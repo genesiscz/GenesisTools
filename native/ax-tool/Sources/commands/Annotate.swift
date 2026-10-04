@@ -181,11 +181,16 @@ func loadCGImage(_ path: String) -> CGImage {
 
 func cmdOcr(appName: String?) {
     var image: CGImage
+    // What was read, so the caller can print a header before the text.
+    var source: [String: Any] = [:]
     if let imgPath = argValue("--image") {
         image = loadCGImage(imgPath)
+        source["image"] = imgPath
     } else if let appName = appName {
-        let (img, _, _, _) = captureWindowCGImage(appName)
+        let (img, title, pid, _) = captureWindowCGImage(appName)
         image = img
+        source["app"] = NSRunningApplication(processIdentifier: pid)?.localizedName ?? appName
+        source["window"] = title
     } else {
         errorExit("ocr needs --image <path> or --app <name>")
     }
@@ -197,5 +202,9 @@ func cmdOcr(appName: String?) {
         }
         image = cropped
     }
-    jsonOutput(runOCR(on: image))
+    var result = runOCR(on: image)
+    result.merge(source) { current, _ in current }
+    result["width"] = image.width
+    result["height"] = image.height
+    jsonOutput(result)
 }

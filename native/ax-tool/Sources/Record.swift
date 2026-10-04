@@ -436,9 +436,7 @@ func cmdCaptureScreen() {
     guard #available(macOS 13.0, *) else {
         errorExit("capture needs macOS 13 or newer")
     }
-    guard CGPreflightScreenCaptureAccess() else {
-        errorExit("Screen Recording permission is required for capture; grant it to the responsible app and retry")
-    }
+    requireScreenRecording()
     let options = recordOptions()
     do {
         try FileManager.default.createDirectory(atPath: options.outDir, withIntermediateDirectories: true)

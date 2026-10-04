@@ -3,9 +3,18 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { DarwinKit, ReminderInfo, ReminderListInfo } from "@genesiscz/darwinkit";
 import { DarwinKitError, ReminderPriority } from "@genesiscz/darwinkit";
+import { isInteractive } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
-import { closeDarwinKit, closeDarwinKitWhenIdle, getDarwinKit, leaseDarwinKit } from "./darwinkit";
+import {
+    closeDarwinKit,
+    closeDarwinKitWhenIdle,
+    getDarwinKit,
+    leaseDarwinKit,
+    shouldAnnounceAccessPrompt,
+    translateDarwinKitAccessError,
+} from "./darwinkit";
+import { describeResponsibleIdentity } from "./genesis-app";
 
 export type { ReminderInfo, ReminderListInfo };
 export { ReminderPriority };
@@ -352,7 +361,9 @@ export async function runDarwinkitGuarded<T>(
                 return;
             }
 
-            settleReject(err instanceof Error ? err : new Error(String(err)));
+            // #448 / #449: DarwinKit's internal "Call reminders.authorized first." should never
+            // reach a user as-is, whatever call site produced it.
+            settleReject(translateDarwinKitAccessError(err));
         });
     });
 
@@ -376,14 +387,27 @@ export interface RemindersAuthResult {
     status: string;
 }
 
+/** #449: names the real responsible app and never sends the user back to a command that does not prompt. */
+export function remindersPermissionMessage(status: string): string {
+    const host = describeResponsibleIdentity();
+    const fix = `System Settings > Privacy & Security > Reminders, set ${host} on, then re-run. macOS grants Reminders access to the responsible app, not to \`tools\`.`;
+
+    switch (status) {
+        case "denied":
+            return `Reminders access for this process is denied (status: denied). If you just clicked Allow, run the command again. Otherwise: ${fix}`;
+        case "restricted":
+            return `Reminders access for this process is restricted by a profile or parental controls (status: restricted). ${fix}`;
+        default:
+            return `Reminders access for this process is not granted (status: ${status}). If you just clicked Allow, run the command again. Otherwise: ${fix}`;
+    }
+}
+
 export class RemindersPermissionError extends Error {
     readonly name = "RemindersPermissionError";
     readonly status: string;
 
     constructor(status: string) {
-        super(
-            `Reminders access not authorized (status: ${status}). Use “Allow Reminders Access” in the dashboard, or run \`tools macos reminders list-lists\` in Terminal so macOS can show the permission dialog. If the dialog never appears (e.g. launchd background), run \`tools dev-dashboard ui up --foreground\` once. Toggle **GenesisTools** (the app that owns the grants; \`tools macos permissions\` shows it) under System Settings → Privacy & Security → Reminders.`
-        );
+        super(remindersPermissionMessage(status));
         this.status = status;
     }
 }
@@ -393,6 +417,34 @@ type RemindersClient = {
     authorizationStatus: (opts?: { timeout?: number }) => Promise<RemindersAuthResult>;
     requestFullAccess: (opts?: { timeout?: number }) => Promise<RemindersAuthResult>;
 };
+
+export interface RemindersAuthClient {
+    authorizationStatus: (options?: GuardOptions) => Promise<RemindersAuthResult>;
+    requestAccess: (options?: GuardOptions) => Promise<RemindersAuthResult>;
+}
+
+/**
+ * Resolves whether this process may use Reminders, requesting access when it is not yet
+ * determined (or any other not-authorized status, matching the existing contract) and the
+ * caller asked for it. Decoupled from the DarwinKit singleton so it is testable with a fake
+ * `RemindersAuthClient` — the equivalent of `resolveCalendarReadAccess` in apple-calendar.ts.
+ */
+export async function resolveRemindersAuthorization(
+    auth: RemindersAuthClient,
+    options?: GuardOptions & { requestIfNeeded?: boolean }
+): Promise<RemindersAuthResult> {
+    let result = await auth.authorizationStatus(options);
+
+    if (!result.authorized && options?.requestIfNeeded !== false) {
+        if (shouldAnnounceAccessPrompt(result.status, isInteractive())) {
+            logger.info("Asking macOS for Reminders access, watch for a system dialog");
+        }
+
+        result = await auth.requestAccess(options);
+    }
+
+    return result;
+}
 
 export class MacReminders {
     /** Read-only: never shows the macOS prompt. `ensureAuthorized` requests access separately. */
@@ -435,11 +487,10 @@ export class MacReminders {
     }
 
     static async ensureAuthorized(options?: GuardOptions & { requestIfNeeded?: boolean }): Promise<void> {
-        let auth = await MacReminders.authorizationStatus(options);
-
-        if (!auth.authorized && options?.requestIfNeeded !== false) {
-            auth = await MacReminders.requestAccess(options);
-        }
+        const auth = await resolveRemindersAuthorization(
+            { authorizationStatus: MacReminders.authorizationStatus, requestAccess: MacReminders.requestAccess },
+            options
+        );
 
         if (!auth.authorized) {
             throw new RemindersPermissionError(auth.status);
@@ -447,6 +498,8 @@ export class MacReminders {
     }
 
     static async listLists(options?: GuardOptions): Promise<ReminderListInfo[]> {
+        await MacReminders.ensureAuthorized({ timeoutMs: options?.timeoutMs, requestIfNeeded: isInteractive() });
+
         const result = await runDarwinkitGuarded(
             getDarwinKit(),
             "reminders.lists",
@@ -460,6 +513,8 @@ export class MacReminders {
         listName?: string | string[],
         options?: GuardOptions & { includeCompleted?: boolean; listIdentifiers?: string[] }
     ): Promise<ReminderInfo[]> {
+        await MacReminders.ensureAuthorized({ timeoutMs: options?.timeoutMs, requestIfNeeded: isInteractive() });
+
         let listIdentifiers: string[] | undefined;
 
         if (options?.listIdentifiers && options.listIdentifiers.length > 0) {
@@ -516,6 +571,8 @@ export class MacReminders {
         url?: string;
         timeoutMs?: number;
     }): Promise<string> {
+        await MacReminders.ensureAuthorized({ timeoutMs: options.timeoutMs, requestIfNeeded: isInteractive() });
+
         const listId = await MacReminders.ensureListExists(options.listName ?? "GenesisTools", undefined, {
             timeoutMs: options.timeoutMs,
         });
@@ -585,6 +642,8 @@ export class MacReminders {
     }
 
     static async completeReminder(options: { reminderId: string; timeoutMs?: number }): Promise<boolean> {
+        await MacReminders.ensureAuthorized({ timeoutMs: options.timeoutMs, requestIfNeeded: isInteractive() });
+
         try {
             await runDarwinkitGuarded(
                 getDarwinKit(),
@@ -608,6 +667,8 @@ export class MacReminders {
     }
 
     static async deleteReminder(options: { reminderId: string; timeoutMs?: number }): Promise<boolean> {
+        await MacReminders.ensureAuthorized({ timeoutMs: options.timeoutMs, requestIfNeeded: isInteractive() });
+
         try {
             const result = await runDarwinkitGuarded(
                 getDarwinKit(),

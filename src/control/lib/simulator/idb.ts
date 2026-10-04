@@ -180,4 +180,9 @@ export async function idbAvailable(signal?: AbortSignal): Promise<boolean> {
     return result.status === 0;
 }
 
-export const IDB_INSTALL_HINT = "idb is required for simulator control: brew install facebook/fb/idb-companion";
+/**
+ * Every verb runs the `idb` client, which drives `idb_companion` next to the simulator. Per
+ * fbidb.io/idb/installation (read 2026-10-04) one formula installs both, and needs full Xcode.
+ */
+export const IDB_INSTALL_HINT =
+    "idb is required for simulator control: `tools control sim` runs the `idb` client, which drives `idb_companion`. Install both with `brew install facebook/fb/idb` (it needs a full Xcode; Command Line Tools are not enough). With a companion already installed, add the client with `pip3 install fb-idb` (Python 3.10 or newer).";

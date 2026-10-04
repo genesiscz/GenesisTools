@@ -55,6 +55,16 @@ public let observedAttributeKeys = [
     "AXEnabled", "AXFocused", "AXSelected", "AXSelectedText", "AXSelectedTextRange", "AXModal",
 ]
 public let observedElementLimit = 4000
+/// The deepest `--depth` see accepts.
+public let maxObservedDepth = 50
+
+/// A refused depth names the maximum and a retry that can work. At the maximum there is none.
+func depthOverflowMessage(_ depth: Int) -> String {
+    if depth >= maxObservedDepth {
+        return "AX tree exceeds --depth \(depth), the maximum: this window's tree is deeper than see can observe"
+    }
+    return "AX tree exceeds --depth \(depth) (max \(maxObservedDepth)); retry with --depth \(maxObservedDepth)"
+}
 
 /// AppKit animates anonymous glyph groups inside standard window buttons. Expose the actual
 /// button as a leaf; those decorative descendants are not controls.
@@ -97,8 +107,8 @@ public func observationBudgetMessage(walked: Int) -> String {
 /// once it answers true the walk stops with an error, never with a partial tree.
 public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth: Int, scope: String,
                               expired: () -> Bool = { false }) throws -> ObservedTreeData {
-    guard (1...50).contains(depth) else {
-        throw ObservedTreeError("--depth must be between 1 and 50")
+    guard (1...maxObservedDepth).contains(depth) else {
+        throw ObservedTreeError("--depth must be between 1 and \(maxObservedDepth)")
     }
     var tree = ObservedTreeData()
     var visited = SnapshotObjectSet()
@@ -128,7 +138,7 @@ public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth:
         let omittedWebContent = scope == "chrome" && role == "AXWebArea"
         let children = windowButton || omittedWebContent ? [] : rawChildren
         guard level < depth || children.isEmpty else {
-            throw ObservedTreeError("AX tree exceeds --depth \(depth); increase depth and run see again")
+            throw ObservedTreeError(depthOverflowMessage(depth))
         }
         let frame = snapshotFrame(element, source: source)
         var row: [String: Any] = [

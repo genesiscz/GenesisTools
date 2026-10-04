@@ -177,7 +177,7 @@ private func workflowLaunch(_ pid: pid_t) -> Double {
 
 private func workflowWindows(_ pid: pid_t) -> [[CFString: Any]] {
     guard CGPreflightScreenCaptureAccess() else {
-        workflowFailure("Screen Recording permission is required for see/act; grant access to the responsible app/process")
+        workflowPermissionFailure(.screenRecording)
     }
     return (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
         as? [[CFString: Any]] ?? []).filter { ($0[kCGWindowOwnerPID] as? Int32) == pid }
@@ -564,11 +564,19 @@ private func workflowSelectOption(_ element: AXUIElement, value: String) throws 
 
 private func workflowPermissions() {
     guard AXIsProcessTrusted() else {
-        if workflowDispatchState != nil {
-            workflowFailure("Accessibility permission is required.", category: .permission)
-        }
-        axUntrustedExit()
+        workflowPermissionFailure(.accessibility)
     }
+}
+
+/// A missing grant in the shape every permission refusal has, plus the dispatch state once an
+/// action is underway.
+private func workflowPermissionFailure(_ grant: PermissionGrant) -> Never {
+    var refusal = permissionRefusal(grant, responsible: responsibleProcess(), pid: getpid())
+    if let state = workflowDispatchState {
+        refusal["dispatchState"] = state
+    }
+    jsonOutput(refusal)
+    exit(1)
 }
 
 private func workflowWindowByID(_ id: Int, pid: pid_t) -> ObservedWindow {

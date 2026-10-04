@@ -14,11 +14,39 @@ import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { profiler } from "@genesiscz/utils/profile";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { isTestProcess } from "@genesiscz/utils/test-process";
-import { captureNativeSources, nativeNeedsBuild, recordNativeBuild } from "./native-build";
+import { NATIVE_BUILD_WORKER_TIMEOUT_MS, nativeNeedsBuild } from "./native-build";
 
 const GT_ROOT = join(import.meta.dir, "..", "..", "..");
 const BINARY_PATH = join(GT_ROOT, "native", "ax-tool", ".build", "release", "ax-tool");
 const SWIFT_SOURCE = join(GT_ROOT, "native", "ax-tool");
+const BUILD_WORKER = join(import.meta.dir, "native-build-worker.ts");
+const BUILD_LOCK = join(SWIFT_SOURCE, ".build", "ax-tool-build.lock");
+
+interface BuildOutcome {
+    ok: boolean;
+    built?: boolean;
+    error?: string;
+}
+
+function isBuildOutcome(value: unknown): value is BuildOutcome {
+    return value !== null && typeof value === "object" && "ok" in value && typeof value.ok === "boolean";
+}
+
+/** The build worker's one-line verdict on stdout. */
+function parseBuildOutcome(stdout: string | null): BuildOutcome | null {
+    try {
+        const parsed: unknown = SafeJSON.parse((stdout ?? "").trim(), { strict: true });
+
+        if (isBuildOutcome(parsed)) {
+            return parsed;
+        }
+    } catch (error) {
+        logger.debug({ error, stdout: stdout?.slice(0, 200) }, "native build worker printed no verdict");
+    }
+
+    return null;
+}
+
 const prof = profiler.scope("control-native");
 
 /** Deliberate opt-in for a test that must run the real ax-tool. Nothing in the default suite sets it. */
@@ -249,20 +277,22 @@ export function ensureBinary(): string {
 
     if (existsSync(join(SWIFT_SOURCE, "Package.swift"))) {
         logger.info({ source: SWIFT_SOURCE }, "ax-tool binary missing or stale; compiling native CLI");
-        const before = captureNativeSources(SWIFT_SOURCE);
-        const r = spawnSync("swift", ["build", "-c", "release"], {
-            cwd: SWIFT_SOURCE,
-            timeout: 120_000,
+        // The worker holds a cross-process lock around check-and-build, so concurrent first runs
+        // compile once; ensureBinary stays synchronous because every runAx caller is.
+        const r = spawnSync(process.execPath, [BUILD_WORKER, BINARY_PATH, SWIFT_SOURCE, BUILD_LOCK], {
+            timeout: NATIVE_BUILD_WORKER_TIMEOUT_MS,
             encoding: "utf-8",
-            stdio: ["pipe", "pipe", "pipe"],
+            stdio: ["ignore", "pipe", "inherit"],
         });
-        if (r.status === 0 && existsSync(BINARY_PATH)) {
-            recordNativeBuild({ binary: BINARY_PATH, sourceDir: SWIFT_SOURCE, before });
-            logger.info("ax-tool built successfully");
+        const outcome = parseBuildOutcome(r.stdout);
+        if (r.status === 0 && outcome?.ok && existsSync(BINARY_PATH)) {
+            logger.info(
+                outcome.built ? "ax-tool built successfully" : "ax-tool was built by another process; reusing it"
+            );
             verifiedBinary = BINARY_PATH;
             return verifiedBinary;
         }
-        const details = [r.error?.message, r.stderr?.trim(), r.stdout?.trim()].filter(Boolean).join("\n");
+        const details = [r.error?.message, outcome?.error ?? r.stdout?.trim()].filter(Boolean).join("\n");
         throw new Error(`ax-tool build failed (${r.status ?? r.signal ?? "spawn error"}):\n${details.slice(-4000)}`);
     }
 

@@ -91,7 +91,7 @@ tools control assist --simulator --bundle-id com.apple.mobilecal --task "create 
 tools control resolve --simulator --intent "the button that adds an event"
 ```
 
-**Requires `idb`** (`brew install facebook/fb/idb-companion`). The macOS Accessibility API cannot
+**Requires `idb`**: every verb runs the `idb` client, which drives `idb_companion`. `brew install facebook/fb/idb` installs both and needs a full Xcode; with a companion already installed, `pip3 install fb-idb` adds the client. The macOS Accessibility API cannot
 see inside the simulator's rendered surface; the measurement is in `docs/benchmarks-simulator.md`.
 
 How a screen is read: `idb ui describe-all` returns only the elements an app publishes at the top
@@ -270,7 +270,7 @@ tools control audit             # plus: which apps carry AXManualAccessibility /
 tools macos permissions open --pane accessibility
 ```
 
-A missing Accessibility grant is reported as a distinct error (`"reason": "accessibility-not-granted"`) naming GenesisTools.app and the pane. It is never reported as `no windows for <app>`: that message is reserved for a query that succeeded and returned an empty list. An app that does not answer the AX query at all gets its own message (`accessibility query failed ... kAXErrorCannotComplete`).
+A missing Accessibility grant is reported as a distinct error (`"reason": "accessibility-not-granted"`) that names the app macOS holds responsible in plain words ("Terminal (com.apple.Terminal)", or GenesisTools.app when the launcher is in front) and the pane to turn it on in. A missing Screen Recording grant has the same shape (`"reason": "screen-recording-not-granted"`) on every capture path: `see`, `act`, `screenshot`, `ocr --app` and `capture`. Both carry `refusal: "permission"`, the `responsible*` fields and `viaGenesisApp`, and both warn when the responsible binary sits in a versioned folder that the next update replaces. A typo in `--app` is reported as `no running app matches '<name>'` before any grant is checked. A missing grant is never reported as `no windows for <app>`: that message is reserved for a query that succeeded and returned an empty list. An app that does not answer the AX query at all gets its own message (`accessibility query failed ... kAXErrorCannotComplete`).
 
 Two things stay outside GenesisTools.app, and `audit` says so:
 

@@ -12,20 +12,19 @@ import Vision
 @_silgen_name("responsibility_get_pid_responsible_for_pid")
 func responsibility_get_pid_responsible_for_pid(_ pid: pid_t) -> pid_t
 
-let genesisAppBundleIdentifier = "com.genesiscz.genesistools"
-
 /// Who macOS actually holds responsible for THIS process, read from the kernel rather than
 /// from the environment. `GENESIS_TOOLS_APP_BUNDLE_ID` is inherited by every descendant of a
 /// launcher-started session, so a bare `ax-tool` run inside such a session still carries it
 /// while its grants follow the terminal; only the responsible pid tells those two apart.
-func responsibleProcess() -> (pid: pid_t, bundleId: String?, path: String) {
+func responsibleProcess() -> ResponsibleProcess {
     let pid = responsibility_get_pid_responsible_for_pid(getpid())
     var buffer = [CChar](repeating: 0, count: Int(PATH_MAX) * 4)
     let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
     let path = length > 0 ? String(cString: buffer) : ""
-    let bundleId = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+    let app = NSRunningApplication(processIdentifier: pid)
+    let bundleId = app?.bundleIdentifier
         ?? (path.contains("/GenesisTools.app/") ? genesisAppBundleIdentifier : nil)
-    return (pid, bundleId, path)
+    return ResponsibleProcess(pid: pid, bundleId: bundleId, path: path, localizedName: app?.localizedName)
 }
 
 /// The GenesisTools.app bundle id when the launcher is this process's responsible process.
@@ -55,29 +54,21 @@ func axErrorName(_ err: AXError) -> String {
     }
 }
 
-/// The one message every AX command prints when the grant is missing. It is a claim about the
-/// CALLER, never about the target app: an untrusted client gets an empty window list from every
-/// app, and reporting that as "no windows for X" sent a session chasing a window bug that did
-/// not exist (handoff h_xt5ixzf9).
-func axUntrustedMessage(responsible: (pid: pid_t, bundleId: String?, path: String)) -> String {
-    let route: String
-    if let bundle = responsible.bundleId, bundle == genesisAppBundleIdentifier {
-        route = "This run went through GenesisTools.app (\(bundle)), which is the identity to grant."
-    } else {
-        route = "macOS currently attributes this run to responsible pid \(responsible.pid) (\(responsible.bundleId ?? responsible.path)); `tools control` normally routes ax-tool through GenesisTools.app."
-    }
-    return "Accessibility is not granted to the process macOS holds responsible for ax-tool. \(route) Grant it in System Settings > Privacy & Security > Accessibility (`tools macos permissions open --pane accessibility`), then re-run. `tools control doctor` shows every grant tools control needs."
+/// The refusal for a missing grant, naming the app macOS holds responsible (see
+/// `permissionRefusalMessage`). Every AX command and every capture path ends here.
+func permissionRefusalExit(_ grant: PermissionGrant) -> Never {
+    jsonOutput(permissionRefusal(grant, responsible: responsibleProcess(), pid: getpid()))
+    exit(1)
 }
 
 func axUntrustedExit() -> Never {
-    let responsible = responsibleProcess()
-    jsonOutput(["ok": false, "error": axUntrustedMessage(responsible: responsible), "reason": "accessibility-not-granted",
-                "refusal": "permission", "pid": getpid(),
-                "responsible": responsible.bundleId ?? "unknown",
-                "responsiblePid": responsible.pid, "responsibleBundleId": responsible.bundleId ?? "",
-                "responsiblePath": responsible.path,
-                "viaGenesisApp": responsible.bundleId == genesisAppBundleIdentifier])
-    exit(1)
+    permissionRefusalExit(.accessibility)
+}
+
+/// `CGPreflightScreenCaptureAccess()` never prompts. Without the grant a window capture fails
+/// with nothing but a nil image, so every capture path asks first and refuses with the app's name.
+func requireScreenRecording() {
+    if !CGPreflightScreenCaptureAccess() { permissionRefusalExit(.screenRecording) }
 }
 
 /// `AXIsProcessTrusted()` never prompts and never writes a TCC row; the prompting variant is

@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { createIdleCloser } from "./darwinkit";
+import {
+    createIdleCloser,
+    parseDarwinKitAccessError,
+    shouldAnnounceAccessPrompt,
+    translateDarwinKitAccessError,
+} from "./darwinkit";
 
 /**
  * `MacReminders.requestAccess` retires the DarwinKit helper it spawned, because
@@ -98,5 +103,85 @@ describe("createIdleCloser", () => {
         second();
 
         expect(close.closes).toBe(2);
+    });
+});
+
+/**
+ * Regression test: #448 / #449 — a macOS permission dialog can only appear once per
+ * authorization decision. Printing "watch for a system dialog" for any other status
+ * would promise a dialog that never shows (denied/restricted/writeOnly/fullAccess all
+ * resolve `authorized()` without ever displaying UI again).
+ */
+describe("shouldAnnounceAccessPrompt", () => {
+    test("announces only for notDetermined in an interactive session", () => {
+        expect(shouldAnnounceAccessPrompt("notDetermined", true)).toBe(true);
+    });
+
+    test("stays silent for notDetermined when not interactive", () => {
+        expect(shouldAnnounceAccessPrompt("notDetermined", false)).toBe(false);
+    });
+
+    test.each(["denied", "restricted", "writeOnly", "fullAccess"] as const)(
+        "stays silent for %s even when interactive, since no dialog will show",
+        (status) => {
+            expect(shouldAnnounceAccessPrompt(status, true)).toBe(false);
+        }
+    );
+});
+
+/**
+ * Regression test: #448 / #449 — DarwinKit's raw "Calendar access not authorized. Call
+ * calendar.authorized first." (and the Reminders/Contacts variants) is an internal API
+ * hint, meaningless to a user who just clicked Allow (#448 step 4).
+ */
+describe("parseDarwinKitAccessError", () => {
+    test.each([
+        ["Calendar access not authorized. Call calendar.authorized first.", "Calendar"],
+        ["Reminders access not authorized. Call reminders.authorized first.", "Reminders"],
+        ["Contacts access not authorized. Call contacts.authorized first.", "Contacts"],
+    ] as const)("recognizes the %s raw DarwinKit message", (message, service) => {
+        expect(parseDarwinKitAccessError(new Error(message))).toEqual({ service });
+    });
+
+    test("returns null for an unrelated error", () => {
+        expect(parseDarwinKitAccessError(new Error("ECONNRESET"))).toBeNull();
+    });
+
+    test("returns null for a non-error, non-string value", () => {
+        expect(parseDarwinKitAccessError({ weird: true })).toBeNull();
+    });
+});
+
+describe("translateDarwinKitAccessError", () => {
+    test("turns the raw Calendar message into a friendly one that names the fix", () => {
+        const translated = translateDarwinKitAccessError(
+            new Error("Calendar access not authorized. Call calendar.authorized first.")
+        );
+
+        expect(translated.message).toContain("Calendar");
+        expect(translated.message).toContain("System Settings");
+        expect(translated.message).not.toContain("calendar.authorized first");
+    });
+
+    test("turns the raw Reminders message into a friendly one that names the fix", () => {
+        const translated = translateDarwinKitAccessError(
+            new Error("Reminders access not authorized. Call reminders.authorized first.")
+        );
+
+        expect(translated.message).toContain("Reminders");
+        expect(translated.message).not.toContain("reminders.authorized first");
+    });
+
+    test("passes an unrelated error through unchanged", () => {
+        const original = new Error("ECONNRESET");
+
+        expect(translateDarwinKitAccessError(original)).toBe(original);
+    });
+
+    test("wraps a non-Error throw into a real Error", () => {
+        const translated = translateDarwinKitAccessError("boom");
+
+        expect(translated).toBeInstanceOf(Error);
+        expect(translated.message).toBe("boom");
     });
 });

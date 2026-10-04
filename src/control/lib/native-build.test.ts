@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmdirSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { captureNativeSources, nativeNeedsBuild, recordNativeBuild } from "./native-build";
+import * as nativeBuild from "./native-build";
+import { buildNativeOnce, captureNativeSources, nativeNeedsBuild, recordNativeBuild } from "./native-build";
 
 test("native source edits invalidate an existing binary", () => {
     const sourceDir = mkdtempSync(join(tmpdir(), "control-build-test-"));
@@ -130,4 +131,42 @@ test("changing bundled cursor artwork invalidates native build freshness", () =>
     expect(nativeNeedsBuild({ binary, sourceDir })).toBe(false);
     writeFileSync(resource, '{"changed":true}');
     expect(nativeNeedsBuild({ binary, sourceDir })).toBe(true);
+});
+
+// Regression test: #447 — three `tools control` processes started together on a fresh checkout each compiled ax-tool
+test("builds that start together compile once, and the later one reuses the fresh binary", async () => {
+    const sourceDir = mkdtempSync(join(tmpdir(), "control-build-lock-"));
+    const binary = join(sourceDir, ".build", "release", "ax-tool");
+    mkdirSync(join(sourceDir, "Sources"));
+    mkdirSync(join(sourceDir, "SnapshotSupport"));
+    writeFileSync(join(sourceDir, "Package.swift"), "package");
+    writeFileSync(join(sourceDir, "Sources", "main.swift"), "print(1)");
+    let compiles = 0;
+    // The compiler boundary: it yields once, so the second caller is already waiting when it finishes.
+    const build = async (): Promise<void> => {
+        compiles++;
+        await new Promise((resolve) => setImmediate(resolve));
+        mkdirSync(join(sourceDir, ".build", "release"), { recursive: true });
+        writeFileSync(binary, "compiled");
+    };
+    const lockPath = join(sourceDir, ".build", "ax-tool-build.lock");
+
+    const results = await Promise.all([
+        buildNativeOnce({ binary, sourceDir, lockPath, build }),
+        buildNativeOnce({ binary, sourceDir, lockPath, build }),
+    ]);
+
+    expect(compiles).toBe(1);
+    expect(results.map((r) => r.built).sort()).toEqual([false, true]);
+    expect(nativeNeedsBuild({ binary, sourceDir })).toBe(false);
+});
+// Regression test: PR #457 review — `swift build` was cut off at a fixed 120 s while a waiter
+// gave the lock 300 s, and the runner's outer timeout could end a worker that waited out the lock
+// and then started its own build. Each budget has to cover the one nested inside it.
+test("the build, lock-wait and worker budgets each cover the one nested inside them", () => {
+    const { NATIVE_BUILD_LOCK_WAIT_MS, NATIVE_BUILD_TIMEOUT_MS, NATIVE_BUILD_WORKER_TIMEOUT_MS } = nativeBuild;
+
+    expect(NATIVE_BUILD_TIMEOUT_MS).toBeGreaterThanOrEqual(240_000);
+    expect(NATIVE_BUILD_LOCK_WAIT_MS).toBeGreaterThan(NATIVE_BUILD_TIMEOUT_MS);
+    expect(NATIVE_BUILD_WORKER_TIMEOUT_MS).toBeGreaterThan(NATIVE_BUILD_LOCK_WAIT_MS + NATIVE_BUILD_TIMEOUT_MS);
 });

@@ -17,6 +17,7 @@ func captureWindowCGImage(_ appName: String) -> (CGImage, String, pid_t, CGRect)
 
 func captureWindowCGImageFull(_ appName: String) -> (CGImage, String, pid_t, CGRect, [String]) {
     let pid = resolveApp(appName)
+    requireScreenRecording()
     let windowScope = argValue("--window")
     let windowIDScope: CGWindowID? = argValue("--window-id").map {
         guard let parsed = CGWindowID($0), parsed > 0 else {

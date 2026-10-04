@@ -16,7 +16,9 @@ import {
     postNotification,
     readNotificationReply,
     removeNotifications,
+    resolveNotificationFallbackState,
 } from "@genesiscz/utils/macos/notifications";
+import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import type { ChannelConfigs } from "@genesiscz/utils/notifications";
 import { dispatchNotification, notificationsConfig } from "@genesiscz/utils/notifications";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
@@ -325,7 +327,7 @@ program
                 process.exit(0);
             }
 
-            await dispatchNotification({
+            const delivered = await dispatchNotification({
                 app: "notify",
                 message,
                 title: options.title,
@@ -336,7 +338,15 @@ program
                 execute: options.execute,
                 appIcon: options.appIcon,
                 ignoreDnD: options.ignoreDnd,
+                requireConfirmed: true,
             });
+
+            if (!delivered) {
+                out.warn(
+                    "One or more notification channels failed or could not confirm delivery. See: tools notify status"
+                );
+                process.exitCode = 1;
+            }
         }
     );
 
@@ -452,7 +462,8 @@ program
     .action(async (options: { json?: boolean }) => {
         const outcome = await notificationStatus();
 
-        if (!printRpcOutcome(outcome, options.json)) {
+        if (!outcome.ok) {
+            await printNotificationFallbackStatus(outcome, Boolean(options.json));
             return;
         }
 
@@ -617,6 +628,44 @@ function printRpcFailure(error: GenesisAppRpcFailure): void {
     process.exitCode = 1;
 }
 
+/**
+ * `tools notify status` used to say only "unavailable" when GenesisTools.app's RPC failed,
+ * even though terminal-notifier or osascript would still carry the next notification
+ * (#455 item 5). Reports which backend is actually in play before falling back to the
+ * generic RPC failure message.
+ */
+async function printNotificationFallbackStatus(
+    outcome: { ok: false; error: GenesisAppRpcFailure },
+    json: boolean
+): Promise<void> {
+    const fallback = await resolveNotificationFallbackState();
+
+    if (json) {
+        out.result({ ...outcome, fallback });
+        process.exitCode = 1;
+        return;
+    }
+
+    if (fallback.kind === "genesis-app") {
+        // The launcher is installed but the RPC itself failed — that failure is more useful
+        // here than a fallback state that is not actually in play.
+        printRpcFailure(outcome.error);
+        return;
+    }
+
+    if (fallback.kind === "terminal-notifier") {
+        out.error(`GenesisTools.app missing; using terminal-notifier at ${fallback.path} (not confirmed authorized).`);
+    } else {
+        out.error(
+            "GenesisTools.app missing, terminal-notifier not found; osascript only, delivery cannot be confirmed."
+        );
+        out.info("Install terminal-notifier: brew install terminal-notifier");
+    }
+
+    out.info(genesisAppBuildHint());
+    process.exitCode = 1;
+}
+
 function printRpcOutcome<T>(outcome: GenesisAppRpcOutcome<T>, json?: boolean): outcome is { ok: true; result: T } {
     if (outcome.ok) {
         return true;
@@ -661,7 +710,13 @@ async function sendPayload(source: string, wait: boolean, timeoutMs: number): Pr
     }
 
     if (!wait) {
-        out.result(await postNotification(payload.value));
+        const posted = await postNotification(payload.value);
+        out.result(posted);
+
+        if (!posted.confirmed) {
+            process.exitCode = 1;
+        }
+
         return;
     }
 

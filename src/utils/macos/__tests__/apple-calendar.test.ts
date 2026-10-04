@@ -1,9 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import type { CalendarAuthorizedResult, CalendarInfo } from "@genesiscz/darwinkit";
+import type { CalendarAuthorizedResult, CalendarInfo, SourceInfo } from "@genesiscz/darwinkit";
 import {
     CALENDAR_PLACEHOLDER_IDENTIFIER,
     type CalendarAuthClient,
     CalendarPermissionError,
+    fetchCalendarSources,
     isPlaceholderCalendarList,
     resolveCalendarReadAccess,
     resolveCalendarWriteAccess,
@@ -11,6 +12,7 @@ import {
 
 interface FakeAuth extends CalendarAuthClient {
     requests: number;
+    statusChecks: number;
 }
 
 type AuthStatus = CalendarAuthorizedResult["status"];
@@ -18,8 +20,12 @@ type AuthStatus = CalendarAuthorizedResult["status"];
 function fakeAuth(status: AuthStatus, afterUpgrade: AuthStatus = status): FakeAuth {
     const auth: FakeAuth = {
         requests: 0,
+        statusChecks: 0,
         authorized: async () => ({ status, authorized: status === "fullAccess" }),
-        authorizationStatus: async () => ({ status, authorized: status === "fullAccess" }),
+        authorizationStatus: async () => {
+            auth.statusChecks++;
+            return { status, authorized: status === "fullAccess" };
+        },
         requestFullAccess: async () => {
             auth.requests++;
             return { status: afterUpgrade, authorized: afterUpgrade === "fullAccess" };
@@ -83,6 +89,15 @@ describe("resolveCalendarReadAccess", () => {
             expect(auth.requests).toBe(0);
         }
     );
+
+    // Regression test: #448 — the caller needs to know BEFORE calling authorized() whether a
+    // dialog is about to appear, so it can print "watch for a system dialog". Without a
+    // status check, there is nothing to decide that on.
+    it("checks the current status before resolving authorization", async () => {
+        const auth = fakeAuth("notDetermined", "fullAccess");
+        await rejection(resolveCalendarReadAccess(auth));
+        expect(auth.statusChecks).toBeGreaterThan(0);
+    });
 });
 
 describe("resolveCalendarWriteAccess", () => {
@@ -121,5 +136,60 @@ describe("isPlaceholderCalendarList", () => {
         expect(isPlaceholderCalendarList([base])).toBe(false);
         expect(isPlaceholderCalendarList([base, { ...base, identifier: CALENDAR_PLACEHOLDER_IDENTIFIER }])).toBe(false);
         expect(isPlaceholderCalendarList([])).toBe(false);
+    });
+});
+
+describe("fetchCalendarSources", () => {
+    const oneSource: SourceInfo[] = [{ identifier: "s1", title: "iCloud", source_type: "calDAV" }];
+
+    // Regression test: #448 — `list-calendars` ran MacCalendar.listCalendars() (which awaits
+    // the permission dialog) in Promise.all with the unguarded getSources(), so DarwinKit
+    // rejected getSources() with "Calendar access not authorized. Call calendar.authorized
+    // first." while the dialog was still on screen. fetchCalendarSources must not call the
+    // raw fetch until the authorization decision has actually resolved.
+    it("waits for the authorization decision before fetching sources, so it never races the permission dialog", async () => {
+        const auth = fakeAuth("writeOnly");
+        let decided = false;
+        const originalAuthorized = auth.authorized;
+        auth.authorized = async (opts) => {
+            const result = await originalAuthorized(opts);
+            decided = true;
+            return result;
+        };
+
+        const fetchSources = async () => {
+            if (!decided) {
+                throw new Error("Calendar access not authorized. Call calendar.authorized first.");
+            }
+
+            return { sources: oneSource };
+        };
+
+        expect(await fetchCalendarSources(auth, fetchSources)).toEqual(oneSource);
+    });
+
+    it("accepts writeOnly, since listing sources does not require full read access", async () => {
+        const auth = fakeAuth("writeOnly");
+        const sources = await fetchCalendarSources(auth, async () => ({ sources: oneSource }));
+        expect(sources).toEqual(oneSource);
+    });
+
+    it("rejects with a friendly CalendarPermissionError when access is denied", async () => {
+        const auth = fakeAuth("denied");
+        const error = await rejection(fetchCalendarSources(auth, async () => ({ sources: [] })));
+        expect(error).toBeInstanceOf(CalendarPermissionError);
+    });
+
+    // Regression test: #448 — even if the guard passed, a stray raw DarwinKit message from
+    // the underlying fetch must still reach the user translated, never as the internal hint.
+    it("translates a raw DarwinKit access error from the fetch itself", async () => {
+        const auth = fakeAuth("fullAccess");
+        const fetchSources = async (): Promise<{ sources: SourceInfo[] }> => {
+            throw new Error("Calendar access not authorized. Call calendar.authorized first.");
+        };
+
+        const error = (await rejection(fetchCalendarSources(auth, fetchSources))) as Error;
+        expect(error.message).not.toContain("calendar.authorized first");
+        expect(error.message).toContain("Calendar");
     });
 });

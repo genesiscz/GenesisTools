@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { logger } from "@genesiscz/utils/logger";
@@ -12,6 +13,8 @@ import {
     isNotifyPostResult,
 } from "@genesiscz/utils/macos/genesis-app-rpc";
 import { escapeJxa } from "@genesiscz/utils/macos/jxa";
+import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
 export interface NotificationOptions {
@@ -100,84 +103,96 @@ export enum NotificationBackend {
 
 const storage = new Storage("notify");
 
-/**
- * Resolve the native terminal-notifier binary path, bypassing rbenv shims.
- * Checks rbenv gem dirs, homebrew, then PATH. Caches the result.
- */
-async function resolveTerminalNotifier(): Promise<string | null> {
-    const cached = await storage.getConfigValue<string>("terminalNotifierPath");
+/** `find` over the rbenv tree may walk many gem directories; `which` and `-help` answer at once. */
+const RBENV_SEARCH_TIMEOUT_MS = 5_000;
+const NOTIFIER_PROBE_TIMEOUT_MS = 2_000;
 
-    if (cached && existsSync(cached)) {
-        return cached;
+/** The cached terminal-notifier path, when it still exists. Read-only, and an unreadable config means no cache. */
+async function cachedTerminalNotifier(): Promise<string | null> {
+    try {
+        const cached = await storage.getConfigValue<string>("terminalNotifierPath");
+        return cached && existsSync(cached) ? cached : null;
+    } catch (error) {
+        logger.debug({ error }, "terminal-notifier cache unreadable; searching instead");
+        return null;
+    }
+}
+
+/**
+ * True when `candidate -help` exits 0 within the deadline. A binary that hangs is killed and counts as
+ * unavailable, so neither `tools notify status` nor a fallback send can wait on it forever. A non-zero
+ * exit counts as unavailable too: boundedCommand reports it in `status`, not `error`, and its
+ * watchdog turns a binary that cannot be executed into exit 127.
+ */
+export async function probeTerminalNotifier(
+    candidate: string,
+    { timeoutMs = NOTIFIER_PROBE_TIMEOUT_MS }: { timeoutMs?: number } = {}
+): Promise<boolean> {
+    const result = await boundedCommand({ command: [candidate, "-help"], timeoutMs });
+
+    if (result.error || result.status !== 0) {
+        logger.debug(
+            { candidate, status: result.status, error: result.error },
+            "terminal-notifier candidate did not answer -help"
+        );
+        return false;
     }
 
+    return true;
+}
+
+/**
+ * Searches for the native terminal-notifier binary, bypassing rbenv shims: rbenv gem dirs,
+ * homebrew, then PATH. Every subprocess has a deadline. Ignores the cache and writes nothing.
+ */
+async function searchTerminalNotifier(): Promise<string | null> {
     const candidates: string[] = [];
 
     // 1. Check rbenv gem paths
     const rbenvRoot = join(homedir(), ".rbenv", "versions");
 
     if (existsSync(rbenvRoot)) {
-        try {
-            const proc = Bun.spawn(
-                ["find", rbenvRoot, "-name", "terminal-notifier", "-path", "*/MacOS/*", "-type", "f"],
-                { stdout: "pipe", stderr: "ignore" }
-            );
-            const output = await new Response(proc.stdout).text();
-            await proc.exited;
+        const found = await boundedCommand({
+            command: ["find", rbenvRoot, "-name", "terminal-notifier", "-path", "*/MacOS/*", "-type", "f"],
+            timeoutMs: RBENV_SEARCH_TIMEOUT_MS,
+        });
 
-            const paths = output.trim().split("\n").filter(Boolean);
-            candidates.push(...paths);
-        } catch {
-            // rbenv search failed, continue
+        if (found.error) {
+            logger.debug({ error: found.error }, "rbenv search for terminal-notifier failed");
+        } else {
+            candidates.push(...found.stdout.trim().split("\n").filter(Boolean));
         }
     }
 
     // 2. Check homebrew
-    const brewPaths = ["/opt/homebrew/bin/terminal-notifier", "/usr/local/bin/terminal-notifier"];
-
-    for (const p of brewPaths) {
+    for (const p of ["/opt/homebrew/bin/terminal-notifier", "/usr/local/bin/terminal-notifier"]) {
         if (existsSync(p)) {
             candidates.push(p);
         }
     }
 
-    // 3. Check PATH via `which` — but verify it's not a shim
-    try {
-        const proc = Bun.spawn(["which", "terminal-notifier"], {
-            stdout: "pipe",
-            stderr: "ignore",
-        });
-        const whichPath = (await new Response(proc.stdout).text()).trim();
-        await proc.exited;
+    // 3. Check PATH via `which` — but skip an rbenv shim
+    const which = await boundedCommand({
+        command: ["which", "terminal-notifier"],
+        timeoutMs: NOTIFIER_PROBE_TIMEOUT_MS,
+    });
+    const whichPath = which.error ? "" : which.stdout.trim();
 
-        if (whichPath && existsSync(whichPath)) {
-            // Check if it's a shim by reading the first few bytes
+    if (whichPath && existsSync(whichPath)) {
+        try {
             const content = await Bun.file(whichPath).text();
-            const isShim = content.includes("RBENV") || content.includes("rbenv");
 
-            if (!isShim) {
+            if (!content.includes("RBENV") && !content.includes("rbenv")) {
                 candidates.push(whichPath);
             }
+        } catch (error) {
+            logger.debug({ error, whichPath }, "could not read terminal-notifier on PATH");
         }
-    } catch {
-        // which failed
     }
 
-    // Pick the first valid candidate
     for (const candidate of candidates) {
-        if (existsSync(candidate)) {
-            try {
-                // Verify it's executable
-                const proc = Bun.spawn([candidate, "-help"], {
-                    stdout: "ignore",
-                    stderr: "ignore",
-                });
-                await proc.exited;
-
-                await storage.setConfigValue("terminalNotifierPath", candidate);
-                logger.debug(`Resolved terminal-notifier: ${candidate}`);
-                return candidate;
-            } catch {}
+        if (existsSync(candidate) && (await probeTerminalNotifier(candidate))) {
+            return candidate;
         }
     }
 
@@ -185,10 +200,86 @@ async function resolveTerminalNotifier(): Promise<string | null> {
 }
 
 /**
- * Send a notification using terminal-notifier.
- * Returns true if successful.
+ * The cached path, else a fresh search. Read-only, so a diagnostic (`tools notify status`) can call
+ * it without writing the resolved path to the config cache.
  */
-function sendViaTerminalNotifier(bin: string, opts: NotificationOptions): boolean {
+async function locateTerminalNotifier(): Promise<string | null> {
+    return (await cachedTerminalNotifier()) ?? searchTerminalNotifier();
+}
+
+export interface ResolveTerminalNotifierDeps {
+    readCache?: () => Promise<string | null | undefined>;
+    writeCache?: (path: string) => Promise<void>;
+    search?: () => Promise<string | null>;
+}
+
+/**
+ * {@link locateTerminalNotifier} for a real send. A valid cached path is returned as it is, with no
+ * config write. A path found by a search is cached best-effort: a config that cannot be written
+ * costs the next send another search, never this notification.
+ */
+export async function resolveTerminalNotifier(deps: ResolveTerminalNotifierDeps = {}): Promise<string | null> {
+    const readCache = deps.readCache ?? cachedTerminalNotifier;
+    const cached = await readCache();
+
+    if (cached && existsSync(cached)) {
+        return cached;
+    }
+
+    const found = await (deps.search ?? searchTerminalNotifier)();
+
+    if (found) {
+        const writeCache = deps.writeCache ?? ((path: string) => storage.setConfigValue("terminalNotifierPath", path));
+
+        try {
+            await writeCache(found);
+            logger.debug(`Resolved terminal-notifier: ${found}`);
+        } catch (error) {
+            logger.warn({ error, found }, "could not cache the terminal-notifier path; the next send searches again");
+        }
+    }
+
+    return found;
+}
+
+interface SpawnResult {
+    exitCode: number;
+    stderr: string;
+}
+
+/** Injected for tests; the real spawn is the default. `signal` aborts when the send gives up, and must kill the child. */
+export type SpawnTerminalNotifier = (args: string[], signal: AbortSignal) => Promise<SpawnResult>;
+
+async function defaultSpawnTerminalNotifier(args: string[], signal: AbortSignal): Promise<SpawnResult> {
+    const proc = Bun.spawn(args, { stdout: "ignore", stderr: "pipe", signal });
+    const [exitCode, stderrText] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
+    return { exitCode, stderr: stderrText };
+}
+
+/**
+ * terminal-notifier answers in about 240 ms. One that has not exited by this deadline is stuck, and
+ * waiting longer would hold every caller of `sendNotification` and keep the osascript fallback from
+ * running, so the send counts as undelivered and the child is killed.
+ */
+const TERMINAL_NOTIFIER_TIMEOUT_MS = 5_000;
+
+/**
+ * Send a notification using terminal-notifier.
+ *
+ * `osascript -e 'display notification'` exits 0 even when macOS drops the notification, but
+ * terminal-notifier does not: a missing notification permission fails loudly (exit 3,
+ * "Could not request notification permission..."). #455 was GenesisTools ignoring that exit
+ * code and still logging "Notification sent" — so a non-zero exit here is undelivered, not a
+ * success, and the caller moves on to the next backend.
+ */
+export async function sendViaTerminalNotifier(
+    bin: string,
+    opts: NotificationOptions,
+    {
+        spawn = defaultSpawnTerminalNotifier,
+        timeoutMs = TERMINAL_NOTIFIER_TIMEOUT_MS,
+    }: { spawn?: SpawnTerminalNotifier; timeoutMs?: number } = {}
+): Promise<boolean> {
     const args = [bin, "-message", opts.message];
 
     if (opts.title) {
@@ -223,16 +314,34 @@ function sendViaTerminalNotifier(bin: string, opts: NotificationOptions): boolea
         args.push("-ignoreDnD");
     }
 
+    const giveUp = new AbortController();
+
     try {
-        Bun.spawn(args, { stdout: "ignore", stderr: "ignore" });
+        const { exitCode, stderr } = await withTimeout(
+            spawn(args, giveUp.signal),
+            timeoutMs,
+            new Error(`terminal-notifier did not exit within ${timeoutMs} ms`)
+        );
+
+        if (exitCode !== 0) {
+            logger.warn(
+                `terminal-notifier failed to deliver (exit ${exitCode}): ${stderr.trim() || "no stderr"}. Fix: open System Settings > Notifications > terminal-notifier, or install GenesisTools.app (${genesisAppBuildHint()})`
+            );
+            return false;
+        }
+
         return true;
-    } catch {
+    } catch (error) {
+        giveUp.abort();
+        logger.warn({ error }, "terminal-notifier failed to spawn or did not exit; trying the next backend");
         return false;
     }
 }
 
 /**
- * Send a notification using osascript as fallback.
+ * Send a notification using osascript as fallback. Fire-and-forget: osascript exits 0
+ * whether or not macOS actually showed the banner, so this can never confirm delivery —
+ * callers must not report it as "sent" (#455).
  */
 function sendViaOsascript(opts: NotificationOptions): void {
     const params = [
@@ -314,6 +423,12 @@ export interface PostedNotification {
     backend: NotificationBackend;
     /** Only `genesis-app` returns one. The other backends cannot address a notification later. */
     id: string | null;
+    /**
+     * False for the osascript hand-off: it exits 0 whether or not macOS actually showed the
+     * banner, so reaching it means no backend could confirm delivery (#455). `genesis-app`
+     * and a zero-exit `terminal-notifier` both confirm and set this true.
+     */
+    confirmed: boolean;
 }
 
 /**
@@ -340,7 +455,7 @@ export async function postNotification(opts: NotificationOptions): Promise<Poste
 
             if (id) {
                 logger.debug(`Notification sent via GenesisTools.app: ${opts.message}`);
-                return { backend, id };
+                return { backend, id, confirmed: true };
             }
 
             continue;
@@ -349,24 +464,24 @@ export async function postNotification(opts: NotificationOptions): Promise<Poste
         if (backend === NotificationBackend.TerminalNotifier) {
             const bin = await resolveTerminalNotifier();
 
-            if (bin && sendViaTerminalNotifier(bin, opts)) {
+            if (bin && (await sendViaTerminalNotifier(bin, opts))) {
                 logger.debug(`Notification sent via terminal-notifier: ${opts.message}`);
-                return { backend, id: null };
+                return { backend, id: null, confirmed: true };
             }
 
             logger.debug("terminal-notifier unavailable or failed");
             continue;
         }
 
-        // osascript — always-available terminal fallback
+        // osascript — always-available terminal fallback, delivery cannot be confirmed from here.
         sendViaOsascript(opts);
-        logger.debug(`Notification sent via osascript: ${opts.message}`);
-        return { backend, id: null };
+        logger.debug(`Notification handed to osascript (delivery cannot be confirmed): ${opts.message}`);
+        return { backend, id: null, confirmed: false };
     }
 
-    // Unreachable in practice: osascript is always last and always "succeeds". Kept so a future
+    // Unreachable in practice: osascript is always last and always runs. Kept so a future
     // reordering cannot silently return a backend that never ran.
-    return { backend: NotificationBackend.Osascript, id: null };
+    return { backend: NotificationBackend.Osascript, id: null, confirmed: false };
 }
 
 /**
@@ -488,12 +603,12 @@ export async function askNotification(
 /**
  * Send a macOS notification.
  *
- * Default backend chain: GenesisTools.app → terminal-notifier → osascript. Which one ran is not
- * reported: every caller gets a banner either way. Use {@link postNotification} when you need the
- * id back so you can retract it later.
+ * Default backend chain: GenesisTools.app → terminal-notifier → osascript. Returns the same
+ * {@link PostedNotification} as {@link postNotification} — check `.confirmed` before treating
+ * this as "the user saw it" (#455): an osascript hand-off cannot confirm delivery.
  */
-export async function sendNotification(opts: NotificationOptions): Promise<void> {
-    await postNotification(opts);
+export async function sendNotification(opts: NotificationOptions): Promise<PostedNotification> {
+    const posted = await postNotification(opts);
 
     if (opts.say) {
         try {
@@ -505,6 +620,43 @@ export async function sendNotification(opts: NotificationOptions): Promise<void>
             logger.debug("tools say failed for notification TTS");
         }
     }
+
+    return posted;
+}
+
+export type NotificationFallbackState =
+    | { kind: "genesis-app" }
+    | { kind: "terminal-notifier"; path: string }
+    | { kind: "osascript-only" };
+
+export interface ResolveNotificationFallbackStateDeps {
+    isAppAvailable?: () => boolean;
+    locateTerminalNotifier?: () => Promise<string | null>;
+}
+
+/**
+ * Which backend would actually carry the next notification, for `tools notify status`
+ * (#455 item 5): the GenesisTools.app RPC check alone used to report "unavailable" even
+ * when terminal-notifier or osascript would still deliver. Read-only: never writes the
+ * terminal-notifier path to the config cache the way a real send does.
+ */
+export async function resolveNotificationFallbackState(
+    deps: ResolveNotificationFallbackStateDeps = {}
+): Promise<NotificationFallbackState> {
+    const isAppAvailable = deps.isAppAvailable ?? isGenesisAppRpcAvailable;
+
+    if (isAppAvailable()) {
+        return { kind: "genesis-app" };
+    }
+
+    const locate = deps.locateTerminalNotifier ?? locateTerminalNotifier;
+    const path = await locate();
+
+    if (path) {
+        return { kind: "terminal-notifier", path };
+    }
+
+    return { kind: "osascript-only" };
 }
 
 export interface NotificationCenterStatus {

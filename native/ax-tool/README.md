@@ -30,7 +30,7 @@ Binary lands at `.build/release/ax-tool`. Requires Swift 5.9+, macOS 13+.
 
 ## Permissions
 
-Needs **Accessibility** access for the calling process (System Settings > Privacy & Security > Accessibility). `screenshot` additionally needs **Screen Recording**.
+Needs **Accessibility** access for the calling process (System Settings > Privacy & Security > Accessibility). `see`, `act`, `screenshot`, `ocr --app` and `capture` additionally need **Screen Recording**. A missing grant is refused with `reason` `accessibility-not-granted` or `screen-recording-not-granted` and the name of the app macOS holds responsible.
 
 ## Commands
 

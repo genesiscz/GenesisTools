@@ -1,5 +1,6 @@
 import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
+import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import type { Command } from "commander";
 import { type CalendarDoctorReport, runCalendarDoctor } from "../../lib/calendar/doctor";
 
@@ -29,7 +30,7 @@ function printReport(report: CalendarDoctorReport): void {
         responsible.kind === "genesis-app"
             ? `GenesisTools.app (${responsible.bundleId})`
             : responsible.kind === "host-app"
-              ? `${responsible.bundleId} (launching app; build GenesisTools.app to own the grants)`
+              ? `${responsible.bundleId} (launching app; build GenesisTools.app to own the grants — ${genesisAppBuildHint()})`
               : "unknown (no bundle; launchd or a bare shell)",
         11
     );

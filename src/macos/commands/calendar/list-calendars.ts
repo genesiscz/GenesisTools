@@ -10,7 +10,11 @@ export function registerListCalendarsCommand(program: Command): void {
         .description("List all available calendars")
         .action(async () => {
             try {
-                const [calendars, sources] = await Promise.all([MacCalendar.listCalendars(), MacCalendar.getSources()]);
+                // Sequential, not Promise.all: both calls can show the macOS permission dialog
+                // and wait on it, and running them concurrently used to let the unguarded
+                // getSources() reject while the dialog was still on screen (#448).
+                const calendars = await MacCalendar.listCalendars();
+                const sources = await MacCalendar.getSources();
 
                 if (calendars.length === 0) {
                     out.println("No calendars found.");

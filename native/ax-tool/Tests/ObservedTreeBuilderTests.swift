@@ -148,10 +148,23 @@ final class ObservedTreeBuilderTests: XCTestCase {
         XCTAssertNotEqual(valid.digest, invalid.digest)
     }
 
+    // Regression test: #447 — "increase depth" named neither the maximum nor a value that could work
     func testDepthOverflowIsRefusedNotTruncated() {
         let fake = source()
         XCTAssertThrowsError(try buildObservedTree(root: fake.element(1), source: fake, depth: 1, scope: "window")) { error in
-            XCTAssertEqual((error as? ObservedTreeError)?.message, "AX tree exceeds --depth 1; increase depth and run see again")
+            XCTAssertEqual((error as? ObservedTreeError)?.message, "AX tree exceeds --depth 1 (max 50); retry with --depth 50")
+        }
+    }
+
+    // Regression test: #447 — at the maximum, "increase depth" sent the user to a value the tool rejects
+    func testDepthOverflowAtTheMaximumSaysTheTreeIsDeeperThanTheMaximum() {
+        let fake = FakeSource()
+        for pid in pid_t(1)...52 {
+            fake.nodes[pid] = FakeNode(role: pid == 1 ? "AXWindow" : "AXGroup", children: pid < 52 ? [pid + 1] : [])
+        }
+        XCTAssertThrowsError(try buildObservedTree(root: fake.element(1), source: fake, depth: 50, scope: "window")) { error in
+            XCTAssertEqual((error as? ObservedTreeError)?.message,
+                           "AX tree exceeds --depth 50, the maximum: this window's tree is deeper than see can observe")
         }
     }
 

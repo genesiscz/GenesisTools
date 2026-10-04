@@ -60,8 +60,8 @@ private struct KeptHierarchySource: HierarchySource {
 
 public func buildQueryTree(root: AXUIElement, source: HierarchySource, depth: Int, query: TreeQuery,
                            expired: () -> Bool = { false }) throws -> (tree: ObservedTreeData, report: QueryWalkReport) {
-    guard (1...50).contains(depth) else {
-        throw ObservedTreeError("--depth must be between 1 and 50")
+    guard (1...maxObservedDepth).contains(depth) else {
+        throw ObservedTreeError("--depth must be between 1 and \(maxObservedDepth)")
     }
     guard !query.text.trimmingCharacters(in: .whitespaces).isEmpty else {
         throw ObservedTreeError("a query scope needs a non-empty query")

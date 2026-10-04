@@ -11,7 +11,7 @@
  * the live-pid cases are as load-bearing as the rejection cases.
  */
 import { describe, expect, test } from "bun:test";
-import { typeOutcome, validateToPid } from "./interact";
+import { ocrReport, typeOutcome, validateToPid } from "./interact";
 
 describe("validateToPid", () => {
     test("undefined is fine — the flag is optional", () => {
@@ -90,5 +90,41 @@ describe("typeOutcome", () => {
         );
 
         expect(outcome).toEqual({ line: "the keystrokes did not land in the focused field", exitCode: 1 });
+    });
+});
+
+describe("ocrReport", () => {
+    // Regression test: #447 — ocr printed the text first and its only label last, which read as leaked debug output
+    test("an app OCR starts with a header naming the app, window, size and block count, then the text", () => {
+        const lines = ocrReport({
+            ok: true,
+            action: "ocr",
+            app: "Terminal",
+            window: "someone — zsh",
+            width: 1470,
+            height: 956,
+            count: 2,
+            blocks: [{ text: "first line" }, { text: "second line" }],
+        });
+
+        expect(lines).toEqual([
+            'OCR of "Terminal" window "someone — zsh" (1470x956 px): 2 text blocks',
+            "first line",
+            "second line",
+        ]);
+    });
+
+    test("an image OCR names the file in its header", () => {
+        const lines = ocrReport({
+            ok: true,
+            action: "ocr",
+            image: "/tmp/shot.png",
+            width: 800,
+            height: 600,
+            count: 1,
+            blocks: [{ text: "hello" }],
+        });
+
+        expect(lines[0]).toBe("OCR of /tmp/shot.png (800x600 px): 1 text block");
     });
 });

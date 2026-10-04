@@ -1,7 +1,39 @@
 import { describe, expect, it } from "bun:test";
 import { EventEmitter } from "node:events";
 import type { DarwinKit } from "@genesiscz/darwinkit";
-import { DarwinkitCrashError, DarwinkitTimeoutError, runDarwinkitGuarded } from "../apple-reminders";
+import {
+    DarwinkitCrashError,
+    DarwinkitTimeoutError,
+    type RemindersAuthClient,
+    type RemindersAuthResult,
+    remindersPermissionMessage,
+    resolveRemindersAuthorization,
+    runDarwinkitGuarded,
+} from "../apple-reminders";
+
+interface FakeRemindersAuth extends RemindersAuthClient {
+    requests: number;
+    statusChecks: number;
+}
+
+function fakeRemindersAuth(
+    initial: RemindersAuthResult,
+    afterRequest: RemindersAuthResult = initial
+): FakeRemindersAuth {
+    const auth: FakeRemindersAuth = {
+        requests: 0,
+        statusChecks: 0,
+        authorizationStatus: async () => {
+            auth.statusChecks++;
+            return initial;
+        },
+        requestAccess: async () => {
+            auth.requests++;
+            return afterRequest;
+        },
+    };
+    return auth;
+}
 
 type EventName =
     | "ready"
@@ -236,5 +268,82 @@ describe("runDarwinkitGuarded", () => {
         });
 
         expect(result).toBe("second");
+    });
+
+    // Regression test: #448 / #449 — the shared layer must translate DarwinKit's internal
+    // "Call reminders.authorized first." into a friendly message for every reminders call,
+    // not just the ones an individual caller remembered to guard.
+    it("translates a raw DarwinKit access-not-authorized rejection into a friendly error", async () => {
+        const fake = new FakeDarwinKit();
+        let rejected: unknown = null;
+
+        try {
+            await runDarwinkitGuarded(
+                asClient(fake),
+                "test.access",
+                async () => {
+                    throw new Error("Reminders access not authorized. Call reminders.authorized first.");
+                },
+                { timeoutMs: 1_000 }
+            );
+        } catch (err) {
+            rejected = err;
+        }
+
+        expect(rejected).toBeInstanceOf(Error);
+        const err = rejected as Error;
+        expect(err.message).not.toContain("reminders.authorized first");
+        expect(err.message).toContain("Reminders");
+    });
+});
+
+// Regression test: #449 — `list-lists` and `list` never called anything that requests
+// Reminders access, so on a fresh Mac macOS never showed the permission dialog at all.
+describe("resolveRemindersAuthorization", () => {
+    it("returns the status without requesting when already authorized", async () => {
+        const auth = fakeRemindersAuth({ status: "fullAccess", authorized: true });
+        const result = await resolveRemindersAuthorization(auth);
+        expect(result.authorized).toBe(true);
+        expect(auth.requests).toBe(0);
+    });
+
+    it("requests access when not authorized and requestIfNeeded is not disabled", async () => {
+        const auth = fakeRemindersAuth(
+            { status: "notDetermined", authorized: false },
+            { status: "fullAccess", authorized: true }
+        );
+        const result = await resolveRemindersAuthorization(auth);
+        expect(result.authorized).toBe(true);
+        expect(auth.requests).toBe(1);
+    });
+
+    it("never requests when requestIfNeeded is false, e.g. a non-interactive caller", async () => {
+        const auth = fakeRemindersAuth({ status: "notDetermined", authorized: false });
+        const result = await resolveRemindersAuthorization(auth, { requestIfNeeded: false });
+        expect(result.authorized).toBe(false);
+        expect(auth.requests).toBe(0);
+    });
+
+    it("checks the current status before deciding whether to request", async () => {
+        const auth = fakeRemindersAuth({ status: "fullAccess", authorized: true });
+        await resolveRemindersAuthorization(auth);
+        expect(auth.statusChecks).toBeGreaterThan(0);
+    });
+});
+
+describe("remindersPermissionMessage", () => {
+    it("names the fix and tells the user to re-run after Allow, not the non-prompting command", () => {
+        const message = remindersPermissionMessage("denied");
+        expect(message).toContain("denied");
+        expect(message).toContain("Privacy & Security");
+        expect(message).toContain("Reminders");
+        expect(message).toContain("run the command again");
+        expect(message).not.toContain("list-lists");
+        expect(message).not.toContain("dashboard");
+    });
+
+    it("includes the status for every status value", () => {
+        expect(remindersPermissionMessage("restricted")).toContain("restricted");
+        expect(remindersPermissionMessage("notDetermined")).toContain("notDetermined");
     });
 });

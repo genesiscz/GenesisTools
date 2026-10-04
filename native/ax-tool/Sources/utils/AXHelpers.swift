@@ -69,7 +69,7 @@ func resolveAppPid(_ name: String) -> pid_t {
             exit(1)
         }
     }
-    errorExit("app not found: \(name)")
+    errorExit("app not found: no running app matches '\(name)' (`tools control apps` lists the names)")
 }
 
 func axChildren(_ element: AXUIElement) -> [AXUIElement] {

@@ -61,6 +61,21 @@ export function typeOutcome(result: AxResult, app: string): { line: string; exit
  * and still post global events, so each run says so once, on stderr, where it
  * cannot corrupt `--json` on stdout.
  */
+/**
+ * The human `ocr` output: a header saying what was read, then the recognised text. With the count
+ * printed last and nothing first, the text read as leaked debug output (#447).
+ */
+export function ocrReport(result: AxResult): string[] {
+    const blocks = Array.isArray(result.blocks) ? (result.blocks as Array<{ text?: string }>) : [];
+    const source =
+        typeof result.image === "string"
+            ? result.image
+            : `"${String(result.app ?? "?")}" window "${String(result.window ?? "(untitled)")}"`;
+    const size = typeof result.width === "number" ? ` (${result.width}x${result.height} px)` : "";
+    const count = `${blocks.length} text ${blocks.length === 1 ? "block" : "blocks"}`;
+    return [`OCR of ${source}${size}: ${count}`, ...blocks.map((b) => String(b.text ?? ""))];
+}
+
 function noteLegacyKeyboardVerb(verb: string): void {
     out.log.warn(
         `\`control ${verb}\` posts global keyboard events and can land in whatever window is frontmost. ` +
@@ -451,10 +466,8 @@ export function registerInteractCommands(program: Command): void {
                 logger.error(String(result.error));
                 process.exit(1);
             }
-            const blocks = Array.isArray(result.blocks) ? (result.blocks as Array<{ text?: string }>) : [];
-            for (const b of blocks) {
-                out.println(String(b.text ?? ""));
+            for (const line of ocrReport(result)) {
+                out.println(line);
             }
-            out.println(pc.dim(`${blocks.length} text blocks (--json for bounding boxes)`));
         });
 }

@@ -1,7 +1,7 @@
 import type { CalendarAuthorizedResult, CalendarEventInfo, CalendarInfo, SourceInfo } from "@genesiscz/darwinkit";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
-import { getDarwinKit } from "./darwinkit";
+import { getDarwinKit, shouldAnnounceAccessPrompt, translateDarwinKitAccessError } from "./darwinkit";
 import { describeResponsibleIdentity } from "./genesis-app";
 
 export type { CalendarAuthorizedResult, CalendarEventInfo, CalendarInfo, SourceInfo };
@@ -65,11 +65,25 @@ export function isPlaceholderCalendarList(calendars: CalendarInfo[]): boolean {
     );
 }
 
+/**
+ * `authorized()` blocks while the macOS prompt is on screen, so check the CURRENT status first:
+ * only `notDetermined` can still show a dialog, and only then is "watch for a system dialog"
+ * true. Every other status resolves `authorized()` immediately with no UI.
+ */
+async function announceAccessPromptIfNeeded(auth: CalendarAuthClient): Promise<void> {
+    const current = await auth.authorizationStatus({ timeout: 10_000 });
+
+    if (shouldAnnounceAccessPrompt(current.status, isInteractive())) {
+        logger.info("Asking macOS for Calendar access, watch for a system dialog");
+    }
+}
+
 /** Read access needs fullAccess. `authorized()` itself triggers the macOS prompt when the status is notDetermined. */
 export async function resolveCalendarReadAccess(
     auth: CalendarAuthClient,
     options?: EnsureAccessOptions
 ): Promise<CalendarAuthorizedResult> {
+    await announceAccessPromptIfNeeded(auth);
     let result = await auth.authorized({ timeout: AUTH_TIMEOUT_MS });
     const requestUpgrade = options?.requestUpgrade ?? isInteractive();
 
@@ -86,6 +100,7 @@ export async function resolveCalendarReadAccess(
 }
 
 export async function resolveCalendarWriteAccess(auth: CalendarAuthClient): Promise<CalendarAuthorizedResult> {
+    await announceAccessPromptIfNeeded(auth);
     const result = await auth.authorized({ timeout: AUTH_TIMEOUT_MS });
 
     if (result.status !== "fullAccess" && result.status !== "writeOnly") {
@@ -93,6 +108,29 @@ export async function resolveCalendarWriteAccess(auth: CalendarAuthClient): Prom
     }
 
     return result;
+}
+
+/**
+ * Calendar sources (iCloud, Local, Exchange, ...) are not gated behind fullAccess the way
+ * events/calendars are: EventKit returns them under writeOnly too, which is why
+ * `ensureCalendarExists` can still find a source to create the fallback calendar in under
+ * Add Only access. But DarwinKit's `sources()` RPC still needs `authorized()` to have been
+ * called and resolved first (#448): calling it before that resolves, or in parallel with a
+ * still-pending `authorized()`, rejects with "Calendar access not authorized. Call
+ * calendar.authorized first." even while the user is answering the dialog.
+ */
+export async function fetchCalendarSources(
+    auth: CalendarAuthClient,
+    fetchSources: () => Promise<{ sources: SourceInfo[] }>
+): Promise<SourceInfo[]> {
+    await resolveCalendarWriteAccess(auth);
+
+    try {
+        const result = await fetchSources();
+        return result.sources;
+    } catch (error) {
+        throw translateDarwinKitAccessError(error);
+    }
 }
 
 export interface CreateEventOptions {
@@ -275,9 +313,7 @@ export class MacCalendar {
     }
 
     static async getSources(): Promise<SourceInfo[]> {
-        const dk = getDarwinKit();
-        const result = await dk.calendar.sources();
-        return result.sources;
+        return fetchCalendarSources(getDarwinKit().calendar, () => getDarwinKit().calendar.sources());
     }
 
     static async ensureCalendarExists(name: string, calendars?: CalendarInfo[]): Promise<string> {

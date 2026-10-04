@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileS
 import { dirname, join, relative } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 
 const REQUIRED_SOURCES = ["Package.swift", "Sources", "SnapshotSupport"] as const;
 const RECEIPT_VERSION = 1;
@@ -122,5 +123,81 @@ export function nativeNeedsBuild({ binary, sourceDir }: { binary: string; source
     } catch (error) {
         logger.debug({ error, sourceDir }, "native build receipt is unavailable or stale");
         return true;
+    }
+}
+
+/**
+ * A cold `swift build` of ax-tool took 68 s on a fresh Mac. Slower machines and first-time package
+ * resolution take longer, and a build cut off here makes every waiter retry and time out in turn.
+ */
+export const NATIVE_BUILD_TIMEOUT_MS = 300_000;
+
+/** A waiter must outlast one full-length build by the process that holds the lock. */
+export const NATIVE_BUILD_LOCK_WAIT_MS = NATIVE_BUILD_TIMEOUT_MS + 60_000;
+
+/**
+ * The runner's bound on the whole build worker: a full lock wait, then this process's own build
+ * when the holder's failed, plus the worker's startup.
+ */
+export const NATIVE_BUILD_WORKER_TIMEOUT_MS = NATIVE_BUILD_LOCK_WAIT_MS + NATIVE_BUILD_TIMEOUT_MS + 30_000;
+
+/**
+ * Compiles the native CLI unless it is already fresh, and records the receipt, one process at a
+ * time. Agents start several `tools control` commands at once, and on a fresh checkout each of
+ * them used to compile its own copy. Freshness is checked again INSIDE the lock, so a process that
+ * waited reuses the binary the first one built. `build` is the compiler boundary.
+ */
+export async function buildNativeOnce({
+    binary,
+    sourceDir,
+    lockPath,
+    build,
+    timeoutMs = NATIVE_BUILD_LOCK_WAIT_MS,
+}: {
+    binary: string;
+    sourceDir: string;
+    lockPath: string;
+    build: () => Promise<void>;
+    timeoutMs?: number;
+}): Promise<{ built: boolean }> {
+    if (existsSync(lockPath)) {
+        logger.info({ lockPath }, "another process is compiling ax-tool; waiting for it");
+    }
+
+    return withFileLock(
+        lockPath,
+        async () => {
+            if (!nativeNeedsBuild({ binary, sourceDir })) {
+                return { built: false };
+            }
+
+            const before = captureNativeSources(sourceDir);
+            await build();
+            recordNativeBuild({ binary, sourceDir, before });
+            return { built: true };
+        },
+        timeoutMs
+    );
+}
+
+/** `swift build -c release` in `sourceDir`; throws with the compiler's last words on failure. */
+export async function swiftReleaseBuild(sourceDir: string): Promise<void> {
+    const command = ["swift", "build", "-c", "release"];
+    logger.debug({ command, cwd: sourceDir }, "swift build started");
+    const proc = Bun.spawn(command, {
+        cwd: sourceDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        signal: AbortSignal.timeout(NATIVE_BUILD_TIMEOUT_MS),
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+    ]);
+
+    if (exitCode !== 0) {
+        const details = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
+        throw new Error(`swift build exited ${exitCode ?? proc.signalCode}:\n${details.slice(-4000)}`);
     }
 }

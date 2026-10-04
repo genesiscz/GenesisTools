@@ -19,7 +19,8 @@ func cmdPermissions() {
                 "responsiblePid": responsible.pid,
                 "responsibleBundleId": responsible.bundleId ?? "",
                 "responsiblePath": responsible.path,
-                "viaGenesisApp": responsible.bundleId == genesisAppBundleIdentifier])
+                "responsibleName": responsible.displayName,
+                "viaGenesisApp": responsible.viaGenesisApp])
 }
 
 /// One app-level boolean attribute, read without touching the target. `AXManualAccessibility`

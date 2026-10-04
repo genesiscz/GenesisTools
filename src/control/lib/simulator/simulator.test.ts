@@ -3,7 +3,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { observationSchema } from "../decision/observation";
 import { SIMULATOR_ACTIONS, swipeForScroll, UnsupportedSimulatorAction, verbsForAction } from "./driver";
 import { clipToScreen, contains, dedupeElements, frameCentre, stableId, toObservedRows } from "./elements";
-import { type IdbElement, idbArguments, parseIdbElements } from "./idb";
+import { IDB_INSTALL_HINT, type IdbElement, idbArguments, parseIdbElements } from "./idb";
 import { DEFAULT_SCREEN, observeSimulator, probePoints, screenFrom, withinBudget } from "./observe";
 import { elementSignature, probedSignature, rematchElement, staleRefusalReason } from "./resolve";
 import { bundleIdFromLaunchLabel, parseDeviceList, parseLaunchPid } from "./simctl";
@@ -19,6 +19,20 @@ const APP = element({
     type: "Application",
     AXLabel: "Calendar",
     frame: { x: 0, y: 0, width: 402, height: 874 },
+});
+
+describe("the idb install hint", () => {
+    // Regression test: #447 D — the hint installed only idb-companion, never the `idb` client every verb runs
+    test("names the formula that installs the idb client and the companion together", () => {
+        expect(idbArguments({ kind: "describe-point", x: 1, y: 1 }, "UDID")[0]).toBe("idb");
+        expect(IDB_INSTALL_HINT).toContain("`brew install facebook/fb/idb`");
+    });
+
+    // Regression test: #447 D — a Mac with only Command Line Tools cannot use the brew formula
+    test("names the pip package for the client and the full-Xcode requirement", () => {
+        expect(IDB_INSTALL_HINT).toContain("`pip3 install fb-idb`");
+        expect(IDB_INSTALL_HINT).toContain("Command Line Tools are not enough");
+    });
 });
 
 describe("idb argument building", () => {

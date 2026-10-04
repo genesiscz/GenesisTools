@@ -77,6 +77,12 @@ export interface NotificationEvent {
     /** Buttons on the banner (`genesis-app` only, forwarded to {@link NotificationOptions.actions}). */
     actions?: NotificationAction[];
     /**
+     * The system channel counts an osascript hand-off as delivered unless this is set. macOS
+     * never confirms that hand-off, so a caller that reports the outcome to a person (the
+     * `tools notify` exit code) sets it; pollers that re-post an undelivered event must not.
+     */
+    requireConfirmed?: boolean;
+    /**
      * Per-call channel allow-list. When set, only these channels may fire for
      * this event (still subject to each channel being enabled in config). When
      * undefined, all config-enabled channels fire (default behaviour).

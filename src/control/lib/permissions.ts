@@ -11,6 +11,7 @@
  * Apple event, which prompts.
  */
 
+import { basename } from "node:path";
 import {
     isTccGranted,
     readTccRows,
@@ -24,8 +25,10 @@ import { logger } from "@genesiscz/utils/logger";
 import {
     GENESIS_APP_BUNDLE_ID,
     installedGenesisAppLauncher,
+    isGenesisAppDisabledByMarker,
     wrapWithGenesisApp,
 } from "@genesiscz/utils/macos/genesis-app";
+import { genesisAppBuildHint, type XcodeToolchain } from "@genesiscz/utils/macos/xcode";
 import { runAx } from "./runner";
 
 export type GrantStatus = "granted" | "denied" | "not-determined" | "unknown";
@@ -62,6 +65,25 @@ export interface CapabilityRoute {
     note: string;
 }
 
+/** The process macOS consults for a grant, as far as it is known. */
+export interface ResponsibleHolder {
+    pid?: number;
+    bundleId?: string;
+    path?: string;
+    /** NSRunningApplication's localized name, which is what the System Settings list shows. */
+    name?: string;
+    viaGenesisApp: boolean;
+}
+
+/** Why native spawns run without the launcher: each has a different fix. */
+export type UnroutedCause = "env" | "marker" | "missing";
+
+const UNROUTED_REASONS: Record<UnroutedCause, string> = {
+    env: "GENESIS_TOOLS_NO_APP=1 is set",
+    marker: "the launcher is switched off",
+    missing: "GenesisTools.app is not installed",
+};
+
 export interface ResponsibleRoute {
     /** The launcher `tools control` prepends to every native spawn, or null when none is usable. */
     launcher: string | null;
@@ -69,6 +91,10 @@ export interface ResponsibleRoute {
     identity: string;
     bundleId?: string;
     reason?: string;
+    cause?: UnroutedCause;
+    holder: ResponsibleHolder;
+    /** Decides whether "build GenesisTools.app" can work here; detected when absent. */
+    toolchain?: XcodeToolchain;
 }
 
 /** `ax-tool permissions`: the live grant state of the process `tools control` actually spawns. */
@@ -79,6 +105,7 @@ export interface AxLivePermissions {
     responsiblePid: number;
     responsibleBundleId: string;
     responsiblePath: string;
+    responsibleName?: string;
 }
 
 export interface ControlDoctorReport {
@@ -148,6 +175,48 @@ function settingsPane(name: string): string {
     return `System Settings > Privacy & Security > ${name}`;
 }
 
+/** `/Applications/Foo.app` for any path inside that bundle, or undefined for a bare binary. */
+function appBundlePath(path: string | undefined): string | undefined {
+    const match = /^(.*\/[^/]+\.app)(?:\/|$)/.exec(path ?? "");
+    return match?.[1];
+}
+
+/** The name to look for in System Settings: "Terminal", "GenesisTools", "bun". */
+export function holderName(holder: ResponsibleHolder): string {
+    if (holder.viaGenesisApp) {
+        return "GenesisTools";
+    }
+
+    const named = holder.name?.trim();
+
+    if (named) {
+        return named;
+    }
+
+    const bundle = appBundlePath(holder.path);
+
+    if (bundle) {
+        return basename(bundle, ".app");
+    }
+
+    if (holder.path) {
+        return basename(holder.path);
+    }
+
+    return holder.bundleId || "the process that launched tools";
+}
+
+/** "Terminal (com.apple.Terminal)": the plain name first, then what tells it apart. */
+export function describeHolder(holder: ResponsibleHolder): string {
+    if (holder.viaGenesisApp) {
+        return `GenesisTools.app (${GENESIS_APP_BUNDLE_ID})`;
+    }
+
+    const name = holderName(holder);
+    const id = holder.bundleId || appBundlePath(holder.path) || holder.path;
+    return id && id !== name ? `${name} (${id})` : name;
+}
+
 export function responsibleRoute(): ResponsibleRoute {
     const launcher = installedGenesisAppLauncher();
 
@@ -157,25 +226,33 @@ export function responsibleRoute(): ResponsibleRoute {
             routed: true,
             identity: `GenesisTools.app (${GENESIS_APP_BUNDLE_ID})`,
             bundleId: GENESIS_APP_BUNDLE_ID,
+            holder: { bundleId: GENESIS_APP_BUNDLE_ID, viaGenesisApp: true },
         };
     }
 
     const host = env.device.getHostBundleIdentifier();
-    const reason = env.tools.isAppLauncherDisabled()
-        ? "GENESIS_TOOLS_NO_APP=1 is set"
-        : "GenesisTools.app is not built or the launcher is switched off (`tools macos permissions`)";
+    const cause: UnroutedCause = env.tools.isAppLauncherDisabled()
+        ? "env"
+        : isGenesisAppDisabledByMarker()
+          ? "marker"
+          : "missing";
 
     return {
         launcher: null,
         routed: false,
         identity: host ? `the terminal or host app (${host})` : "the process that launched tools (no bundle)",
         bundleId: host,
-        reason,
+        reason: UNROUTED_REASONS[cause],
+        cause,
+        holder: { bundleId: host, viaGenesisApp: false },
     };
 }
 
 export function capabilityRoutes(route: ResponsibleRoute): CapabilityRoute[] {
     const viaLauncher = route.routed ? route.identity : `${route.identity}; not routed: ${route.reason}`;
+    const spawned = route.routed
+        ? "spawned through the GenesisTools.app launcher"
+        : `spawned directly, without the GenesisTools.app launcher (${route.reason}), so the grants of ${route.identity} apply`;
 
     return [
         {
@@ -184,11 +261,11 @@ export function capabilityRoutes(route: ResponsibleRoute): CapabilityRoute[] {
             binary: "native/ax-tool (Swift, AX API)",
             identity: viaLauncher,
             grant: "Accessibility",
-            note: "spawned through the GenesisTools.app launcher on every call (src/control/lib/runner.ts)",
+            note: `${spawned} on every call (src/control/lib/runner.ts)`,
         },
         {
             capability: "Screen Recording, native",
-            commands: "screenshot, ocr, see --path, capture (backend native)",
+            commands: "see, act, screenshot, ocr, capture (backend native)",
             binary: "native/ax-tool (CGWindowList, ScreenCaptureKit)",
             identity: viaLauncher,
             grant: "Screen Recording",
@@ -200,7 +277,7 @@ export function capabilityRoutes(route: ResponsibleRoute): CapabilityRoute[] {
             binary: "peekaboo (Homebrew) --no-remote",
             identity: viaLauncher,
             grant: "Screen Recording, Accessibility",
-            note: "spawned through the launcher (src/control/lib/peekaboo.ts); Peekaboo's own bundle is not involved",
+            note: `${spawned} (src/control/lib/peekaboo.ts); Peekaboo's own bundle is not involved`,
         },
         {
             capability: "Screen Recording, peekaboo bridge",
@@ -216,7 +293,7 @@ export function capabilityRoutes(route: ResponsibleRoute): CapabilityRoute[] {
             binary: "/usr/bin/osascript",
             identity: viaLauncher,
             grant: "Automation (per target app)",
-            note: "spawned through the launcher (commands/osascript.ts, lib/peekaboo.ts)",
+            note: `${spawned} (commands/osascript.ts, lib/peekaboo.ts)`,
         },
         {
             capability: "DarwinKit",
@@ -240,11 +317,18 @@ export function refineRoute(route: ResponsibleRoute, live: AxLivePermissions | n
         return route;
     }
 
-    const who = live.responsibleBundleId || live.responsiblePath || "no bundle";
+    const holder: ResponsibleHolder = {
+        pid: live.responsiblePid,
+        bundleId: live.responsibleBundleId || undefined,
+        path: live.responsiblePath || undefined,
+        name: live.responsibleName,
+        viaGenesisApp: live.viaGenesisApp,
+    };
     return {
         ...route,
-        identity: `pid ${live.responsiblePid} (${who}), not GenesisTools.app`,
+        identity: `${describeHolder(holder)}, pid ${live.responsiblePid}`,
         bundleId: live.responsibleBundleId || live.responsiblePath || undefined,
+        holder,
     };
 }
 
@@ -359,7 +443,7 @@ export function buildChecks(input: {
         liveCheck(
             "screen-recording",
             "Screen Recording",
-            "screenshot, ocr, see --path, capture",
+            "see, act, screenshot, ocr, capture, and everything built on see/act",
             "CGPreflightScreenCaptureAccess()",
             live?.screenRecording,
             screenRows
@@ -383,6 +467,88 @@ export function buildChecks(input: {
     ];
 }
 
+const TCCUTIL_SERVICES: Record<PermissionCheck["id"], string> = {
+    accessibility: "Accessibility",
+    "screen-recording": "ScreenCapture",
+    automation: "AppleEvents",
+};
+
+/**
+ * One missing grant, with the advice its state calls for. A never-asked identity is not in the
+ * pane's list yet, and macOS never asks again after a denial, so the two get different fixes.
+ */
+function grantProblem(check: PermissionCheck, holder: ResponsibleHolder): string {
+    const name = holderName(holder);
+    const open = `${check.pane} (\`${check.openCommand}\`)`;
+
+    if (check.status === "not-determined") {
+        if (check.id === "automation") {
+            return `Automation has never been asked for ${check.identity}. macOS asks once per target app the first time osascript drives it; allow ${name} then.`;
+        }
+
+        return `${check.label} has never been asked for ${check.identity}. Open ${open} and turn on ${name}; add it with + if it is not listed.`;
+    }
+
+    if (check.status === "denied") {
+        const reset = holder.bundleId
+            ? `, or clear the decision with \`tccutil reset ${TCCUTIL_SERVICES[check.id]} ${holder.bundleId}\` and re-run`
+            : "";
+        return `${check.label} is denied for ${check.identity}, and macOS will not ask again: turn on ${name} in ${open}${reset}.`;
+    }
+
+    return `${check.label} is ${check.status} for ${check.identity}. Open ${open} and check that ${name} is turned on.`;
+}
+
+/** How to get the launcher back for this run, or how to live without it: whole sentences. */
+function launcherFix(route: ResponsibleRoute): string {
+    const name = holderName(route.holder);
+
+    switch (route.cause) {
+        case "env":
+            return `Fix: unset GENESIS_TOOLS_NO_APP, or turn the grants below on for ${name}.`;
+        case "marker":
+            return `Fix: \`tools macos permissions enable\`, or turn the grants below on for ${name}.`;
+        default:
+            return `Fix: turn the grants below on for ${name}, or build GenesisTools.app so one identity holds them for every terminal and agent. ${genesisAppBuildHint(route.toolchain)}`;
+    }
+}
+
+/** The one step that puts GenesisTools.app back in front of every native spawn, as a sentence. */
+function restoreLauncher(route: ResponsibleRoute): string {
+    switch (route.cause) {
+        case "env":
+            return "Unset GENESIS_TOOLS_NO_APP to use it.";
+        case "marker":
+            return "Turn its launcher back on with `tools macos permissions enable`.";
+        default:
+            return genesisAppBuildHint(route.toolchain);
+    }
+}
+
+/** `2.1.286` in `…/claude-code/2.1.286/f2326db61802/claude.app/…`: a folder an update replaces. */
+function versionedFolder(path: string | undefined): string | undefined {
+    const folders = (path ?? "").split("/").slice(0, -1);
+    return folders.find((folder) => /^v?\d+\.\d+\.\d+(?:[-+.][0-9A-Za-z.-]+)?$/.test(folder));
+}
+
+/**
+ * Worth knowing, not a failure. macOS ties a grant to the exact path of a bundle-less or
+ * self-updating host, so a host that installs every version into a new folder loses its grants
+ * on each update while TCC still lists the old path as allowed.
+ */
+export function collectFindings(route: ResponsibleRoute): string[] {
+    const version = route.routed ? undefined : versionedFolder(route.holder.path);
+
+    if (!version) {
+        return [];
+    }
+
+    const name = holderName(route.holder);
+    return [
+        `${name} runs from a versioned folder (…/${version}/…), and macOS ties a grant to that exact path, so the next ${name} update drops every grant given to it. GenesisTools.app keeps one identity across updates. ${restoreLauncher(route)}`,
+    ];
+}
+
 export function collectProblems(input: {
     route: ResponsibleRoute;
     checks: PermissionCheck[];
@@ -394,7 +560,7 @@ export function collectProblems(input: {
 
     if (!route.routed) {
         problems.push(
-            `ax-tool, peekaboo and osascript run unwrapped, so their grants follow ${route.identity} instead of GenesisTools.app (${route.reason}). Fix: unset GENESIS_TOOLS_NO_APP, or \`tools macos permissions build\` / \`tools macos permissions enable\`.`
+            `ax-tool, peekaboo and osascript run unwrapped (${route.reason}), so their grants follow ${route.identity}. ${launcherFix(route)}`
         );
     } else if (live && !live.viaGenesisApp) {
         problems.push(
@@ -411,10 +577,7 @@ export function collectProblems(input: {
             continue;
         }
 
-        const verb = check.status === "not-determined" ? "has never been asked for" : `is ${check.status} for`;
-        problems.push(
-            `${check.label} ${verb} ${check.identity}. Open ${check.pane} (\`${check.openCommand}\`) and tick GenesisTools.`
-        );
+        problems.push(grantProblem(check, route.holder));
     }
 
     return problems;
@@ -444,7 +607,7 @@ export function controlDoctor(): ControlDoctorReport {
         checks,
         routes: capabilityRoutes(route),
         problems: collectProblems({ route, checks, live, liveError: error }),
-        findings: [],
+        findings: collectFindings(route),
     };
 }
 

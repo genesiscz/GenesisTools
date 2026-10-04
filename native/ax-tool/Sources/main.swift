@@ -156,6 +156,11 @@ if command == "quit-app" {
 // on Screen Recording inside Record.swift) and `ocr --image` (a file on disk).
 let axFreeCommands: Set<String> = ["screens", "capture"]
 if !axFreeCommands.contains(command) && !(command == "ocr" && argValue("--image") != nil) {
+    // NSWorkspace answers without Accessibility, so a typo in --app is reported as a typo rather
+    // than hidden behind the missing grant. `resolveAppPid` never touches the target.
+    if let requested = argValue("--app") {
+        _ = resolveAppPid(requested)
+    }
     requireAxTrust()
 }
 

@@ -15,9 +15,8 @@ mock.module("./native-build", () => ({
         needsBuildCalls++;
         return false;
     },
-    // Mocking a module replaces ALL of its exports, and runner.ts imports these two as well.
-    captureNativeSources: () => ({ files: [], fingerprint: "fixture" }),
-    recordNativeBuild: () => {},
+    // Mocking a module replaces ALL of its exports, and runner.ts imports this one as well.
+    NATIVE_BUILD_WORKER_TIMEOUT_MS: 1,
 }));
 
 const { ensureBinary, REAL_AX_TOOL_IN_TESTS } = await import("./runner");

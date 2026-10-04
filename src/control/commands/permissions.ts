@@ -8,7 +8,13 @@ import {
 } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { addFormatOption, type FormatOptions, resolveFormat } from "../lib/output-format";
+import {
+    addFormatOption,
+    type FormatOptions,
+    fitColumnWidths,
+    resolveFormat,
+    stdoutTableWidth,
+} from "../lib/output-format";
 import {
     type AuditedApp,
     type CapabilityRoute,
@@ -20,17 +26,22 @@ import {
     type PermissionCheck,
 } from "../lib/permissions";
 
+const STATUS_LABELS: Record<GrantStatus, string> = {
+    granted: "granted",
+    denied: "denied",
+    "not-determined": "not determined",
+    unknown: "unknown",
+};
+
+const STATUS_TONES: Record<GrantStatus, Parameters<typeof formatDotStatus>[0]> = {
+    granted: "ok",
+    denied: "err",
+    "not-determined": "warn",
+    unknown: "dim",
+};
+
 function statusCell(status: GrantStatus): string {
-    switch (status) {
-        case "granted":
-            return formatDotStatus("ok", "granted");
-        case "denied":
-            return formatDotStatus("err", "denied");
-        case "not-determined":
-            return formatDotStatus("warn", "not determined");
-        default:
-            return formatDotStatus("dim", "unknown");
-    }
+    return formatDotStatus(STATUS_TONES[status], STATUS_LABELS[status]);
 }
 
 function flagCell(value: string): string {
@@ -45,16 +56,26 @@ function flagCell(value: string): string {
     return formatDotStatus("dim", value);
 }
 
+/** Widths for `headers` x `rows` of plain text, cut only as far as this terminal needs. */
+function tableWidths(headers: string[], rows: string[][], shrinkOrder: number[]): number[] {
+    const natural = headers.map((header, column) => Math.max(header.length, ...rows.map((row) => row[column].length)));
+    return fitColumnWidths({ natural, available: stdoutTableWidth(), shrinkOrder });
+}
+
 function printChecks(checks: PermissionCheck[]): void {
-    const table = createBoxTable(["GRANT", "STATUS", "IDENTITY THAT NEEDS IT", "USED BY", "SOURCE"]);
+    const headers = ["GRANT", "STATUS", "IDENTITY THAT NEEDS IT", "USED BY", "SOURCE"];
+    const table = createBoxTable(headers);
+    // The status cell renders as "● not determined"; its colour codes take no columns.
+    const plain = checks.map((c) => [c.label, `● ${STATUS_LABELS[c.status]}`, c.identity, c.usedBy, c.source]);
+    const [, , identity, usedBy, source] = tableWidths(headers, plain, [4, 3, 2]);
 
     for (const check of checks) {
         table.push([
             pc.white(check.label),
             statusCell(check.status),
-            truncateDisplay(check.identity, 48),
-            truncateDisplay(check.usedBy, 36),
-            truncateDisplay(check.source, 56),
+            truncateDisplay(check.identity, identity),
+            truncateDisplay(check.usedBy, usedBy),
+            truncateDisplay(check.source, source),
         ]);
     }
 
@@ -119,14 +140,17 @@ function printDoctor(report: ControlDoctorReport): void {
 
 function printRoutes(routes: CapabilityRoute[]): void {
     renderCliSection("What each capability runs through");
-    const table = createBoxTable(["CAPABILITY", "COMMANDS", "BINARY", "GRANTS OF"]);
+    const headers = ["CAPABILITY", "COMMANDS", "BINARY", "GRANTS OF"];
+    const table = createBoxTable(headers);
+    const plain = routes.map((r) => [r.capability, r.commands, r.binary, r.identity]);
+    const [, commands, binary, identity] = tableWidths(headers, plain, [1, 2, 3]);
 
     for (const route of routes) {
         table.push([
             pc.white(route.capability),
-            truncateDisplay(route.commands, 48),
-            truncateDisplay(route.binary, 40),
-            truncateDisplay(route.identity, 48),
+            truncateDisplay(route.commands, commands),
+            truncateDisplay(route.binary, binary),
+            truncateDisplay(route.identity, identity),
         ]);
     }
 
