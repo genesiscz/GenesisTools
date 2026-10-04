@@ -21,6 +21,55 @@ describe("payload extraction", () => {
     });
 });
 
+/**
+ * The artist payload runs in the page, so it is evaluated here with a fake `window.__gql` and a
+ * `setTimeout` that does not wait, both passed in as the names the payload text refers to.
+ */
+describe("the artist payload", () => {
+    test("a request that throws is retried, then reported, and every other artist is kept", async () => {
+        const calls = new Map<string, number>();
+        const gql = async (_operation: string, _hash: string, vars: { uri: string }) => {
+            const n = (calls.get(vars.uri) ?? 0) + 1;
+            calls.set(vars.uri, n);
+
+            // What `fetch` throws when the network drops; unhandled, it rejected the whole batch.
+            if (vars.uri === "spotify:artist:Broken" || (vars.uri === "spotify:artist:Flaky" && n === 1)) {
+                throw new TypeError("Failed to fetch");
+            }
+
+            return { status: 200, json: { data: { artistUnion: { profile: { name: vars.uri }, discography: {} } } } };
+        };
+        const waits: number[] = [];
+        const noWait = (fn: () => void, ms: number) => {
+            waits.push(ms);
+
+            return setTimeout(fn, 0);
+        };
+
+        const harvest = new Function("window", "setTimeout", `return (${payload("harvestArtists")});`)(
+            { __gql: gql },
+            noWait
+        );
+        const uris = ["spotify:artist:A", "spotify:artist:Flaky", "spotify:artist:Broken", "spotify:artist:Later"];
+        const result = await harvest(uris);
+
+        expect(result).toMatchObject({
+            requested: 4,
+            fetched: 3,
+            errors: [{ uri: "spotify:artist:Broken", error: "request failed: Failed to fetch" }],
+        });
+        expect(result.artists.map((a: { uri: string }) => a.uri)).toEqual([
+            "spotify:artist:A",
+            "spotify:artist:Flaky",
+            "spotify:artist:Later",
+        ]);
+        expect(calls.get("spotify:artist:Flaky")).toBe(2);
+        expect(calls.get("spotify:artist:Broken")).toBe(3);
+        // Backed off before each retry, and paused between the two batches of three.
+        expect(waits.sort((a, b) => a - b)).toEqual([1000, 2000, 2000, 4000]);
+    });
+});
+
 describe("preparedSetupGql", () => {
     test("substitutes both tokens", () => {
         const src = preparedSetupGql(tokens);

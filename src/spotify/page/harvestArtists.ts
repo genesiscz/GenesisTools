@@ -9,6 +9,10 @@
  * Pacing follows the measured rule in references/pathfinder-api.md (about 1 request per second
  * sustained): 3 requests in flight, then a 1 s pause.
  *
+ * One artist never sinks the batch: a non-200 answer and a thrown request (network, JSON) are
+ * both retried twice and then come back as `{ uri, error }`, so the result still carries every
+ * artist that was read before and after it.
+ *
  * No type annotations: this text is evaluated as JavaScript inside the page.
  */
 async (artistUris) => {
@@ -25,17 +29,26 @@ async (artistUris) => {
         return pick ? pick.url : null;
     };
 
+    const retry = async (uri, attempt, error) => {
+        if (attempt < 2) {
+            await sleep(2000 * (attempt + 1));
+
+            return one(uri, attempt + 1);
+        }
+
+        return { uri, error };
+    };
+
     const one = async (uri, attempt = 0) => {
-        const res = await window.__gql("queryArtistOverview", HASH, { uri, locale: "", includePrerelease: true });
+        let res;
+        try {
+            res = await window.__gql("queryArtistOverview", HASH, { uri, locale: "", includePrerelease: true });
+        } catch (err) {
+            return retry(uri, attempt, `request failed: ${String(err?.message ?? err).slice(0, 120)}`);
+        }
 
         if (res.status !== 200) {
-            if (attempt < 2) {
-                await sleep(2000 * (attempt + 1));
-
-                return one(uri, attempt + 1);
-            }
-
-            return { uri, error: `${res.status} ${String(res.json).slice(0, 120)}` };
+            return retry(uri, attempt, `${res.status} ${String(res.json).slice(0, 120)}`);
         }
 
         const artist = res.json?.data?.artistUnion;
@@ -72,7 +85,12 @@ async (artistUris) => {
     const artists = [];
     const errors = [];
     for (let i = 0; i < artistUris.length; i += CONCURRENCY) {
-        const results = await Promise.all(artistUris.slice(i, i + CONCURRENCY).map((uri) => one(uri)));
+        // The catch covers what `one` does not retry: a response shaped so oddly that reading it throws.
+        const results = await Promise.all(
+            artistUris
+                .slice(i, i + CONCURRENCY)
+                .map((uri) => one(uri).catch((err) => ({ uri, error: String(err?.message ?? err).slice(0, 120) })))
+        );
         for (const r of results) {
             if (r.error) {
                 errors.push(r);
