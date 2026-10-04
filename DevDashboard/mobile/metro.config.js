@@ -39,6 +39,11 @@ const aliasResolvers = [
         match: "@genesiscz/utils/obsidian/vault-filter",
         target: path.resolve(workspaceRoot, "src/utils/obsidian/vault-filter.ts"),
     },
+    // pure string helper with no imports, so the real module is RN-safe
+    {
+        match: "@genesiscz/utils/cli/tool-command",
+        target: path.resolve(workspaceRoot, "src/utils/cli/tool-command.ts"),
+    },
     { prefix: "@dd/", target: path.resolve(workspaceRoot, "src/dev-dashboard") },
     { prefix: "@/", target: path.resolve(projectRoot, "src") },
     { prefix: "@app/", target: path.resolve(workspaceRoot, "src") },
