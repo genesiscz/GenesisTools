@@ -1251,6 +1251,8 @@ function nestedValueOf(j: JSCodeshift, value: NonNullable<JSXAttribute["value"]>
 /**
  * Moves a prop to a nested object prop.
  * Example: label="foo" -> fieldProps={{ label: "foo" }}
+ * When the target prop exists but is not an object literal (`fieldProps={props}`), nothing changes: the
+ * source prop stays, a warning is logged, and the result is false.
  */
 export function movePropToNestedObject(
     j: JSCodeshift,
@@ -1268,14 +1270,16 @@ export function movePropToNestedObject(
     const targetAttr = findJSXAttribute(element.openingElement, targetPropName);
 
     if (targetAttr) {
-        // merge into an existing object literal; any other target value is left alone, and the
-        // source prop is still removed below
-        if (targetAttr.value?.type === "JSXExpressionContainer") {
-            const expr = targetAttr.value.expression;
-            if (expr.type === "ObjectExpression") {
-                expr.properties.push(j.property("init", j.identifier(nestedPropName), propValue));
-            }
+        const expr = targetAttr.value?.type === "JSXExpressionContainer" ? targetAttr.value.expression : undefined;
+        if (expr?.type !== "ObjectExpression") {
+            logger.warn(
+                { component: getJSXComponentName(element), sourcePropName, targetPropName },
+                "movePropToNestedObject: the target prop is not an object literal, so the source prop stays"
+            );
+            return false;
         }
+
+        expr.properties.push(j.property("init", j.identifier(nestedPropName), propValue));
     } else {
         const newProp = j.jsxAttribute(
             j.jsxIdentifier(targetPropName),

@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
+import { logger } from "@genesiscz/utils/logger";
 import jscodeshift, { type ASTPath, type Collection, type JSXAttribute, type JSXElement } from "jscodeshift";
 import * as guards from "./guards";
 import {
@@ -23,6 +24,7 @@ import {
     isBooleanJsxAttribute,
     isPropertyKey,
     moveImports,
+    movePropToNestedObject,
     processJSXElements,
     removeImportsFromModule,
     setJSXAttribute,
@@ -398,6 +400,29 @@ describe("transformJSXComponent", () => {
         });
 
         expect(flat(root.toSource())).toBe(`const a = <Field id="f" inputProps={{ label: "Name" }} />;`);
+    });
+
+    it("keeps the prop and warns when the target prop holds something other than an object literal", () => {
+        const root = j(
+            `const a = [<Card label="foo" fieldProps={props} />, <Field label="bar" inputProps={props} />];`
+        );
+        const warn = spyOn(logger, "warn").mockImplementation(() => {});
+
+        try {
+            expect(movePropToNestedObject(j, element(root, "Card"), "label", "fieldProps", "label")).toBe(false);
+            expect(
+                transformJSXComponent(j, element(root, "Field"), {
+                    movePropsToNested: { label: { targetProp: "inputProps", nestedProp: "label" } },
+                })
+            ).toBe(false);
+            expect(warn).toHaveBeenCalledTimes(2);
+        } finally {
+            warn.mockRestore();
+        }
+
+        expect(flat(root.toSource())).toBe(
+            `const a = [<Card label="foo" fieldProps={props} />, <Field label="bar" inputProps={props} />];`
+        );
     });
 });
 
