@@ -1,4 +1,5 @@
 import type { Collection, ImportSpecifier, JSCodeshift } from "jscodeshift";
+import { renameModuleBinding } from "./ast-helpers";
 
 export interface ImportInfo {
     module: string;
@@ -313,7 +314,7 @@ export class ImportConflictResolver {
     }
 
     /**
-     * Writes the queued changes: renames aliased imports and their JSX usages, removes queued specifiers (and a
+     * Writes the queued changes: renames aliased imports and every reference to them, removes queued specifiers (and a
      * declaration whose last specifier that removed; a side-effect-only import stays), then adds the new imports.
      */
     applyImportChanges(): void {
@@ -333,20 +334,24 @@ export class ImportConflictResolver {
         });
 
         this.pendingAliases.forEach((newName, oldName) => {
+            renameModuleBinding(this.j, this.root, oldName, newName);
+
             this.root.find(this.j.ImportDeclaration).forEach((path) => {
                 // a fresh specifier, not a new `local` on the old one: recast patches a shorthand `{ Button }`'s
                 // local in place, and imported and local share that text, so `{ LocalButton }` would come out
-                path.node.specifiers = (path.node.specifiers || []).map((spec) =>
-                    spec.type === "ImportSpecifier" && spec.local?.name === oldName
-                        ? this.j.importSpecifier(spec.imported, this.j.identifier(newName))
-                        : spec
-                );
-            });
+                path.node.specifiers = (path.node.specifiers || []).map((spec) => {
+                    if (spec.local?.name !== oldName) {
+                        return spec;
+                    }
 
-            this.root.find(this.j.JSXIdentifier, { name: oldName }).forEach((path) => {
-                if (path.parent.node.type === "JSXOpeningElement" || path.parent.node.type === "JSXClosingElement") {
-                    path.node.name = newName;
-                }
+                    if (spec.type === "ImportSpecifier") {
+                        return this.j.importSpecifier(spec.imported, this.j.identifier(newName));
+                    }
+
+                    return spec.type === "ImportDefaultSpecifier"
+                        ? this.j.importDefaultSpecifier(this.j.identifier(newName))
+                        : this.j.importNamespaceSpecifier(this.j.identifier(newName));
+                });
             });
         });
 

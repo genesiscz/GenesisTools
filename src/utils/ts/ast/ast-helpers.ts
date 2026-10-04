@@ -1,6 +1,7 @@
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import type { ExpressionKind } from "ast-types/lib/gen/kinds";
+import type { Scope } from "ast-types/lib/scope";
 import type {
     ASTPath,
     Collection,
@@ -1194,6 +1195,116 @@ export function copyAttributes(
             toElement.openingElement.attributes.push(attr);
         }
     }
+}
+
+/**
+ * True when the identifier at `path` reads a binding: not a declaration's own name, a non-computed key or member
+ * property, a JSX attribute name, an intrinsic JSX tag (`<div>`), a label, or part of an import specifier.
+ */
+function isBindingReference(j: JSCodeshift, path: ASTPath<Node>): boolean {
+    const parentPath: ASTPath<Node> | null = path.parent;
+    const parent = parentPath?.node;
+    const node = path.node;
+
+    if (!parent) {
+        return false;
+    }
+
+    if (
+        j.ImportSpecifier.check(parent) ||
+        j.ImportDefaultSpecifier.check(parent) ||
+        j.ImportNamespaceSpecifier.check(parent) ||
+        j.JSXAttribute.check(parent) ||
+        j.JSXNamespacedName.check(parent) ||
+        j.LabeledStatement.check(parent) ||
+        j.BreakStatement.check(parent) ||
+        j.ContinueStatement.check(parent)
+    ) {
+        return false;
+    }
+
+    if (j.ExportSpecifier.check(parent)) {
+        // `export { Button } from "./x"` names the other module's export, not a binding of this file
+        const declaration = parentPath?.parent?.node;
+        return parent.local === node && !(j.ExportNamedDeclaration.check(declaration) && declaration.source);
+    }
+
+    if (j.MemberExpression.check(parent) || j.JSXMemberExpression.check(parent)) {
+        return parent.object === node || Boolean(parent.computed);
+    }
+
+    if (j.TSQualifiedName.check(parent)) {
+        return parent.left === node;
+    }
+
+    if (j.JSXOpeningElement.check(parent) || j.JSXClosingElement.check(parent)) {
+        return !(j.JSXIdentifier.check(node) && /^[a-z]/.test(node.name));
+    }
+
+    if ((j.Property.check(parent) || j.ObjectProperty.check(parent)) && parent.shorthand && parent.value === node) {
+        return true;
+    }
+
+    if ("key" in parent && parent.key === node) {
+        return "computed" in parent && parent.computed === true;
+    }
+
+    return !("id" in parent && parent.id === node);
+}
+
+/** True when no scope between the identifier and the module scope declares `name` again. */
+function refersToModuleBinding(path: ASTPath<Node>, name: string): boolean {
+    let scope: Scope | null = path.scope;
+
+    while (scope && !scope.isGlobal) {
+        if (scope.declares(name)) {
+            return false;
+        }
+
+        scope = scope.parent;
+    }
+
+    return scope !== null;
+}
+
+/**
+ * Renames every reference to the module-scope binding `oldName`, such as an import's local name: expressions
+ * (`memo(Button)`, `Button.displayName`), JSX tags and the object of a JSX member tag (`<Button.Icon />`), type
+ * references and `typeof`. A reference to an inner binding that shadows the name stays, and so do property keys,
+ * member properties and JSX attribute names. A shorthand property keeps its key (`{ Button: LocalButton }`) and an
+ * export specifier its exported name (`export { LocalButton as Button }`). The declaration that binds the name,
+ * such as the import specifier, is left to the caller.
+ */
+export function renameModuleBinding(j: JSCodeshift, root: Collection, oldName: string, newName: string): void {
+    root.find(j.Identifier, { name: oldName }).forEach((path) => {
+        if (!isBindingReference(j, path) || !refersToModuleBinding(path, oldName)) {
+            return;
+        }
+
+        const parentPath: ASTPath<Node> = path.parent;
+        const parent = parentPath.node;
+
+        // a fresh node, not a new name on the shared one: recast patches the single source token that a shorthand
+        // property or export specifier prints for both of its names, which would rename the key or export too
+        if (j.ObjectProperty.check(parent) && parent.shorthand) {
+            parentPath.replace(j.objectProperty(j.identifier(oldName), j.identifier(newName)));
+            return;
+        }
+
+        if (j.Property.check(parent) && parent.shorthand) {
+            parentPath.replace(j.property("init", j.identifier(oldName), j.identifier(newName)));
+            return;
+        }
+
+        if (j.ExportSpecifier.check(parent)) {
+            parentPath.replace(
+                j.exportSpecifier.from({ local: j.identifier(newName), exported: j.identifier(oldName) })
+            );
+            return;
+        }
+
+        path.node.name = newName;
+    });
 }
 
 // ============================================================================

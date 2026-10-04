@@ -6,7 +6,7 @@ instead of regex or text replacement.
 
 | File | What it gives you |
 |---|---|
-| `ast-helpers.ts` | JSX props (find, set, rename, move into a nested object, turn into children), component rename, `transformJSXComponent` (declarative per-element transform), import rewrites (`transformImports`, `addOrUpdateImport`, `moveImports`, `consolidateImportsFromModule`), type renames, `PropValue` read and write, `WarningCollector` |
+| `ast-helpers.ts` | JSX props (find, set, rename, move into a nested object, turn into children), component rename, a scope-aware rename of every reference to an import (`renameModuleBinding`), `transformJSXComponent` (declarative per-element transform), import rewrites (`transformImports`, `addOrUpdateImport`, `moveImports`, `consolidateImportsFromModule`), type renames, `PropValue` read and write, `WarningCollector` |
 | `ImportManager.ts` | `ImportManagerImpl` edits import declarations in place; `ImportManagerMemoryImpl` reads them into memory and rebuilds the whole import block |
 | `import-conflict-resolver.ts` | `ImportConflictResolver`: what a component rename does when the target name is already imported, given the primary library's module |
 | `ComponentNode.ts` | `ComponentNode`: one JSX element as a rule target (rename with imports, props, nested props, sibling insert) |

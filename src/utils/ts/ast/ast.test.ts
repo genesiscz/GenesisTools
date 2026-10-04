@@ -924,6 +924,40 @@ describe("ImportConflictResolver", () => {
         );
     });
 
+    it("aliasing an app-local import renames every reference to it, but not a shadowing binding or a key", () => {
+        const { root, resolver } = conflictResolver(
+            [
+                `import { Button } from "./Button";`,
+                "const Wrapped = memo(Button);",
+                `Button.displayName = "Button";`,
+                "const parts = { Button, icon: <Button.Icon /> };",
+                "const keys = { Button: 1 };",
+                "let props: React.ComponentProps<typeof Button>;",
+                "function render(Button: string) { return Button; }",
+                "export { Button };",
+            ].join("\n")
+        );
+
+        resolver.trackResolution(resolver.resolveComponentUsage("OldButton", "Button", PRIMARY, PRIMARY));
+        resolver.applyImportChanges();
+
+        expect(flat(root.toSource())).toBe(
+            flat(
+                [
+                    `import { Button as ${PREFIX}Button } from "./Button";`,
+                    `import { Button } from "${PRIMARY}";`,
+                    `const Wrapped = memo(${PREFIX}Button);`,
+                    `${PREFIX}Button.displayName = "Button";`,
+                    `const parts = { Button: ${PREFIX}Button, icon: <${PREFIX}Button.Icon /> };`,
+                    "const keys = { Button: 1 };",
+                    `let props: React.ComponentProps<typeof ${PREFIX}Button>;`,
+                    "function render(Button: string) { return Button; }",
+                    `export { ${PREFIX}Button as Button };`,
+                ].join("\n")
+            )
+        );
+    });
+
     it("a target that would come from an app-local module is aliased with the prefix", () => {
         const { resolver } = conflictResolver(`import { Card } from "${PRIMARY}";`);
 
