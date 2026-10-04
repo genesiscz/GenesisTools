@@ -3,6 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, HeadContent, Scripts, useRouterState } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { TooltipProvider } from "@ui/components/tooltip";
+import { useDashboardTheme } from "@ui/theme/dashboard-theme";
 import Header from "../components/Header";
 import { Sidebar } from "../components/sidebar/Sidebar";
 import TanStackQueryDevtools from "../integrations/tanstack-query/devtools";
@@ -60,12 +61,14 @@ function RootContent({ children }: { children: React.ReactNode }) {
 }
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+	const { className } = useDashboardTheme("claude-history");
+
 	return (
 		<html lang="en">
 			<head>
 				<HeadContent />
 			</head>
-			<body className="cyberpunk bg-background text-foreground">
+			<body className={`${className} bg-background text-foreground`}>
 				<div className="scan-lines" aria-hidden="true" />
 				<div className="cyber-grid" aria-hidden="true" />
 				<TooltipProvider>

@@ -3,6 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { TooltipProvider } from "@ui/components/tooltip";
+import { useDashboardTheme } from "@ui/theme/dashboard-theme";
 import { useEffect } from "react";
 import { Toaster } from "sonner";
 import { RouteError } from "@/components/RouteError";
@@ -47,6 +48,7 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 
 function RootDocument({ children }: { children: React.ReactNode }) {
     useApplyTheme();
+    const { documentClassName } = useDashboardTheme("personal-dashboard");
 
     // Cmd/Ctrl+P is repurposed as the "Park context" shortcut across the
     // dashboard. Suppress the browser's native print dialog globally so it
@@ -63,7 +65,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
     }, []);
 
     return (
-        <html lang="en">
+        <html lang="en" className={documentClassName || undefined}>
             <head>
                 <HeadContent />
             </head>

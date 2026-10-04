@@ -8,17 +8,37 @@ interface StatCardProps {
     trend?: string;
     trendPositive?: boolean;
     icon?: React.ReactNode;
+    /** The page's key number. One per screen; themed dashboards render it as the highlighted card. */
+    featured?: boolean;
     className?: string;
 }
 
-export function StatCard({ value, label, trend, trendPositive = true, icon, className }: StatCardProps) {
+/** `data-stat*` hooks let the dashboard themes (`@ui/theme/surfaces.css`) lay the card out as icon + label, number, hint. */
+export function StatCard({ value, label, trend, trendPositive = true, icon, featured, className }: StatCardProps) {
     return (
-        <Card variant="wow-static" className={cn("rounded-[14px] p-4 gap-0", className)}>
-            {icon && <div className="mb-3 text-muted-foreground">{icon}</div>}
-            <div className="text-2xl font-bold text-foreground mb-1">{value}</div>
-            <div className="text-xs text-muted-foreground">{label}</div>
+        <Card
+            variant="wow-static"
+            data-stat-card=""
+            data-featured={featured ? "" : undefined}
+            className={cn("rounded-[14px] p-4 gap-0", className)}
+        >
+            {icon && (
+                <div data-stat="icon" className="mb-3 text-muted-foreground">
+                    {icon}
+                </div>
+            )}
+            <div data-stat="value" className="text-2xl font-bold text-foreground mb-1">
+                {value}
+            </div>
+            <div data-stat="label" className="text-xs text-muted-foreground">
+                {label}
+            </div>
             {trend && (
-                <div className={cn("mt-2 text-xs font-medium", trendPositive ? "text-emerald-500" : "text-red-400")}>
+                <div
+                    data-stat="hint"
+                    data-trend={trendPositive ? "up" : "down"}
+                    className={cn("mt-2 text-xs font-medium", trendPositive ? "text-emerald-500" : "text-red-400")}
+                >
                     {trend}
                 </div>
             )}

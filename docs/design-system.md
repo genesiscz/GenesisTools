@@ -30,6 +30,19 @@ themed Card surface, (2) `<Button>`/`<Card>` left at the flat resolved
 **There is exactly one design system. It already ships everything you need.
 Your job is to *consume* it, not re-skin it.**
 
+- **Two dashboard themes, chosen per dashboard (2026-10-04 15:04).** `.cyberpunk` (amber +
+  cyan neon, the default) and `.gold-bento` (`@ui/theme/gold-bento.css`, warm
+  plum-black + champagne with softened accents, ported from Kalendora's design
+  doc). Both share `@ui/theme/surfaces.css`: 3D glass cards with a gradient
+  edge, stat-card anatomy (`data-stat-card`, `data-stat="icon|label|value|hint"`),
+  one featured card per screen (`data-featured`, `StatCard featured`), stat
+  rows (`data-stat-row`), metal primary buttons, glass tabs, quiet recharts
+  grids and glass tooltips, rise-in motion. Each theme only sets `--sf-*` vars.
+- **Picking a theme:** the `theme` field of the dashboard's entry in
+  `src/utils/ui/dashboards.ts` is the default. Per run: `VITE_GT_UI_THEME=gold-bento`
+  in the dev server's env (one server per look). Per browser: `?theme=gold-bento`
+  or the header switch (`themeKey` on `DashboardLayout` / `AppShell`). Roots call
+  `useDashboardTheme(key)` from `@ui/theme/dashboard-theme` and render its `className`.
 - **Tokens:** `@ui/theme/styles.css` — oklch palette + `.wow` / `.cyberpunk`
   themes + `gradient-text` / `neon-glow` / animations. Imported by clarity,
   shops, dev-dashboard. The dashboard inlines a byte-identical copy.
@@ -165,7 +178,8 @@ design system "for free" with no per-app theme code:
 
 - **`@ui/layouts/DashboardLayout`** — top-nav apps (clarity, shops, reas).
   Pass `title`, `navLinks`, `activePath`, `onNavigate`, optional `rightSlot`.
-  Set `<html className="cyberpunk">` in the root document.
+  Set `<html className={useDashboardTheme(key).documentClassName}>` in the root document
+  and pass `themeKey={key}` to the layout.
 - **`@ui/custom/AppShell`** — sidebar apps (the dashboard). Sidebar + nexus.
 - **`@ui/layouts/AuthLayout`** — every login/register screen. Props:
   `brand`, `icon`, `footer`. Branded glass card on ambient bg.
@@ -184,7 +198,10 @@ same line**. Wire it into CI alongside `lint`.
 
 ## New-Dashboard Checklist
 
-1. Root document: `<html className="cyberpunk">`.
+1. Root document: `<html className={useDashboardTheme(key).documentClassName}>` (it stays
+   constant on the client, so React never rewrites the `<html>` classes; use `className` for a
+   themed subtree such as the shell or `<body>`), plus a
+   `theme` field on the dashboard's registry entry.
 2. Wrap routes in `@ui/layouts/DashboardLayout` (or `AppShell`).
 3. Auth (if any) in `@ui/layouts/AuthLayout`.
 4. Compose pages from `@ui/components/*` + `@ui/custom/*` only.

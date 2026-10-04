@@ -49,7 +49,7 @@ uniqueness — wire it into a test/launcher when adding a dashboard.
 **clarity · shops · reas**
 
 - **Shell:** `@ui/layouts/DashboardLayout` (top nav). Root document
-  `<html className="cyberpunk">`.
+  `<html className={useDashboardTheme(key).documentClassName}>`.
 - **Theme:** shared `@ui/theme/styles.css`, `ThemeProvider variant="nexus"`,
   cyber-grid + glow orbs + glass header (wired by the layout — free for
   consumers).
@@ -172,7 +172,7 @@ beats reinventing it.
    free port; keep `findPortConflicts()` green.
 2. **Prefer Family A or B**: wrap routes in `@ui/layouts/DashboardLayout`
    (top-nav) or `@ui/custom/AppShell` (sidebar); set
-   `<html className="cyberpunk">`; compose from `@ui/components/*` +
+   `<html className={useDashboardTheme(key).documentClassName}>`; compose from `@ui/components/*` +
    `@ui/custom/*`. You inherit the WOW look for free.
 3. **Family C is acceptable** (own shell) **only if** you still
    `@import "@ui/theme/styles.css"`, use the `.cyberpunk` class + theme

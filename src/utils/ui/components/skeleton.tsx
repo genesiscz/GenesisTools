@@ -20,7 +20,8 @@ const skeletonVariants: Record<SkeletonVariant, string> = {
     "data-stream": ["bg-muted/50", "animate-data-stream", "origin-left"].join(" "),
     card: "wow-skeleton rounded-xl h-32 w-full",
     line: "wow-skeleton rounded-md h-4 w-full",
-    nexus: "bg-accent animate-pulse",
+    // Muted, not `bg-accent`: in cyberpunk the accent is full neon cyan, so loading pages flashed solid bars.
+    nexus: "bg-muted/60 animate-pulse",
 };
 
 function Skeleton({ className, variant, ...props }: SkeletonProps) {

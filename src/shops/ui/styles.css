@@ -15,6 +15,15 @@
     --color-neon-coral: #fb7185;
 }
 
+/* The same roles in the gold-bento theme: softened hues on the warm base. */
+.gold-bento {
+    --color-neon-cyan: var(--teal);
+    --color-neon-amber: var(--apricot);
+    --color-neon-emerald: var(--sage);
+    --color-neon-violet: var(--orchid);
+    --color-neon-coral: var(--coral);
+}
+
 .scan-lines {
     background-image: repeating-linear-gradient(
         0deg,

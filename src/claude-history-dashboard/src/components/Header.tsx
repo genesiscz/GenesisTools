@@ -1,4 +1,5 @@
 import { Link, useLocation } from "@tanstack/react-router";
+import { ThemeSwitch } from "@ui/custom/theme-switch";
 import { BarChart3, MessageSquare, Terminal } from "lucide-react";
 
 export default function Header() {
@@ -19,7 +20,7 @@ export default function Header() {
 							<Terminal className="w-4 h-4 text-amber-400" />
 						</div>
 						<span className="font-mono font-bold text-sm text-gray-300 tracking-wider group-hover:text-amber-400 transition-colors">
-							CLAUDE<span className="text-amber-500">::</span>HISTORY
+							Claude<span className="text-amber-500">::</span>History
 						</span>
 					</Link>
 
@@ -42,6 +43,7 @@ export default function Header() {
 								</Link>
 							);
 						})}
+						<ThemeSwitch themeKey="claude-history" className="ml-2" />
 					</nav>
 				</div>
 			</div>

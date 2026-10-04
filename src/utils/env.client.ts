@@ -74,6 +74,14 @@ export const env = {
         getUiPort: () => getTrimmed("SPOTIFY_UI_PORT"),
     },
 
+    ui: {
+        /**
+         * Dashboard look for this dev server (`cyberpunk`, `gold-bento`, `native`). VITE_-prefixed so
+         * the browser bundle sees the same value as SSR; see `@ui/theme/dashboard-theme`.
+         */
+        getTheme: () => getTrimmed("VITE_GT_UI_THEME"),
+    },
+
     extension: {
         /** EXT_DEV=1 enables the dev-reload WebSocket in the extension build. */
         isDevReload: () => isFlag("EXT_DEV"),

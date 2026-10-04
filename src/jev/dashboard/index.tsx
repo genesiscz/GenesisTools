@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Input } from "@ui/components/input";
 import { Textarea } from "@ui/components/textarea";
 import { DashboardLayout } from "@ui/layouts/DashboardLayout";
+import { useDashboardTheme } from "@ui/theme/dashboard-theme";
 import {
     Braces,
     CheckCheck,
@@ -803,6 +804,7 @@ interface GatewayStatus {
     error?: string;
 }
 export default function Dashboard() {
+    useDashboardTheme("jev");
     const [tab, setTab] = useState(() => window.location.hash.slice(1) || "playground");
     const [provider, setProvider] = useState<EvaluationProviderId>("vercel");
     const [status, setStatus] = useState<GatewayStatus>();
@@ -827,7 +829,6 @@ export default function Dashboard() {
         }
     };
     useEffect(() => {
-        document.documentElement.classList.add("cyberpunk");
         void refresh();
         const changed = () => {
             setTab(window.location.hash.slice(1) || "playground");
@@ -839,6 +840,7 @@ export default function Dashboard() {
     return (
         <DashboardLayout
             title="JEV"
+            themeKey="jev"
             titleAccent="LAB"
             icon={<FlaskConical size={17} />}
             navLinks={[

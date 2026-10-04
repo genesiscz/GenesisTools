@@ -1,7 +1,10 @@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@ui/components/tooltip";
 import { GlowOrbsNexus } from "@ui/custom/glow-orbs";
+import { ThemeSwitch } from "@ui/custom/theme-switch";
+import { edgeFadeMask, useOverflowEdges } from "@ui/hooks/useOverflowEdges";
 import { ThemeProvider } from "@ui/theme/provider";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
+import type { DashboardKey } from "../dashboards";
 
 export interface NavLink {
     label: string;
@@ -26,6 +29,8 @@ export interface DashboardLayoutProps {
     onNavigate?: (href: string) => void;
     /** Optional element rendered to the right of the nav (e.g. user chip + logout) */
     rightSlot?: ReactNode;
+    /** Registry key of this dashboard; shows the look switch (`@ui/theme/dashboard-theme`) in the header. */
+    themeKey?: DashboardKey;
     /** Main content */
     children: ReactNode;
 }
@@ -38,6 +43,7 @@ export function DashboardLayout({
     activePath,
     onNavigate,
     rightSlot,
+    themeKey,
     children,
 }: DashboardLayoutProps) {
     const displayTitle = titleAccent ? (
@@ -50,6 +56,26 @@ export function DashboardLayout({
         title
     );
 
+    const navRef = useRef<HTMLElement>(null);
+    const navMask = edgeFadeMask(useOverflowEdges(navRef));
+
+    // When the links do not fit, keep the active one in view instead of wherever the scroll was.
+    useEffect(() => {
+        const nav = navRef.current;
+        const item = nav?.querySelector<HTMLElement>('[aria-current="page"]');
+        if (!nav || !item) {
+            return;
+        }
+
+        const navBox = nav.getBoundingClientRect();
+        const itemBox = item.getBoundingClientRect();
+        if (itemBox.left < navBox.left) {
+            nav.scrollLeft -= navBox.left - itemBox.left + 40;
+        } else if (itemBox.right > navBox.right) {
+            nav.scrollLeft += itemBox.right - navBox.right + 40;
+        }
+    }, [activePath]);
+
     return (
         <ThemeProvider variant="nexus">
             <TooltipProvider>
@@ -58,7 +84,7 @@ export function DashboardLayout({
                     <div className="fixed inset-0 cyber-grid opacity-[0.35] pointer-events-none -z-10" />
 
                     {/* Themed glow orbs (primary + accent) for depth */}
-                    <div className="fixed inset-0 overflow-hidden pointer-events-none -z-10">
+                    <div data-glow-orbs className="fixed inset-0 overflow-hidden pointer-events-none -z-10">
                         <GlowOrbsNexus />
                     </div>
 
@@ -68,7 +94,7 @@ export function DashboardLayout({
                     {/* Header */}
                     <header className="sticky top-0 z-40 bg-background/70 backdrop-blur-2xl border-b border-primary/20 shadow-[0_1px_0_0_rgba(255,255,255,0.03),0_8px_24px_-12px_var(--color-primary)]">
                         <div className="max-w-6xl mx-auto px-3 sm:px-6">
-                            <div className="flex h-12 items-center justify-between">
+                            <div className="flex h-12 items-center justify-between gap-3 sm:gap-6">
                                 {/* Logo / Title */}
                                 <button
                                     type="button"
@@ -88,7 +114,14 @@ export function DashboardLayout({
 
                                 {/* Navigation */}
                                 {navLinks && navLinks.length > 0 && (
-                                    <nav className="flex items-center gap-0.5 sm:gap-1 overflow-x-auto flex-nowrap min-w-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                                    // Scrolls sideways when the links do not fit; the hidden side fades out
+                                    // instead of cutting a label in half against the logo or the controls.
+                                    // The padding is room for the active link's glow, which a scroll box clips.
+                                    <nav
+                                        ref={navRef}
+                                        style={navMask ? { maskImage: navMask, WebkitMaskImage: navMask } : undefined}
+                                        className="flex flex-1 items-center gap-0.5 sm:gap-1 overflow-x-auto flex-nowrap min-w-0 px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                                    >
                                         {navLinks.map(({ label, href, icon: linkIcon, badge }) => {
                                             const isActive = activePath === href;
                                             return (
@@ -122,7 +155,12 @@ export function DashboardLayout({
                                     </nav>
                                 )}
 
-                                {rightSlot}
+                                {(themeKey || rightSlot) && (
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        {themeKey && <ThemeSwitch themeKey={themeKey} />}
+                                        {rightSlot}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </header>

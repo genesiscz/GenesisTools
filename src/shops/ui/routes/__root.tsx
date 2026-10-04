@@ -3,6 +3,7 @@ import appCss from "@app/shops/ui/styles.css?url";
 import { Badge } from "@genesiscz/utils/ui/components/badge";
 import { Button } from "@genesiscz/utils/ui/components/button";
 import { DashboardLayout } from "@genesiscz/utils/ui/layouts/DashboardLayout";
+import { useDashboardTheme } from "@genesiscz/utils/ui/theme/dashboard-theme";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRootRoute, HeadContent, Link, Outlet, Scripts, useRouter, useRouterState } from "@tanstack/react-router";
 import {
@@ -54,8 +55,10 @@ export const Route = createRootRoute({
 });
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+    const { documentClassName } = useDashboardTheme("shops");
+
     return (
-        <html lang="en" className="cyberpunk">
+        <html lang="en" className={documentClassName}>
             <head>
                 <HeadContent />
             </head>
@@ -114,6 +117,7 @@ function ShopsLayout({ children }: { children: React.ReactNode }) {
     return (
         <DashboardLayout
             title="SHOPS"
+            themeKey="shops"
             titleAccent="CZ"
             navLinks={decoratedLinks}
             activePath={currentPath}

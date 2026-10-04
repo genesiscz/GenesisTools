@@ -1,6 +1,8 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import './components/auth/cyberpunk.css';
+@import '../../../../utils/ui/theme/gold-bento.css';
+@import '../../../../utils/ui/theme/surfaces.css';
 @source "../../../../utils/ui";
 
 @custom-variant dark (&:is(.dark *));

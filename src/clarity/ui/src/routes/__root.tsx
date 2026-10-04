@@ -1,6 +1,7 @@
 import { createRootRoute, HeadContent, Outlet, Scripts, useRouter, useRouterState } from "@tanstack/react-router";
 import { TooltipProvider } from "@ui/components/tooltip";
 import { DashboardLayout } from "@ui/layouts/DashboardLayout";
+import { useDashboardTheme } from "@ui/theme/dashboard-theme";
 import { ArrowDownToLine, ArrowUpFromLine, Link2, Settings } from "lucide-react";
 import { Toaster } from "sonner";
 import { AppProvider } from "../context/AppContext";
@@ -30,8 +31,10 @@ export const Route = createRootRoute({
 });
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+    const { documentClassName } = useDashboardTheme("clarity");
+
     return (
-        <html lang="en" className="cyberpunk">
+        <html lang="en" className={documentClassName}>
             <head>
                 <HeadContent />
             </head>
@@ -72,6 +75,7 @@ function ClarityLayout() {
     return (
         <DashboardLayout
             title="Clarity"
+            themeKey="clarity"
             titleAccent="Timelog"
             navLinks={navLinks}
             activePath={currentPath}

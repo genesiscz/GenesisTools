@@ -27,8 +27,9 @@ function OverviewPage() {
             <ReportState query={summary} isEmpty={(r) => r.empty} rows={8}>
                 {(r) => (
                     <>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
+                        <div data-stat-row="" className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
                             <StatCard
+                                featured
                                 value={int(r.totals.plays)}
                                 label="plays"
                                 trend={`+${int(r.totals.shortPlays)} under 30s`}

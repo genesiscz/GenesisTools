@@ -63,10 +63,18 @@ export function Section({
 /** One headline number with a caption, used in every page's stat strip. */
 export function StatTile({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
     return (
-        <Card variant="wow-static" className="p-3">
-            <div className="text-[11px] font-mono uppercase tracking-widest text-muted-foreground">{label}</div>
-            <div className="text-lg font-semibold text-foreground">{value}</div>
-            {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
+        <Card variant="wow-static" data-stat-card="" className="p-3">
+            <div data-stat="label" className="text-[11px] font-mono uppercase tracking-widest text-muted-foreground">
+                {label}
+            </div>
+            <div data-stat="value" className="text-lg font-semibold text-foreground">
+                {value}
+            </div>
+            {hint && (
+                <div data-stat="hint" className="text-xs text-muted-foreground">
+                    {hint}
+                </div>
+            )}
         </Card>
     );
 }

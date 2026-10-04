@@ -5,6 +5,8 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { defineConfig, normalizePath, type Plugin, type PluginOption, type Rolldown, type UserConfig } from "vite";
+// Relative on purpose: config bundlers inline relative imports but externalize bare ones.
+import { env } from "../env.client";
 
 export interface DashboardViteConfig {
     /** Root directory of the dashboard app */
@@ -285,7 +287,17 @@ export function createDashboardViteConfig({
     host = true,
     serverOnlyDirs = [],
 }: DashboardViteConfig): UserConfig {
-    const { plugins: _ignored, resolve: _resolveIgnored, optimizeDeps: overrideOptimizeDeps, ...rest } = overrides;
+    const {
+        plugins: _ignored,
+        resolve: _resolveIgnored,
+        optimizeDeps: overrideOptimizeDeps,
+        define: overrideDefine,
+        ...rest
+    } = overrides;
+    // The dashboard look for this server (`VITE_GT_UI_THEME`), baked in as a literal so SSR and the
+    // browser bundle agree; the browser cannot read process env. See `@ui/theme/dashboard-theme`.
+    const uiTheme = env.ui.getTheme();
+    const uiThemeLiteral = uiTheme && /^[a-z-]+$/.test(uiTheme) ? `"${uiTheme}"` : "undefined";
     const allAliases: Record<string, string> = {
         "@app": resolve(root, "src"),
         "@genesiscz/utils": UTILS_PACKAGE_ROOT,
@@ -392,5 +404,6 @@ export function createDashboardViteConfig({
               }
             : {}),
         ...rest,
+        define: { __GT_UI_THEME__: uiThemeLiteral, ...overrideDefine },
     }) as UserConfig;
 }

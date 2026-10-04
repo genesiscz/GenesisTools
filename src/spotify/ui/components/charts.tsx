@@ -108,10 +108,25 @@ export function BarSeries({
     /** Draws this bar in the accent colour — used for "the peak". */
     highlightIndex?: number;
 }) {
+    // Per-chart ids for the same reason as AreaSeries: a shared id resolves to the first chart's fill.
+    const fillId = `spotify-bar-${useId()}`;
+    const highlightId = `${fillId}-hl`;
+
     return (
         <ChartBox height={height}>
             {({ width, height: h }) => (
                 <BarChart width={width} height={h} data={data} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
+                    {/* Bars fade towards the axis, like the area chart, so a row of twenty reads as one shape. */}
+                    <defs>
+                        <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={color} stopOpacity={0.95} />
+                            <stop offset="100%" stopColor={color} stopOpacity={0.28} />
+                        </linearGradient>
+                        <linearGradient id={highlightId} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={SERIES[3]} stopOpacity={1} />
+                            <stop offset="100%" stopColor={SERIES[3]} stopOpacity={0.35} />
+                        </linearGradient>
+                    </defs>
                     <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
                     <XAxis dataKey="label" {...AXIS} tickLine={false} axisLine={false} minTickGap={12} />
                     <YAxis {...AXIS} tickLine={false} axisLine={false} width={48} tickFormatter={format} />
@@ -120,9 +135,9 @@ export function BarSeries({
                         formatter={tooltipValue(format)}
                         cursor={{ fill: "var(--chart-grid)" }}
                     />
-                    <Bar dataKey="value" radius={[3, 3, 0, 0]}>
+                    <Bar dataKey="value" radius={[6, 6, 2, 2]}>
                         {data.map((d, i) => (
-                            <Cell key={d.label} fill={i === highlightIndex ? SERIES[3] : color} />
+                            <Cell key={d.label} fill={`url(#${i === highlightIndex ? highlightId : fillId})`} />
                         ))}
                     </Bar>
                 </BarChart>

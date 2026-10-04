@@ -3,6 +3,7 @@ import { WatcherDialog } from "@app/monitor/ui/components/watcher-dialog";
 import { Button } from "@genesiscz/utils/ui/components/button";
 import { AppShell, AppSidebar, type SidebarNavItem } from "@genesiscz/utils/ui/custom";
 import { cn } from "@genesiscz/utils/ui/lib/utils";
+import { useDashboardTheme } from "@genesiscz/utils/ui/theme/dashboard-theme";
 import type { QueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { Activity, Bell, Plus, Radar, Siren } from "lucide-react";
@@ -88,13 +89,15 @@ function SidebarSummary() {
 }
 
 function RootLayout() {
+    const dashboardTheme = useDashboardTheme("monitor");
     const pathname = useRouterState({ select: (state) => state.location.pathname });
     const { connected } = useLiveUpdates();
     const [adding, setAdding] = useState(false);
 
     return (
         <AppShell
-            themeClass="cyberpunk"
+            themeClass={dashboardTheme.className}
+            themeKey="monitor"
             glowVariant="rich"
             sidebar={
                 <AppSidebar

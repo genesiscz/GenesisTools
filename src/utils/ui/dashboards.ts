@@ -15,6 +15,9 @@ export type DashboardTech = "vite+tanstack-start" | "vite+tanstack-router" | "vi
 
 export type WebServiceKind = "http-api" | "extension" | "proxy" | "other";
 
+/** Look a dashboard wears by default; `native` = no shared theme class. See `@ui/theme/dashboard-theme`. */
+export type DashboardThemeName = "native" | "cyberpunk" | "gold-bento";
+
 /** Live process fields available when matching a listening port. */
 export interface PortMatchContext {
     readonly port: number;
@@ -65,6 +68,8 @@ export interface DashboardEntry extends PortRegistryBase {
     readonly strictPort: boolean;
     readonly tech: DashboardTech;
     readonly auth: DashboardAuth;
+    /** Default look. Change it here to move one dashboard to another theme. Omitted = `native`. */
+    readonly theme?: DashboardThemeName;
 }
 
 export interface WebServiceEntry extends PortRegistryBase {
@@ -155,6 +160,7 @@ export const DASHBOARDS = {
     },
     jev: {
         key: "jev",
+        theme: "cyberpunk",
         name: "Jev Lab",
         description: "Evaluation, generation, arena and native control workbench.",
         port: 3088,
@@ -168,6 +174,7 @@ export const DASHBOARDS = {
     },
     "claude-history": {
         key: "claude-history",
+        theme: "cyberpunk",
         name: "Claude History Browser",
         description: "Search & browse Claude Code conversation history.",
         port: 3069,
@@ -209,6 +216,7 @@ export const DASHBOARDS = {
     },
     clarity: {
         key: "clarity",
+        theme: "cyberpunk",
         name: "Clarity Timelog",
         description: "Azure DevOps ↔ CA PPM Clarity timesheet sync.",
         port: 3071,
@@ -221,6 +229,7 @@ export const DASHBOARDS = {
     },
     reas: {
         key: "reas",
+        theme: "cyberpunk",
         name: "REAS Analyzer",
         description: "Real-estate investment analysis (reas.cz + Sreality + MF cenová mapa).",
         port: 3072,
@@ -234,6 +243,7 @@ export const DASHBOARDS = {
     },
     shops: {
         key: "shops",
+        theme: "cyberpunk",
         name: "Shops CZ",
         description: "Czech e-shop price intelligence — watchlist, alerts, observability.",
         port: 3073,
@@ -246,6 +256,7 @@ export const DASHBOARDS = {
     },
     youtube: {
         key: "youtube",
+        theme: "cyberpunk",
         name: "YouTube Web UI",
         description: "Browse, search & analyze YouTube videos, channels, transcripts.",
         port: 3074,
@@ -259,6 +270,7 @@ export const DASHBOARDS = {
     },
     spotify: {
         key: "spotify",
+        theme: "cyberpunk",
         name: "Spotify Listening",
         description: "Listening analytics over your own export, plus two-person taste compatibility.",
         port: 3075,
@@ -273,6 +285,7 @@ export const DASHBOARDS = {
     },
     monitor: {
         key: "monitor",
+        theme: "cyberpunk",
         name: "Monitor",
         description: "Uptime watchers for websites, status pages and AI providers.",
         port: 3077,

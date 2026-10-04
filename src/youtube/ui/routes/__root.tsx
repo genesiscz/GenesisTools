@@ -9,6 +9,7 @@ import { pageTitleFromPath } from "@app/yt/lib/theme";
 import { useEventStream } from "@app/yt/ws.client";
 import { AppShell, AppSidebar, type SidebarNavItem } from "@genesiscz/utils/ui/custom";
 import { cn } from "@genesiscz/utils/ui/lib/utils";
+import { useDashboardTheme } from "@genesiscz/utils/ui/theme/dashboard-theme";
 import type { QueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, Link, Outlet, redirect, useRouterState } from "@tanstack/react-router";
 import { BriefcaseBusiness, History, Library, Newspaper, PlaySquare, Settings, Tv } from "lucide-react";
@@ -83,6 +84,7 @@ function useAppearance() {
 }
 
 function RootLayout() {
+    const dashboardTheme = useDashboardTheme("youtube");
     const pathname = useRouterState({ select: (state) => state.location.pathname });
     const { connected } = useEventStream({ enabled: pathname !== "/first-run" });
 
@@ -99,7 +101,8 @@ function RootLayout() {
     return (
         <AuthGateProvider>
             <AppShell
-                themeClass="cyberpunk"
+                themeClass={dashboardTheme.className}
+                themeKey="youtube"
                 glowVariant="rich"
                 sidebar={
                     <AppSidebar

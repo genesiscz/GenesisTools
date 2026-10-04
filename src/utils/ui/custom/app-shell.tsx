@@ -3,7 +3,9 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from "@ui/components/si
 import { cn } from "@ui/lib/utils";
 import { ThemeProvider } from "@ui/theme/provider";
 import type React from "react";
+import type { DashboardKey } from "../dashboards";
 import { GlowOrbsNexus } from "./glow-orbs";
+import { ThemeSwitch } from "./theme-switch";
 
 interface AppShellProps {
     sidebar: React.ReactNode;
@@ -20,6 +22,9 @@ interface AppShellProps {
     /** Token theme class applied to the shell root (e.g. "cyberpunk", "wow").
      *  Pins token values regardless of ambient; default inherits (dashboard). */
     themeClass?: string;
+    /** Registry key of this dashboard; shows the look switch in the top bar. Pass the
+     *  matching `useDashboardTheme(key).className` as `themeClass`. */
+    themeKey?: DashboardKey;
     gridBackground?: boolean;
     scanLinesEffect?: boolean;
     children: React.ReactNode;
@@ -33,6 +38,7 @@ export function AppShell({
     headerEnd,
     glowVariant = "subtle",
     themeClass,
+    themeKey,
     gridBackground,
     scanLinesEffect,
     children,
@@ -41,7 +47,7 @@ export function AppShell({
         <ThemeProvider variant="nexus">
             <SidebarProvider className={cn("nexus", themeClass)}>
                 <div className="fixed inset-0 -z-20 bg-background pointer-events-none" />
-                <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
+                <div data-glow-orbs className="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
                     <GlowOrbsNexus variant={glowVariant} />
                 </div>
                 {gridBackground && (
@@ -65,6 +71,7 @@ export function AppShell({
 
                         <div className="ml-auto flex items-center gap-2">
                             {headerEnd}
+                            {themeKey && <ThemeSwitch themeKey={themeKey} />}
                             <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                                 <span className="uppercase tracking-widest">{statusLabel}</span>

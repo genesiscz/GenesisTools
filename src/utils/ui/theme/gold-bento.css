@@ -1,0 +1,252 @@
+/* ============================================================================
+   GOLD BENTO THEME: warm plum-black rooms, ivory text, champagne gold as the
+   lead accent, softened teal / orchid / sage / apricot as supporting accents.
+   Ported from Kalendora's design doc. Opt in per dashboard (the `theme` field
+   in `src/utils/ui/dashboards.ts`, `VITE_GT_UI_THEME`, `?theme=gold-bento` or
+   the header switch; see `@ui/theme/dashboard-theme`). Cards, stat cards,
+   buttons, tabs, charts and motion live in `surfaces.css`, shared with
+   `.cyberpunk`.
+   ============================================================================ */
+
+@font-face {
+  font-family: "Onest";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/onest-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Onest";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/onest-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* `html.gold-bento` outranks the `:root` token block an app may inline after this file. */
+html.gold-bento,
+.gold-bento {
+  color-scheme: dark;
+  --gb-sans: "Onest", ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  --background: #0e0b10;
+  --foreground: #f3eee9;
+  --card: #17131a;
+  --card-foreground: #f3eee9;
+  --raised: #221d25;
+  --popover: #241f28;
+  --popover-foreground: #f3eee9;
+
+  --champagne: #e3c79f;
+  --gold-hi: #f7e7ca;
+  --gold-grad: linear-gradient(135deg, #f7e7ca 0%, #e3c79f 40%, #c49a61 75%, #ecd3aa 100%);
+  /* Supporting accents: the cyberpunk hues, softened to sit on warm plum. */
+  --teal: #8fd3cb;
+  --orchid: #d9a8c8;
+  --sage: oklch(0.8 0.073 162);
+  --apricot: oklch(0.83 0.095 62);
+  --periwinkle: #a9b8ec;
+  --coral: #f08a7e;
+
+  --primary: #e3c79f;
+  --primary-foreground: #1c160f;
+  --secondary: #8fd3cb;
+  --secondary-foreground: #0d1f1c;
+  --muted: #241f28;
+  --muted-foreground: #b3aab5;
+  /* Accent stays a quiet hover surface (shadcn meaning); `text-accent` is mapped to orchid below. */
+  --accent: #2a2230;
+  --accent-foreground: #ecd3e4;
+  --destructive: #f08a7e;
+  --destructive-foreground: #1c160f;
+
+  --border: #28222c;
+  --input: #3a333f;
+  --ring: #e3c79f;
+
+  --chart-1: #e3c79f;
+  --chart-2: #8fd3cb;
+  --chart-3: #d9a8c8;
+  --chart-4: #9fd0b4;
+  --chart-5: #a9b8ec;
+  --chart-6: #f0c48f;
+  --chart-grid: rgb(179 170 181 / 0.1);
+  --chart-axis: rgb(179 170 181 / 0.7);
+  /* `chartColors` in @ui/graphs/colors (shared recharts palette, shop accent bars). */
+  --gt-chart-cyan: #e3c79f;
+  --gt-chart-amber: oklch(0.83 0.095 62);
+  --gt-chart-emerald: #9fd0b4;
+  --gt-chart-violet: #d9a8c8;
+  --gt-chart-rose: #f08a7e;
+  --gt-chart-slate: #b3aab5;
+  --gt-chart-grid: rgb(179 170 181 / 0.1);
+  --gt-chart-axis: rgb(179 170 181 / 0.8);
+  --gt-chart-tooltip-border: rgb(227 199 159 / 0.16);
+  --gt-chart-tooltip-bg: rgb(36 31 40 / 0.96);
+
+  --radius: 0.75rem;
+
+  --sidebar: #120f14;
+  --sidebar-foreground: #f3eee9;
+  --sidebar-primary: #e3c79f;
+  --sidebar-primary-foreground: #1c160f;
+  --sidebar-accent: #1f1a22;
+  --sidebar-accent-foreground: #f3eee9;
+  --sidebar-border: #2b2530;
+  --sidebar-ring: #e3c79f;
+
+  /* DaisyUI defines its own `--color-*` on :root, which wins inside arbitrary
+     values like `shadow-[…var(--color-primary)]`; pin them to this theme. */
+  --color-primary: var(--primary);
+  --color-secondary: var(--secondary);
+  --color-accent: var(--accent);
+
+  /* Tailwind's status and accent palettes, re-tuned to the warm plum base: same
+     hue families, lower chroma. `text-emerald-400` stays green, just calmer. */
+  --color-emerald-50: oklch(0.975 0.015 162); --color-emerald-100: oklch(0.945 0.031 162); --color-emerald-200: oklch(0.89 0.050 162); --color-emerald-300: oklch(0.8 0.073 162);
+  --color-emerald-400: oklch(0.7 0.088 162); --color-emerald-500: oklch(0.61 0.090 162); --color-emerald-600: oklch(0.53 0.088 162); --color-emerald-700: oklch(0.45 0.077 162);
+  --color-emerald-800: oklch(0.37 0.063 162); --color-emerald-900: oklch(0.3 0.050 162); --color-emerald-950: oklch(0.23 0.037 162);
+  --color-green-50: oklch(0.975 0.015 150); --color-green-100: oklch(0.945 0.031 150); --color-green-200: oklch(0.89 0.050 150); --color-green-300: oklch(0.8 0.073 150);
+  --color-green-400: oklch(0.7 0.088 150); --color-green-500: oklch(0.61 0.090 150); --color-green-600: oklch(0.53 0.088 150); --color-green-700: oklch(0.45 0.077 150);
+  --color-green-800: oklch(0.37 0.063 150); --color-green-900: oklch(0.3 0.050 150); --color-green-950: oklch(0.23 0.037 150);
+  --color-lime-50: oklch(0.975 0.016 128); --color-lime-100: oklch(0.945 0.033 128); --color-lime-200: oklch(0.89 0.052 128); --color-lime-300: oklch(0.8 0.075 128);
+  --color-lime-400: oklch(0.7 0.091 128); --color-lime-500: oklch(0.61 0.094 128); --color-lime-600: oklch(0.53 0.091 128); --color-lime-700: oklch(0.45 0.081 128);
+  --color-lime-800: oklch(0.37 0.065 128); --color-lime-900: oklch(0.3 0.052 128); --color-lime-950: oklch(0.23 0.039 128);
+  --color-teal-50: oklch(0.975 0.016 185); --color-teal-100: oklch(0.945 0.033 185); --color-teal-200: oklch(0.89 0.052 185); --color-teal-300: oklch(0.8 0.075 185);
+  --color-teal-400: oklch(0.7 0.091 185); --color-teal-500: oklch(0.61 0.094 185); --color-teal-600: oklch(0.53 0.091 185); --color-teal-700: oklch(0.45 0.081 185);
+  --color-teal-800: oklch(0.37 0.065 185); --color-teal-900: oklch(0.3 0.052 185); --color-teal-950: oklch(0.23 0.039 185);
+  --color-cyan-50: oklch(0.975 0.016 198); --color-cyan-100: oklch(0.945 0.034 198); --color-cyan-200: oklch(0.89 0.054 198); --color-cyan-300: oklch(0.8 0.078 198);
+  --color-cyan-400: oklch(0.7 0.095 198); --color-cyan-500: oklch(0.61 0.097 198); --color-cyan-600: oklch(0.53 0.095 198); --color-cyan-700: oklch(0.45 0.084 198);
+  --color-cyan-800: oklch(0.37 0.068 198); --color-cyan-900: oklch(0.3 0.054 198); --color-cyan-950: oklch(0.23 0.041 198);
+  --color-sky-50: oklch(0.975 0.016 225); --color-sky-100: oklch(0.945 0.034 225); --color-sky-200: oklch(0.89 0.054 225); --color-sky-300: oklch(0.8 0.078 225);
+  --color-sky-400: oklch(0.7 0.095 225); --color-sky-500: oklch(0.61 0.097 225); --color-sky-600: oklch(0.53 0.095 225); --color-sky-700: oklch(0.45 0.084 225);
+  --color-sky-800: oklch(0.37 0.068 225); --color-sky-900: oklch(0.3 0.054 225); --color-sky-950: oklch(0.23 0.041 225);
+  --color-blue-50: oklch(0.975 0.017 262); --color-blue-100: oklch(0.945 0.035 262); --color-blue-200: oklch(0.89 0.056 262); --color-blue-300: oklch(0.8 0.081 262);
+  --color-blue-400: oklch(0.7 0.098 262); --color-blue-500: oklch(0.61 0.101 262); --color-blue-600: oklch(0.53 0.098 262); --color-blue-700: oklch(0.45 0.087 262);
+  --color-blue-800: oklch(0.37 0.070 262); --color-blue-900: oklch(0.3 0.056 262); --color-blue-950: oklch(0.23 0.042 262);
+  --color-indigo-50: oklch(0.975 0.017 280); --color-indigo-100: oklch(0.945 0.035 280); --color-indigo-200: oklch(0.89 0.056 280); --color-indigo-300: oklch(0.8 0.081 280);
+  --color-indigo-400: oklch(0.7 0.098 280); --color-indigo-500: oklch(0.61 0.101 280); --color-indigo-600: oklch(0.53 0.098 280); --color-indigo-700: oklch(0.45 0.087 280);
+  --color-indigo-800: oklch(0.37 0.070 280); --color-indigo-900: oklch(0.3 0.056 280); --color-indigo-950: oklch(0.23 0.042 280);
+  --color-violet-50: oklch(0.975 0.017 300); --color-violet-100: oklch(0.945 0.035 300); --color-violet-200: oklch(0.89 0.056 300); --color-violet-300: oklch(0.8 0.081 300);
+  --color-violet-400: oklch(0.7 0.098 300); --color-violet-500: oklch(0.61 0.101 300); --color-violet-600: oklch(0.53 0.098 300); --color-violet-700: oklch(0.45 0.087 300);
+  --color-violet-800: oklch(0.37 0.070 300); --color-violet-900: oklch(0.3 0.056 300); --color-violet-950: oklch(0.23 0.042 300);
+  --color-purple-50: oklch(0.975 0.017 312); --color-purple-100: oklch(0.945 0.035 312); --color-purple-200: oklch(0.89 0.056 312); --color-purple-300: oklch(0.8 0.081 312);
+  --color-purple-400: oklch(0.7 0.098 312); --color-purple-500: oklch(0.61 0.101 312); --color-purple-600: oklch(0.53 0.098 312); --color-purple-700: oklch(0.45 0.087 312);
+  --color-purple-800: oklch(0.37 0.070 312); --color-purple-900: oklch(0.3 0.056 312); --color-purple-950: oklch(0.23 0.042 312);
+  --color-fuchsia-50: oklch(0.975 0.017 330); --color-fuchsia-100: oklch(0.945 0.036 330); --color-fuchsia-200: oklch(0.89 0.058 330); --color-fuchsia-300: oklch(0.8 0.084 330);
+  --color-fuchsia-400: oklch(0.7 0.102 330); --color-fuchsia-500: oklch(0.61 0.104 330); --color-fuchsia-600: oklch(0.53 0.102 330); --color-fuchsia-700: oklch(0.45 0.090 330);
+  --color-fuchsia-800: oklch(0.37 0.072 330); --color-fuchsia-900: oklch(0.3 0.058 330); --color-fuchsia-950: oklch(0.23 0.043 330);
+  --color-pink-50: oklch(0.975 0.018 345); --color-pink-100: oklch(0.945 0.038 345); --color-pink-200: oklch(0.89 0.060 345); --color-pink-300: oklch(0.8 0.087 345);
+  --color-pink-400: oklch(0.7 0.105 345); --color-pink-500: oklch(0.61 0.108 345); --color-pink-600: oklch(0.53 0.105 345); --color-pink-700: oklch(0.45 0.093 345);
+  --color-pink-800: oklch(0.37 0.075 345); --color-pink-900: oklch(0.3 0.060 345); --color-pink-950: oklch(0.23 0.045 345);
+  --color-rose-50: oklch(0.975 0.013 10); --color-rose-100: oklch(0.945 0.030 10); --color-rose-200: oklch(0.89 0.055 10); --color-rose-300: oklch(0.8 0.081 10);
+  --color-rose-400: oklch(0.7 0.098 10); --color-rose-500: oklch(0.61 0.106 10); --color-rose-600: oklch(0.53 0.106 10); --color-rose-700: oklch(0.45 0.098 10);
+  --color-rose-800: oklch(0.37 0.081 10); --color-rose-900: oklch(0.3 0.064 10); --color-rose-950: oklch(0.23 0.047 10);
+  --color-red-50: oklch(0.975 0.014 25); --color-red-100: oklch(0.945 0.033 25); --color-red-200: oklch(0.89 0.062 25); --color-red-300: oklch(0.8 0.090 25);
+  --color-red-400: oklch(0.7 0.109 25); --color-red-500: oklch(0.61 0.119 25); --color-red-600: oklch(0.53 0.119 25); --color-red-700: oklch(0.45 0.109 25);
+  --color-red-800: oklch(0.37 0.090 25); --color-red-900: oklch(0.3 0.071 25); --color-red-950: oklch(0.23 0.052 25);
+  --color-orange-50: oklch(0.975 0.015 48); --color-orange-100: oklch(0.945 0.035 48); --color-orange-200: oklch(0.89 0.065 48); --color-orange-300: oklch(0.8 0.095 48);
+  --color-orange-400: oklch(0.7 0.115 48); --color-orange-500: oklch(0.61 0.125 48); --color-orange-600: oklch(0.53 0.125 48); --color-orange-700: oklch(0.45 0.115 48);
+  --color-orange-800: oklch(0.37 0.095 48); --color-orange-900: oklch(0.3 0.075 48); --color-orange-950: oklch(0.23 0.055 48);
+  --color-amber-50: oklch(0.975 0.015 62); --color-amber-100: oklch(0.945 0.035 62); --color-amber-200: oklch(0.89 0.065 62); --color-amber-300: oklch(0.8 0.095 62);
+  --color-amber-400: oklch(0.7 0.115 62); --color-amber-500: oklch(0.61 0.125 62); --color-amber-600: oklch(0.53 0.125 62); --color-amber-700: oklch(0.45 0.115 62);
+  --color-amber-800: oklch(0.37 0.095 62); --color-amber-900: oklch(0.3 0.075 62); --color-amber-950: oklch(0.23 0.055 62);
+  --color-yellow-50: oklch(0.975 0.013 85); --color-yellow-100: oklch(0.945 0.030 85); --color-yellow-200: oklch(0.89 0.055 85); --color-yellow-300: oklch(0.8 0.081 85);
+  --color-yellow-400: oklch(0.7 0.098 85); --color-yellow-500: oklch(0.61 0.106 85); --color-yellow-600: oklch(0.53 0.106 85); --color-yellow-700: oklch(0.45 0.098 85);
+  --color-yellow-800: oklch(0.37 0.081 85); --color-yellow-900: oklch(0.3 0.064 85); --color-yellow-950: oklch(0.23 0.047 85);
+
+  font-family: var(--gb-sans);
+}
+
+/* ----------------------------------------------------------------------------
+   Ambient light instead of grid + scan lines: champagne from the top right,
+   a hint of orchid bottom left. The shells' glow-orb layer carries it, so it
+   paints above their opaque `bg-background` root; body carries it for apps
+   without a shell.
+   ---------------------------------------------------------------------------- */
+.gold-bento body,
+body.gold-bento {
+  font-family: var(--gb-sans);
+  letter-spacing: normal;
+  background:
+    radial-gradient(52rem 30rem at 82% -8%, rgb(227 199 159 / 0.12), transparent 65%),
+    radial-gradient(40rem 26rem at 30% 108%, rgb(217 168 200 / 0.06), transparent 60%),
+    var(--background);
+  background-attachment: fixed;
+}
+
+.gold-bento [data-glow-orbs] {
+  background-image:
+    radial-gradient(52rem 30rem at 82% -8%, rgb(227 199 159 / 0.12), transparent 65%),
+    radial-gradient(40rem 26rem at 30% 108%, rgb(217 168 200 / 0.06), transparent 60%);
+}
+
+/* Decoration layers only (`:empty`): an app that puts `cyber-grid` on its page
+   wrapper (claude-history) keeps its content and loses just the grid and the
+   hard-coded near-black fill, so the ambient light shows through. */
+.gold-bento [data-glow-orbs] > *,
+.gold-bento :is(.cyber-grid, .scan-lines):empty {
+  display: none;
+}
+
+.gold-bento .cyber-grid:not(:empty) {
+  background-image: none;
+  background-color: transparent;
+}
+
+.gold-bento ::selection {
+  background-color: color-mix(in oklch, var(--champagne) 30%, transparent);
+  color: var(--foreground);
+}
+
+.gold-bento * {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--muted-foreground) 35%, transparent) transparent;
+}
+
+/* ----------------------------------------------------------------------------
+   One family: monospace stays for real code only. Uppercase micro-labels keep
+   their case but lose the terminal tracking.
+   ---------------------------------------------------------------------------- */
+.gold-bento .font-mono:not(:is(code, pre, kbd, samp, code *, pre *)),
+.gold-bento svg text {
+  font-family: var(--gb-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+.gold-bento .uppercase:is(.tracking-wider, .tracking-widest, [class*="tracking-[0."]) {
+  letter-spacing: 0.06em;
+  font-weight: 500;
+}
+
+/* ----------------------------------------------------------------------------
+   Accent text. `--accent` is a surface here, so text that used it as a
+   highlight colour gets orchid instead of disappearing.
+   ---------------------------------------------------------------------------- */
+.gold-bento .text-accent {
+  color: var(--orchid);
+}
+
+.gold-bento .border-accent {
+  border-color: color-mix(in oklch, var(--orchid) 35%, transparent);
+}
+
+/* The shared wow-components hardcode neon hexes; map each to its softened hue. */
+.gold-bento :is(.icon-container-cyan, .tag-cyan) { background: rgb(143 211 203 / 0.12); color: var(--teal); }
+.gold-bento :is(.icon-container-emerald, .tag-emerald) { background: rgb(159 208 180 / 0.12); color: var(--sage); }
+.gold-bento :is(.icon-container-orange, .tag-orange) { background: rgb(240 196 143 / 0.12); color: var(--apricot); }
+.gold-bento :is(.icon-container-red, .tag-red) { background: rgb(240 138 126 / 0.12); color: var(--coral); }
+.gold-bento :is(.icon-container-blue, .tag-blue) { background: rgb(169 184 236 / 0.12); color: var(--periwinkle); }
+.gold-bento :is(.icon-container-purple, .icon-container-violet, .icon-container-pink, .tag-purple, .tag-pink) {
+  background: rgb(217 168 200 / 0.12);
+  color: var(--orchid);
+}
+
+.gold-bento :is(.section-label, .section-label-emerald) { color: var(--sage); }
+.gold-bento .section-label-cyan { color: var(--teal); }
+.gold-bento .section-label-orange { color: var(--apricot); }
+.gold-bento .section-label-blue { color: var(--periwinkle); }
+.gold-bento :is(.section-label-purple, .section-label-violet, .section-label-rose) { color: var(--orchid); }

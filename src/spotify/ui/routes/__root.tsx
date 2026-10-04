@@ -2,6 +2,7 @@ import { FilterBar } from "@app/spotify/ui/components/FilterBar";
 import { FiltersProvider } from "@app/spotify/ui/lib/filters";
 import appCss from "@app/spotify/ui/styles.css?url";
 import { DashboardLayout } from "@genesiscz/utils/ui/layouts/DashboardLayout";
+import { useDashboardTheme } from "@genesiscz/utils/ui/theme/dashboard-theme";
 import { createRootRoute, HeadContent, Outlet, Scripts, useRouter, useRouterState } from "@tanstack/react-router";
 import {
     Activity,
@@ -57,8 +58,10 @@ export const Route = createRootRoute({
 });
 
 function RootDocument({ children }: { children: ReactNode }) {
+    const { documentClassName } = useDashboardTheme("spotify");
+
     return (
-        <html lang="en" className="cyberpunk">
+        <html lang="en" className={documentClassName}>
             <head>
                 <HeadContent />
             </head>
@@ -95,6 +98,7 @@ function SpotifyLayout({ children }: { children: ReactNode }) {
             activePath={currentPath}
             onNavigate={(href: string) => router.navigate({ to: href })}
             rightSlot={<FilterBar />}
+            themeKey="spotify"
         >
             <div className="max-w-6xl mx-auto px-3 sm:px-6 py-6">{children}</div>
         </DashboardLayout>

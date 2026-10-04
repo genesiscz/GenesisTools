@@ -1,5 +1,6 @@
 import { createRootRoute, HeadContent, Outlet, Scripts, useRouter, useRouterState } from "@tanstack/react-router";
 import { DashboardLayout } from "@ui/layouts/DashboardLayout";
+import { useDashboardTheme } from "@ui/theme/dashboard-theme";
 import { Activity, BarChart3, Building2, Clock, GitCompare, Search, Star } from "lucide-react";
 import { Toaster } from "sonner";
 import appCss from "../styles.css?url";
@@ -29,8 +30,10 @@ export const Route = createRootRoute({
 });
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+    const { documentClassName } = useDashboardTheme("reas");
+
     return (
-        <html lang="en" className="cyberpunk">
+        <html lang="en" className={documentClassName}>
             <head>
                 <HeadContent />
             </head>
@@ -69,6 +72,7 @@ function ReasLayout() {
     return (
         <DashboardLayout
             title="REAS"
+            themeKey="reas"
             titleAccent="Analyzer"
             icon={<BarChart3 className="w-4 h-4 text-primary" />}
             navLinks={navLinks}
