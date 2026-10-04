@@ -14,6 +14,7 @@ export {
 export { isQuietOutput } from "./output-mode";
 export { commandWords, parseNonNegativeInt } from "./parse";
 export { printLn, writeStdout } from "./stdout";
+export { toolCommand } from "./tool-command";
 export type { CollectedOutput, RunToolOptions } from "./tools";
 export { collectOutput, execTool, execToolInteractive, spawnToolDetached } from "./tools";
 export { parseVariadic } from "./variadic";
