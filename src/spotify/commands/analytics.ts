@@ -15,6 +15,13 @@ import {
     obsessionsReport,
 } from "@app/spotify/lib/reports/discovery";
 import { dnaReport, shiftReport } from "@app/spotify/lib/reports/insight";
+import {
+    isRecommendMethod,
+    RECOMMEND_METHODS,
+    type RecommendMethod,
+    type RecommendOpts,
+    recommendReport,
+} from "@app/spotify/lib/reports/recommend";
 import { summaryReport } from "@app/spotify/lib/reports/summary";
 import {
     calendarReport,
@@ -35,11 +42,14 @@ import {
     renderObsessions,
 } from "@app/spotify/render/discovery";
 import { renderDna, renderShift } from "@app/spotify/render/insight";
+import { renderRecommend } from "@app/spotify/render/recommend";
 import { renderSummary } from "@app/spotify/render/summary";
 import { renderCalendar, renderClock, renderSeasons, renderTimeline } from "@app/spotify/render/time";
 import { renderTop } from "@app/spotify/render/top";
 import { renderWrapped } from "@app/spotify/render/wrapped";
+import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -253,4 +263,61 @@ export function registerAnalytics(program: Command): void {
     ).action((year: string | undefined, o: CommonOpts) => {
         emit(o.json, wrappedReport(year, o), renderWrapped);
     });
+
+    common(
+        program
+            .command("recommend")
+            .description("artists and albums you will probably like, picked by one of four methods")
+            .option(
+                "-m, --method [name]",
+                `how to pick: ${RECOMMEND_METHODS.map((m) => m.id).join(", ")} (default bursts)`
+            )
+            .option("--window <days>", "bursts: likes this close together form one burst", "14")
+            .option("--min <n>", "bursts: liked songs per burst (2); unfinished / old-loves: minimum plays")
+            .option("--quiet-months <n>", "old-loves: silent for at least this many months", "12")
+            .option("--gap <minutes>", "neighbours: silence that ends a listening session", "30")
+    ).action(async (o: Omit<RecommendOpts, "method"> & { method?: string | true }) => {
+        const method = await resolveMethod(o.method);
+        if (!method) {
+            return;
+        }
+
+        emit(o.json, recommendReport({ ...o, method }), (r) => renderRecommend(r, limitOf(o)));
+    });
+}
+
+/** `--method` omitted means bursts; a bare or unknown `--method` asks (TTY) or lists the values. */
+async function resolveMethod(given: string | true | undefined): Promise<RecommendMethod | null> {
+    if (given === undefined) {
+        return "bursts";
+    }
+
+    if (typeof given === "string" && isRecommendMethod(given)) {
+        return given;
+    }
+
+    const ids = RECOMMEND_METHODS.map((m) => m.id);
+    if (!isInteractive()) {
+        out.error(
+            suggestEnumFlag("tools spotify", "--method", ids, {
+                given: typeof given === "string" ? given : undefined,
+            })
+        );
+        process.exitCode = 1;
+
+        return null;
+    }
+
+    const picked = await p.select({
+        message: "How should I pick?",
+        options: RECOMMEND_METHODS.map((m) => ({ value: m.id, label: m.title, hint: m.description })),
+    });
+
+    if (p.isCancel(picked)) {
+        return null;
+    }
+
+    const value = String(picked);
+
+    return isRecommendMethod(value) ? value : null;
 }
