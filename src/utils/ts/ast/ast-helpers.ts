@@ -1272,7 +1272,7 @@ function refersToModuleBinding(path: ASTPath<Node>, name: string): boolean {
  * (`memo(Button)`, `Button.displayName`), JSX tags and the object of a JSX member tag (`<Button.Label />`), type
  * references and `typeof`. A reference to an inner binding that shadows the name stays, and so do property keys,
  * member properties and JSX attribute names. A shorthand property keeps its key (`{ Button: LocalButton }`) and an
- * export specifier its exported name (`export { LocalButton as Button }`). The declaration that binds the name,
+ * export specifier the name it exports (`export { LocalButton as Button }`). The declaration that binds the name,
  * such as the import specifier, is left to the caller.
  */
 export function renameModuleBinding(j: JSCodeshift, root: Collection, oldName: string, newName: string): void {
@@ -1297,8 +1297,15 @@ export function renameModuleBinding(j: JSCodeshift, root: Collection, oldName: s
         }
 
         if (j.ExportSpecifier.check(parent)) {
+            // the exported name stays whatever it was (`export { Button as PublicButton }` keeps PublicButton), and
+            // so does an `export type` marker on the specifier
+            const exportedName = typeof parent.exported?.name === "string" ? parent.exported.name : oldName;
+            const replacement = j.exportSpecifier.from({
+                local: j.identifier(newName),
+                exported: j.identifier(exportedName),
+            });
             parentPath.replace(
-                j.exportSpecifier.from({ local: j.identifier(newName), exported: j.identifier(oldName) })
+                "exportKind" in parent ? Object.assign(replacement, { exportKind: parent.exportKind }) : replacement
             );
             return;
         }

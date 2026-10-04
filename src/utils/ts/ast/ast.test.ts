@@ -974,6 +974,19 @@ describe("ImportConflictResolver", () => {
         );
     });
 
+    it("aliasing a binding keeps the name an export specifier already exports", () => {
+        const { root, resolver } = conflictResolver(
+            `import { Button } from "./Button";\nexport { Button as PublicButton };`
+        );
+
+        resolver.trackResolution(resolver.resolveComponentUsage("OldButton", "Button", PRIMARY, PRIMARY));
+        resolver.applyImportChanges();
+
+        expect(flat(root.toSource())).toBe(
+            `import { Button as ${PREFIX}Button } from "./Button"; import { Button } from "${PRIMARY}"; export { ${PREFIX}Button as PublicButton };`
+        );
+    });
+
     it("a new import joins one plain value import of the module, never a type-only or namespace one", () => {
         const typeAndNamespace = conflictResolver(
             `import type { Props } from "${PRIMARY}";\nimport * as UI from "${PRIMARY}";\nconst a = <OldHeader />;`
