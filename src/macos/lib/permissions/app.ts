@@ -12,6 +12,7 @@ import {
     genesisAppInstallMarkerPath,
     genesisAppLauncherPath,
 } from "@genesiscz/utils/macos/genesis-app";
+import { detectXcodeToolchain, genesisAppBuildHint, type XcodeToolchain } from "@genesiscz/utils/macos/xcode";
 import { clearPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { withFileLock } from "@genesiscz/utils/storage";
@@ -259,6 +260,18 @@ export async function buildApp(options?: { onStep?: (message: string) => void })
     );
 }
 
+/**
+ * Refuses before `swift build` ever runs when the active toolchain is the Command Line Tools
+ * (or nothing at all): GenesisKit's SwiftUI macros (`@State`, `@Entry`) need the `SwiftUIMacros`
+ * compiler plugin, which ships only with full Xcode, and a build without it fails with 100+
+ * cascading "plugin for module 'SwiftUIMacros' not found" errors instead of one clear message (#445).
+ */
+export function assertFullXcodeToolchain(toolchain: XcodeToolchain): void {
+    if (toolchain.kind !== "xcode") {
+        throw new Error(genesisAppBuildHint(toolchain));
+    }
+}
+
 async function buildAppLocked(options?: { onStep?: (message: string) => void }): Promise<BuildResult> {
     const step = options?.onStep ?? (() => {});
 
@@ -269,6 +282,8 @@ async function buildAppLocked(options?: { onStep?: (message: string) => void }):
     if (!Bun.which("swift")) {
         throw new Error("swift not found. Install Xcode or the Command Line Tools, then re-run.");
     }
+
+    assertFullXcodeToolchain(detectXcodeToolchain());
 
     step("swift build -c release");
     const build = run(["swift", "build", "-c", "release"], APP_SOURCE_DIR);

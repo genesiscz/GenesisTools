@@ -8,6 +8,7 @@ import {
     isRunningUnderGenesisApp,
 } from "./genesis-app";
 import { MacOS } from "./MacOS";
+import { genesisAppBuildHint } from "./xcode";
 
 /**
  * Full Disk Access has no system prompt: the user adds the app to a list by hand. This is the
@@ -101,7 +102,7 @@ export function fullDiskAccessInstructions(context: FullDiskAccessContext): stri
         `Add ${fullDiskAccessSubject()} in System Settings > Privacy & Security > Full Disk Access and switch it on. ${others.join(" and ")} start working too, from any terminal and from background services.`,
         isRunningUnderGenesisApp()
             ? "There is no prompt for this one. `tools macos permissions open --pane full-disk-access` opens the list and reveals the app in Finder."
-            : "Run `tools macos permissions build` first, so GenesisTools holds the grant instead of whichever terminal ran the command.",
+            : `${genesisAppBuildHint()} That build makes GenesisTools hold the grant instead of whichever terminal ran the command.`,
     ].join("\n");
 }
 

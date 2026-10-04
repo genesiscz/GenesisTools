@@ -26,7 +26,7 @@
         },
         {
             "name": "genesis-tools-server",
-            "description": "Linux server security auditing and hardening tools. Provides comprehensive security analysis including log analysis, intrusion detection, malware scanning, and rootkit detection.",
+            "description": "A single Claude Code command for Linux server security auditing: log analysis, intrusion detection, malware scanning, and rootkit detection. Not an MCP server, despite the name.",
             "version": "1.0.0",
             "author": {
                 "name": "GenesisTools"

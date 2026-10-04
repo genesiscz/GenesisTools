@@ -5,6 +5,7 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
 import { requestFullDiskAccess } from "@genesiscz/utils/macos/full-disk-access";
 import { genesisAppBundlePath, genesisAppDisabledMarkerPath } from "@genesiscz/utils/macos/genesis-app";
+import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { Command } from "commander";
 import { buildApp } from "../../lib/permissions/app";
 import { type PermissionsReport, permissionsReport, SETTINGS_PANES, settingsUrl } from "../../lib/permissions/report";
@@ -144,7 +145,7 @@ export function registerPermissionsCommand(program: Command): void {
             const bundle = genesisAppBundlePath();
 
             if (!existsSync(bundle)) {
-                ui.err(`${bundle} is not built. Run: tools macos permissions build`);
+                ui.err(`${bundle} is not built. ${genesisAppBuildHint()}`);
                 process.exitCode = 1;
                 return;
             }
@@ -206,7 +207,7 @@ export function registerPermissionsCommand(program: Command): void {
             const bundle = genesisAppBundlePath();
 
             if (!existsSync(bundle)) {
-                ui.err(`${bundle} is not built, so there is nothing to grant yet. Run: tools macos permissions build`);
+                ui.err(`${bundle} is not built, so there is nothing to grant yet. ${genesisAppBuildHint()}`);
                 process.exitCode = 1;
                 return;
             }

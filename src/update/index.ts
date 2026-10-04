@@ -8,8 +8,10 @@ import { execTool, execToolInteractive, isInteractive, runTool, suggestCommand }
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { Command } from "commander";
 import pc from "picocolors";
+import { genesisAppRefreshAction } from "./genesis-app-refresh";
 import {
     MARKETPLACE_FALLBACK_SOURCE,
     MARKETPLACE_NAME,
@@ -325,6 +327,12 @@ async function offerServiceRestarts(): Promise<void> {
     await execToolInteractive(["services", "restart", "--stale"]);
 }
 
+/**
+ * Keeps an already-installed GenesisTools.app current. #445 made the FIRST build opt-in
+ * (`install.sh` asks, this command never did): someone who answered "no", or who runs an
+ * old `install.sh` that predates the app, must not have it installed behind their back by a
+ * routine update.
+ */
 async function refreshGenesisApp(): Promise<void> {
     if (process.platform !== "darwin") {
         return;
@@ -332,37 +340,14 @@ async function refreshGenesisApp(): Promise<void> {
 
     const status = appStatus();
 
-    if (status.built && !status.stale) {
+    if (genesisAppRefreshAction(status) === "skip") {
         return;
     }
 
-    // Missing is the common case on the first update after this landed: `install.sh` builds the
-    // bundle, but nobody re-runs that to update. Without this an existing user would silently keep
-    // the old model, where each terminal owns its own grants.
-    const installing = !status.built;
-    out.println(
-        pc.dim(
-            installing
-                ? "\n  Installing GenesisTools.app, which owns the macOS privacy grants for tools..."
-                : "\n  Rebuilding GenesisTools.app (its sources changed in this update)..."
-        )
-    );
+    out.println(pc.dim("\n  Rebuilding GenesisTools.app (its sources changed in this update)..."));
 
     try {
         const result = await buildApp({ onStep: (message) => out.println(pc.dim(`    ${message}`)) });
-
-        if (installing) {
-            out.println(pc.green(`  GenesisTools.app installed at ${result.bundlePath}`));
-            out.println(
-                pc.dim(
-                    "  Calendars, Reminders, Contacts and Full Disk Access now attach to it instead of to each terminal."
-                )
-            );
-            out.println(
-                pc.dim("  Review and grant: tools macos permissions    Opt out: tools macos permissions disable")
-            );
-            return;
-        }
 
         out.println(
             pc.green(
@@ -370,17 +355,11 @@ async function refreshGenesisApp(): Promise<void> {
             )
         );
     } catch (err) {
-        logger.warn({ err, installing }, "update: GenesisTools.app build failed");
+        logger.warn({ err }, "update: GenesisTools.app rebuild failed");
         out.println(
-            pc.yellow(`  Could not build GenesisTools.app: ${err instanceof Error ? err.message : String(err)}`)
+            pc.yellow(`  Could not rebuild GenesisTools.app: ${err instanceof Error ? err.message : String(err)}`)
         );
-        out.println(
-            pc.dim(
-                installing
-                    ? "  Tools keep working under your terminal's own permissions. Retry with: tools macos permissions build"
-                    : "  Tools keep running under the previous bundle. Rebuild later with: tools macos permissions build"
-            )
-        );
+        out.println(pc.dim(`  Tools keep running under the previous bundle. ${genesisAppBuildHint()}`));
     }
 }
 

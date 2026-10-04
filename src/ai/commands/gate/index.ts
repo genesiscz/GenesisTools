@@ -16,6 +16,7 @@ import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { parseJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { isGenesisAppRpcAvailable } from "@genesiscz/utils/macos/genesis-app-rpc";
+import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { createBoxTable, renderCliHeader, renderCliSection, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -210,7 +211,7 @@ export function registerGateCommands(program: Command): void {
         .action(() => {
             const available = isGenesisAppRpcAvailable();
             out.println(
-                `${available ? pc.green("● ok") : pc.red("● missing")} GenesisTools.app RPC ${available ? "installed" : "not installed or switched off (tools macos permissions build)"}`
+                `${available ? pc.green("● ok") : pc.red("● missing")} GenesisTools.app RPC ${available ? "installed" : `not installed or switched off: ${genesisAppBuildHint()}`}`
             );
             out.println(`${pc.dim("grants")} ${grantsPath()}`);
             out.println(`${pc.dim("audit ")} ${auditPath()}`);

@@ -5,6 +5,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { json2md, jsonToBlocks } from "@genesiscz/utils/json2md";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
+import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { Storage, withFileLock } from "@genesiscz/utils/storage";
 
 /**
@@ -581,7 +582,7 @@ export function hubStatus(): { available: boolean; bundlePath: string; reason?: 
         return {
             available: false,
             bundlePath,
-            reason: "GenesisTools.app is not installed (tools macos permissions build)",
+            reason: `GenesisTools.app is not installed: ${genesisAppBuildHint()}`,
         };
     }
 

@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
+import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { hubStatus } from "./proposal";
 
 export const HUB_MODES = ["sessions", "worktrees", "prs", "inbox", "timeline", "agents"] as const;
@@ -167,7 +168,7 @@ export async function openHub(options: OpenHubOptions): Promise<OpenHubResult> {
 
     if (reason) {
         if (options.build === false) {
-            throw new Error(`${reason}; run without --no-build, or: tools macos permissions build`);
+            throw new Error(`${reason}; run without --no-build, or: ${genesisAppBuildHint()}`);
         }
 
         options.onStep?.(`${reason}: building it (about a minute on a cold build)`);

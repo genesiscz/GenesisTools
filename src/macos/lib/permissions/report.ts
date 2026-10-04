@@ -10,6 +10,7 @@ import {
     type ResponsibleIdentity,
     responsibleIdentity,
 } from "@genesiscz/utils/macos/genesis-app";
+import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { type AppStatus, appStatus } from "./app";
 import {
     isTccGranted,
@@ -144,15 +145,13 @@ export function collectProblems(report: Omit<PermissionsReport, "problems">): st
     }
 
     if (!report.app.built) {
-        problems.push(
-            "GenesisTools.app is not built: permissions follow the terminal. Run `tools macos permissions build`."
-        );
+        problems.push(`GenesisTools.app is not built: permissions follow the terminal. ${genesisAppBuildHint()}`);
     } else if (!report.app.identityStable) {
         problems.push(
             "GenesisTools.app is ad-hoc signed: every rebuild gets a new identity and macOS forgets its grants. Sign with a Developer ID or Apple Development certificate."
         );
     } else if (report.app.stale) {
-        problems.push("GenesisTools.app sources changed since the last build. Run `tools macos permissions build`.");
+        problems.push(`GenesisTools.app sources changed since the last build. ${genesisAppBuildHint()}`);
     }
 
     if (report.app.built && report.launchdJobsOutsideApp.length > 0) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { retiredBundlesToKeep, runningExecutableInodes } from "./app";
+import { assertFullXcodeToolchain, retiredBundlesToKeep, runningExecutableInodes } from "./app";
 
 describe("runningExecutableInodes", () => {
     it("reads the inode lines of lsof -Fi and ignores the rest", () => {
@@ -14,6 +14,27 @@ describe("runningExecutableInodes", () => {
 
     it("keeps every retired bundle when lsof failed after printing part of the list", () => {
         expect(runningExecutableInodes({ code: 1, stdout: ["p101", "ftxt", "i42"].join("\n") })).toBeNull();
+    });
+});
+
+describe("assertFullXcodeToolchain", () => {
+    it("does not throw when the full Xcode toolchain is active", () => {
+        expect(() =>
+            assertFullXcodeToolchain({ kind: "xcode", developerDir: "/Applications/Xcode.app/Contents/Developer" })
+        ).not.toThrow();
+    });
+
+    it("refuses with the Xcode-install hint instead of letting swift build run and dump errors", () => {
+        expect(() =>
+            assertFullXcodeToolchain({
+                kind: "command-line-tools",
+                developerDir: "/Library/Developer/CommandLineTools",
+            })
+        ).toThrow("GenesisTools.app needs the full Xcode");
+    });
+
+    it("refuses the same way when xcode-select names no toolchain at all", () => {
+        expect(() => assertFullXcodeToolchain({ kind: "none" })).toThrow("GenesisTools.app needs the full Xcode");
     });
 });
 

@@ -84,15 +84,29 @@ bun install && ./install.sh
 ```
 
 `install.sh` checks for Bun, installs dependencies if `node_modules` is missing, then puts the
-repo on your `PATH`. On macOS and Linux it appends its lines to `~/.zshrc` and `~/.bashrc`. On Windows
-(Git Bash, MSYS, Cygwin) it sets `GENESIS_TOOLS_PATH` and extends the user `PATH` via `setx`
-and PowerShell.
+repo on your `PATH`. On macOS and Linux it updates whichever of `~/.zshrc` / `~/.bashrc` already
+exist, plus the rc files of your login shell (`$SHELL`) and of the shell you run it from (each
+created if it is missing) — it never creates `~/.bashrc` on a zsh-only Mac unless you run it from
+bash. On Windows (Git Bash, MSYS, Cygwin) it sets `GENESIS_TOOLS_PATH`
+and extends the user `PATH` via `setx` and PowerShell.
 
-Reload your shell afterward:
+On macOS, `install.sh` also offers to build **GenesisTools.app** (a signed launcher that lets
+tools own macOS privacy grants — Calendars, Reminders, Full Disk Access — instead of your
+terminal owning them). This is optional: say no, or run it later with `bun run build:app`.
+Building it needs the **full Xcode app**, not just the Command Line Tools (SwiftUI macros ship
+only with Xcode); on a Command Line Tools-only Mac, `install.sh` explains that instead of asking.
+
+Reload your shell afterward: open a new terminal, or source the rc file of the shell you are
+typing in (only that one; the other may not exist). In zsh:
 
 ```bash
-source ~/.zshrc    # zsh
-source ~/.bashrc   # bash
+source ~/.zshrc
+```
+
+In bash:
+
+```bash
+source ~/.bashrc
 ```
 
 ### First command
@@ -157,9 +171,12 @@ you. Set `TOOLS_SKIP_AUTOINSTALL=1` to suppress that.
 ## 🎯 Claude Code plugin
 
 The repo ships two Claude Code plugins through the marketplace file at
-`.claude-plugin/marketplace.json`. The main one, `genesis-tools` (currently version 1.0.48),
-contains **4 commands**, **25 skills**, **2 subagents**, **4 hook registrations**, and a stdio
-**MCP server**.
+`.claude-plugin/marketplace.json`. The main one, `genesis-tools` (currently version 1.0.77),
+contains **6 commands**, **31 skills**, **2 subagents**, and **6 hook registrations**.
+
+The plugin does **not** register an MCP server — `plugin.json` has no `mcpServers` entry. The
+genesis-tools MCP server described further down is a separate opt-in step
+(`tools claude mcp install`).
 
 Commands are invoked explicitly as `/gt:<name>`, which comes from each command file's own
 `name:` frontmatter. Skills load themselves when the conversation matches their trigger
@@ -179,7 +196,14 @@ Add this repository as a plugin marketplace, then install the plugin:
 Because the plugin is installed from the GitHub remote, local edits to `plugins/` only take
 effect after you push and run `/plugin update`.
 
-### Commands (4)
+That installs commands, skills, subagents and hooks only. To also register the
+**genesis-tools MCP server** with Claude Code:
+
+```bash
+tools claude mcp install
+```
+
+### Commands (6)
 
 | Command | Argument hint | What it does |
 |---------|---------------|--------------|
@@ -187,6 +211,8 @@ effect after you push and run `/plugin update`.
 | `/gt:github-pr` | `<pr-number-or-url> [-u] [-w] [--save] [--open] [--open-only]` | Fix PR review comments: fetch threads, verify each claim against the source, pick which to fix, implement, commit, reply. |
 | `/gt:automate` | `[run\|list\|show\|create] [name-or-args]` | Build or run multi-step `tools` CLI automation presets. |
 | `/gt:timelog` | `[date or range]` | Sync Timely to Azure DevOps time logs, then fill Clarity PPM timesheets. |
+| `/gt:git-recommit` | `[<count> \| --min <n> --max <n>]` | Recompose the current branch's commits into N clean, scope-organised commits with the same final tree. |
+| `/gt:git-recompose-branches` | `[<commit-count>] [<source-branch>] [<pattern,pattern,…>]` | Split a branch's commits into separate branches by file-pattern groups, with a verified split. |
 
 `/gt:github-pr` also handles multiple PRs in one invocation: pass several URLs and it works
 them in parallel, writes a per-PR plan, and presents one consolidated report.
@@ -194,19 +220,25 @@ them in parallel, writes a per-PR plan, and presents one consolidated report.
 `/gt:automate` and `/gt:timelog` are deliberately commands rather than skills. Their guidance
 is large, and as skills they would load into sessions that never needed them.
 
-### Skills (25)
+### Skills (31)
 
 | Skill | What it does |
 |-------|--------------|
 | `agents-talk` | Cross-agent messaging protocol via `tools agents`. Invoke before spawning subagents that must talk to each other. |
 | `analyze-har` | Token-efficient HAR analysis. The rule it enforces: never `cat` or `jq` a HAR file. |
+| `artifact` | Create, serve, and build local dashboards and single-file HTML artifacts via `tools artifact`, with a 40+ component kit (React, Tailwind, charts, diffs). |
 | `azure-devops` | Work items, queries, sprints, dashboards. Defers time logging to `/gt:timelog`. |
+| `browser-router` | Route non-web links so a click on this Mac runs a saved command instead of opening a page. |
+| `chrome-devtools` | Drive a real running browser over the Chrome DevTools Protocol to debug auth loops, cookie/session issues, and captured HAR files. |
 | `claude-history` | Find native Claude, Codex or Grok conversations by topic, file or date. |
 | `debugging-master` | Hypothesis-driven runtime debugging with temporary, auto-cleanable instrumentation (Node/TS, PHP, browser). |
+| `fable-replace` | Verified, transactional find/replace for code and docs, instead of sed/perl/repeated edits, for a change spanning more than one file or spot. |
 | `git` | Branch mechanics with proof: is it merged (by content), rebase one branch or a fleet, the oracle merge, cascade a parent and its children, clean up after a merge, recommit, split a branch, merge a PR. Drives `tools git merged`, `rebase-cascade`, `base`, `config`. |
 | `github` | Read or search GitHub, and analyze GitHub Actions runs, failures, and billing. |
 | `handoff-to` | Offload work to another model or agent and pick which one (Codex/GPT, grok, Claude on another account, sonnet, opus, fable); per-backend mechanics in its `references/`. |
 | `improve-agents-md` | Empirically evaluate and trim `CLAUDE.md` / `AGENTS.md` by testing which rules a clean model already follows. |
+| `jev-grep` | Find the source code for a behavior when you don't know the symbol or file, via `tools jev grep`. |
+| `json2md` | Generate markdown efficiently from JSON data. |
 | `living-docs` | Self-maintaining docs system: bootstrap, validate, refine minimal doc chunks. |
 | `macos-control` | Drive native macOS apps through the Accessibility API, and record short screen captures reviewed frame by frame. |
 | `mcp-scripting` | Call MCP tools from a plain TypeScript script via `tools scripts`, with types generated from each server's live `tools/list`. |
@@ -214,9 +246,11 @@ is large, and as skills they would load into sessions that never needed them.
 | `question` | Answer a question, then preserve the question and answer for later review. |
 | `react-compiler-debug` | Inspect `babel-plugin-react-compiler` output and explain memoization decisions. |
 | `research` | Answer questions that need information from outside the local codebase. |
+| `review-proposal` | Review a GitHub PR or GitLab MR and push the result into the GenesisTools.app review window as a proposal. |
 | `stash` | Save, apply, and unapply named code overlays across projects with `tools stash`. |
 | `summarize` | Summarize a Claude Code session into learnings, a postmortem, a changelog, or onboarding docs. |
 | `task` | Run long-lived interactive commands (dev servers, Metro, Vite) with PTY capture and an agent-friendly log tail. |
+| `tdd` | Test-first workflow for implementing any feature or bugfix, with mechanical RED/GREEN evidence gates. |
 | `timely` | Turn a day of Timely auto-tracked memories into time-log entries via a plan/apply workflow. |
 | `todo` | Project-scoped task tracking through `tools todo`, including timed todos synced to Apple Calendar. |
 | `typescript-error-fixer` | Fix TypeScript compile errors and eliminate `any`, one agent per file. |
@@ -232,19 +266,31 @@ Two subagents ship with the plugin:
 -   **`explore`** does deep codebase exploration and writes a persistent report, so findings
     survive the subagent exiting.
 
-Four hook registrations in `plugins/genesis-tools/hooks/hooks.json`:
+Six hook registrations in `plugins/genesis-tools/hooks/hooks.json`:
 
 | Event | Script | Purpose |
 |-------|--------|---------|
 | `SessionStart` | `track-session-files.ts` | Start the per-session record of modified files. |
+| `SessionStart` | `agents-talk-hint.ts` | Surface the agents-talk protocol hint at session start. |
 | `SessionStart` | `record-session-account.ts` | Record which Claude account the session is billing. |
-| `PostToolUse` (`Edit\|Write\|MultiEdit`) | `track-session-files.ts` | Append each edited file to that session's record. |
+| `SessionStart` | `record-session-cmux.ts` | Record the cmux pane/surface the session is running in. |
+| `UserPromptSubmit` | `record-session-cmux.ts` | Keep the cmux pane record current as the session continues. |
+| `PostToolUse` (`Edit\|Write\|MultiEdit\|NotebookEdit`) | `track-session-files.ts` | Append each edited file to that session's record. |
 
 The session file record lands in
 `~/.genesis-tools/claude-code/sessions/<session-id>.json`, which is what makes
 "commit only the files you touched this session" possible.
 
 ### The genesis-tools MCP server
+
+Not registered by the plugin install above — `plugin.json` has no `mcpServers` entry, so
+Claude Code never starts it on its own. Register it once with:
+
+```bash
+tools claude mcp install   # registers the stdio server with Claude Code
+```
+
+The server itself runs as:
 
 ```bash
 tools claude mcp        # stdio MCP server
@@ -273,10 +319,10 @@ GENESIS_TOOLS_MCP_CAPABILITIES=boards                    # only the boards tools
 
 ### Second plugin: genesis-tools-server
 
-`genesis-tools-server` (version 1.0.0, category `security`) ships exactly one command:
-a comprehensive Linux server security audit that analyzes logs, detects attack patterns,
-identifies malicious IPs, checks security tool status, runs malware and rootkit scans, and
-generates the matching `fail2ban` commands.
+Despite the name, this is **not an MCP server**. `genesis-tools-server` (version 1.0.0,
+category `security`) ships exactly one command: a comprehensive Linux server security audit
+that analyzes logs, detects attack patterns, identifies malicious IPs, checks security tool
+status, runs malware and rootkit scans, and generates the matching `fail2ban` commands.
 
 ---
 
