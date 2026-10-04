@@ -13,7 +13,11 @@ export function renderRecommend(r: RecommendReport, limit: number): void {
     if (r.missingLibrary) {
         line("");
         line(`  ${c.yellow("This method needs your Liked Songs, and this profile has no harvested library.")}`);
-        line(`  ${c.grey("Run: tools spotify harvest --auto")}`);
+        line(`  ${c.grey("Make it with these commands, in order:")}`);
+        for (const step of r.nextSteps) {
+            line(`    ${step}`);
+        }
+
         line("");
 
         return;

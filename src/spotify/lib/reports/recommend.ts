@@ -15,8 +15,16 @@
  * The report only wires the profile and the catalogue in.
  */
 import { type ArtistCatalog, type CatalogArtist, type CatalogRelease, loadCatalog } from "@app/spotify/lib/catalog";
-import { type CommonOpts, context, head, minMsOf, numberOption, type ReportHead } from "@app/spotify/lib/context";
-import { type Play, songKey } from "@app/spotify/lib/history";
+import {
+    type CommonOpts,
+    context,
+    head,
+    minMsOf,
+    numberOption,
+    type ReportHead,
+    windowOptions,
+} from "@app/spotify/lib/context";
+import { applyFilter, type Play, songKey } from "@app/spotify/lib/history";
 import { type LibTrack, loadLibrary } from "@app/spotify/lib/library";
 import { sessionize } from "@app/spotify/lib/stats";
 
@@ -140,7 +148,7 @@ export interface ArtistStats {
 
 export interface ArtistIndex {
     artists: Map<string, ArtistStats>;
-    /** The newest counted play: "now" for every "how long ago" question, so fixtures are stable. */
+    /** "Now" for every "how long ago" question: the newest counted play or like, so fixtures are stable. */
     now: number;
 }
 
@@ -177,11 +185,35 @@ export interface ArtistIndexInput {
      * report passes the unfiltered list so a date window cannot make an old artist look new.
      */
     history?: Play[];
+    /**
+     * "Now" for every "how long ago" question. Defaults to `newestMoment` of `plays` and
+     * `library`; a report passes the newest moment of the WHOLE history in its date window, so an
+     * artist, genre or platform filter cannot stop the clock at the last play it kept.
+     */
+    now?: number;
 }
 
-export function buildArtistIndex({ plays, library, minMs, history }: ArtistIndexInput): ArtistIndex {
-    const artists = new Map<string, ArtistStats>();
+/** The newest counted play or dated like, or the current time when there is neither. */
+export function newestMoment({ plays, library, minMs }: { plays: Play[]; library: LibTrack[]; minMs: number }): number {
     let now = 0;
+    for (const p of plays) {
+        if (p.artist && p.ms >= minMs) {
+            now = Math.max(now, p.ts);
+        }
+    }
+
+    for (const t of library) {
+        const addedAt = t.addedAt ? Date.parse(t.addedAt) : Number.NaN;
+        if (Number.isFinite(addedAt)) {
+            now = Math.max(now, addedAt);
+        }
+    }
+
+    return now || Date.now();
+}
+
+export function buildArtistIndex({ plays, library, minMs, history, now }: ArtistIndexInput): ArtistIndex {
+    const artists = new Map<string, ArtistStats>();
 
     for (const p of plays) {
         if (!p.artist) {
@@ -203,7 +235,6 @@ export function buildArtistIndex({ plays, library, minMs, history }: ArtistIndex
         s.heard.add(p.name.toLowerCase());
         s.first = s.first === null ? p.ts : Math.min(s.first, p.ts);
         s.last = s.last === null ? p.ts : Math.max(s.last, p.ts);
-        now = Math.max(now, p.ts);
     }
 
     for (const t of library) {
@@ -220,9 +251,6 @@ export function buildArtistIndex({ plays, library, minMs, history }: ArtistIndex
             addedAt: Number.isFinite(addedAt) ? addedAt : null,
             album: t.album ? { name: t.album.name, uri: t.album.uri } : null,
         });
-        if (addedAt && Number.isFinite(addedAt)) {
-            now = Math.max(now, addedAt);
-        }
     }
 
     for (const p of history ?? []) {
@@ -233,7 +261,7 @@ export function buildArtistIndex({ plays, library, minMs, history }: ArtistIndex
         }
     }
 
-    return { artists, now: now || Date.now() };
+    return { artists, now: now ?? newestMoment({ plays, library, minMs }) };
 }
 
 const isoDay = (ts: number | null) => (ts === null ? null : new Date(ts).toISOString().slice(0, 10));
@@ -579,6 +607,11 @@ export interface RecommendReport {
     settings: { label: string; value: string }[];
     /** The method needs Liked Songs and this profile has no harvested library. */
     missingLibrary: boolean;
+    /**
+     * With `missingLibrary`: the commands that make the library, in order, for this profile.
+     * Empty otherwise. CLI and dashboard both print these, so they cannot drift apart.
+     */
+    nextSteps: string[];
     /** The whole ranking (`--json` promises every row); `limit` is how many a table shows. */
     recommendations: Recommendation[];
     limit: number;
@@ -598,22 +631,34 @@ export function recommendReport(o: RecommendOpts): RecommendReport {
     // genre-filtered run would still rank liked artists from every other genre.
     const narrowed = Boolean(o.artist || o.genre || o.platform);
     const played = new Set(ctx.plays.map((p) => p.artist.toLowerCase()));
-    const library = loadLibrary(ctx.profile).filter(
-        (t) => !narrowed || played.has(t.artists[0]?.name.toLowerCase() ?? "")
-    );
-    const index = buildArtistIndex({ plays: ctx.plays, library, minMs, history: ctx.all });
+    const fullLibrary = loadLibrary(ctx.profile);
+    const library = fullLibrary.filter((t) => !narrowed || played.has(t.artists[0]?.name.toLowerCase() ?? ""));
+    // "Now" comes from every play in the date window and every like, whatever the artist, genre or
+    // platform filter kept. From the filtered plays, `--artist Gone` stopped the clock at Gone's own
+    // last play, so an old love was never silent, and the neighbours' "recent" window moved with it.
+    const now = newestMoment({ plays: applyFilter(ctx.all, ctx.tz, windowOptions(o)), library: fullLibrary, minMs });
+    const index = buildArtistIndex({ plays: ctx.plays, library, minMs, history: ctx.all, now });
     const top = ctx.top;
 
     const catalog = loadCatalog();
     const catalogSize = Object.keys(catalog.artists).length;
 
-    if (method.needsLibrary && library.length === 0) {
+    // Only a profile with no library at all is missing one. A filter that keeps no liked artist
+    // is an empty result, and telling that user to harvest again would send them the wrong way.
+    if (method.needsLibrary && fullLibrary.length === 0) {
+        const name = ctx.profile.name;
+
         return {
             head: head(ctx),
             method,
             methods: RECOMMEND_METHODS,
             settings: [],
             missingLibrary: true,
+            nextSteps: [
+                ...(ctx.profile.dataDir ? [] : [`tools spotify profile add ${name} --data <dir>`]),
+                `tools spotify harvest --auto --profile ${name}`,
+                `tools spotify build --profile ${name}`,
+            ],
             recommendations: [],
             limit: top,
             catalog: { artists: catalogSize, covered: 0 },
@@ -673,6 +718,7 @@ export function recommendReport(o: RecommendOpts): RecommendReport {
         methods: RECOMMEND_METHODS,
         settings,
         missingLibrary: false,
+        nextSteps: [],
         recommendations: ranked,
         limit: top,
         catalog: { artists: catalogSize, covered: ranked.slice(0, top).filter((r) => r.inCatalog).length },

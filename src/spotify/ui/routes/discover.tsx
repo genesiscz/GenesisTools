@@ -97,7 +97,7 @@ function DiscoverPage() {
                                     {r.missingLibrary ? (
                                         <EmptyBlock
                                             title="This method needs your Liked Songs"
-                                            description="This profile has no harvested library yet. Run: tools spotify harvest --auto"
+                                            description={`This profile has no harvested library yet. Run: ${r.nextSteps.join(", then ")}`}
                                         />
                                     ) : (
                                         <Section
