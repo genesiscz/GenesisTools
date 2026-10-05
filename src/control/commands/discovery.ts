@@ -6,6 +6,9 @@ import pc from "picocolors";
 import { runAx } from "../lib/runner";
 import { addTargetOptions, targetArgs, targetLabel } from "../lib/target";
 
+/** Preflight only reads, so it may take longer than a native action's 10 s default (Calendar needs ~9.6 s). */
+const PREFLIGHT_TIMEOUT_MS = 30_000;
+
 export function registerDiscoveryCommands(program: Command): void {
     program
         .command("list")
@@ -318,7 +321,8 @@ export function registerDiscoveryCommands(program: Command): void {
             if (opts.wanted) {
                 axArgs.push("--wanted", opts.wanted);
             }
-            const result = runAx(axArgs);
+            // a read-only command: a slow app's full element list is worth more than the 10 s default
+            const result = runAx(axArgs, PREFLIGHT_TIMEOUT_MS);
             if (!result.ok) {
                 logger.error(String(result.error));
                 process.exit(1);
@@ -362,6 +366,9 @@ export function registerDiscoveryCommands(program: Command): void {
                         .sort((a, b) => b[1] - a[1])
                         .slice(0, 6);
                     out.println(`  ${roles.map(([r, n]) => `${r}:${n}`).join("  ")}\n`);
+                }
+                if (typeof result.elementsCut === "string") {
+                    out.println(pc.yellow(`  ${result.elementsCut}\n`));
                 }
                 const grouped = (result.grouped as Record<string, Array<Record<string, string>>>) ?? {};
                 const SHOW_ROLES = ["AXButton", "AXTextField", "AXCheckBox", "AXPopUpButton", "AXRadioButton"];

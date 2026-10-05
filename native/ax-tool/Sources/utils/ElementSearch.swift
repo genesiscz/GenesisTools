@@ -74,18 +74,41 @@ struct ElementInfo {
     let description: String?
 }
 
-func collectElements(_ root: AXUIElement, depth: Int = 0, maxDepth: Int = 15) -> [ElementInfo] {
+/// A wall-clock limit for an element walk: an app with a huge tree (Finder's desktop and a big
+/// Downloads list) otherwise ran past the runner's 10 s timeout and returned nothing at all.
+final class WalkBudget {
+    let deadline: Date
+    private(set) var exhausted = false
+
+    init(seconds: TimeInterval) {
+        deadline = Date().addingTimeInterval(seconds)
+    }
+
+    func spent() -> Bool {
+        if !exhausted && Date() >= deadline {
+            exhausted = true
+        }
+        return exhausted
+    }
+}
+
+func collectElements(_ root: AXUIElement, depth: Int = 0, maxDepth: Int = 15, budget: WalkBudget? = nil) -> [ElementInfo] {
     if depth > maxDepth { return [] }
+    if let budget, budget.spent() { return [] }
 
     var results: [ElementInfo] = []
+
+    // One element costs several reads and each may block for the per-read timeout, so the budget is checked
+    // between the reads as well: once it is spent the element keeps what it has and skips the rest.
+    let outOfTime = { budget?.spent() ?? false }
     let ident = axStringAttribute(root, "AXIdentifier")
     let role = axStringAttribute(root, "AXRole")
-    let title = axStringAttribute(root, "AXTitle")
-    let subrole = axStringAttribute(root, "AXSubrole")
-    let desc = axStringAttribute(root, "AXDescription")
+    let title = outOfTime() ? nil : axStringAttribute(root, "AXTitle")
+    let subrole = outOfTime() ? nil : axStringAttribute(root, "AXSubrole")
+    let desc = outOfTime() ? nil : axStringAttribute(root, "AXDescription")
 
     var valueStr: String? = nil
-    if let v = axAttribute(root, "AXValue") {
+    if !outOfTime(), let v = axAttribute(root, "AXValue") {
         valueStr = "\(v)"
     }
 
@@ -96,8 +119,11 @@ func collectElements(_ root: AXUIElement, depth: Int = 0, maxDepth: Int = 15) ->
         ))
     }
 
+    if outOfTime() { return results }
+
     for child in axChildren(root) {
-        results.append(contentsOf: collectElements(child, depth: depth + 1, maxDepth: maxDepth))
+        if let budget, budget.spent() { break }
+        results.append(contentsOf: collectElements(child, depth: depth + 1, maxDepth: maxDepth, budget: budget))
     }
     return results
 }

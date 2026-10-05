@@ -333,7 +333,7 @@ export const AX_STDOUT_BUDGET_BYTES = 32 * 1024 * 1024;
  * recovery retry carries its own, shorter deadline while every other argument stays the same.
  */
 export function withNativeBudget(args: string[], timeoutMs: number): string[] {
-    if (!["see", "act"].includes(args[0] ?? "") || args.includes("--budget-ms")) {
+    if (!["see", "act", "preflight"].includes(args[0] ?? "") || args.includes("--budget-ms")) {
         return args;
     }
 

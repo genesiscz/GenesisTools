@@ -381,6 +381,18 @@ test("see and act carry the attempt's deadline to the native side, other command
     expect(withNativeBudget(["act", "--budget-ms", "500"], 9000)).toEqual(["act", "--budget-ms", "500"]);
 });
 
+// Regression test: `control preflight --app Finder` walked every element past the 10 s native
+// timeout and returned nothing; the walk now learns the deadline and returns what it read
+test("preflight carries the deadline to the native side too", () => {
+    expect(withNativeBudget(["preflight", "--app", "Finder"], 30_000)).toEqual([
+        "preflight",
+        "--app",
+        "Finder",
+        "--budget-ms",
+        "30000",
+    ]);
+});
+
 test("a throwing spawn is reported as uncertain and never retried", () => {
     let spawns = 0;
     const result = runAxWithBoundary({

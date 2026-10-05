@@ -68,6 +68,19 @@ func browserTabInfo(_ appName: String, axWindowTitles: [String]) -> [String: Any
 }
 
 func cmdPreflight(appName: String, maxDepth: Int) {
+    // the caller's deadline (--budget-ms, as for see/act) covers this whole process, so its clock starts here,
+    // before the app is resolved and the windows and the browser tab are read; the element walk gets what is
+    // left. Less a margin to print and exit: a huge tree then returns what it read instead of being killed
+    // with nothing. No flag, no limit.
+    // One stuck read must not eat the budget either (an app answers nothing for the default 6 s):
+    // bound each AX read as `see` does, and stop the walk one read early.
+    let budgetMs = argValue("--budget-ms").flatMap(Double.init)
+    let readTimeout = budgetMs.map { min(3, max(0.25, $0 / 3000)) } ?? 0
+    if budgetMs != nil {
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), Float(readTimeout))
+    }
+    let walkBudget = WalkBudget(seconds: budgetMs.map { $0 / 1000 - readTimeout - min(0.35, $0 / 4000) } ?? .infinity)
+
     let pid = resolveApp(appName)
     // --app may be a pid — resolve the display name for browser detection etc.
     let displayName = NSWorkspace.shared.runningApplications
@@ -93,6 +106,13 @@ func cmdPreflight(appName: String, maxDepth: Int) {
     }
     func wanted(_ g: String) -> Bool { wantedGroups?.contains(g) ?? true }
 
+    // Each window's title is read once, before the walk, and reused by the window list, the browser check and
+    // every element entry: a read per element would be an AX call that no deadline covers. The reads stop when
+    // the budget is spent; a window whose title was not read is named by its index, as an untitled one is.
+    let windowTitles: [String?] = ["windows", "browser", "elements", "plan"].contains(where: wanted)
+        ? windows.map { walkBudget.spent() ? nil : axStringAttribute($0, "AXTitle") }
+        : []
+
     var out: [String: Any] = ["ok": true, "app": appName, "pid": pid]
 
     if wanted("screens") {
@@ -112,7 +132,7 @@ func cmdPreflight(appName: String, maxDepth: Int) {
         var windowInfos: [[String: Any]] = []
         var phantomStrips: [[String: Any]] = []
         for (i, w) in windows.enumerated() {
-            var info: [String: Any] = ["title": axStringAttribute(w, "AXTitle") ?? "window-\(i)"]
+            var info: [String: Any] = ["title": windowTitles[i] ?? "window-\(i)"]
             if let id = axStringAttribute(w, "AXIdentifier") { info["id"] = id }
             if let pos = axPointValue(w, "AXPosition") { info["x"] = pos.x; info["y"] = pos.y }
             if let sz = axSizeValue(w, "AXSize") { info["width"] = sz.width; info["height"] = sz.height }
@@ -131,15 +151,16 @@ func cmdPreflight(appName: String, maxDepth: Int) {
     }
 
     if wanted("browser"),
-       let tab = browserTabInfo(displayName, axWindowTitles: windows.compactMap { axStringAttribute($0, "AXTitle") }) {
+       let tab = browserTabInfo(displayName, axWindowTitles: windowTitles.compactMap { $0 }) {
         out["browserTab"] = tab
     }
 
     var addressable: [[String: String]] = []
     var roleCounts: [String: Int] = [:]
     if wanted("elements") || wanted("plan") {
-        for window in windows {
-            for info in collectElements(window, maxDepth: maxDepth) {
+        for (windowIndex, window) in windows.enumerated() {
+            if walkBudget.spent() { break }
+            for info in collectElements(window, maxDepth: maxDepth, budget: walkBudget) {
                 let role = info.role ?? "?"
                 roleCounts[role, default: 0] += 1
                 // Addressable = targetable by id OR desc OR title (browsers
@@ -149,7 +170,7 @@ func cmdPreflight(appName: String, maxDepth: Int) {
                     if let eid = info.identifier { entry["id"] = eid }
                     if let d = info.description { entry["desc"] = d }
                     if let t = info.title { entry["title"] = t }
-                    entry["window"] = axStringAttribute(window, "AXTitle") ?? ""
+                    entry["window"] = windowTitles[windowIndex] ?? ""
                     addressable.append(entry)
                 }
             }
@@ -175,6 +196,9 @@ func cmdPreflight(appName: String, maxDepth: Int) {
         out["roleCounts"] = roleCounts
         out["addressableCount"] = addressable.count
         out["totalElements"] = roleCounts.values.reduce(0, +)
+        if walkBudget.exhausted {
+            out["elementsCut"] = "the element walk reached the time limit; the lists cover what was read by then. Narrow it with --wanted elements:<Role>, or inspect one window with `see --window-id`."
+        }
         if !truncatedRoles.isEmpty {
             out["truncatedRoles"] = truncatedRoles
             out["note"] = "element groups truncated to \(perRoleCap)/role — re-run with --wanted elements:<Role> for the full list of one role"
