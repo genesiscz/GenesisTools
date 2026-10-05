@@ -366,7 +366,7 @@ that tool's own `README.md`, which you can also print in the terminal with
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| [`git`](src/git/README.md) | Commit analysis plus branch mechanics: is a branch merged (by content, not sha), cascade-rebase a parent with its children, detect the base branch, per-repo git policy, and what you touched when (`changes`). | `commits` `merged` `rebase-cascade` `rebranch` `rename-commits` `base` `config` `configure-authors` `configure-workitem-patterns` `health` `monster` `changes` |
+| [`git`](src/git/README.md) | Commit analysis plus branch mechanics: is a branch merged (by content, not sha), cascade-rebase a parent with its children, split a messy branch into clean ones by path group and prove nothing was lost (`rebranch plan\|apply\|verify`), detect the base branch, per-repo git policy, and what you touched when (`changes`). | `commits` `merged` `rebase-cascade` `rebranch` `rename-commits` `changes` `base` `config` `configure-authors` `configure-workitem-patterns` `health` `monster` |
 | [`loc`](src/loc/README.md) | Count files and code, blank, and comment lines by language, respecting `.gitignore`. | flags only |
 
 ### GitHub and CI
@@ -450,7 +450,7 @@ onto the merged base first, then optionally deletes the head branch.
 | [`notify`](src/notify/README.md) | Send macOS notifications through `terminal-notifier`, with action hooks and an interactive config. | `config` |
 | [`ms-teams`](src/ms-teams/README.md) | Read Microsoft Teams chats from the local desktop cache and export markdown, JSON, or HTML. | `sync` `doctor` `conversations` `show` `search` `people` `files` `calls` `meetings` `mcp` |
 | [`telegram`](src/telegram/README.md) | Telegram MTProto user-account client: listen for messages, auto-respond, browse contacts and history, TUI watcher. | `configure` `listen` `contacts` `history` `watch` |
-| [`telegram-bot`](src/telegram-bot/README.md) | Telegram Bot API client for notifications and remote control. Simpler auth than the user client. | `configure` `send` `start` |
+| [`telegram-bot`](src/telegram-bot/README.md) | Telegram Bot API client for notifications and remote control. Long-polling by default, or a secret-token webhook behind the tunnel (`start --webhook`). | `configure` `send` `start` `webhook` |
 
 ### Shell and small utilities
 

@@ -54,7 +54,7 @@ compose-ready skeletons.
 When tunneled (host, allowed identities, and tunnel name are read from local config, not committed here):
 
 - `https://<your-host>/` -> Cloudflare Access gate (email OTP for the configured identity).
-- `https://<your-host>/telegram-webhook` -> bypass (secret-token auth).
+- `https://<your-host>/telegram-webhook` -> the `tools telegram-bot` webhook receiver, not the dashboard. A tunnel rule routes that one path (anchored) to its own port; it authenticates with the Telegram secret-token header, so it needs no gate. See `src/telegram-bot/README.md`.
 - `https://<your-host>/share/<slug>` -> bypass (the slug is a cryptographically-random 96-bit token and is the only credential; `unpublish` revokes it).
 
 Publish the same way the Obsidian reader **publish** / **copy** buttons do:
