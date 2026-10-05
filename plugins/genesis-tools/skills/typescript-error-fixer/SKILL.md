@@ -69,11 +69,10 @@ plugin. What matters below is the per-file isolation, not which tool spawns it:
 
 ## Type Research Tools
 
-**Per-file checking (faster than full recompilation):**
-- `tools mcp-tsc <file>` -- persistent LSP server, ~100ms for incremental checks
-- `tools mcp-tsc --hover --line N --text symbol file.ts` -- type introspection to find the correct type replacing `any`
+**Whole-project check:**
+- `tsgo --noEmit` (or the project's `typecheck` script) -- the authoritative check. Always run it on the whole project: `tsgo` refuses to load `tsconfig.json` (error TS5112) when you pass it file paths. Read the errors for the files you changed instead of narrowing the command
 
-**Claude Code LSP operations (built-in):**
+**Claude Code LSP operations (built-in), the way to introspect types:**
 - `goToDefinition` -- trace type origins to their source
 - `hover` -- get inline type info for any symbol
 - `findReferences` -- understand usage patterns across the codebase

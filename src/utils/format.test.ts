@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from "bun:test";
 import {
     formatBytes,
     formatCost,
+    formatCountdown,
     formatDuration,
     formatList,
     formatNumber,
@@ -9,6 +10,7 @@ import {
     formatTokens,
     parseDuration,
 } from "./format";
+import { generateId } from "./id";
 
 describe("formatDuration", () => {
     describe("tiered style (default)", () => {
@@ -328,5 +330,31 @@ describe("formatNumber", () => {
 
     it("formats billions with B", () => {
         expect(formatNumber(1000000000)).toBe("1.0B");
+    });
+});
+
+describe("formatCountdown", () => {
+    it("reads 00:00 for zero and for a negative remainder", () => {
+        expect(formatCountdown(0)).toBe("00:00");
+        expect(formatCountdown(-1000)).toBe("00:00");
+    });
+
+    it("formats seconds, minutes and hours", () => {
+        expect(formatCountdown(5000)).toBe("00:05");
+        expect(formatCountdown(90_000)).toBe("01:30");
+        expect(formatCountdown(3_661_000)).toBe("01:01:01");
+    });
+
+    it("rounds a partial second up so the display never shows 00:00 early", () => {
+        expect(formatCountdown(100)).toBe("00:01");
+    });
+});
+
+describe("generateId", () => {
+    it("is non-empty and unique across 100 calls", () => {
+        const ids = new Set(Array.from({ length: 100 }, () => generateId()));
+
+        expect(ids.size).toBe(100);
+        expect([...ids].every((id) => id.length > 0)).toBe(true);
     });
 });

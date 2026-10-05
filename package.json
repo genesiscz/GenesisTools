@@ -263,7 +263,6 @@
         "tar-stream": "^3.2.1",
         "telegram": "^2.26.22",
         "tough-cookie": "^6.0.2",
-        "ts-lsp-client": "^1.1.1",
         "turndown": "^7.2.4",
         "tweetnacl": "^1.0.3",
         "tweetnacl-util": "^0.15.1",

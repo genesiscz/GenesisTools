@@ -65,4 +65,4 @@ These sound similar and do different things.
 
 - Vector search performance depends on the backend. `bench-vectors` compares sqlite-vec against brute force on your actual data, which is the only comparison that matters.
 - ⚠️ If sqlite-vec fails to load, search falls back to slower behaviour. That failure has historically appeared only in the log file, so check `~/.genesis-tools/logs/<today>.log` when search feels unexpectedly slow.
-- Related: [`tools repo-map`](../repo-map/README.md) gives a cheap structural map with no embedding step. Use it when you need shape rather than semantics.
+- Related: `tools ts skeleton --max-tokens <n>` gives a cheap structural map, ranked by importers, with no embedding step. Use it when you need shape rather than semantics.

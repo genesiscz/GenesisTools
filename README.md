@@ -56,9 +56,9 @@ GenesisTools is a TypeScript monorepo that Bun executes directly, with no build 
 lives in its own folder under `src/` and runs in its own process. The `tools` executable is the
 only entry point you need.
 
-The catalogue below is taken from what actually exists in this checkout: 104 discoverable
+The catalogue below is taken from what actually exists in this checkout: 94 discoverable
 entries, of which `src/utils` is the shared package barrel (`@genesiscz/utils`, not a runnable
-tool) and `src/Internal` holds private tools. That leaves **102 usable tools**.
+tool) and `src/Internal` holds private tools. That leaves **92 usable tools**.
 Running `tools` with no arguments prints the same total of discovered entries in its header.
 
 ---
@@ -344,7 +344,6 @@ that tool's own `README.md`, which you can also print in the terminal with
 | [`redact`](src/redact/README.md) | Reversibly redact secrets and PII from text before pasting it into an AI, then restore the reply. | `restore` |
 | [`json`](src/json/README.md) | Convert between JSON and TOON (30 to 60 percent fewer tokens), or infer a schema (`schema`, with `--compact` for one-line output). | `convert` (default) `schema` |
 | [`mcp-web-reader`](src/mcp-web-reader/README.md) | Fetch a page and convert HTML to Markdown with pluggable engines. Works as CLI and MCP server. | flags only (`--engine`, `--mode`) |
-| [`repo-map`](src/repo-map/README.md) | Token-efficient repo symbol map for agents, in the style of aider. | flags only |
 | [`indexer`](src/indexer/README.md) | Semantic code indexer with AST-aware chunking and hybrid search. | `add` `search` `sync` `watch` `graph` `context` `mcp-serve` |
 
 ### Agents and AI coding sessions
@@ -369,18 +368,14 @@ that tool's own `README.md`, which you can also print in the terminal with
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| [`git`](src/git/README.md) | Commit analysis plus branch mechanics: is a branch merged (by content, not sha), cascade-rebase a parent with its children, detect the base branch, per-repo git policy. | `commits` `merged` `rebase-cascade` `rebranch` `rename-commits` `base` `config` `configure-authors` `configure-workitem-patterns` `health` `monster` |
-| [`last-changes`](src/last-changes/README.md) | Show uncommitted changes grouped by modification time, so you can see what you touched when. | flags only |
-| [`regret-grep`](src/regret-grep/README.md) | Warn when the current diff repeats a bug you already fixed. | `index` `check` |
-| [`apoptosis`](src/apoptosis/README.md) | Programmed cell death for dead code: flag zero-signal files and suggest deletion after a grace window. | `status` `kill` `rescue` `reset` |
+| [`git`](src/git/README.md) | Commit analysis plus branch mechanics: is a branch merged (by content, not sha), cascade-rebase a parent with its children, detect the base branch, per-repo git policy, and what you touched when (`changes`). | `commits` `merged` `rebase-cascade` `rebranch` `rename-commits` `base` `config` `configure-authors` `configure-workitem-patterns` `health` `monster` `changes` |
 | [`loc`](src/loc/README.md) | Count files and code, blank, and comment lines by language, respecting `.gitignore`. | flags only |
 
 ### GitHub and CI
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| [`github`](src/github/README.md) | Token-efficient GitHub client: issues, PRs, review threads, code search, notifications, activity, raw files, stack-safe merges. | `issue` `pr` `merge` `comments` `search` `code` `get` `review` `notifications` `activity` `status` |
-| [`github-release-notes`](src/github-release-notes/README.md) | Fetch release notes from any GitHub repository into Markdown. | flags only (`--limit`, `--oldest`) |
+| [`github`](src/github/README.md) | Token-efficient GitHub client: issues, PRs, review threads, code search, notifications, activity, raw files, release notes as one Markdown document, stack-safe merges. | `issue` `pr` `merge` `comments` `search` `code` `get` `review` `notifications` `activity` `releases` `status` |
 | [`gitlab`](src/gitlab/README.md) | GitLab client for any instance (host, token and project from flags, env, glab or the origin remote): per-day activity, user and project reports, MR review threads and drafts, batch comments and labels, open MRs by file, two-phase stale-MR cleanup. | `activity` `analyze-user` `analyze-project` `fetch-review` `discussions` `draft-reply` `drafts` `batch-comment` `batch-label` `search-by-file` `stale-branches` |
 | [`jenkins-mcp`](src/jenkins-mcp/README.md) | Jenkins CLI and MCP server: paste a job path or full Jenkins URL, read stages, logs, changes, and monitor the queue. | `stages` `log` `info` `changes` `jobs` `monitor` |
 
@@ -392,10 +387,7 @@ onto the merged base first, then optionally deletes the head branch.
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| [`mcp-manager`](src/mcp-manager/README.md) | Manage MCP servers across Claude, Gemini, Codex, and Cursor from one unified config, with backups and visual diffs. | `config` `sync` `sync-from-providers` `list` `enable` `disable` `install` `show` `remove` `rename` `backup-all` `config-json` |
-| [`mcp-doctor`](src/mcp-doctor/README.md) | Health-check and benchmark the MCP servers you already have configured. | `list` `check` `tools` |
-| [`mcp-debug`](src/mcp-debug/README.md) | Debug MCP server configuration by running commands and printing JSON to stdout plus diagnostics to stderr, so you can see the env, cwd, and PATH your client passes. | flags only (`--env`) |
-| [`mcp-tsc`](src/mcp-tsc/README.md) | TypeScript diagnostics as both a CLI and an MCP server, using the compiler API or a language server. | flags only (`--lsp`, `--warnings`, `--mcp`) |
+| [`mcp-manager`](src/mcp-manager/README.md) | Manage MCP servers across Claude, Gemini, Codex, and Cursor from one unified config, with backups and visual diffs, and health-check the servers your clients run (`doctor`). | `config` `sync` `sync-from-providers` `list` `enable` `disable` `install` `show` `remove` `rename` `backup-all` `config-json` `doctor` |
 
 ### Frontend and web debugging
 
@@ -412,7 +404,6 @@ onto the merged base first, then optionally deletes the head branch.
 | [`azure-devops`](src/azure-devops/README.md) | Azure DevOps work items, queries, sprints, dashboards, and time logs, with caching and change detection. | `configure` `query` `workitem` `workitem-create` `list` `iterations` `sprint` `dashboard` `timelog` `history` |
 | [`timely`](src/timely/README.md) | Timely time tracking: OAuth login, accounts and projects, events, auto-tracked memories, monthly exports. | `login` `status` `accounts` `projects` `events` `memories` `create` `export-month` `cache` |
 | [`clarity`](src/clarity/README.md) | CA PPM Clarity timesheet management, filled from Azure DevOps time logs and Timely activity. | `configure` `timesheet` `fill` `link-workitems` `ui` |
-| [`timer`](src/timer/README.md) | Focus timer with live countdown, background mode, Pomodoro cycles, and completion hooks. | `list` `cancel` |
 | [`todo`](src/todo/README.md) | Project-scoped task tracking for AI-assisted sessions, stored as JSON, with git-context capture and Apple Calendar / Reminders sync. | `add` `list` `show` `start` `block` `complete` `reopen` `edit` `search` `sync` `export` `import` |
 
 ### Web dashboards and data
@@ -470,7 +461,6 @@ onto the merged base first, then optionally deletes the head branch.
 |------|--------------|-----------------|
 | [`tools`](src/tools/README.md) | The interactive browser itself: fuzzy search every tool, read its README, list subcommands, copy the command. | (interactive) |
 | [`zsh`](src/zsh/README.md) | Shell enhancement manager: installs one hook line into your rc files, with toggleable feature modules. | `install` `uninstall` `enable` `disable` `list` `hook` |
-| [`aliases`](src/aliases/README.md) | Mine shell history for the command chains and single commands you actually repeat, and propose aliases. | `analyze` `apply` `decay` `status` `reset` |
 | [`config`](src/config/README.md) | Manage GenesisTools configuration. | `packages` |
 | [`update`](src/update/README.md) | Update GenesisTools: git pull, `bun install` with a clean retry, optional plugin refresh. | (single command) |
 | [`benchmark`](src/benchmark/README.md) | Save command recipes and run them through hyperfine, keeping per-run history so you can see timings drift. | `add` `remove` `list` `show` `edit` `history` |

@@ -428,3 +428,21 @@ export function createStopwatch(): () => string {
     const start = performance.now();
     return () => formatDuration(performance.now() - start);
 }
+
+/** `MM:SS`, or `HH:MM:SS` from one hour up, for a live countdown. Zero or negative reads `00:00`. */
+export function formatCountdown(remainingMs: number): string {
+    if (remainingMs <= 0) {
+        return "00:00";
+    }
+
+    const totalSeconds = Math.ceil(remainingMs / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    if (hours > 0) {
+        return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    }
+
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}

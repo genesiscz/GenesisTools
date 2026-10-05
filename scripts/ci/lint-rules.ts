@@ -24,7 +24,7 @@
  * The three worst are exactly the three that enumerate call arguments.
  *
  * The replacement uses @ast-grep/napi, already a dependency and already used
- * by src/repo-map, src/indexer. Matching happens in Rust, and a literal is
+ * by src/indexer. Matching happens in Rust, and a literal is
  * found by KIND rather than by guessing at its parents, so the context
  * enumeration disappears along with its cost.
  *

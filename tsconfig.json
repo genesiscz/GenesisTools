@@ -1,6 +1,5 @@
 {
     "exclude": [
-        "src/mcp-tsc/test-dummy*.ts",
         // Browser payloads pasted verbatim into evaluate_script; they run inside the
         // Spotify web player, not here, and carry no type annotations by design.
         "src/spotify/page",
