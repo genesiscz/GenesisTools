@@ -41,6 +41,10 @@
  *
  *   tools macos swap [--limit n] [--top n] [--all] [--json]
  *
+ *   tools macos eslogger [-e events | -c categories] [--filter-event expr] [-o file]
+ *   tools macos eslogger --list-events
+ *   tools macos eslogger --input recorded.jsonl [--filter-event expr]
+ *
  * Future subcommands:
  *   tools macos contacts search
  */
@@ -82,6 +86,7 @@ const REGISTRARS: Record<string, () => Promise<(program: Command) => void>> = {
     sleep: async () => (await import("@app/macos/commands/sleep/index")).registerSleepCommand,
     swap: async () => (await import("@app/macos/commands/swap/index")).registerSwapCommand,
     "voice-memos": async () => (await import("@app/macos/commands/voice-memos/index")).registerVoiceMemosCommand,
+    eslogger: async () => (await import("@app/macos/commands/eslogger/index")).registerEsloggerCommand,
 };
 
 const program = new Command();

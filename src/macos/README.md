@@ -3,7 +3,7 @@
 ![Status](https://img.shields.io/badge/Status-Active-success?style=flat-square)
 ![Platform](https://img.shields.io/badge/Platform-macOS-blue?style=flat-square)
 
-> **Umbrella CLI for macOS native frameworks — Mail, Calendar, Reminders, Messages, Voice Memos, Sleep.**
+> **Umbrella CLI for macOS native frameworks — Mail, Calendar, Reminders, Messages, Voice Memos, Sleep, Endpoint Security events.**
 
 `tools macos` exposes a consistent interface for reading and (where supported) writing to macOS native data stores. It reuses the shared DarwinKit bridge so commands feel fast and scriptable compared to `osascript`.
 
@@ -21,6 +21,7 @@
 | `voice-memos` | List, play, export, transcribe, search Voice Memos |
 | `clones` | Clone-aware sizes, duplicate detection, safe APFS dedupe across worktrees (alias: `apfs`) |
 | `sleep` | Inspect macOS sleep / wake metadata |
+| `eslogger` | Watch Endpoint Security events live (exec, fork, file, login, sudo, ...) through Apple's `eslogger`, with categories, JSON-path filters and file output. Needs root and Full Disk Access |
 
 ---
 
@@ -73,6 +74,11 @@ tools macos clones reclaim plan --dir ~/Projects --worktrees-of acme --save acme
 tools macos clones reclaim apply --dir ~/Projects --yes
 tools macos clones reclaim presets list
 tools macos clones optimize --rollback --process <id>
+
+# Endpoint Security events (sudo asks for your password; see "eslogger" below)
+tools macos eslogger -c process
+tools macos eslogger -e exec --filter-event '.event.exec.target.executable.path =~ "zsh"'
+tools macos eslogger --list-events
 ```
 
 Run `tools macos <subcommand> --help` for the full option list of each subcommand.
@@ -180,3 +186,50 @@ Every read/write command (`list-lists`, `list`, `search`, `add`, `remove`) asks 
 ### `tools macos doctor`: every read-only check in one pass
 
 Runs the permissions report, the Calendar doctor, the Reminders doctor and the Notifications status together, one section per check, and exits 1 if any of them failed. It calls each check's library function directly rather than spawning the individual subcommands, so none of them can show a permission dialog or write durable state — the same read-only contract as each doctor on its own.
+
+## eslogger: Endpoint Security events
+
+`tools macos eslogger` runs Apple's `/usr/bin/eslogger` (macOS 13 and later) and turns its JSON Lines into one readable line per event: local time, event name, the acting process (pid and executable), then what the event did.
+
+```text
+10:15:30.123 exec         pid 4100   /bin/zsh → /usr/bin/git status --short (cwd /Users/alice/project)
+10:15:31.000 fork         pid 4200   /bin/zsh → child pid 4201
+10:15:32.000 exit         pid 4300   /usr/sbin/ipconfig exit code 0
+```
+
+**Requirements.** eslogger only runs as root, and the app macOS holds responsible for the command needs Full Disk Access (`man eslogger`, "TCC AUTHORIZATION"). The tool itself stays a normal user process: it starts only eslogger through `sudo`, which asks for your password in the terminal. Without a terminal (a pipe, an agent, launchd) sudo cannot ask, so the command prints the fix and exits 1 instead of starting anything. Under GenesisTools.app the Full Disk Access grant belongs to GenesisTools; with `GENESIS_TOOLS_NO_APP=1` it belongs to your terminal. When eslogger refuses for a missing grant (`ES_NEW_CLIENT_RESULT_ERR_NOT_PERMITTED`), the tool says which app needs it and names `tools macos permissions open --pane full-disk-access`. The first capture in a terminal may offer to build GenesisTools.app, as the other permission-gated subcommands do; `--list-events`, `--dry-run`, `--input` and `--help` never do.
+
+**Choosing events.** `-e exec,fork` picks events, `-c process,file` picks categories, and both can be combined. With neither, a terminal gets a picker; a pipe gets an error naming the flags. `--include-fork` adds `fork` beside `exec`. `--list-events` prints the categories and every event this Mac's eslogger reports through `eslogger --list-events`, which needs no root; an unknown event name is refused before eslogger starts, while a category member this Mac's eslogger lacks (an older macOS) is named and left out. eslogger supports notify events only, never AUTH events.
+
+| Category | Events |
+|---|---|
+| `process` | exec, fork, exit |
+| `file` | open, close, create, write, unlink, rename (high volume) |
+| `ipc` | uipc_bind, uipc_connect, xpc_connect (Unix-domain sockets and XPC; eslogger has no TCP/IP events) |
+| `security` | authentication, sudo, su, setuid, setgid, seteuid, setegid, setreuid, setregid, xp_malware_detected, xp_malware_remediated, gatekeeper_user_override |
+| `session` | lw_session_login/logout/lock/unlock, screensharing_attach/detach, openssh_login/logout, login_login/logout |
+| `auth` | authorization_petition, authorization_judgement, tcc_modify |
+| `persistence` | btm_launch_item_add/remove, profile_add/remove |
+
+**Filters.** `--filter-event '<path> <op> <value>'`, repeatable (all must match). The path is jq-style dot notation into eslogger's JSON, and eslogger nests every event's fields under its short name, so the exec target is `.event.exec.target.executable.path`, not `.event.target.path`. A path that skips the event name is refused with that hint. `==` and `!=` compare the whole value as text (`.process.audit_token.euid == 0` works); `=~` and `!~` test a regular expression. Arrays of plain values join with spaces, so `.event.exec.args =~ "--inspect"` searches the arguments. A missing field never equals anything.
+
+| Path | What it is |
+|---|---|
+| `.process.executable.path` | the process that caused the event (for exec: the image before the exec) |
+| `.process.audit_token.pid`, `.euid`, `.ppid` | its pid, effective uid and parent pid |
+| `.event.exec.target.executable.path`, `.event.exec.args`, `.event.exec.cwd.path` | what an exec started, its arguments and directory |
+| `.event.fork.child.audit_token.pid` | the pid a fork created |
+| `.event.exit.stat` | the wait(2) status (shown as exit code or signal) |
+| `.event.open.file.path`, `.event.open.fflag` | the file an open reads or writes |
+| `.event.close.target.path`, `.event.write.target.path`, `.event.unlink.target.path` | the file closed, written or deleted |
+| `.event.rename.source.path` | the file a rename moved |
+| `.event.signal.sig`, `.event.signal.target.audit_token.pid` | a signal and the process it went to |
+| `.event.sudo.command`, `.event.sudo.success`, `.event.sudo.to_username` | a sudo run |
+
+Field names follow the EndpointSecurity C headers (`es_message_t`, `es_event_*_t`), as `man eslogger` documents. Apple makes no schema promise: message version 10 writes `audit_token` as a positional array of eight numbers instead of an object. Audit-token paths such as `.process.audit_token.pid` work on both shapes, and `event_type` numbers map to names from the macOS 26.5 SDK enum (146 is `gatekeeper_user_override`, 147 `tcc_modify`).
+
+**Output and replay.** Event lines go to stdout and status to stderr, so `tools macos eslogger -c process > log.txt` keeps only events; `-o <file>` writes them to a file as they arrive; `-s` drops the status lines; `--debug` also prints each event's raw JSON on stderr. `--input <file>` (or `-` for stdin) replays a recording made with `sudo eslogger exec fork > rec.jsonl` through the same `-e`/`-c` selection, filters and formatting, with no root: the way to build a filter without sudo, and how the tests prove the parsing. `--dry-run` prints the exact eslogger command line, or with `--input` the recording it would replay, and never touches the `-o` file.
+
+**Things that look like bugs.** Shell builtins (`cd`, `echo`, zsh's `which`) never exec, so they produce no exec event; `/usr/bin/which` does. eslogger hides events from its own process group, so commands typed in the terminal that runs the capture can be missing; run them in another window. Ctrl+C stops eslogger (SIGINT through sudo, SIGTERM after 3 s) and prints the totals.
+
+Code: [src/macos/commands/eslogger/index.ts](commands/eslogger/index.ts) is the CLI door; the event catalogue, parsing, filters, formatting and process handling live in [src/macos/lib/eslogger/](lib/eslogger/) with tests in `eslogger.test.ts`.

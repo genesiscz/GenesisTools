@@ -16,6 +16,15 @@ import { buildApp } from "./app";
  */
 const GATED_TOOLS = new Set(["control"]);
 const GATED_MACOS_SUBCOMMANDS = new Set(["calendar", "reminders", "mail", "messages", "voice-memos", "control"]);
+/**
+ * `macos` subcommands that take only options, mapped to the options that make a run read-only. `macos
+ * eslogger` starts a capture that needs Full Disk Access, even bare (it prompts for events); listing the
+ * events, a dry run and replaying a recorded file never reach eslogger, so they never prompt. A Map, not
+ * an object literal: `tools macos constructor` must not find Object.prototype.constructor here.
+ */
+const GATED_MACOS_OPTION_COMMANDS = new Map<string, ReadonlySet<string>>([
+    ["eslogger", new Set(["--list-events", "--dry-run", "-d", "--input"])],
+]);
 
 /**
  * A help page or a read-only check never prompts and never writes the cooldown file: a diagnostic
@@ -57,6 +66,13 @@ export function isGatedInvocation(scriptId: string, scriptArgs: readonly string[
 
     if (GATED_TOOLS.has(scriptId)) {
         return first !== undefined && !READ_ONLY_SUBCOMMANDS.has(first);
+    }
+
+    const readOnlyOptions =
+        scriptId === "macos" && first !== undefined ? GATED_MACOS_OPTION_COMMANDS.get(first) : undefined;
+
+    if (readOnlyOptions) {
+        return !scriptArgs.some((arg) => readOnlyOptions.has(arg.split("=")[0]));
     }
 
     return (

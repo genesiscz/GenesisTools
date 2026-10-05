@@ -145,6 +145,24 @@ describe("isGatedInvocation", () => {
         expect(isGatedInvocation("macos", ["swap"])).toBe(false);
     });
 
+    // eslogger takes only options, and a capture needs Full Disk Access, so it is gated without a second word
+    it("gates a macos eslogger capture, bare or with options", () => {
+        expect(isGatedInvocation("macos", ["eslogger"])).toBe(true);
+        expect(isGatedInvocation("macos", ["eslogger", "-e", "exec"])).toBe(true);
+        expect(isGatedInvocation("macos", ["-v", "eslogger", "-c", "process"])).toBe(true);
+    });
+
+    it.each([["--list-events"], ["--dry-run"], ["-d"], ["--input"], ["--input=rec.jsonl"], ["--help"], ["--readme"]])(
+        "does not gate macos eslogger %s, which never starts eslogger",
+        (arg) => {
+            expect(isGatedInvocation("macos", ["eslogger", "-e", "exec", arg])).toBe(false);
+        }
+    );
+
+    it("does not read an object prototype key as a gated macos subcommand", () => {
+        expect(isGatedInvocation("macos", ["constructor", "-x"])).toBe(false);
+    });
+
     it("does not gate bare macos with no subcommand", () => {
         expect(isGatedInvocation("macos", [])).toBe(false);
     });
