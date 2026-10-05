@@ -19,7 +19,7 @@ which order, and what to read in its output.
 | "rebase my open MRs", "restack these 12 branches", "main moved, update my branches", many branches behind one base | `references/rebase-fleet.md` (GitLab fleets: also the internal plugin's `rebase-prs` skill) | worktrees + git |
 | conflicts on a branch whose PRs already merged, `git cherry` mostly `+` while the base visibly holds the features, "rebase enhancements safely", "the base already has most of this" | `references/oracle-merge.md` | `scripts/resolve-hunks.ts`, `scripts/rebase-with-oracle.ts` |
 | "rebase the parent and its children", "my sub-branches broke after I rebased", a stack of PRs, "cascade" | `references/rebase-cascade.md` | `tools git rebase-cascade` |
-| "recommit", "make these 40 commits into 5", "clean commits before the PR", "squash into logical commits" | `references/recommit.md` (`/gt:git-recommit`) | git, `scripts/recommit-plan-check.ts` |
+| "recommit", "make these 40 commits into 5", "clean commits before the PR", "squash into logical commits" | `references/recommit.md` (`/gt:git-recommit`) | `scripts/recommit.ts` (log, group, check, apply), `scripts/recommit-plan-check.ts` |
 | "split this branch into three PRs", "cherry-pick the dashboard commits out into their own branch" | `references/recompose-branches.md` (`/gt:git-recompose-branches`) | git, `tools git-rebranch` |
 | "merge PR 12", "land it", "rebase merge", "squash merge it", GitLab MR merge | `references/merge-pr.md` | `tools github merge`, `glab` |
 | import-only conflicts on a JS/TS monorepo with a barrel normaliser (rare) | `references/import-fast-path.md` | the internal plugin's `rebase-prs` skill |
@@ -86,3 +86,8 @@ printed when this skill loaded (the plugin root is that directory minus `skills/
   lists every changed path with rename detection off (both halves of a move), or checks a
   recommit plan in a temporary index before the first commit exists: duplicates, missing and
   extra paths, groups that change nothing, and the tree-identity gate.
+- `bun "${CLAUDE_PLUGIN_ROOT}/skills/git/scripts/recommit.ts" log|group|check|apply --base <ref> [--head <ref>]`
+  does a recommit's mechanics from the merge-base: `log` prints the categoriser's input, `group`
+  turns a groups JSON (message plus the commits, path globs or `rest` it owns) into a plan and
+  checks it, `apply` builds the commits in a temporary index, proves the tree, tags the old head
+  and moves the branch with a compare-and-swap. It never touches the working tree or the index.

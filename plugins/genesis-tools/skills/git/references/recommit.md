@@ -7,6 +7,49 @@ tree-identity check. Not for: splitting into several branches (`recompose-branch
 Arguments (`/gt:git-recommit`): a number (exactly that many commits), `--min N --max M` (decide
 within the range), or nothing (ask: a number, or analyse and propose a split).
 
+## The script path (preferred)
+
+`scripts/recommit.ts` does Phases 3, 5's placement, 5's check and 7 in four calls. The judgement
+stays yours: which commits form which group, and each message.
+
+```bash
+R="${CLAUDE_PLUGIN_ROOT}/skills/git/scripts/recommit.ts"
+bun "$R" log   --base <parent> --head <branch>              # commits oldest first, with their paths
+# write groups.json, in commit order:
+#   [{ "message": "fix(x): …", "commits": ["abc1234", …] },
+#    { "message": "test: …", "paths": ["src/**/*.test.ts"] },
+#    { "message": "chore: the rest", "commits": [ … ], "rest": true }]
+bun "$R" group --base <parent> --head <branch> --groups groups.json   # writes groups.plan.txt, checks it
+bun "$R" apply --base <parent> --head <branch> --plan groups.plan.txt --dry-run
+bun "$R" apply --base <parent> --head <branch> --plan groups.plan.txt
+```
+
+- Every path goes to the group whose `paths` globs claim it, else the group whose commits touch
+  it most (a tie goes to the later group and prints as `shared`), else the `rest` group. Read the
+  `shared` lines: a file that two scopes edit lands in one of them, so move it with an explicit
+  `paths` entry when the default is wrong.
+- `group` refuses a commit listed twice or never, a path two groups claim, a path no rule places,
+  and an empty group. Fix the JSON and run it again; nothing exists yet.
+- Grouping by `commits` keeps the CONTENT safe whatever the commits mix (cmux, tmux, utils, a
+  deletion, a rename split across groups, a mode change, a symlink): `apply` proves the final tree
+  byte for byte AND audits every path (it equals the base before its group, its final entry from
+  its group on, and no other commit touches it). It does not make each commit BUILD on its own:
+  a commit that edits cmux and a shared util puts the util in whichever group wins, so an
+  earlier group can depend on a later one. Read `group`'s `areas:` line per group, pin a
+  misplaced path with `paths`, and pass `--verify-each "bunx tsgo --noEmit"` (any command) to
+  run it on every new commit in a throwaway worktree; a failure refuses the move.
+- `apply` works on the merge-base, never on a moved parent tip, builds with `commit-tree` in a
+  throwaway index (the working tree, the index and the stash are never touched, so it is safe in
+  a worktree with someone else's uncommitted edits), refuses unless the new tree equals head's,
+  tags the old head `bkp/recommit/<branch>-<stamp>`, and moves the branch only if it still points
+  at the head the plan was built from. It prints the undo line.
+- A stack: apply the parent, then `git rebase --onto <new parent> <old parent> <child>` (the tree
+  is identical, so this applies cleanly), then recommit the child against the new parent.
+- After a tree-identical recommit the previous CI result still describes the code; see the
+  review-loop skill's rule on when CI may be skipped.
+
+The phases below are the manual path, and what each step of the script stands for.
+
 ## Phase 1: detect the base
 
 ```bash
