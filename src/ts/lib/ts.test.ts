@@ -16,6 +16,7 @@ import { buildGraph, isLoadTimeEdge, isMeasuredEdge, labelFor, packageNameOf, po
 import { findLazyCandidates } from "./lazy";
 import type { WorkerSample } from "./measure";
 import { parseModule } from "./parse";
+import { fanInOf, packByBudget, rankFiles } from "./rank";
 import { exportedOnly, extractSkeleton, parseSource, type SkeletonSymbol } from "./skeleton";
 import { collectTypeNames, expandTypes } from "./type-expand";
 
@@ -992,5 +993,122 @@ describe("renderSymbol", () => {
         const wide = Array.from({ length: 12 }, (_, i) => `    keyNumber${i}: "value number ${i}",`).join("\n");
 
         expect(line(`export const facade = {\n${wide}\n};\n`, 1)).toContain("field keyNumber0");
+    });
+});
+
+// Ported from the retired `tools repo-map`, whose ranking `tools ts skeleton --rank` now carries.
+describe("rankFiles", () => {
+    const now = 1_700_000_000_000;
+    const base = { size: 1000, mtimeMs: now - 86_400_000 };
+    const keyOf = (file: { path: string }) => file.path;
+
+    it("ranks the file more files import first when size and recency are equal", () => {
+        const ranked = rankFiles({
+            files: [
+                { path: "a", fanIn: 0, ...base },
+                { path: "b", fanIn: 5, ...base },
+            ],
+            now,
+            keyOf,
+        });
+
+        expect(ranked.map((file) => file.path)).toEqual(["b", "a"]);
+    });
+
+    it("ranks the more recently written file first when size and importers are equal", () => {
+        const ranked = rankFiles({
+            files: [
+                { path: "old", fanIn: 0, size: 1000, mtimeMs: now - 30 * 86_400_000 },
+                { path: "new", fanIn: 0, size: 1000, mtimeMs: now - 86_400_000 },
+            ],
+            now,
+            keyOf,
+        });
+
+        expect(ranked[0].path).toBe("new");
+    });
+
+    it("breaks a tie by key so the order is stable", () => {
+        const ranked = rankFiles({
+            files: [
+                { path: "b", fanIn: 1, ...base },
+                { path: "a", fanIn: 1, ...base },
+            ],
+            now,
+            keyOf,
+        });
+
+        expect(ranked.map((file) => file.path)).toEqual(["a", "b"]);
+    });
+});
+
+describe("packByBudget", () => {
+    const files = [
+        { path: "a", rank: 0.9, tokens: 100 },
+        { path: "b", rank: 0.5, tokens: 100 },
+        { path: "c", rank: 0.1, tokens: 100 },
+    ];
+
+    it("keeps files in rank order until the budget is used, and never exceeds it", () => {
+        const packed = packByBudget({ files, budget: 250 });
+
+        expect(packed.included.map((file) => file.path)).toEqual(["a", "b"]);
+        expect(packed.elided.map((file) => file.path)).toEqual(["c"]);
+        expect(packed.usedTokens).toBe(200);
+    });
+
+    it("skips an over-budget high-rank file so a smaller one can still fit", () => {
+        const packed = packByBudget({
+            files: [
+                { path: "big", rank: 0.9, tokens: 500 },
+                { path: "small", rank: 0.5, tokens: 100 },
+            ],
+            budget: 200,
+        });
+
+        expect(packed.included.map((file) => file.path)).toEqual(["small"]);
+        expect(packed.elided.map((file) => file.path)).toEqual(["big"]);
+    });
+
+    it("does not reorder its input", () => {
+        const input = [...files];
+
+        packByBudget({ files: input, budget: 100 });
+
+        expect(input.map((file) => file.path)).toEqual(["a", "b", "c"]);
+    });
+});
+
+describe("fanInOf", () => {
+    const site = (specifier: string) => ({
+        specifier,
+        kind: "static" as const,
+        typeOnly: false,
+        names: [],
+        locals: [],
+        line: 1,
+    });
+    const moduleOf = (...specifiers: string[]) =>
+        ({ imports: specifiers.map(site) }) as unknown as import("./types").ParsedModule;
+
+    it("counts each importing file once, ignores itself and files outside the scan", () => {
+        const files = [
+            { file: "a.ts", absolute: "/r/a.ts" },
+            { file: "b.ts", absolute: "/r/b.ts" },
+            { file: "c.ts", absolute: "/r/c.ts" },
+        ];
+        const modules = new Map([
+            ["a.ts", moduleOf("./c", "./c", "./a", "left-pad")],
+            ["b.ts", moduleOf("./c", "./missing")],
+            ["c.ts", moduleOf()],
+        ]);
+        const resolve = (specifier: string) =>
+            ({ "./c": "/r/c.ts", "./a": "/r/a.ts", "./missing": "/elsewhere/x.ts" })[specifier];
+
+        const fanIn = fanInOf({ files, modules, resolve });
+
+        expect(fanIn.get("/r/c.ts")).toBe(2);
+        expect(fanIn.get("/r/a.ts")).toBeUndefined();
+        expect(fanIn.has("/elsewhere/x.ts")).toBe(false);
     });
 });

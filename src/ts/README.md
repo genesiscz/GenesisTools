@@ -44,6 +44,17 @@ A path may be a file or a directory. Directories are walked recursively, skippin
 | `--tests` | Include `*.test.ts` / `*.spec.ts` |
 | `--ignore <substring>` | Skip any path containing this below the path you named (never the folders above it); repeatable |
 | `--exact-tokens` | Count tokens with `@anthropic-ai/tokenizer` instead of the chars-per-token estimate |
+| `--rank` | Order files by importance instead of by path, and print each file's rank and importer count |
+| `--max-tokens <n>` | Keep the highest-ranked files whose printed skeletons fit the budget, measured in the chosen format with `--function-context` bodies and `--types` included (implies `--rank`); the rest are named in the closing line and in `stats.omitted`, which the budget does not count |
+| `--files-only` | Print only the ranked file list (implies `--rank`): rank, importers, declarations, path |
+
+**Ranking (what `tools repo-map` used to do).** Rank is 0.5 importers + 0.2 size + 0.3 recency (the weight
+halves every 14 days), each part scaled to 0..1. Importers are the scanned files that import a file,
+resolved the way Bun resolves them, so tsconfig aliases like `@app/...` count. They are counted among
+the files you scanned, so scan the whole tree (`tools ts skeleton src --files-only`) for a global
+ranking, not one folder. `tools ts skeleton src --max-tokens 8000 --exported --top-level` is the old
+"map of the repo inside a budget". It covers TypeScript and JavaScript only; `repo-map` also read
+Python, Go and Rust.
 
 **The `--include-*` flags are off by default because they cost payload, not because they are rare.**
 Measured 2026-09-22 on a sibling repo's 20,102 symbols: `--include-names` adds 24.9% of the bytes and

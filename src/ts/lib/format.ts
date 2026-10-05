@@ -98,33 +98,20 @@ export interface Rendered {
 }
 
 /**
- * One exit for every subcommand, so `--md`, `--json`, `--json-compact` and `--toon` cannot
- * drift apart between them. Returns the plain text that was printed, which the caller measures
- * for its token-saving line.
+ * What `emit` prints for `format`, without printing it, so a caller can measure an output before it
+ * decides what to print.
  */
-export function emit(format: OutputFormat, rendered: Rendered): string {
+export function render(format: OutputFormat, rendered: Rendered): string {
     if (format === "md") {
-        const text = json2md(rendered.md());
-
-        out.print(text);
-
-        return text;
+        return json2md(rendered.md());
     }
 
     if (format === "json") {
-        const text = SafeJSON.stringify(rendered.json());
-
-        out.print(text);
-
-        return text;
+        return SafeJSON.stringify(rendered.json());
     }
 
     if (format === "json-compact") {
-        const text = SafeJSON.stringify((rendered.compact ?? rendered.json)());
-
-        out.print(text);
-
-        return text;
+        return SafeJSON.stringify((rendered.compact ?? rendered.json)());
     }
 
     if (format === "toon") {
@@ -133,18 +120,31 @@ export function emit(format: OutputFormat, rendered: Rendered): string {
         // the columnar form does by hand; feeding it positional arrays defeated that and cost
         // 15% more tokens than `--json-compact` (measured 2026-09-22 on src/utils: 493k tokens
         // against 428k). From the object rows it lands at 433k, level with the columnar form.
-        const text = toToon((rendered.toon ?? rendered.json)());
-
-        out.print(text);
-
-        return text;
+        return toToon((rendered.toon ?? rendered.json)());
     }
 
-    const lines = rendered.text();
+    return rendered.text().join("\n");
+}
 
-    for (const line of lines) {
-        out.println(line);
+/**
+ * One exit for every subcommand, so `--md`, `--json`, `--json-compact` and `--toon` cannot
+ * drift apart between them. Returns the plain text that was printed, which the caller measures
+ * for its token-saving line.
+ */
+export function emit(format: OutputFormat, rendered: Rendered): string {
+    if (format === "text") {
+        const lines = rendered.text();
+
+        for (const line of lines) {
+            out.println(line);
+        }
+
+        return lines.join("\n");
     }
 
-    return lines.join("\n");
+    const text = render(format, rendered);
+
+    out.print(text);
+
+    return text;
 }
