@@ -581,6 +581,11 @@ struct GroupHeader: View {
     /// The group's identity in `prefs` and `allNames` when the title is not unique (two projects
     /// both named `service`); the title otherwise.
     var key: String?
+    /// A star button instead of the pin glyph: the PR list's favourite projects, which load with
+    /// every list. The same pin underneath, so the order and the menu stay one mechanism.
+    var starred = false
+    /// A hide button: the PR list's projects opened from "More projects" leave the list again.
+    var remove: (() -> Void)?
 
     /// Where a header dragged over this one would land (a line on that edge); nil when none is.
     @State private var dropEdge: VerticalEdge?
@@ -599,7 +604,7 @@ struct GroupHeader: View {
                         .font(.system(size: 9, weight: .semibold))
                         .rotationEffect(.degrees(isCollapsed ? 0 : 90))
                     Text(title).font(.system(size: 11.5, weight: .semibold))
-                    if isPinned {
+                    if isPinned && !starred {
                         Image(systemName: "pin.fill").font(.system(size: 9)).foregroundColor(ReviewPalette.modified)
                     }
                     Spacer()
@@ -610,6 +615,12 @@ struct GroupHeader: View {
             .accessibilityLabel(Text(title))
             .accessibilityValue(Text(isCollapsed ? "collapsed, \(count) items" : "expanded, \(count) items"))
             .accessibilityHint(Text(isCollapsed ? "Expands the group" : "Collapses the group"))
+            if let remove {
+                IconButton(systemName: "eye.slash", tooltip: "Hide \(title) again (it stays under More projects)", size: 9.5, action: remove)
+            }
+            if starred {
+                IconButton(systemName: isPinned ? "star.fill" : "star", tooltip: isPinned ? "Unstar \(title)" : "Star \(title): kept on top, its PRs/MRs load with every list", size: 9.5) { prefs.togglePin(key) }
+            }
             if let path {
                 IconButton(systemName: "doc.on.doc", tooltip: "Copy absolute path: \(path)", size: 9.5) { PathOpener.copy(path, what: "path") }
             }
@@ -665,6 +676,71 @@ struct GroupHeader: View {
                 Button("Copy absolute path") { PathOpener.copy(path, what: "path") }
             }
         }
+    }
+}
+
+/// Where a session's checkout lives when its recorded folder no longer holds one. A project moved into a
+/// group folder (`Projects/ReservineBack` → `Projects/Reservine/ReservineBack`, 2026-10-02) leaves the
+/// old path empty or with a broken `.git`, and the agent keeps that path as its folder: the Changes pane
+/// then had no repository. The checkout with the same name one level down under the parent is the
+/// move, when exactly one exists. Only a found checkout is cached, and only while it still is one: a miss
+/// is asked again, so a move still in progress is found once it lands. A folder that holds a repository
+/// is its own answer, also after a move was cached: a move undone wins over the cached one.
+enum MovedCheckout {
+    private static var cache: [String: String] = [:]
+    private static let lock = NSLock()
+
+    static func resolve(_ folder: String) -> String? {
+        if isRepository(projectRoot(of: folder)) {
+            lock.lock()
+            cache[folder] = nil
+            lock.unlock()
+            return nil
+        }
+
+        lock.lock()
+        let known = cache[folder]
+        lock.unlock()
+        if let known, isRepository(known) {
+            return known
+        }
+
+        let found = search(folder)
+        lock.lock()
+        cache[folder] = found
+        lock.unlock()
+        if let found {
+            HubPerf.log("moved checkout: \(folder) -> \(found)")
+        }
+        return found
+    }
+
+    /// A real repository: `.git` is a folder with `HEAD`, or a worktree's (or submodule's) pointer file
+    /// whose `gitdir:` still holds a `HEAD`. A pointer left behind by a deleted main checkout is not one.
+    static func isRepository(_ root: String) -> Bool {
+        let git = (root as NSString).appendingPathComponent(".git")
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: git, isDirectory: &isDirectory) else { return false }
+        if isDirectory.boolValue {
+            return FileManager.default.fileExists(atPath: (git as NSString).appendingPathComponent("HEAD"))
+        }
+        guard let text = try? String(contentsOfFile: git, encoding: .utf8),
+              let line = text.split(whereSeparator: \.isNewline).first, line.hasPrefix("gitdir:")
+        else { return false }
+        var target = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
+        if !target.hasPrefix("/") {
+            target = (root as NSString).appendingPathComponent(target)
+        }
+        return FileManager.default.fileExists(atPath: (target as NSString).appendingPathComponent("HEAD"))
+    }
+
+    private static func search(_ folder: String) -> String? {
+        let name = (folder as NSString).lastPathComponent
+        let parent = (folder as NSString).deletingLastPathComponent
+        guard !name.isEmpty, let groups = try? FileManager.default.contentsOfDirectory(atPath: parent) else { return nil }
+        let matches = groups.filter { !$0.hasPrefix(".") }.map { (parent as NSString).appendingPathComponent($0 + "/" + name) }
+            .filter { $0 != folder && isRepository($0) }
+        return matches.count == 1 ? matches[0] : nil
     }
 }
 

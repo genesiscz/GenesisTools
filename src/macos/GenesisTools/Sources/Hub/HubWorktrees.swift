@@ -33,11 +33,12 @@ enum WorktreeDiscovery {
         cache.write(worktrees, key: "all")
     }
 
-    /// One `git worktree list` per repository, found from the distinct session folders.
-    static func discover(sessions: [HubSession]) -> [HubWorktree] {
+    /// One `git worktree list` per repository, found from the distinct session folders and `extra`
+    /// folders (a worktree a link names).
+    static func discover(sessions: [HubSession], extra: [String] = []) -> [HubWorktree] {
         var seenCommonDirs = Set<String>()
         var worktrees: [HubWorktree] = []
-        for cwd in Set(sessions.map(\.cwd)) where !cwd.isEmpty && FileManager.default.fileExists(atPath: cwd) {
+        for cwd in Set(sessions.map(\.cwd)).union(extra) where !cwd.isEmpty && FileManager.default.fileExists(atPath: cwd) {
             guard let common = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"])?.trimmed,
                   seenCommonDirs.insert(common).inserted,
                   let list = git(cwd, ["worktree", "list", "--porcelain"])
@@ -252,8 +253,11 @@ struct WorktreeListView: View {
         let groups = groups
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
-                if model.loadingWorktrees {
-                    ProgressView().frame(maxWidth: .infinity).padding()
+                if model.loadingWorktrees, model.worktrees.isEmpty {
+                    SkeletonRows(count: 8, leading: .dot)
+                        .skeletonShimmer()
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Finding worktrees")
                 } else if !model.worktrees.isEmpty {
                     WorktreeCleanupEntry(model: model)
                 }
