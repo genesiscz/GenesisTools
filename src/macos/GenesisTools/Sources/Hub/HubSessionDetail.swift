@@ -9,6 +9,8 @@ struct HubSessionDetailHost: View {
     let session: HubSession
     /// A tool row's "Open diff": absolute path and line of the change.
     var onShowChange: ((String, Int?) -> Void)?
+    /// A sidebar sub-agent row: the hub opens it in the Agents mode.
+    var onOpenSubagent: ((SessionSubagent) -> Void)?
     /// False in a multi-pane layout: the screen's own sidebar starts folded to leave room.
     var showsSidebar = true
     /// Opens with this transcript search applied (`--transcript-query`, snapshots and links).
@@ -170,7 +172,7 @@ struct HubSessionDetailHost: View {
         // A failed Agent call in the loaded turns is the one thing the directory cannot tell.
         let failed = Set(digest.subagents.filter { $0.state == .failed }.map(\.id))
         merged.subagents = subagents.map { agent in
-            failed.contains(agent.id) ? SessionSubagent(id: agent.id, kind: agent.kind, summary: agent.summary, state: .failed) : agent
+            failed.contains(agent.id) ? SessionSubagent(id: agent.id, kind: agent.kind, summary: agent.summary, state: .failed, startedAt: agent.startedAt) : agent
         }
         return merged
     }
@@ -300,6 +302,7 @@ struct HubSessionDetailHost: View {
             Task { await load(offset: turns.isEmpty ? nil : windowStart, limit: max(Self.pageSize, turns.count + Self.pageSize), throughEnd: true) }
         }
         actions.copy = { text in PathOpener.copy(text) }
+        actions.openSubagent = agentChild ? nil : onOpenSubagent
         // The header's "Copy the resume command" copied an empty string (it cleared the clipboard):
         // nothing set the command. It runs in the session's folder, where the agent finds the session.
         if !agentChild, let command = AgentLauncher.resumeCommand(for: session) {
@@ -397,7 +400,15 @@ struct HubSessionDetailHost: View {
             await rebuild()
             // A newer load started while this one rebuilt: it owns the state, the notice and the tail.
             guard id == loadID else { return }
-            HubMainBusy.measure("transcript.page.render")
+            if offset == nil, limit == Self.firstPage {
+                // A session opened: every open is logged with what its rows hold, until the main thread
+                // settles, so the cost of the rows can be read per session from app-perf.log. Keyed by the
+                // session: a second session opened before the first settles gets its own line.
+                let shape = Self.shape(document, session: session.sessionId)
+                HubMainBusy.measureUntilSettled("transcript.open \(session.sessionId.prefix(8))") { shape }
+            } else {
+                HubMainBusy.measure("transcript.page.render")
+            }
             loadState = .loaded
             NotificationCenter.default.post(name: Self.firstPageDone, object: session.id)
             // This window's own follow, from its last turn (which may still grow).
@@ -612,6 +623,39 @@ struct HubSessionDetailHost: View {
         }
     }
 
+    /// What a transcript.open line names: the session and the rows by kind, with the text a row lays out.
+    static func shape(_ document: TranscriptDocument, session: String) -> String {
+        var counts: [String: Int] = [:]
+        var chars = 0
+        var rows = 0
+        for section in document.sections {
+            for row in section.rows {
+                rows += 1
+                switch row.kind {
+                case .prompt(let text, _):
+                    counts["prompt", default: 0] += 1
+                    chars += text.count
+                case .reply(let text, _, _):
+                    counts["reply", default: 0] += 1
+                    chars += text.count
+                case .thinking(let text):
+                    counts["thinking", default: 0] += 1
+                    chars += text.count
+                case .tool(let line):
+                    counts["tool.\(TranscriptToolKind.of(line.name))", default: 0] += 1
+                case .toolGroup:
+                    counts["toolGroup", default: 0] += 1
+                case .notice:
+                    counts["notice", default: 0] += 1
+                case .activity:
+                    counts["activity", default: 0] += 1
+                }
+            }
+        }
+        let kinds = counts.sorted { $0.value > $1.value }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
+        return "\(session.prefix(8)) \(document.sections.count) turns \(rows) rows \(chars) chars [\(kinds)]"
+    }
+
     /// Off the main thread: a long session is thousands of rows with regex work per prompt. Builds
     /// overlap (a fetch, the native scan, an earlier page, the live tail), and only the latest may
     /// land: an older one would drop turns added after it started.
@@ -641,6 +685,7 @@ enum HubSubagents {
             let description: String?
             let agentType: String?
             let toolUseId: String?
+            let startedAt: String?
             let lastAt: String
             let state: String
         }
@@ -668,14 +713,21 @@ enum HubSubagents {
 
     private static func row(_ agent: Envelope.Agent) -> SessionSubagent {
         let title = agent.description ?? agent.agentType ?? agent.id
-        var summary = agent.name.map { "\($0): \(title)" } ?? title
-        // The stolen row has no "stopped" state: the text says it, the row keeps the "done" state.
-        if agent.state == "stopped" {
-            summary += " (stopped, last write \(agent.lastAt.prefix(16).replacingOccurrences(of: "T", with: " ")) UTC)"
+        let summary = agent.name.map { "\($0): \(title)" } ?? title
+        // "stopped": its transcript stopped growing before it reported back.
+        let state: SessionSubagent.State = switch agent.state {
+        case "running": .running
+        case "stopped": .idle
+        default: .done
         }
-
-        let state: SessionSubagent.State = agent.state == "running" ? .running : .done
-        return SessionSubagent(id: agent.toolUseId ?? agent.id, kind: agent.agentType ?? "Agent", summary: summary, state: state)
+        return SessionSubagent(
+            id: agent.toolUseId ?? agent.id,
+            kind: agent.agentType ?? "Agent",
+            summary: summary,
+            state: state,
+            // No start is no start: the last write would sort an old agent as a new one.
+            startedAt: HubFormat.date(agent.startedAt)
+        )
     }
 }
 

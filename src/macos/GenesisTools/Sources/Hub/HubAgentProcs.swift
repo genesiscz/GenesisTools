@@ -347,14 +347,13 @@ struct AgentProcsView: View {
         }
     }
 
-    /// The session in the Sessions list, when it is among the listed ones; else the filter finds it.
+    /// The session in the Sessions list; one older than the list's window is fetched and opened.
     private func reveal(_ group: ProcGroup) {
         guard let sessionId = group.session?.sessionId else { return }
         if let session = model.sessions.first(where: { $0.sessionId == sessionId }) {
             model.select(session.id)
         } else {
-            model.filter = sessionId
-            store.notice = ("\(sessionId.prefix(8)) is not among the last \(HubModel.recentHours) h; the filter searches its history", false)
+            model.openOlderSession(sessionId, settle: false)
         }
     }
 

@@ -36,6 +36,8 @@ struct InsightTurn: Decodable, Equatable, Identifiable {
     let models: [String]
     let toolCount: Int
     let errorCount: Int
+    /// The context window after the prompt (its last call's prompt size); nil from an older cached answer.
+    let contextTokens: Int?
     let rank: Int?
 
     var id: String { turnId }
@@ -202,7 +204,10 @@ final class SessionInsightsModel: ObservableObject {
            id == sessionId, payload == nil, loading {
             HubSWR.painted("insights.load", "\(cached.turns.count) prompts")
             showingCache = true
-            withAnimation(SWR.animation) { payload = cached }
+            // No animation: the sidebar is one stack, and a spring here laid it all out again on every
+            // frame while the transcript's first page was drawing. Without it, opening four sessions took
+            // 3110-3238 ms of main thread instead of 3728-4055 ms (hub bench, 3 rounds, 2026-10-01 23:39).
+            payload = cached
         }
         let result = await fetch.value
         guard id == sessionId else {
@@ -216,7 +221,7 @@ final class SessionInsightsModel: ObservableObject {
         case .success(let fresh):
             span.end("\(fresh.turns.count) prompts, \(fresh.tools.count) tools")
             if payload != fresh {
-                withAnimation(SWR.animation) { payload = fresh }
+                payload = fresh
             }
             error = nil
             HubStuckStore.shared.apply(fresh.stuck, sessionId: id)
@@ -291,18 +296,36 @@ struct InsightBar {
     let lead: InsightTurn
     /// The best rank inside the bar, for its marker.
     let rank: Int?
+    /// The context window at the bar's last prompt that recorded one; 0 when none did (not measured).
+    let context: Int
+    /// The prompt `context` comes from: what the context chart's hover names and its click opens.
+    let contextTurn: InsightTurn?
+    /// The context fell by a third or more at one of the bar's prompts, measured from the prompt before
+    /// it, in this bar or the last measured one before it (a compaction the bar's last value would hide).
+    let compactedInside: Bool
 
     var billable: Int { input + cacheWrite + output }
+
+    /// A fall of a third or more from `previous` to `next`.
+    static func isCompaction(from previous: Int, to next: Int) -> Bool {
+        previous > 0 && next > 0 && Double(next) < Double(previous) * 0.67
+    }
 
     /// At most `maxBars` bars, consecutive prompts summed when there are more. Empty for no turns.
     static func bucket(_ turns: [InsightTurn], maxBars: Int, priced: Bool) -> [InsightBar] {
         guard !turns.isEmpty, maxBars > 0 else { return [] }
         let size = Int((Double(turns.count) / Double(maxBars)).rounded(.up))
+        // The last measurement before each bar: a fall into a bar's first prompt is its compaction too.
+        var carried: Int?
         return stride(from: 0, to: turns.count, by: size).map { start in
             let slice = turns[start..<min(start + size, turns.count)]
             let lead = slice.max { a, b in
                 priced ? (a.costUsd ?? 0) < (b.costUsd ?? 0) : a.billableTokens < b.billableTokens
             } ?? slice[slice.startIndex]
+            let measured = slice.compactMap { turn in (turn.contextTokens ?? 0) > 0 ? turn : nil }
+            let chain = (carried.map { [$0] } ?? []) + measured.map { $0.contextTokens ?? 0 }
+            let compactedInside = zip(chain, chain.dropFirst()).contains { isCompaction(from: $0.0, to: $0.1) }
+            carried = measured.last?.contextTokens ?? carried
             return InsightBar(
                 turns: slice,
                 cost: slice.reduce(0) { $0 + ($1.costUsd ?? 0) },
@@ -311,7 +334,10 @@ struct InsightBar {
                 output: slice.reduce(0) { $0 + $1.outputTokens },
                 cacheRead: slice.reduce(0) { $0 + $1.cacheReadTokens },
                 lead: lead,
-                rank: slice.compactMap(\.rank).min()
+                rank: slice.compactMap(\.rank).min(),
+                context: measured.last?.contextTokens ?? 0,
+                contextTurn: measured.last,
+                compactedInside: compactedInside
             )
         }
     }
@@ -355,12 +381,14 @@ struct SessionInsightsSection: View {
                     .foregroundStyle(SessionPalette.red)
                     .textSelection(.enabled)
             } else {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.mini)
-                    Text("Reading cost and tool analytics…")
+                // Shaped like the cost chart and the tool table that replace it.
+                VStack(alignment: .leading, spacing: 10) {
+                    SkeletonBar(height: 56, radius: 5)
+                    SkeletonRows(count: 4, subtitle: false, rowHeight: 20)
                 }
-                .font(.system(size: 11.5))
-                .foregroundStyle(SessionPalette.faint)
+                .skeletonShimmer()
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Reading cost and tool analytics")
             }
             HandoffSidebarRow(
                 thresholds: model.payload?.thresholds,
@@ -406,8 +434,12 @@ struct TurnCostTimelineSection: View {
     static let maxBars = 90
 
     private var showsCost: Bool { payload.priced && metricRaw == "cost" }
+    /// The context window after each prompt, as a line: it climbs through the session and falls at a compaction.
+    private var showsContext: Bool { metricRaw == "context" && hasContext }
     /// A file with no per-call usage (Grok) has nothing to chart or to switch between.
     private var hasUsage: Bool { payload.turns.contains { $0.billableTokens + $0.cacheReadTokens > 0 } }
+    private var hasContext: Bool { payload.turns.contains { ($0.contextTokens ?? 0) > 0 } }
+    private var metricLabel: String { showsContext ? "Context" : showsCost ? "Cost" : "Tokens" }
 
     var body: some View {
         let bars = InsightBar.bucket(payload.turns, maxBars: Self.maxBars, priced: payload.priced)
@@ -415,15 +447,14 @@ struct TurnCostTimelineSection: View {
             HStack(spacing: 6) {
                 SessionSectionTitle(title: "Cost per prompt", count: payload.turns.count)
                 Spacer(minLength: 4)
-                if payload.priced && hasUsage {
+                if hasUsage && (payload.priced || hasContext) {
                     MenuButton {
-                        [
-                            .action("Cost (list price)", checked: showsCost) { metricRaw = "cost" },
-                            .action("Tokens", checked: !showsCost) { metricRaw = "tokens" },
-                        ]
+                        (payload.priced ? [MenuButtonItem.action("Cost (list price)", checked: showsCost && !showsContext) { metricRaw = "cost" }] : [])
+                            + [.action("Tokens", checked: !showsCost && !showsContext) { metricRaw = "tokens" }]
+                            + (hasContext ? [.action("Context window", checked: showsContext) { metricRaw = "context" }] : [])
                     } label: {
                         HStack(spacing: 3) {
-                            Text(verbatim: showsCost ? "Cost" : "Tokens")
+                            Text(verbatim: metricLabel)
                             Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
                         }
                         .font(.system(size: 10.5, weight: .medium))
@@ -456,12 +487,18 @@ struct TurnCostTimelineSection: View {
         let tokenMax = Double(max(bars.map(\.billable).max() ?? 0, 1))
         let readMax = Double(max(bars.map(\.cacheRead).max() ?? 0, 1))
         let cost = showsCost
+        let contextLine = showsContext
+        let contextMax = Double(max(bars.map(\.context).max() ?? 0, 1))
         let focus = hovered
         return Canvas { context, size in
             let slot = size.width / CGFloat(bars.count)
             let gap: CGFloat = slot > 4 ? 1 : 0
             let top: CGFloat = 12
             let height = size.height - top
+            if contextLine {
+                Self.drawContext(bars, in: context, size: size, top: top, max: contextMax, focus: focus)
+                return
+            }
             for (i, bar) in bars.enumerated() {
                 let x = CGFloat(i) * slot
                 let width = max(1, slot - gap)
@@ -504,15 +541,55 @@ struct TurnCostTimelineSection: View {
         }
         .gesture(SpatialTapGesture().onEnded { tap in
             guard let index = InsightBar.index(at: tap.location.x, width: chartWidth, count: bars.count) else { return }
-            onJump(bars[index].lead)
+            // The context chart opens the prompt its hover names; cost and tokens open the costliest.
+            onJump(showsContext ? (bars[index].contextTurn ?? bars[index].lead) : bars[index].lead)
         })
         .instantTooltip("Click a bar to open its prompt in the transcript")
         .accessibilityIdentifier("session-details-cost-chart")
     }
 
 
+    /// The context window as a filled line through the bars' centres; a fall of a third or more (a
+    /// compaction, or a fresh start) gets a red tick at the top, also when it happened inside one bar.
+    /// A bar with no recorded context is a missing measurement, not a zero: the line passes over it.
+    private static func drawContext(_ bars: [InsightBar], in context: GraphicsContext, size: CGSize, top: CGFloat, max: Double, focus: Int?) {
+        let slot = size.width / CGFloat(bars.count)
+        let height = size.height - top
+        func point(_ i: Int) -> CGPoint {
+            CGPoint(x: (CGFloat(i) + 0.5) * slot, y: size.height - CGFloat(Double(bars[i].context) / max) * height)
+        }
+        let measured = bars.indices.filter { bars[$0].context > 0 }
+        guard let first = measured.first, let last = measured.last else { return }
+        var line = Path()
+        var area = Path()
+        area.move(to: CGPoint(x: point(first).x, y: size.height))
+        var previous: Int?
+        for i in measured {
+            let p = point(i)
+            if previous == nil { line.move(to: p) } else { line.addLine(to: p) }
+            area.addLine(to: p)
+            let dropped = previous.map { InsightBar.isCompaction(from: bars[$0].context, to: bars[i].context) } ?? false
+            if dropped || bars[i].compactedInside {
+                context.fill(Path(CGRect(x: p.x - 0.75, y: 2, width: 1.5, height: 7)), with: .color(SessionPalette.red))
+            }
+            previous = i
+        }
+        area.addLine(to: CGPoint(x: point(last).x, y: size.height))
+        area.closeSubpath()
+        context.fill(area, with: .color(SessionPalette.blue.opacity(0.18)))
+        context.stroke(line, with: .color(SessionPalette.blue), lineWidth: 1.5)
+        if let focus, bars.indices.contains(focus), bars[focus].context > 0 {
+            let p = point(focus)
+            context.fill(Path(ellipseIn: CGRect(x: p.x - 3, y: p.y - 3, width: 6, height: 6)), with: .color(.white))
+        }
+    }
+
     private func hoverLine(_ bars: [InsightBar]) -> String {
         guard let hovered, bars.indices.contains(hovered) else {
+            if showsContext {
+                let peak = bars.map(\.context).max() ?? 0
+                return "context window after each prompt, peak \(SessionFormat.tokens(peak)) · a red tick is a compaction"
+            }
             let total = payload.priced ? "\(InsightFormat.usd(payload.totals.costUsd)) at list price" : "not every model has a price"
             return showsCost
                 ? "\(total) · hover a bar, click to open its prompt"
@@ -520,6 +597,10 @@ struct TurnCostTimelineSection: View {
         }
 
         let bar = bars[hovered]
+        if showsContext {
+            guard let last = bar.contextTurn else { return "no context recorded for these prompts" }
+            return "context \(SessionFormat.tokens(bar.context)) after \(last.title)"
+        }
         let prefix = bar.turns.count > 1 ? "\(bar.turns.count) prompts, the costliest: " : ""
         return prefix + InsightFormat.summary(bar.lead, priced: payload.priced)
     }
