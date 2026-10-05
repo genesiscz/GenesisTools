@@ -1,367 +1,171 @@
-#!/usr/bin/env node
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
-import chalk from "chalk";
-import { Command } from "commander";
-
-// Handle --readme flag early (before Commander parses)
-handleReadmeFlag(import.meta.url);
-
-import { runTool } from "@genesiscz/utils/cli";
+#!/usr/bin/env bun
+import { runTool, suggestCommand } from "@genesiscz/utils/cli";
+import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import {
-    type CallToolResult,
-    type ListToolsResult,
-    ProtocolError,
-    ProtocolErrorCode,
-    Server,
-} from "@modelcontextprotocol/server";
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { checkLLMModel, downloadLLMModel } from "@nanocollective/get-md";
-import { type EngineName, getEngine, listEngines } from "./engines/index.js";
-import {
-    compactCodeBlocks,
-    fetchText,
-    handleFetchJina,
-    handleFetchWebMarkdown,
-    handleFetchWebRaw,
-} from "./handlers.js";
-import { limitToTokens } from "./utils/tokens.js";
-import { buildJinaUrl, ensureHttpUrl } from "./utils/urls.js";
+import { handleReadmeFlag } from "@genesiscz/utils/readme";
+import { Command, InvalidArgumentError } from "commander";
+import pc from "picocolors";
+import { z } from "zod";
+import { DEPTHS, ENGINE_NAMES, isDepth, isEngineName, listEngines, unknownEngineMessage } from "./lib/convert";
+import { isReadMode, READ_MODES, readPage } from "./lib/read";
 
-// CLI status → stderr via clack (out.log.*), with logger mirror for the file
-// log. Plain console.log here would corrupt stdout (the MCP server's JSON-RPC
-// channel when --server is set). `out.print`/`out.result` are the ONLY stdout
-// writers.
-const log = {
-    info: (msg: string) => out.log.info(msg),
-    ok: (msg: string) => out.log.success(msg),
-    warn: (msg: string) => out.log.warn(msg),
-    err: (msg: string, e?: unknown) => out.log.error(msg + (e ? `: ${String(e)}` : "")),
-};
-const slog = logger.scoped("mcp-web-reader").log;
+handleReadmeFlag(import.meta.url);
 
-// CLI options interface
+const TOOL = "tools mcp-web-reader";
+
 interface CliOptions {
-    url: string;
-    mode: string;
-    depth: string;
-    engine: string;
+    url?: string;
+    mode: string | boolean;
+    engine: string | boolean;
+    depth: string | boolean;
+    tokens?: number;
+    saveTokens?: boolean;
     out?: string;
-    tokens?: string;
-    saveTokens: boolean;
     headers?: string;
+    server?: boolean;
+    listEngines?: boolean;
 }
 
-// CLI
-async function runCli(opts: CliOptions): Promise<void> {
-    const url = ensureHttpUrl(String(opts.url));
-    const mode = opts.mode;
-    const depth = (opts.depth || "basic") as "basic" | "advanced";
-    const engineName = (opts.engine || "turndown") as EngineName;
-    const out = opts.out;
-    const maxTokens = opts.tokens ? Number(opts.tokens) : undefined;
-    const saveTokens = opts.saveTokens;
+const headersSchema = z.record(z.string(), z.string());
 
-    try {
-        if (mode === "raw") {
-            log.info(`Fetching raw HTML: ${chalk.cyan(url)}`);
-            const headers = opts.headers ? SafeJSON.parse(String(opts.headers)) : undefined;
-            let html = await fetchText(url, headers);
-            if (saveTokens) {
-                html = html.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n");
-            }
-            const limited = limitToTokens(html, maxTokens);
-            if (out) {
-                await Bun.write(out, limited.text);
-                log.ok(`Wrote HTML to ${out}`);
-            } else {
-                process.stdout.write(`${limited.text}\n`);
-            }
-            return;
-        }
+function parsePositiveInt(value: string): number {
+    const parsed = Number(value);
 
-        if (mode === "jina") {
-            const jUrl = buildJinaUrl(url);
-            log.info(`Fetching Jina Reader MD: ${chalk.cyan(jUrl)}`);
-            let md = await fetchText(jUrl);
-            if (saveTokens) {
-                md = compactCodeBlocks(md);
-            }
-            const limited = limitToTokens(md, maxTokens);
-            if (out) {
-                await Bun.write(out, limited.text);
-                log.ok(`Wrote Jina MD to ${out}`);
-            } else {
-                process.stdout.write(`${limited.text}\n`);
-            }
-            return;
-        }
-
-        if (mode === "markdown") {
-            log.info(`Fetching HTML and extracting with engine "${engineName}": ${chalk.cyan(url)}`);
-            const html = await fetchText(url);
-
-            // Use the new engine system
-            const engine = getEngine(engineName);
-            const result = await engine.convert(html, {
-                baseUrl: url,
-                depth,
-            });
-
-            let md = result.markdown;
-            if (saveTokens) {
-                md = compactCodeBlocks(md);
-            }
-            const limited = limitToTokens(md, maxTokens);
-
-            if (out) {
-                await Bun.write(out, limited.text);
-                log.ok(
-                    `Wrote extracted MD to ${out} (engine: ${engineName}, time: ${Math.round(result.metrics.conversionTimeMs)}ms)`
-                );
-            } else {
-                process.stdout.write(`${limited.text}\n`);
-            }
-            return;
-        }
-
-        log.err(`Unknown mode: ${mode} (expected raw|markdown|jina)`);
-        process.exit(1);
-    } catch (e) {
-        log.err("Failed", e);
-        process.exit(1);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new InvalidArgumentError("expected a positive whole number");
     }
+
+    return parsed;
 }
 
-// MCP server
-const server = new Server(
-    {
-        name: "mcp-web-reader",
-        version: "0.2.0",
-    },
-    { capabilities: { tools: {} } }
-);
-
-server.setRequestHandler("tools/list", async (): Promise<ListToolsResult> => {
-    return {
-        tools: [
-            {
-                name: "FetchWebRaw",
-                description: "Fetch raw HTML of a URL (depth, save_tokens, tokens)",
-                inputSchema: {
-                    type: "object" as const,
-                    properties: {
-                        url: { type: "string" },
-                        headers: { type: "object" as const, description: "Optional headers" },
-                        depth: { type: "string", enum: ["basic", "advanced"], description: "Extraction depth" },
-                        save_tokens: {
-                            type: "number",
-                            enum: [0, 1],
-                            description: "Compact code blocks to save tokens",
-                        },
-                        tokens: { type: "number", description: "Max tokens to return" },
-                    },
-                    required: ["url"],
-                },
-            },
-            {
-                name: "FetchJina",
-                description:
-                    "Fetch Markdown via Jina Reader (https://r.jina.ai/http://...) (depth, save_tokens, tokens)",
-                inputSchema: {
-                    type: "object" as const,
-                    properties: {
-                        url: { type: "string" },
-                        depth: {
-                            type: "string",
-                            enum: ["basic", "advanced"],
-                            description: "Extraction depth (info only)",
-                        },
-                        save_tokens: {
-                            type: "number",
-                            enum: [0, 1],
-                            description: "Compact code blocks to save tokens",
-                        },
-                        tokens: { type: "number", description: "Max tokens to return" },
-                    },
-                    required: ["url"],
-                },
-            },
-            {
-                name: "FetchWebMarkdown",
-                description:
-                    "Extract Markdown locally using pluggable engines (turndown, mdream, readerlm). Supports depth, engine selection, save_tokens, and token limits.",
-                inputSchema: {
-                    type: "object" as const,
-                    properties: {
-                        url: { type: "string", description: "URL to fetch and convert" },
-                        engine: {
-                            type: "string",
-                            enum: ["turndown", "mdream", "readerlm"],
-                            description:
-                                "Conversion engine: turndown (default, GFM support), mdream (fast, LLM-optimized), readerlm (AI-powered placeholder)",
-                        },
-                        depth: {
-                            type: "string",
-                            enum: ["basic", "advanced"],
-                            description: "Extraction depth (basic=title only, advanced=YAML frontmatter)",
-                        },
-                        save_tokens: {
-                            type: "number",
-                            enum: [0, 1],
-                            description: "Compact code blocks to save tokens",
-                        },
-                        tokens: { type: "number", description: "Max tokens to return" },
-                    },
-                    required: ["url"],
-                },
-            },
-        ],
-    };
-});
-
-server.setRequestHandler("tools/call", async (request): Promise<CallToolResult> => {
-    const name = request.params.name;
-    const args = (request.params.arguments || {}) as Record<string, unknown>;
-
-    try {
-        if (name === "FetchWebRaw") {
-            return (await handleFetchWebRaw(args)) as CallToolResult;
-        }
-
-        if (name === "FetchJina") {
-            return (await handleFetchJina(args)) as CallToolResult;
-        }
-
-        if (name === "FetchWebMarkdown") {
-            return (await handleFetchWebMarkdown(args)) as CallToolResult;
-        }
-
-        throw new ProtocolError(ProtocolErrorCode.MethodNotFound, `Unknown tool: ${name}`);
-    } catch (e: unknown) {
-        if (e instanceof ProtocolError) {
-            throw e;
-        }
-
-        const message = e instanceof Error ? e.message : String(e);
-        logger.warn({ error: e, tool: name }, "mcp-web-reader tool call failed");
-        return {
-            isError: true,
-            content: [{ type: "text" as const, text: `Error: ${message}` }],
-        };
+function parseHeaders(raw: string | undefined): Record<string, string> | undefined {
+    if (raw === undefined) {
+        return undefined;
     }
-});
 
-async function main(): Promise<void> {
-    const engineChoices = listEngines()
-        .map((e) => e.name)
-        .join("|");
+    const parsed = headersSchema.safeParse(SafeJSON.parse(raw));
+    if (!parsed.success) {
+        throw new Error(`--headers must be a JSON object of string values: ${z.prettifyError(parsed.error)}`);
+    }
 
-    const program = new Command()
-        .name("mcp-web-reader")
-        .description("Web content reader (MCP + CLI) with pluggable markdown engines")
-        .argument("[url]", "URL to fetch (or use --url)")
-        .option("-u, --url <url>", "Source URL")
-        .option("-m, --mode <mode>", "raw | markdown | jina", "markdown")
-        .option("-e, --engine <engine>", `Markdown engine: ${engineChoices}`, "turndown")
-        .option("-d, --depth <depth>", "Extraction depth: basic | advanced", "basic")
-        .option("-T, --tokens <n>", "Max AI tokens to return")
-        .option("-s, --save-tokens", "Compact code blocks and whitespace")
-        .option("-o, --out <path>", "Output file path")
-        .option("--headers <json>", "Additional request headers as JSON")
-        .option("--server", "Start as MCP server instead of CLI")
-        .option("--list-engines", "List available markdown engines")
-        .option("--model-info", "Show ReaderLM model status")
-        .option("--download-model", "Download ReaderLM model (~1GB)");
+    return parsed.data;
+}
 
-    await runTool(program, { tool: "mcp-web-reader" });
-
-    const opts = program.opts();
-    const args = program.args;
+async function run(urlArg: string | undefined, opts: CliOptions): Promise<void> {
+    if (opts.server) {
+        const { startMcpServer } = await import("./mcp/server");
+        await startMcpServer();
+        return;
+    }
 
     if (opts.listEngines) {
         out.println("Available engines:");
+
         for (const engine of listEngines()) {
-            out.println(`  ${chalk.cyan(engine.name)}: ${engine.description}`);
+            out.println(`  ${pc.cyan(engine.name)}: ${engine.description}`);
         }
+
         return;
     }
 
-    if (opts.modelInfo) {
-        log.info("Checking ReaderLM model status...");
-        const status = await checkLLMModel();
-        if (status.available) {
-            log.ok(`Model available: ${status.path}`);
-            out.println(`  Size: ${status.sizeFormatted}`);
-        } else {
-            log.warn("Model not downloaded");
-            out.println("  Run with --download-model to download (~1GB)");
-        }
+    const flagContext = { tool: TOOL, subcommand: [] };
+    const mode = await pickEnumFlag({
+        ...flagContext,
+        flag: "--mode",
+        given: opts.mode,
+        values: READ_MODES,
+        fallback: "markdown",
+        accepts: isReadMode,
+    });
+    if (!mode) {
         return;
     }
 
-    if (opts.downloadModel) {
-        const status = await checkLLMModel();
-        if (status.available) {
-            log.ok(`Model already downloaded: ${status.path}`);
-        } else {
-            log.info("Downloading ReaderLM-v2 (~1GB)");
-            out.println(`  Model: ${chalk.cyan("https://huggingface.co/jinaai/ReaderLM-v2")}`);
-            out.println(`  HTML-to-Markdown conversion optimized for LLMs (512K tokens, 29 languages)`);
-            let lastUpdate = 0;
-            await downloadLLMModel({
-                onProgress: (downloaded, total, pct) => {
-                    const now = Date.now();
-                    if (now - lastUpdate < 1000 && pct < 100) {
-                        return; // Throttle to 1s
-                    }
-                    lastUpdate = now;
-                    process.stdout.clearLine?.(0);
-                    process.stdout.cursorTo?.(0);
-                    process.stdout.write(
-                        `  Progress: ${pct.toFixed(1)}% (${(downloaded / 1e6).toFixed(0)}MB / ${(total / 1e6).toFixed(0)}MB)`
-                    );
-                },
-            });
-            out.println("");
-            log.ok("Model downloaded successfully!");
-        }
-        // If no URL provided, just exit after download
-        const url = args[0] || opts.url;
-        if (!url) {
+    if (typeof opts.engine === "string" && !isEngineName(opts.engine)) {
+        out.printlnErr(unknownEngineMessage(opts.engine));
+    }
+
+    const engine = await pickEnumFlag({
+        ...flagContext,
+        flag: "--engine",
+        given: opts.engine,
+        values: ENGINE_NAMES,
+        fallback: "turndown",
+        accepts: isEngineName,
+    });
+    if (!engine) {
+        return;
+    }
+
+    const depth = await pickEnumFlag({
+        ...flagContext,
+        flag: "--depth",
+        given: opts.depth,
+        values: DEPTHS,
+        fallback: "basic",
+        accepts: isDepth,
+    });
+    if (!depth) {
+        return;
+    }
+
+    const url = urlArg ?? opts.url;
+    if (!url) {
+        out.log.error("A URL is required (positional or --url).");
+        out.printlnErr(suggestCommand(TOOL, { add: ["https://example.com"] }));
+        process.exitCode = 1;
+        return;
+    }
+
+    try {
+        const headers = parseHeaders(opts.headers);
+        out.log.info(`Fetching ${pc.cyan(url)} (${mode}${mode === "markdown" ? `, ${engine}` : ""})`);
+        const result = await readPage({
+            url,
+            mode,
+            engine,
+            depth,
+            headers,
+            maxTokens: opts.tokens,
+            saveTokens: opts.saveTokens,
+        });
+
+        if (opts.out) {
+            await Bun.write(opts.out, result.text);
+            out.log.success(
+                `Wrote ${opts.out}: ${result.tokens} tokens${result.truncated ? " (truncated)" : ""}` +
+                    (result.conversion
+                        ? `, ${result.conversion.method} content, ${result.conversion.conversionTime}`
+                        : "")
+            );
             return;
         }
-        // Otherwise continue to convert with the URL
-    }
 
-    if (opts.server) {
-        const transport = new StdioServerTransport();
-        await server.connect(transport);
-        slog.info("mcp-web-reader server running (v0.2.0)");
-        return;
+        out.println(result.text);
+    } catch (error) {
+        logger.debug({ error, url, mode }, "mcp-web-reader read failed");
+        out.log.error(`Failed: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
     }
-
-    // URL from positional arg or --url option
-    const url = args[0] || opts.url;
-    if (!url) {
-        log.err("URL is required (positional or --url)");
-        process.exit(1);
-    }
-
-    await runCli({
-        url,
-        mode: opts.mode,
-        engine: opts.engine || "turndown",
-        depth: opts.depth || "basic",
-        out: opts.out,
-        tokens: opts.tokens,
-        saveTokens: opts.saveTokens || false,
-        headers: opts.headers,
-    });
 }
 
-main().catch((e) => {
-    slog.error({ err: e }, "fatal");
-    process.exit(1);
-});
+const program = new Command()
+    .name("mcp-web-reader")
+    .description("Fetch a web page as Markdown, raw HTML or Jina Reader output. Also an MCP server (--server).")
+    .argument("[url]", "URL to fetch (or use --url)")
+    .option("-u, --url <url>", "Source URL")
+    .option("-m, --mode [mode]", `Output: ${READ_MODES.join(" | ")}`, "markdown")
+    .option("-e, --engine [engine]", `Markdown engine: ${ENGINE_NAMES.join(" | ")}`, "turndown")
+    .option("-d, --depth [depth]", "basic | advanced (advanced adds YAML front matter)", "basic")
+    .option("-T, --tokens <n>", "Return at most this many tokens", parsePositiveInt)
+    .option("-s, --save-tokens", "Compact whitespace (raw) or code blocks (markdown, jina)")
+    .option("-o, --out <path>", "Write to a file instead of stdout")
+    .option("--headers <json>", "Extra request headers as a JSON object (not sent in jina mode)")
+    .option("--server", "Start the MCP stdio server instead of the CLI")
+    .option("--list-engines", "List the markdown engines")
+    .action(run);
+
+if (import.meta.main) {
+    await runTool(program, { tool: "mcp-web-reader" });
+}

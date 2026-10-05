@@ -1,50 +1,34 @@
 # MCP Web Reader
 
-A web content reader that fetches URLs and converts HTML to Markdown using pluggable engines. Available as both an MCP server and a CLI tool.
+Fetch a web page and return its main content as Markdown, its raw HTML, or the Markdown that the Jina Reader service renders. It works as a CLI and as an MCP stdio server; both call the same core in `lib/read.ts`.
 
 ## Features
 
-- **Multiple Engines**: Choose between `turndown` (GFM), `mdream` (fast), or `readerlm` (AI-powered)
-- **ReaderLM Support**: Optional local AI model for highest quality conversion
-- **Token Management**: Limit output tokens and compact code blocks
-- **MCP Server**: Use as an MCP tool for AI assistants
+- **Main-content extraction**: navigation, banners, footers, sidebars, link lists, ad and cookie blocks are dropped. The content root is the page's `<main>`, an `<article>` that holds most of its text, or the container whose paragraphs score highest.
+- **Clean Markdown**: GFM tables, fenced code blocks with the language detected from the page, figure captions, absolute links and images, no base64 placeholder images.
+- **Token management**: cap the output at a token count, and compact whitespace or code blocks.
+- **MCP server**: three read-only tools for AI assistants.
 
-## CLI Usage
+## CLI usage
 
 ```bash
-# Basic usage (defaults to markdown mode with turndown engine)
+# Main content as Markdown (default mode)
 tools mcp-web-reader "https://example.com"
-
-# Choose engine
-tools mcp-web-reader "https://example.com" --engine turndown   # Default, GFM support
-tools mcp-web-reader "https://example.com" --engine mdream     # Fast, LLM-optimized
-tools mcp-web-reader "https://example.com" --engine readerlm   # AI-powered (requires model)
 
 # Other modes
 tools mcp-web-reader "https://example.com" --mode raw          # Raw HTML
-tools mcp-web-reader "https://example.com" --mode jina         # Jina Reader API
+tools mcp-web-reader "https://example.com" --mode jina         # Markdown rendered by Jina Reader (https://r.jina.ai)
 
-# Advanced options
-tools mcp-web-reader "https://example.com" --depth advanced    # YAML frontmatter
-tools mcp-web-reader "https://example.com" --tokens 2048       # Limit tokens
-tools mcp-web-reader "https://example.com" --save-tokens       # Compact output
-tools mcp-web-reader "https://example.com" -o page.md          # Save to file
+# Options
+tools mcp-web-reader "https://example.com" --depth advanced    # YAML front matter: title, url, author, date
+tools mcp-web-reader "https://example.com" --tokens 2048       # At most 2048 tokens
+tools mcp-web-reader "https://example.com" --save-tokens       # Compact whitespace / code blocks
+tools mcp-web-reader "https://example.com" -o page.md          # Write to a file
+tools mcp-web-reader "https://example.com" --headers '{"Cookie":"a=b"}'   # Extra request headers (not sent to Jina)
+tools mcp-web-reader --list-engines
 ```
 
-## ReaderLM Model
-
-The `readerlm` engine uses [ReaderLM-v2](https://huggingface.co/jinaai/ReaderLM-v2), a local AI model for HTML-to-Markdown conversion optimized for LLMs (512K tokens, 29 languages).
-
-```bash
-# Check model status
-tools mcp-web-reader --model-info
-
-# Download model (~1GB one-time download)
-tools mcp-web-reader --download-model
-
-# Download and convert in one command
-tools mcp-web-reader "https://example.com" --engine readerlm --download-model
-```
+`--mode`, `--engine` and `--depth` take a fixed set of values. Given bare in a terminal, they open a picker. Given an unknown value, or bare without a terminal, they print the possible values and a corrected command, and exit 1.
 
 ## Options
 
@@ -56,31 +40,22 @@ Arguments:
 
 Options:
   -u, --url <url>        Source URL
-  -m, --mode <mode>      raw | markdown | jina (default: "markdown")
-  -e, --engine <engine>  Markdown engine: turndown|mdream|readerlm (default: "turndown")
-  -d, --depth <depth>    Extraction depth: basic | advanced (default: "basic")
-  -T, --tokens <n>       Max AI tokens to return
-  -s, --save-tokens      Compact code blocks and whitespace
-  -o, --out <path>       Output file path
-  --headers <json>       Additional request headers as JSON
-  --server               Start as MCP server instead of CLI
-  --list-engines         List available markdown engines
-  --model-info           Show ReaderLM model status
-  --download-model       Download ReaderLM model (~1GB)
-  -h, --help             display help for command
+  -m, --mode [mode]      Output: markdown | raw | jina (default: "markdown")
+  -e, --engine [engine]  Markdown engine: turndown (default: "turndown")
+  -d, --depth [depth]    basic | advanced (advanced adds YAML front matter) (default: "basic")
+  -T, --tokens <n>       Return at most this many tokens
+  -s, --save-tokens      Compact whitespace (raw) or code blocks (markdown, jina)
+  -o, --out <path>       Write to a file instead of stdout
+  --headers <json>       Extra request headers as a JSON object (not sent in jina mode)
+  --server               Start the MCP stdio server instead of the CLI
+  --list-engines         List the markdown engines
 ```
 
-## Engines Comparison
+## Engines
 
-| Engine | Speed | Quality | Requirements |
-|--------|-------|---------|--------------|
-| `turndown` | Fast | Good | None (default) |
-| `mdream` | Fastest | Good | None |
-| `readerlm` | Slower | Best | ~1GB model download |
+`turndown` is the only engine. The `mdream` and `readerlm` engines were removed on 2026-10-05 together with their packages (`mdream`, `@nanocollective/get-md`, `@mozilla/readability`). The `readerlm` engine never ran the ReaderLM model: `get-md` 1.7 ignores `useLLM` for HTML input and `node-llama-cpp` was not installed, so it was Readability plus Turndown. Asking for a removed engine fails with a message that names the engines that remain.
 
-## MCP Server
-
-Start as MCP server:
+## MCP server
 
 ```bash
 tools mcp-web-reader --server
@@ -88,13 +63,17 @@ tools mcp-web-reader --server
 bun run src/mcp-web-reader/index.ts --server
 ```
 
-### MCP Tools
+### Tools
 
-- `FetchWebRaw`: Fetch raw HTML
-- `FetchWebMarkdown`: Convert to Markdown (supports `engine` parameter)
-- `FetchJina`: Use Jina Reader API
+All three are annotated read-only, idempotent and open-world. Arguments are validated; a bad argument returns an error result that names the field.
 
-### MCP Configuration
+- `FetchWebMarkdown`: `url`, `headers?`, `engine?` (`turndown`), `depth?` (`basic` | `advanced`), `save_tokens?`, `tokens?`
+- `FetchWebRaw`: `url`, `headers?`, `save_tokens?`, `tokens?`
+- `FetchJina`: `url`, `save_tokens?`, `tokens?`. The page URL goes to Jina; use it for pages that need JavaScript.
+
+`save_tokens` accepts `true`/`false` or `0`/`1`. A cancelled call aborts the HTTP request. Every request has a 30 s timeout.
+
+### Configuration
 
 ```json
 {
@@ -107,33 +86,28 @@ bun run src/mcp-web-reader/index.ts --server
 }
 ```
 
-### Tool Parameters
+### Result
 
 ```json
 {
-  "url": "https://example.com",
-  "engine": "turndown",
-  "depth": "basic",
-  "save_tokens": 0,
-  "tokens": 2048
-}
-```
-
-### Response Format
-
-```json
-{
-    "content": [{ "type": "text", "text": "..." }],
-    "meta": {
-        "tokens": "1234",
+    "content": [{ "type": "text", "text": "# Title\n\n..." }],
+    "_meta": {
+        "tokens": 1234,
+        "truncated": false,
+        "source": "https://example.com/",
         "engine": "turndown",
-        "conversion_time_ms": "45"
+        "method": "main",
+        "conversionTime": "45ms",
+        "issues": []
     }
 }
 ```
 
+`source` is the address after redirects. `method` names the rule that picked the content root (`main`, `article`, `scored`, `body`). `issues` lists conversion leftovers such as HTML tags outside code or an unclosed code block. `FetchWebRaw` and `FetchJina` return only `tokens`, `truncated` and `source`.
+
 ## Notes
 
-- Tokenization uses `gpt-3-encoder` to approximate GPT token counts
-- The `readerlm` engine requires downloading a ~1GB model on first use
-- Advanced depth adds YAML frontmatter with title, URL, author, and date
+- Token counts use `gpt-3-encoder` (through `@genesiscz/utils/tokens`) to approximate GPT token counts.
+- Relative links resolve against the final URL after redirects.
+- Up to 5 redirects are followed, and only to http or https addresses. `--headers` go to the origin you asked for (an `http` address that upgrades to `https` on the same host counts as the same origin), never to another origin a redirect leads to.
+- Text is decoded as UTF-8.

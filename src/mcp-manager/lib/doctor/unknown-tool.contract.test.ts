@@ -26,8 +26,7 @@ const SERVERS: ServerUnderTest[] = [
     { name: "shops", entry: "shops/index.ts", args: ["mcp"], catchWrapped: false },
     { name: "claude", entry: "claude/index.ts", args: ["mcp"], catchWrapped: false },
     { name: "har-analyzer", entry: "har-analyzer/index.ts", args: ["mcp"], catchWrapped: true },
-    { name: "mcp-web-reader", entry: "mcp-web-reader/index.ts", args: ["--server"], catchWrapped: true },
-
+    { name: "mcp-web-reader", entry: "mcp-web-reader/index.ts", args: ["--server"], catchWrapped: false },
     { name: "node-repl", entry: "node-repl/index.ts", args: ["mcp"], catchWrapped: false },
     {
         name: "jenkins-mcp",
