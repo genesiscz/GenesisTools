@@ -45,7 +45,7 @@ Examples:
 /** `tools ask usage [options]`: the ask tool dispatches here before its own argument parser runs. */
 export async function runUsageCommand(args: string[]): Promise<void> {
     const program = new Command()
-        .name("usage")
+        .name("ask usage")
         .description("Display usage statistics and analytics for the ask tool")
         .option("-d, --days <number>", "Number of days to analyze", "30")
         .option("-p, --provider <name>", "Filter by provider name")

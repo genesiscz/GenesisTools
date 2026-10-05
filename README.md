@@ -56,9 +56,9 @@ GenesisTools is a TypeScript monorepo that Bun executes directly, with no build 
 lives in its own folder under `src/` and runs in its own process. The `tools` executable is the
 only entry point you need.
 
-The catalogue below is taken from what actually exists in this checkout: 94 discoverable
+The catalogue below is taken from what actually exists in this checkout: 91 discoverable
 entries, of which `src/utils` is the shared package barrel (`@genesiscz/utils`, not a runnable
-tool) and `src/Internal` holds private tools. That leaves **92 usable tools**.
+tool) and `src/Internal` holds private tools. That leaves **89 usable tools**.
 Running `tools` with no arguments prints the same total of discovered entries in its header.
 
 ---
@@ -341,9 +341,8 @@ that tool's own `README.md`, which you can also print in the terminal with
 | [`say`](src/say/README.md) | Text to speech with pluggable backends (macOS, xAI Grok, OpenAI) and per-app config profiles. | `voices` `models` `config` |
 | [`transcribe`](src/transcribe/README.md) | Transcribe audio files with AI, locally or in the cloud. | flags only |
 | [`darwinkit`](src/darwinkit/README.md) | Apple on-device ML from the terminal: NLP, embeddings, OCR, clustering, biometry, iCloud. | 40+ verbs, see `--help` |
-| [`redact`](src/redact/README.md) | Reversibly redact secrets and PII from text before pasting it into an AI, then restore the reply. | `restore` |
 | [`json`](src/json/README.md) | Convert between JSON and TOON (30 to 60 percent fewer tokens), or infer a schema (`schema`, with `--compact` for one-line output). | `convert` (default) `schema` |
-| [`mcp-web-reader`](src/mcp-web-reader/README.md) | Fetch a page and convert HTML to Markdown with pluggable engines. Works as CLI and MCP server. | flags only (`--engine`, `--mode`) |
+| [`mcp-web-reader`](src/mcp-web-reader/README.md) | Fetch a page and return its main content as Markdown, its raw HTML, or Jina Reader output. Works as CLI and MCP server. | flags only (`--mode`, `--depth`, `--server`) |
 | [`indexer`](src/indexer/README.md) | Semantic code indexer with AST-aware chunking and hybrid search. | `add` `search` `sync` `watch` `graph` `context` `mcp-serve` |
 
 ### Agents and AI coding sessions
@@ -356,7 +355,6 @@ that tool's own `README.md`, which you can also print in the terminal with
 | [`grok`](src/grok/README.md) | Run isolated Grok workers, resume native sessions, and search indexed conversation history. | `login` `run` `resume` `history` `usage` `steer` `read` `tail` `sessions` |
 | [`cursor`](src/cursor/README.md) | Ask Cursor Agent a question about the codebase and stream the answer, tool calls on stderr and answer on stdout. | flags only (`--mode`, `--model`, `--raw`) |
 | [`agents`](src/agents/README.md) | Cross-agent communication: register, message, request, discover, listen across a swarm. | `login` `message` `request` `discover` `listen` |
-| [`agent-watch`](src/agent-watch/README.md) | Notify you when background agents finish, stall, or need input. | `watch` `status` `list` |
 | [`question`](src/question/README.md) | Capture and review the questions fired at agents mid-session, with their answers. | `record` `log` `tail` `config` |
 | [`task`](src/task/README.md) | PTY-aware command wrapper with ordered log capture, built for long-lived dev servers. | `run` `get` `logs` `tail` `wait` `sessions` `dashboard` |
 | [`scripts`](src/scripts/README.md) | Script MCP tool calls directly, with no agent loop, using types generated from each server. | `servers` `tools` `call` `create` `run` `regen` `remote` `doctor` |
@@ -422,13 +420,12 @@ onto the merged base first, then optionally deletes the head branch.
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| [`macos`](src/macos/README.md) | Umbrella CLI for macOS native frameworks. | `mail` `calendar` `reminders` `messages` `voice-memos` `sleep` `swap` `clones` `control` |
+| [`macos`](src/macos/README.md) | Umbrella CLI for macOS native frameworks. | `mail` `calendar` `reminders` `messages` `voice-memos` `sleep` `swap` `clones` `control` `eslogger` |
 | [`control`](src/control/README.md) | macOS UI automation through the Accessibility API, plus screen recording with timed actions. | `list` `tree` `find` `click` `type` `hotkey` `scroll` `screenshot` `ocr` `capture` `record-plan` `assert` |
-| [`macos-eslogger`](src/macos-eslogger/README.md) | Monitor macOS Endpoint Security events in real time with category and JSON-path filters. Needs root and Full Disk Access. | flags only (`-e`, `-c`, `--filter-event`) |
 | [`macos-resources`](src/macos-resources/README.md) | Live TUI dashboard of process CPU, RAM, and open-file usage, with alert thresholds. | flags only (`--process`, `--cpulimit`, `--notify`) |
 | [`doctor`](src/doctor/README.md) | Diagnose and fix common macOS dev-machine problems. | `find` `log` `stats` `wipe-cache` |
 | [`du`](src/du/README.md) | Clone-aware disk usage for APFS. Measures the real on-disk footprint of trees full of clonefiles, where plain `du` lies. | `clonesize` `volume` `clones` `bench` |
-| [`fsevents-profile`](src/fsevents-profile/README.md) | Profile filesystem events to find the directories generating the most churn. | flags only (`-d`, `-t`, `--watchers`) |
+| [`fsevents`](src/fsevents/README.md) | Profile macOS filesystem events to find the directories generating the most churn. | `profile` (`-d`, `-t`, `--watchers`) |
 | [`watch`](src/watch/README.md) | Watch files matching a glob and show content changes in real time, like `tail -f` with patterns. | flags only (`-s`, `-f`, `-n`) |
 | [`watchman`](src/watchman/README.md) | Monitor files through Facebook's Watchman for instant change detection. | flags only (`-c`) |
 | [`wakeup`](src/wakeup/README.md) | Wake-on-LAN helper plus a small wake relay you can run on an always-on host. | `config` `server` `register` `login` `wake` `send` `daemon` |
@@ -465,12 +462,12 @@ onto the merged base first, then optionally deletes the head branch.
 | [`update`](src/update/README.md) | Update GenesisTools: git pull, `bun install` with a clean retry, optional plugin refresh. | (single command) |
 | [`benchmark`](src/benchmark/README.md) | Save command recipes and run them through hyperfine, keeping per-run history so you can see timings drift. | `add` `remove` `list` `show` `edit` `history` |
 | [`markdown-cli`](src/markdown-cli/README.md) | Render Markdown to good-looking terminal output, with watch mode and themes. | flags only (`--watch`, `--no-color`) |
-| [`hash`](src/hash/README.md) | Compute and verify file checksums (md5, sha1, sha256, sha512, blake3), coreutils-compatible. | flags only |
-| [`jwt`](src/jwt/README.md) | Decode and inspect a JWT offline, humanizing `exp` / `iat` / `nbf` into local and relative time. It does not verify signatures. | flags only |
+| [`hash`](src/hash/README.md) | Compute and verify file checksums (md5, sha1, sha256, sha512, blake3) over files, directories or stdin, matching `shasum` and `shasum -c`. | flags only (`-a`, `-c`, `-q`, `--strict`) |
+| [`jwt`](src/jwt/README.md) | Decode and inspect a JWT offline, humanizing `exp` / `iat` / `nbf` into local and relative time. Reads the token from an argument, stdin or the clipboard. It does not verify signatures. | flags only (`--clipboard`, `--json`) |
 | [`qr`](src/qr/README.md) | Render QR codes in the terminal for a URL, arbitrary text, or a WiFi network. | `wifi` |
 | [`tz`](src/tz/README.md) | Convert a time across timezones from natural language, for example `tz '3pm PST in Prague'`. | flags only |
 | [`envdiff`](src/envdiff/README.md) | Diff `.env` against `.env.example`: missing, extra, and changed keys with masked values, plus `--sync` to scaffold. | flags only |
-| [`secrets`](src/secrets/README.md) | Scan for hardcoded API keys, tokens, and private keys. | `scan` |
+| [`secrets`](src/secrets/README.md) | Scan for hardcoded API keys, tokens, and private keys, and reversibly redact secrets and PII from text before pasting it into an AI. | `scan` `redact` |
 
 ### Not user-facing
 

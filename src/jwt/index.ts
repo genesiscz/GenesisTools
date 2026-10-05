@@ -1,5 +1,7 @@
+import { resolveTokenInput } from "@app/jwt/lib/token-input";
 import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { readFromClipboard } from "@genesiscz/utils/clipboard";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { decodeJwt, describeClaimTime, type JwtObject, type TimeClaim } from "@genesiscz/utils/jwt";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -59,19 +61,6 @@ function printHumanized(header: JwtObject, payload: JwtObject, nowMs: number): v
     out.println("Signature  not verified (offline decode only)");
 }
 
-async function readToken(argToken: string | undefined): Promise<string | undefined> {
-    if (argToken && argToken.trim().length > 0) {
-        return argToken.trim();
-    }
-
-    if (isInteractive()) {
-        return undefined;
-    }
-
-    const piped = (await Bun.stdin.text()).trim();
-    return piped.length > 0 ? piped : undefined;
-}
-
 async function main(): Promise<void> {
     const program = new Command()
         .name("jwt")
@@ -79,24 +68,43 @@ async function main(): Promise<void> {
             "Decode & inspect a JWT (offline). Base64url-decodes the header and payload and humanizes " +
                 "exp/iat/nbf into local + relative time. Offline; does not verify signatures."
         )
-        .argument("[token]", "JWT to decode (omit to read from stdin)")
+        .argument("[token]", "JWT to decode (omit to read from stdin, or use --clipboard)")
+        .option("-c, --clipboard", "Read the token from the system clipboard")
         .option("--json", "Print raw decoded { header, payload } as pretty JSON")
         .option("-v, --verbose", "Verbose diagnostics on stderr (never includes the token)");
 
     await runTool(program, { tool: "jwt" });
 
-    const options = program.opts<{ json?: boolean; verbose?: boolean }>();
-    const token = await readToken(program.args[0]);
+    const options = program.opts<{ json?: boolean; verbose?: boolean; clipboard?: boolean }>();
+    const input = await resolveTokenInput({
+        argToken: program.args[0],
+        clipboard: options.clipboard,
+        interactive: isInteractive(),
+        readClipboard: readFromClipboard,
+        readStdin: () => Bun.stdin.text(),
+    });
 
-    if (!token) {
-        out.error("Error: no token provided.");
-        out.error(suggestCommand("tools jwt", { add: ["<token>"] }));
-        out.error(`Or pipe one:  echo "<token>" | ${toolCommand("jwt")}`);
+    if (!input.ok) {
+        out.error(`Error: ${input.error}`);
+        if (input.failure === "both") {
+            out.error(`Use one of:  ${toolCommand("jwt", "<token>")}  or  ${toolCommand("jwt", "--clipboard")}`);
+        } else if (input.failure === "clipboard") {
+            out.error(`Copy the token first, then run:  ${toolCommand("jwt", "--clipboard")}`);
+        } else if (input.clipboardHasJwt) {
+            out.error("The clipboard holds something that looks like a JWT. Decode it with:");
+            out.error(`  ${toolCommand("jwt", "--clipboard")}`);
+        } else {
+            out.error(suggestCommand("tools jwt", { add: ["<token>"] }));
+            out.error(`Or pipe one:  echo "<token>" | ${toolCommand("jwt")}`);
+            out.error(`Or read the clipboard:  ${toolCommand("jwt", "--clipboard")}`);
+        }
+
         await out.flush();
         process.exit(1);
     }
 
-    const result = decodeJwt(token);
+    logger.debug({ source: input.source, length: input.token.length }, "jwt: token read");
+    const result = decodeJwt(input.token);
 
     if (!result.ok) {
         out.error(`Error: ${result.error}`);
