@@ -41,8 +41,10 @@ enum AppDock {
         return menu
     }
 
-    /// The hub, wherever it runs: this window, the running hub, or a new one.
-    static func showHub(_ hubWindow: NSWindow?) {
+    /// The hub, wherever it runs: this window, the running hub, or a new one. False when none runs and
+    /// no new one could be started, so a caller that would quit can show something else instead.
+    @discardableResult
+    static func showHub(_ hubWindow: NSWindow?) -> Bool {
         if let hubWindow {
             _ = reopenHub(hubWindow)
         } else if HubSingleInstance.isRunningElsewhere {
@@ -56,8 +58,13 @@ enum AppDock {
                 try process.run()
             } catch {
                 HubPerf.log("dock: the hub did not start: \(error)")
+                return false
             }
+        } else {
+            HubPerf.log("dock: the hub did not start: no executable path")
+            return false
         }
+        return true
     }
 }
 
