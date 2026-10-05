@@ -271,20 +271,15 @@ public struct SessionTranscriptList: View {
             }
             .padding(.horizontal, 16)
             .frame(height: 40)
-            VStack(alignment: .leading, spacing: 6) {
-                searchField
-                HStack(spacing: 10) {
-                    toolbarControls
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            // A third layout for a hub pane of about 440 pt, where the row
-            // above was still wider than the column and clipped at both edges (audit 2026-09-24).
+            // Two rows when one does not fit (a hub pane of about 440 pt clipped the single row at both
+            // edges, audit 2026-09-24). The prompt navigator stays on the top row in every layout: a
+            // second two-row layout that put it at the end of the lower row was picked or not by the
+            // session's prompt count and turn range, so on a session switch it jumped down and back
+            // (Martin, 2026-10-02).
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     searchField
-                    Spacer(minLength: 4)
+                    windowNoteSlot
                     promptNavigator
                 }
                 HStack(spacing: 8) {
@@ -351,20 +346,29 @@ public struct SessionTranscriptList: View {
 
         wrapMenu
 
-        Spacer(minLength: 8)
-
-        if let windowNote {
-            // Dropped, not truncated, when the window is too narrow for it.
-            ViewThatFits(in: .horizontal) {
-                Text(verbatim: windowNote)
-                    .font(.system(size: 11))
-                    .foregroundStyle(SessionPalette.dim)
-                    .fixedSize()
-                Color.clear.frame(width: 0, height: 0)
-            }
-        }
+        windowNoteSlot
 
         promptNavigator
+    }
+
+    /// The room before the prompt navigator, with the window note ("Turns 12834–12845") drawn in it.
+    /// An overlay, so the note never decides which toolbar layout fits: it changes per session.
+    private var windowNoteSlot: some View {
+        Color.clear
+            .frame(minWidth: 8, maxWidth: .infinity, maxHeight: 20)
+            .overlay(alignment: .trailing) {
+                if let windowNote {
+                    // Whole or not at all: cut to the slot it read "Tı".
+                    ViewThatFits(in: .horizontal) {
+                        Text(verbatim: windowNote)
+                            .font(.system(size: 11))
+                            .foregroundStyle(SessionPalette.dim)
+                            .fixedSize()
+                        Color.clear.frame(width: 0, height: 0)
+                    }
+                }
+            }
+            .clipped()
     }
 
     /// "All" plus one toggle chip per filter. Several chips can be on (Chat + Errors); turning the
@@ -503,11 +507,13 @@ public struct SessionTranscriptList: View {
             .instantTooltip("Previous prompt (⌘[)")
             .accessibilityIdentifier("session-transcript-prev-prompt")
 
+            // One width for "0 prompts" up to "999 / 999": a count that changes per session must not
+            // change which toolbar layout fits.
             Text(verbatim: promptPosition)
                 .font(SessionPalette.mono(11))
                 .foregroundStyle(SessionPalette.dim)
-                .fixedSize()
-                .frame(minWidth: 44)
+                .lineLimit(1)
+                .frame(width: 84)
 
             Button { jump(1) } label: {
                 Image(systemName: "chevron.down")
@@ -545,10 +551,8 @@ public struct SessionTranscriptList: View {
     private var content: some View {
         switch loadState {
         case .loading where document.sections.isEmpty:
-            placeholder {
-                ProgressView().controlSize(.small)
-                Text("Loading transcript…")
-            }
+            TranscriptSkeleton()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         case .failed(let message) where document.sections.isEmpty:
             placeholder {
                 Image(systemName: "exclamationmark.triangle")
@@ -682,6 +686,7 @@ public struct SessionTranscriptList: View {
             }
             .onChange(of: scrollTarget) { _, request in
                 guard let request else { return }
+                anchor.listMoves()
                 Self.scroll(proxy, to: request.id, anchor: request.anchor)
             }
             .onChange(of: document) {
@@ -701,6 +706,8 @@ public struct SessionTranscriptList: View {
             .onAppear {
                 guard !didInitialScroll, visible.last?.rows.last != nil else { return }
                 didInitialScroll = true
+                // The passes below are the list's own scroll: the anchor does not undo them.
+                anchor.listMoves(for: 0.6)
                 if let target = preset.scrollTo {
                     Self.scroll(proxy, to: target, anchor: .top)
                     return
@@ -727,6 +734,7 @@ public struct SessionTranscriptList: View {
     private func latestButton(_ proxy: ScrollViewProxy) -> some View {
         Button {
             atLatest = true
+            anchor.listMoves()
             if let last = visible.last {
                 Self.scroll(proxy, to: Self.endMarker(last.id), anchor: .bottom)
             }
@@ -823,10 +831,11 @@ public struct SessionTranscriptList: View {
     }
 
     /// Tool calls start open at "Inputs + output" and above, thinking only at Verbose; a folded
-    /// group and a long prompt start closed.
+    /// group and a long prompt start closed. A Read starts closed at every level (Martin,
+    /// 2026-10-01): its output is the file, which the reader already has.
     private func defaultOpen(_ row: TranscriptRow) -> Bool {
         switch row.kind {
-        case .tool: return verbosity.opensTools
+        case .tool(let line): return verbosity.opensTools && TranscriptToolKind.of(line.name) != .read
         case .thinking: return verbosity.opensThinking
         default: return false
         }
@@ -1195,7 +1204,7 @@ public struct TranscriptMarkdown: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .textSelection(.enabled)
+        .hoverTextSelection()
     }
 }
 
@@ -1503,7 +1512,7 @@ private struct NoticeCard: View {
                         .font(SessionPalette.mono(11))
                         .foregroundStyle(SessionPalette.secondary)
                         .lineLimit(6)
-                        .textSelection(.enabled)
+                        .hoverTextSelection()
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if !notice.actions.isEmpty, let onAction {
@@ -1671,7 +1680,7 @@ private struct ThinkingLine: View {
                     .font(.system(size: 12))
                     .foregroundStyle(SessionPalette.dim)
                     .lineSpacing(2)
-                    .textSelection(.enabled)
+                    .hoverTextSelection()
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, 12)
                     .overlay(alignment: .leading) {
