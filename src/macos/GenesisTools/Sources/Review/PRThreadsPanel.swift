@@ -12,6 +12,10 @@ struct PRReviewBar: View {
     var maxListHeight: CGFloat = 900
     @AppStorage("review.prThreads.open", store: HubDefaults.store) private var open = false
     @AppStorage("review.prThreads.height", store: HubDefaults.store) private var listHeight = 260.0
+    /// The standalone window's Context panel has a Threads tab: while it is open, a second list of the
+    /// same threads above the diff only took the diff's room ("No thread matches" over 350 pt, 2026-10-02).
+    @AppStorage(ReviewContextPanel.collapsedKey, store: HubDefaults.store) private var contextCollapsed = true
+    private var listInPanel: Bool { !model.embedded && !contextCollapsed }
     @State private var submitting = false
     @State private var fixing = false
     /// The height the drag began with: the layout keeps it until release (see `threadsList`).
@@ -33,7 +37,9 @@ struct PRReviewBar: View {
                         .fixedSize()
                     // Inside the hub the PR header above already links the author and both branches.
                     if !model.embedded {
+                        // The first to shrink: "Submit review…" at the row's end was cut off by the window edge.
                         PRBarLinks(pr: pr)
+                            .layoutPriority(-1)
                     }
                 } else {
                     Text(verbatim: model.prLabel).font(.system(size: 12, weight: .semibold)).fixedSize()
@@ -60,9 +66,11 @@ struct PRReviewBar: View {
                     NoticePill(text: notice, isError: notice.hasPrefix("Failed")) { store.notice = nil }
                         .layoutPriority(-1)
                 }
-                IconButton(systemName: open ? "rectangle.topthird.inset.filled" : "list.bullet.rectangle",
-                           tooltip: open ? "Hide the PR threads list" : "Show the PR threads list: reply, resolve, edit your drafts") {
-                    open.toggle()
+                if !listInPanel {
+                    IconButton(systemName: open ? "rectangle.topthird.inset.filled" : "list.bullet.rectangle",
+                               tooltip: open ? "Hide the PR threads list" : "Show the PR threads list: reply, resolve, edit your drafts") {
+                        open.toggle()
+                    }
                 }
                 IconButton(systemName: "arrow.clockwise", tooltip: "Load the PR threads again from the host") {
                     store.load(noCache: true)
@@ -106,7 +114,7 @@ struct PRReviewBar: View {
                 FixThreadsForm(model: model, store: store) { model.showsFixFormInline = false }
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if open {
+            if open, !listInPanel {
                 threadsList
             }
         }
@@ -264,7 +272,7 @@ private struct PRBarLinks: View {
         if let author = pr.author, !author.isEmpty {
             ExternalLink(text: author, url: forge?.user(author), font: font, icon: "person.crop.circle", glyph: .onHover,
                          tooltip: "\(author) opened \(pr.identity.label)")
-                .fixedSize()
+                .frame(minWidth: 40)
         }
         if let source = pr.sourceBranch, let target = pr.targetBranch {
             ExternalLink(text: source, url: pr.sourceBranchURL, font: .system(size: 11.5, design: .monospaced), glyph: .onHover,
@@ -272,7 +280,7 @@ private struct PRBarLinks: View {
                 .frame(minWidth: 40)
             ExternalLink(text: "→ \(target)", url: pr.compareURL,
                          font: .system(size: 11.5, design: .monospaced), glyph: .onHover, tooltip: "Compare \(target)...\(source)")
-                .fixedSize()
+                .frame(minWidth: 50)
         }
     }
 }
@@ -424,6 +432,11 @@ private struct PRThreadRow: View {
                             store.resolve(thread: thread.id, resolved: !thread.resolved)
                         }
                         .instantTooltip(thread.resolved ? "Reopen this thread on the PR" : "Mark this thread resolved on the PR")
+                    } else {
+                        // Said, not hidden: a missing button read as a feature the hub lacks.
+                        Button(thread.resolved ? "Unresolve" : "Resolve") {}
+                            .disabled(true)
+                            .instantTooltip("The host does not let your account \(thread.resolved ? "reopen" : "resolve") this thread (usually only its author, the PR's author or someone with write access can)")
                     }
                     Button("Reply") {
                         replying = true

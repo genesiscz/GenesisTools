@@ -63,6 +63,9 @@ func runReview(_ args: [String]) -> Never {
     let delegate = ReviewAppDelegate()
     app.delegate = delegate
     installBrowserURLForwarder()
+    if snapshotPath == nil {
+        installNotificationClicksForWindowFace()
+    }
     MainActor.assumeIsolated { AppMainMenu.install() }
 
     var proposal: ProposalDocument?
@@ -91,6 +94,9 @@ func runReview(_ args: [String]) -> Never {
         defer: false
     )
     window.title = "Review · \(model.repo.lastPathComponent)"
+    // The Context panel's tabs sit in the title bar row: AppKit's title drew over "Commits" (Martin,
+    // 2026-10-02). The title still names the window in the Window menu and Mission Control.
+    window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
     window.appearance = NSAppearance(named: .darkAqua)
     window.backgroundColor = ReviewPalette.background
@@ -1524,6 +1530,8 @@ struct ReviewRootView: View {
     @ObservedObject var model: ReviewModel
     /// False while the hub shows the same list as its own Files pane: one list, not two.
     var showsFileList = true
+    /// The hub's own list in the file panel (changed files or the folders, Hub/HubFolders.swift); nil: the changed files.
+    var fileList: (() -> AnyView)? = nil
     @State private var width: CGFloat = 0
     @State private var height: CGFloat = 0
 
@@ -1590,7 +1598,11 @@ struct ReviewRootView: View {
                 ResizableSidePanel(key: "review.files", edge: .trailing, title: "Files", defaultWidth: 320,
                                    minWidth: Self.listMinWidth, maxWidth: max(Self.listMinWidth, room),
                                    autoCollapse: innerWidth > 0 && room < Self.listMinWidth, fitWidth: listFit) {
-                    FileSidebar(model: model)
+                    if let fileList {
+                        fileList()
+                    } else {
+                        FileSidebar(model: model)
+                    }
                 }
             }
         }
@@ -1630,7 +1642,8 @@ struct ReviewRootView: View {
                         .padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                if model.files.isEmpty && !model.loading {
+                // An error is the answer: "No changes against HEAD" under it contradicted it.
+                if model.files.isEmpty && !model.loading && model.error == nil {
                     VStack(spacing: 8) {
                         Image(systemName: "checkmark.circle")
                             .font(.system(size: 28))
@@ -1642,6 +1655,14 @@ struct ReviewRootView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     RendererHost(renderer: model.renderer)
+                        .overlay {
+                            // The first load of this review: the page has nothing to draw yet.
+                            if model.files.isEmpty && model.loading {
+                                DiffSkeleton()
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                                    .hubSurface(.content)
+                            }
+                        }
                 }
             }
             .frame(minWidth: 0, maxWidth: .infinity)
