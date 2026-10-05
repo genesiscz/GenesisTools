@@ -33,10 +33,12 @@ group with `git cherry-pick -x`, and prove the groups together equal the source.
    `plugins/genesis-tools/skills/git/references/recompose-branches.md` in the GenesisTools repo.
    🛑 Do not improvise these phases from memory — this splits a branch, and a wrong move loses
    commits.
-2. Analyse and classify the commits (IN / OUTSIDE / MIXED), write the table to
-   `.claude/work/<source>-commits.md`, and ask how MIXED commits should be handled.
-3. Build each group branch from the base with `--no-track`, cherry-pick in order, and for a
-   MIXED commit drop the outside paths only after printing them and confirming.
-4. Verify the split: the union of the groups' changed paths equals the source's, and every
-   path's blob matches on exactly one group.
+2. Analyse with `tools git rebranch plan`, one `--groups name=pattern` per group (a pattern
+   without `*` covers its whole directory). Show the IN / OUTSIDE / MIXED table, ask how each
+   MIXED commit should go (whole, skip, paths-only), and write the answers into the plan file
+   from `plan --json`.
+3. Build with `tools git rebranch apply --plan <file>` (`--dry-run` first). It cherry-picks in
+   order from the base and prints the outside paths of every paths-only commit.
+4. The apply ends with the proof; `tools git rebranch verify --plan <file>` reruns it. Exit 1
+   names every lost or changed path: report it, never call the split done.
 5. Report per group; pushes and PRs are printed, not run, until the user says push.

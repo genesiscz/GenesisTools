@@ -4,9 +4,9 @@
 
 > **Git analysis for commits, authors, and workitem ID extraction, plus branch mechanics with proof.**
 
-Queries commits across a date range, extracts workitem IDs from commit messages via configurable regex patterns, attributes branches, classifies rebased commits, and maintains a list of author identities so you can slice history cleanly across name/email changes. The branch side answers "is it merged?" by content (`merged`), rebases a parent with its children (`rebase-cascade`), detects the base branch (`base`) and reads the per-repo policy file (`config`). `changes` shows what you touched and when. The `gt:git` skill in `plugins/genesis-tools` is the guided workflow on top of these commands; the typed git readers they share live in `src/utils/git/` (`createGit()` and `porcelain`).
+Queries commits across a date range, extracts workitem IDs from commit messages via configurable regex patterns, attributes branches, classifies rebased commits, and maintains a list of author identities so you can slice history cleanly across name/email changes. The branch side answers "is it merged?" by content (`merged`), rebases a parent with its children (`rebase-cascade`), detects the base branch (`base`), splits one branch into one branch per path group and proves nothing was lost (`rebranch plan`, `apply`, `verify`) and reads the per-repo policy file (`config`). `changes` shows what you touched and when. The `gt:git` skill in `plugins/genesis-tools` is the guided workflow on top of these commands; the typed git readers they share live in `src/utils/git/` (`createGit()` and `porcelain`).
 
-`tools git commits` is the reporting layer. The same tool holds the two interactive history editors, `rebranch` and `rename-commits`.
+`tools git commits` is the reporting layer. The same tool holds the two interactive history editors, `rebranch` (when run without a subcommand) and `rename-commits`.
 
 ---
 
@@ -151,12 +151,65 @@ Status colors: yellow for modified, green for added, red for deleted, blue for r
 
 ### `rebranch`
 
-Interactive split of a messy branch into several clean ones. It finds the fork point, groups the commits by conventional-commit scope or ticket id (`feat(login, PROJ-123): ...`), lets you refine each group in a searchable multiselect, names the branches, and cherry-picks each group from the fork point. `--dry-run` prints the plan and creates nothing. Commits that conflict are skipped with a warning. It needs a terminal, so an agent uses the manual flow in the `gt:git` skill (`references/recompose-branches.md`), which also proves nothing was lost.
+Split a messy branch into several clean ones. Two ways in.
+
+**Interactive** (no subcommand, needs a terminal): it finds the fork point, groups the commits by conventional-commit scope or ticket id (`feat(login, PROJ-123): ...`), lets you refine each group in a searchable multiselect, names the branches, and cherry-picks each group from the fork point. `--dry-run` prints the plan and creates nothing. Commits that conflict are skipped with a warning.
 
 ```bash
 tools git rebranch --dry-run     # the plan only
 tools git rebranch
 ```
+
+**By path groups** (no prompts, for agents and scripts): `plan`, then `apply`, then `verify`. This is the flow of the `gt:git` skill (`references/recompose-branches.md`) as code.
+
+```bash
+tools git rebranch plan --groups 'api=src/api/**' --groups 'web=src/web/**,docs/web' --base origin/master
+tools git rebranch plan --groups 'api=src/api/**' --groups 'web=src/web/**,docs/web' --base origin/master --json > plan.json
+# edit plan.json: a decision on every MIXED commit, the commits in no group added to a group or listed under skip
+tools git rebranch apply --plan plan.json --dry-run    # the exact git commands, nothing written
+tools git rebranch apply --plan plan.json --yes        # build the branches, then verify
+tools git rebranch verify --plan plan.json             # the proof alone, on existing branches
+```
+
+`plan` is read-only. It detects the base with the same ladder as `tools git base` (`--base`, the PR target, config `mainPrBranch`, a declared branch, an inference; `--offline` skips the PR lookup), lists the source's commits since the merge-base, and classifies each one per group: **IN** (every changed path matches), **OUTSIDE** (none does) or **MIXED** (both). Paths are listed with rename detection off, so a move counts with its old and its new name. It also lists the commits in no group and the commits in several groups. A merge commit in the range stops it: linearise the source first. A pattern with `*` uses the repo's glob matcher (`*` also crosses `/`, matching ignores case); a pattern without `*` names a file or a directory and matches everything below it.
+
+`apply` refuses to start with uncommitted or untracked changes, a rebase or cherry-pick in progress, a locked index, a group branch name that already exists, or a MIXED commit without a decision. Per group it runs `git switch -c <branch> --no-track <base>` and `git cherry-pick -x` for each commit in source order. A `paths-only` commit is picked whole first; then the paths outside the group are printed, put back from the branch tip before that pick (`git restore --source=<tip> --staged --worktree`), and the commit is amended (`--no-verify`, so no hook rewrites it). Restoring from the pre-pick tip rather than the base keeps what an earlier pick on the same branch did to those paths. If the restore or the amend fails, `--continue` finishes that cleanup instead of picking the commit again, and refuses while the checkout holds a change the cleanup did not make (an edit to a path outside the group, an unrelated staged file), because the restore would overwrite it and the amend would commit it. At the end it switches back to the starting branch, runs the verification, and prints the `git push` and `gh pr create` lines, which it never runs. The source branch is never moved.
+
+One rebranch operation runs per repository: `apply`, `--continue` and `--abort` hold `<git-common-dir>/genesis-rebranch.lock` until they end, and a second invocation from any worktree is refused at once. A killed run leaves a lock the next invocation takes over. A conflict stops the run and keeps its state in `<git-common-dir>/genesis-rebranch.json`. Resolve, `git add`, `git cherry-pick --continue` (or `--skip` to leave that commit out), then `tools git rebranch apply --continue`. `apply --abort` stops the cherry-pick, returns to the starting branch, and removes every branch this run created; each one is first tagged `bkp/rebranch/<branch>-<stamp>`, and the command prints the `git branch <name> <tag>` line that brings it back. When the final verification fails the state is kept as well: fix the branches and run `--continue` to prove the split again, run `--abort` to remove them, or start another `apply`, which replaces the record and leaves those branches in place.
+
+`verify` is the proof, as code. For every path the source changed since the merge-base, it finds the last source commit that touched it and the groups that carry that change (`whole`, or `paths-only` with the path inside the group). One of those group branches must hold the source's final entry: the same mode and blob, or no file at all after a deletion. When the base moved after the fork, the expected entry comes from the source merged onto the base (`git merge-tree`); a path that merge conflicts on is reported as unverified. It exits 1 and names the path when an entry differs, when the last change of a path is in no group (lost), or when a group branch changes a path the source never touched (extra). A path whose last change was left out on purpose (`skip`, `paths-only`, or the top-level skip list) is reported as dropped and does not fail the check. Paths changed by commits in two groups are reported as shared.
+
+The plan file (`plan --json` prints a complete one; `apply` and `verify` read it from a path or from `-` for stdin):
+
+```jsonc
+{
+  "version": 1,
+  "source": "feat/messy",                  // the branch to split; never moved
+  "base": "origin/master",                 // the new branches start at its tip
+  "sourceSha": "…", "baseSha": "…", "mergeBase": "…",   // optional: apply warns when they moved
+  "groups": [
+    {
+      "name": "api",
+      "branch": "feat/messy-api",          // must not exist yet
+      "paths": ["src/api/**"],             // the group's patterns; paths-only and verify use them
+      "commits": [
+        { "sha": "1a2b3c4d…", "decision": "whole" },
+        { "sha": "5e6f7a8b…", "decision": "paths-only" }   // a MIXED commit: keep only src/api/**
+      ]
+    }
+  ],
+  "skip": ["9c0d1e2f…"]                    // commits left out of every group on purpose
+}
+```
+
+| Field | Rule |
+|---|---|
+| `commits[].sha` | 7 to 64 hex characters; a unique prefix of a commit of `source` since the merge-base |
+| `commits[].decision` | `whole`, `skip` or `paths-only`. Required for a MIXED commit; an IN or OUTSIDE commit defaults to `whole`. `paths-only` on a commit with no path in the group is refused |
+| commit order | picked in source order whatever the list order (apply says when it reordered) |
+| other keys | `subject`, `class`, `outsidePaths`, `baseSource`, `commits`, `unassigned`, `shared` are information from `plan` and ignored on read |
+
+Exit codes: `plan` 0, or 1 on merges or an empty range; `apply` 0 when the branches are built and verified, 1 on a refusal, a conflict, a failure or a failed proof, 2 on missing arguments, on `--dry-run` combined with `--continue` or `--abort` (those always act, so a preview of them would lie), on `--continue` combined with `--abort`, or on no `--yes` without a terminal; `verify` 0 or 1.
 
 ### `rename-commits`
 
