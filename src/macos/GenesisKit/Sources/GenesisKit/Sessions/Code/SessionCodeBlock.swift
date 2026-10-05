@@ -49,6 +49,9 @@ public struct CodeBlock: Equatable, Sendable {
     public let isDiff: Bool
     /// A hash of everything drawn, taken once here, for `CodeBlockText`'s cache key.
     public let fingerprint: Int
+    /// Each line's width in monospaced columns (`CodeBlockMetrics.columns`), counted once here: the block
+    /// is sized from them before any of its text is built.
+    public let lineColumns: [Int]
 
     public init(lines: [CodeLine], language: SyntaxLanguage, failed: Bool = false) {
         self.lines = lines
@@ -62,6 +65,21 @@ public struct CodeBlock: Equatable, Sendable {
             hasher.combine(line)
         }
         fingerprint = hasher.finalize()
+        lineColumns = lines.map { CodeBlockMetrics.columns($0.text) }
+    }
+
+    /// The size the rendered block will have, without rendering it: code and gutter, for `limit` lines.
+    public func size(limit: Int?) -> (code: CGSize, gutter: CGSize, hasGutter: Bool) {
+        let count = limit.map { min($0, lines.count) } ?? lines.count
+        let shown = lines.prefix(count)
+        // As `CodeBlockRenderer.attributed` counts it, one digit at least, so the two sizes always agree.
+        let width = String(shown.compactMap(\.number).max() ?? 0).count
+        let columns = lineColumns.prefix(count).max() ?? 0
+        return (
+            CodeBlockMetrics.size(lines: count, columns: columns),
+            CodeBlockMetrics.size(lines: count, columns: width + (isDiff ? 2 : 0)),
+            width > 0 || isDiff
+        )
     }
 
     public var additions: Int { lines.filter { $0.mark == .added }.count }
@@ -394,12 +412,16 @@ public enum CodeBlockRenderer {
         // See `CodeBlockAttributed.spoken`. It covers every shown line, also the
         // ones the first draw leaves blank: the text is cheap, only the drawing is bounded.
         let cut = drawn.map { lines.count > max($0, 1) } ?? false
+        let widest = lines.reduce(0) { max($0, CodeBlockMetrics.columns($1.text)) }
         return CodeBlockAttributed(
             gutter: gutter,
             body: out,
             hasGutter: width > 0 || isDiff,
             spoken: isDiff || cut ? lines.map { spokenLine($0, isDiff: isDiff) }.joined(separator: "\n") : nil,
-            wrapTail: wrapTail
+            wrapTail: wrapTail,
+            lineCount: lines.count,
+            columns: max(widest, band),
+            gutterColumns: width + (isDiff ? 2 : 0)
         )
     }
 
@@ -465,6 +487,45 @@ public struct CodeBlockAttributed: Equatable, Sendable {
     // when there are none). A diff line keeps its `+` / `-`, so the colour is never the only sign; line
     // numbers stay out, so copying ordinary code from the tail copies only the code.
     public var wrapTail: AttributedString? = nil
+    /// Lines in `body`, and the widest one in monospaced columns (a tab counts 8, a wide character 2):
+    /// enough to size the block without asking `Text` to measure itself (see `CodeBlockMetrics`).
+    public var lineCount = 0
+    public var columns = 0
+    public var gutterColumns = 0
+}
+
+/// The code font's cell, for sizing a non-wrapping block from its line and column counts. A block's
+/// `Text` measured with `.fixedSize()` typeset every line on each layout pass: about 450 ms of the
+/// 775 ms first page of a Verbose transcript (2026-10-01, `GENESIS_EXP=code` against the baseline).
+public enum CodeBlockMetrics {
+    private static let nsFont = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+    public static let columnWidth: CGFloat = ("M" as NSString).size(withAttributes: [.font: nsFont]).width
+    public static let lineHeight: CGFloat = NSLayoutManager().defaultLineHeight(for: nsFont)
+    public static let lineSpacing: CGFloat = 1.5
+
+    public static func size(lines: Int, columns: Int) -> CGSize {
+        let count = max(lines, 1)
+        // One spare column: an estimate that is one cell short would wrap the widest line.
+        return CGSize(
+            width: ceil(CGFloat(columns + 1) * columnWidth),
+            height: ceil(CGFloat(count) * lineHeight + CGFloat(count - 1) * lineSpacing)
+        )
+    }
+
+    /// A tab is 8 cells, a character outside ASCII 2 (an over-estimate only adds sideways room).
+    public static func columns(_ text: String) -> Int {
+        var total = 0
+        for character in text {
+            if character == "\t" {
+                total += 8
+            } else if character.isASCII {
+                total += 1
+            } else {
+                total += 2
+            }
+        }
+        return total
+    }
 }
 
 /// Memoised highlighted bodies, so a recycled row redraws without re-highlighting. Sized for a long
@@ -529,14 +590,23 @@ public struct CodeBlockText: View {
         // A highlighted body counts only for its own key (see `highlighted`).
         let key = key
         let current = highlighted?.key == key ? highlighted?.value : nil
-        // The plain first draw is bounded (see `CodeBlockRenderer.firstDrawLimit`).
-        let rendered = current ?? CodeBlockCache.shared.get(key)
-            ?? CodeBlockRenderer.attributed(block, limit: limit, highlight: false, drawn: CodeBlockRenderer.firstDrawLimit)
+        let colored = current ?? CodeBlockCache.shared.get(key)
         Group {
             if wrap {
-                wrapped(rendered)
+                // The plain first draw is bounded (see `CodeBlockRenderer.firstDrawLimit`).
+                let rendered = colored ?? CodeBlockRenderer.attributed(block, limit: limit, highlight: false, drawn: CodeBlockRenderer.firstDrawLimit)
+                if WrappedCodeTextView.usesSwiftUI {
+                    wrapped(rendered)
+                } else {
+                    appKitWrapped(rendered, contentKey: colored == nil ? key + "#plain" : key)
+                }
+            } else if let colored {
+                sidewaysScrolling(colored, contentKey: key)
             } else {
-                sidewaysScrolling(rendered)
+                // Until the coloured text arrives (built off the main thread, a few ms): an empty box of
+                // its final size. A plain draw first would build and lay out the text twice, the second
+                // time on the main thread (`codeBlock.render.main`, 17 of a 12-turn page).
+                placeholder
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -553,6 +623,7 @@ public struct CodeBlockText: View {
                 }.value
                 guard !Task.isCancelled else { return }
                 CodeBlockCache.shared.set(key, result)
+                RenderProbe.hit("codeBlock.highlightSwap")
                 // `highlighted` remembers its key (see its declaration).
                 highlighted = (key, result)
             }
@@ -592,32 +663,61 @@ public struct CodeBlockText: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .textSelection(.enabled)
+        .hoverTextSelection()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(rendered.spoken.map { Text(verbatim: $0) } ?? Text(rendered.body))
     }
 
-    private func sidewaysScrolling(_ rendered: CodeBlockAttributed) -> some View {
-        HStack(alignment: .top, spacing: 0) {
+    /// Wrap mode in AppKit (`WrappedCodeTextView`): one wrapping text view and a drawn gutter.
+    private func appKitWrapped(_ rendered: CodeBlockAttributed, contentKey: String) -> some View {
+        WrappedCodeTextView(
+            key: contentKey,
+            gutter: { rendered.hasGutter ? CodeTextConversion.appKit(rendered.gutter) : nil },
+            body: { CodeTextConversion.appKit(rendered.body, wrapping: true) },
+            gutterWidth: CodeBlockMetrics.size(lines: rendered.lineCount, columns: rendered.gutterColumns).width,
+            ideal: {
+                let code = CodeBlockMetrics.size(lines: rendered.lineCount, columns: rendered.columns)
+                let gutter = rendered.hasGutter ? CodeBlockMetrics.size(lines: rendered.lineCount, columns: rendered.gutterColumns).width + 7 : 0
+                return CGSize(width: code.width + gutter, height: code.height)
+            }()
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(rendered.spoken.map { Text(verbatim: $0) } ?? Text(rendered.body))
+    }
+
+    private var placeholder: some View {
+        let size = block.size(limit: limit)
+        return HStack(alignment: .top, spacing: 0) {
+            if size.hasGutter {
+                Color.clear.frame(width: size.gutter.width, height: size.gutter.height).padding(.trailing, 7)
+            }
+            Color.clear.frame(height: size.code.height)
+        }
+    }
+
+    /// The code as an AppKit text view (`CodeTextView`) sized from its line and column counts: SwiftUI never
+    /// measures or typesets it, and TextKit keeps its layout and draws only what is on screen. `contentKey`
+    /// changes only when the text does (the plain first draw, then the coloured one), so a re-render of
+    /// the row replaces nothing.
+    private func sidewaysScrolling(_ rendered: CodeBlockAttributed, contentKey: String) -> some View {
+        let code = CodeBlockMetrics.size(lines: rendered.lineCount, columns: rendered.columns)
+        let gutter = CodeBlockMetrics.size(lines: rendered.lineCount, columns: rendered.gutterColumns)
+        codeWidth.value = code.width
+        return HStack(alignment: .top, spacing: 0) {
             if rendered.hasGutter {
-                Text(rendered.gutter)
-                    .font(CodeBlockRenderer.font)
-                    .lineSpacing(1.5)
-                    .fixedSize()
+                CodeTextView(key: contentKey + "#gutter", text: { CodeTextConversion.appKit(rendered.gutter) }, selectable: false)
+                    .frame(width: gutter.width, height: gutter.height)
                     .padding(.trailing, 7)
                     .accessibilityHidden(true)
             }
-            Text(rendered.body)
-                .font(CodeBlockRenderer.font)
-                .lineSpacing(1.5)
-                .textSelection(.enabled)
-                .fixedSize()
+            CodeTextView(key: contentKey, text: { CodeTextConversion.appKit(rendered.body) })
+                .frame(width: code.width, height: code.height)
                 // A diff reads its marks too (see `CodeBlockAttributed.spoken`).
                 .accessibilityLabel(rendered.spoken.map { Text(verbatim: $0) } ?? Text(rendered.body))
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { codeWidth.value = $0 }
                 .offset(x: -sideways)
                 // `minWidth: 0` makes the frame as wide as the row gives, not as wide as the code.
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                .frame(height: code.height)
                 .clipped()
                 .overlay(SidewaysWheel(offset: $sideways, contentWidth: codeWidth))
         }
