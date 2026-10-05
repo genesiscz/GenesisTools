@@ -1,5 +1,6 @@
 import * as p from "@clack/prompts";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import {
     getGenesisToolsConfigPath,
     getProfilingConfig,
@@ -33,11 +34,14 @@ export interface ProfilingCliFlags {
     summaryOnExit?: boolean;
     noSummaryOnExit?: boolean;
     json?: boolean;
+    /** Open the edit form by name; a bare call opens it too, in a terminal. */
+    edit?: boolean;
 }
 
 export type ProfilingRunResult =
     | { status: "ok"; stored: ProfilingConfig; wrote: boolean }
-    | { status: "missing-enum"; flag: string; values: readonly string[]; help: string };
+    | { status: "missing-enum"; flag: string; values: readonly string[]; help: string }
+    | { status: "needs-tty"; help: string };
 
 export interface ProfilingIo {
     interactive: boolean;
@@ -254,6 +258,13 @@ export async function runProfilingCommand(
         }
     }
 
+    if (flags.edit && !(io.interactive && io.promptEdit)) {
+        return {
+            status: "needs-tty",
+            help: `--edit opens the edit form and needs a terminal. Set the fields with flags instead: ${toolCommand("config profiling")} --enable --scopes all --detail phases`,
+        };
+    }
+
     if (!hasMutatingFlags(flags) && !flags.json && io.interactive && io.promptEdit) {
         const patch = await io.promptEdit();
 
@@ -397,6 +408,7 @@ export function registerProfilingCommand(program: Command): void {
         .option("--summary-on-exit", "print the summary table when the process exits")
         .option("--no-summary-on-exit", "do not print a summary on exit")
         .option("--json", "print stored + resolved gate as JSON")
+        .option("--edit", "open the edit form (needs a terminal; a bare call opens it too)")
         .action(async (opts: ProfilingCliFlags) => {
             const io = defaultIo();
             const showFirst = io.interactive && !opts.json && !hasMutatingFlags(opts);
@@ -407,7 +419,7 @@ export function registerProfilingCommand(program: Command): void {
 
             const result = await runProfilingCommand(opts, io);
 
-            if (result.status === "missing-enum") {
+            if (result.status === "missing-enum" || result.status === "needs-tty") {
                 out.error(result.help);
                 process.exitCode = 1;
                 return;

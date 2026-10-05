@@ -194,6 +194,31 @@ describe("runProfilingCommand enumerated flags", () => {
         expect(result.status).toBe("ok");
         expect(existsSync(getGenesisToolsConfigPath())).toBe(false);
     });
+
+    // DECISION 6 (#453): bare `profiling` keeps its form in a terminal; --edit asks for the form by name
+    it("--edit in a TTY opens the edit form and applies the patch", async () => {
+        const result = await runProfilingCommand(
+            { edit: true },
+            { interactive: true, promptEdit: async () => ({ enabled: true, minDurationMs: 25 }) }
+        );
+        expect(result.status).toBe("ok");
+        expect(getProfilingConfig().minDurationMs).toBe(25);
+    });
+
+    it("--edit without a TTY refuses, names the flags to use, and writes nothing", async () => {
+        const result = await runProfilingCommand(
+            { edit: true },
+            {
+                interactive: false,
+                promptEdit: async () => {
+                    throw new Error("the form must not open without a terminal");
+                },
+            }
+        );
+        expect(result.status).toBe("needs-tty");
+        expect(result.status === "needs-tty" ? result.help : "").toContain("--enable");
+        expect(existsSync(getGenesisToolsConfigPath())).toBe(false);
+    });
 });
 
 describe("printProfilingStatus header", () => {
