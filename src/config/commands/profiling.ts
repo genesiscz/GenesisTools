@@ -1,6 +1,5 @@
 import * as p from "@clack/prompts";
-import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import {
     getGenesisToolsConfigPath,
     getProfilingConfig,
@@ -261,7 +260,7 @@ export async function runProfilingCommand(
     if (flags.edit && !(io.interactive && io.promptEdit)) {
         return {
             status: "needs-tty",
-            help: `--edit opens the edit form and needs a terminal. Set the fields with flags instead: ${toolCommand("config profiling")} --enable --scopes all --detail phases`,
+            help: `--edit opens the edit form and needs a terminal. Set the fields with flags instead: ${suggestCommand("tools config", { replaceCommand: ["profiling", "--enable", "--scopes", "all", "--detail", "phases"] })}`,
         };
     }
 

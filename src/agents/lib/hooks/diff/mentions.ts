@@ -154,11 +154,13 @@ export function textPaths(command: string): string[] {
     for (const match of command.matchAll(TOKEN)) {
         const at = match.index ?? 0;
 
-        if (command[at - 1] === "$") {
+        const whole = match[0];
+
+        // `$VAR`, a fragment a variable completes (`src/${n}/` is not `src/`), and an
+        // excluded glob (`--glob '!**/cache/**'` names what the command leaves alone).
+        if (command[at - 1] === "$" || command[at - 1] === "!" || command[at + whole.length] === "$") {
             continue;
         }
-
-        const whole = match[0];
 
         if (whole.includes("://")) {
             continue;

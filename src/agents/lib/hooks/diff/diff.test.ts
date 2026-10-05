@@ -2347,6 +2347,26 @@ describe("mention extraction", () => {
         expect(found.some((token) => token.includes("nope"))).toBe(false);
     });
 
+    it("skips a path fragment that a variable completes, and an excluded glob", () => {
+        // Observed 2026-10-04: a script written through a heredoc held `src/${n}/` and
+        // `--glob '!**/cache/**'`. The fragment became `src/`, resolved against the main
+        // checkout, and every file another session changed under src was shown as this one's.
+        const found = textPaths(
+            [
+                "cd /tmp/scratch && cat > scan.ts <<'EOF'",
+                "const pat = `src/${n}/|@app/${n}/`;",
+                'Bun.spawnSync(["rg", "-l", "-e", pat, "--glob", "!**/cache/**", `${home}/.zshrc`]);',
+                "EOF",
+                "bun scan.ts src/keep.ts",
+            ].join("\n")
+        );
+
+        expect(found).toEqual(expect.arrayContaining(["/tmp/scratch", "scan.ts", "src/keep.ts"]));
+        expect(found).not.toContain("src/");
+        expect(found).not.toContain("@app/");
+        expect(found).not.toContain("**/cache/**");
+    });
+
     it("never lets the repository root itself, or a glob over it, cover every file", () => {
         const root = "/work/app";
         const mentions = mentionsFrom([root, `${root}/src/feature`, `glob:${root}/**/*.ts`, `glob:${root}/docs/*.md`]);

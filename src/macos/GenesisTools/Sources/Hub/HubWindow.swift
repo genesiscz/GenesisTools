@@ -1364,6 +1364,12 @@ final class HubModel: ObservableObject {
     /// A later `GenesisTools --hub …` handed to this hub: the same flags as a first launch.
     func apply(_ request: HubRequest) {
         applyOverlays(request)
+        // A request that navigates owns the navigation from here on. An older-session lookup still waiting for
+        // its list must not select its session over it, whether the request resolves from the list, waits for a
+        // fresher one or only changes the mode.
+        if request.session != nil || request.mode != nil || request.agent != nil || request.worktree != nil {
+            olderSessionRequest += 1
+        }
         if let tab = request.tab {
             self.tab = tab
         }
