@@ -4,7 +4,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { captureDir } from "../lib/paths.ts";
 import { artifactPath } from "../lib/platform.ts";
-import { collectStatus } from "../lib/status.ts";
+import { collectStatus, isDeadPort } from "../lib/status.ts";
 import { suggest } from "./shared.ts";
 
 function mb(bytes: number): string {
@@ -17,10 +17,11 @@ export function registerStatus(program: Command): void {
         .description(
             "every recorder and recorder-shaped process: pid, CPU, memory, cpu-time, buffer size, endpoint health. Read-only."
         )
+        .option("--all", "also list leftover capture dirs with no recorder, buffer or CDP endpoint")
         .option("--detailed", "add per-port meta, pidfile records and segment lists")
         .option("--format <fmt>", "output format: table (default) or json")
         .option("--json", "shorthand for --format json")
-        .action(async (opts: { detailed?: boolean; format?: string; json?: boolean }) => {
+        .action(async (opts: { all?: boolean; detailed?: boolean; format?: string; json?: boolean }) => {
             const report = await collectStatus();
 
             if (opts.json || opts.format === "json") {
@@ -35,9 +36,14 @@ export function registerStatus(program: Command): void {
 
             renderCliHeader("chrome-devtools status", "recorders · buffers · endpoints");
 
+            const shown = opts.all ? report.ports : report.ports.filter((p) => !isDeadPort(p));
+            const hidden = report.ports.length - shown.length;
+
             if (report.ports.length === 0) {
                 out.println("no capture dirs yet — nothing has ever recorded on this machine.");
                 out.println(`  start: ${suggest(["attach"])}`);
+            } else if (shown.length === 0) {
+                out.println("no recorder, buffer or CDP endpoint is active.");
             } else {
                 const table = createBoxTable([
                     "PORT",
@@ -52,7 +58,7 @@ export function registerStatus(program: Command): void {
                     "ENDPOINT",
                 ]);
 
-                for (const p of report.ports) {
+                for (const p of shown) {
                     const rec =
                         p.pidState.status === "live"
                             ? formatDotStatus("ok", `pid ${p.pidState.pid}`)
@@ -77,6 +83,12 @@ export function registerStatus(program: Command): void {
                 }
 
                 out.println(table.toString());
+            }
+
+            if (hidden > 0) {
+                out.println(
+                    `  ${hidden} leftover capture dir(s) with no recorder, buffer or CDP hidden: ${suggest(["status", "--all"])}`
+                );
             }
 
             if (report.orphans.length > 0) {
@@ -105,7 +117,7 @@ export function registerStatus(program: Command): void {
             }
 
             if (opts.detailed) {
-                for (const p of report.ports) {
+                for (const p of shown) {
                     renderCliSection(`port ${p.port} — detail`);
                     out.println(`  dir:      ${captureDir(p.port)}`);
                     out.println(

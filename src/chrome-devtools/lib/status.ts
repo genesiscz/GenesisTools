@@ -122,6 +122,11 @@ export interface PortStatus {
     endpoint: EndpointProbe | null;
 }
 
+/** A leftover capture dir: no recorder, nothing buffered, and nothing answering CDP on it. */
+export function isDeadPort(p: PortStatus): boolean {
+    return p.pidState.status === "none" && p.segments.count === 0 && p.endpoint === null;
+}
+
 export interface StatusReport {
     ports: PortStatus[];
     legacyFiles: string[];

@@ -7,7 +7,7 @@
 
 > **🚀 Lightning-fast, beautiful diffs between NPM package versions**
 
-A powerful command-line tool that creates temporary directories, installs package versions in parallel, watches for file changes during installation, and shows beautiful diffs with multiple output formats.
+A powerful command-line tool that creates temporary directories, installs package versions in parallel, reads every installed file once the installs finish, and shows beautiful diffs with multiple output formats.
 
 ---
 
@@ -19,7 +19,7 @@ A powerful command-line tool that creates temporary directories, installs packag
 | 📊 **Multiple Formats** | Terminal, unified diff, HTML, JSON, side-by-side |
 | 🔍 **Smart Filtering** | Include/exclude files using glob patterns |
 | 📈 **Rich Analytics** | File counts, size comparisons, change summaries |
-| ⚡ **High Performance** | Parallel installation, efficient file watching |
+| ⚡ **High Performance** | Parallel installation, one file walk after it |
 | 🛠️ **Highly Configurable** | CLI options, config files, environment variables |
 | 🎯 **CI/CD Ready** | Exit codes, JSON output, automated workflows |
 | 🌈 **Delta Integration** | GitHub-style diffs with delta support |
@@ -161,9 +161,8 @@ Create a `.npmpackagediffrc` file in your project:
 ```mermaid
 graph LR
     A[Start] --> B[Create Temp Dirs]
-    B --> C[Setup File Watchers]
-    C --> D[Install Packages]
-    D --> E[Collect File Changes]
+    B --> D[Install Packages]
+    D --> E[Read Installed Files]
     E --> F[Filter Files]
     F --> G[Generate Diffs]
     G --> H[Format Output]
@@ -171,11 +170,10 @@ graph LR
 ```
 
 1. **🏗️ Setup** - Creates isolated temporary directories
-2. **👁️ Watch** - Monitors file system during installation
-3. **📦 Install** - Parallel package installation
-4. **📊 Analyze** - Collects and filters changed files
-5. **🎨 Output** - Generates beautiful, formatted diffs
-6. **🧹 Cleanup** - Removes temporary files (unless `--keep`)
+2. **📦 Install** - Parallel package installation
+3. **📊 Analyze** - Reads every installed file (symlinks followed, cycles skipped) and filters them; when the filter matches nothing it says so
+4. **🎨 Output** - Generates beautiful, formatted diffs
+5. **🧹 Cleanup** - Removes temporary files (unless `--keep`)
 
 ---
 

@@ -11,13 +11,14 @@ import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import * as TOML from "@iarna/toml";
 import boxen from "boxen";
 import chalk from "chalk";
-import chokidar, { type FSWatcher } from "chokidar";
+
 import Table from "cli-table3";
 import { Command } from "commander";
 import * as diff from "diff";
 import { filesize } from "filesize";
 import { minimatch } from "minimatch";
 import ora, { type Ora } from "ora";
+import { collectInstalledFiles, type FileMetadata } from "./lib/collect-files";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -342,14 +343,6 @@ if (!packageName || !version1 || !version2) {
     process.exit(1);
 }
 
-interface FileMetadata {
-    path: string;
-    absolutePath: string;
-    size: number;
-    mtime: Date;
-    relativePath: string;
-}
-
 interface DiffResult {
     file: string;
     status: "added" | "removed" | "modified" | "identical" | "renamed";
@@ -371,7 +364,7 @@ class EnhancedPackageComparison {
     private dir2: string;
     private addedFiles1: FileMetadata[] = [];
     private addedFiles2: FileMetadata[] = [];
-    private watchers: FSWatcher[] = [];
+
     private spinner?: Ora;
     private results: DiffResult[] = [];
     private packageManager: PackageManager;
@@ -486,39 +479,6 @@ class EnhancedPackageComparison {
         this.spinner?.succeed(`Created temporary directories`);
     }
 
-    private setupWatcher(directory: string, addedFiles: FileMetadata[]): FSWatcher {
-        logger.debug(`Setting up watcher for: ${directory}`);
-
-        const watcher = chokidar.watch(directory, {
-            persistent: true,
-            ignoreInitial: true,
-            followSymlinks: true,
-            alwaysStat: true,
-        });
-
-        watcher.on("add", (filepath: string, stats?: fs.Stats) => {
-            if (stats) {
-                const relativePath = path.relative(directory, filepath);
-                const metadata: FileMetadata = {
-                    path: filepath,
-                    absolutePath: filepath,
-                    size: stats.size,
-                    mtime: stats.mtime,
-                    relativePath: relativePath,
-                };
-                addedFiles.push(metadata);
-                logger.debug(`File added: ${relativePath} (${filesize(stats.size)})`);
-            }
-        });
-
-        watcher.on("error", (error) => {
-            logger.error(`Watcher error for ${directory}: ${error}`);
-        });
-
-        this.watchers.push(watcher);
-        return watcher;
-    }
-
     async installPackages(): Promise<void> {
         if (!this.options.silent) {
             this.spinner = ora({
@@ -526,13 +486,6 @@ class EnhancedPackageComparison {
                 spinner: "dots",
             }).start();
         }
-
-        // Setup watchers before installation
-        this.setupWatcher(this.dir1, this.addedFiles1);
-        this.setupWatcher(this.dir2, this.addedFiles2);
-
-        // Give watchers time to initialize
-        await new Promise((resolve) => setTimeout(resolve, 500));
 
         // Install both packages in parallel
         const installPromises = [
@@ -548,8 +501,10 @@ class EnhancedPackageComparison {
             throw error;
         }
 
-        // Give time for all file events to be processed
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        // read once the installs are done: a watcher with fixed sleeps missed a fast or cached install
+        this.addedFiles1 = collectInstalledFiles(this.dir1);
+        this.addedFiles2 = collectInstalledFiles(this.dir2);
+        logger.debug(`Installed files: ${this.addedFiles1.length} and ${this.addedFiles2.length}`);
     }
 
     private getTempBunfig(): string {
@@ -709,6 +664,16 @@ class EnhancedPackageComparison {
         logger.debug(`Found ${filteredFiles1.length} matching files in ${this.version1}`);
         logger.debug(`Found ${filteredFiles2.length} matching files in ${this.version2}`);
 
+        // Without this the run ended on "Comparison complete" and printed nothing at all: the
+        // default filter is *.d.ts, and a package that ships its types elsewhere (react) has none.
+        if (filteredFiles1.length === 0 && filteredFiles2.length === 0) {
+            this.spinner?.warn(`No files match --filter "${this.options.filter}" in either version`);
+            logger.warn(
+                `${this.addedFiles1.length} and ${this.addedFiles2.length} files were installed, none matching "${this.options.filter}". Compare other files with --filter "**/*.js", or "**/*" for everything.`
+            );
+            return;
+        }
+
         // Create maps for easier lookup
         const files1Map = new Map(filteredFiles1.map((f) => [f.relativePath, f]));
         const files2Map = new Map(filteredFiles2.map((f) => [f.relativePath, f]));
@@ -765,6 +730,11 @@ class EnhancedPackageComparison {
         }
 
         this.spinner?.succeed(`Comparison complete`);
+
+        if (!this.options.silent && this.results.every((result) => result.status === "identical")) {
+            // stderr, so a --format json run keeps its stdout parseable
+            out.log.info(`No differences in the ${inBoth.length} file(s) matching "${this.options.filter}".`);
+        }
     }
 
     // Trailing path segments two paths share, e.g. apis/X.d.ts vs dist/apis/X.d.ts → 2.
@@ -1626,11 +1596,6 @@ class EnhancedPackageComparison {
     }
 
     async cleanup(): Promise<void> {
-        for (const watcher of this.watchers) {
-            await watcher.close();
-        }
-        this.watchers = [];
-
         if (!this.options.keep) {
             const cleanupSpinner = ora({
                 text: "Cleaning up temporary files...",
