@@ -308,7 +308,7 @@ RESULT SCHEMA (stdout JSON)
 EXAMPLE PLAN
   {
     "capture": { "mode": "screen", "screenIndex": 0, "duration": 9, "activeFps": 15,
-                 "threshold": 0.1, "videoOut": "/tmp/run.mp4" },
+                 "threshold": 0.1, "videoOut": "/path/to/run.mp4" },
     "actions": [
       { "atMs": 0,    "do": "crop", "region": { "x": 880, "y": 296, "w": 2360, "h": 170 }, "label": "topbar" },
       { "atMs": 400,  "do": "url", "url": "http://localhost:2021/restaurants",

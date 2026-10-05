@@ -220,7 +220,7 @@ One schema covers sequential steps, timed timelines and recordings.
     { "do": "press", "q": "Chat" },
     { "do": "click", "desc": "Account", "role": "button" },
     { "do": "set", "id": "field-id", "value": "hello" },
-    { "atMs": 2000, "do": "screenshot", "path": "/tmp/shot.png" },
+    { "atMs": 2000, "do": "screenshot", "path": "/path/to/shot.png" },
     { "do": "hotkey", "keys": "cmd,w" },
     { "do": "wait", "q": "Save", "gone": true },
     { "do": "assert", "id": "status", "contains": "Done" }

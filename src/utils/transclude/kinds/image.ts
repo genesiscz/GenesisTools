@@ -20,7 +20,7 @@ export const imageTransclusion = defineTransclusion({
         },
         { name: "alt", type: "string", description: "The alt text; the file name when omitted." },
     ],
-    examples: ['{{image path="/tmp/hub-before.png" alt="Hub before the fix"}}'],
+    examples: ['{{image path="/path/to/hub-before.png" alt="Hub before the fix"}}'],
     action: "substitute",
     async resolve(params, ctx) {
         const path = params.string("path");

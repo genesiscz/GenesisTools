@@ -160,7 +160,7 @@ An item's `promptMarkdown`, `reasoning`, `proposal` and every choice label may c
 | `json` | `path*`, `pointer` (`/a/b/0` or `$.a.b[0]`), `commit` | `{{json path="package.json" pointer="/scripts/test"}}` |
 | `cmd` | `run*`, `cwd`, `timeout` (ms, default 10000, at most 30000, never past the token's deadline) | `{{cmd run="git log --oneline -5"}}` |
 | `url` | `url*`, `chars` (excerpt length, default 300) | `{{url url="https://rust-lang.github.io/mdBook/format/mdbook.html"}}` |
-| `image` | `path*`, `alt` | `{{image path="/tmp/hub-before.png" alt="Hub before the fix"}}` |
+| `image` | `path*`, `alt` | `{{image path="/path/to/hub-before.png" alt="Hub before the fix"}}` |
 | `pr-thread` | one of `url` / `pr`, `comment`, `max` (comments, default 10) | `{{pr-thread url="https://github.com/genesiscz/GenesisTools/pull/434#discussion_r4139866100"}}` |
 
 What each one does:

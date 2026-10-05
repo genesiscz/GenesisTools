@@ -1221,7 +1221,7 @@ function parseAction(
                 return shapeFail(
                     index,
                     verb,
-                    'attach_file needs path — e.g. { action: "attach_file", path: "/tmp/screenshot.png", taskId: "t1", note: "before state" }.'
+                    'attach_file needs path — e.g. { action: "attach_file", path: "/path/to/screenshot.png", taskId: "t1", note: "before state" }.'
                 );
             }
 

@@ -12,7 +12,7 @@ export interface AnnotateImageArgs {
 
 export async function handleAnnotateImage(args: AnnotateImageArgs): Promise<string> {
     if (typeof args.input !== "string" || args.input.length === 0) {
-        throw new Error('input is required — the absolute path of the image to annotate, e.g. "/tmp/shot.png"');
+        throw new Error('input is required — the absolute path of the image to annotate, e.g. "/path/to/shot.png"');
     }
 
     if (!isAbsolute(args.input)) {
