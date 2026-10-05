@@ -6,34 +6,37 @@ const commandCooldowns: Record<string, number> = {
     run: 10_000,
 };
 
-interface RateLimitState {
-    timestamps: number[];
-    lastCommandTime: Record<string, number>;
+export interface RateLimitResult {
+    allowed: boolean;
+    retryAfterMs?: number;
 }
 
-const state: RateLimitState = {
-    timestamps: [],
-    lastCommandTime: {},
-};
+export interface RateLimiter {
+    check(command: string): RateLimitResult;
+}
 
-export function checkRateLimit(command: string): { allowed: boolean; retryAfterMs?: number } {
-    const now = Date.now();
+export function createRateLimiter(now: () => number = Date.now): RateLimiter {
+    let timestamps: number[] = [];
+    const lastCommandTime: Record<string, number> = {};
 
-    state.timestamps = state.timestamps.filter((t) => now - t < WINDOW_MS);
-    if (state.timestamps.length >= GLOBAL_LIMIT) {
-        const oldest = state.timestamps[0];
-        return { allowed: false, retryAfterMs: WINDOW_MS - (now - oldest) };
-    }
+    return {
+        check(command) {
+            const current = now();
 
-    const cooldownMs = commandCooldowns[command];
-    if (cooldownMs) {
-        const lastTime = state.lastCommandTime[command] ?? 0;
-        if (now - lastTime < cooldownMs) {
-            return { allowed: false, retryAfterMs: cooldownMs - (now - lastTime) };
-        }
-    }
+            timestamps = timestamps.filter((t) => current - t < WINDOW_MS);
+            if (timestamps.length >= GLOBAL_LIMIT) {
+                return { allowed: false, retryAfterMs: WINDOW_MS - (current - timestamps[0]) };
+            }
 
-    state.timestamps.push(now);
-    state.lastCommandTime[command] = now;
-    return { allowed: true };
+            const cooldownMs = commandCooldowns[command];
+            const lastTime = lastCommandTime[command];
+            if (cooldownMs && lastTime !== undefined && current - lastTime < cooldownMs) {
+                return { allowed: false, retryAfterMs: cooldownMs - (current - lastTime) };
+            }
+
+            timestamps.push(current);
+            lastCommandTime[command] = current;
+            return { allowed: true };
+        },
+    };
 }
