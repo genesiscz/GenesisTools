@@ -103,7 +103,10 @@ async function showConfig(options: ConfigOptions): Promise<void> {
 
     out.println(table.toString());
     out.println(pc.dim(`  ${jevSettingsPath()}`));
-    out.println(pc.dim(`  ${suggestCommand("tools jev config set", { add: ["provider", "typesafe"] })}`));
+    // replaceCommand: the hint is a set command, not the current argv with words appended
+    out.println(
+        pc.dim(`  ${suggestCommand("tools jev", { replaceCommand: ["config", "set", "provider", "typesafe"] })}`)
+    );
 }
 
 async function pickSpec(): Promise<SettingSpec | null> {
@@ -135,7 +138,7 @@ async function setConfig(key: string | undefined, value: string | undefined): Pr
     if (key === undefined || value === undefined) {
         if (!isInteractive()) {
             ui.err("jev config set needs a key and a value.");
-            ui.info(suggestCommand("tools jev config set", { add: ["provider", "typesafe"] }));
+            ui.info(suggestCommand("tools jev", { replaceCommand: ["config", "set", "provider", "typesafe"] }));
             ui.info(`Keys: ${JEV_SETTINGS.map((spec) => spec.key).join(", ")}`);
             process.exitCode = 1;
             return;

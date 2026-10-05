@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { setConsoleLevel } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import {
     addGlobalVerboseOption,
@@ -9,8 +10,11 @@ import {
     argvRequestsReadme,
     getArgvVerbosity,
     isVerbose,
+    reportUnhandledToolError,
     runTool,
 } from "./commander";
+
+const BOUNDARY_FIXTURE = join(import.meta.dir, "__fixtures__/run-tool-boundary.ts");
 
 const ORIGINAL_LOG_DEBUG = env.get("LOG_DEBUG");
 const ORIGINAL_LOG_TRACE = env.get("LOG_TRACE");
@@ -152,5 +156,112 @@ describe("addGlobalVerboseOption trace gate", () => {
         const b = new Command();
         addGlobalVerboseOption(b, { trace: true });
         expect(b.helpInformation()).toContain("--trace");
+    });
+});
+
+// reportUnhandledToolError alone passes even when runTool stops calling it, so the boundary is tested through
+// runTool: a real run (a child process, because runTool refuses process.argv under the test runner) and a caller
+// that passes its own argv.
+describe("runTool error boundary", () => {
+    async function runFixture(...args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+        const proc = Bun.spawn(["bun", "run", BOUNDARY_FIXTURE, ...args], {
+            env: process.env,
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+
+        return { exitCode, stdout, stderr };
+    }
+
+    it("reports an action error from a real run as one ERROR line and exits 1", async () => {
+        const run = await runFixture("boom");
+
+        expect(run.exitCode).toBe(1);
+        expect(run.stderr.match(/^ERROR: boom$/gm)?.length).toBe(1);
+        expect(run.stderr).not.toContain("run-tool-boundary.ts");
+        expect(run.stdout).toBe("");
+    });
+
+    it("leaves a Commander error to Commander's own exit path", async () => {
+        const run = await runFixture("nope");
+
+        expect(run.exitCode).toBe(1);
+        expect(run.stderr).toContain("unknown command 'nope'");
+        expect(run.stderr).not.toContain("ERROR:");
+    });
+
+    it("hands an action error back to a caller that passes its own argv", async () => {
+        const program = new Command("explicit");
+        program.command("boom").action(() => {
+            throw new Error("boom");
+        });
+
+        await expect(runTool(program, { tool: "explicit" }, ["bun", "explicit", "boom"])).rejects.toThrow("boom");
+    });
+});
+
+// Regression test: an error a tool's action did not catch (e.g. `tools artifact build missing.tsx`)
+// reached Bun's top level, which printed a source code frame and a stack instead of one line
+describe("reportUnhandledToolError", () => {
+    const message = '"missing.tsx" is neither a registered dashboard name, a file, nor a directory.';
+
+    // The logger's console sink writes through process.stderr, so this sees what a user sees
+    function captureStderr(run: () => void): string {
+        const chunks: string[] = [];
+        const spy = spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+            chunks.push(String(chunk));
+            return true;
+        });
+
+        try {
+            run();
+        } finally {
+            spy.mockRestore();
+        }
+
+        return chunks.join("");
+    }
+
+    it("prints one ERROR line and sets exit code 1", () => {
+        const previous = process.exitCode;
+        setConsoleLevel("info");
+
+        try {
+            const stderr = captureStderr(() => reportUnhandledToolError(new Error(message)));
+            expect(stderr).toBe(`ERROR: ${message}\n`);
+            expect(process.exitCode).toBe(1);
+        } finally {
+            process.exitCode = previous;
+        }
+    });
+
+    // Regression test: -v lowers the console gate to debug, so the debug record printed the stack and the
+    // handler wrote the same stack a second time
+    it("prints the stack once when the console level is debug", () => {
+        const error = new Error(message);
+        const frame = error.stack
+            ?.split("\n")
+            .map((line) => line.trim())
+            .find((line) => line.startsWith("at "));
+        if (!frame) {
+            throw new Error("the test error has no stack frame");
+        }
+
+        const previous = process.exitCode;
+        setConsoleLevel("debug");
+
+        try {
+            const stderr = captureStderr(() => reportUnhandledToolError(error));
+            expect(stderr.split(frame).length - 1).toBe(1);
+            expect(stderr).toContain(`ERROR: ${message}`);
+        } finally {
+            setConsoleLevel("info");
+            process.exitCode = previous;
+        }
     });
 });

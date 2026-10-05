@@ -1,14 +1,11 @@
 import { basename, dirname } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { setBaseBinding, setConsoleLevel } from "@genesiscz/utils/logger";
+import { logger, setBaseBinding, setConsoleLevel } from "@genesiscz/utils/logger";
 import { consoleFloorFor } from "@genesiscz/utils/logging/tool-policy";
-import type { Command } from "commander";
+import { type Command, CommanderError } from "commander";
 import { setCurrentCommand } from "./current-command";
 import { enhanceHelp, markRequiredOptionsDeep, setSuggestCommandProgram, showHelpAfterErrorDeep } from "./executor";
 import { observeInterrupts } from "./interrupt";
-// `logger` itself is intentionally NOT imported here — runTool only drives the
-// console gate / base binding via the setters above (importing the logger
-// value into commander.ts would risk a commander↔logger value cycle).
 
 export type Verbosity = 0 | 1 | 2 | 3;
 
@@ -193,6 +190,19 @@ function launchedByTestRunner(): boolean {
     return TEST_ENTRY.test(Bun.main);
 }
 
+/**
+ * An error a tool's action let escape. Without this, Bun printed the throwing line's source and a
+ * stack; a user needs the message, and `-v` (or the day's log file) for the rest. The stack comes from
+ * the debug record alone: `-v` lowers the console gate to debug, so that record prints it on stderr, and
+ * writing it here as well printed it twice.
+ */
+export function reportUnhandledToolError(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.debug({ err: error }, "unhandled tool error");
+    process.stderr.write(`ERROR: ${message}\n`);
+    process.exitCode = 1;
+}
+
 export async function runTool(
     program: Command,
     opts: RunToolOpts = {},
@@ -274,6 +284,16 @@ export async function runTool(
     setConsoleLevel(level);
     setBaseBinding({ tool });
 
-    await program.parseAsync(argv);
+    try {
+        await program.parseAsync(argv);
+    } catch (error) {
+        // a test passes its own argv and gets the error back; commander's own errors keep their exit path
+        if (argv !== process.argv || error instanceof CommanderError) {
+            throw error;
+        }
+
+        reportUnhandledToolError(error);
+    }
+
     return { tool, verbosity: _verbosity, isVerbose: _verbosity >= 1, command: program };
 }

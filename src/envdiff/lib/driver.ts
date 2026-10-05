@@ -30,7 +30,7 @@ export interface RunEnvdiffResult {
 
 export function runEnvdiff(args: RunEnvdiffArgs): RunEnvdiffResult {
     if (args.positionals.length > 2) {
-        logger.error({ positionals: args.positionals }, "envdiff: too many positional arguments");
+        logger.debug({ positionals: args.positionals }, "envdiff: too many positional arguments");
         return {
             exitCode: 2,
             stdout: "",
@@ -48,7 +48,7 @@ export function runEnvdiff(args: RunEnvdiffArgs): RunEnvdiffResult {
     const status: string[] = [];
 
     if (!existsSync(example)) {
-        logger.error({ example }, "envdiff: example file not found");
+        logger.debug({ example }, "envdiff: example file not found");
         return { exitCode: 2, stdout: "", status: [`Example file not found: ${example}`] };
     }
 
@@ -56,7 +56,7 @@ export function runEnvdiff(args: RunEnvdiffArgs): RunEnvdiffResult {
     try {
         exampleContent = readFileSync(example, "utf-8");
     } catch (err) {
-        logger.error({ error: err, example }, "envdiff: failed to read example file");
+        logger.debug({ error: err, example }, "envdiff: failed to read example file");
         return { exitCode: 2, stdout: "", status: [`Failed to read example file: ${example}`] };
     }
 
@@ -66,7 +66,7 @@ export function runEnvdiff(args: RunEnvdiffArgs): RunEnvdiffResult {
         try {
             actualContent = readFileSync(actual, "utf-8");
         } catch (err) {
-            logger.error({ error: err, actual }, "envdiff: failed to read actual file");
+            logger.debug({ error: err, actual }, "envdiff: failed to read actual file");
             return { exitCode: 2, stdout: "", status: [`Failed to read actual file: ${actual}`] };
         }
     } else {
@@ -88,7 +88,7 @@ export function runEnvdiff(args: RunEnvdiffArgs): RunEnvdiffResult {
             try {
                 writeFileSync(actual, synced);
             } catch (err) {
-                logger.error({ error: err, actual }, "envdiff: failed to write synced file");
+                logger.debug({ error: err, actual }, "envdiff: failed to write synced file");
                 return { exitCode: 2, stdout: "", status: [`Failed to write ${actual}`] };
             }
         }
