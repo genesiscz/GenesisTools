@@ -65,6 +65,8 @@ export interface ImportStatement {
     multiline: boolean;
     indent: string;
     trailingComma: boolean;
+    /** `with { type: "json" }` as written, when the statement carries import attributes. */
+    attributes?: string;
 }
 
 /** `text` with every comment and literal body replaced by spaces; newlines and offsets are kept. */
@@ -89,7 +91,7 @@ const blankSpans = (text: string, spans: Array<{ start: number; end: number }>):
 };
 
 const STATEMENT =
-    /^(import|export)([ \t]+type)?[ \t]+((?:[\w$]+[ \t]*,[ \t]*)?(?:\{[^}]*\}|\*(?:[ \t]+as[ \t]+[\w$]+)?)|[\w$]+)\s*from[ \t]*(['"])([^'"\n]+)\4([ \t]*;)?/gm;
+    /^(import|export)([ \t]+type)?[ \t]+((?:[\w$]+[ \t]*,[ \t]*)?(?:\{[^}]*\}|\*(?:[ \t]+as[ \t]+[\w$]+)?)|[\w$]+)\s*from[ \t]*(['"])([^'"\n]+)\4(?:[ \t]+((?:with|assert)[ \t]*\{[^}]*\}))?([ \t]*;)?/gm;
 
 const parseNamed = (inner: string): NamedSpecifier[] =>
     inner
@@ -169,7 +171,7 @@ export const parseImports = (text: string, masked: string = maskNonCode(text)): 
             continue;
         }
 
-        const [whole, keyword, typeWord, clause, quote, specifier, semicolon] = match;
+        const [whole, keyword, typeWord, clause, quote, specifier, attributes, semicolon] = match;
         const braceAt = clause.indexOf("{");
         const head = (braceAt === -1 ? clause : clause.slice(0, braceAt)).replace(/,\s*$/, "").trim();
         const inner = braceAt === -1 ? undefined : clause.slice(braceAt + 1, clause.lastIndexOf("}"));
@@ -198,6 +200,7 @@ export const parseImports = (text: string, masked: string = maskNonCode(text)): 
             multiline: inner?.includes("\n") ?? false,
             indent: firstEntryLine?.match(/^\s*/)?.[0] ?? "    ",
             trailingComma: inner?.trimEnd().endsWith(",") ?? false,
+            ...(attributes === undefined ? {} : { attributes }),
         });
     }
 
@@ -227,6 +230,61 @@ export interface Declarations {
     exportDefault: boolean;
 }
 
+/** `text` cut at each `separator` that sits outside every nested bracket. */
+const splitTopLevel = (text: string, separator: string): string[] => {
+    const parts: string[] = [];
+    let depth = 0;
+    let from = 0;
+    for (let k = 0; k < text.length; k++) {
+        const char = text[k];
+        if ("{[(".includes(char)) {
+            depth++;
+        } else if ("}])".includes(char)) {
+            depth--;
+        } else if (depth === 0 && char === separator) {
+            parts.push(text.slice(from, k));
+            from = k + 1;
+        }
+    }
+
+    parts.push(text.slice(from));
+    return parts;
+};
+
+/** The names a destructuring pattern binds, read from masked text: `{ a, b: c = 1, ...d }`, `[e, [f]]`. */
+const patternNames = (pattern: string): string[] => {
+    const trimmed = pattern.trim();
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+        return /^[\w$]+$/.test(trimmed) ? [trimmed] : [];
+    }
+
+    const object = trimmed.startsWith("{");
+    return splitTopLevel(trimmed.slice(1, -1), ",").flatMap((entry) => {
+        // The default goes first: a `:` inside `a = x ? y : z` is not a rename.
+        const target = splitTopLevel(entry.trim().replace(/^\.\.\./, ""), "=")[0];
+        const renamed = object ? splitTopLevel(target, ":") : [target];
+        return patternNames(renamed[renamed.length - 1]);
+    });
+};
+
+/** The index of the bracket that closes the one at `open`, or the text's end. */
+const closingBracket = (masked: string, open: number): number => {
+    let depth = 0;
+    for (let k = open; k < masked.length; k++) {
+        if ("{[".includes(masked[k])) {
+            depth++;
+        } else if ("}]".includes(masked[k])) {
+            depth--;
+            if (depth === 0) {
+                return k;
+            }
+        }
+    }
+
+    return masked.length;
+};
+
+const DESTRUCTURING_LINE = /^(export[ \t]+)?(?:declare[ \t]+)?(?:const|let|var)[ \t]*[{[]/gm;
 const DECLARATION_LINE =
     /^(export[ \t]+)?(default[ \t]+)?(?:declare[ \t]+)?(?:abstract[ \t]+)?(?:async[ \t]+)?(const[ \t]+enum|function\*?|class|interface|type|enum|const|let|var|namespace)[ \t]+([\w$]+)/gm;
 const LOCAL_EXPORT_LIST = /^export[ \t]+(?:type[ \t]+)?\{([^}]*)\}(?!\s*from\b)/gm;
@@ -243,6 +301,21 @@ export const topLevelDeclarations = (masked: string, raw: string = masked): Decl
         const at = match.index ?? 0;
         const end = raw.indexOf("\n", at);
         names.set(name, { exported, typeOnly, line: known?.line ?? raw.slice(at, end === -1 ? undefined : end) });
+    }
+
+    for (const match of masked.matchAll(DESTRUCTURING_LINE)) {
+        const at = match.index ?? 0;
+        const open = at + match[0].length - 1;
+        const end = raw.indexOf("\n", at);
+        const line = raw.slice(at, end === -1 ? undefined : end);
+        for (const name of patternNames(masked.slice(open, closingBracket(masked, open) + 1))) {
+            const known = names.get(name);
+            names.set(name, {
+                exported: match[1] !== undefined || known?.exported === true,
+                typeOnly: false,
+                line: known?.line ?? line,
+            });
+        }
     }
 
     for (const match of masked.matchAll(LOCAL_EXPORT_LIST)) {
@@ -596,6 +669,7 @@ interface Addition {
     defaultName?: string;
     namespace?: string;
     star?: boolean;
+    attributes?: string;
     /** Copy brace layout from this statement (the one a split came from). */
     layoutFrom?: ImportStatement;
 }
@@ -607,6 +681,14 @@ interface FileStyle {
     trailingComma: boolean;
     quote: string;
     semicolon: boolean;
+}
+
+/** What a top-level name means in a file: where it comes from and the name it has there. */
+interface Binding {
+    /** The resolved file, or a package's specifier; the file itself for its own declarations. */
+    from: string;
+    /** `default`, `*` for a namespace, else the exported name. */
+    imported: string;
 }
 
 interface FilePlan {
@@ -622,8 +704,8 @@ interface FilePlan {
     respecified: Map<number, { specifier: string; abs: string }>;
     removed: Set<number>;
     additions: Addition[];
-    /** Names the file binds at top level (imports and declarations), for skipping duplicates. */
-    bound: Set<string>;
+    /** Names the file binds at top level (imports and declarations), for skipping duplicates and refusing a clash. */
+    bound: Map<string, Binding>;
     style: FileStyle;
     /** Ops that are not about import statements, such as an `export` a widened move adds. */
     extraOps: Op[];
@@ -667,7 +749,14 @@ interface Layout {
 }
 
 const renderStatement = (
-    head: { keyword: string; typeOnly: boolean; defaultName?: string; namespace?: string; star?: boolean },
+    head: {
+        keyword: string;
+        typeOnly: boolean;
+        defaultName?: string;
+        namespace?: string;
+        star?: boolean;
+        attributes?: string;
+    },
     named: NamedSpecifier[] | undefined,
     specifier: string,
     layout: Layout
@@ -705,7 +794,8 @@ const renderStatement = (
         }
 
         const typeWord = head.typeOnly ? " type" : "";
-        return `${head.keyword}${typeWord} ${parts.join(", ")} from ${layout.quote}${specifier}${layout.quote}${layout.semicolon ? ";" : ""}`;
+        const attributes = head.attributes === undefined ? "" : ` ${head.attributes}`;
+        return `${head.keyword}${typeWord} ${parts.join(", ")} from ${layout.quote}${specifier}${layout.quote}${attributes}${layout.semicolon ? ";" : ""}`;
     };
     const single = build(false);
     // A line comment cannot sit inside a one-line list, so a list that carries comments wraps.
@@ -813,6 +903,10 @@ const fileStyle = (abs: string, text: string, statements: ImportStatement[]): Fi
 
 const isRelative = (specifier: string): boolean => specifier.startsWith(".");
 
+/** Two imports share this key exactly when they name the same module: its file, else the package. */
+const moduleKey = (fileAbs: string, specifier: string, resolvedAbs: string | null): string =>
+    resolvedAbs ?? (isRelative(specifier) ? path.resolve(path.dirname(fileAbs), specifier) : specifier);
+
 /** Where a new statement goes: alphabetical by module path inside its group (relative or not). */
 const placement = (
     plan: FilePlan,
@@ -856,6 +950,7 @@ const addTo = (plan: FilePlan, addition: Addition): void => {
                 !plan.removed.has(index) &&
                 statement.keyword === addition.keyword &&
                 statement.typeOnly === addition.typeOnly &&
+                statement.attributes === addition.attributes &&
                 statement.named !== undefined &&
                 willResolveTo(plan, index) === addition.resolvedAbs
         );
@@ -870,6 +965,7 @@ const addTo = (plan: FilePlan, addition: Addition): void => {
                 other.named !== undefined &&
                 other.keyword === addition.keyword &&
                 other.typeOnly === addition.typeOnly &&
+                other.attributes === addition.attributes &&
                 (other.resolvedAbs ?? other.specifier) === (addition.resolvedAbs ?? addition.specifier)
         );
         if (pending?.named !== undefined) {
@@ -893,7 +989,12 @@ const addTo = (plan: FilePlan, addition: Addition): void => {
 /** `statement.text` with only its module path swapped, so the rest keeps its exact bytes. */
 const withSpecifier = (statement: ImportStatement, specifier: string): string => {
     const quoted = `${statement.quote}${statement.specifier}${statement.quote}`;
-    const at = statement.text.lastIndexOf(quoted);
+    // `from "json" with { type: "json" }`: the module path is the last match before the attributes.
+    const head =
+        statement.attributes === undefined
+            ? statement.text
+            : statement.text.slice(0, statement.text.lastIndexOf(statement.attributes));
+    const at = head.lastIndexOf(quoted);
     return `${statement.text.slice(0, at)}${statement.quote}${specifier}${statement.quote}${statement.text.slice(at + quoted.length)}`;
 };
 
@@ -1171,25 +1272,28 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
         if (plan === undefined) {
             const text = read(abs) ?? "";
             const statements = reader.imports(text, abs);
-            const bound = new Set<string>();
-            for (const statement of statements) {
+            const resolved = statements.map((statement) => resolver.resolve(abs, statement.specifier)?.abs ?? null);
+            const bound = new Map<string, Binding>();
+            for (const [index, statement] of statements.entries()) {
                 if (statement.keyword !== "import") {
                     continue;
                 }
 
-                for (const name of [
-                    statement.defaultName,
-                    statement.namespace,
-                    ...(statement.named ?? []).map((n) => n.local),
-                ]) {
-                    if (name !== undefined) {
-                        bound.add(name);
+                const from = moduleKey(abs, statement.specifier, resolved[index]);
+                const entries: Array<[string | undefined, string]> = [
+                    [statement.defaultName, "default"],
+                    [statement.namespace, "*"],
+                    ...(statement.named ?? []).map((n): [string, string] => [n.local, n.imported]),
+                ];
+                for (const [local, imported] of entries) {
+                    if (local !== undefined) {
+                        bound.set(local, { from, imported });
                     }
                 }
             }
 
             for (const name of reader.declarations(text, abs).names.keys()) {
-                bound.add(name);
+                bound.set(name, { from: abs, imported: name });
             }
 
             plan = {
@@ -1197,7 +1301,7 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
                 display: display(abs),
                 text,
                 statements,
-                resolved: statements.map((statement) => resolver.resolve(abs, statement.specifier)?.abs ?? null),
+                resolved,
                 named: new Map(),
                 respecified: new Map(),
                 removed: new Set(),
@@ -1210,6 +1314,26 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
         }
 
         return plan;
+    };
+
+    // One declaration can bind several names (`const { a, b } = x`); it gets one `export`.
+    const widened = new Set<string>();
+    const widen = (abs: string, name: string, line: string): void => {
+        const key = `${abs}\0${line}`;
+        if (widened.has(key)) {
+            return;
+        }
+
+        widened.add(key);
+        planFor(abs).extraOps.push(exportOp(name, line));
+    };
+
+    /** What a binding means once the batch is applied: a moved declaration lives in its new file. */
+    const settled = (binding: Binding): Binding => {
+        const move = fixing.find(
+            (m) => m.fromAbs === binding.from && reader.declarations(m.blockText, m.fromAbs).names.has(binding.imported)
+        );
+        return move === undefined ? binding : { from: move.toAbs, imported: binding.imported };
     };
 
     /** How a file names other project files: the majority style of its own imports. */
@@ -1324,7 +1448,7 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
                     );
                 }
 
-                planFor(info.toAbs).extraOps.push(exportOp(name, info.line));
+                widen(info.toAbs, name, info.line);
                 info.exported = true;
             }
 
@@ -1343,7 +1467,50 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
             const blockUses = reader.uses(toTarget.map((move) => move.blockText).join("\n"), sourceAbs);
             const target = planFor(targetAbs);
             const localHere = new Set([...moved].filter(([, info]) => info.toAbs === targetAbs).map(([name]) => name));
-            const needs = (name: string): boolean => blockUses(name) && !localHere.has(name) && !target.bound.has(name);
+            const where = (from: string): string => (path.isAbsolute(from) ? display(from) : from);
+            const meaning = ({ from, imported }: Binding): string =>
+                imported === "*"
+                    ? `the namespace of ${where(from)}`
+                    : imported === "default"
+                      ? `the default export of ${where(from)}`
+                      : `${imported} from ${where(from)}`;
+            const needs = (name: string, origin: Binding & { specifier?: string }): boolean => {
+                if (!blockUses(name) || localHere.has(name)) {
+                    return false;
+                }
+
+                const bound = target.bound.get(name);
+                if (bound === undefined) {
+                    return true;
+                }
+
+                const mine = settled(origin);
+                const theirs = settled(bound);
+                if (mine.from === theirs.from && mine.imported === theirs.imported) {
+                    return false;
+                }
+
+                const alias = `${name}From${pascal(path.basename(withoutExt(mine.from)))}`;
+                const quoted = `"${origin.specifier}"`;
+                const importLine =
+                    origin.imported === "default"
+                        ? `import ${alias} from ${quoted};`
+                        : origin.imported === "*"
+                          ? `import * as ${alias} from ${quoted};`
+                          : `import { ${origin.imported} as ${alias} } from ${quoted};`;
+                throw new MoveError(
+                    withFix(
+                        `move: the moved code's ${name} is ${meaning(mine)}, and ${display(targetAbs)} already binds ${name} to ${meaning(theirs)}`,
+                        {
+                            why:
+                                origin.specifier === undefined
+                                    ? `rename ${name} in one of the two files first (for example to ${alias}), then move again.`
+                                    : `give one of them another name first (for example \`${importLine}\` in ${display(sourceAbs)}, with the moved code's ${name} renamed to ${alias}), then move again.`,
+                        }
+                    ),
+                    toTarget[0].index
+                );
+            };
 
             for (const statement of source.statements) {
                 if (statement.keyword !== "import") {
@@ -1365,13 +1532,22 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
                           ).replace(/^(?!\.)/, "./")
                         : resolver.specifierFor(targetAbs, resolved.abs, resolved.via)
                     : statement.specifier;
-                const named = (statement.named ?? []).filter((entry) => needs(entry.local));
+                const from = moduleKey(sourceAbs, statement.specifier, resolved?.abs ?? null);
+                const origin = (imported: string): Binding & { specifier: string } => ({
+                    from,
+                    imported,
+                    specifier: statement.specifier,
+                });
+                const named = (statement.named ?? []).filter((entry) => needs(entry.local, origin(entry.imported)));
                 const defaultName =
-                    statement.defaultName !== undefined && needs(statement.defaultName)
+                    statement.defaultName !== undefined && needs(statement.defaultName, origin("default"))
                         ? statement.defaultName
                         : undefined;
                 const namespace =
-                    statement.namespace !== undefined && needs(statement.namespace) ? statement.namespace : undefined;
+                    statement.namespace !== undefined && needs(statement.namespace, origin("*"))
+                        ? statement.namespace
+                        : undefined;
+                const attributes = statement.attributes === undefined ? {} : { attributes: statement.attributes };
                 if (defaultName !== undefined || namespace !== undefined) {
                     addTo(target, {
                         keyword: "import",
@@ -1380,6 +1556,7 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
                         resolvedAbs: resolved?.abs ?? null,
                         ...(defaultName === undefined ? {} : { defaultName }),
                         ...(namespace === undefined ? {} : { namespace }),
+                        ...attributes,
                     });
                 }
 
@@ -1390,13 +1567,20 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
                         specifier,
                         resolvedAbs: resolved?.abs ?? null,
                         named,
+                        ...attributes,
                     });
                 }
 
-                for (const name of [...named.map((entry) => entry.local), defaultName, namespace]) {
-                    if (name !== undefined) {
-                        target.bound.add(name);
-                    }
+                for (const entry of named) {
+                    target.bound.set(entry.local, origin(entry.imported));
+                }
+
+                if (defaultName !== undefined) {
+                    target.bound.set(defaultName, origin("default"));
+                }
+
+                if (namespace !== undefined) {
+                    target.bound.set(namespace, origin("*"));
                 }
             }
 
@@ -1416,7 +1600,7 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
                         );
                     }
 
-                    planFor(fromAbs).extraOps.push(exportOp(name, info.line));
+                    widen(fromAbs, name, info.line);
                     info.exported = true;
                 }
 
@@ -1427,16 +1611,16 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
                     resolvedAbs: fromAbs,
                     named: [{ raw: info.typeOnly ? `type ${name}` : name, imported: name, local: name }],
                 });
-                target.bound.add(name);
+                target.bound.set(name, { from: fromAbs, imported: name });
             };
             for (const [name, info] of remainingDeclarations) {
-                if (needs(name)) {
+                if (needs(name, { from: sourceAbs, imported: name })) {
                     reachBack(name, sourceAbs, info, toTarget[0].index);
                 }
             }
 
             for (const [name, info] of moved) {
-                if (info.toAbs !== targetAbs && needs(name)) {
+                if (info.toAbs !== targetAbs && needs(name, { from: info.toAbs, imported: name })) {
                     reachBack(name, info.toAbs, info, toTarget[0].index);
                 }
             }
@@ -1593,6 +1777,7 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
                         specifier: resolver.specifierFor(file, toAbs, via),
                         resolvedAbs: toAbs,
                         named: leaving.filter((entry) => exported.get(entry.imported)?.toAbs === toAbs),
+                        ...(statement.attributes === undefined ? {} : { attributes: statement.attributes }),
                         layoutFrom: statement,
                     });
                 }

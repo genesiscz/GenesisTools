@@ -148,9 +148,11 @@ export const listProjectFiles = (cwd: string): string[] => {
 };
 
 const scanProjectFiles = (cwd: string): string[] => {
-    const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" });
+    // `--show-cdup` keeps the cwd's spelling; `--show-toplevel` is the realpath, and a symlinked cwd
+    // (macOS /tmp, /var) would then name every listed file by a path no move ever names.
+    const top = spawnSync("git", ["rev-parse", "--show-cdup"], { cwd, encoding: "utf8" });
     if (top.status === 0) {
-        const root = top.stdout.trim();
+        const root = path.resolve(cwd, top.stdout.trim());
         const listed = spawnSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
             cwd: root,
             encoding: "utf8",
