@@ -70,9 +70,9 @@ export function suggestedModelFor(account: AiProxyAccountConfig): string | undef
         // Three segments plus the slash inside the OpenRouter id: the fully
         // qualified form `resolve-model.ts` parses without ambiguity.
         case "openrouter":
-            return `${account.name}/${account.providerSlug}/anthropic/claude-sonnet-5`;
+            return `${account.name}/${account.providerSlug}/anthropic/claude-sonnet-5.5`;
         case "openai":
-            return `${account.name}/${account.providerSlug}/gpt-5.4`;
+            return `${account.name}/${account.providerSlug}/gpt-6.1-sol`;
         // The short alias, not a dated id: `listAnthropicSubProxyModels` always
         // advertises `sonnet`/`opus`/`haiku`/`fable`, and they track the current
         // dated model so a suggestion cannot rot.
