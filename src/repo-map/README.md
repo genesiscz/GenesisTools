@@ -44,4 +44,4 @@ That is why `--max-tokens` is the main dial. At 2000 tokens you get the spine of
 ## Notes
 
 - This is a map, not a search index. For semantic search over content, use [`tools indexer`](../indexer/README.md).
-- For dumping actual file contents into a prompt, use [`tools files-to-prompt`](../files-to-prompt/README.md). `repo-map` deliberately gives you names and structure only.
+- `repo-map` deliberately gives you names and structure only, never file contents.

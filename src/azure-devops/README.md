@@ -969,8 +969,8 @@ The TimeLog API uses minutes internally:
 
 - `mcp-manager`: Manage MCP server configurations
 - `mcp-tsc`: TypeScript diagnostics MCP server
-- `mcp-ripgrep`: Code search MCP server
-- `git-last-commits-diff`: View git changes for work items
+
+- `git commits`: List the commits that reference a work item
 
 ## Documentation
 

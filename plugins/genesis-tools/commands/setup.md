@@ -78,10 +78,9 @@ After installation completes:
 Explain what's now available:
 - `tools` - Interactive tool selector (run without arguments)
 - `tools github` - GitHub issue/PR fetching and search
-- `tools collect-files-for-ai` - Gather files for AI context
-- `tools git-last-commits-diff` - Show recent commit diffs
+- `tools git` - Commit analysis, merged verdicts, cascade rebases
 - `tools watch` - Monitor file changes
-- `tools files-to-prompt` - Convert files to prompt format
+
 - And more! Run `tools` to see the full list.
 
 ## Troubleshooting

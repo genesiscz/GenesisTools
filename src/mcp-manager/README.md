@@ -452,7 +452,7 @@ Ensure your TOML syntax is valid. The tool uses `@iarna/toml` for parsing.
 ## Related Tools
 
 -   `mcp-tsc`: TypeScript diagnostics MCP server
--   `mcp-ripgrep`: Code search MCP server
+
 -   `mcp-web-reader`: Web content fetching MCP server
 
 ## Local auth gateway

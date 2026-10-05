@@ -102,7 +102,7 @@ When expressions are embedded in a larger string, they are interpolated as strin
 
 The `action` field maps directly to `tools <action>`:
 - `"action": "github search"` => runs `tools github search`
-- `"action": "collect-files-for-ai"` => runs `tools collect-files-for-ai`
+- `"action": "git commits"` => runs `tools git commits`
 - `"action": "azure-devops workitem"` => runs `tools azure-devops workitem`
 
 ### Param Conventions

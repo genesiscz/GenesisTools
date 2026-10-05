@@ -319,5 +319,5 @@ For very large projects, the LSP may timeout waiting for diagnostics. This is co
 
 ## Related Tools
 
-- `mcp-ripgrep`: Similar MCP server architecture for code search
+
 - Standard `tsc`: Full TypeScript compiler (checks entire project)

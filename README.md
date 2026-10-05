@@ -56,9 +56,9 @@ GenesisTools is a TypeScript monorepo that Bun executes directly, with no build 
 lives in its own folder under `src/` and runs in its own process. The `tools` executable is the
 only entry point you need.
 
-The catalogue below is taken from what actually exists in this checkout: 100 discoverable
+The catalogue below is taken from what actually exists in this checkout: 104 discoverable
 entries, of which `src/utils` is the shared package barrel (`@genesiscz/utils`, not a runnable
-tool) and `src/Internal` plus `src/t3chat-length` are private. That leaves **97 usable tools**.
+tool) and `src/Internal` holds private tools. That leaves **102 usable tools**.
 Running `tools` with no arguments prints the same total of discovered entries in its header.
 
 ---
@@ -146,13 +146,6 @@ tools <name> -v             # promote debug logging to the console
 tools <partial-name>        # fuzzy match, then pick from a shortlist
 ```
 
-Two tools live as loose scripts inside a folder without an `index.ts` and are addressed by
-path instead of by name:
-
-```bash
-tools hold-ai/server        # WebSocket hold/release server
-tools hold-ai/client        # the client an AI calls to block on your input
-```
 
 **Global flags** are added by the shared `runTool` wrapper, so they exist on every commander
 entrypoint: `-v, --verbose`, `--readme`, `-h, --help`. Tools that opt in also accept `--trace`
@@ -301,26 +294,26 @@ The server itself runs as:
 tools genesis-tools-mcp   # stdio MCP server (tools claude mcp is the same, as an alias)
 ```
 
-It registers **27 tools across 4 capability groups**:
+It registers **17 tools across 5 capability groups**:
 
 | Capability | Tools | Purpose |
 |------------|-------|---------|
 | `question_answer` | `question_answer` | Capture a question and your complete answer to the local question store, reviewable later with `tools question log` / `tools question tail`. |
-| `handoff` | `handoff_post`, `handoff_get`, `handoff_list`, `handoff_action` | Cross-agent task handoff: post a task list, address it to a session or a harness (`target.agent`: claude / codex / grok / copilot), fetch it by id or readable name, claim it, check items off with proof, finish. A session that is not the intended recipient gets a warning, never a block. |
+| `question_ask` | `question_post`, `question_wait`, `question_poll`, `question_respond`, `question_cancel`, `question_update`, `question_tokens` | Ask the user: `question_post` creates a pending form and returns its id at once, and blocks only with `wait: true`. Then wait, poll, respond, or cancel. |
+| `handoff` | `handoff_post`, `handoff_get`, `handoff_list`, `handoff_action` | Cross-agent task handoff: post a task list, address it to a session or a harness (`target.agent`: claude / codex / grok / copilot), fetch it by id or name, and claim and check off tasks. |
 | `annotate` | `annotate_image` | Annotate an image (arrows, boxes, labels) for review. |
-| `boards` | 21 `boards_*` tools | Dev-dashboard annotation boards: create and compose boards, push screenshot sets, list and answer work, wait for new annotations. |
+| `jev` | `jev_route`, `jev_compact`, `jev_verify`, `jev_verify_templates` | Read-only Jev tools. |
 
-All four groups are enabled when `GENESIS_TOOLS_MCP_CAPABILITIES` is unset. Set it to a
+All groups are enabled when `GENESIS_TOOLS_MCP_CAPABILITIES` is unset. Set it to a
 comma-delimited list of capability names to restrict registration, for example in
 `~/.claude.json` under `mcpServers.genesis-tools.env`:
 
 ```bash
 GENESIS_TOOLS_MCP_CAPABILITIES=question_answer,handoff   # only these two groups
-GENESIS_TOOLS_MCP_CAPABILITIES=boards                    # only the boards tools
 ```
 
-> ⚠️ The `tools claude mcp --help` string still says "exposes question_answer + boards". The
-> registry is the authority, and it registers all four groups.
+The dev-dashboard annotation boards used to be a sixth group (`boards_*`). They were removed from
+the MCP server; a leftover `boards` entry in the capability list now enables nothing.
 
 ### Second plugin: genesis-tools-server
 
@@ -335,7 +328,7 @@ status, runs malware and rootkit scans, and generates the matching `fail2ban` co
 
 Every row is a real tool in this checkout, described from its own `--help`. Each name links to
 that tool's own `README.md`, which you can also print in the terminal with
-`tools <name> --readme`. All 98 usable tools ship one.
+`tools <name> --readme`.
 
 ### AI and LLM
 
@@ -344,14 +337,12 @@ that tool's own `README.md`, which you can also print in the terminal with
 | [`ai`](src/ai/README.md) | Unified AI toolkit: translate, summarize, classify, generate images, manage accounts and models. | `translate` `summarize` `image` `classify` `models` `config` |
 | [`ai-proxy`](src/ai-proxy/README.md) | OpenAI-compatible local proxy in front of Grok, GitHub Copilot, and other providers, with a client ledger. | `up` `down` `serve` `status` `models` `calls` `clients` `usage` `link` `config` |
 | [`ai-spend`](src/ai-spend/README.md) | Token and cost analytics across every local Claude Code, Codex and Grok session, reported per source. | `summary` `sessions` `today` `daily` `weekly` `monthly` `series` `monitor` `blocks` `statusline` |
-| [`ask`](src/ask/README.md) | Multi-provider LLM chat, one-shot or interactive, with optional audio input via `--sst`. | flags only (`-m`, `-p`, `-f`, `-o`) |
-| [`usage`](src/usage/README.md) | Token and cost analytics for `ask`, by provider, model, and day. | flags only (`--days`, `--provider`, `--format`) |
+| [`ask`](src/ask/README.md) | Multi-provider LLM chat, one-shot or interactive, with optional audio input via `--sst`, plus token and cost analytics of its own calls. | `models` `usage` `configure`, or flags (`-m`, `-p`, `-f`, `-o`) |
 | [`say`](src/say/README.md) | Text to speech with pluggable backends (macOS, xAI Grok, OpenAI) and per-app config profiles. | `voices` `models` `config` |
 | [`transcribe`](src/transcribe/README.md) | Transcribe audio files with AI, locally or in the cloud. | flags only |
 | [`darwinkit`](src/darwinkit/README.md) | Apple on-device ML from the terminal: NLP, embeddings, OCR, clustering, biometry, iCloud. | 40+ verbs, see `--help` |
 | [`redact`](src/redact/README.md) | Reversibly redact secrets and PII from text before pasting it into an AI, then restore the reply. | `restore` |
-| [`json`](src/json/README.md) | Convert between JSON and TOON (30 to 60 percent fewer tokens), or infer a schema. | `convert` (default) `schema` |
-| [`json-schema`](src/json-schema/README.md) | Infer a skeleton, TypeScript interfaces, or JSON Schema from JSON on a file or stdin. | flags only (`-m`, `--pretty`) |
+| [`json`](src/json/README.md) | Convert between JSON and TOON (30 to 60 percent fewer tokens), or infer a schema (`schema`, with `--compact` for one-line output). | `convert` (default) `schema` |
 | [`mcp-web-reader`](src/mcp-web-reader/README.md) | Fetch a page and convert HTML to Markdown with pluggable engines. Works as CLI and MCP server. | flags only (`--engine`, `--mode`) |
 | [`repo-map`](src/repo-map/README.md) | Token-efficient repo symbol map for agents, in the style of aider. | flags only |
 | [`indexer`](src/indexer/README.md) | Semantic code indexer with AST-aware chunking and hybrid search. | `add` `search` `sync` `watch` `graph` `context` `mcp-serve` |
@@ -365,10 +356,8 @@ that tool's own `README.md`, which you can also print in the terminal with
 | [`codex`](src/codex/README.md) | Run the native Codex terminal on a named account with shared configuration, search indexed history, and manage app-server workers. | `login` `run` `history` `usage` `spawn` `steer` `read` `review` `approve` `deny` `tail` `sessions` |
 | [`grok`](src/grok/README.md) | Run isolated Grok workers, resume native sessions, and search indexed conversation history. | `login` `run` `resume` `history` `usage` `steer` `read` `tail` `sessions` |
 | [`cursor`](src/cursor/README.md) | Ask Cursor Agent a question about the codebase and stream the answer, tool calls on stderr and answer on stdout. | flags only (`--mode`, `--model`, `--raw`) |
-| [`cursor-context`](src/cursor-context/README.md) | Strip tool-use parameters and results from Cursor SpecStory exports to save tokens. | flags only |
 | [`agents`](src/agents/README.md) | Cross-agent communication: register, message, request, discover, listen across a swarm. | `login` `message` `request` `discover` `listen` |
 | [`agent-watch`](src/agent-watch/README.md) | Notify you when background agents finish, stall, or need input. | `watch` `status` `list` |
-| [`boards`](src/boards/README.md) | Dev-dashboard annotation boards: push screenshot sets, create boards, listen for work. | `init` `add` `push` `board-from-set` `watch` `operator` |
 | [`question`](src/question/README.md) | Capture and review the questions fired at agents mid-session, with their answers. | `record` `log` `tail` `config` |
 | [`task`](src/task/README.md) | PTY-aware command wrapper with ordered log capture, built for long-lived dev servers. | `run` `get` `logs` `tail` `wait` `sessions` `dashboard` |
 | [`scripts`](src/scripts/README.md) | Script MCP tool calls directly, with no agent loop, using types generated from each server. | `servers` `tools` `call` `create` `run` `regen` `remote` `doctor` |
@@ -380,15 +369,8 @@ that tool's own `README.md`, which you can also print in the terminal with
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| [`git`](src/git/README.md) | Commit analysis plus branch mechanics: is a branch merged (by content, not sha), cascade-rebase a parent with its children, detect the base branch, per-repo git policy. | `commits` `merged` `rebase-cascade` `base` `config` `configure-authors` `configure-workitem-patterns` `health` `monster` |
-| [`git-commit`](src/git-commit/README.md) | Generate commit messages with AI, optionally staging first and pushing after. | flags only (`--stage`, `--detail`) |
-| [`git-last-commits-diff`](src/git-last-commits-diff/README.md) | Render diffs between recent commits, formatted for feeding to an AI. | flags only (`--commits`, `--output`, `--clipboard`) |
-| [`git-rebranch`](src/git-rebranch/README.md) | Split a messy branch into several clean branches by grouping commits. | flags only (`--dry-run`) |
-| [`git-rename-commits`](src/git-rename-commits/README.md) | Interactively rename the last N commit messages, with a confirmation screen before the rewrite. | flags only (`--commits`) |
+| [`git`](src/git/README.md) | Commit analysis plus branch mechanics: is a branch merged (by content, not sha), cascade-rebase a parent with its children, detect the base branch, per-repo git policy. | `commits` `merged` `rebase-cascade` `rebranch` `rename-commits` `base` `config` `configure-authors` `configure-workitem-patterns` `health` `monster` |
 | [`last-changes`](src/last-changes/README.md) | Show uncommitted changes grouped by modification time, so you can see what you touched when. | flags only |
-| [`collect-files-for-ai`](src/collect-files-for-ai/README.md) | Copy files changed in git (by commit count, staged, unstaged, or all) into a folder for AI context. | flags only (`-c`, `--staged`, `--flat`) |
-| [`files-to-prompt`](src/files-to-prompt/README.md) | Turn a directory tree into one AI-friendly prompt (XML, Markdown, or plain), with filters. | flags only (`-e`, `--markdown`, `--cxml`, `--flat-folder`) |
-| [`time-machine`](src/time-machine/README.md) | Auto-bisect a failing command across history to find the last green commit. | flags only |
 | [`regret-grep`](src/regret-grep/README.md) | Warn when the current diff repeats a bug you already fixed. | `index` `check` |
 | [`apoptosis`](src/apoptosis/README.md) | Programmed cell death for dead code: flag zero-signal files and suggest deletion after a grace window. | `status` `kill` `rescue` `reset` |
 | [`loc`](src/loc/README.md) | Count files and code, blank, and comment lines by language, respecting `.gitignore`. | flags only |
@@ -413,7 +395,6 @@ onto the merged base first, then optionally deletes the head branch.
 | [`mcp-manager`](src/mcp-manager/README.md) | Manage MCP servers across Claude, Gemini, Codex, and Cursor from one unified config, with backups and visual diffs. | `config` `sync` `sync-from-providers` `list` `enable` `disable` `install` `show` `remove` `rename` `backup-all` `config-json` |
 | [`mcp-doctor`](src/mcp-doctor/README.md) | Health-check and benchmark the MCP servers you already have configured. | `list` `check` `tools` |
 | [`mcp-debug`](src/mcp-debug/README.md) | Debug MCP server configuration by running commands and printing JSON to stdout plus diagnostics to stderr, so you can see the env, cwd, and PATH your client passes. | flags only (`--env`) |
-| [`mcp-ripgrep`](src/mcp-ripgrep/README.md) | MCP server exposing ripgrep: search, advanced search, count matches, list files, list file types. | server only |
 | [`mcp-tsc`](src/mcp-tsc/README.md) | TypeScript diagnostics as both a CLI and an MCP server, using the compiler API or a language server. | flags only (`--lsp`, `--warnings`, `--mcp`) |
 
 ### Frontend and web debugging
@@ -443,10 +424,8 @@ onto the merged base first, then optionally deletes the head branch.
 | [`dev-dashboard`](src/dev-dashboard/README.md) | Personal dev dashboard wiring ttyd, cmux, and Obsidian together, with auth, tunnel, and pairing. | `ui` `configure` `auth` `agent` `tunnel` `pair` `share` |
 | [`youtube`](src/youtube/README.md) | The largest tool here: channels, videos, transcripts, downloads, summarisation, Q&A, a browser extension, a queue, and an MCP server. | `channels` `videos` `transcribe` `download` `pipeline` `queue` `ask` `analyze` `extension` `server` `ui` `mcp` `config` |
 | [`shops`](src/shops/README.md) | Grocery, drogerie, and pharmacy price intelligence across Czech e-shops, with crawlers, matching, and a dashboard. | `get` `crawl` `sitemap-sync` `match` `list` `watch` `notify` `daemon` `db` `ui` `mcp` |
-| [`instagram`](src/instagram/README.md) | Inspect public Instagram profiles, and fetch stories and highlights with your own session. | `profile` `highlights` `stories` `highlight` `session` |
 | [`spotify`](src/spotify/README.md) | Spotify listening analytics from your own export, plus cross-library compatibility with a partner. | `profile` `analytics` `harvest` `build` `enrich` `history-merge` `export` `doctor` |
 | [`tradingview`](src/tradingview/README.md) | Stream TradingView live quotes, indicators, charts, and scans. | `quotes` `alerts` `indicator` `charts` `indicators` `scan` |
-| [`rohlik-spending`](src/rohlik-spending/README.md) | Total up your spending on rohlik.cz from delivered orders and line items. | flags only |
 
 ### macOS and system
 
@@ -509,7 +488,7 @@ onto the merged base first, then optionally deletes the head branch.
 |-------|----------------|
 | `utils` | The `@genesiscz/utils` package barrel. It is discovered because it has an `index.ts`, but running it does nothing. |
 | `Internal` | Private tools, explicitly marked "not for public use". |
-| `t3chat-length` | Internal scratch tool. It prints `[]` unless you edit `myInputJson` in its source first. |
+
 
 ---
 
@@ -927,20 +906,6 @@ tools youtube extension build                # browser extension
 Targets are interchangeable everywhere: a video ID, a full URL, or an `@handle`. Captions are
 used when they exist, with AI transcription as the fallback.
 
-### ⏸️ Hold-AI
-
-[`src/hold-ai/README.md`](src/hold-ai/README.md)
-
-A WebSocket hold/release pair with no `index.ts`, so both halves are addressed by path:
-
-```bash
-tools hold-ai/server        # terminal 1: collects your messages, opens an editor
-tools hold-ai/client        # terminal 2: what the AI runs to block
-```
-
-Type messages, save and exit to send them. Send `OK` on its own to release the AI.
-
----
 
 ## 🗂️ Where things are stored
 
