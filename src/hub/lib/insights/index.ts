@@ -50,7 +50,7 @@ const log = logger.child({ component: "hub/insights" });
 const STUCK_SCAN_CONCURRENCY = 4;
 
 /** Bump when the cached JSON's shape or the cache key changes. */
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 /** How old a heavy part a library caller gets when it does not say; the key already names the file state. */
 const CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 /** The stuck detector reads this much of the file's end for full tool inputs. */
