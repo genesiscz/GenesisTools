@@ -17,6 +17,10 @@ describe("toVaultRelativePath", () => {
         expect(toVaultRelativePath("Widgets/Design/Note", root)).toBe("Widgets/Design/Note.md");
     });
 
+    test("keeps a source file's own extension", () => {
+        expect(toVaultRelativePath("Widgets/Design/Report.ts", root)).toBe("Widgets/Design/Report.ts");
+    });
+
     test("converts an absolute path inside the vault", () => {
         expect(toVaultRelativePath("/vault/Widgets/Design/Note.md", root)).toBe("Widgets/Design/Note.md");
     });

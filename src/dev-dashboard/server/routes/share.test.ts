@@ -38,6 +38,13 @@ const OUTSIDE_MD = "# outside the vault";
 const FAKE_TOKEN = `sk-test-${"0".repeat(40)}`;
 const CREDS = `{"service":"demo","apiKey":"${FAKE_TOKEN}"}`;
 const CREDS_MD = `# Setup\n\nexport DEMO_KEY=${FAKE_TOKEN}\n`;
+const GENERATOR = [
+    "/**",
+    " * Report.md is generated from Report.json by this file.",
+    " * See [the note](wrap.md) and ![[pic.webp]].",
+    " */",
+    'const rows: string[] = ["a"];',
+].join("\n");
 const TOOL = Array.from({ length: 1000 }, (_, i) => `const line${i + 1} = ${i + 1};`).join("\n");
 
 const NOTE = [
@@ -69,6 +76,7 @@ describe("GET /share/:slug assets", () => {
     let dir = "";
     let slug = "";
     let pubSlug = "";
+    let codeSlug = "";
 
     beforeAll(async () => {
         dir = mkdtempSync(join(tmpdir(), "share-assets-"));
@@ -82,6 +90,7 @@ describe("GET /share/:slug assets", () => {
         writeFileSync(join(vault, "Notes/creds.json"), CREDS);
         writeFileSync(join(vault, "Notes/creds.md"), CREDS_MD);
         writeFileSync(join(vault, "Notes/tool.ts"), TOOL);
+        writeFileSync(join(vault, "Notes/Report.ts"), GENERATOR);
         writeFileSync(join(vault, "Other/Other Note.md"), OTHER_NOTE);
         writeFileSync(join(vault, "Other/Pub.md"), PUB);
         writeFileSync(join(vault, "secret.md"), SECRET_MD);
@@ -105,6 +114,7 @@ describe("GET /share/:slug assets", () => {
         });
         slug = (await publishNote("Notes/sub/Run.md")).slug;
         pubSlug = (await publishNote("Other/Pub.md")).slug;
+        codeSlug = (await publishNote("Notes/Report.ts")).slug;
     });
 
     afterAll(() => {
@@ -113,12 +123,12 @@ describe("GET /share/:slug assets", () => {
         rmSync(dir, { recursive: true, force: true });
     });
 
-    async function get(query: Record<string, string>, accept = "*/*"): Promise<RouteResult> {
+    async function get(query: Record<string, string>, accept = "*/*", target = slug): Promise<RouteResult> {
         const ctx: RouteContext = {
             method: "GET",
-            pathname: `/share/${slug}`,
+            pathname: `/share/${target}`,
             query: new URLSearchParams(query),
-            params: { slug },
+            params: { slug: target },
             headers: { accept },
             readJson: async () => {
                 throw new Error("no body");
@@ -153,6 +163,11 @@ describe("GET /share/:slug assets", () => {
         expect(html).not.toContain(sha(OUTSIDE));
         expect(html).not.toContain(sha(SECRET));
         expect(html).toContain('class="dd-md-embed-stub" data-target="escape.png"');
+        // A file the page does not serve is its label, never a dead href="#" link.
+        expect(html).toContain('<span class="dd-md-inert-link">outside md</span>');
+        expect(html).toContain('<span class="dd-md-inert-link">escape</span>');
+        expect(html).not.toContain('href="#">outside md');
+        expect(html).not.toContain('href="#">escape');
     });
 
     test("a referenced image is served with its type, nosniff and an immutable cache", async () => {
@@ -248,6 +263,18 @@ describe("GET /share/:slug assets", () => {
         expect(farHtml).not.toContain('data-line="459"');
         expect(farHtml).not.toContain('data-line="860"');
         expect(farHtml.match(/class="dd-code-line[ "]/g)?.length).toBe(400);
+    });
+
+    test("a shared source file is one highlighted block, and its comments link nothing", async () => {
+        const page = await get({}, "text/html", codeSlug);
+        const html = page.kind === "raw" ? page.body : "";
+
+        expect(html).toContain('<code class="hljs language-typescript">');
+        expect(html).toContain("<title>Report.ts");
+        expect(html).toContain('a.download = "Report.ts";');
+        expect(html).not.toContain("<li>");
+        expect(html).not.toContain(sha(WRAP));
+        expect(html).not.toContain(sha(PIC));
     });
 
     test("a code file is served raw as plain text", async () => {

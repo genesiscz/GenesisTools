@@ -44,4 +44,39 @@ describe("renderSharePage", () => {
 
         expect(page).not.toContain("mermaid.esm.min.mjs");
     });
+
+    test("a source file downloads as plain text under its own name, a note as markdown", () => {
+        const options = {
+            title: "Report",
+            rendered: { html: "<p>x</p>", hasMath: false, hasMermaid: false, tags: [] },
+            source: "export const x = 1;",
+        };
+        const code = renderSharePage({ ...options, sourcePath: "src/Report.ts" });
+        const note = renderSharePage({ ...options, sourcePath: "notes/Report.md" });
+
+        expect(code).toContain('a.download = "Report.ts"');
+        expect(code).toContain('type: "text/plain;charset=utf-8"');
+        expect(code).not.toContain("text/markdown");
+        expect(note).toContain('a.download = "Report.md"');
+        expect(note).toContain('type: "text/markdown;charset=utf-8"');
+    });
+
+    test("a source file page names the source in its toolbar and toggle, a note names markdown", () => {
+        const options = {
+            title: "Report",
+            rendered: { html: "<p>x</p>", hasMath: false, hasMermaid: false, tags: [] },
+            source: "export const x = 1;",
+        };
+        const code = renderSharePage({ ...options, sourcePath: "src/Report.ts" });
+        const note = renderSharePage({ ...options, sourcePath: "notes/Report.md" });
+
+        expect(code).toContain('aria-label="Show raw source"');
+        expect(code).toContain('aria-label="Download source file"');
+        expect(code).toContain('"Show highlighted source"');
+        expect(code).not.toContain("raw markdown");
+        expect(code).not.toContain("rendered note");
+        expect(note).toContain('aria-label="Show raw markdown source"');
+        expect(note).toContain('aria-label="Download raw markdown"');
+        expect(note).toContain('"Show rendered note"');
+    });
 });

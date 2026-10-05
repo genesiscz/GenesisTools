@@ -1,4 +1,5 @@
 import type { RenderResult } from "@app/dev-dashboard/lib/obsidian/markdown";
+import { codeLanguageFor } from "@app/dev-dashboard/lib/obsidian/share-assets";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { escapeHtml } from "@genesiscz/utils/string";
 
@@ -603,7 +604,33 @@ function embedSourceJson(source: string): string {
     return SafeJSON.stringify(source).replace(/</g, "\\u003c");
 }
 
-function buildViewToggleScript(downloadName: string): string {
+interface ShareLabels {
+    showRaw: string;
+    showRendered: string;
+    download: string;
+}
+
+const NOTE_LABELS: ShareLabels = {
+    showRaw: "Show raw markdown source",
+    showRendered: "Show rendered note",
+    download: "Download raw markdown",
+};
+
+const SOURCE_FILE_LABELS: ShareLabels = {
+    showRaw: "Show raw source",
+    showRendered: "Show highlighted source",
+    download: "Download source file",
+};
+
+function buildViewToggleScript({
+    downloadName,
+    contentType,
+    labels,
+}: {
+    downloadName: string;
+    contentType: string;
+    labels: ShareLabels;
+}): string {
     return `<script>
 (function () {
     var btn = document.getElementById("dd-share-view-btn");
@@ -618,7 +645,7 @@ function buildViewToggleScript(downloadName: string): string {
     var downloadBtn = document.getElementById("dd-share-download-btn");
     if (downloadBtn) {
         downloadBtn.addEventListener("click", function () {
-            var blob = new Blob([panel.textContent], { type: "text/markdown;charset=utf-8" });
+            var blob = new Blob([panel.textContent], { type: ${SafeJSON.stringify(contentType)} });
             var url = URL.createObjectURL(blob);
             var a = document.createElement("a");
             a.href = url;
@@ -640,7 +667,7 @@ function buildViewToggleScript(downloadName: string): string {
         btn.innerHTML = mode === "reading" ? fileCodeIcon : bookOpenIcon;
         btn.setAttribute(
             "aria-label",
-            mode === "reading" ? "Show raw markdown source" : "Show rendered note"
+            mode === "reading" ? ${SafeJSON.stringify(labels.showRaw)} : ${SafeJSON.stringify(labels.showRendered)}
         );
         btn.title = btn.getAttribute("aria-label") ?? "";
     });
@@ -855,10 +882,16 @@ export function renderSharePage(options: ShareTemplateOptions): string {
         bodyExtras.push(buildMermaidScript());
     }
 
-    const baseName = sourcePath?.split("/").pop()?.replace(/\.md$/i, "") || title;
-    const downloadName = `${baseName.replace(/[\\/:*?"<>|]/g, "_")}.md`;
+    const fileName = sourcePath?.split("/").pop();
+    // A shared source file downloads under its own name; only a note gets the .md suffix.
+    const isSourceFile = Boolean(fileName && codeLanguageFor(fileName));
+    const baseName = isSourceFile && fileName ? fileName : `${fileName?.replace(/\.md$/i, "") || title}.md`;
+    const downloadName = baseName.replace(/[\\/:*?"<>|]/g, "_");
+    const contentType = isSourceFile ? "text/plain;charset=utf-8" : "text/markdown;charset=utf-8";
 
-    bodyExtras.push(buildViewToggleScript(downloadName));
+    const labels = isSourceFile ? SOURCE_FILE_LABELS : NOTE_LABELS;
+
+    bodyExtras.push(buildViewToggleScript({ downloadName, contentType, labels }));
     bodyExtras.push(buildAssetPanelScript());
 
     const sourceLine = sourcePath ? `<span class="dd-share-source">${escapeHtml(sourcePath)}</span>` : "";
@@ -875,8 +908,8 @@ ${headExtras.join("\n")}
 </head>
 <body${openAssetUrl ? ` data-open-asset="${escapeHtml(openAssetUrl)}"` : ""}>
 <div class="dd-share-toolbar">
-<button type="button" class="dd-share-view-btn" id="dd-share-view-btn" aria-label="Show raw markdown source" title="Show raw markdown source">${FILE_CODE_ICON}</button>
-<button type="button" class="dd-share-view-btn" id="dd-share-download-btn" aria-label="Download raw markdown" title="Download raw markdown">${DOWNLOAD_ICON}</button>
+<button type="button" class="dd-share-view-btn" id="dd-share-view-btn" aria-label="${escapeHtml(labels.showRaw)}" title="${escapeHtml(labels.showRaw)}">${FILE_CODE_ICON}</button>
+<button type="button" class="dd-share-view-btn" id="dd-share-download-btn" aria-label="${escapeHtml(labels.download)}" title="${escapeHtml(labels.download)}">${DOWNLOAD_ICON}</button>
 </div>
 <main>
 <article>${rendered.html}</article>
