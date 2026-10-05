@@ -172,7 +172,7 @@ export async function startGatewayServer(
 
             if (hosted) {
                 const peer = self.requestIP(request);
-                // Blocking tools (question_wait, boards_wait_for_work) stay silent longer than
+                // Blocking tools (question_wait) stay silent longer than
                 // Bun's 10 s idle default; the call's own deadline governs instead.
                 self.timeout(request, 0);
                 const serve = await hosted;

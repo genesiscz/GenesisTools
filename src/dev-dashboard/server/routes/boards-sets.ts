@@ -1,4 +1,3 @@
-import { sanitizeOperator } from "@app/boards/lib/operator";
 import { blobPath, blobUrl, mimeForPath } from "@app/dev-dashboard/lib/boards/blobs";
 import { getBoardsDb } from "@app/dev-dashboard/lib/boards/db";
 import { publishBoardEvent } from "@app/dev-dashboard/lib/boards/events";
@@ -14,6 +13,7 @@ import {
     syncSet,
 } from "@app/dev-dashboard/lib/boards/sets-store";
 import { untarGz } from "@app/dev-dashboard/lib/boards/tar";
+import { sanitizeOperator } from "@app/dev-dashboard/server/operator";
 import type { RouteContext, RouteDef } from "@app/dev-dashboard/server/types";
 import { escapeLike } from "@genesiscz/utils/database/predicates";
 import { logger } from "@genesiscz/utils/logger";

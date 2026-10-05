@@ -619,8 +619,7 @@ async function main(): Promise<void> {
 // Guarded: this file is imported by transcribe.test.ts for its pure formatters.
 // Without the guard the import RAN the CLI, which reached an interactive prompt
 // and blocked forever — `bun run test` never finished, and CI reported a
-// 4-minute timeout rather than a pass. Matches src/time-machine/index.ts, which
-// has the same test-imports-entrypoint shape.
+// 4-minute timeout rather than a pass.
 if (import.meta.main) {
     try {
         await main();

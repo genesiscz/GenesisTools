@@ -29,8 +29,8 @@
  * fires the moment someone adds the import — before the suite starts timing out.
  *
  * THE FIX, when it fires: wrap the call in `if (import.meta.main) { … }`, which
- * is the existing convention (`src/time-machine/index.ts` has the same
- * test-imports-entrypoint shape and was already guarded). If the imported
+ * is the existing convention (`src/transcribe/index.ts` has the same
+ * test-imports-entrypoint shape and is guarded). If the imported
  * helper is genuinely library code, the better fix is to move it into
  * `src/<tool>/lib/` and import it from there.
  */
@@ -193,7 +193,7 @@ if (offenders.length > 0) {
     }
 
     console.error(
-        "::error:: a test imports an entrypoint that executes on import — collecting it launches the CLI and the suite hangs. Wrap the runner call in `if (import.meta.main) { … }` (see src/time-machine/index.ts), or move the imported helper into src/<tool>/lib/."
+        "::error:: a test imports an entrypoint that executes on import — collecting it launches the CLI and the suite hangs. Wrap the runner call in `if (import.meta.main) { … }` (see src/transcribe/index.ts), or move the imported helper into src/<tool>/lib/."
     );
     process.exit(1);
 }

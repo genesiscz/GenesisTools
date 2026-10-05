@@ -24,7 +24,7 @@ const ALL = registry(
     "question_poll",
     "question_respond",
     "question_cancel",
-    "boards_read",
+
     "handoff_post",
     "question_update",
     "annotate_image",
@@ -78,7 +78,6 @@ describe("filterRegistryByCapabilities", () => {
     });
 
     test("a prefix capability still matches its whole family", () => {
-        expect(withCapabilities("boards")).toEqual(["boards_read"]);
         expect(withCapabilities("handoff")).toEqual(["handoff_post"]);
         expect(withCapabilities("decision")).toEqual([
             "question_poll",
@@ -99,12 +98,17 @@ describe("filterRegistryByCapabilities", () => {
     });
 
     test("an explicit undefined (an HTTP request with no header) ignores this process's env", () => {
-        env.testing.set("GENESIS_TOOLS_MCP_CAPABILITIES", "boards");
+        env.testing.set("GENESIS_TOOLS_MCP_CAPABILITIES", "handoff");
 
         expect(Object.keys(filterRegistryByCapabilities(ALL, undefined))).toHaveLength(Object.keys(ALL).length);
     });
 
     test("an unknown capability name enables nothing rather than everything", () => {
         expect(withCapabilities("does_not_exist")).toEqual([]);
+    });
+
+    // A config written while the boards tools existed must not start exposing everything now.
+    test("the retired `boards` capability enables nothing", () => {
+        expect(withCapabilities("boards")).toEqual([]);
     });
 });

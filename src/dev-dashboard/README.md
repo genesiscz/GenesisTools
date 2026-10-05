@@ -25,8 +25,10 @@ Config is stored at `~/.genesis-tools/dev-dashboard/config.json`.
 
 ## Boards
 
-Screenshot annotation boards (`tools boards` CLI + `boards_*` MCP tools — see
-`src/boards/README.md` for the CLI/listening workflow). Routes live under `/api/boards/*`
+Screenshot annotation boards, reachable through the HTTP API and the dashboard UI only: the
+`tools boards` CLI and the `boards_*` MCP tools were removed, so no agent interface is left (the
+templates in `server/static/boards-templates.md` still name the removed MCP tools). Routes live
+under `/api/boards/*`
 (static-prefix routes like `/api/boards/sets/*` and `/api/boards/work/*` are registered
 before the `/api/boards/:slug` catch-all, since the router is first-match). Storage:
 `<GENESIS_TOOLS_HOME>/dev-dashboard/boards.db` (override with `BOARDS_DB_PATH`) plus a
@@ -44,8 +46,8 @@ work wire on the same `dispatch` gate as annotations. AI-authored cards carry
 `payload.layer === "ai"` (no schema column); journey sections are `kind:"section"` cards
 with spatial (not FK) membership. Question rows live in `board_questions`
 (`board_id, card_id, prompt, options, answer, staged, delivered, multi`) — `delivered` gives
-the work-wire's exactly-once drain. See `src/boards/README.md` for the CLI-facing summary and
-`src/dev-dashboard/server/static/boards-templates.md` for compose-ready skeletons.
+the work-wire's exactly-once drain. See `src/dev-dashboard/server/static/boards-templates.md` for
+compose-ready skeletons.
 
 ## Public surface
 

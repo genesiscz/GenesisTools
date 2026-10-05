@@ -9,9 +9,9 @@ export function registerMcpCommand(program: Command): void {
     const mcp = program
         .command("mcp")
         .description(
-            "Run the genesis-tools MCP server (stdio) — exposes question_answer + boards " +
+            "Run the genesis-tools MCP server (stdio) — exposes the question, handoff, annotate and jev tools " +
                 `(alias of ${toolCommand("genesis-tools-mcp")}). ` +
-                "Set GENESIS_TOOLS_MCP_CAPABILITIES (comma-delimited, e.g. question_answer,boards) to restrict."
+                "Set GENESIS_TOOLS_MCP_CAPABILITIES (comma-delimited, e.g. question_answer,handoff) to restrict."
         )
         .action(async () => {
             log.info("starting MCP server");

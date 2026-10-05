@@ -66,10 +66,6 @@ function shouldSkip(relPath: string): boolean {
         return true;
     }
 
-    if (relPath === "src/mcp-ripgrep/index.ts") {
-        return true; // already migrated in d8facc72
-    }
-
     if (relPath === "src/mcp-web-reader/index.ts") {
         return true; // already migrated in d8facc72
     }

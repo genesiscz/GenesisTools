@@ -22,8 +22,6 @@ const XAI_API_KEYS = ["XAI_API_KEY", "X_AI_API_KEY"] as const;
 const HF_TOKEN_KEYS = ["HUGGINGFACE_TOKEN", "HF_TOKEN"] as const;
 // GitHub CLI and apps disagree on the canonical name — never use `gh auth token` here.
 const GITHUB_TOKEN_KEYS = ["GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"] as const;
-// Instaloader and instagrapi both use IG_SESSIONID; INSTAGRAM_SESSIONID reads clearer.
-const INSTAGRAM_SESSION_KEYS = ["IG_SESSIONID", "INSTAGRAM_SESSIONID"] as const;
 const EDITOR_KEYS = ["VISUAL", "EDITOR"] as const;
 const LOCALE_PREFERENCE_KEYS = ["LC_TIME", "LANG", "LC_ALL"] as const;
 /** Same keys `~/.config/shell/pm-no-proxy.zsh` unsets. Bun snapshots these at process start. */
@@ -141,18 +139,6 @@ export const env = {
         getCopilotTokenEnvKey: () => (isNonEmpty("COPILOT_GITHUB_TOKEN") ? "COPILOT_GITHUB_TOKEN" : undefined),
     },
 
-    instagram: {
-        // Session cookie for the story/highlight endpoints. Instagram gates story
-        // media on viewer identity, so the anonymous surface (profile, posts,
-        // highlight ids) needs none of this and must keep working without it.
-        getSessionId: () => getFirstValue(INSTAGRAM_SESSION_KEYS),
-        getSessionIdEnvKey: () => getFirstEnvKey(INSTAGRAM_SESSION_KEYS),
-        hasSessionId: () => getFirstValue(INSTAGRAM_SESSION_KEYS) !== undefined,
-        // Instagram expects x-csrftoken to match the csrftoken cookie sitting next
-        // to sessionid — a mismatch is a fingerprint signal, so fetch both.
-        getCsrfToken: () => getTrimmed("IG_CSRFTOKEN"),
-    },
-
     security: {
         // Base64 of the vault's 32-byte master key. The headless rung: launchd
         // daemons started before login and SSH sessions cannot reach the login
@@ -228,7 +214,7 @@ export const env = {
         getHubServerMaxMb: () => parseIntEnv("GENESIS_HUB_SERVER_MAX_MB", 512),
         getQdrantPort: () => parseIntEnv("GENESIS_QDRANT_PORT", 16_335),
         getQdrantGrpcPort: () => parseIntEnv("GENESIS_QDRANT_GRPC_PORT", 16_336),
-        /** Comma-delimited capability filter for `tools claude mcp` (e.g. "question_answer,boards"). */
+        /** Comma-delimited capability filter for `tools claude mcp` (e.g. "question_answer,handoff"). */
         getMcpCapabilities: (): string[] | undefined => {
             const raw = getTrimmed("GENESIS_TOOLS_MCP_CAPABILITIES");
             if (raw === undefined) {
@@ -395,8 +381,7 @@ export const env = {
     boards: {
         /** Test/tooling override for the boards SQLite path (e.g. ":memory:"). */
         getDbPath: () => getTrimmed("BOARDS_DB_PATH"),
-        /** Base URL of the dev-dashboard server for MCP/CLI clients. */
-        getBaseUrl: () => getTrimmed("BOARDS_BASE_URL"),
+
         /** Listener lease TTL override in ms. */
         getListenerTtlMs: () => {
             const raw = getTrimmed("BOARDS_LISTENER_TTL_MS");

@@ -1,4 +1,3 @@
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { blobUrl } from "./blobs";
 import { containingSection, type SectionCard, sectionFrames, sectionTitle } from "./sections";
 import type { AnnotationDto, CardDto } from "./types";
@@ -47,16 +46,24 @@ export function buildCapsule(
             lines.push(`- ${m.author}: ${body}`);
         }
     }
+    const api = `/api/boards/annotations/${a.id}`;
     lines.push(
         a.intent === "reshoot"
             ? `**Protocol (reshoot):** NO code changes — the shot caught a bad state (loading/broken). ` +
-                  `boards_set_status working → re-capture this screen (route/surface in the set manifest for ` +
-                  `\`${card.filePath || card.kind}\`), wait for the app to settle → push the new set ` +
-                  `(\`${toolCommand("boards push")}\`) → boards_attach_after → boards_reply (1 line) → boards_set_status ` +
-                  `in_review. A 409 "cancelled" from ANY tool means the user withdrew №${a.id}: reply once, move on.`
-            : "**Protocol:** boards_set_status working → fix → push a new set version → boards_attach_after → " +
-                  "boards_reply (1-3 lines) → boards_set_status in_review. Never set resolved (user-only). " +
+                  `PATCH ${api} {"status":"working","session":"<work session>"} → re-capture this screen (route/surface in the set manifest for ` +
+                  `\`${card.filePath || card.kind}\`), wait for the app to settle → push the new set version ` +
+                  `(PUT /api/boards/sets/{project}/{branch}/{key}/content, tar.gz body) → POST ${api}/attempts ` +
+                  `{project, branch, selector, file} → POST ${api}/messages {"body"} (1 line) → PATCH ${api} ` +
+                  `{"status":"in_review"}. A 409 "cancelled" from ANY write means the user withdrew №${a.id}: ` +
+                  `reply once, move on.`
+            : `**Protocol:** PATCH ${api} {"status":"working","session":"<work session>"} → fix → push a new set version → POST ${api}/attempts ` +
+                  `{project, branch, selector, file} → POST ${api}/messages {"body"} (1-3 lines) → PATCH ${api} ` +
+                  `{"status":"in_review"}. Never set resolved (user-only). ` +
                   'A 409 "cancelled" on any write = the user withdrew this item — revert your changes for it and move on.'
+    );
+    lines.push(
+        "**Claim:** send the `session` this work arrived with when you set it to working, so an expired lease reopens " +
+            "the item instead of leaving it stuck."
     );
     lines.push(
         "**Scope:** this board only — keep draining with the same scope; other boards belong to other sessions."

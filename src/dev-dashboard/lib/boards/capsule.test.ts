@@ -60,15 +60,18 @@ describe("buildCapsule", () => {
 
     it("includes the standard protocol line without the reshoot caveat for a normal intent", () => {
         const capsule = buildCapsule(makeAnnotation(), makeCard(), "my-board");
-        expect(capsule).toContain("**Protocol:** boards_set_status working");
+        expect(capsule).toContain(
+            '**Protocol:** PATCH /api/boards/annotations/17 {"status":"working","session":"<work session>"}'
+        );
+        expect(capsule).toContain("**Claim:** send the `session` this work arrived with");
         expect(capsule).not.toContain("reshoot intent");
     });
 
     it("replaces the default protocol with the reshoot protocol when intent is reshoot", () => {
         const capsule = buildCapsule(makeAnnotation({ intent: "reshoot" }), makeCard(), "my-board");
         expect(capsule).toContain("**Protocol (reshoot):** NO code changes");
-        expect(capsule).toContain("boards_attach_after");
-        expect(capsule).not.toContain("**Protocol:** boards_set_status working");
+        expect(capsule).toContain("POST /api/boards/annotations/17/attempts");
+        expect(capsule).not.toContain("**Protocol:** PATCH");
     });
 
     it("uses intentOther for an 'other' intent", () => {

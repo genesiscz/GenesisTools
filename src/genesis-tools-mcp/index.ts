@@ -11,8 +11,8 @@ const program = new Command();
 program
     .name("genesis-tools-mcp")
     .description(
-        "Run the genesis-tools MCP server (stdio) — exposes question_answer + boards. " +
-            "Set GENESIS_TOOLS_MCP_CAPABILITIES (comma-delimited, e.g. question_answer,boards) to restrict."
+        "Run the genesis-tools MCP server (stdio) — exposes the question, handoff, annotate and jev tools. " +
+            "Set GENESIS_TOOLS_MCP_CAPABILITIES (comma-delimited, e.g. question_answer,handoff) to restrict."
     )
     .action(async () => {
         log.info("starting MCP server");

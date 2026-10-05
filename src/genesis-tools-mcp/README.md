@@ -8,10 +8,10 @@ New `jev_*` tools will join this registry. The MCP server name is `genesis-tools
 | Capability | Tools | Purpose |
 |------------|-------|---------|
 | `question_answer` | `question_answer` | Record a user question and the complete answer in the local question store. |
-| `question_ask` | `question_post`, `question_wait`, `question_poll`, `question_respond`, `question_cancel`, `question_update`, `question_tokens` | Blocking ask: post a pending form, wait or poll, respond, or cancel. `question_tokens` (read-only) lists the inline `{{kind …}}` tokens `question_post` resolves, or previews a text; see `src/question/README.md`. |
+| `question_ask` | `question_post`, `question_wait`, `question_poll`, `question_respond`, `question_cancel`, `question_update`, `question_tokens` | Ask the user: `question_post` creates a pending form and returns its id at once, and blocks only with `wait: true`. Then wait, poll, respond, or cancel. `question_tokens` (read-only) lists the inline `{{kind …}}` tokens `question_post` resolves, or previews a text; see `src/question/README.md`. |
 | `handoff` | `handoff_post`, `handoff_get`, `handoff_list`, `handoff_action` | Cross-agent task handoff. |
 | `annotate` | `annotate_image` | Annotate an image (arrows, boxes, labels). |
-| `boards` | `boards_*` | Dev-dashboard annotation boards: create, compose, list work, wait, attach. |
+
 | `jev` | `jev_route`, `jev_compact`, `jev_verify`, `jev_verify_templates` | Read-only Jev tools (`src/jev/mcp/genesis-tools.ts` adapts the registry `tools jev mcp` serves alone). |
 
 `question_ask` is an explicit set, not a `question_` prefix, so it never includes `question_answer`.

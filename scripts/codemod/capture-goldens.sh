@@ -38,8 +38,7 @@ run() { # <golden-name> <tool-dir> [argv...]
 # every phase. (`indexer search x --format json` hit a clack "Multiple
 # indexes found" guard BEFORE its JSON path = category (c); replaced with
 # `json` on a tracked fixture = a pure category-(b) transform.)
-run t3chat_json     t3chat-length    --format json                       # (b) writeStdout(asResult) — Task 0c; stdout = "[]\n"
-run gitcommit_help  git-commit       --help                              # (a) commander help
+
 run npmdiff_help    npm-package-diff  --help                             # (a) commander help
 run macos_mail_help macos             mail search --help                 # (a) commander help
 run json_toon       json             scripts/codemod/golden-fixture.json # (b) pure console.log transform, codemod-untouched
