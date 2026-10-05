@@ -125,13 +125,16 @@ export function hubArgs(options: OpenHubOptions): string[] {
 
 /**
  * The same target as a link: `genesis-tools://hub?session=<parent>&agent=<child>`, with `mode`,
- * `pr`, `tab` and `filter` as further query items (the set the app's URL handler reads).
+ * `pr`, `reveal`, `tab`, `filter` and `worktree` as further query items (keys of `HubRequest.linkKeys`
+ * in the app). A link without `worktree` and `reveal` lost them: `--print-url` named neither.
  */
-export function hubUrl(options: Pick<OpenHubOptions, "mode" | "session" | "agent" | "pr" | "tab" | "filter">): string {
+export function hubUrl(
+    options: Pick<OpenHubOptions, "mode" | "session" | "agent" | "pr" | "reveal" | "tab" | "filter" | "worktree">
+): string {
     // encodeURIComponent, not URLSearchParams: that writes a space as `+`, which Foundation's
     // URLComponents reads back as a literal plus.
     const query: string[] = [];
-    for (const key of ["mode", "session", "agent", "pr", "tab", "filter"] as const) {
+    for (const key of ["mode", "session", "agent", "pr", "reveal", "tab", "filter", "worktree"] as const) {
         const value = options[key];
         if (value !== undefined && value !== "") {
             query.push(`${key}=${encodeURIComponent(value)}`);

@@ -54,7 +54,7 @@ import {
     proposalMarkdown,
     saveProposal,
 } from "./lib/proposal";
-import { hubPr, hubPrs, PrRefError } from "./lib/prs";
+import { hubPr, hubPrProjects, hubPrs, PrRefError } from "./lib/prs";
 import {
     buildTimeline,
     resolveRange,
@@ -183,7 +183,18 @@ program
             }
 
             if (opts.printUrl) {
-                out.println(hubUrl({ mode, session: opts.session, agent: opts.agent, pr, tab, filter: opts.filter }));
+                out.println(
+                    hubUrl({
+                        mode,
+                        session: opts.session,
+                        agent: opts.agent,
+                        pr,
+                        reveal: opts.reveal,
+                        tab,
+                        filter: opts.filter,
+                        worktree: opts.worktree,
+                    })
+                );
                 return;
             }
 
@@ -656,6 +667,14 @@ pr.command("show")
             out.result({ ref, error: error.message });
             process.exitCode = 1;
         }
+    });
+
+pr.command("projects")
+    .description(
+        "Every GitHub/GitLab project cloned under the repo roots, as JSON (project key, name, checkout); read-only"
+    )
+    .action(async () => {
+        out.result({ projects: await hubPrProjects() });
     });
 
 pr.command("fetch")

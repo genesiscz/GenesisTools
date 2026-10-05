@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
+import { loadConfig } from "@app/browser-extension/lib/config";
+import { configuredCheckouts } from "@app/browser-extension/lib/deps";
 import { concurrentMap } from "@genesiscz/utils/async";
 import {
     type CommandRunner,
@@ -21,6 +23,7 @@ import {
     worktreeByBranch,
 } from "@genesiscz/utils/git";
 import { branchMentions, localBranchNames } from "@genesiscz/utils/git/branch-names";
+import { projectRefFromUrl as checkoutProjectRef, rankCheckouts } from "@genesiscz/utils/git/local-checkouts";
 import { type RepoFacts, repoFacts, repoFactsMany } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -106,6 +109,89 @@ function toHubPr({
         isMine: viewer && pr.author ? viewer === pr.author : mine ? true : null,
         proposal,
     };
+}
+
+const HEAD_CHECK_TIMEOUT_MS = 10_000;
+
+/**
+ * The indexes of `shas` the repository lacks, from one `git cat-file --batch-check`. Null when git
+ * could not answer (a timeout, a failed exit): an unknown head is never read as a missing one.
+ */
+export async function missingCommits(
+    repo: string,
+    shas: string[],
+    { timeoutMs = HEAD_CHECK_TIMEOUT_MS, git = "git" }: { timeoutMs?: number; git?: string } = {}
+): Promise<Set<number> | null> {
+    const proc = Bun.spawn([git, "-C", repo, "cat-file", "--batch-check"], {
+        stdin: new TextEncoder().encode(shas.map((sha) => `${sha}^{commit}\n`).join("")),
+        stdout: "pipe",
+        stderr: "pipe",
+        signal: AbortSignal.timeout(timeoutMs),
+        killSignal: "SIGKILL",
+    });
+    const stdout = new Response(proc.stdout).text();
+    const stderr = new Response(proc.stderr).text();
+    await proc.exited;
+
+    if (proc.exitCode !== 0) {
+        // A killed git may leave a child holding its pipes open: its stderr is read only after a normal exit.
+        log.warn(
+            {
+                repo,
+                exitCode: proc.exitCode,
+                signal: proc.signalCode,
+                stderr: proc.signalCode ? "" : (await stderr).slice(0, 300),
+            },
+            "hub prs: the head check did not finish; worktrees stay as they are"
+        );
+        return null;
+    }
+
+    const lines = (await stdout).split("\n");
+    return new Set(shas.flatMap((_, index) => (lines[index]?.endsWith(" missing") ? [index] : [])));
+}
+
+/**
+ * The worktree a row names, only while it holds the PR's head commit. A local branch behind the
+ * forge (`devlp` before a pull) was named, and the diff failed with "commit … is not in <path>"
+ * instead of fetching the head into the main checkout (Reservine/ReservineBack#815, 2026-10-04).
+ * One `git cat-file --batch-check` per repository: worktrees share its objects.
+ */
+async function dropStaleWorktrees<
+    T extends { localWorktree: string | null; headSha?: string | null; repoRoot: string | null },
+>(rows: T[]): Promise<T[]> {
+    const byRepo = new Map<string, T[]>();
+
+    for (const row of rows) {
+        if (row.localWorktree && row.headSha) {
+            const key = row.repoRoot ?? row.localWorktree;
+            byRepo.set(key, [...(byRepo.get(key) ?? []), row]);
+        }
+    }
+
+    const missing = new Set<T>();
+
+    for (const [repo, group] of byRepo) {
+        try {
+            const gone = await missingCommits(
+                repo,
+                group.map((row) => row.headSha ?? "")
+            );
+            group.forEach((row, index) => {
+                if (gone?.has(index)) {
+                    missing.add(row);
+                }
+            });
+        } catch (err) {
+            log.debug({ err, repo }, "hub prs: could not check the heads in the worktrees");
+        }
+    }
+
+    if (missing.size > 0) {
+        log.debug({ stale: [...missing].map((row) => row.localWorktree) }, "hub prs: worktrees without the PR head");
+    }
+
+    return rows.map((row) => (missing.has(row) ? { ...row, localWorktree: null } : row));
 }
 
 interface ProjectGroup {
@@ -307,8 +393,10 @@ async function collectHubPrs({
 
             return {
                 repo: entry,
-                prs: listed.prs.map((pr) =>
-                    toHubPr({ pr, project, repo: repoName, repoRoot, worktrees: byBranch, viewer, mine })
+                prs: await dropStaleWorktrees(
+                    listed.prs.map((pr) =>
+                        toHubPr({ pr, project, repo: repoName, repoRoot, worktrees: byBranch, viewer, mine })
+                    )
                 ),
             };
         },
@@ -341,6 +429,65 @@ async function collectHubPrs({
 }
 
 export class PrRefError extends Error {}
+
+export interface HubPrProject {
+    /** The key the PR list groups by: the origin's web page (`HubPR.project` in the app). */
+    project: string;
+    repo: string;
+    root: string;
+    kind: OriginKind;
+}
+
+/**
+ * Every GitHub or GitLab project with a main checkout under the configured repo roots (the browser
+ * extension's): the PRs mode lists them all, not only the projects of recent sessions, so a project
+ * cloned one level deeper (`Projects/Reservine/ReservineBack`) is there too. Read-only, local only.
+ */
+export async function hubPrProjects(): Promise<HubPrProject[]> {
+    const mains = [
+        ...new Set(
+            configuredCheckouts(await loadConfig())
+                .filter((checkout) => checkout.isMain)
+                .map((checkout) => checkout.root)
+        ),
+    ];
+    const facts = await prof.measureAsync("projects.facts", () => repoFactsMany({ paths: mains }));
+    const byProject = new Map<string, HubPrProject>();
+
+    for (const fact of facts) {
+        const web = fact.origin?.web;
+        const kind = fact.origin?.kind;
+
+        if (!web || !fact.root || (kind !== "github" && kind !== "gitlab") || byProject.has(web)) {
+            continue;
+        }
+
+        byProject.set(web, { project: web, repo: fact.repo ?? basename(fact.root), root: fact.root, kind });
+    }
+
+    const projects = [...byProject.values()].sort((a, b) => a.repo.localeCompare(b.repo));
+    log.debug({ checkouts: mains.length, projects: projects.length }, "hub pr projects");
+    return projects;
+}
+
+/** The main checkout of a forge project under the configured repo roots (the browser extension's). */
+async function localCheckoutOf(project: ProjectRef): Promise<string | null> {
+    const wanted = checkoutProjectRef(`https://${project.host}/${project.path}`);
+
+    if (!wanted) {
+        return null;
+    }
+
+    try {
+        const ranked = rankCheckouts({ project: wanted, checkouts: configuredCheckouts(await loadConfig()) });
+        const root = ranked.find((checkout) => checkout.isMain)?.root ?? ranked[0]?.root ?? null;
+        log.debug({ project: wanted, root, candidates: ranked.length }, "hub pr: local checkout of a URL ref");
+        return root;
+    } catch (err) {
+        log.warn({ err, project: wanted }, "hub pr: could not look for a local checkout");
+        return null;
+    }
+}
 
 /** One PR/MR by URL or `<repoPath>#<number>`, with body, commits and checks. Read-only; throws PrRefError. */
 export async function hubPr({
@@ -380,6 +527,16 @@ export async function hubPr({
         project = fromUrl.project;
         number = fromUrl.number;
         repo = basename(project.path);
+        // A PR opened by its page (the browser extension, a link) still gets its diff and worktree when
+        // the project is cloned under a repo root: without it the hub had no checkout to show it from.
+        const root = await prof.measureAsync("show.checkout", () => localCheckoutOf(project));
+
+        if (root) {
+            const local = await prof.measureAsync("show.worktrees", () => localWorktrees([root]));
+            repoRoot = local.main ?? root;
+            repo = basename(repoRoot);
+            worktrees = worktreeByBranch(local.all);
+        }
     } else {
         const facts = await prof.measureAsync("show.facts", () => repoFacts({ path: parsedRef.path }));
 
@@ -446,9 +603,13 @@ async function fetchHubPr({
         throw new PrRefError(viewed.error ?? "the host returned no PR");
     }
 
+    const [row] = await dropStaleWorktrees([
+        toHubPr({ pr: viewed.pr, project, repo, repoRoot, worktrees, viewer, mine: false }),
+    ]);
     return {
-        ...toHubPr({ pr: viewed.pr, project, repo, repoRoot, worktrees, viewer, mine: false }),
+        ...row,
         ...viewed.pr,
+        localWorktree: row?.localWorktree ?? null,
         warnings: viewed.warnings,
         branchMentions: branchMentions(viewed.pr.body, branches),
     };

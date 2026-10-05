@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CommandRunner } from "@genesiscz/utils/git/origins";
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
-import { hubPr, hubPrs, PrRefError } from "./prs";
+import { hubPr, hubPrs, missingCommits, PrRefError } from "./prs";
 
 setupStorageSandbox();
 
@@ -151,5 +152,37 @@ describe("hubPrs / hubPr", () => {
         expect(result.prs).toEqual([]);
         expect(result.repos[0]).toMatchObject({ count: 0, error: "gh: auth required" });
         await expect(hubPr({ ref: "https://github.com/o/r/pull/7", runner: failing })).rejects.toThrow(PrRefError);
+    });
+});
+describe("missingCommits", () => {
+    it("names the commits the repository lacks and none it holds", async () => {
+        const repo = await TestRepo.create({ prefix: "gt-review-prs-" });
+        repos.push(repo);
+        const head = Bun.spawnSync(["git", "-C", repo.dir, "rev-parse", "HEAD"], { env: process.env })
+            .stdout.toString()
+            .trim();
+
+        const gone = await missingCommits(repo.dir, [head, "0".repeat(40)]);
+
+        expect([...(gone ?? [])]).toEqual([1]);
+    });
+
+    it("answers null instead of waiting forever when git hangs, so no worktree is dropped on a guess", async () => {
+        const repo = await TestRepo.create({ prefix: "gt-review-prs-" });
+        repos.push(repo);
+        const stuck = join(repo.dir, "stuck-git");
+        writeFileSync(stuck, "#!/bin/sh\nsleep 30\n", { mode: 0o755 });
+        const started = Date.now();
+
+        const gone = await missingCommits(repo.dir, ["0".repeat(40)], { timeoutMs: 300, git: stuck });
+
+        expect(gone).toBeNull();
+        expect(Date.now() - started).toBeLessThan(5000);
+    });
+
+    it("answers null when git exits with an error", async () => {
+        const gone = await missingCommits("/nonexistent-gt-repo-path", ["0".repeat(40)]);
+
+        expect(gone).toBeNull();
     });
 });
