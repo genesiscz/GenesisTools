@@ -222,3 +222,38 @@ bun scripts/hooks-diff-parity.ts          # the diff, over a constructed scenari
 bun scripts/hooks-config-parity.ts        # every rule x harness x length, old config vs imported
 bun scripts/benchmarks/hooks/hook-latency.ts
 ```
+
+---
+
+# Is a background agent working, waiting, or stalled?
+
+`src/utils/ai/transcripts/activity.ts` decides which of four states an agent is in. It was the core of the
+removed `tools agent-watch`. No command calls it yet: `tools agents` is the message bus and never reads
+transcripts, and the hub's agent status (`AgentStatus` in `src/hub/lib/agents/types.ts`) is a fixed contract
+with the Swift app, so a fifth state there is a change on both sides.
+
+| State | Meaning |
+|---|---|
+| `FINISHED` | An exit event, or the process is gone. |
+| `AWAITING-INPUT` | The last conversation record is a finished turn or an `AskUserQuestion` call. A prompt is never a stall. |
+| `STALLED` | Silent for longer than `stallTimeoutMs` (the newer of the last event and the file's mtime). |
+| `RUNNING` | Anything else. |
+
+```ts
+import { readClaudeActivity } from "@genesiscz/utils/ai/transcripts/activity-tail";
+
+// One stat and one 64 KB read of the end of the file. No spawn, no write.
+const activity = readClaudeActivity(transcriptPath, { stallTimeoutMs: 120_000 });
+// { state: "STALLED", lastActivityAt: 1760000000000, silenceMs: 241000 }, or null for an empty or unreadable file
+```
+
+The pure functions take everything as arguments, so a caller with its own reader can use them directly:
+`classifyActivity` (the decision), `claudeRecordsToEvents` (Claude transcript records to events),
+`taskLinesToEvents` and `taskPidAlive` (a `tools task` session and its sidecar, with `classifyPid` as the
+probe) and `isNotableTransition` (alert once when an agent enters a notable state, not on every poll).
+
+Two limits worth knowing. Records after the last conversation record (`cost-state`, `system`,
+`queue-operation`) say nothing about the state, so they are skipped: 39 of the 40 most recent transcripts on
+one machine ended on one (2026-10-05), and the old rule that read the final line labelled 39 of them
+`STALLED` and none `AWAITING-INPUT`. And `listSubagents` (`src/utils/ai/transcripts/subagents.ts`) answers a
+nearby question for sub-agents with a fixed 15 minute limit and no waiting state; the two are not merged.

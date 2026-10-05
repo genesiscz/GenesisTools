@@ -2,13 +2,15 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { registerRedactCommand } from "@app/secrets/commands/redact";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { detectAll } from "./lib/detectors";
-import { redact } from "./lib/redact";
-import { restore } from "./lib/restore";
-import { buildSession, loadLatestSession, loadMapFile, saveSession } from "./lib/session";
-import { DEFAULT_TYPES } from "./lib/types";
+import { Command } from "commander";
+import { detectAll } from "./detectors";
+import { redact } from "./redact";
+import { restore } from "./restore";
+import { buildSession, loadLatestSession, loadMapFile, saveSession } from "./session";
+import { DEFAULT_TYPES } from "./types";
 
 const opts = { homeDir: "/Users/test", types: DEFAULT_TYPES };
 
@@ -136,6 +138,46 @@ describe("restore + round-trip", () => {
         expect(r.mapping["[HOME]"]).toBeUndefined();
         expect(r.mapping["[HOME_2]"]).toBe("/Users/test");
         expect(restore(r.redacted, r.mapping)).toBe(sample);
+    });
+});
+
+describe("redact command line", () => {
+    class StopParse extends Error {}
+
+    interface Reached {
+        name: string;
+        options: Record<string, unknown>;
+    }
+
+    async function reach(argv: string[]): Promise<Reached> {
+        const program = new Command().exitOverride().option("-v, --verbose", "Enable verbose debug logging");
+        registerRedactCommand(program);
+        const reached: Reached[] = [];
+        program.hook("preAction", (_command, actionCommand) => {
+            reached.push({ name: actionCommand.name(), options: actionCommand.opts() });
+            throw new StopParse();
+        });
+
+        await expect(program.parseAsync(argv, { from: "user" })).rejects.toBeInstanceOf(StopParse);
+        return reached[0];
+    }
+
+    it("runs the redactor when no subcommand is named", async () => {
+        const reached = await reach(["redact", "--in", "a.txt", "--out", "b.txt", "--phones"]);
+        expect(reached.name).toBe("run");
+        expect(reached.options).toEqual({ in: "a.txt", out: "b.txt", phones: true });
+    });
+
+    it("hands --in, --out and --map that follow restore to restore", async () => {
+        const reached = await reach(["redact", "restore", "--in", "a.txt", "--out", "b.txt", "--map", "m.json"]);
+        expect(reached.name).toBe("restore");
+        expect(reached.options).toEqual({ in: "a.txt", out: "b.txt", map: "m.json" });
+    });
+
+    it("still accepts the global -v after restore", async () => {
+        const reached = await reach(["redact", "restore", "--clipboard", "-v"]);
+        expect(reached.name).toBe("restore");
+        expect(reached.options).toEqual({ clipboard: true });
     });
 });
 

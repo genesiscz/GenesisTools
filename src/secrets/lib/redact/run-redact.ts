@@ -35,7 +35,7 @@ export async function runRedact(args: RunRedactArgs): Promise<void> {
     const wantsClipboardInput = Boolean(args.clipboard) && !args.in;
     if (!args.in && !wantsClipboardInput && isInteractive()) {
         out.log.error("No input: pass --in <file>, --clipboard, or pipe text on stdin.");
-        out.printlnErr(suggestCommand("tools redact", { add: ["--in", "<file>"] }));
+        out.printlnErr(suggestCommand("tools secrets redact", { add: ["--in", "<file>"] }));
         process.exitCode = 1;
         return;
     }

@@ -6,6 +6,7 @@ import type { Mapping, RedactType, SessionRecord } from "./types";
 const SESSIONS_SUBDIR = "sessions";
 const TTL = "365 days";
 
+// The data folder keeps the name "redact" so sessions saved before the move still restore.
 function storage(): Storage {
     return new Storage("redact");
 }

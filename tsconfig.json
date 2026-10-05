@@ -6,7 +6,6 @@
         "src/claude-history-dashboard",
         "src/dashboard",
         "src/debugging-master/dashboard",
-        "src/fsevents-profile",
         "src/clarity/ui",
         "src/dev-dashboard/ui",
         "src/shops/ui",

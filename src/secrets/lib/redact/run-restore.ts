@@ -26,7 +26,7 @@ async function resolveMapping(mapPath: string | undefined): Promise<Mapping | nu
 export async function runRestore(args: RunRestoreArgs): Promise<void> {
     const mapping = await resolveMapping(args.map);
     if (mapping === null) {
-        out.log.error(`No mapping found: pass --map <file> or run \`${toolCommand("redact")}\` first.`);
+        out.log.error(`No mapping found: pass --map <file> or run \`${toolCommand("secrets redact")}\` first.`);
         process.exitCode = 1;
         return;
     }
@@ -34,7 +34,7 @@ export async function runRestore(args: RunRestoreArgs): Promise<void> {
     const wantsClipboardInput = Boolean(args.clipboard) && !args.in;
     if (!args.in && !wantsClipboardInput && isInteractive()) {
         out.log.error("No input: pass --in <file>, --clipboard, or pipe text on stdin.");
-        out.printlnErr(suggestCommand("tools redact restore", { add: ["--in", "<file>"] }));
+        out.printlnErr(suggestCommand("tools secrets redact restore", { add: ["--in", "<file>"] }));
         process.exitCode = 1;
         return;
     }

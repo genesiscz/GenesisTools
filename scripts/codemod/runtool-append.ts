@@ -7,8 +7,8 @@
  *
  * Coverage note: like import-rewrite (4a), we explicitly
  * addSourceFilesAtPaths the entrypoint glob — `tsConfigFilePath` honors
- * tsconfig `exclude` (src/dashboard, src/shops/ui, src/dev-dashboard/ui,
- * src/fsevents-profile), and getSourceFiles() would silently miss any
+ * tsconfig `exclude` (src/dashboard, src/shops/ui, src/dev-dashboard/ui),
+ * and getSourceFiles() would silently miss any
  * excluded entrypoint. The glob-add makes coverage tsconfig-independent.
  */
 import { basename, dirname } from "node:path";
