@@ -174,6 +174,43 @@ describe("extra source loaders", () => {
         expect(events[0].cacheCreationTokens).toBe(1);
     });
 
+    it("opencode skips message rows last updated before minMtimeMs", () => {
+        const root = home();
+        const dir = join(root, ".local/share/opencode");
+        mkdirSync(dir, { recursive: true });
+        const db = new Database(join(dir, "opencode.db"));
+        db.run(
+            "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)"
+        );
+        for (const [id, day] of [
+            ["old", "2026-01-01"],
+            ["new", "2026-06-01"],
+        ]) {
+            const at = Date.parse(`${day}T10:00:00.000Z`);
+            db.run("INSERT INTO message VALUES (?, ?, ?, ?, ?)", [
+                id,
+                "s1",
+                at,
+                at,
+                SafeJSON.stringify({
+                    id,
+                    modelID: "opencode-model",
+                    sessionID: "s1",
+                    time: { created: at },
+                    tokens: { input: 1, output: 1 },
+                }),
+            ]);
+        }
+        db.close();
+
+        const since = Date.parse("2026-05-01T00:00:00Z");
+
+        const everything = loadOpencodeEvents(root).map((event) => event.id);
+
+        expect(loadOpencodeEvents(root, undefined, since).map((event) => event.id)).toEqual(["new"]);
+        expect(everything.sort()).toEqual(["new", "old"]);
+    });
+
     it("hermes reads sessions from sqlite", () => {
         const root = home();
         const dir = join(root, ".hermes");

@@ -54,6 +54,10 @@ function passesFilters(ev: UsageEvent, f: Filters): boolean {
 }
 
 function eventCost(ev: UsageEvent, pricing: PricingTable): number {
+    if (ev.costUsd !== undefined) {
+        return ev.costUsd;
+    }
+
     const entry = priceFor(ev.model, pricing);
     if (!entry) {
         return 0;
@@ -112,6 +116,7 @@ export function aggregate(args: AggregateArgs): Report {
         };
         addTokens(model.tokens, ev);
         model.cost += evCost;
+        model.priced ||= ev.costUsd !== undefined;
         byModel.set(ev.model, model);
 
         const day = dayOf(ev.timestamp);

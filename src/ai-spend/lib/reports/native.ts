@@ -10,6 +10,7 @@ import { grokDriver } from "../drivers/grok";
 import { num } from "../drivers/parse-helpers";
 import type { DriverRoot, DriverUsageEvent, MonitorDriver } from "../drivers/types";
 import { findRecentTranscripts } from "../monitor";
+import { prof } from "../prof";
 import { asRecord, asString, parseJsonValue } from "./jsonl";
 import type { SourceId, SpendEvent } from "./types";
 import { readBytes, readText } from "./walk";
@@ -386,13 +387,19 @@ function parseDriverFiles(options: DriverFilesOptions): SpendEvent[] {
 
 function loadDriverFiles(driver: MonitorDriver, source: SourceId, options: LoadNativeOptions): SpendEvent[] {
     const roots = driverRoots(driver, options);
-    const files = findRecentTranscripts(
-        roots.map((root) => root.path),
-        options.minMtimeMs ?? MIN_MTIME,
-        driver
+    const files = prof.measure(`${source}:discover`, () =>
+        findRecentTranscripts(
+            roots.map((root) => root.path),
+            options.minMtimeMs ?? MIN_MTIME,
+            driver
+        )
     );
+    // The file count tells a slow run from a big one: the same seconds mean something different over 50 files and 5000.
+    prof.mark(`${source}:files=${files.length}`);
 
-    return parseDriverFiles({ driver, source, roots, files, sessionId: options.sessionId });
+    return prof.measure(`${source}:parse`, () =>
+        parseDriverFiles({ driver, source, roots, files, sessionId: options.sessionId })
+    );
 }
 
 export function loadClaudeEvents(options: LoadNativeOptions): SpendEvent[] {

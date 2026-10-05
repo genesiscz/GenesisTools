@@ -3,7 +3,9 @@ import * as fs from "node:fs";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { findCodexRollout } from "@genesiscz/utils/session-changes/codex";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { withTimeZone } from "@genesiscz/utils/test/timezone";
@@ -12,10 +14,13 @@ import { loadPricing } from "./lib/config";
 import { isolateAgentHomeEnv } from "./lib/drivers/test-env";
 import { parseTranscriptLine } from "./lib/parse";
 import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "./lib/pricing";
+import { toUsageEvent, transcriptCutoffMs } from "./lib/register";
 import { renderSummary } from "./lib/render";
 import { resolveSessionFlag } from "./lib/reports/commands";
 import { loadEvents } from "./lib/reports/load";
+import { loadEventsParallel } from "./lib/reports/load-parallel";
 import type { SpendEvent } from "./lib/reports/types";
+import { walkFiles } from "./lib/reports/walk";
 import { resolveSince } from "./lib/since";
 import type { UsageEvent } from "./lib/types";
 
@@ -585,5 +590,218 @@ describe("session --id prefix", () => {
         expect(loadEvents({ home, sources: ["codex"], sessionId: id }).map((event) => event.sessionId)).toEqual([
             rollout,
         ]);
+    });
+});
+
+describe("toUsageEvent", () => {
+    const now = new Date("2026-06-02T00:00:00.000Z");
+    const grok: SpendEvent = {
+        source: "grok",
+        id: "same-id",
+        model: "grok-unlisted-model",
+        timestamp: "2026-06-01T10:00:00.000Z",
+        sessionId: "s1",
+        project: "/p",
+        inputTokens: 1000,
+        outputTokens: 500,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        recordedCostUsd: 0.42,
+    };
+    const claude: SpendEvent = { ...grok, source: "claude", model: "claude-opus-4-8", recordedCostUsd: undefined };
+    const opus = (1000 * 5 + 500 * 25) / 1_000_000;
+
+    it("keeps a recorded cost for a model no rate table lists", () => {
+        const report = aggregate({ events: [toUsageEvent(grok, DEFAULT_PRICING)], pricing: DEFAULT_PRICING, now });
+
+        expect(report.total.cost).toBeCloseTo(0.42, 9);
+        expect(report.models[0].priced).toBe(true);
+    });
+
+    it("keeps the same id from two sources apart", () => {
+        const events = [toUsageEvent(grok, DEFAULT_PRICING), toUsageEvent(claude, DEFAULT_PRICING)];
+        const report = aggregate({ events, pricing: DEFAULT_PRICING, now });
+
+        expect(report.total.totalTokens).toBe(3000);
+        expect(report.total.cost).toBeCloseTo(0.42 + opus, 9);
+    });
+
+    it("prices an event with no recorded cost from the table, and leaves an unlisted model unpriced", () => {
+        const unlisted = { ...claude, id: "u", model: "unlisted-model" };
+        const report = aggregate({
+            events: [toUsageEvent(claude, DEFAULT_PRICING), toUsageEvent(unlisted, DEFAULT_PRICING)],
+            pricing: DEFAULT_PRICING,
+            now,
+        });
+
+        expect(report.models.find((model) => model.model === "claude-opus-4-8")?.cost).toBeCloseTo(opus, 9);
+        expect(report.models.find((model) => model.model === "unlisted-model")).toMatchObject({
+            cost: 0,
+            priced: false,
+        });
+    });
+});
+
+describe("the transcript time window", () => {
+    isolateAgentHomeEnv();
+
+    it("transcriptCutoffMs keeps a 3-day margin before the window start, and no cutoff without one", () => {
+        expect(transcriptCutoffMs("2026-06-10")).toBe(Date.parse("2026-06-07T00:00:00.000Z"));
+        expect(transcriptCutoffMs(undefined)).toBe(0);
+        expect(transcriptCutoffMs("not-a-day")).toBe(0);
+    });
+
+    it("walkFiles skips files last written before minMtimeMs, and reads everything when it is unset or 0", () => {
+        const root = mkdtempSync(join(tmpdir(), "ai-spend-walk-"));
+        const oldFile = join(root, "old.jsonl");
+        const newFile = join(root, "new.jsonl");
+        writeFileSync(oldFile, "{}\n");
+        writeFileSync(newFile, "{}\n");
+        fs.utimesSync(oldFile, new Date("2026-01-01T00:00:00Z"), new Date("2026-01-01T00:00:00Z"));
+        const isFile = (name: string) => name.endsWith(".jsonl");
+        const cutoff = Date.parse("2026-06-01T00:00:00Z");
+
+        expect(walkFiles([root], { maxDepth: 1, isFile, minMtimeMs: cutoff })).toEqual([newFile]);
+        expect(walkFiles([root], { maxDepth: 1, isFile, minMtimeMs: 0 })).toEqual([newFile, oldFile].sort());
+        expect(walkFiles([root], { maxDepth: 1, isFile })).toEqual([newFile, oldFile].sort());
+    });
+
+    it("walkFiles applies the cutoff to a root that is a file", () => {
+        const root = mkdtempSync(join(tmpdir(), "ai-spend-walk-root-"));
+        const oldFile = join(root, "old.jsonl");
+        writeFileSync(oldFile, "{}\n");
+        fs.utimesSync(oldFile, new Date("2026-01-01T00:00:00Z"), new Date("2026-01-01T00:00:00Z"));
+        const isFile = (name: string) => name.endsWith(".jsonl");
+
+        expect(walkFiles([oldFile], { maxDepth: 0, isFile, minMtimeMs: Date.parse("2026-06-01T00:00:00Z") })).toEqual(
+            []
+        );
+        expect(walkFiles([oldFile], { maxDepth: 0, isFile })).toEqual([oldFile]);
+    });
+
+    it("loadEvents skips a transcript written before the window", () => {
+        const home = mkdtempSync(join(tmpdir(), "ai-spend-window-"));
+        const dir = join(home, ".claude", "projects", "-Users-x-Old");
+        mkdirSync(dir, { recursive: true });
+        const file = join(dir, "sess.jsonl");
+        writeFileSync(
+            file,
+            `${SafeJSON.stringify({
+                type: "assistant",
+                timestamp: "2026-01-01T10:00:00.000Z",
+                cwd: "/Users/x/Old",
+                sessionId: "s-old",
+                message: { id: "m-old", model: "claude-opus-4-8", usage: { input_tokens: 5 } },
+            })}\n`
+        );
+        fs.utimesSync(file, new Date("2026-01-01T10:00:00Z"), new Date("2026-01-01T10:00:00Z"));
+
+        expect(loadEvents({ home, sources: ["claude"], minMtimeMs: Date.parse("2026-06-01T00:00:00Z") })).toEqual([]);
+        expect(loadEvents({ home, sources: ["claude"] }).map((event) => event.id)).toEqual(["m-old"]);
+    });
+});
+
+describe("loadEventsParallel", () => {
+    isolateAgentHomeEnv();
+
+    function homeWithClaudeAndCodex(): string {
+        const home = mkdtempSync(join(tmpdir(), "ai-spend-parallel-"));
+        const claudeDir = join(home, ".claude", "projects", "-Users-x-Par");
+        mkdirSync(claudeDir, { recursive: true });
+        writeFileSync(
+            join(claudeDir, "sess.jsonl"),
+            `${SafeJSON.stringify({
+                type: "assistant",
+                timestamp: "2026-06-01T10:00:00.000Z",
+                cwd: "/Users/x/Par",
+                sessionId: "s-par",
+                message: { id: "m-par", model: "claude-opus-4-8", usage: { input_tokens: 7, output_tokens: 3 } },
+            })}\n`
+        );
+        const codexDir = join(home, ".codex", "sessions", "2026", "06", "01");
+        mkdirSync(codexDir, { recursive: true });
+        const usage = { input_tokens: 100, cached_input_tokens: 40, output_tokens: 10, reasoning_output_tokens: 0 };
+        writeFileSync(
+            join(codexDir, "rollout-2026-06-01T10-00-00-0190aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee.jsonl"),
+            [
+                SafeJSON.stringify({
+                    timestamp: "2026-06-01T10:00:00.000Z",
+                    type: "turn_context",
+                    payload: { cwd: "/tmp/par", model: "gpt-5.6-sol" },
+                }),
+                SafeJSON.stringify({
+                    timestamp: "2026-06-01T10:00:10.000Z",
+                    type: "event_msg",
+                    payload: { type: "token_count", info: { total_token_usage: usage, last_token_usage: usage } },
+                }),
+            ].join("\n")
+        );
+
+        return home;
+    }
+
+    const key = (event: SpendEvent) => `${event.source}:${event.id}`;
+    const inlineReads = (warn: { mock: { calls: unknown[][] } }) =>
+        warn.mock.calls.filter((call) =>
+            call.some((arg) => typeof arg === "string" && arg.includes("reading this group inline"))
+        );
+
+    it("returns the same events as the sequential loader, from one worker per source", async () => {
+        const home = homeWithClaudeAndCodex();
+        const sequential = loadEvents({ home, sources: ["claude", "codex"] });
+        const warn = spyOn(logger, "warn");
+        const parallel = await loadEventsParallel({ home, sources: ["claude", "codex"] });
+        const inline = inlineReads(warn);
+        warn.mockRestore();
+
+        // A failed worker is read inline and logs a warning, so no warning means the workers did the loading.
+        expect(inline).toHaveLength(0);
+        expect(sequential.map(key).sort()).toEqual(["claude:m-par", expect.stringContaining("codex:")]);
+        expect(parallel.map(key).sort()).toEqual(sequential.map(key).sort());
+        expect(parallel.find((event) => event.source === "claude")).toMatchObject({
+            inputTokens: 7,
+            outputTokens: 3,
+            project: "/Users/x/Par",
+        });
+    });
+
+    it("reads every group inline when its worker cannot start, and loses no event", async () => {
+        const home = homeWithClaudeAndCodex();
+        const sequential = loadEvents({ home, sources: ["claude", "codex"] });
+        const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+        const events = await loadEventsParallel(
+            { home, sources: ["claude", "codex"] },
+            { workerUrl: new URL("file:///nonexistent/load-worker.ts") }
+        );
+
+        const inline = inlineReads(warn);
+        warn.mockRestore();
+
+        expect(events.map(key).sort()).toEqual(sequential.map(key).sort());
+        expect(inline).toHaveLength(2);
+    });
+
+    it("stops waiting for a worker that never answers, then reads its group inline", async () => {
+        const home = homeWithClaudeAndCodex();
+        const sequential = loadEvents({ home, sources: ["claude", "codex"] });
+        const silent = join(mkdtempSync(join(tmpdir(), "ai-spend-silent-worker-")), "silent-worker.ts");
+        writeFileSync(silent, "self.onmessage = () => {};\n");
+        const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+        const events = await loadEventsParallel(
+            { home, sources: ["claude", "codex"] },
+            { workerUrl: pathToFileURL(silent), timeoutMs: 50 }
+        );
+
+        const inline = inlineReads(warn);
+        warn.mockRestore();
+
+        expect(events.map(key).sort()).toEqual(sequential.map(key).sort());
+        expect(inline).toHaveLength(2);
+    });
+
+    it("loads one source inline, without a worker", async () => {
+        const home = homeWithClaudeAndCodex();
+
+        expect((await loadEventsParallel({ home, sources: ["claude"] })).map((event) => event.id)).toEqual(["m-par"]);
     });
 });

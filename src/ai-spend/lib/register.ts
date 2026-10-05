@@ -7,15 +7,18 @@ import type { Command } from "commander";
 import { loadSpendAccountsContext } from "./accounts-context";
 import { aggregate } from "./aggregate";
 import { loadPricing } from "./config";
-import { AGENT_IDS, type AgentId } from "./drivers";
+import { AGENT_IDS } from "./drivers";
 import { buildMonitorReport, type MonitorReport } from "./monitor";
+import { prof } from "./prof";
 import { renderSessions, renderSummary, renderToday } from "./render";
 import { addAccountFlags, registerCcusageCommands } from "./reports/commands";
-import { loadEvents } from "./reports/load";
-import type { SpendEvent } from "./reports/types";
+import { eventCostEstimate } from "./reports/cost";
+import { candidatesFor } from "./reports/load";
+import { loadEventsParallel } from "./reports/load-parallel";
+import { SOURCE_IDS, type SourceId, type SpendEvent } from "./reports/types";
 import { buildSpendSeries, type TranscriptGrain } from "./series";
 import { resolveSince } from "./since";
-import type { Report, UsageEvent } from "./types";
+import type { PricingTable, Report, UsageEvent } from "./types";
 
 /** Grains `buildSpendSeries` accepts. `minute` is call-log only. */
 const TRANSCRIPT_GRAINS: readonly TranscriptGrain[] = ["hour", "day", "week"];
@@ -26,6 +29,7 @@ export interface SpendOpts {
     project?: string;
     top?: string;
     json?: boolean;
+    sources?: string;
 }
 
 export type SpendView = "summary" | "sessions" | "today";
@@ -34,13 +38,18 @@ const DEFAULT_SINCE = "30d";
 
 /**
  * `aggregate` predates the ccusage reports and speaks its own event shape. The
- * two differ only in the name of the id field, so bridging beats forking the
- * aggregator — which is what kept `discover.ts` alive as a second discovery
- * stack that missed `~/.config/claude/projects` and `CLAUDE_CONFIG_DIR`.
+ * two differ in the id field and in how cost is carried, so bridging beats
+ * forking the aggregator — which is what kept `discover.ts` alive as a second
+ * discovery stack that missed `~/.config/claude/projects` and `CLAUDE_CONFIG_DIR`.
  */
-function toUsageEvent(event: SpendEvent): UsageEvent {
+export function toUsageEvent(event: SpendEvent, pricing: PricingTable): UsageEvent {
+    // Priced like the ccusage reports: a recorded charge wins, then the source's own candidate
+    // ladder and service tier. Grok records `costUsdTicks` and is in no rate table, so without this it reads $0.
+    const estimate = eventCostEstimate(event, pricing, "auto", candidatesFor(event));
+
     return {
-        messageId: event.id,
+        // The loader keeps the same id from two sources apart, so the aggregator must too.
+        messageId: `${event.source}:${event.id}`,
         model: event.model,
         timestamp: event.timestamp,
         project: event.project,
@@ -49,14 +58,25 @@ function toUsageEvent(event: SpendEvent): UsageEvent {
         outputTokens: event.outputTokens,
         cacheCreationTokens: event.cacheCreationTokens,
         cacheReadTokens: event.cacheReadTokens,
+        costUsd: estimate.costUSD ?? undefined,
     };
 }
 
-async function buildReport(opts: SpendOpts, view: SpendView): Promise<Report> {
+/** Oldest transcript mtime that can still hold an event on `sinceDay`, with the same 3-day margin as the ccusage reports. */
+export function transcriptCutoffMs(sinceDay: string | undefined): number {
+    if (!sinceDay) {
+        return 0;
+    }
+
+    const start = Date.parse(`${sinceDay}T00:00:00.000Z`);
+
+    return Number.isFinite(start) ? start - 3 * 24 * 60 * 60 * 1000 : 0;
+}
+
+async function buildReport(opts: SpendOpts, view: SpendView, sources: SourceId[] | undefined): Promise<Report> {
     const now = new Date();
     const storage = new Storage("ai-spend");
-    const pricing = await loadPricing(storage);
-    const events = loadEvents({ home: homedir(), sources: ["claude"] }).map(toUsageEvent);
+    const pricing = await prof.measureAsync("pricing", () => loadPricing(storage));
 
     let sinceDay: string | undefined;
     if (view === "today") {
@@ -65,9 +85,19 @@ async function buildReport(opts: SpendOpts, view: SpendView): Promise<Report> {
         sinceDay = resolveSince(opts.since ?? DEFAULT_SINCE, now) ?? resolveSince(DEFAULT_SINCE, now);
     }
 
+    // Transcripts are append-only, so one last written before the window cannot hold an event inside
+    // it. Without this the report parsed every transcript ever written (14 s on 16 GB of history),
+    // blocking the event loop the whole time.
+    const loaded = await prof.measureAsync("load-events", () =>
+        loadEventsParallel({ home: homedir(), sources, minMtimeMs: transcriptCutoffMs(sinceDay) })
+    );
+    const events = loaded.map((event) => toUsageEvent(event, pricing));
+
     const parsedTop = opts.top ? Number.parseInt(opts.top, 10) : 10;
     const top = Number.isInteger(parsedTop) && parsedTop > 0 ? parsedTop : 10;
-    return aggregate({ events, pricing, now, sinceDay, model: opts.model, project: opts.project, top });
+    return prof.measure("aggregate", () =>
+        aggregate({ events, pricing, now, sinceDay, model: opts.model, project: opts.project, top })
+    );
 }
 
 function emit(report: Report, opts: SpendOpts, view: SpendView): void {
@@ -95,6 +125,7 @@ export function addSpendOptions(cmd: Command): Command {
         .option("--model <substr>", "Filter to models containing this substring")
         .option("--project <substr>", "Filter to projects (cwd) containing this substring")
         .option("--top <n>", "Leaderboard length", "10")
+        .option("--sources <ids>", `Comma-separated subset of ${SOURCE_IDS.join(", ")} (default: all)`)
         .option("--json", "Emit the Report as JSON to stdout");
 }
 
@@ -103,7 +134,15 @@ export async function runSpend(cmd: Command, view: SpendView): Promise<void> {
     // commander treats them as global. The action's plain opts arg therefore
     // omits flags resolved onto the parent — optsWithGlobals() merges them back.
     const opts = cmd.optsWithGlobals() as SpendOpts;
-    emit(await buildReport(opts, view), opts, view);
+    const sources = parseSources(opts.sources, { command: view, ids: SOURCE_IDS });
+
+    if (sources === null) {
+        return;
+    }
+
+    const report = await buildReport(opts, view, sources);
+    prof.measure("render", () => emit(report, opts, view));
+    prof.summary("ai-spend report");
 }
 
 /**
@@ -161,7 +200,10 @@ const SERIES_DEFAULT_DAYS = 7;
  * mistyped `--sources` printed a Bun stack trace with a source excerpt where a
  * one-line flag diagnostic belongs.
  */
-function parseSources(raw: string | undefined): AgentId[] | undefined | null {
+function parseSources<T extends string>(
+    raw: string | undefined,
+    { command, ids }: { command: string; ids: readonly T[] }
+): T[] | undefined | null {
     if (!raw) {
         return undefined;
     }
@@ -170,12 +212,13 @@ function parseSources(raw: string | undefined): AgentId[] | undefined | null {
         .split(",")
         .map((value) => value.trim())
         .filter((value) => value.length > 0);
-    const unknown = wanted.filter((value) => !AGENT_IDS.includes(value as AgentId));
+    const known = (value: string): value is T => (ids as readonly string[]).includes(value);
+    const unknown = wanted.filter((value) => !known(value));
 
     if (unknown.length > 0) {
         out.error(
-            suggestEnumFlag("tools ai-spend series", "--sources", AGENT_IDS, {
-                subcommand: ["series"],
+            suggestEnumFlag(`tools ai-spend ${command}`, "--sources", ids, {
+                subcommand: [command],
                 given: unknown.join(", "),
             })
         );
@@ -184,7 +227,7 @@ function parseSources(raw: string | undefined): AgentId[] | undefined | null {
         return null;
     }
 
-    return wanted as AgentId[];
+    return wanted.filter(known);
 }
 
 async function resolveGrain(raw: string | true | undefined): Promise<TranscriptGrain | null> {
@@ -259,7 +302,7 @@ function registerSeriesCommand(program: Command): Command {
         const opts = cmd.optsWithGlobals() as SeriesOpts;
         // Ahead of the grain prompt: a mistyped --sources must not sit behind an
         // interactive question the user then answers for nothing.
-        const sources = parseSources(opts.sources);
+        const sources = parseSources(opts.sources, { command: "series", ids: AGENT_IDS });
 
         if (sources === null) {
             return;
@@ -273,26 +316,32 @@ function registerSeriesCommand(program: Command): Command {
 
         const now = new Date();
         const from = opts.from ?? new Date(now.getTime() - SERIES_DEFAULT_DAYS * 86_400_000).toISOString();
-        const context = await loadSpendAccountsContext({ allHomes: opts.allHomes });
-        const result = await buildSpendSeries(
-            {
-                from,
-                to: opts.to ?? now.toISOString(),
-                grain,
-                sources,
-                accountIds: opts.account,
-                byModel: opts.byModel,
-            },
-            { accounts: context.accounts, discoveredHomes: context.discoveredHomes }
+        const context = await prof.measureAsync("series:accounts", () =>
+            loadSpendAccountsContext({ allHomes: opts.allHomes })
+        );
+        const result = await prof.measureAsync("series:build", () =>
+            buildSpendSeries(
+                {
+                    from,
+                    to: opts.to ?? now.toISOString(),
+                    grain,
+                    sources,
+                    accountIds: opts.account,
+                    byModel: opts.byModel,
+                },
+                { accounts: context.accounts, discoveredHomes: context.discoveredHomes }
+            )
         );
 
         if (opts.json) {
             out.result(result);
+            prof.summary("ai-spend series");
 
             return;
         }
 
         out.println(renderSeries(result));
+        prof.summary("ai-spend series");
     });
 
     return program;
@@ -339,15 +388,20 @@ export function registerSpendCommand(program: Command): Command {
         // optsWithGlobals() merges it back — same as runSpend above.
         const opts = cmd.optsWithGlobals() as MonitorOpts;
         const storage = new Storage("ai-spend");
-        const pricing = await loadPricing(storage);
-        const context = await loadSpendAccountsContext({ allHomes: opts.allHomes });
-        const report = buildMonitorReport({
-            pricing,
-            storage,
-            accounts: context.accounts,
-            discoveredHomes: context.discoveredHomes,
-            accountIds: opts.account,
-        });
+        const pricing = await prof.measureAsync("pricing", () => loadPricing(storage));
+        const context = await prof.measureAsync("monitor:accounts", () =>
+            loadSpendAccountsContext({ allHomes: opts.allHomes })
+        );
+        const report = prof.measure("monitor:build", () =>
+            buildMonitorReport({
+                pricing,
+                storage,
+                accounts: context.accounts,
+                discoveredHomes: context.discoveredHomes,
+                accountIds: opts.account,
+            })
+        );
+        prof.summary("ai-spend monitor");
 
         if (opts.json) {
             out.result(monitorEnvelope(report));

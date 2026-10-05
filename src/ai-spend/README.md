@@ -1,19 +1,18 @@
 # tools ai-spend
 
-Also available as `tools ai-usage`.
 
 ## Codex pricing and review passes
 
 ```bash
-tools ai-usage codex daily --since 2026-09-07 --breakdown
-tools ai-usage codex reviews --since 2026-09-07 --timezone Europe/Prague
-tools ai-usage codex reviews --since 2026-09-07 --json
-tools ai-usage codex session --id rollout-example --json
+tools ai-spend codex daily --since 2026-09-07 --breakdown
+tools ai-spend codex reviews --since 2026-09-07 --timezone Europe/Prague
+tools ai-spend codex reviews --since 2026-09-07 --json
+tools ai-spend codex session --id rollout-example --json
 ```
 
 The existing `--account <id...>`, `--all-homes`, date and timezone filters apply.
 `CODEX_HOME` can select a specific home when no configured account claims the roots.
-The alias uses the same `ai-spend` configuration and storage.
+
 
 Codex daily/monthly/session reports now include an `analysis` object with model costs,
 activity totals, review passes, long-context counts and pricing coverage.
@@ -92,7 +91,7 @@ fallback-price behavior. Older non-Codex reports retain their existing shapes.
 
 Reads the session records your coding agents leave on disk and turns them into a spend report: what the window cost, which sessions were expensive, and what today looks like so far.
 
-`summary`, `sessions` and `today` read Claude Code only. `monitor` reads Claude Code, Codex and Grok, and reports each one separately.
+`summary`, `sessions` and `today` read every source by default (Claude Code, Codex, Grok and the others the ccusage reports know). `--sources claude,codex` narrows them. `monitor` reports Claude Code, Codex and Grok separately.
 
 `daily`, `weekly`, `monthly`, `session`, `blocks` and `statusline` mirror the live `ccusage` command tree (unified across every detected source, plus per-source namespaces). `--json` uses the same grouping keys and token field names as `ccusage --json`.
 
@@ -196,6 +195,7 @@ Measured on this machine (11.5k Claude transcripts, 207 Codex rollouts, 2.9k Gro
 ## Notes
 
 - `series` answers "how did spend move over time" for the dashboard. Buckets are LOCAL, and its per-file event cache (`~/.genesis-tools/ai-spend/cache/events-cache.json`, rolling 90 days) means an unchanged transcript is never re-parsed. Claude transcripts carry no account marker, so they report as one `claude (all accounts)` row; transcripts under a home no account claims report as `(unbound)`. Per-account Claude numbers come from the call log instead (`queryUsage({ grain })`).
-- `summary`, `sessions` and `today` report on Claude Code sessions specifically; only `monitor` reads Codex and Grok as well. For token and cost analytics of the `ask` tool, use [`tools usage`](../usage/README.md).
+- `summary`, `sessions` and `today` used to read Claude Code only; they now read every source, with `--sources` to narrow. For token and cost analytics of the `ask` tool, use [`tools ask usage`](../ask/README.md).
+- A report only opens transcripts written inside its window (plus a 3-day margin), and the source groups load on separate threads. Measured on this machine (about 16 GB of Claude history): a 30-day summary over every source takes about 4.6 s, where the Claude-only version read all history in 14 s. `Ctrl-C` ends it at once. To see where the time goes: `PROFILE=ai-spend tools ai-spend` (per-source discover and parse times, file counts, aggregate, render).
 - Costs are derived from recorded token counts and model rates. A number here is an estimate of what was consumed, not an invoice fetched from a billing API.
 - `tools claude usage` is a different thing: an interactive TUI showing API usage and account limits. This tool is the historical spend view.

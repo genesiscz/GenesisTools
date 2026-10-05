@@ -11,6 +11,11 @@ export interface UsageEvent {
     outputTokens: number;
     cacheCreationTokens: number;
     cacheReadTokens: number;
+    /**
+     * Cost the loader's source already resolved for this event: a recorded charge, or its own price
+     * ladder. `aggregate` prices from the table only when this is absent.
+     */
+    costUsd?: number;
 }
 
 export interface ModelPrice {

@@ -5,6 +5,21 @@ import { logger } from "@genesiscz/utils/logger";
 export interface WalkOptions {
     maxDepth: number;
     isFile: (name: string, full: string) => boolean;
+    /** Skip files last written before this instant. Usage logs are append-only, so an older file holds nothing newer. */
+    minMtimeMs?: number;
+}
+
+function writtenSince(file: string, minMtimeMs: number | undefined): boolean {
+    if (minMtimeMs === undefined || minMtimeMs <= 0) {
+        return true;
+    }
+
+    try {
+        return statSync(file).mtimeMs >= minMtimeMs;
+    } catch (err) {
+        logger.debug({ err, file }, "ai-spend: stat failed, file skipped");
+        return false;
+    }
 }
 
 export function walkFiles(roots: string[], options: WalkOptions): string[] {
@@ -31,7 +46,7 @@ export function walkFiles(roots: string[], options: WalkOptions): string[] {
                 continue;
             }
 
-            if (!entry.isFile() || !options.isFile(entry.name, full)) {
+            if (!entry.isFile() || !options.isFile(entry.name, full) || !writtenSince(full, options.minMtimeMs)) {
                 continue;
             }
 
@@ -43,7 +58,7 @@ export function walkFiles(roots: string[], options: WalkOptions): string[] {
         if (existsSync(root)) {
             try {
                 if (statSync(root).isFile()) {
-                    if (options.isFile(root.split("/").pop() ?? root, root)) {
+                    if (options.isFile(root.split("/").pop() ?? root, root) && writtenSince(root, options.minMtimeMs)) {
                         out.push(root);
                     }
 

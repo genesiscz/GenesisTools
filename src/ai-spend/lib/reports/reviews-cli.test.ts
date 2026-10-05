@@ -6,8 +6,8 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { agentHomeEnvPatch } from "../drivers/test-env";
 import type { CodexAnalysis } from "./reviews";
 
-test("ai-usage alias reports a review pass and daily pricing coverage from real fixture files", async () => {
-    const home = mkdtempSync(join(tmpdir(), "ai-usage-cli-"));
+test("ai-spend reports a review pass and daily pricing coverage from real fixture files", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ai-spend-cli-"));
     const sessions = join(home, ".codex", "sessions", "2026", "09", "07");
     mkdirSync(sessions, { recursive: true });
     const timestamp = "2026-09-07T10:00:00Z";
@@ -34,7 +34,7 @@ test("ai-usage alias reports a review pass and daily pricing coverage from real 
         const child = Bun.spawn(
             [
                 "bun",
-                join(import.meta.dir, "../../../ai-usage/index.ts"),
+                join(import.meta.dir, "../../../ai-spend/index.ts"),
                 "codex",
                 kind,
                 "--since",

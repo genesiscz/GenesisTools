@@ -32,7 +32,7 @@ function trend(report: Report): string {
 export function renderSummary(report: Report): string {
     const t = report.total;
     const header = [
-        pc.bold("ai-spend — Claude Code token & cost analytics"),
+        pc.bold("ai-spend — coding-agent token & cost analytics"),
         pc.dim(
             `window: ${report.windowStartDay} → ${report.windowEndDay} (UTC)  •  ${report.projectCount} projects  •  ${report.sessionCount} sessions`
         ),

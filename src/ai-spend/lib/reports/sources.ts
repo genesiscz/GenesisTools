@@ -94,11 +94,11 @@ function tokensFromUsage(usage: Record<string, unknown> | undefined): {
     };
 }
 
-export function loadAmpEvents(home: string): SpendEvent[] {
+export function loadAmpEvents(home: string, _onlySession?: string, minMtimeMs?: number): SpendEvent[] {
     const roots = rootsFromEnv("AMP_DATA_DIR", home, [".local/share/amp"]);
     const files = walkFiles(
         roots.map((root) => join(root, "threads")),
-        { maxDepth: 2, isFile: (name) => name.startsWith("T-") && name.endsWith(".json") }
+        { minMtimeMs, maxDepth: 2, isFile: (name) => name.startsWith("T-") && name.endsWith(".json") }
     );
     const events: SpendEvent[] = [];
 
@@ -180,10 +180,11 @@ export function loadAmpEvents(home: string): SpendEvent[] {
     return events;
 }
 
-export function loadDroidEvents(home: string, onlySession?: string): SpendEvent[] {
+export function loadDroidEvents(home: string, onlySession?: string, minMtimeMs?: number): SpendEvent[] {
     const roots = rootsFromEnv("DROID_SESSIONS_DIR", home, [".factory/sessions"]);
     const mine = ofSession(onlySession, droidSession);
     const files = walkFiles(roots, {
+        minMtimeMs,
         maxDepth: 3,
         isFile: (name, full) => name.endsWith(".settings.json") && mine(full),
     });
@@ -225,7 +226,7 @@ export function loadDroidEvents(home: string, onlySession?: string): SpendEvent[
     return events;
 }
 
-export function loadCodebuffEvents(home: string, onlySession?: string): SpendEvent[] {
+export function loadCodebuffEvents(home: string, onlySession?: string, minMtimeMs?: number): SpendEvent[] {
     const override = envPathList(env.getTrimmed("CODEBUFF_DATA_DIR"));
     const roots =
         override.length > 0
@@ -235,6 +236,7 @@ export function loadCodebuffEvents(home: string, onlySession?: string): SpendEve
               );
     const mine = ofSession(onlySession, codebuffSession);
     const files = walkFiles(roots, {
+        minMtimeMs,
         maxDepth: 6,
         isFile: (name, full) => name === "chat-messages.json" && mine(full),
     });
@@ -284,10 +286,14 @@ export function loadCodebuffEvents(home: string, onlySession?: string): SpendEve
     return events;
 }
 
-export function loadPiEvents(home: string, onlySession?: string): SpendEvent[] {
+export function loadPiEvents(home: string, onlySession?: string, minMtimeMs?: number): SpendEvent[] {
     const roots = rootsFromEnv("PI_AGENT_DIR", home, [".pi/agent/sessions"]);
     const mine = ofSession(onlySession, fileStem);
-    const files = walkFiles(roots, { maxDepth: 4, isFile: (name, full) => name.endsWith(".jsonl") && mine(full) });
+    const files = walkFiles(roots, {
+        minMtimeMs,
+        maxDepth: 4,
+        isFile: (name, full) => name.endsWith(".jsonl") && mine(full),
+    });
     const events: SpendEvent[] = [];
 
     for (const file of files) {
@@ -337,13 +343,13 @@ export function loadPiEvents(home: string, onlySession?: string): SpendEvent[] {
     return events;
 }
 
-export function loadKimiEvents(home: string, onlySession?: string): SpendEvent[] {
+export function loadKimiEvents(home: string, onlySession?: string, minMtimeMs?: number): SpendEvent[] {
     const override = envPathList(env.getTrimmed("KIMI_DATA_DIR"));
     const roots = override.length > 0 ? override : [join(home, ".kimi"), join(home, ".kimi-code")];
     const mine = ofSession(onlySession, kimiSession);
     const files = walkFiles(
         roots.map((root) => join(root, "sessions")),
-        { maxDepth: 4, isFile: (name, full) => name === "wire.jsonl" && mine(full) }
+        { minMtimeMs, maxDepth: 4, isFile: (name, full) => name === "wire.jsonl" && mine(full) }
     );
     const events: SpendEvent[] = [];
 
@@ -389,11 +395,12 @@ export function loadKimiEvents(home: string, onlySession?: string): SpendEvent[]
     return events;
 }
 
-export function loadGeminiEvents(home: string): SpendEvent[] {
+export function loadGeminiEvents(home: string, _onlySession?: string, minMtimeMs?: number): SpendEvent[] {
     const roots = rootsFromEnv("GEMINI_DATA_DIR", home, [".gemini"]).map((root) =>
         basename(root) === "tmp" ? root : join(root, "tmp")
     );
     const files = walkFiles(roots, {
+        minMtimeMs,
         maxDepth: 6,
         isFile: (name) => name.endsWith(".json") || name.endsWith(".jsonl"),
     });
@@ -456,9 +463,9 @@ export function loadGeminiEvents(home: string): SpendEvent[] {
     return events;
 }
 
-export function loadQwenEvents(home: string): SpendEvent[] {
+export function loadQwenEvents(home: string, _onlySession?: string, minMtimeMs?: number): SpendEvent[] {
     const roots = rootsFromEnv("QWEN_DATA_DIR", home, [".qwen"]).map((root) => join(root, "projects"));
-    const files = walkFiles(roots, { maxDepth: 6, isFile: (name) => name.endsWith(".jsonl") });
+    const files = walkFiles(roots, { minMtimeMs, maxDepth: 6, isFile: (name) => name.endsWith(".jsonl") });
     const events: SpendEvent[] = [];
 
     for (const file of files) {
@@ -501,14 +508,18 @@ export function loadQwenEvents(home: string): SpendEvent[] {
     return events;
 }
 
-export function loadOpenclawEvents(home: string, onlySession?: string): SpendEvent[] {
+export function loadOpenclawEvents(home: string, onlySession?: string, minMtimeMs?: number): SpendEvent[] {
     const override = envPathList(env.getTrimmed("OPENCLAW_DIR"));
     const roots =
         override.length > 0
             ? override
             : [".openclaw", ".clawdbot", ".moltbot", ".moldbot"].map((dir) => join(home, dir));
     const mine = ofSession(onlySession, fileStem);
-    const files = walkFiles(roots, { maxDepth: 8, isFile: (name, full) => name.endsWith(".jsonl") && mine(full) });
+    const files = walkFiles(roots, {
+        minMtimeMs,
+        maxDepth: 8,
+        isFile: (name, full) => name.endsWith(".jsonl") && mine(full),
+    });
     const events: SpendEvent[] = [];
 
     for (const file of files) {
@@ -561,10 +572,10 @@ export function loadOpenclawEvents(home: string, onlySession?: string): SpendEve
     return events;
 }
 
-export function loadCopilotEvents(home: string): SpendEvent[] {
+export function loadCopilotEvents(home: string, _onlySession?: string, minMtimeMs?: number): SpendEvent[] {
     const override = env.getTrimmed("COPILOT_OTEL_FILE_EXPORTER_PATH");
     const roots = override ? [override] : [join(home, ".copilot", "otel")];
-    const files = walkFiles(roots, { maxDepth: 6, isFile: (name) => name.endsWith(".jsonl") });
+    const files = walkFiles(roots, { minMtimeMs, maxDepth: 6, isFile: (name) => name.endsWith(".jsonl") });
     const events: SpendEvent[] = [];
 
     for (const file of files) {
@@ -619,7 +630,8 @@ export function loadCopilotEvents(home: string): SpendEvent[] {
 function readSqliteRows(
     path: string,
     sql: string,
-    map: (row: Record<string, unknown>) => SpendEvent | null
+    map: (row: Record<string, unknown>) => SpendEvent | null,
+    params: number[] = []
 ): SpendEvent[] {
     if (!existsSync(path)) {
         return [];
@@ -631,7 +643,7 @@ function readSqliteRows(
         const db = new Database(path, { readonly: true });
 
         try {
-            const rows = db.query(sql).all() as Record<string, unknown>[];
+            const rows = db.query(sql).all(...params) as Record<string, unknown>[];
 
             for (const row of rows) {
                 const event = map(row);
@@ -676,7 +688,7 @@ function parseOpenCodeLike(source: SourceId, data: unknown, id: string, sessionI
     });
 }
 
-export function loadOpencodeEvents(home: string): SpendEvent[] {
+export function loadOpencodeEvents(home: string, _onlySession?: string, minMtimeMs?: number): SpendEvent[] {
     const roots = rootsFromEnv("OPENCODE_DATA_DIR", home, [".local/share/opencode"]);
     const events: SpendEvent[] = [];
 
@@ -684,15 +696,27 @@ export function loadOpencodeEvents(home: string): SpendEvent[] {
         const dbPath = existsSync(join(root, "opencode.db")) ? join(root, "opencode.db") : undefined;
 
         if (dbPath) {
+            // `time_updated` is never before a message's own `time.created`, so a row last written before
+            // the cutoff cannot hold an event inside the report window.
+            const sql = minMtimeMs
+                ? "SELECT id, session_id, data FROM message WHERE time_updated >= ?"
+                : "SELECT id, session_id, data FROM message";
+
             events.push(
-                ...readSqliteRows(dbPath, "SELECT id, session_id, data FROM message", (row) => {
-                    const data = typeof row.data === "string" ? parseJsonValue(row.data) : row.data;
-                    return parseOpenCodeLike("opencode", data, String(row.id), String(row.session_id ?? "unknown"));
-                })
+                ...readSqliteRows(
+                    dbPath,
+                    sql,
+                    (row) => {
+                        const data = typeof row.data === "string" ? parseJsonValue(row.data) : row.data;
+                        return parseOpenCodeLike("opencode", data, String(row.id), String(row.session_id ?? "unknown"));
+                    },
+                    minMtimeMs ? [minMtimeMs] : []
+                )
             );
         }
 
         const files = walkFiles([join(root, "storage", "message")], {
+            minMtimeMs,
             maxDepth: 3,
             isFile: (name) => name.endsWith(".json"),
         });
@@ -824,7 +848,7 @@ export function loadGooseEvents(home: string): SpendEvent[] {
  */
 const LOADERS: Record<
     Exclude<SourceId, "claude" | "codex" | "grok">,
-    (home: string, onlySession?: string) => SpendEvent[]
+    (home: string, onlySession?: string, minMtimeMs?: number) => SpendEvent[]
 > = {
     amp: loadAmpEvents,
     droid: loadDroidEvents,
@@ -845,7 +869,8 @@ const LOADERS: Record<
 export function loadExtraSource(
     source: Exclude<SourceId, "claude" | "codex" | "grok">,
     home: string,
-    onlySession?: string
+    onlySession?: string,
+    minMtimeMs?: number
 ): SpendEvent[] {
-    return LOADERS[source](home, onlySession);
+    return LOADERS[source](home, onlySession, minMtimeMs);
 }

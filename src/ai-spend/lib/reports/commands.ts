@@ -8,6 +8,7 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
 import { loadSpendAccountsContext } from "../accounts-context";
 import { loadPricing } from "../config";
+import { prof } from "../prof";
 import { buildBlocksReport } from "./blocks";
 import {
     isValidTimeZone,
@@ -19,7 +20,8 @@ import {
     systemTimeZone,
     zonedDay,
 } from "./dates";
-import { filterEvents, loadEvents } from "./load";
+import { filterEvents } from "./load";
+import { loadEventsParallel } from "./load-parallel";
 import { buildPeriodReport } from "./period";
 import { addCodexPricingCoverage } from "./pricing-coverage";
 import { renderBlocksTable, renderPeriodTable, renderSessionTable } from "./render";
@@ -178,6 +180,14 @@ export function resolveSessionFlag(
 }
 
 async function runReport(cmd: Command, kind: ReportKind, source?: SourceId): Promise<void> {
+    try {
+        await runReportPhases(cmd, kind, source);
+    } finally {
+        prof.summary(`ai-spend ${kind}`);
+    }
+}
+
+async function runReportPhases(cmd: Command, kind: ReportKind, source?: SourceId): Promise<void> {
     const flags = flagsOf(cmd);
 
     if (flags.mode !== undefined) {
@@ -200,7 +210,7 @@ async function runReport(cmd: Command, kind: ReportKind, source?: SourceId): Pro
     const home = homedir();
     const now = new Date();
     const storage = new Storage("ai-spend");
-    const pricing = await loadPricing(storage);
+    const pricing = await prof.measureAsync("pricing", () => loadPricing(storage));
     const mode = parseCostMode(typeof flags.mode === "string" ? flags.mode : undefined);
     const sources = source ? ([source] as const) : undefined;
     const sincePassed = optionFromCli(cmd, "since");
@@ -245,17 +255,19 @@ async function runReport(cmd: Command, kind: ReportKind, source?: SourceId): Pro
         flags.id = resolved.id;
     }
 
-    const context = await loadSpendAccountsContext({ allHomes: flags.allHomes });
-    const loaded = loadEvents({
-        home,
-        sources,
-        minMtimeMs: Number.isFinite(minMtimeMs) ? minMtimeMs : 0,
-        accounts: context.accounts,
-        discoveredHomes: context.discoveredHomes,
-        // `session` and `reviews` read nothing but events of `--id`, so only
-        // that session's files need reading.
-        sessionId: kind === "session" || kind === "reviews" ? flags.id : undefined,
-    });
+    const context = await prof.measureAsync("accounts", () => loadSpendAccountsContext({ allHomes: flags.allHomes }));
+    const loaded = await prof.measureAsync("load-events", () =>
+        loadEventsParallel({
+            home,
+            sources,
+            minMtimeMs: Number.isFinite(minMtimeMs) ? minMtimeMs : 0,
+            accounts: context.accounts,
+            discoveredHomes: context.discoveredHomes,
+            // `session` and `reviews` read nothing but events of `--id`, so only
+            // that session's files need reading.
+            sessionId: kind === "session" || kind === "reviews" ? flags.id : undefined,
+        })
+    );
     // Filtering here rather than inside each report builder: `--account` means
     // the same thing for daily, session and blocks, and the builders each own a
     // frozen ccusage-compatible row shape that must not learn a new dimension.

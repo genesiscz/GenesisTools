@@ -25,6 +25,8 @@ export const PROFILER_SCOPE_NAMES = [
     "claude-cmux-open",
     "claude-sessions",
     "claude-usage",
+    // `tools ai-spend`: pricing, per-source transcript loading, aggregation and rendering.
+    "ai-spend",
     "cmux",
     "tmux",
     "route",

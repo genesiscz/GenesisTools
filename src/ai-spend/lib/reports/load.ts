@@ -3,6 +3,7 @@ import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-featu
 import { CLAUDE_ALL_ACCOUNT_ID, UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
 import { logger } from "@genesiscz/utils/logger";
 import type { AgentId } from "../drivers";
+import { prof } from "../prof";
 import type { PricingTable } from "../types";
 import { priceCandidates as defaultCandidates, eventCost } from "./cost";
 import { inDayWindow, zonedDay } from "./dates";
@@ -61,23 +62,39 @@ export function loadEvents(options: LoadOptions): SpendEvent[] {
     const events: SpendEvent[] = [];
 
     if (wanted.has("claude")) {
-        appendAll(events, loadClaudeEvents(native("claude")));
+        appendAll(
+            events,
+            prof.measure("load:claude", () => loadClaudeEvents(native("claude")))
+        );
     }
 
     if (wanted.has("codex")) {
-        appendAll(events, loadCodexEvents(native("codex")));
+        appendAll(
+            events,
+            prof.measure("load:codex", () => loadCodexEvents(native("codex")))
+        );
     }
 
     if (wanted.has("grok")) {
-        appendAll(events, loadGrokEvents(native("grok")));
+        appendAll(
+            events,
+            prof.measure("load:grok", () => loadGrokEvents(native("grok")))
+        );
     }
 
-    appendAll(events, loadExtraSources(wanted, options.home));
+    appendAll(
+        events,
+        prof.measure("load:extra-sources", () => loadExtraSources(wanted, options.home, { minMtimeMs }))
+    );
 
-    return dedupEvents(events);
+    return prof.measure("dedup", () => dedupEvents(events));
 }
 
-function loadExtraSources(wanted: ReadonlySet<SourceId>, home: string, onlySession?: string): SpendEvent[] {
+function loadExtraSources(
+    wanted: ReadonlySet<SourceId>,
+    home: string,
+    { onlySession, minMtimeMs }: { onlySession?: string; minMtimeMs?: number } = {}
+): SpendEvent[] {
     const events: SpendEvent[] = [];
 
     for (const source of SOURCE_IDS) {
@@ -86,7 +103,10 @@ function loadExtraSources(wanted: ReadonlySet<SourceId>, home: string, onlySessi
         }
 
         try {
-            appendAll(events, loadExtraSource(source, home, onlySession));
+            appendAll(
+                events,
+                prof.measure(`extra:${source}`, () => loadExtraSource(source, home, onlySession, minMtimeMs))
+            );
         } catch (err) {
             logger.debug({ err, source }, "ai-spend: extra source failed");
         }
@@ -134,7 +154,7 @@ function loadSessionEvents(options: SessionLoadOptions): SpendEvent[] {
         }
     }
 
-    const extras = loadExtraSources(wanted, home, sessionId);
+    const extras = loadExtraSources(wanted, home, { onlySession: sessionId });
 
     if (!wanted.has("claude") || extras.some((event) => event.sessionId === sessionId)) {
         return extras;

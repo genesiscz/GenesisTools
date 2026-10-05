@@ -59,10 +59,15 @@ export async function withInterrupt<T>(
         // A forwarded copy of the first Ctrl-C may still be on its way. Without a listener it would take
         // the default action and end the process while it prints what it found.
         const remaining = controller.signal.aborted ? window - (now() - firstAt) : 0;
-        if (remaining > 0) {
-            setTimeout(() => process.off("SIGINT", handler), remaining).unref();
-        } else {
+        const release = () => {
             process.off("SIGINT", handler);
+            releaseInterruptObserver();
+        };
+
+        if (remaining > 0) {
+            setTimeout(release, remaining).unref();
+        } else {
+            release();
         }
     }
 }
@@ -81,8 +86,26 @@ export const INTERRUPTED_EXIT_CODE = 130;
  * The observer never changes what Ctrl-C does. With no other SIGINT listener it removes itself and
  * re-raises, so the default action ends the process exactly as before; with one, it only records the
  * interrupt, and a run that then ends with 0 exits 130. Any other exit code is kept.
+ *
+ * It is installed only once a tool has a SIGINT listener of its own. A JavaScript listener cannot run
+ * while the event loop is blocked, so one installed up front made every tool unkillable during
+ * synchronous work: `tools ai-spend` read gigabytes of transcripts in one blocking pass and ignored
+ * Ctrl-C until it finished (measured 2026-10-04, 15 s). With no listener the kernel's default action
+ * ends the process at once, which is what the observer would have done anyway.
  */
-const observed = new WeakSet<object>();
+const observed = new WeakMap<object, () => void>();
+
+/**
+ * Detach the observer once its tool's last SIGINT listener is gone, so Ctrl-C takes the default action
+ * again during later synchronous work. The next listener the tool adds attaches it again.
+ *
+ * Bun's `process` never emits `removeListener`, so the observer cannot notice a removal by itself:
+ * the code that removes the tool's listener calls this. `withInterrupt` does. A handler a tool removes
+ * on its own leaves the observer in place, as before.
+ */
+export function releaseInterruptObserver(target: NodeJS.Process = process): void {
+    observed.get(target)?.();
+}
 
 export function observeInterrupts(target: NodeJS.Process = process): void {
     // Once per process: a second observer would count the first as the tool's own handler, and with
@@ -91,24 +114,49 @@ export function observeInterrupts(target: NodeJS.Process = process): void {
         return;
     }
 
-    observed.add(target);
     let interrupted = false;
+    let attached = false;
     const observer = () => {
         if (target.listenerCount("SIGINT") > 1) {
             interrupted = true;
             return;
         }
 
+        attached = false;
         target.off("SIGINT", observer);
         // pid-verified: target.pid is this process; re-raising lets the default SIGINT action end it.
         target.kill(target.pid, "SIGINT");
     };
 
-    // First in line, so it records the interrupt even when the tool's own handler ends the process.
-    target.prependListener("SIGINT", observer);
+    const attach = () => {
+        if (attached) {
+            return;
+        }
+
+        attached = true;
+        // First in line, so it records the interrupt even when the tool's own handler ends the process.
+        target.prependListener("SIGINT", observer);
+    };
+
+    observed.set(target, () => {
+        if (attached && target.listenerCount("SIGINT") === 1) {
+            attached = false;
+            target.off("SIGINT", observer);
+        }
+    });
     target.on("exit", (code) => {
         if (interrupted && (code ?? 0) === 0) {
             target.exitCode = INTERRUPTED_EXIT_CODE;
         }
     });
+    // `newListener` fires before the tool's listener is added, so the observer still sits first.
+    target.on("newListener", (event, listener) => {
+        if (event === "SIGINT" && listener !== observer) {
+            attach();
+        }
+    });
+
+    if (target.listenerCount("SIGINT") > 0) {
+        attach();
+    }
 }
