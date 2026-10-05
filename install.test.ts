@@ -15,6 +15,7 @@ function runBash({
     shellValue,
     ostype,
     pathPrepend,
+    env,
     setup = "",
     call,
 }: {
@@ -22,6 +23,7 @@ function runBash({
     shellValue: string;
     ostype?: string;
     pathPrepend?: string;
+    env?: Record<string, string>;
     setup?: string;
     call: string;
 }): { code: number; stdout: string } {
@@ -44,6 +46,7 @@ function runBash({
             HOME: home,
             SHELL: shellValue,
             PATH: pathPrepend ? `${pathPrepend}:${process.env.PATH}` : process.env.PATH,
+            ...env,
         },
         stdout: "pipe",
         stderr: "pipe",
@@ -56,14 +59,23 @@ function tempHome(): string {
     return mkdtempSync(join(tmpdir(), "genesis-install-test-"));
 }
 
-/** A fake `xcode-select` on PATH, so detect_xcode_toolchain is testable without the real tool. */
-function fakeXcodeSelect(devDir: string | null): string {
-    const bin = mkdtempSync(join(tmpdir(), "genesis-install-xcode-"));
-    const script = join(bin, "xcode-select");
+let fakeXcodeBin: string | undefined;
 
-    writeFileSync(script, devDir === null ? "#!/bin/sh\nexit 2\n" : `#!/bin/sh\necho "${devDir}"\n`);
-    chmodSync(script, 0o755);
-    return bin;
+/**
+ * A fake `xcode-select` on PATH, so detect_xcode_toolchain is testable without the real tool.
+ * ONE script per file, told what to print through the environment: macOS scans a never-run
+ * executable on its first exec (~140 ms measured), so a fresh script per test paid that each time.
+ * An empty `FAKE_XCODE_DEV_DIR` makes it fail the way a missing toolchain does.
+ */
+function fakeXcodeSelect(devDir: string | null): { pathPrepend: string; env: Record<string, string> } {
+    if (!fakeXcodeBin) {
+        fakeXcodeBin = mkdtempSync(join(tmpdir(), "genesis-install-xcode-"));
+        const script = join(fakeXcodeBin, "xcode-select");
+        writeFileSync(script, '#!/bin/sh\n[ -n "$FAKE_XCODE_DEV_DIR" ] || exit 2\necho "$FAKE_XCODE_DEV_DIR"\n');
+        chmodSync(script, 0o755);
+    }
+
+    return { pathPrepend: fakeXcodeBin, env: { FAKE_XCODE_DEV_DIR: devDir ?? "" } };
 }
 
 describe("shell_rc_filename", () => {
@@ -164,11 +176,11 @@ describe("reload_rc_filename", () => {
 
 describe("detect_xcode_toolchain", () => {
     test("reports xcode for a *.app/Contents/Developer path", () => {
-        const bin = fakeXcodeSelect("/Applications/Xcode.app/Contents/Developer");
+        const xcode = fakeXcodeSelect("/Applications/Xcode.app/Contents/Developer");
         const { stdout } = runBash({
             home: tempHome(),
             shellValue: "/bin/zsh",
-            pathPrepend: bin,
+            ...xcode,
             call: "detect_xcode_toolchain",
         });
 
@@ -176,11 +188,11 @@ describe("detect_xcode_toolchain", () => {
     });
 
     test("reports command-line-tools for a CommandLineTools path", () => {
-        const bin = fakeXcodeSelect("/Library/Developer/CommandLineTools");
+        const xcode = fakeXcodeSelect("/Library/Developer/CommandLineTools");
         const { stdout } = runBash({
             home: tempHome(),
             shellValue: "/bin/zsh",
-            pathPrepend: bin,
+            ...xcode,
             call: "detect_xcode_toolchain",
         });
 
@@ -188,11 +200,11 @@ describe("detect_xcode_toolchain", () => {
     });
 
     test("reports none when xcode-select fails", () => {
-        const bin = fakeXcodeSelect(null);
+        const xcode = fakeXcodeSelect(null);
         const { stdout } = runBash({
             home: tempHome(),
             shellValue: "/bin/zsh",
-            pathPrepend: bin,
+            ...xcode,
             call: "detect_xcode_toolchain",
         });
 
@@ -215,13 +227,13 @@ describe("offer_genesis_app_build", () => {
     });
 
     test("skips the build and explains, without asking, when only the Command Line Tools are present", () => {
-        const bin = fakeXcodeSelect("/Library/Developer/CommandLineTools");
+        const xcode = fakeXcodeSelect("/Library/Developer/CommandLineTools");
         const setup = `command() { if [ "$1" = -v ] && [ "$2" = swift ]; then return 0; fi; builtin command "$@"; }`;
         const { stdout } = runBash({
             home: tempHome(),
             shellValue: "/bin/zsh",
             ostype: "darwin24",
-            pathPrepend: bin,
+            ...xcode,
             setup,
             call: 'offer_genesis_app_build < /dev/null; echo "built=$GENESIS_APP_BUILT"',
         });
@@ -233,13 +245,13 @@ describe("offer_genesis_app_build", () => {
     // Regression test: PR #457 review — the hint named /Applications/Xcode.app as the only path,
     // which fails for Xcode-beta.app or any other install location.
     test("does not prescribe one fixed Xcode path in the Command Line Tools hint", () => {
-        const bin = fakeXcodeSelect("/Library/Developer/CommandLineTools");
+        const xcode = fakeXcodeSelect("/Library/Developer/CommandLineTools");
         const setup = `command() { if [ "$1" = -v ] && [ "$2" = swift ]; then return 0; fi; builtin command "$@"; }`;
         const { stdout } = runBash({
             home: tempHome(),
             shellValue: "/bin/zsh",
             ostype: "darwin24",
-            pathPrepend: bin,
+            ...xcode,
             setup,
             call: "offer_genesis_app_build < /dev/null",
         });
@@ -265,13 +277,13 @@ describe("offer_genesis_app_build", () => {
     });
 
     test("skips the build and explains how to run it later when stdin is not a terminal", () => {
-        const bin = fakeXcodeSelect("/Applications/Xcode.app/Contents/Developer");
+        const xcode = fakeXcodeSelect("/Applications/Xcode.app/Contents/Developer");
         const setup = `command() { if [ "$1" = -v ] && [ "$2" = swift ]; then return 0; fi; builtin command "$@"; }`;
         const { stdout } = runBash({
             home: tempHome(),
             shellValue: "/bin/zsh",
             ostype: "darwin24",
-            pathPrepend: bin,
+            ...xcode,
             setup,
             call: 'offer_genesis_app_build < /dev/null; echo "built=$GENESIS_APP_BUILT"',
         });

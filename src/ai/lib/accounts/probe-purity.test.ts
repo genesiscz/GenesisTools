@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as historySearch from "@app/claude/lib/history/search";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
@@ -237,6 +238,27 @@ describe("accounts show", () => {
         expect(fetchCalls).toEqual([]);
     });
 });
+
+/**
+ * The history listing `who` enriches rows with is faked. The real one indexes every
+ * transcript under the developer's own `~/.claude/projects` (`os.homedir()` ignores a
+ * test's HOME) into this test's empty `GENESIS_TOOLS_HOME`: a cold rebuild of about 6 s
+ * that reads no credential and is not what this suite asserts. The process scan (`ps`,
+ * `lsof`, `cmux`) and the account read off each process environment stay real.
+ */
+mock.module("@app/claude/lib/history/search", () => ({
+    ...historySearch,
+    getSessionListing: async (): Promise<historySearch.SessionListingResult> => ({
+        sessions: [],
+        total: 0,
+        subagents: 0,
+        indexed: 0,
+        staleRemoved: 0,
+        reindexed: false,
+        projectCount: 0,
+        scope: "all projects",
+    }),
+}));
 
 describe("accounts who", () => {
     test("lists processes without touching a credential", async () => {

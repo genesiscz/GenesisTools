@@ -1,11 +1,20 @@
 import { Database } from "bun:sqlite";
-import { describe, expect } from "bun:test";
-import { existsSync } from "node:fs";
+import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { createNativeHistoryAdapter } from "../native-adapter";
-import { BASELINE_REVISION, type BaselineOracle, createBaselineOracle } from "./baseline-oracle";
+import {
+    BASELINE_REVISION,
+    type BaselineOracle,
+    type BaselineOracleManifest,
+    createBaselineOracle,
+    loadPersistentTemplate,
+    rememberBaselineTemplate,
+} from "./baseline-oracle";
 import { generateHistoryCorpus } from "./corpus";
 import { createFixtureWorld } from "./fixture-world";
 import { withBaseline } from "./with-baseline";
@@ -390,3 +399,93 @@ try {
     },
     25_000
 );
+
+describe("persistent baseline template", () => {
+    const scratchDirectories: string[] = [];
+
+    afterEach(() => {
+        for (const path of scratchDirectories.splice(0)) {
+            rmSync(path, { recursive: true, force: true });
+        }
+    });
+
+    function scratchDirectory(): string {
+        const path = mkdtempSync(join(tmpdir(), "baseline-template-"));
+        scratchDirectories.push(path);
+
+        return path;
+    }
+
+    function repositoryRoot(): string {
+        const root = scratchDirectory();
+        writeFileSync(join(root, "bun.lock"), "lock");
+        mkdirSync(join(root, "node_modules"));
+
+        return root;
+    }
+
+    function sha256(text: string): string {
+        return createHash("sha256").update(text).digest("hex");
+    }
+
+    function fakeBuild(label: string): { checkout: string; archivePath: string } {
+        const directory = scratchDirectory();
+        const checkout = join(directory, "checkout");
+        const archivePath = join(directory, "source.tar");
+        mkdirSync(checkout);
+        writeFileSync(join(checkout, "baseline-driver.bundle.js"), `bundle ${label}`);
+        writeFileSync(archivePath, `archive ${label}`);
+        const manifest: BaselineOracleManifest = {
+            revision: BASELINE_REVISION,
+            archiveSha256: sha256(`archive ${label}`),
+            runtimeBundleSha256: sha256(`bundle ${label}`),
+            runtimeDependencyHash: "",
+            runtimeDependencies: {},
+            sourceHashes: {},
+            dependencyManifestHashes: { packageJson: "", bunLock: "" },
+        };
+        writeFileSync(join(checkout, "baseline-oracle-manifest.json"), SafeJSON.stringify(manifest));
+
+        return { checkout, archivePath };
+    }
+
+    function bundleOf(template: { checkout: string }): string {
+        return readFileSync(join(template.checkout, "baseline-driver.bundle.js"), "utf8");
+    }
+
+    test("checking a damaged template leaves it in place, and the publisher replaces it", async () => {
+        const root = repositoryRoot();
+        const first = await rememberBaselineTemplate({ ...fakeBuild("one"), repositoryRoot: root });
+        writeFileSync(join(first.checkout, "baseline-driver.bundle.js"), "damaged");
+
+        expect(await loadPersistentTemplate(root)).toBeNull();
+        expect(existsSync(first.checkout)).toBe(true);
+
+        const replaced = await rememberBaselineTemplate({ ...fakeBuild("two"), repositoryRoot: root });
+
+        expect(replaced).toEqual(first);
+        expect(bundleOf(replaced)).toBe("bundle two");
+        expect(await loadPersistentTemplate(root)).toEqual(replaced);
+    });
+
+    test("a later publish keeps a template that already verifies", async () => {
+        const root = repositoryRoot();
+        const first = await rememberBaselineTemplate({ ...fakeBuild("one"), repositoryRoot: root });
+        const second = await rememberBaselineTemplate({ ...fakeBuild("two"), repositoryRoot: root });
+
+        expect(second).toEqual(first);
+        expect(bundleOf(second)).toBe("bundle one");
+    });
+
+    test("a persistent cache that cannot be created falls back to a process-local copy", async () => {
+        const root = repositoryRoot();
+        writeFileSync(join(root, "node_modules", ".cache"), "a file where the cache directory belongs");
+
+        const template = await rememberBaselineTemplate({ ...fakeBuild("one"), repositoryRoot: root });
+
+        expect(template.checkout.startsWith(root)).toBe(false);
+        expect(bundleOf(template)).toBe("bundle one");
+        expect(readFileSync(template.archive, "utf8")).toBe("archive one");
+        expect(await loadPersistentTemplate(root)).toBeNull();
+    });
+});

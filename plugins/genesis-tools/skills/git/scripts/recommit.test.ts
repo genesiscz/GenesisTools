@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
 import { auditCommits, buildCommits } from "./recommit";
@@ -26,24 +26,43 @@ let repo: TestRepo;
 let base: string;
 let shas: string[];
 
-/** Five commits over three areas; src/shared.ts is touched by an "api" commit and a "ui" commit. */
+/** The base and the five feature shas, recorded by the one real build of the scenario below. */
+let built: { base: string; shas: string[] } | null = null;
+
+/**
+ * Five commits over three areas; src/shared.ts is touched by an "api" commit and a "ui" commit.
+ *
+ * Built once per file and copied for every case (`TestRepo.fromScenario`): the commits are
+ * deterministic, so every copy carries the shas the first build recorded. That build was fourteen
+ * git processes per case, ~180 ms each time.
+ */
 beforeEach(async () => {
-    repo = await TestRepo.create();
-    await repo.commitMany({ files: { "src/api/a.ts": "a\n", "src/old.ts": "old\n" }, message: "app" });
-    base = await repo.sha();
-    await repo.checkout("feat/work", { create: true });
-    shas = [];
-    await repo.commitMany({ files: { "src/api/a.ts": "a2\n", "src/shared.ts": "s1\n" }, message: "api one" });
-    shas.push(await repo.sha());
-    await repo.commit({ file: "src/ui/b.tsx", content: "b\n", message: "ui one" });
-    shas.push(await repo.sha());
-    await repo.commitMany({ files: { "src/shared.ts": "s2\n", "src/ui/b.tsx": "b2\n" }, message: "ui two" });
-    shas.push(await repo.sha());
-    await repo.git(["rm", "-q", "src/old.ts"]);
-    await repo.git(["commit", "-q", "-m", "drop old"], { epoch: repo.tick() });
-    shas.push(await repo.sha());
-    await repo.commit({ file: "docs/readme.md", content: "doc\n", message: "docs" });
-    shas.push(await repo.sha());
+    repo = await TestRepo.fromScenario("recommit:five-commits", async (r) => {
+        await r.commitMany({ files: { "src/api/a.ts": "a\n", "src/old.ts": "old\n" }, message: "app" });
+        const first = await r.sha();
+        await r.checkout("feat/work", { create: true });
+        const recorded: string[] = [];
+        await r.commitMany({ files: { "src/api/a.ts": "a2\n", "src/shared.ts": "s1\n" }, message: "api one" });
+        recorded.push(await r.sha());
+        await r.commit({ file: "src/ui/b.tsx", content: "b\n", message: "ui one" });
+        recorded.push(await r.sha());
+        await r.commitMany({ files: { "src/shared.ts": "s2\n", "src/ui/b.tsx": "b2\n" }, message: "ui two" });
+        recorded.push(await r.sha());
+        await r.git(["rm", "-q", "src/old.ts"]);
+        await r.git(["commit", "-q", "-m", "drop old"], { epoch: r.tick() });
+        recorded.push(await r.sha());
+        await r.commit({ file: "docs/readme.md", content: "doc\n", message: "docs" });
+        recorded.push(await r.sha());
+        built = { base: first, shas: recorded };
+    });
+
+    // HEAD comes off the filesystem, so this check costs no process.
+    if (built === null || (await repo.sha()) !== built.shas[4]) {
+        throw new Error("the copied scenario does not end on the head its build recorded");
+    }
+
+    base = built.base;
+    shas = [...built.shas];
 });
 
 afterEach(() => {
@@ -62,9 +81,31 @@ const GOOD = () => [
     { message: "chore: the rest", commits: [shas[3], shas[4]], paths: ["docs/**"], rest: true },
 ];
 
+let goodGroup: { result: RunResult; plan: string } | null = null;
+
+/**
+ * `group` with GOOD(), which five cases run on the same scenario. Each run is a cold `bun`
+ * process (~210 ms), and the scenario and the groups are identical every time, so the first case
+ * runs it for real and later cases get that run's result and its plan file written back where
+ * `group` puts it.
+ */
+function groupGood(): RunResult {
+    const groups = groupsFile(GOOD());
+    const out = groups.replace(/\.json$/, ".plan.txt");
+
+    if (goodGroup === null) {
+        const result = run(repo, ["group", "--base", base, "--groups", groups]);
+        goodGroup = { result, plan: existsSync(out) ? readFileSync(out, "utf8") : "" };
+        return result;
+    }
+
+    writeFileSync(out, goodGroup.plan);
+    return goodGroup.result;
+}
+
 describe("recommit group", () => {
     test("places every path by commits, globs and rest, reports a shared path, and the plan checks", () => {
-        const res = run(repo, ["group", "--base", base, "--groups", groupsFile(GOOD())]);
+        const res = groupGood();
 
         expect(res.exitCode).toBe(0);
         expect(res.stdout).toContain("tree identity OK");
@@ -90,7 +131,7 @@ describe("recommit group", () => {
 describe("recommit apply", () => {
     test("moves the branch to N commits with head's exact tree, tags the old head, and leaves the checkout clean", async () => {
         const head = await repo.sha();
-        const grouped = run(repo, ["group", "--base", base, "--groups", groupsFile(GOOD())]);
+        const grouped = groupGood();
         expect(grouped.exitCode).toBe(0);
 
         const res = run(repo, ["apply", "--base", base, "--plan", join(repo.root, "groups.plan.txt")]);
@@ -113,7 +154,7 @@ describe("recommit apply", () => {
         expect(bad.exitCode).toBe(1);
         expect(bad.stderr).toContain("missing: src/old.ts");
 
-        run(repo, ["group", "--base", base, "--groups", groupsFile(GOOD())]);
+        groupGood();
         const dry = run(repo, ["apply", "--base", base, "--plan", join(repo.root, "groups.plan.txt"), "--dry-run"]);
         expect(dry.exitCode).toBe(0);
         expect(dry.stdout).toContain("dry run");
@@ -192,7 +233,7 @@ describe("recommit edge cases", () => {
 
     test("--verify-each refuses to move the branch when a commit does not pass on its own", async () => {
         const head = await repo.sha();
-        run(repo, ["group", "--base", base, "--groups", groupsFile(GOOD())]);
+        groupGood();
 
         const res = run(repo, [
             "apply",
@@ -215,7 +256,7 @@ describe("recommit edge cases", () => {
 describe("auditCommits", () => {
     // negative control: the audit must fail on commits whose content does not follow the plan
     test("catches a path that changes in the wrong commit", async () => {
-        run(repo, ["group", "--base", base, "--groups", groupsFile(GOOD())]);
+        groupGood();
         const head = await repo.sha();
         const planText = await Bun.file(join(repo.root, "groups.plan.txt")).text();
         const shas = buildCommits({ cwd: repo.dir, base, head, planText });

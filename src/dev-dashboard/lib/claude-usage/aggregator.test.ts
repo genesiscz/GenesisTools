@@ -9,7 +9,7 @@ describe("getUsageHistory", () => {
             const result = getUsageHistory({ account: "acct", bucket: "five_hour", minutes: 1440 }, db);
 
             expect(result.snapshots).toEqual([]);
-            expect(result.hint).toBe("Run 'tools claude daemon install' to start polling.");
+            expect(result.hint).toBe("Run 'tools claude daemon register' to start polling.");
         } finally {
             db.close();
         }
@@ -43,7 +43,7 @@ describe("getUsageHistoryMulti", () => {
 
             expect(result.series.map((s) => s.bucket)).toEqual(["five_hour", "seven_day", "seven_day_sonnet"]);
             expect(result.series.every((s) => s.snapshots.length === 0)).toBe(true);
-            expect(result.hint).toBe("Run 'tools claude daemon install' to start polling.");
+            expect(result.hint).toBe("Run 'tools claude daemon register' to start polling.");
         } finally {
             db.close();
         }

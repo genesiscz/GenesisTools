@@ -71,7 +71,8 @@ describe("stuckVerdict", () => {
                 filePath: mkdtempSync(join(tmpdir(), "gt-stuck-")),
             },
         ];
-        const [result] = await stuckSessions({ rows, thresholds, now: T0 });
+        // Not about liveness: the default reads the real process table (0.6 s warm, 3 s cold).
+        const [result] = await stuckSessions({ rows, thresholds, now: T0, liveSessions: async () => new Set() });
 
         expect(result?.provider).toBe("codex");
         expect(result?.error).toBeDefined();

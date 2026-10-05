@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { setProfilingConfig } from "@genesiscz/utils/GenesisTools";
@@ -301,19 +301,33 @@ describe("the profiler's real-home write guard", () => {
     });
 
     it("refuses to write a profiling log into the real store", async () => {
-        const realTarget = join(realGenesisToolsRoot(), "logs", "__profiler_guard_probe__.log");
+        // A name of this run's own: a fixed name left behind by one run whose guard did not fire
+        // (an unarmed guard, the escape hatch set) failed every later run, the guard working or not
+        // (the leftover held three runs' lines on 2026-10-04).
+        const realTarget = join(
+            realGenesisToolsRoot(),
+            "logs",
+            `__profiler_guard_probe_${process.pid}_${Date.now()}__.log`
+        );
         await setProfilingConfig({ enabled: true });
         env.testing.set("PROFILE_TO_FILE", realTarget);
         reloadProfiler();
 
-        const stderr = captureStderr(() => {
-            profiler.scope("t").measure("guarded", () => "value");
-            flushProfilerFile();
-        });
+        try {
+            const stderr = captureStderr(() => {
+                profiler.scope("t").measure("guarded", () => "value");
+                flushProfilerFile();
+            });
 
-        // The guard fired, named the real store, and nothing was written.
-        expect(stderr).toContain("REAL ~/.genesis-tools");
-        expect(existsSync(realTarget)).toBe(false);
+            // The guard fired, named the real store, and nothing was written.
+            expect(stderr).toContain("REAL ~/.genesis-tools");
+            expect(existsSync(realTarget)).toBe(false);
+        } finally {
+            // Only this run's own probe, and only when a broken guard let it land.
+            if (existsSync(realTarget)) {
+                unlinkSync(realTarget);
+            }
+        }
     });
 
     it("NEGATIVE CONTROL: a sandbox path is still written normally", async () => {

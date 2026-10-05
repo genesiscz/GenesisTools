@@ -1,6 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { mkdir, symlink, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -9,6 +9,7 @@ import type { SessionMetadataRecord } from "@genesiscz/utils/agent-sessions/cach
 import type { ConversationMessage } from "@genesiscz/utils/claude/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import type { HistoryFixtureWorld } from "./fixture-world";
 
 export const BASELINE_REVISION = "010697b869a34af0e79363b5c74bfc4946f74b96";
@@ -440,6 +441,18 @@ async function verifyStoredMaterialization(options: {
     }
 }
 
+export interface BaselineTemplate {
+    checkout: string;
+    archive: string;
+}
+
+export interface BaselineTemplateSource {
+    checkout: string;
+    archivePath: string;
+}
+
+const TEMPLATE_LOCK_WAIT_MS = 30_000;
+
 /**
  * The materialized baseline, built once per process and copied into every later world.
  *
@@ -451,21 +464,155 @@ async function verifyStoredMaterialization(options: {
  * The per-world checkout stays, deliberately. One test damages its own bundle and expects
  * "bundle hash mismatch", so a single shared directory would poison every later test. The
  * template is only a source of bytes, never the directory anything runs from.
+ *
+ * The template is also kept across processes, under a key of every input the build reads (the
+ * revision, the driver source, the bun build and the lockfile its node_modules came from).
+ * Every test file is its own process, so a per-process template still paid the 250-900 ms build
+ * once per file, and once more in each `bun -e` helper baseline-oracle.test.ts spawns. A
+ * changed input is a new key, so the first process after any change still runs the real build.
+ * It lives in the ignored `node_modules/.cache/`, so a reinstall discards it with the
+ * dependencies it was built from.
+ *
+ * Checking a stored template never changes it. A damaged one is only replaced by the process that
+ * publishes its rebuild, which verifies it again under a per-key lock file first: a process whose
+ * own check failed against an older generation therefore cannot delete the one another process has
+ * published since. The cache is an optimization, so any failure to keep it (a read-only
+ * `node_modules/.cache`, a full disk, a lock that never frees) leaves the process with a copy
+ * under tmpdir() instead of failing the test.
  */
-let baselineTemplate: { checkout: string; archive: string } | null = null;
+let baselineTemplate: BaselineTemplate | null = null;
 
-function rememberBaselineTemplate(source: { checkout: string; archivePath: string }): void {
-    const base = mkdtempSync(join(tmpdir(), "genesis-baseline-template-"));
-    const checkout = join(base, "checkout");
-    const archive = join(base, "source.tar");
-    // The build unlinks its node_modules symlink before this point, so the tree copied here
-    // holds no dangling link.
-    cpSync(source.checkout, checkout, { recursive: true });
-    cpSync(source.archivePath, archive);
-    baselineTemplate = { checkout, archive };
+function templatePaths(base: string): BaselineTemplate {
+    return { checkout: join(base, "checkout"), archive: join(base, "source.tar") };
+}
+
+function removeQuietly(path: string): void {
+    try {
+        rmSync(path, { recursive: true, force: true });
+    } catch (error) {
+        logger.debug({ error, path }, "Baseline template cleanup failed");
+    }
+}
+
+function persistentTemplateDirectory(repositoryRoot: string): string | null {
+    const lockPath = join(repositoryRoot, "bun.lock");
+    const dependencies = join(repositoryRoot, "node_modules");
+    if (!existsSync(lockPath) || !existsSync(dependencies)) {
+        return null;
+    }
+
+    const key = createHash("sha256")
+        .update(
+            SafeJSON.stringify([BASELINE_REVISION, DRIVER_SOURCE, Bun.version, Bun.revision, repositoryRoot], {
+                strict: true,
+            })
+        )
+        .update(readFileSync(lockPath))
+        .digest("hex")
+        .slice(0, 24);
+    // Not tmpdir(): the test preload points TMPDIR at a fresh root per test process and removes
+    // it afterwards, so a template there never outlives the file that built it.
+    return join(dependencies, ".cache", "genesis-baseline-oracle", key);
+}
+
+/** Read-only. A template that is missing or fails verification is reported as absent and left where it is. */
+async function verifiedTemplate(base: string): Promise<BaselineTemplate | null> {
+    const template = templatePaths(base);
+    const manifestPath = join(template.checkout, "baseline-oracle-manifest.json");
+    if (!existsSync(manifestPath) || !existsSync(template.archive)) {
+        return null;
+    }
+
+    try {
+        const manifest = SafeJSON.parse(await Bun.file(manifestPath).text(), {
+            strict: true,
+        }) as BaselineOracleManifest;
+        await verifyStoredMaterialization({ checkout: template.checkout, archivePath: template.archive, manifest });
+    } catch (error) {
+        logger.warn({ error, base }, "Persistent baseline template failed verification; it is rebuilt from git");
+        return null;
+    }
+
+    return template;
+}
+
+export async function loadPersistentTemplate(repositoryRoot: string): Promise<BaselineTemplate | null> {
+    const base = persistentTemplateDirectory(repositoryRoot);
+    if (base === null) {
+        return null;
+    }
+
+    return verifiedTemplate(base);
+}
+
+function stageTemplate(source: BaselineTemplateSource, parent: string): { staging: string; staged: BaselineTemplate } {
+    mkdirSync(parent, { recursive: true });
+    const staging = mkdtempSync(join(parent, "genesis-baseline-template-"));
+    try {
+        const staged = templatePaths(staging);
+        // The build unlinks its node_modules symlink before this point, so the tree copied here
+        // holds no dangling link.
+        cpSync(source.checkout, staged.checkout, { recursive: true });
+        cpSync(source.archivePath, staged.archive);
+
+        return { staging, staged };
+    } catch (error) {
+        removeQuietly(staging);
+        throw error;
+    }
+}
+
+async function publishPersistentTemplate(
+    source: BaselineTemplateSource,
+    persistent: string
+): Promise<BaselineTemplate> {
+    const { staging } = stageTemplate(source, dirname(persistent));
+    try {
+        return await withFileLock(
+            `${persistent}.lock`,
+            async () => {
+                const existing = await verifiedTemplate(persistent);
+                if (existing !== null) {
+                    // Another process published this key first; its copy is identical by construction.
+                    logger.debug({ persistent }, "Persistent baseline template already published");
+                    return existing;
+                }
+
+                // Only a template that fails verification here, under the lock, is replaced.
+                rmSync(persistent, { recursive: true, force: true });
+                // Atomic publish: a concurrent test process either sees the whole template or none.
+                renameSync(staging, persistent);
+
+                return templatePaths(persistent);
+            },
+            TEMPLATE_LOCK_WAIT_MS
+        );
+    } finally {
+        removeQuietly(staging);
+    }
+}
+
+export async function rememberBaselineTemplate(
+    source: BaselineTemplateSource & { repositoryRoot: string }
+): Promise<BaselineTemplate> {
+    const persistent = persistentTemplateDirectory(source.repositoryRoot);
+    if (persistent !== null) {
+        try {
+            return await publishPersistentTemplate(source, persistent);
+        } catch (error) {
+            logger.warn(
+                { error, persistent },
+                "Persistent baseline template could not be kept; using a process-local copy"
+            );
+        }
+    }
+
+    const { staging, staged } = stageTemplate(source, tmpdir());
     process.on("exit", () => {
-        rmSync(base, { recursive: true, force: true });
+        removeQuietly(staging);
     });
+
+    return staged;
 }
 
 async function materialize(options: {
@@ -488,6 +635,7 @@ async function materialize(options: {
     options.world.assertOwnedPath(checkout);
     options.world.assertOwnedPath(archivePath);
 
+    baselineTemplate ??= await loadPersistentTemplate(options.repositoryRoot);
     const template = baselineTemplate;
 
     if (template !== null) {
@@ -554,7 +702,11 @@ async function materialize(options: {
         },
     };
     await Bun.write(storedManifestPath, SafeJSON.stringify(manifest));
-    rememberBaselineTemplate({ checkout, archivePath });
+    baselineTemplate = await rememberBaselineTemplate({
+        checkout,
+        archivePath,
+        repositoryRoot: options.repositoryRoot,
+    });
     return { checkout, manifest, elapsedMs: performance.now() - started };
 }
 
@@ -665,6 +817,11 @@ export async function createBaselineOracle(options: {
         ...options.world.environment,
         GENESIS_TOOLS_HOME: cacheHome,
         BASELINE_FIXED_NOW: options.world.now.toISOString(),
+        // pino resolves `pino-pretty` and its transport packages at runtime, outside the bundle.
+        // The checkout holds no node_modules, so without this bun AUTO-INSTALLED them from the npm
+        // registry into each world's invented HOME: about 550 ms of network per world, whatever
+        // version was latest that day, and a driver that fails to start offline.
+        NODE_PATH: join(repositoryRoot, "node_modules"),
     };
     const bundlePath = join(materialized.checkout, "baseline-driver.bundle.js");
     const driverStarted = performance.now();

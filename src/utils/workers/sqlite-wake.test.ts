@@ -35,7 +35,7 @@ describe("watchSqliteChanges", () => {
             other.close();
             const startedAt = Date.now();
 
-            while (fired === 0 && Date.now() - startedAt < 1500) {
+            while (fired === 0 && Date.now() - startedAt < 5000) {
                 await Bun.sleep(5);
             }
 

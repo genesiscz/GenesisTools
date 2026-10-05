@@ -1,4 +1,5 @@
 import {
+    appendFileSync,
     cpSync,
     existsSync,
     mkdirSync,
@@ -12,6 +13,15 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
+
+/**
+ * `git commit`, `merge` and `rebase` end with an automatic housekeeping check (`gc --auto`,
+ * `maintenance run --auto`), ~4.5 ms a call against ~8 ms for a commit itself (interleaved probe,
+ * 3 x 30 commits). Throwaway repositories never grow enough to need it, and the switches change
+ * no object or ref, so every TestRepo turns it off in its own config, which the production git
+ * calls under test read too.
+ */
+const HOUSEKEEPING_OFF = "[gc]\n\tauto = 0\n[maintenance]\n\tauto = false\n";
 
 /** Fixed wall-clock anchor so every committed date is deterministic across runs. */
 export const TEST_REPO_EPOCH = 1_700_000_000;
@@ -111,6 +121,22 @@ export interface CommitDeleteOptions {
     file: string;
     message?: string;
     cwd?: string;
+}
+
+export interface ImportedCommit {
+    message: string;
+    files?: Record<string, string>;
+    deletes?: string[];
+}
+
+export interface BranchImport {
+    branch: string;
+    /**
+     * Where the first commit starts: any ref, including a branch an earlier entry of the same
+     * import wrote. Ignored when an earlier entry wrote `branch` itself.
+     */
+    from: string;
+    commits: ImportedCommit[];
 }
 
 export interface WorktreeAddOptions {
@@ -228,6 +254,7 @@ export class TestRepo {
         await repo.git(["config", "user.name", "Test"]);
         await repo.git(["config", "user.email", "test@example.com"]);
         await repo.git(["config", "commit.gpgsign", "false"]);
+        appendFileSync(join(dir, ".git", "config"), HOUSEKEEPING_OFF);
 
         if (seeded) {
             await repo.commit({ file: "README.md", content: "seed\n", message: "seed" });
@@ -376,15 +403,66 @@ export class TestRepo {
             throw new Error(`git init --bare failed: ${init.stderr}`);
         }
 
+        appendFileSync(join(remote, "config"), `${HOUSEKEEPING_OFF}[receive]\n\tautogc = false\n`);
         await this.git(["remote", "add", "origin", remote]);
         const current = await this.git(["rev-parse", "--abbrev-ref", "HEAD"]);
-
-        for (const branch of [current, ...branches]) {
-            await this.git(["push", "-q", "-u", "origin", branch]);
-        }
+        // One push for every branch: a local push is ~64 ms (push, receive-pack, pack-objects).
+        await this.git(["push", "-q", "-u", "origin", current, ...branches]);
 
         await this.git(["remote", "set-head", "origin", current]);
         return remote;
+    }
+
+    /**
+     * Append commits to `branch` (created at `from` when it does not exist yet) with ONE
+     * `git fast-import` process instead of an add and a commit (or an rm and a commit) per commit.
+     *
+     * The objects are byte-identical to what `commit()`, `commitMany()` and `commitDelete()`
+     * write: the same identity, the epoch taken from the same `tick()` ladder, the message with the
+     * newline `git commit -m` appends, and mode 100644. Only the ref moves: the index and the
+     * working tree are left alone, which is the state `checkout -b <branch>; commit...; checkout
+     * master` ends in. For the checked-out branch, follow it with `git reset -q --hard`.
+     */
+    async importCommits(imports: BranchImport | BranchImport[]): Promise<void> {
+        const chunks: string[] = [];
+        const seen = new Set<string>();
+        const data = (text: string) => `data ${Buffer.byteLength(text)}\n${text}\n`;
+
+        for (const { branch, from, commits } of [imports].flat()) {
+            commits.forEach((c, i) => {
+                const ident = `Test <test@example.com> ${this.tick()} +0000`;
+                chunks.push(
+                    `commit refs/heads/${branch}\nauthor ${ident}\ncommitter ${ident}\n${data(`${c.message}\n`)}`
+                );
+
+                // A branch this import already wrote continues from its own tip. Otherwise fast-import
+                // refuses to start a branch from itself, and `^0` sends that lookup to the repository.
+                if (i === 0 && !seen.has(branch)) {
+                    chunks.push(`from ${from === `refs/heads/${branch}` ? `${from}^0` : from}\n`);
+                }
+
+                for (const path of c.deletes ?? []) {
+                    chunks.push(`D ${path}\n`);
+                }
+
+                for (const [path, content] of Object.entries(c.files ?? {})) {
+                    chunks.push(`M 100644 inline ${path}\n${data(content)}`);
+                }
+            });
+            seen.add(branch);
+        }
+
+        const proc = Bun.spawn(["git", "-C", this.dir, "fast-import", "--quiet"], {
+            stdin: Buffer.from(chunks.join("")),
+            stdout: "pipe",
+            stderr: "pipe",
+            env: hermeticGitEnv(),
+        });
+        const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+
+        if (code !== 0) {
+            throw new Error(`git fast-import failed (${code}): ${stderr}`);
+        }
     }
 
     /** Squash-merge `branch` into the current branch as one commit; returns its sha. */

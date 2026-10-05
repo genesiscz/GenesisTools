@@ -459,8 +459,13 @@ describe("tmux spawn wedge guard", () => {
     // Regression test: 2026-09-16 — three orphan `tmux list-sessions` clients sat at
     // ~95% CPU for 28h after the feat-dev-dashboard-mobile parent died (PPID 1,
     // stdout gone). Bun.spawn `{ timeout }` lives in the parent, so it dies with it.
+    //
+    // Proven in two halves so the test does not sit out the real 8 s deadline (perl's
+    // alarm is whole seconds). The REAL path: `listTmuxSessions` launches its client as a
+    // child of the perl watchdog armed with TMUX_CHILD_DEADLINE_MS. The REAP: the same
+    // watchdog, armed for 1 s, still kills a wedged client after the parent is SIGKILLed.
     test("SIGKILL of the parent still reaps a wedged list-sessions client", async () => {
-        const { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } = await import("node:fs");
+        const { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } = await import("node:fs");
 
         if (!existsSync("/usr/bin/perl")) {
             return;
@@ -471,23 +476,38 @@ describe("tmux spawn wedge guard", () => {
 
         const dir = join(tmpdir(), `tmux-orphan-${process.pid}-${Date.now()}`);
         mkdirSync(dir, { recursive: true });
-        const pidfile = join(dir, "client.pid");
-        const spinner = join(dir, "tmux");
-        writeFileSync(
-            spinner,
-            `#!/bin/sh\nprintf '%s' "$$" > "${pidfile}"\ntrap '' TERM INT\nwhile true; do :; done\n`
-        );
-        chmodSync(spinner, 0o755);
+
+        const spinnerBody = (pidfile: string) =>
+            `printf '%s' "$$" > "${pidfile}"\ntrap '' TERM INT\nwhile true; do :; done`;
+
+        // A script file, because listTmuxSessions runs it as the tmux binary. The first run of a new executable
+        // costs ~270 ms on macOS and those runs queue across test processes (8 at once: 280 to 2050 ms), which
+        // the 8 s watchdog absorbs and a 1 s one cannot.
+        const realClient = { path: join(dir, "tmux"), pidfile: join(dir, "tmux.pid") };
+        writeFileSync(realClient.path, `#!/bin/sh\n${spinnerBody(realClient.pidfile)}\n`);
+        chmodSync(realClient.path, 0o755);
+        // The 1 s client is `sh -c` for that reason: 10 ms to start, however many tests run beside this one.
+        const reapedPidfile = join(dir, "wedged.pid");
+        const reapedArgv = ["/bin/sh", "-c", spinnerBody(reapedPidfile)];
 
         const repoRoot = join(import.meta.dir, "../../..");
         const parent = join(dir, "parent.ts");
+        // The 1 s watchdog is armed only once the real client is up, and the parent kills itself as soon as the
+        // 1 s client is up too. So neither a slow start nor a slow test process decides the order of events.
+        // Exit code 3 means a client was gone or never came up.
         writeFileSync(
             parent,
-            `import { setTmuxBinForTests } from ${SafeJSON.stringify(`${repoRoot}/src/utils/tmux/bin.ts`)};\n` +
+            `import { readFileSync } from "node:fs";\n` +
+                `import { argvWithChildDeadline } from ${SafeJSON.stringify(`${repoRoot}/src/utils/process/child-deadline.ts`)};\n` +
+                `import { setTmuxBinForTests } from ${SafeJSON.stringify(`${repoRoot}/src/utils/tmux/bin.ts`)};\n` +
                 `import { listTmuxSessions } from ${SafeJSON.stringify(`${repoRoot}/src/utils/tmux/sessions.ts`)};\n` +
-                `setTmuxBinForTests(${SafeJSON.stringify(spinner)});\n` +
+                `const up = (file) => { try { return process.kill(Number.parseInt(readFileSync(file, "utf8"), 10), 0); } catch { return false; } };\n` +
+                `const waitUp = async (file) => { for (const stop = Date.now() + 5000; Date.now() < stop && !up(file); ) { await Bun.sleep(10); } return up(file); };\n` +
+                `setTmuxBinForTests(${SafeJSON.stringify(realClient.path)});\n` +
                 `void listTmuxSessions();\n` +
-                `await Bun.sleep(400);\n` +
+                `if (!(await waitUp(${SafeJSON.stringify(realClient.pidfile)}))) { process.exit(3); }\n` +
+                `Bun.spawn(argvWithChildDeadline(${SafeJSON.stringify(reapedArgv)}, 1000), { stdout: "ignore", stderr: "ignore" });\n` +
+                `if (!(await waitUp(${SafeJSON.stringify(reapedPidfile)}))) { process.exit(3); }\n` +
                 `process.kill(process.pid, "SIGKILL");\n`
         );
 
@@ -499,41 +519,54 @@ describe("tmux spawn wedge guard", () => {
             stdout: "ignore",
             stderr: "pipe",
         });
-        const deadline = Date.now() + 3000;
-        let clientPid = 0;
 
-        while (Date.now() < deadline) {
+        function pidOf(pidfile: string): number {
             try {
-                const raw = (await Bun.file(pidfile).text()).trim();
-                clientPid = Number.parseInt(raw, 10);
-
-                if (clientPid > 0 && isProcessAlive(clientPid)) {
-                    break;
-                }
+                return Number.parseInt(readFileSync(pidfile, "utf8").trim(), 10) || 0;
             } catch {
-                // pidfile not written yet
+                return 0;
+            }
+        }
+
+        try {
+            await child.exited;
+            expect(child.signalCode).toBe("SIGKILL");
+
+            const realPid = pidOf(realClient.pidfile);
+            const reapedPid = pidOf(reapedPidfile);
+
+            expect(realPid).toBeGreaterThan(0);
+            expect(reapedPid).toBeGreaterThan(0);
+
+            const psField = (field: string, pid: number) =>
+                Bun.spawnSync(["ps", "-o", `${field}=`, "-p", String(pid)], { env: process.env })
+                    .stdout.toString()
+                    .trim();
+            const watchdog = psField("args", Number.parseInt(psField("ppid", realPid), 10));
+            expect(watchdog).toContain("/usr/bin/perl");
+            expect(watchdog).toContain(` ${TMUX_CHILD_DEADLINE_MS} `);
+
+            // Its watchdog would reap it in 8 s; the reap itself is proven on the second client.
+            process.kill(realPid, "SIGKILL");
+
+            const reapUntil = Date.now() + 5000;
+
+            while (Date.now() < reapUntil && isProcessAlive(reapedPid)) {
+                await Bun.sleep(100);
             }
 
-            await Bun.sleep(50);
+            expect(isProcessAlive(reapedPid)).toBe(false);
+        } finally {
+            for (const pidfile of [realClient.pidfile, reapedPidfile]) {
+                const pid = pidOf(pidfile);
+
+                if (pid > 0 && isProcessAlive(pid)) {
+                    process.kill(pid, "SIGKILL");
+                }
+            }
+
+            rmSync(dir, { recursive: true, force: true });
         }
-
-        expect(clientPid).toBeGreaterThan(0);
-        await child.exited;
-
-        const reapUntil = Date.now() + 9000;
-
-        while (Date.now() < reapUntil && isProcessAlive(clientPid)) {
-            await Bun.sleep(100);
-        }
-
-        const stillAlive = isProcessAlive(clientPid);
-
-        if (stillAlive) {
-            process.kill(clientPid, "SIGKILL");
-        }
-
-        expect(stillAlive).toBe(false);
-        rmSync(dir, { recursive: true, force: true });
     }, 20_000);
 
     // Regression test: 2026-09-16 — dashboard polls overlapped, so three wedged

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createGit, listWorktrees } from "@genesiscz/utils/git";
-import { hermeticGitEnv, TEST_REPO_EPOCH, TestRepo } from "@genesiscz/utils/git/test-repo";
+import { hermeticGitEnv, type ImportedCommit, TEST_REPO_EPOCH, TestRepo } from "@genesiscz/utils/git/test-repo";
 import {
     abortCascade,
     buildPlan,
@@ -34,10 +34,13 @@ afterEach(() => {
     }
 });
 
-async function repo(): Promise<TestRepo> {
-    const r = await TestRepo.create({ prefix: "gt-cascade-" });
+function track(r: TestRepo): TestRepo {
     repos.push(r);
     return r;
+}
+
+async function repo(): Promise<TestRepo> {
+    return track(await TestRepo.create({ prefix: "gt-cascade-" }));
 }
 
 /**
@@ -48,11 +51,49 @@ async function repo(): Promise<TestRepo> {
  * the repository the first build produced, checked out on `feat/parent` the same way.
  */
 async function repoWithStack(): Promise<TestRepo> {
-    const r = await TestRepo.fromScenario("cascade:parent-c1-c2", (target) => stack(target), {
-        prefix: "gt-cascade-",
-    });
-    repos.push(r);
-    return r;
+    return track(
+        await TestRepo.fromScenario("cascade:parent-c1-c2", (target) => stack(target), { prefix: "gt-cascade-" })
+    );
+}
+
+/**
+ * Check out `branch` and make the index and working tree match it, after `importCommits` moved
+ * refs under them: the clean state the slow path's last `git checkout` left behind.
+ */
+async function checkoutClean(r: TestRepo, branch: string): Promise<void> {
+    await r.git(["checkout", "-q", "-f", branch]);
+}
+
+const sharedBase: ImportedCommit = { files: { "shared.txt": "base\n" }, message: "shared base" };
+const masterEditsShared: ImportedCommit = { files: { "shared.txt": "master\n" }, message: "master edits shared" };
+
+/**
+ * master and `feat/child` both edit `shared.txt` after it was seeded, with `feat/parent` between
+ * them and checked out. Two cases open with exactly this, so the second one copies the first build.
+ */
+async function repoWithConflictingChild(): Promise<TestRepo> {
+    const r = await TestRepo.fromScenario(
+        "cascade:conflicting-child",
+        async (target) => {
+            await target.importCommits([
+                { branch: "master", from: "refs/heads/master", commits: [sharedBase] },
+                {
+                    branch: "feat/parent",
+                    from: "refs/heads/master",
+                    commits: [{ files: { "p.txt": "p\n" }, message: "parent" }],
+                },
+                {
+                    branch: "feat/child",
+                    from: "refs/heads/feat/parent",
+                    commits: [{ files: { "shared.txt": "child\n" }, message: "child edits shared" }],
+                },
+                { branch: "master", from: "refs/heads/master", commits: [masterEditsShared] },
+            ]);
+            await checkoutClean(target, "feat/parent");
+        },
+        { prefix: "gt-cascade-" }
+    );
+    return track(r);
 }
 
 const target = { ref: "master", source: "flag" as const, detail: "--onto" };
@@ -148,14 +189,29 @@ describe("cascade end to end", () => {
 
     it("orders a child of a child after its sibling and transplants it onto the rebased sibling", async () => {
         const r = await repo();
-        await r.checkout("feat/parent", { create: true });
-        await r.commit({ file: "p.txt", content: "p\n", message: "parent" });
-        await r.checkout("feat/c1", { create: true });
-        await r.commit({ file: "c1.txt", content: "c1\n", message: "child one" });
-        await r.checkout("feat/c2", { create: true });
-        await r.commit({ file: "c2.txt", content: "c2\n", message: "grandchild" });
-        await r.checkout("master");
-        await r.commit({ file: "m.txt", content: "m\n", message: "master moves" });
+        await r.importCommits([
+            {
+                branch: "feat/parent",
+                from: "refs/heads/master",
+                commits: [{ files: { "p.txt": "p\n" }, message: "parent" }],
+            },
+            {
+                branch: "feat/c1",
+                from: "refs/heads/feat/parent",
+                commits: [{ files: { "c1.txt": "c1\n" }, message: "child one" }],
+            },
+            {
+                branch: "feat/c2",
+                from: "refs/heads/feat/c1",
+                commits: [{ files: { "c2.txt": "c2\n" }, message: "grandchild" }],
+            },
+            {
+                branch: "master",
+                from: "refs/heads/master",
+                commits: [{ files: { "m.txt": "m\n" }, message: "master moves" }],
+            },
+        ]);
+        await checkoutClean(r, "master");
 
         const { plan: built } = await plan(r, "feat/parent");
         expect(built.children.map((c) => [c.name, c.directParent])).toEqual([
@@ -215,20 +271,32 @@ describe("cascade end to end", () => {
 
     it("routes a recomposed parent through the oracle merge and moves nothing until --continue", async () => {
         const r = await repo();
-        await r.checkout("feat/parent", { create: true });
-
-        for (const f of ["a", "b", "c", "d", "e"]) {
-            await r.commit({ file: `${f}.txt`, content: `${f}\n`, message: `add ${f}` });
-        }
-
-        await r.checkout("feat/child", { create: true });
-        await r.commit({ file: "child.txt", content: "child\n", message: "child" });
-        await r.checkout("master");
-        await r.commitMany({
-            files: { "a.txt": "a\n", "b.txt": "b\n", "c.txt": "c\n", "d.txt": "d\n" },
-            message: "recomposed a-d",
-        });
-        await r.checkout("feat/parent");
+        await r.importCommits([
+            {
+                branch: "feat/parent",
+                from: "refs/heads/master",
+                commits: ["a", "b", "c", "d", "e"].map((f) => ({
+                    files: { [`${f}.txt`]: `${f}\n` },
+                    message: `add ${f}`,
+                })),
+            },
+            {
+                branch: "feat/child",
+                from: "refs/heads/feat/parent",
+                commits: [{ files: { "child.txt": "child\n" }, message: "child" }],
+            },
+            {
+                branch: "master",
+                from: "refs/heads/master",
+                commits: [
+                    {
+                        files: { "a.txt": "a\n", "b.txt": "b\n", "c.txt": "c\n", "d.txt": "d\n" },
+                        message: "recomposed a-d",
+                    },
+                ],
+            },
+        ]);
+        await checkoutClean(r, "feat/parent");
 
         const { plan: built } = await plan(r, "feat/parent");
         expect(built.parentRoute).toBe("oracle");
@@ -257,15 +325,7 @@ describe("cascade end to end", () => {
     });
 
     it("stops on a conflict, resumes with --continue after the human resolves, and can abort back to the backups", async () => {
-        const r = await repo();
-        await r.commit({ file: "shared.txt", content: "base\n", message: "shared base" });
-        await r.checkout("feat/parent", { create: true });
-        await r.commit({ file: "p.txt", content: "p\n", message: "parent" });
-        await r.checkout("feat/child", { create: true });
-        await r.commit({ file: "shared.txt", content: "child\n", message: "child edits shared" });
-        await r.checkout("master");
-        await r.commit({ file: "shared.txt", content: "master\n", message: "master edits shared" });
-        await r.checkout("feat/parent");
+        const r = await repoWithConflictingChild();
 
         const git = createGit({ cwd: r.dir });
         const commonDir = join(r.dir, ".git");
@@ -303,14 +363,21 @@ describe("cascade end to end", () => {
 
     it("abort restores every branch to its backup even mid-conflict", async () => {
         const r = await repo();
-        await r.commit({ file: "shared.txt", content: "base\n", message: "shared base" });
-        await r.checkout("feat/parent", { create: true });
-        await r.commit({ file: "shared.txt", content: "parent\n", message: "parent edits shared" });
-        await r.checkout("feat/child", { create: true });
-        await r.commit({ file: "c.txt", content: "c\n", message: "child" });
-        await r.checkout("master");
-        await r.commit({ file: "shared.txt", content: "master\n", message: "master edits shared" });
-        await r.checkout("feat/child");
+        await r.importCommits([
+            { branch: "master", from: "refs/heads/master", commits: [sharedBase] },
+            {
+                branch: "feat/parent",
+                from: "refs/heads/master",
+                commits: [{ files: { "shared.txt": "parent\n" }, message: "parent edits shared" }],
+            },
+            {
+                branch: "feat/child",
+                from: "refs/heads/feat/parent",
+                commits: [{ files: { "c.txt": "c\n" }, message: "child" }],
+            },
+            { branch: "master", from: "refs/heads/master", commits: [masterEditsShared] },
+        ]);
+        await checkoutClean(r, "feat/child");
 
         const git = createGit({ cwd: r.dir });
         const commonDir = join(r.dir, ".git");
@@ -377,15 +444,7 @@ describe("review round 1", () => {
     });
 
     it("--cleanup refuses to delete the backups of a cascade that is still in progress unless --yes", async () => {
-        const r = await repo();
-        await r.commit({ file: "shared.txt", content: "base\n", message: "shared base" });
-        await r.checkout("feat/parent", { create: true });
-        await r.commit({ file: "p.txt", content: "p\n", message: "parent" });
-        await r.checkout("feat/child", { create: true });
-        await r.commit({ file: "shared.txt", content: "child\n", message: "child edits shared" });
-        await r.checkout("master");
-        await r.commit({ file: "shared.txt", content: "master\n", message: "master edits shared" });
-        await r.checkout("feat/parent");
+        const r = await repoWithConflictingChild();
 
         const git = createGit({ cwd: r.dir });
         const commonDir = join(r.dir, ".git");
@@ -434,17 +493,26 @@ describe("judge round 1", () => {
 
     it("--abort leaves a dirty worktree where it is and names it, and restores the others", async () => {
         const r = await repo();
-        await r.commit({ file: "shared.txt", content: "base\n", message: "shared base" });
-        await r.checkout("feat/parent", { create: true });
-        await r.commit({ file: "p.txt", content: "p\n", message: "parent" });
-        await r.checkout("feat/c1", { create: true });
-        await r.commit({ file: "c1.txt", content: "c1\n", message: "child one" });
-        await r.checkout("feat/c2", { create: true });
-        await r.git(["reset", "-q", "--hard", "feat/parent"]);
-        await r.commit({ file: "shared.txt", content: "child\n", message: "child two edits shared" });
-        await r.checkout("master");
-        await r.commit({ file: "shared.txt", content: "master\n", message: "master edits shared" });
-        await r.checkout("feat/parent");
+        await r.importCommits([
+            { branch: "master", from: "refs/heads/master", commits: [sharedBase] },
+            {
+                branch: "feat/parent",
+                from: "refs/heads/master",
+                commits: [{ files: { "p.txt": "p\n" }, message: "parent" }],
+            },
+            {
+                branch: "feat/c1",
+                from: "refs/heads/feat/parent",
+                commits: [{ files: { "c1.txt": "c1\n" }, message: "child one" }],
+            },
+            {
+                branch: "feat/c2",
+                from: "refs/heads/feat/parent",
+                commits: [{ files: { "shared.txt": "child\n" }, message: "child two edits shared" }],
+            },
+            { branch: "master", from: "refs/heads/master", commits: [masterEditsShared] },
+        ]);
+        await checkoutClean(r, "feat/parent");
         const wt = await r.worktreeAdd({ name: "wt-c1", ref: "feat/c1" });
 
         const git = createGit({ cwd: r.dir });

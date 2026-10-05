@@ -19,7 +19,8 @@ function fakeGitHub() {
               };
         return new Response(SafeJSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
     };
-    const make = (token: string) => new Octokit({ auth: token, request: { fetch } });
+    const make = (token: string) =>
+        new Octokit({ auth: token, request: { fetch }, retry: { enabled: false }, throttle: { enabled: false } });
     return { calls, make };
 }
 
@@ -115,7 +116,8 @@ describe("withGhFallback", () => {
                 { status: 200, headers: { "content-type": "application/json" } }
             );
         };
-        const make = (token: string) => new Octokit({ auth: token, request: { fetch } });
+        const make = (token: string) =>
+            new Octokit({ auth: token, request: { fetch }, retry: { enabled: false }, throttle: { enabled: false } });
         const octokit = withGhFallback(make("env-token"), "env-token", {
             ghToken: () => "gh-token",
             client: make,

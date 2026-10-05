@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { listWorktrees, type OriginDriver, type PrInfo } from "@genesiscz/utils/git";
-import { hermeticGitEnv, TEST_REPO_EPOCH, TestRepo } from "@genesiscz/utils/git/test-repo";
+import { hermeticGitEnv, type ImportedCommit, TEST_REPO_EPOCH, TestRepo } from "@genesiscz/utils/git/test-repo";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { type CollectContext, collectRefReport, listAllRefs } from "./collect";
 import { executePrune, type PruneContext, planPrune } from "./prune";
@@ -16,23 +16,29 @@ afterEach(() => {
     }
 });
 
-async function repo(): Promise<TestRepo> {
-    const r = await TestRepo.create({ prefix: "gt-merged-" });
+function track(r: TestRepo): TestRepo {
     repos.push(r);
     return r;
+}
+
+async function repo(): Promise<TestRepo> {
+    return track(await TestRepo.create({ prefix: "gt-merged-" }));
 }
 
 /**
  * A repository that already carries the default two-commit `feat/x`, built once per process.
  *
- * Eleven cases wanted exactly this, and `feature()` costs eight git processes every time
- * (checkout -b, two commits at add/commit/rev-parse each, checkout back). The bytes are
- * deterministic, so the eleventh copy is the same repository the first one built.
+ * Eleven cases wanted exactly this. The bytes are deterministic, so the eleventh copy is the
+ * same repository the first one built.
  */
 async function repoWithFeature(): Promise<TestRepo> {
-    const r = await TestRepo.fromScenario("merged:feat/x", (target) => feature(target), { prefix: "gt-merged-" });
-    repos.push(r);
-    return r;
+    return track(await TestRepo.fromScenario("merged:feat/x", (target) => feature(target), { prefix: "gt-merged-" }));
+}
+
+/** `importCommits` onto the checked-out `master`, then the index and working tree catch up with it. */
+async function commitsOnCheckout(r: TestRepo, commits: ImportedCommit[]): Promise<void> {
+    await r.importCommits({ branch: "master", from: "refs/heads/master", commits });
+    await r.git(["reset", "-q", "--hard"]);
 }
 
 async function ctxFor(r: TestRepo, baseRef = "master"): Promise<CollectContext> {
@@ -57,13 +63,25 @@ async function pruneCtxFor(r: TestRepo, extra: Partial<PruneContext> = {}): Prom
     };
 }
 
-/** A two-commit feature branch off master with content unique to its name; returns to master. */
-async function feature(r: TestRepo, name = "feat/x"): Promise<void> {
-    const tag = name.replace(/[^a-z0-9]+/gi, "-");
-    await r.checkout(name, { create: true });
-    await r.commit({ file: `${tag}-a.txt`, content: `alpha ${tag}\n`, message: `add alpha ${tag}` });
-    await r.commit({ file: `${tag}-b.txt`, content: `beta ${tag}\n`, message: `add beta ${tag}` });
-    await r.checkout("master");
+/**
+ * A two-commit feature branch off master per name, with content unique to its name; master stays
+ * checked out. One process for all of them, where checkout -b, two add/commit pairs and the
+ * checkout back were six per branch.
+ */
+async function feature(r: TestRepo, ...names: string[]): Promise<void> {
+    await r.importCommits(
+        (names.length ? names : ["feat/x"]).map((name) => {
+            const tag = name.replace(/[^a-z0-9]+/gi, "-");
+            return {
+                branch: name,
+                from: "refs/heads/master",
+                commits: [
+                    { files: { [`${tag}-a.txt`]: `alpha ${tag}\n` }, message: `add alpha ${tag}` },
+                    { files: { [`${tag}-b.txt`]: `beta ${tag}\n` }, message: `add beta ${tag}` },
+                ],
+            };
+        })
+    );
 }
 
 describe("verdict ladder", () => {
@@ -108,14 +126,20 @@ describe("verdict ladder", () => {
 
     it("MERGED by content when three commits were recomposed into two with the same final tree", async () => {
         const r = await repo();
-        await r.checkout("feat/three", { create: true });
-        await r.commit({ file: "a.txt", content: "a1\n", message: "a first" });
-        await r.commit({ file: "a.txt", content: "a2\n", message: "a second" });
-        await r.commit({ file: "c.txt", content: "c\n", message: "c" });
-        await r.checkout("master");
-        await r.commitMany({ files: { "a.txt": "a2\n" }, message: "recomposed: a" });
-        await r.commit({ file: "c.txt", content: "c\n", message: "recomposed: c" });
-        await r.commit({ file: "m.txt", content: "later\n", message: "master moves" });
+        await r.importCommits({
+            branch: "feat/three",
+            from: "refs/heads/master",
+            commits: [
+                { files: { "a.txt": "a1\n" }, message: "a first" },
+                { files: { "a.txt": "a2\n" }, message: "a second" },
+                { files: { "c.txt": "c\n" }, message: "c" },
+            ],
+        });
+        await commitsOnCheckout(r, [
+            { files: { "a.txt": "a2\n" }, message: "recomposed: a" },
+            { files: { "c.txt": "c\n" }, message: "recomposed: c" },
+            { files: { "m.txt": "later\n" }, message: "master moves" },
+        ]);
 
         const report = await collectRefReport(await ctxFor(r), "feat/three");
         expect(report).toMatchObject({ verdict: "MERGED", how: "content", ahead: 3 });
@@ -123,12 +147,20 @@ describe("verdict ladder", () => {
 
     it("STALE when the base rewrote every file the snapshot still holds an older copy of", async () => {
         const r = await repo();
-        await r.checkout("feat/pr", { create: true });
-        await r.commit({ file: "a.txt", content: "v1\n", message: "a v1" });
-        await r.commit({ file: "b.txt", content: "b\n", message: "b" });
-        await r.branch("backup/snapshot");
-        await r.commit({ file: "a.txt", content: "v2\n", message: "a v2" });
-        await r.checkout("master");
+        await r.importCommits({
+            branch: "feat/pr",
+            from: "refs/heads/master",
+            commits: [
+                { files: { "a.txt": "v1\n" }, message: "a v1" },
+                { files: { "b.txt": "b\n" }, message: "b" },
+            ],
+        });
+        await r.branch("backup/snapshot", "feat/pr");
+        await r.importCommits({
+            branch: "feat/pr",
+            from: "refs/heads/feat/pr",
+            commits: [{ files: { "a.txt": "v2\n" }, message: "a v2" }],
+        });
         await r.squashMerge("feat/pr");
 
         const pr = await collectRefReport(await ctxFor(r), "feat/pr");
@@ -144,10 +176,12 @@ describe("verdict ladder", () => {
 
     it("UNMERGED when a file the branch changed was never touched again on the base", async () => {
         const r = await repo();
-        await r.checkout("feat/orphan", { create: true });
-        await r.commit({ file: "only-here.txt", content: "mine\n", message: "add only-here" });
-        await r.checkout("master");
-        await r.commit({ file: "elsewhere.txt", content: "other\n", message: "unrelated work" });
+        await r.importCommits({
+            branch: "feat/orphan",
+            from: "refs/heads/master",
+            commits: [{ files: { "only-here.txt": "mine\n" }, message: "add only-here" }],
+        });
+        await commitsOnCheckout(r, [{ files: { "elsewhere.txt": "other\n" }, message: "unrelated work" }]);
 
         const report = await collectRefReport(await ctxFor(r), "feat/orphan");
         expect(report).toMatchObject({ verdict: "UNMERGED", how: "none" });
@@ -157,11 +191,15 @@ describe("verdict ladder", () => {
 
     it("treats a deleted path as merged only when the base no longer has it", async () => {
         const r = await repo();
-        await r.commit({ file: "old.txt", content: "old\n", message: "add old" });
-        await r.checkout("feat/del", { create: true });
-        await r.commitDelete({ file: "old.txt" });
-        await r.commit({ file: "new.txt", content: "new\n", message: "add new" });
-        await r.checkout("master");
+        await commitsOnCheckout(r, [{ files: { "old.txt": "old\n" }, message: "add old" }]);
+        await r.importCommits({
+            branch: "feat/del",
+            from: "refs/heads/master",
+            commits: [
+                { deletes: ["old.txt"], message: "delete old.txt" },
+                { files: { "new.txt": "new\n" }, message: "add new" },
+            ],
+        });
 
         const before = await collectRefReport(await ctxFor(r), "feat/del");
         expect(before.verdict).toBe("UNMERGED");
@@ -174,9 +212,11 @@ describe("verdict ladder", () => {
 
     it("handles binary files by blob id and reports them as 0/0 when unmerged", async () => {
         const r = await repo();
-        await r.checkout("feat/bin", { create: true });
-        await r.commit({ file: "blob.dat", content: "\u0000\u0001\u0002binary\u0000\n", message: "add binary" });
-        await r.checkout("master");
+        await r.importCommits({
+            branch: "feat/bin",
+            from: "refs/heads/master",
+            commits: [{ files: { "blob.dat": "\u0000\u0001\u0002binary\u0000\n" }, message: "add binary" }],
+        });
 
         const before = await collectRefReport(await ctxFor(r), "feat/bin");
         expect(before.unmerged).toEqual([{ path: "blob.dat", status: "A", insertions: 0, deletions: 0 }]);
@@ -189,9 +229,10 @@ describe("verdict ladder", () => {
         const r = await repoWithFeature();
         await r.squashMerge("feat/x");
 
-        for (let i = 0; i < 30; i++) {
-            await r.commit({ file: `m${i}.txt`, content: `${i}\n`, message: `master ${i}` });
-        }
+        await commitsOnCheckout(
+            r,
+            Array.from({ length: 30 }, (_, i) => ({ files: { [`m${i}.txt`]: `${i}\n` }, message: `master ${i}` }))
+        );
 
         const report = await collectRefReport(await ctxFor(r), "feat/x");
         expect(report).toMatchObject({ verdict: "MERGED", how: "content", behind: 31 });
@@ -199,10 +240,14 @@ describe("verdict ladder", () => {
 
     it("parses paths with spaces and non-ASCII characters", async () => {
         const r = await repo();
-        await r.checkout("feat/unicode", { create: true });
-        await r.commit({ file: "dir/ná me.txt", content: "čau\n", message: "add unicode path" });
-        await r.commit({ file: "dir/ná me.txt", content: "čau znovu\n", message: "edit unicode path" });
-        await r.checkout("master");
+        await r.importCommits({
+            branch: "feat/unicode",
+            from: "refs/heads/master",
+            commits: [
+                { files: { "dir/ná me.txt": "čau\n" }, message: "add unicode path" },
+                { files: { "dir/ná me.txt": "čau znovu\n" }, message: "edit unicode path" },
+            ],
+        });
         await r.squashMerge("feat/unicode");
         await r.commit({ file: "m.txt", content: "m\n", message: "master moves" });
         const report = await collectRefReport(await ctxFor(r), "feat/unicode");
@@ -255,10 +300,11 @@ describe("verdict ladder", () => {
     it("judges a stacked child against the base its PR names", async () => {
         const r = await repo();
         await feature(r, "feat/parent");
-        await r.checkout("feat/child", { create: true });
-        await r.git(["reset", "-q", "--hard", "feat/parent"]);
-        await r.commit({ file: "child.txt", content: "child\n", message: "child work" });
-        await r.checkout("master");
+        await r.importCommits({
+            branch: "feat/child",
+            from: "refs/heads/feat/parent",
+            commits: [{ files: { "child.txt": "child\n" }, message: "child work" }],
+        });
 
         const ctx = await ctxFor(r);
         const againstMaster = await collectRefReport(ctx, "feat/child");
@@ -297,8 +343,7 @@ describe("listAllRefs", () => {
 describe("prune", () => {
     it("refuses unmerged, dirty, current, base and main-checkout refs", async () => {
         const r = await repo();
-        await feature(r, "feat/unmerged");
-        await feature(r, "feat/dirty");
+        await feature(r, "feat/unmerged", "feat/dirty");
         await r.squashMerge("feat/dirty");
         const dirtyWt = await r.worktreeAdd({ name: "wt-dirty", ref: "feat/dirty" });
         r.write({ file: "feat-dirty-a.txt", content: "dirty\n", cwd: dirtyWt });
@@ -354,9 +399,7 @@ describe("prune", () => {
 
     it("deletes the remote only with --remote, and keeps it for an open PR or a push:never policy", async () => {
         const r = await repo();
-        await feature(r, "feat/open");
-        await feature(r, "feat/never");
-        await feature(r, "feat/ok");
+        await feature(r, "feat/open", "feat/never", "feat/ok");
         await r.addOrigin(["feat/open", "feat/never", "feat/ok"]);
         await r.squashMerge("feat/open");
         await r.squashMerge("feat/never");
@@ -433,9 +476,7 @@ describe("prune", () => {
 
     it("refuses a remote-only ref with an OPEN PR, a failed PR lookup, or a never push policy", async () => {
         const r = await repo();
-        await feature(r, "feat/open");
-        await feature(r, "feat/blind");
-        await feature(r, "feat/never");
+        await feature(r, "feat/open", "feat/blind", "feat/never");
         await r.addOrigin(["feat/open", "feat/blind", "feat/never"]);
         await r.squashMerge("feat/open");
         await r.squashMerge("feat/blind");
@@ -589,8 +630,7 @@ describe("pure verdict", () => {
 describe("CLI", () => {
     it("prints JSON with the base and per-ref verdicts and exits 1 on an unmerged ref", async () => {
         const r = await repo();
-        await feature(r, "feat/merged");
-        await feature(r, "feat/open");
+        await feature(r, "feat/merged", "feat/open");
         await r.squashMerge("feat/merged");
 
         const proc = Bun.spawn(
@@ -630,14 +670,20 @@ describe("CLI", () => {
 describe("review round 1", () => {
     it("credits a blob that master only ever held through a merge commit's conflict resolution", async () => {
         const r = await repo();
-        await r.commit({ file: "x.txt", content: "seed x\n", message: "seed x" });
-        await r.checkout("feat/x", { create: true });
-        await r.commit({ file: "x.txt", content: "resolved\n", message: "feature resolves x" });
-        await r.checkout("master");
-        await r.checkout("other", { create: true });
-        await r.commit({ file: "x.txt", content: "other\n", message: "other edits x" });
-        await r.checkout("master");
-        await r.commit({ file: "x.txt", content: "master\n", message: "master edits x" });
+        await commitsOnCheckout(r, [{ files: { "x.txt": "seed x\n" }, message: "seed x" }]);
+        await r.importCommits([
+            {
+                branch: "feat/x",
+                from: "refs/heads/master",
+                commits: [{ files: { "x.txt": "resolved\n" }, message: "feature resolves x" }],
+            },
+            {
+                branch: "other",
+                from: "refs/heads/master",
+                commits: [{ files: { "x.txt": "other\n" }, message: "other edits x" }],
+            },
+        ]);
+        await commitsOnCheckout(r, [{ files: { "x.txt": "master\n" }, message: "master edits x" }]);
         await r.git(["merge", "-q", "other"], { allowFail: true });
         r.write({ file: "x.txt", content: "resolved\n" });
         await r.git(["add", "x.txt"]);
@@ -651,12 +697,22 @@ describe("review round 1", () => {
 
     it("checks a deleted path against the base the PR names, not the run base", async () => {
         const r = await repo();
-        await r.commit({ file: "f.txt", content: "f\n", message: "add f" });
-        await r.checkout("feat/parent", { create: true });
-        await r.commit({ file: "p.txt", content: "p\n", message: "parent work" });
-        await r.checkout("feat/child", { create: true });
-        await r.commitDelete({ file: "f.txt", message: "child drops f" });
-        await r.commit({ file: "child.txt", content: "child\n", message: "child work" });
+        await commitsOnCheckout(r, [{ files: { "f.txt": "f\n" }, message: "add f" }]);
+        await r.importCommits([
+            {
+                branch: "feat/parent",
+                from: "refs/heads/master",
+                commits: [{ files: { "p.txt": "p\n" }, message: "parent work" }],
+            },
+            {
+                branch: "feat/child",
+                from: "refs/heads/feat/parent",
+                commits: [
+                    { deletes: ["f.txt"], message: "child drops f" },
+                    { files: { "child.txt": "child\n" }, message: "child work" },
+                ],
+            },
+        ]);
         await r.checkout("feat/parent");
         await r.squashMerge("feat/child");
         await r.checkout("master");
@@ -676,8 +732,7 @@ describe("review round 1", () => {
 
     it("prunes a worktree whose directory vanished without failing and keeps pruning the rest", async () => {
         const r = await repo();
-        await feature(r, "feat/gone");
-        await feature(r, "feat/fine");
+        await feature(r, "feat/gone", "feat/fine");
         await r.squashMerge("feat/gone");
         await r.squashMerge("feat/fine");
         const wt = await r.worktreeAdd({ name: "wt-gone", ref: "feat/gone" });

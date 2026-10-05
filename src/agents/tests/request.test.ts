@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { appendFeed, appendMessage, readFeed } from "../lib/feed";
 import { ensureSessionDir, sessionPaths } from "../lib/paths";
 import { sendRequest } from "../lib/request";
@@ -38,10 +39,25 @@ describe("agents request", () => {
                 from: "lead",
                 to: "worker",
                 body: "approve?",
-                timeoutMs: 1_000,
+                // A deadline, not a delay: the reply below resolves it at once. 1 s ran out under the
+                // parallel suite's load (failed at 1019 ms, 2026-10-04).
+                timeoutMs: 10_000,
             });
-            await Bun.sleep(30);
-            const request = (await readFeed(paths)).find((event) => event.type === "message");
+            // The request lands in the feed asynchronously: wake on the feed's change event, not a short poll.
+            let request = (await readFeed(paths)).find((event) => event.type === "message");
+
+            if (!request) {
+                await watchFileFeed({
+                    path: paths.feedPath,
+                    deadlineAt: Date.now() + 5_000,
+                    onChange: async () => {
+                        request = (await readFeed(paths)).find((event) => event.type === "message");
+
+                        return request ? { done: true } : undefined;
+                    },
+                });
+            }
+
             expect(request?.type).toBe("message");
 
             if (request?.type !== "message") {
