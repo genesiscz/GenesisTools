@@ -41,6 +41,8 @@ export interface JournalEntry {
     runId: string;
     pid: number;
     cwd: string;
+    /** The agent session that ran it (Claude Code, Codex), so its diff hook finds the files it wrote. */
+    session?: string;
     kind: "run" | "rollback" | "prune";
     outcome: JournalOutcome;
     spec?: { files: number; ops: number; chars: number; hash: string };

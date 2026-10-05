@@ -373,6 +373,8 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
 
     skipped.push(...named.skipped);
     writePrivateFile(join(dir, "stamp"), String(Math.floor(Date.now() / 1000)));
+    // `stamp` is whole seconds (mtime comparisons); the writer journal needs the real start.
+    writePrivateFile(join(dir, "started-ms"), String(Date.now()));
     writePrivateFile(join(dir, "roots.txt"), roots.length > 0 ? `${roots.join("\n")}\n` : "");
     // One line per root, aligned by index with roots.txt. An empty line means "no HEAD".
     writePrivateFile(join(dir, "heads.txt"), captured_roots.map((entry) => entry.head ?? "").join("\n"));

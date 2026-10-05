@@ -199,6 +199,8 @@ export const env = {
         getHome: () => getTrimmed("GENESIS_TOOLS_HOME") ?? homedir(),
         /** True only when GENESIS_TOOLS_HOME is actually set (a sandboxed root). */
         hasExplicitHome: () => isNonEmpty("GENESIS_TOOLS_HOME"),
+        /** fable-replace's own data root override (its journal lives under it); unset in normal use. */
+        getFableReplaceHome: () => getTrimmed("FABLE_REPLACE_HOME"),
         /** Set by the GenesisTools.app launcher for its children: the TCC identity this process runs under. */
         getAppBundleId: () => getTrimmed("GENESIS_TOOLS_APP_BUNDLE_ID"),
         /** Set by the launcher beside the bundle id: the inode of the launcher binary this process tree runs under. */
