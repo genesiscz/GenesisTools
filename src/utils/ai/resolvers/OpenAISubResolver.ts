@@ -16,21 +16,21 @@ export class OpenAISubResolver implements AccountResolver {
         const entry = config.account(binding.accountId);
 
         const { createOpenAI } = await import("@ai-sdk/openai");
-        const { toWhamRequest } = await import("../openai/wham-request");
+        const { fetchWhamResponse } = await import("../openai/wham-request");
         // Per-request token resolve so a long-running process follows CLI /
         // account refreshes instead of serving the token from detection time.
-        // The body is rewritten for WHAM on the way out: the SDK's plain Responses
-        // request got 400 "Stream must be set to true" (2026-09-10), so no `ai.chat`
-        // on a codex subscription ever reached the model before this. WHAM only
-        // streams, so callers stream too (`streaming: true`).
+        // WHAM requires SSE even for SDK doGenerate calls. The transport restores
+        // the requested response mode after applying the backend's request dialect.
         const freshTokenFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+            const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+            signal?.throwIfAborted();
             const fresh = await binding.tokens();
-            const wham = await toWhamRequest(input, init);
-            const headers = new Headers(wham.headers);
+            signal?.throwIfAborted();
+            const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
             headers.set("Authorization", `Bearer ${fresh.accessToken}`);
             headers.set("ChatGPT-Account-Id", fresh.chatgptAccountId);
 
-            return fetch(input, { ...wham, headers });
+            return fetchWhamResponse({ input, init: { ...init, headers } });
         };
         const provider = createOpenAI({
             apiKey: "codex-sub-placeholder",
