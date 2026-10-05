@@ -61,8 +61,10 @@ async function parentById(id: string, rows: AgentSessionRow[], now: number): Pro
         const resolved = await resolveTranscript(id, {}, "claude");
         const mtime = Bun.file(resolved.filePath).lastModified;
         // The window reaching back to that session, so the index row (title, project, account)
-        // is read rather than guessed. Nothing older than it is read.
-        const hours = (now - mtime) / 3_600_000 + 0.01;
+        // is read rather than guessed. A live session's index row lags its file (a reused listing
+        // is up to 30 s old), so the window reaches an hour further: ending at the file's mtime, it
+        // missed 7 of 40 lookups taken just after a write, and the hub showed the bare id.
+        const hours = (now - mtime) / 3_600_000 + 1;
         const rows = await listAgentSessionRows({
             providers: ["claude"],
             hours,
