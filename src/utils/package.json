@@ -295,6 +295,11 @@
             "types": "./markdown/index.ts",
             "default": "./markdown/index.ts"
         },
+        "./markdown/includes": {
+            "bun": "./markdown/includes.ts",
+            "types": "./markdown/includes.ts",
+            "default": "./markdown/includes.ts"
+        },
         "./math": {
             "bun": "./math.ts",
             "types": "./math.ts",
