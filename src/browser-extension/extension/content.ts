@@ -370,7 +370,12 @@ function start(): void {
     // A host that was down gave no definite checkout answer; coming back to the tab asks again, so the
     // dock settles once the host is up without waiting for a navigation.
     const askAgain = () => {
-        if (page && !dockHidden && document.visibilityState === "visible" && !hasCheckout.answered(page.webBase)) {
+        if (
+            page &&
+            !dockHidden &&
+            document.visibilityState === "visible" &&
+            (hasCheckout.recheck(page.webBase) || !hasCheckout.answered(page.webBase))
+        ) {
             void renderDock();
         }
     };

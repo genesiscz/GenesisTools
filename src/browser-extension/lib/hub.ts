@@ -50,5 +50,6 @@ export async function openInHub(deps: Deps, request: HubRequest): Promise<{ deta
     const target = await hubTarget(deps, request);
     const opened = await deps.hub(target.options);
     log.info({ ...target.options, root: target.root, args: opened.args }, "opened in the hub");
-    return { detail: `GenesisTools shows ${target.summary}`, root: target.root };
+    // "Asked", not "shows": the hub answers that it got the request, not that it found the target.
+    return { detail: `Asked GenesisTools to show ${target.summary}`, root: target.root };
 }

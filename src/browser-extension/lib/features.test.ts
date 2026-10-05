@@ -296,7 +296,7 @@ describe("open in GenesisTools", () => {
         const { deps, calls } = fakeDeps();
         expect(await openInHub(deps, { url: `${mr}/diffs` })).toMatchObject({ root });
         expect(await openInHub(deps, { url: mr, path: "src/a.ts" })).toMatchObject({
-            detail: "GenesisTools shows group/app!7, src/a.ts",
+            detail: "Asked GenesisTools to show group/app!7, src/a.ts",
         });
         expect(calls.hub).toEqual([
             { mode: "prs", pr: "group/app!7", reveal: undefined },

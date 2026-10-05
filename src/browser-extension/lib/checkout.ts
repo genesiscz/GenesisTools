@@ -72,11 +72,32 @@ export function resolvePage({
         const where = config.repoRoots.length > 0 ? config.repoRoots.join(", ") : "(no repoRoots configured)";
         throw new FeatureError(
             "no-checkout",
-            `no local checkout of ${project.host}/${project.path} under ${where}. Clone it there, or map it in "repos".`
+            `no local checkout of ${project.host}/${project.path} under ${where}. Clone it there, or map it in "repos".${renamedHint(project, pool)}`
         );
     }
 
     return { page, project, candidates, checkout };
+}
+
+/**
+ * A checkout with the project's name whose origin names another owner: the repository was most likely
+ * moved or renamed on the forge, which keeps redirecting git, so nothing forced the remote to change
+ * (genesiscz/ReservineBack → Reservine/ReservineBack, 2026-10-04). The error then says which one and how.
+ */
+function renamedHint(project: ProjectRef, pool: LocalCheckout[]): string {
+    const name = project.path.split("/").at(-1);
+    const match = pool.find(
+        (checkout) =>
+            checkout.isMain &&
+            checkout.project.host === project.host &&
+            checkout.project.path.split("/").at(-1) === name
+    );
+
+    if (!match) {
+        return "";
+    }
+
+    return ` ${match.root} has this name but its origin is ${match.remoteUrl}; if the repository moved, run: git -C ${match.root} remote set-url origin <the new URL>`;
 }
 
 /**

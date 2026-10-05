@@ -96,7 +96,13 @@ export async function dispatch(deps: Deps, request: unknown): Promise<HostRespon
     } catch (error) {
         const code = errorCode(error);
         const message = error instanceof Error ? error.message : String(error);
-        log.warn({ command, code, error }, "host command failed");
+        // "No checkout" is an answer, not a failure: the popup shows it muted. As a warning it was most of
+        // the day log's warnings, one per forge page visited (49 on 2026-10-02).
+        if (code === "no-checkout") {
+            log.info({ command, code, message }, "host command: no local checkout");
+        } else {
+            log.warn({ command, code, error }, "host command failed");
+        }
         return { ok: false, code, error: message };
     }
 }

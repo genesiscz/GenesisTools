@@ -133,6 +133,8 @@ export function menuTargetContext<T>(message: MenuMessage, read: () => T, empty:
  */
 export function checkoutCache(probe: (webBase: string) => Promise<HostResponse>): CheckoutCache {
     const known = new Map<string, Promise<boolean>>();
+    /** Projects whose held answer is "no checkout": a focus asks them again (`recheck`). */
+    const absent = new Set<string>();
 
     const ask = (webBase: string) => {
         let answer = known.get(webBase);
@@ -143,6 +145,10 @@ export function checkoutCache(probe: (webBase: string) => Promise<HostResponse>)
                     if (!reply.ok && reply.code !== "no-checkout") {
                         known.delete(webBase);
                         return true;
+                    }
+
+                    if (!reply.ok) {
+                        absent.add(webBase);
                     }
 
                     return reply.ok;
@@ -161,12 +167,26 @@ export function checkoutCache(probe: (webBase: string) => Promise<HostResponse>)
     };
 
     // Held or in flight; false after a transient answer, which the caller asks again on a focus.
-    return Object.assign(ask, { answered: (webBase: string) => known.has(webBase) });
+    // A held "no checkout" is dropped by `recheck`: cloning the project, mapping it in `repos` or fixing
+    // its remote brought the dock back only after a reload of the tab (2026-10-04).
+    return Object.assign(ask, {
+        answered: (webBase: string) => known.has(webBase),
+        recheck: (webBase: string) => {
+            if (!absent.delete(webBase)) {
+                return false;
+            }
+
+            known.delete(webBase);
+            return true;
+        },
+    });
 }
 
 export type CheckoutCache = ((webBase: string) => Promise<boolean>) & {
     /** A definite answer is held (or a probe is in flight) for `webBase`; false when the next render should ask. */
     answered(webBase: string): boolean;
+    /** Drops a held "no checkout" for `webBase` so the next render asks again; true when there was one. */
+    recheck(webBase: string): boolean;
 };
 
 /** Where keyboard focus goes when the dock disappears under it: the page's main landmark, else the body. */
