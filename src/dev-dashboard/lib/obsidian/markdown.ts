@@ -610,7 +610,9 @@ function buildMarked(opts: RenderOptions): Marked {
         // are unaffected.
         {
             renderer: {
-                html: ({ text }) => escapeHtml(text),
+                // A comment-only token (`<!-- md:include … -->` around an excerpt, a json2md stamp, an
+                // `<!-- updated … -->` note) is for the file, not the reader: Obsidian and Genesis hide it too.
+                html: ({ text }) => (text.replace(/<!--[\s\S]*?-->/g, "").trim() === "" ? "" : escapeHtml(text)),
                 link(token: Tokens.Link): string {
                     const local = isLocalHref(token.href);
 
@@ -622,6 +624,12 @@ function buildMarked(opts: RenderOptions): Marked {
 
                     if (asset) {
                         return renderAsset(asset, this.parser.parseInline(token.tokens), false);
+                    }
+
+                    // On a shared page a local file the page does not serve (a code file outside the vault)
+                    // has no address a visitor could open, so it shows as its label instead of a dead link.
+                    if (local && opts.resolveAsset) {
+                        return `<span class="dd-md-inert-link">${this.parser.parseInline(token.tokens)}</span>`;
                     }
 
                     const href = escapeHtml(sanitizeUrl(token.href, SAFE_LINK_SCHEME_RE));
