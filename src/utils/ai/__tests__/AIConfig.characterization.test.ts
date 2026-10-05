@@ -226,7 +226,7 @@ describe("AIConfig mutations (characterization)", () => {
         expect(reloaded.getAppDefaults("youtube")?.temperature).toBe(0.9);
     });
 
-    test("load() is a process-lifetime singleton that sees another process's write to the file", async () => {
+    test("load() retains singleton identity while refreshing external account writes", async () => {
         const config = await AIConfig.load();
         expect(config.getAccount("late-arrival")).toBeUndefined();
 
@@ -238,9 +238,13 @@ describe("AIConfig mutations (characterization)", () => {
 
         const same = await AIConfig.load();
         expect(same).toBe(config);
-        // The freshness check landed: load() re-reads the file when its mtime changes, so a running
-        // daemon sees a login done in another terminal without invalidate().
-        expect(same.getAccount("late-arrival")).toBeDefined();
+        // Report 3 deliberately fixes the old stale projection: daemons must see
+        // account changes without replacing the facade held by existing callers.
+        expect(same.getAccount("late-arrival")?.provider).toBe("groq");
+        expect(same.getAccount("max-primary")?.provider).toBe("anthropic-sub");
+
+        AIConfig.invalidate();
+        expect((await AIConfig.load()).getAccount("late-arrival")).toBeDefined();
     });
 });
 
