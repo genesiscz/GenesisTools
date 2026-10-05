@@ -20,6 +20,7 @@ import {
     formatRepoConfig,
     loadRepoConfig,
     type RepoConfig,
+    type WorktreeSection,
     writeLocalRepoConfig,
 } from "@genesiscz/utils/git";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -35,6 +36,10 @@ import {
 } from "../lib/worktree/policy";
 
 const log = logger.scoped("git-worktree").log;
+
+type WorktreeField = "base" | "install" | "plansSync";
+
+const WORKTREE_DEFAULTS: WorktreeSection = { base: ".claude/worktrees", install: "bun install", plansSync: true };
 
 interface WorktreeOptions {
     cwd?: string;
@@ -62,7 +67,7 @@ function refuse(repoRoot: string): number {
     return 1;
 }
 
-async function runConfig(options: WorktreeOptions): Promise<number> {
+export async function runConfig(options: WorktreeOptions): Promise<number> {
     const cwd = options.cwd ?? process.cwd();
     const repoRoot = await repoRootOf(cwd);
     const loaded = await loadRepoConfig(cwd);
@@ -92,43 +97,112 @@ async function runConfig(options: WorktreeOptions): Promise<number> {
         return 1;
     }
 
+    if (loaded.source === "claude" && loaded.path) {
+        // `loadRepoConfig` returns the versioned file first, so the local file this wizard writes is never read.
+        out.log.error(
+            `The worktree policy of this repository is the versioned ${loaded.path}. It shadows the local file this wizard writes, so a change made here would not take effect.`
+        );
+        out.log.info("Edit that file instead.");
+        return 1;
+    }
+
     p.intro(pc.cyan("worktree policy"));
-    p.note(
-        presets.map((preset) => `${pc.bold(preset.value)}\n  ${pc.dim(preset.example)}`).join("\n\n"),
-        `Where a worktree for ${pc.bold("feat/login")} would land`
-    );
 
-    const base = await p.select({
-        message: "Base directory for new worktrees",
-        options: presets.map((preset) => ({ value: preset.value, label: preset.label, hint: preset.example })),
-        initialValue: loaded.config.git?.worktrees?.base ?? ".claude/worktrees",
-    });
+    const current = loaded.config.git?.worktrees;
+    let start: WorktreeSection = WORKTREE_DEFAULTS;
+    let fields: WorktreeField[] = ["base", "install", "plansSync"];
 
-    if (p.isCancel(base)) {
-        p.cancel("Nothing written.");
-        return 1;
+    if (current) {
+        p.note(formatRepoConfig({ git: { worktrees: current } }), `Current (${loaded.path})`);
+
+        const action = await p.select({
+            message: "What do you want to do?",
+            options: [
+                { value: "keep", label: "Keep it", hint: "write nothing" },
+                { value: "change", label: "Change fields", hint: "pick which ones" },
+                { value: "reset", label: "Reset", hint: "answer every question from the defaults" },
+            ],
+            initialValue: "keep",
+        });
+
+        if (p.isCancel(action) || action === "keep") {
+            p.outro("Nothing written.");
+            return 0;
+        }
+
+        if (action === "change") {
+            start = current;
+            const picked = await p.multiselect<WorktreeField>({
+                message: "Fields to change",
+                options: [
+                    { value: "base", label: "base", hint: current.base ?? "not set" },
+                    { value: "install", label: "install", hint: current.install ?? "not set" },
+                    { value: "plansSync", label: "plansSync", hint: String(current.plansSync ?? false) },
+                ],
+                required: true,
+            });
+
+            if (p.isCancel(picked)) {
+                p.cancel("Nothing written.");
+                return 1;
+            }
+
+            fields = picked;
+        }
     }
 
-    const install = await p.text({
-        message: "Command to run inside a new worktree (empty to skip)",
-        placeholder: "bun install",
-        initialValue: loaded.config.git?.worktrees?.install ?? "bun install",
-        defaultValue: "",
-    });
+    let base = start.base;
+    let install = start.install;
+    let plansSync = start.plansSync;
 
-    if (p.isCancel(install)) {
-        p.cancel("Nothing written.");
-        return 1;
+    if (fields.includes("base")) {
+        p.note(
+            presets.map((preset) => `${pc.bold(preset.value)}\n  ${pc.dim(preset.example)}`).join("\n\n"),
+            `Where a worktree for ${pc.bold("feat/login")} would land`
+        );
+
+        const picked = await p.select({
+            message: "Base directory for new worktrees",
+            options: presets.map((preset) => ({ value: preset.value, label: preset.label, hint: preset.example })),
+            initialValue: start.base,
+        });
+
+        if (p.isCancel(picked)) {
+            p.cancel("Nothing written.");
+            return 1;
+        }
+
+        base = picked;
     }
 
-    const plansSync = await p.confirm({
-        message: "Copy .claude/plans back to the main checkout after each commit in a worktree?",
-        initialValue: loaded.config.git?.worktrees?.plansSync ?? true,
-    });
+    if (fields.includes("install")) {
+        const typed = await p.text({
+            message: "Command to run inside a new worktree (empty to skip)",
+            placeholder: "bun install",
+            initialValue: start.install ?? "",
+            defaultValue: "",
+        });
 
-    if (p.isCancel(plansSync)) {
-        p.cancel("Nothing written.");
-        return 1;
+        if (p.isCancel(typed)) {
+            p.cancel("Nothing written.");
+            return 1;
+        }
+
+        install = typed.trim() || undefined;
+    }
+
+    if (fields.includes("plansSync")) {
+        const confirmed = await p.confirm({
+            message: "Copy .claude/plans back to the main checkout after each commit in a worktree?",
+            initialValue: start.plansSync ?? true,
+        });
+
+        if (p.isCancel(confirmed)) {
+            p.cancel("Nothing written.");
+            return 1;
+        }
+
+        plansSync = confirmed;
     }
 
     const next: RepoConfig = {
@@ -136,9 +210,9 @@ async function runConfig(options: WorktreeOptions): Promise<number> {
         git: {
             ...loaded.config.git,
             worktrees: {
-                base,
-                ...(install.trim() ? { install: install.trim() } : {}),
-                plansSync,
+                ...(base ? { base } : {}),
+                ...(install ? { install } : {}),
+                plansSync: plansSync ?? false,
             },
         },
     };
