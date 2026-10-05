@@ -9,10 +9,18 @@ import { logger } from "@genesiscz/utils/logger";
 export { detectCloudflared, installCloudflared };
 
 export const AI_PROXY_INGRESS_MARKER = `# ai-proxy (managed by ${toolCommand("ai-proxy")})`;
+export const TELEGRAM_WEBHOOK_INGRESS_MARKER = `# telegram-bot webhook (managed by ${toolCommand("telegram-bot webhook tunnel")})`;
 
 export interface AiProxyIngressRule {
     hostname: string;
     basePath: string;
+    port: number;
+}
+
+export interface TelegramWebhookIngressRule {
+    hostname: string;
+    /** Path the public URL ends in. cloudflared forwards it unchanged, so the receiver serves the same path. */
+    path: string;
     port: number;
 }
 
@@ -31,8 +39,25 @@ export interface MergeIngressResult {
  * `/ai/health`, and everything else under `/ai` falls through to the dashboard.
  */
 export function ingressPathPattern(basePath: string): string {
-    const escaped = basePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return `^${escaped}/(${AI_PROXY_PUBLIC_SEGMENTS.join("|")})(/|$)`;
+    return `^${escapeRegex(basePath)}/(${AI_PROXY_PUBLIC_SEGMENTS.join("|")})(/|$)`;
+}
+
+function escapeRegex(text: string): string {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Anchored at both ends: an unanchored `/telegram-webhook` would also capture `/api/telegram-webhook-stats`. */
+export function telegramWebhookPathPattern(path: string): string {
+    return `^${escapeRegex(path)}$`;
+}
+
+export function buildTelegramWebhookIngressBlock(rule: TelegramWebhookIngressRule): string {
+    return [
+        `  ${TELEGRAM_WEBHOOK_INGRESS_MARKER}`,
+        `  - hostname: ${rule.hostname}`,
+        `    path: ${telegramWebhookPathPattern(rule.path)}`,
+        `    service: http://127.0.0.1:${rule.port}`,
+    ].join("\n");
 }
 
 export function buildAiProxyIngressBlock(rule: AiProxyIngressRule): string {
@@ -169,6 +194,84 @@ export function mergeAiProxyIngress(configYaml: string, rule: AiProxyIngressRule
         changed,
         removedLegacyRules,
     };
+}
+
+function isTelegramWebhookEntry(lines: string[], index: number, rule: TelegramWebhookIngressRule): boolean {
+    const host = (lines[index] ?? "").match(/^\s{2}-\s+hostname:\s*(\S+)\s*$/)?.[1];
+    if (host !== rule.hostname) {
+        return false;
+    }
+
+    const path = ingressEntryText(lines, index).match(/^\s+path:\s*(\S+)\s*$/m)?.[1];
+    return path === rule.path || path === telegramWebhookPathPattern(rule.path);
+}
+
+/** A comment right above the replaced rule describes that rule (the old one named a service that is gone). */
+function isRuleComment(line: string | undefined): boolean {
+    return /^\s*#.*(telegram|webhook|openclaw)/i.test(line ?? "");
+}
+
+/**
+ * Point the webhook path of one hostname at the receiver, as an anchored rule. A rule the config already
+ * holds for that hostname and path (the old unanchored `/telegram-webhook` one, or a managed one) is
+ * replaced where it stands, so the order of the other rules never moves. With no such rule, the new one
+ * goes in front of the hostname catch-all. Every other line comes back byte for byte.
+ */
+export function mergeTelegramWebhookIngress(configYaml: string, rule: TelegramWebhookIngressRule): MergeIngressResult {
+    const lines = configYaml.split("\n");
+    const block = buildTelegramWebhookIngressBlock(rule);
+    const out: string[] = [];
+    let hasIngress = false;
+    let placed = false;
+    let removedLegacyRules = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i] ?? "";
+
+        if (line.trim() === "ingress:") {
+            hasIngress = true;
+            out.push(line);
+            continue;
+        }
+
+        if (hasIngress && isTelegramWebhookEntry(lines, i, rule)) {
+            removedLegacyRules += 1;
+
+            if (isRuleComment(out.at(-1))) {
+                out.pop();
+            }
+
+            if (!placed) {
+                out.push(block);
+                placed = true;
+            }
+
+            i = skipIngressEntry(lines, i) - 1;
+            continue;
+        }
+
+        if (hasIngress && !placed && (isHostnameCatchAllEntry(lines, i) || isIngressCatchAll(line))) {
+            out.push(block);
+            placed = true;
+        }
+
+        out.push(line);
+    }
+
+    if (!hasIngress) {
+        return {
+            yaml: `${configYaml.trimEnd()}\ningress:\n${block}\n  - service: http_status:404\n`,
+            changed: true,
+            removedLegacyRules: 0,
+        };
+    }
+
+    if (!placed) {
+        out.push(block);
+    }
+
+    const yaml = out.join("\n");
+    return { yaml, changed: yaml !== configYaml, removedLegacyRules };
 }
 
 export async function readCloudflaredConfig(config: AiProxyConfig): Promise<string | null> {

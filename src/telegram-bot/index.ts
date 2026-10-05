@@ -6,6 +6,7 @@ import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure";
 import { registerSendCommand } from "./commands/send";
 import { registerStartCommand } from "./commands/start";
+import { registerWebhookCommand } from "./commands/webhook";
 
 handleReadmeFlag(import.meta.url);
 
@@ -19,5 +20,6 @@ program
 registerConfigureCommand(program);
 registerSendCommand(program);
 registerStartCommand(program);
+registerWebhookCommand(program);
 
 await runTool(program, { tool: "telegram-bot" });
