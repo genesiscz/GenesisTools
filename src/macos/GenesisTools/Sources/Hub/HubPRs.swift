@@ -49,7 +49,7 @@ struct HubPR: Decodable, Identifiable, Equatable {
     /// The head branch lives in a fork; `headRepo` is its `owner/repo` when the host named it.
     let crossRepository: Bool?
     let headRepo: String?
-    let localWorktree: String?
+    fileprivate(set) var localWorktree: String?
     let isMine: Bool?
     let proposal: Proposal?
 
@@ -72,10 +72,37 @@ struct HubPR: Decodable, Identifiable, Equatable {
 struct HubPRRef: Equatable {
     let project: String?
     let number: Int
+    /// The PR's page when the ref came from one (the browser extension, a link): `tools hub pr show`
+    /// takes it as is, so a PR of a project outside the list still opens.
+    var pageURL: String?
 
-    init(project: String?, number: Int) {
+    init(project: String?, number: Int, pageURL: String? = nil) {
         self.project = project
         self.number = number
+        self.pageURL = pageURL
+    }
+
+    /// `group/app!7`: a GitLab merge request, whose page needs a host only its checkout knows.
+    var isMergeRequest = false
+
+    /// What `tools hub pr show` can fetch with no local checkout: the page, else a GitHub
+    /// `owner/repo` PR. Never for a merge request: a github.com guess opened another project or
+    /// failed with a host error that hid the real cause.
+    var showURL: String? {
+        if let pageURL { return pageURL }
+        guard !isMergeRequest, let project, project.split(separator: "/").count == 2 else { return nil }
+        return "https://github.com/\(project)/pull/\(number)"
+    }
+
+    /// The forge host of the page this ref came from; nil for a path-only ref.
+    var host: String? { pageURL.flatMap { URL(string: $0)?.host?.lowercased() } }
+
+    /// The same ref with the PR's page attached, when the caller holds it (Activity rows do).
+    func withPage(_ url: String?) -> HubPRRef {
+        guard let url, !url.isEmpty else { return self }
+        var copy = self
+        copy.pageURL = url
+        return copy
     }
 
     init?(_ raw: String) {
@@ -94,6 +121,7 @@ struct HubPRRef: Equatable {
         let head = String(text[..<split])
         project = head.isEmpty ? nil : head
         self.number = number
+        isMergeRequest = text[split] == "!"
     }
 
     /// A PR or MR page: `https://github.com/owner/repo/pull/42/files`,
@@ -102,11 +130,11 @@ struct HubPRRef: Equatable {
         guard let url = URL(string: text), url.scheme == "https" || url.scheme == "http" else { return nil }
         let parts = url.path.split(separator: "/").map(String.init)
         if let at = parts.firstIndex(of: "pull"), at >= 2, at + 1 < parts.count, let number = Int(parts[at + 1]) {
-            return HubPRRef(project: parts[..<at].joined(separator: "/"), number: number)
+            return HubPRRef(project: parts[..<at].joined(separator: "/"), number: number, pageURL: text)
         }
         if let at = parts.firstIndex(of: "merge_requests"), at >= 3, parts[at - 1] == "-", at + 1 < parts.count,
            let number = Int(parts[at + 1]) {
-            return HubPRRef(project: parts[..<(at - 1)].joined(separator: "/"), number: number)
+            return HubPRRef(project: parts[..<(at - 1)].joined(separator: "/"), number: number, pageURL: text)
         }
         return nil
     }
@@ -115,6 +143,8 @@ struct HubPRRef: Equatable {
     /// letter case: GitHub and GitLab paths are case-insensitive, and a typed or lowercased URL is common.
     func matches(_ pr: HubPR) -> Bool {
         guard pr.number == number else { return false }
+        // Two clones of `team/app` on different forges share a path: the page's host tells them apart.
+        if let host, let rowHost = pr.origin?.host?.lowercased(), host != rowHost { return false }
         guard let project else { return true }
         let wanted = project.lowercased()
         let key = pr.project.lowercased()
@@ -122,6 +152,15 @@ struct HubPRRef: Equatable {
     }
 
     var label: String { project.map { "\($0)#\(number)" } ?? "#\(number)" }
+}
+
+/// A forge project with a checkout under the repo roots (`tools hub pr projects`).
+struct HubPRProject: Decodable, Equatable, Identifiable {
+    let project: String
+    let repo: String
+    let root: String
+    let kind: String
+    var id: String { project }
 }
 
 /// A file, and optionally the PR thread on it, to open in one PR's review (Activity's "Open in the diff").
@@ -180,10 +219,26 @@ private struct HubPRList: Decodable {
         let repo: String
         let error: String?
         let count: Int?
+        let origin: HubPR.Origin?
     }
 
     let prs: [HubPR]
     let repos: [Repo]
+
+    private enum CodingKeys: String, CodingKey { case prs, repos }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        repos = try container.decode([Repo].self, forKey: .repos)
+        // A cached list can name a worktree deleted since (a review's scratch checkout): its diff failed
+        // with "commit … is not in <path>" instead of fetching the head into the main checkout.
+        prs = try container.decode([HubPR].self, forKey: .prs).map { pr in
+            guard let path = pr.localWorktree, !FileManager.default.fileExists(atPath: path) else { return pr }
+            var live = pr
+            live.localWorktree = nil
+            return live
+        }
+    }
 }
 
 @MainActor
@@ -233,8 +288,22 @@ final class PRsModel: ObservableObject {
     static let pageSize = 40
     /// PRs per project the list asks for; "Load more" adds a page.
     @Published private(set) var limit = PRsModel.pageSize
-    /// Some project returned a full page, so the forge may hold more.
-    @Published private(set) var canLoadMore = false
+    /// Projects whose last answer was a full page, so the forge may hold more: each gets its own
+    /// "Load more" (one button for every project asked them all for another page).
+    @Published private(set) var fullProjects: Set<String> = []
+    /// Every forge project cloned under the repo roots, not only the session projects the list starts
+    /// from: a project with no recent session (Reservine/ReservineBack, 2026-10-04) was missing.
+    @Published private(set) var allProjects: [HubPRProject] = []
+    /// Projects whose own page (`loadProject`) is loading.
+    @Published private(set) var projectLoading: Set<String> = []
+    /// Projects opened from "More projects" or given a bigger page: their checkouts join every list
+    /// load, and a page bigger than the list's is asked for again after it.
+    private var extraRoots: [String: String] = [:]
+    private var projectLimits: [String: Int] = [:]
+    /// Counts each project's own loads, so a request superseded by a filter change or a removal never
+    /// overwrites the rows a later one (or none) put there.
+    private var projectGeneration: [String: Int] = [:]
+    private var projectsRequested = false
     /// The rows on screen came from the disk cache and the fresh list is still loading.
     @Published private(set) var showingCache = false
     /// Rows that are new or whose update time moved in the last refresh; they flash once.
@@ -269,13 +338,23 @@ final class PRsModel: ObservableObject {
 
     var selected: HubPR? { prs.first { $0.id == selectedID } }
 
-    func load(paths: [String]) {
-        self.paths = paths
+    /// Starred projects (the PR list's pins) are asked for on every load, beside the session projects.
+    static var starred: [String] { HubDefaults.store.stringArray(forKey: "groups.prs.repos.pinned") ?? [] }
+
+    private func listPaths(_ sessionPaths: [String]) -> [String] {
+        let starredRoots = Self.starred.compactMap { key in allProjects.first { $0.project == key }?.root }
+        return Array(Set(sessionPaths + starredRoots + extraRoots.values)).sorted()
+    }
+
+    func load(paths sessionPaths: [String]) {
+        self.paths = sessionPaths
         guard !loading else {
             reloadPending = true
             return
         }
 
+        loadProjectsIfNeeded()
+        let paths = listPaths(sessionPaths)
         guard !paths.isEmpty else { return }
         loading = true
         let state = state
@@ -354,6 +433,12 @@ final class PRsModel: ObservableObject {
                 }
                 freshGeneration = generation
                 apply(list, key: key, flash: true)
+                // A project given more pages than the list asks each for keeps them after a reload.
+                for (projectKey, projectLimit) in projectLimits where projectLimit > limit {
+                    if let project = allProjects.first(where: { $0.project == projectKey }) {
+                        loadProject(project)
+                    }
+                }
                 // Once per list load, never on a timer (Hub/HubPRReadiness.swift). The open PR's verdict first.
                 let selectedID = selectedID
                 PRReadinessStore.shared.refresh(prs.filter { $0.id == selectedID } + prs.filter { $0.id != selectedID })
@@ -426,9 +511,13 @@ final class PRsModel: ObservableObject {
             select(match, opened: true)
             return true
         }
-        guard matches.isEmpty, let root = directRoot(ref) else { return false }
+        guard matches.isEmpty else { return false }
+        // A checkout of the project among the list's folders, else the PR's page: `hub pr show` finds
+        // the checkout under the repo roots itself. Without the page fallback a PR of a project with no
+        // recent session ("Open in GenesisTools" on Reservine/ReservineBack#815) left another PR open.
+        guard let arg = ref.pageURL ?? directRoot(ref).map({ "\($0)#\(ref.number)" }) ?? ref.showURL else { return false }
         wantedStarted = ref
-        openDirect(ref, root: root)
+        openDirect(ref, arg: arg)
         return true
     }
 
@@ -439,6 +528,11 @@ final class PRsModel: ObservableObject {
         if let root = prs.first(where: { HubPRRef(project: project, number: $0.number).matches($0) })?.repoRoot {
             return root
         }
+        // A cloned project whose web path is the ref's, whatever the host: the path form needs no host.
+        let wanted = project.lowercased()
+        if let match = allProjects.first(where: { $0.project.lowercased().hasSuffix("/" + wanted) }) {
+            return match.root
+        }
         let name = (project.split(separator: "/").last.map(String.init) ?? project).lowercased()
         return paths.first { URL(fileURLWithPath: $0).lastPathComponent.lowercased() == name }
     }
@@ -447,23 +541,34 @@ final class PRsModel: ObservableObject {
     /// body, commits and checks), while the list loads. Its threads and head fetch start once that answer
     /// lands, not with it: for a PR with no cached row only the show names its forge thread target and
     /// its head commit. A cached row (`startWanted`) starts all three at once.
-    private func openDirect(_ ref: HubPRRef, root: String) {
-        let arg = "\(root)#\(ref.number)"
+    private func openDirect(_ ref: HubPRRef, arg: String) {
         directOpen = (ref, selectedID)
         Task {
             let span = HubPerf.begin("prs.show.direct", arg, awaits: true)
-            let fresh = await Task.detached(priority: .userInitiated) { () -> (HubPR, HubPRDetail, Data)? in
-                guard let data = try? ToolsCLIRunner.run(["hub", "pr", "show", arg]),
-                      let row = try? JSONDecoder().decode(HubPR.self, from: data),
-                      let detail = try? JSONDecoder().decode(HubPRDetail.self, from: data) else { return nil }
-                return (row, detail, data)
+            let answer = await Task.detached(priority: .userInitiated) { () -> Result<(HubPR, HubPRDetail, Data), Error> in
+                Result {
+                    let data = try ToolsCLIRunner.run(["hub", "pr", "show", arg])
+                    return (try JSONDecoder().decode(HubPR.self, from: data), try JSONDecoder().decode(HubPRDetail.self, from: data), data)
+                }
             }.value
             let request = directOpen
             if request?.ref == ref {
                 directOpen = nil
             }
-            guard let (row, detail, data) = fresh, ref.matches(row) else {
-                span.end(fresh == nil ? "failed" : "another PR")
+            let fresh: (HubPR, HubPRDetail, Data)
+            switch answer {
+            case .success(let value):
+                fresh = value
+            case .failure(let error):
+                span.end("failed")
+                // Said, not swallowed: the list's own answer no longer reports a ref it handed here.
+                errors.append("Could not open \(ref.label): \(error)")
+                return
+            }
+            let (row, detail, data) = fresh
+            guard ref.matches(row) else {
+                span.end("another PR")
+                errors.append("\(arg) answered \(row.label), not \(ref.label)")
                 return
             }
             span.end(row.label)
@@ -530,10 +635,128 @@ final class PRsModel: ObservableObject {
         load(paths: current)
     }
 
-    /// One more page per project; the rows already shown stay while it loads.
-    func loadMore() {
-        limit += Self.pageSize
-        reload()
+    /// The project list for "More projects" and the stars, once per hub run.
+    func loadProjectsIfNeeded() {
+        guard !projectsRequested else { return }
+        projectsRequested = true
+        Task {
+            let span = HubPerf.begin("prs.projects", awaits: true)
+            struct Answer: Decodable { let projects: [HubPRProject] }
+            let answer = await Task.detached(priority: .utility) { () -> Result<[HubPRProject], Error> in
+                Result { try JSONDecoder().decode(Answer.self, from: ToolsCLIRunner.run(["hub", "pr", "projects"])).projects }
+            }.value
+            switch answer {
+            case .success(let projects):
+                span.end("\(projects.count) projects")
+                allProjects = projects
+                // A starred project the first load could not name yet (the list came before this answer).
+                let starredRoots = Self.starred.compactMap { key in projects.first { $0.project == key }?.root }
+                if !starredRoots.isEmpty, !starredRoots.allSatisfy({ root in prs.contains { $0.repoRoot == root } }) {
+                    reload()
+                }
+            case .failure(let error):
+                span.end("failed")
+                projectsRequested = false
+                errors.append("Could not list the projects under the repo roots: \(error)")
+            }
+        }
+    }
+
+    /// What one project asks the forge for: its own pages so far, never fewer rows than the list already
+    /// holds for it (the list restores its cached limit, which the old global "Load more" raised), plus
+    /// a page when `more`. A smaller ask would replace the project's rows with a shorter page.
+    static func projectLimit(own: Int?, listed: Int, more: Bool) -> Int {
+        max(own ?? pageSize, listed) + (more ? pageSize : 0)
+    }
+
+    /// One project's PRs, on its own: opened from "More projects", or one more page of it. Its rows
+    /// replace that project's rows; every other project's stay as they are.
+    func loadProject(_ project: HubPRProject, more: Bool = false) {
+        guard !projectLoading.contains(project.project) else { return }
+        let limit = Self.projectLimit(own: projectLimits[project.project], listed: self.limit, more: more)
+        projectLimits[project.project] = limit
+        extraRoots[project.project] = project.root
+        projectLoading.insert(project.project)
+        let state = state
+        let mineOnly = mineOnly
+        let query = query
+        let mine = mineOnly ? ["--mine"] : []
+        let search = query.isEmpty ? [] : ["--query", query]
+        projectGeneration[project.project, default: 0] += 1
+        let generation = projectGeneration[project.project]
+        Task {
+            let span = HubPerf.begin("prs.project", "\(project.repo) limit=\(limit)", awaits: true)
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<HubPRList, Error> in
+                Result {
+                    try JSONDecoder().decode(HubPRList.self, from: ToolsCLIRunner.run(["hub", "pr", "list", project.root, "--state", state, "--limit", String(limit)] + mine + search))
+                }
+            }.value
+            projectLoading.remove(project.project)
+            // A filter change, or this project leaving the list, raced this request: its answer
+            // belongs to a state that is gone, so it must not overwrite rows for the current one.
+            guard generation == projectGeneration[project.project], extraRoots[project.project] != nil,
+                self.state == state, self.mineOnly == mineOnly, self.query == query else {
+                span.end("superseded")
+                // The project itself is still wanted, only under filters that moved while this ran:
+                // ask again now, under those, so its page does not stay stuck at the old count.
+                if extraRoots[project.project] != nil, generation == projectGeneration[project.project] {
+                    loadProject(project)
+                }
+                return
+            }
+            switch result {
+            case .success(let list):
+                span.end("\(list.prs.count) prs")
+                let merged = (prs.filter { $0.project != project.project } + list.prs).sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
+                withAnimation(SWR.animation) {
+                    prs = merged
+                    if list.repos.contains(where: { ($0.count ?? 0) >= limit }) {
+                        fullProjects.insert(project.project)
+                    } else {
+                        fullProjects.remove(project.project)
+                    }
+                }
+                if let error = list.repos.compactMap(\.error).first {
+                    errors.append("\(project.repo): \(error)")
+                } else if list.prs.isEmpty {
+                    errors.append("\(project.repo) has no \(state == "all" ? "" : state + " ")PRs/MRs\(mineOnly ? " of yours" : "")")
+                }
+            case .failure(let error):
+                span.end("failed")
+                errors.append("Could not load \(project.repo)'s PRs/MRs: \(error)")
+            }
+        }
+    }
+
+    func dismissError(_ text: String) {
+        errors.removeAll { $0 == text }
+    }
+
+    /// A project opened from "More projects" (not a session project, not starred) leaves the list
+    /// again; it stayed until the hub quit.
+    func isRemovable(_ key: String) -> Bool {
+        extraRoots[key] != nil && !Self.starred.contains(key)
+    }
+
+    func removeProject(_ key: String) {
+        extraRoots[key] = nil
+        projectLimits[key] = nil
+        fullProjects.remove(key)
+        withAnimation(SWR.animation) {
+            prs.removeAll { $0.project == key && $0.id != selectedID }
+        }
+    }
+
+    /// One more page of the project a group shows.
+    func loadMore(project key: String) {
+        if let project = allProjects.first(where: { $0.project == key }) {
+            loadProject(project, more: true)
+            return
+        }
+
+        // A session project the projects answer does not hold: its checkout is in its rows.
+        guard let root = prs.first(where: { $0.project == key })?.repoRoot else { return }
+        loadProject(HubPRProject(project: key, repo: prs.first { $0.project == key }?.repo ?? key, root: root, kind: ""), more: true)
     }
 
     /// Refreshes a list older than `age` seconds: the hub coming back to the PRs mode shows what it
@@ -574,7 +797,7 @@ final class PRsModel: ObservableObject {
             : []
         withAnimation(SWR.animation) {
             prs = sorted
-            canLoadMore = list.repos.contains { ($0.count ?? 0) >= limit }
+            fullProjects = Set(list.repos.compactMap { repo in (repo.count ?? 0) >= limit ? repo.origin?.web : nil })
             changed = moved
         }
         errors = list.repos.compactMap { repo in repo.error.map { "\(repo.repo): \($0)" } }
@@ -592,12 +815,19 @@ final class PRsModel: ObservableObject {
             // already for this head (it is what noticed the push) stays.
             details[pr.id] = nil
         }
+        let samePR = reviewPRID == pr.id
+        let sameHead = reviewHeadSha == pr.headSha
         reviewPRID = pr.id
         reviewProposalStamp = pr.proposalStamp
         reviewHeadSha = pr.headSha
         let next = ReviewModel(repo: URL(fileURLWithPath: path), options: DiffViewOptions())
         next.embedded = true
-        next.scope = Self.scope(pr, detail: details[pr.id], fetch: fetch)
+        // Only the proposal changed (a review landed, no push): the commit the reader picked still exists.
+        if samePR, let previous = review, previous.repo.path == URL(fileURLWithPath: path).path, sameHead {
+            next.scope = previous.scope
+        } else {
+            next.scope = Self.scope(pr, detail: details[pr.id], fetch: fetch)
+        }
         if let fetch {
             // The main checkout is on another branch: file actions open the host's copy at the head.
             next.remoteHead = ReviewRemoteHead(branch: pr.headBranch, sha: fetch.head, base: fetch.mergeBase ?? fetch.base,
@@ -954,17 +1184,37 @@ struct PRListView: View {
             .padding(.horizontal, 10)
             .padding(.bottom, 6)
             ForEach(prs.errors, id: \.self) { error in
-                NoticePill(text: error, isError: true) {}
+                NoticePill(text: error, isError: true) { prs.dismissError(error) }
                     .padding(.horizontal, 10)
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
+                    if prs.prs.isEmpty, prs.loading {
+                        SkeletonRows(count: 10, leading: .dot)
+                            .skeletonShimmer()
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Loading PRs and MRs")
+                    }
                     ForEach(groups, id: \.project) { group in
                         Section {
                             if !prefs.collapsed.contains(group.project) {
                                 ForEach(group.rows) { pr in
                                     row(pr)
                                         .transition(SWR.rowTransition)
+                                }
+                                if prs.fullProjects.contains(group.project) {
+                                    let busy = prs.projectLoading.contains(group.project)
+                                    GhostButton(
+                                        busy ? "Loading…" : "Load \(PRsModel.pageSize) more",
+                                        symbol: "arrow.down.circle",
+                                        tooltip: "Ask \(group.repo) for \(PRsModel.pageSize) more PRs/MRs",
+                                        fullWidth: true
+                                    ) {
+                                        prs.loadMore(project: group.project)
+                                    }
+                                    .disabled(busy)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
                                 }
                             }
                         } header: {
@@ -974,32 +1224,91 @@ struct PRListView: View {
                                 prefs: prefs,
                                 allNames: groups.map(\.project),
                                 path: group.rows.first?.repoRoot,
-                                key: group.project
+                                key: group.project,
+                                starred: true,
+                                remove: prs.isRemovable(group.project) ? { prs.removeProject(group.project) } : nil
                             )
                         }
                     }
-                    if prs.canLoadMore {
-                        GhostButton(
-                            prs.loading ? "Loading…" : "Load \(PRsModel.pageSize) more",
-                            symbol: "arrow.down.circle",
-                            tooltip: "Ask each project for \(PRsModel.pageSize) more PRs/MRs; the list is cached, so the next launch shows them at once",
-                            fullWidth: true
-                        ) {
-                            prs.loadMore()
-                        }
-                        .disabled(prs.loading)
-                        .padding(.horizontal, 10)
-                        .padding(.top, 6)
-                    }
+                    moreProjects(shown: Set(groups.map(\.project)))
                 }
                 .padding(.bottom, 12)
             }
         }
+        // The list's own layout width: a sidebar drag that re-lays it out per step flips this per step.
+        .onGeometryChange(for: CGFloat.self, of: \.size.width) { HubBench.note("prs.list.width", Int($0)) }
         .onAppear {
             prs.search(model.filter)
             prs.refreshIfStale()
         }
         .onChange(of: model.filter) { _, filter in prs.search(filter) }
+    }
+
+    @State private var moreOpen = false
+
+    /// Every other project cloned under the repo roots, folded under one header: a click loads its
+    /// PRs into the list, the star keeps it there on every load. The sidebar filter narrows it by name.
+    @ViewBuilder
+    private func moreProjects(shown: Set<String>) -> some View {
+        let needle = model.filter.trimmed.lowercased()
+        let others = prs.allProjects.filter { project in
+            !shown.contains(project.project) && (needle.isEmpty || project.repo.lowercased().contains(needle) || project.project.lowercased().contains(needle))
+        }
+        if !others.isEmpty {
+            Section {
+                if moreOpen || !needle.isEmpty {
+                    ForEach(others) { project in
+                        moreProjectRow(project)
+                    }
+                }
+            } header: {
+                Button { moreOpen.toggle() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .rotationEffect(.degrees(moreOpen || !needle.isEmpty ? 90 : 0))
+                        Text("More projects").font(.system(size: 11.5, weight: .semibold))
+                        Spacer()
+                        Text(verbatim: "\(others.count)").font(.system(size: 10.5, design: .monospaced))
+                    }
+                    .foregroundColor(ReviewPalette.dim)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(ReviewPalette.sidebar)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.genHoverPlain())
+                .instantTooltip("Every other GitHub/GitLab project cloned under the repo roots; click one to load its PRs/MRs")
+            }
+        }
+    }
+
+    private func moreProjectRow(_ project: HubPRProject) -> some View {
+        let starred = prefs.pinned.contains(project.project)
+        return HStack(spacing: 6) {
+            IconButton(systemName: starred ? "star.fill" : "star", tooltip: starred ? "Unstar \(project.repo)" : "Star \(project.repo): its PRs/MRs load with every list", size: 10) {
+                prefs.togglePin(project.project)
+                if !starred {
+                    prs.loadProject(project)
+                }
+            }
+            Button { prs.loadProject(project) } label: {
+                HStack(spacing: 6) {
+                    Text(project.repo).font(.system(size: 12)).foregroundColor(Color.white.opacity(0.85)).lineLimit(1)
+                    Text(project.project.replacingOccurrences(of: "https://", with: ""))
+                        .font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 0)
+                    if prs.projectLoading.contains(project.project) {
+                        ProgressView().controlSize(.mini)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.genHoverPlain())
+            .instantTooltip("Load \(project.repo)'s PRs/MRs (\(project.root))")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 3)
     }
 
     private func row(_ pr: HubPR) -> some View {
@@ -1224,9 +1533,13 @@ struct PRsMain: View {
             PRDetailView(model: model, prs: prs, pr: pr)
                 .id(pr.id)
         } else {
-            Text(prs.loading ? "Loading PRs and MRs…" : "Pick a PR or MR")
-                .foregroundColor(ReviewPalette.dim)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if prs.loading {
+                PaneSkeleton("Loading PRs and MRs")
+            } else {
+                Text("Pick a PR or MR")
+                    .foregroundColor(ReviewPalette.dim)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
     }
 }
@@ -1279,6 +1592,18 @@ struct PRDetailView: View {
                     }
                     ReviewRootView(model: review)
                         .freezesWidthWhileResizing()
+                        .hubSurface(.content)
+                }
+                .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
+            } else if showDiff, prs.fetchState(pr) == .fetching {
+                // The head is on its way into the main checkout: the diff's place shows its shape.
+                HStack(spacing: 0) {
+                    overview
+                        .frame(width: max(Self.overviewMinWidth, width * 0.4))
+                        .hubSurface(.content)
+                    Rectangle().fill(ReviewPalette.hairline).frame(width: 1)
+                    DiffSkeleton()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         .hubSurface(.content)
                 }
                 .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
@@ -1540,7 +1865,10 @@ struct PRDetailView: View {
                     }
                     .id(Self.descriptionSectionID)
                 } else if detail == nil {
-                    ProgressView().controlSize(.small)
+                    SkeletonLines(count: 6)
+                        .skeletonShimmer()
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Loading the description")
                 }
                 if let commits = detail?.commits, !commits.isEmpty {
                     if let review = prs.review {

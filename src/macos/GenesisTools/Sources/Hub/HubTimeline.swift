@@ -720,7 +720,7 @@ extension HubModel {
     /// thread once it is built (the list, a head fetch for a PR without a worktree, the diff load).
     @MainActor
     func openTimelinePR(_ event: TimelineEvent, reveal path: String? = nil) {
-        guard let ref = event.pr.flatMap({ HubPRRef($0.ref) }) else {
+        guard let ref = event.pr.flatMap({ pr in HubPRRef(pr.ref)?.withPage(pr.url) }) else {
             notice = "This row names no PR."
             return
         }
@@ -796,7 +796,7 @@ extension HubModel {
             add("prs", "arrow.triangle.pull", "Open the PRs that contain it") { [weak self, weak timeline] in
                 guard let self, let timeline else { return }
                 if case .commit(let detail)? = timeline.details[event.id] {
-                    guard let first = detail.prs.first, let ref = HubPRRef(first.ref) else {
+                    guard let first = detail.prs.first, let ref = HubPRRef(first.ref)?.withPage(first.url) else {
                         self.notice = "No PR of this repository contains \(event.shortSha ?? "this commit")."
                         return
                     }
@@ -1083,8 +1083,14 @@ struct TimelineMain: View {
             PanelFindBar(find: find)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                    if events.isEmpty {
-                        Text(timeline.loading ? "Reading the activity…" : timeline.error ?? (timeline.events.isEmpty ? "Nothing happened in this range." : "Nothing matches these filters."))
+                    if events.isEmpty, timeline.loading {
+                        SkeletonRows(count: 12, leading: .dot)
+                            .skeletonShimmer()
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Reading the activity")
+                            .padding(.top, 8)
+                    } else if events.isEmpty {
+                        Text(timeline.error ?? (timeline.events.isEmpty ? "Nothing happened in this range." : "Nothing matches these filters."))
                             .font(.system(size: 13))
                             .foregroundColor(ReviewPalette.dim)
                             .frame(maxWidth: .infinity)

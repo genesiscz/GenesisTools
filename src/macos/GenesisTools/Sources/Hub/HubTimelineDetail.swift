@@ -317,11 +317,10 @@ struct TimelineDetailView: View {
                     Button("Retry") { timeline.loadDetail(event, fresh: true) }.buttonStyle(.genHoverPlain()).font(.system(size: 11.5))
                 }
             } else {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Reading the details…").font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim)
-                }
-                .frame(height: 24)
+                SkeletonLines(count: 3)
+                    .skeletonShimmer()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Reading the details")
             }
         }
         .padding(10)
@@ -535,7 +534,7 @@ struct TimelineCommitDetailView: View {
     private func prLink(_ pr: TimelinePRSummary) -> some View {
         HStack(spacing: 4) {
             Button {
-                if let ref = HubPRRef(pr.ref) {
+                if let ref = HubPRRef(pr.ref)?.withPage(pr.url) {
                     model.setMode(.prs)
                     model.prs.request(ref)
                 }
@@ -653,7 +652,7 @@ struct TimelinePushDetailView: View {
             if let pr = detail.pr {
                 DetailLine(kicker: "PR") {
                     Button {
-                        if let ref = HubPRRef(pr.ref) {
+                        if let ref = HubPRRef(pr.ref)?.withPage(pr.url) {
                             model.setMode(.prs)
                             model.prs.request(ref)
                         }

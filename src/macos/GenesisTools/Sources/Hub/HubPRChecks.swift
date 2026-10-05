@@ -73,6 +73,11 @@ final class CheckLogStore: ObservableObject {
     /// Finished logs, as `tools hub pr check-log` printed them (Hub/HubSWR.swift).
     private static let cache = HubSWR.cache("check-log")
 
+    /// The × on the failure pill: the next open asks again.
+    func dismissFailure(_ url: String) {
+        failures[url] = nil
+    }
+
     func load(_ url: String, fresh: Bool = false) {
         guard !loading.contains(url), fresh || logs[url] == nil else { return }
         loading.insert(url)
@@ -223,12 +228,12 @@ struct PRChecksSection: View {
     private func logPanel(_ check: HubPRDetail.Check, url: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if store.loading.contains(url) && store.logs[url] == nil {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Fetching the failing log…").font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim)
-                }
+                SkeletonLines(count: 6, lineHeight: 8, spacing: 6)
+                    .skeletonShimmer()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Fetching the failing log")
             } else if let failure = store.failures[url] {
-                NoticePill(text: "The log could not be read", detail: failure, isError: true) {}
+                NoticePill(text: "The log could not be read", detail: failure, isError: true) { store.dismissFailure(url) }
             } else if let render = store.logs[url] {
                 logBody(render)
                 toolbar(check, url: url, render: render)

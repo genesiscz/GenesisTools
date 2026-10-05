@@ -105,4 +105,16 @@ final class HubPRFetchTests: XCTestCase {
         XCTAssertFalse(PRsModel.showIsStale(started: "a", current: "a", shown: "c"))
     }
 
+    /// A list restored at 120 per project (an old global "Load more" raised it) holds 120 rows of a project:
+    /// that project's next page asks for 160, never 80, which would replace its 120 rows with fewer.
+    @MainActor
+    func testAProjectsNextPageStartsFromTheRowsTheListAlreadyHolds() {
+        XCTAssertEqual(PRsModel.projectLimit(own: nil, listed: 120, more: true), 160)
+        XCTAssertEqual(PRsModel.projectLimit(own: 80, listed: 120, more: true), 160, "its own page is behind the list's")
+        XCTAssertEqual(PRsModel.projectLimit(own: 200, listed: 120, more: true), 240, "its own page is ahead of the list's")
+        XCTAssertEqual(PRsModel.projectLimit(own: nil, listed: 40, more: true), 80, "an untouched list: one page more")
+        XCTAssertEqual(PRsModel.projectLimit(own: nil, listed: 40, more: false), 40, "opened from More projects")
+        XCTAssertEqual(PRsModel.projectLimit(own: 120, listed: 40, more: false), 120, "a reload keeps the pages it has")
+    }
+
 }

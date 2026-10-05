@@ -85,6 +85,26 @@ private struct OpenTopRectangle: Shape {
     }
 }
 
+/// Clips a side panel's held content to the moving edge, only while it is held: open at the top like
+/// `FreezeWidthWhileResizing`, so a row in the title bar strip still draws. One shape in both states:
+/// an `if` here would rebuild the panel's content at each drag's start and end (its scroll position too).
+private struct HeldContentClip: ViewModifier {
+    let active: Bool
+
+    func body(content: Content) -> some View {
+        content.clipShape(HeldClipShape(active: active))
+    }
+}
+
+private struct HeldClipShape: Shape {
+    let active: Bool
+
+    func path(in rect: CGRect) -> Path {
+        guard active else { return Path(rect.insetBy(dx: -10_000, dy: -10_000)) }
+        return Path(CGRect(x: rect.minX, y: rect.minY - 10_000, width: rect.width, height: rect.height + 10_000))
+    }
+}
+
 private struct FreezeWidthWhileResizing: ViewModifier {
     /// A heavy pane (the transcript list) also holds during a pane-divider drag. A light one follows
     /// the divider: frozen, it left a dark gap beside the divider until release (recording 15:09).
@@ -161,6 +181,11 @@ struct ResizableSidePanel<Content: View>: View {
     var autoCollapse = false
     var fitWidth: CGFloat?
     var holdsLayout = true
+    /// The panel's own content keeps the width the drag began with and lays out once, on release; the
+    /// edge still moves with the pointer (the content is clipped, or the surface fills the rest). For
+    /// content that re-wraps: the PR list's two-line titles and its toolbar re-laid out on every step,
+    /// so the rows jumped under the pointer for the whole drag (2026-10-04).
+    var holdsContent = false
     @ViewBuilder let content: () -> Content
 
     @AppStorage private var width: Double
@@ -175,7 +200,7 @@ struct ResizableSidePanel<Content: View>: View {
 
     init(key: String, edge: Edge, title: String = "panel", defaultWidth: CGFloat = 300, minWidth: CGFloat = 180,
          maxWidth: CGFloat = 900, autoCollapse: Bool = false, fitWidth: CGFloat? = nil, holdsLayout: Bool = true,
-         @ViewBuilder content: @escaping () -> Content) {
+         holdsContent: Bool = false, @ViewBuilder content: @escaping () -> Content) {
         self.key = key
         self.edge = edge
         self.title = title
@@ -185,6 +210,7 @@ struct ResizableSidePanel<Content: View>: View {
         self.autoCollapse = autoCollapse
         self.fitWidth = fitWidth
         self.holdsLayout = holdsLayout
+        self.holdsContent = holdsContent
         self.content = content
         _width = AppStorage(wrappedValue: Double(defaultWidth), "panel.\(key).width")
         _collapsed = AppStorage(wrappedValue: false, "panel.\(key).collapsed")
@@ -210,6 +236,11 @@ struct ResizableSidePanel<Content: View>: View {
         guard holdsLayout else { return shownWidth }
         return min(CGFloat(dragStart ?? baseWidth), max(minWidth, maxWidth))
     }
+    /// The content's own width: the drag's start width while `holdsContent` holds it, else the shown one.
+    private var contentWidth: CGFloat {
+        guard holdsContent, let dragStart else { return shownWidth }
+        return min(CGFloat(dragStart), max(minWidth, maxWidth))
+    }
     /// A live layout still has the light panes follow instead of freezing (`HubLiveResize.splitOnly`).
     private var resizeSource: String { holdsLayout ? "panel.\(key)" : "split.panel.\(key)" }
     private var dragShift: CGFloat {
@@ -226,7 +257,9 @@ struct ResizableSidePanel<Content: View>: View {
             } else {
                 if edge == .trailing { handle.offset(x: dragShift) }
                 content()
-                    .frame(width: max(0, shownWidth))
+                    .frame(width: max(0, contentWidth))
+                    .frame(width: max(0, shownWidth), alignment: edge == .leading ? .leading : .trailing)
+                    .modifier(HeldContentClip(active: holdsContent && dragStart != nil))
                     .opacity(willCollapse ? 0.35 : 1)
                     .frame(width: dragStart != nil ? max(0, slotWidth) : nil, alignment: edge == .leading ? .leading : .trailing)
                     // Shrinking leaves part of the held slot uncovered: paint it as the neighbour, so it
