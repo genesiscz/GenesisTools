@@ -53,6 +53,25 @@ describe("tools dispatcher", () => {
         expect(output).not.toContain("Tool not found");
     });
 
+    it("says a source folder without an entry file has no entry point, instead of 'Tool not found'", () => {
+        const { status, output } = runTools("types");
+
+        expect(output).toContain("No entry point");
+        expect(output).toContain("src/types/");
+        expect(output).toContain("tools types/<file>");
+        expect(output).not.toContain("Tool not found");
+        expect(status).toBe(1);
+    });
+
+    // src/log-viewer has no index.ts, but its scripts run by path, so the message must not say "nothing to run".
+    it("still runs a script inside an entry-less folder by path", () => {
+        const { status, output } = runTools("log-viewer/session-key");
+
+        expect(output).not.toContain("Tool not found");
+        expect(output).not.toContain("No entry point");
+        expect(status).toBe(0);
+    });
+
     // Regression test: #446 item 5 — `tools --help` printed "Tool not found: --help" and exited 1.
     it.each(["--help", "-h"])("%s prints usage and the tool list, and exits 0", (flag) => {
         const { status, output } = runTools(flag);

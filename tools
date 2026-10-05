@@ -102,7 +102,8 @@ async function getAvailableTools(srcDir) {
     } catch (readError) {
         logger.error(`✖ Error reading source directory ${srcDir}:`, readError);
     }
-    return tools.sort(); // Return sorted list
+    // case-insensitive, so the capitalised `Internal` folder sorts among the rest instead of first
+    return tools.sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
 }
 
 /**
@@ -199,6 +200,20 @@ async function executeTool(scriptId, scriptArgs) {
         if (!targetScript) {
             const { searchSelect, searchSelectCancelSymbol } = await import("@genesiscz/utils/prompts/clack/search-select");
             const chalk = (await import("chalk")).default;
+
+            // A folder with no entry file (shared types, test suites, a dashboard bundle) is real, so
+            // "Tool not found" would misreport it.
+            if (!scriptId.includes("/") && existsSync(pathAsIs) && statSync(pathAsIs).isDirectory()) {
+                const readme = join(pathAsIs, "README.md");
+                console.error(
+                    `\n  ${chalk.yellow("No entry point:")} ${chalk.bold(`src/${scriptId}/`)} has no ${INDEX_FILE_NAMES.join(" or ")}.\n` +
+                    `  A file inside it can still be run by path: ${chalk.bold(`tools ${scriptId}/<file>`)}\n` +
+                    (existsSync(readme) ? `  Read: ${chalk.dim(readme)}\n` : "") +
+                    `  List runnable tools: ${chalk.bold("tools --help")}\n`
+                );
+                process.exit(1);
+            }
+
             // Fuzzy match: find tools that contain the input or share segments
             const availableTools = await getAvailableTools(srcDir);
             const searchTerm = scriptId.toLowerCase().replace(/[-_]+$/, ""); // strip trailing dashes
