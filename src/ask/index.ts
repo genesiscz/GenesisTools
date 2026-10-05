@@ -55,6 +55,14 @@ const convManager = conversationManager;
 class ASKTool {
     async main(): Promise<void> {
         try {
+            // `usage` has its own options (--days, ...) that the chat argument parser rejects, so it
+            // takes the arguments before that parser sees them.
+            if (process.argv[2]?.toLowerCase() === "usage") {
+                const { runUsageCommand } = await import("@ask/commands/usage");
+                await runUsageCommand(process.argv.slice(3));
+                return;
+            }
+
             const argv = parseCLIArguments();
 
             // Handle help and version

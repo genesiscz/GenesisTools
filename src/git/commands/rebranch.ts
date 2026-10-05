@@ -1,28 +1,22 @@
+import { groupCommits, parseCommit } from "@app/git/lib/rebranch/grouping";
+import type { BranchResult, CommitGroup } from "@app/git/lib/rebranch/types";
 import * as p from "@clack/prompts";
-import { isVerbose, runTool } from "@genesiscz/utils/cli";
+import { isVerbose } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { DetailedCommitInfo } from "@genesiscz/utils/git";
 import { createGit } from "@genesiscz/utils/git";
-import { logger, out } from "@genesiscz/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import { cancelSymbol, searchMultiselect } from "@genesiscz/utils/prompts/clack/search-multiselect";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
-import { Command } from "commander";
+import type { Command } from "commander";
 import pc from "picocolors";
-import { groupCommits, parseCommit } from "./grouping";
-import type { BranchResult, CommitGroup } from "./types";
-
-// Handle --readme flag early (before Commander parses)
-handleReadmeFlag(import.meta.url);
 
 interface Options {
-    helpFull?: boolean;
     dryRun?: boolean;
 }
 
-function showHelpFull() {
-    out.println(`
-Usage: ${toolCommand("git-rebranch")} [options]
+const HELP_TEXT = `
+Usage: ${toolCommand("git rebranch")} [options]
 
 Description:
   Split a messy branch with mixed commits into multiple clean branches.
@@ -33,7 +27,7 @@ Description:
 Options:
   --dry-run       Show execution plan without creating branches
   -v, --verbose   Show git commands being executed
-  -?, --help-full Show this detailed help message
+
 
 Workflow:
   1. Detects your current branch and its fork point
@@ -44,11 +38,10 @@ Workflow:
   6. Cherry-picks commits onto new branches from fork point
 
 Examples:
-  ${toolCommand("git-rebranch")}              # Interactive mode
-  ${toolCommand("git-rebranch")} --dry-run    # Preview without creating branches
-  ${toolCommand("git-rebranch")} --verbose    # Show all git commands
-`);
-}
+  ${toolCommand("git rebranch")}              # Interactive mode
+  ${toolCommand("git rebranch")} --dry-run    # Preview without creating branches
+  ${toolCommand("git rebranch")} --verbose    # Show all git commands
+`;
 
 function slugify(str: string): string {
     return str
@@ -58,25 +51,10 @@ function slugify(str: string): string {
         .replace(/^-|-$/g, "");
 }
 
-const program = new Command()
-    .name("git-rebranch")
-    .description("Split a messy branch into multiple clean branches by commit grouping")
-    .option("-?, --help-full", "Show detailed help message")
-    .option("--dry-run", "Show execution plan without creating branches");
-
-await runTool(program, { tool: "git-rebranch" });
-
-const opts = program.opts<Options>();
-
-if (opts.helpFull) {
-    showHelpFull();
-    process.exit(0);
-}
-
-async function main(): Promise<void> {
+async function rebranch(opts: Options): Promise<void> {
     const git = createGit({ verbose: isVerbose() });
 
-    p.intro(pc.bgCyan(pc.black(" git-rebranch ")));
+    p.intro(pc.bgCyan(pc.black(" git rebranch ")));
 
     // === STEP 1: Precondition checks ===
     if (await git.hasUncommittedChanges()) {
@@ -497,7 +475,18 @@ function displayResults(results: BranchResult[]): void {
     p.note(lines.join("\n"), "Results");
 }
 
-main().catch((err) => {
-    p.log.error(pc.red(String(err)));
-    process.exit(1);
-});
+export function registerRebranchCommand(program: Command): void {
+    program
+        .command("rebranch")
+        .description("Split a messy branch into multiple clean branches by commit grouping (interactive)")
+        .addHelpText("after", HELP_TEXT)
+        .option("--dry-run", "Show execution plan without creating branches")
+        .action(async (opts: Options) => {
+            try {
+                await rebranch(opts);
+            } catch (err) {
+                p.log.error(pc.red(String(err)));
+                process.exit(1);
+            }
+        });
+}

@@ -2,8 +2,9 @@
 
 Purpose: take the commits of a source branch and rebuild them as separate branches (one per
 scope, one PR each), then prove the split lost nothing. Not for: reshaping the commits of a
-single branch (`recommit.md`); `tools git-rebranch` is the interactive alternative for the same
-job.
+single branch (`recommit.md`). `tools git rebranch` is the interactive alternative for the same
+job: it groups commits by conventional-commit scope or ticket id and cherry-picks each group, but
+it prompts, so an agent follows the steps below, which also prove that nothing was lost.
 
 Arguments (`/gt:git-recompose-branches`): number of commits to analyse (default 50), the
 source branch (default: current), and comma-separated path patterns per group.

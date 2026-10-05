@@ -180,5 +180,5 @@ This is not a stylistic preference. Both commands once rotated Anthropic OAuth r
 ## Notes
 
 - `tools ai-proxy link` registers a local proxy as a real account, which is what makes `@proxy/...` references resolve here.
-- Cost accounting for calls made through this subsystem is recorded automatically. See `tools usage` for `ask` analytics and [`tools ai-spend`](../ai-spend/README.md) for Claude Code session spend.
+- Cost accounting for calls made through this subsystem is recorded automatically. See `tools ask usage` for `ask` analytics and [`tools ai-spend`](../ai-spend/README.md) for Claude Code session spend.
 - `image` needs `HUGGINGFACE_TOKEN` in the environment. It is the one verb here that is not covered by the account system.

@@ -202,15 +202,24 @@ The tool uses a two-step detection process:
 -   **Verbose Info**: Output to stderr (doesn't interfere with piping)
 -   **Errors**: Output to stderr with clear messages
 
+## Schema inference
+
+`tools json schema [file]` (alias `infer-schema`) reads JSON from a file or stdin and prints a TypeScript interface (default), a JSON Schema, or a skeleton of the structure.
+
+```bash
+tools json schema data.json                       # TypeScript interfaces
+tools json schema data.json -f skeleton           # { users: { id: integer, name: string }[], total: integer }
+tools json schema data.json -f schema --compact   # JSON Schema on one line
+curl -s https://api.example.com/users | tools json schema -n User --clipboard
+```
+
+`-f, --format` is `typescript`, `schema` or `skeleton`. `-n, --name` renames the root interface (typescript only). `--compact` prints one line instead of the indented form; it came from the retired `tools json-schema`.
+
 ## Dependencies
 
 -   `@toon-format/toon`: Official TOON format library for encoding/decoding
 -   `commander`: Command-line argument parsing
 
-## Related Tools
-
--   `files-to-prompt`: Convert files to AI-friendly formats
--   `collect-files-for-ai`: Aggregate project files for AI analysis
 
 ## References
 

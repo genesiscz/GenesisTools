@@ -1,24 +1,16 @@
 import { existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { Executor, runTool } from "@genesiscz/utils/cli";
+import { Executor } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import { isPromptCancelled } from "@genesiscz/utils/prompt-helpers.js";
 import * as p from "@genesiscz/utils/prompts/p";
 import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
-
-// Use inquirer backend for this tool
-p.setBackend(inquirerBackend);
-
-import { env } from "@genesiscz/utils/env";
-import { out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
-import { Command } from "commander";
-
-// Handle --readme flag early (before Commander parses)
-handleReadmeFlag(import.meta.url);
+import type { Command } from "commander";
 
 // Simple logger that doesn't interfere with prompts
 const logger = {
@@ -34,7 +26,7 @@ const logger = {
 
 interface Options {
     commits?: number;
-    helpFull?: boolean;
+
     force?: boolean;
 }
 
@@ -45,9 +37,8 @@ interface CommitInfo {
     newMessage?: string;
 }
 
-function showHelpFull() {
-    logger.info(`
-Usage: ${toolCommand("git-rename-commits")} [--commits N] [--help]
+const HELP_TEXT = `
+Usage: ${toolCommand("git rename-commits")} [--commits N] [--help]
 
 Description:
   Interactively rename commit messages for the last N commits.
@@ -57,12 +48,14 @@ Description:
 Options:
   -c, --commits   Number of recent commits to rename (default: prompts if not provided)
   -f, --force     Skip safety check (not recommended - use only if commits are backed up)
-  -?, --help-full Show this help message (Commander auto-generates --help)
 
 Examples:
-  ${toolCommand("git-rename-commits")} --commits 3
-  ${toolCommand("git-rename-commits")} -c 5
-`);
+  ${toolCommand("git rename-commits")} --commits 3
+  ${toolCommand("git rename-commits")} -c 5
+`;
+
+function showHelpFull() {
+    logger.info(HELP_TEXT);
 }
 
 async function getCurrentRepoDir(): Promise<string> {
@@ -854,22 +847,10 @@ async function checkCommitsArePushed(repoDir: string, currentBranch: string): Pr
     }
 }
 
-async function main() {
-    const program = new Command()
-        .name("git-rename-commits")
-        .description("Interactively rename git commits")
-        .option("-c, --commits <n>", "Number of commits to rename", (value: string) => parseInt(value, 10))
-        .option("-f, --force", "Force: skip safety check (not recommended - use only if commits are backed up)")
-        .option("-?, --help-full", "Show detailed help message");
-
-    await runTool(program, { tool: "git-rename-commits" });
-
-    const opts = program.opts<Options>();
-
-    if (opts.helpFull) {
-        showHelpFull();
-        process.exit(0);
-    }
+async function renameCommits(opts: Options) {
+    // The prompt facade's backend is process-wide state, so it is chosen when this command runs
+    // rather than when `tools git` loads and every other subcommand inherits it.
+    p.setBackend(inquirerBackend);
 
     try {
         // Get repository directory
@@ -893,7 +874,7 @@ async function main() {
                 logger.error("   Please push your commits first as a backup:");
                 logger.error(`   ${chalk.cyan(`git push origin ${currentBranch}`)}`);
                 logger.error("\n   If you're sure you want to proceed anyway, use:");
-                logger.error(`   ${chalk.cyan(`${toolCommand("git-rename-commits")} --force`)}`);
+                logger.error(`   ${chalk.cyan(`${toolCommand("git rename-commits")} --force`)}`);
                 process.exit(1);
             }
         } else {
@@ -1048,7 +1029,19 @@ async function main() {
     }
 }
 
-main().catch((err) => {
-    logger.error(`\n✖ Unexpected error: ${err}`);
-    process.exit(1);
-});
+export function registerRenameCommitsCommand(program: Command): void {
+    program
+        .command("rename-commits")
+        .description("Interactively rename the last N commit messages, with a confirmation before the rewrite")
+        .option("-c, --commits <n>", "Number of commits to rename", (value: string) => parseInt(value, 10))
+        .option("-f, --force", "Force: skip safety check (not recommended - use only if commits are backed up)")
+        .addHelpText("after", HELP_TEXT)
+        .action(async (opts: Options) => {
+            try {
+                await renameCommits(opts);
+            } catch (err) {
+                logger.error(`\n✖ Unexpected error: ${err}`);
+                process.exit(1);
+            }
+        });
+}

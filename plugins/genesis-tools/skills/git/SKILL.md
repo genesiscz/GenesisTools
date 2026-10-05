@@ -20,7 +20,7 @@ which order, and what to read in its output.
 | conflicts on a branch whose PRs already merged, `git cherry` mostly `+` while the base visibly holds the features, "rebase enhancements safely", "the base already has most of this" | `references/oracle-merge.md` | `scripts/resolve-hunks.ts`, `scripts/rebase-with-oracle.ts` |
 | "rebase the parent and its children", "my sub-branches broke after I rebased", a stack of PRs, "cascade" | `references/rebase-cascade.md` | `tools git rebase-cascade` |
 | "recommit", "make these 40 commits into 5", "clean commits before the PR", "squash into logical commits" | `references/recommit.md` (`/gt:git-recommit`) | `scripts/recommit.ts` (log, group, check, apply), `scripts/recommit-plan-check.ts` |
-| "split this branch into three PRs", "cherry-pick the dashboard commits out into their own branch" | `references/recompose-branches.md` (`/gt:git-recompose-branches`) | git, `tools git-rebranch` |
+| "split this branch into three PRs", "cherry-pick the dashboard commits out into their own branch" | `references/recompose-branches.md` (`/gt:git-recompose-branches`) | git, `tools git rebranch` (interactive, for a person at a terminal) |
 | "merge PR 12", "land it", "rebase merge", "squash merge it", GitLab MR merge | `references/merge-pr.md` | `tools github merge`, `glab` |
 | import-only conflicts on a JS/TS monorepo with a barrel normaliser (rare) | `references/import-fast-path.md` | the internal plugin's `rebase-prs` skill |
 

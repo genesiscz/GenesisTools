@@ -1,6 +1,6 @@
 /**
  * Usage recording for the YouTube tool. All LLM/embedding/transcription calls funnel
- * through here so they show up in `tools usage` (the central UsageDatabase shared
+ * through here so they show up in `tools ask usage` (the central UsageDatabase shared
  * with the `ask` tool).
  *
  * Per-call cost is computed from the catalog price ladder (provider+model+token-based).

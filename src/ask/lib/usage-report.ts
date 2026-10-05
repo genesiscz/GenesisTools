@@ -1,50 +1,16 @@
-#!/usr/bin/env bun
-import { UsageDatabase } from "@app/ask/output/UsageDatabase";
-import { runTool } from "@genesiscz/utils/cli";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import type { UsageDatabase } from "@app/ask/output/UsageDatabase";
 import { formatDateTime } from "@genesiscz/utils/date";
 import { formatCost, formatTokens } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { logger, out } from "@genesiscz/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 import Table from "cli-table3";
-import { Command } from "commander";
-
-interface Options {
-    days?: number;
-    provider?: string;
-    model?: string;
-    format?: "table" | "json" | "summary";
-    helpFull?: boolean;
-}
-
-function showHelp() {
-    out.println(`
-Usage: ${toolCommand("usage")} [options]
-
-Display usage statistics and analytics for ASK tool.
-
-Options:
-  -d, --days <number>     Number of days to analyze (default: 30)
-  -p, --provider <name>  Filter by provider name
-  -m, --model <name>      Filter by model name
-  -f, --format <format>   Output format: table, json, summary (default: table)
-  -?, --help-full         Show this detailed help message
-
-Examples:
-  ${toolCommand("usage")}                    # Show last 30 days usage
-  ${toolCommand("usage")} --days 7           # Show last 7 days usage
-  ${toolCommand("usage")} --provider openai   # Filter by provider
-  ${toolCommand("usage")} --format summary    # Show summary only
-  ${toolCommand("usage")} --format json       # Output as JSON
-`);
-}
 
 function formatDate(dateStr: string): string {
     return formatDateTime(dateStr, { absolute: "date" });
 }
 
-async function showSummary(db: UsageDatabase, days: number) {
+export async function showSummary(db: UsageDatabase, days: number) {
     const total = await db.getTotalUsage(days);
 
     out.println(chalk.bold.cyan("\n📊 USAGE SUMMARY\n"));
@@ -62,7 +28,7 @@ async function showSummary(db: UsageDatabase, days: number) {
     }
 }
 
-async function showDailyUsage(db: UsageDatabase, days: number) {
+export async function showDailyUsage(db: UsageDatabase, days: number) {
     const dailyUsage = await db.getDailyUsage(days);
 
     if (dailyUsage.length === 0) {
@@ -90,7 +56,7 @@ async function showDailyUsage(db: UsageDatabase, days: number) {
     out.println(table.toString());
 }
 
-async function showProviderUsage(db: UsageDatabase, days: number) {
+export async function showProviderUsage(db: UsageDatabase, days: number) {
     const providerUsage = await db.getProviderUsage(days);
 
     if (providerUsage.length === 0) {
@@ -117,7 +83,7 @@ async function showProviderUsage(db: UsageDatabase, days: number) {
     out.println(table.toString());
 }
 
-async function showModelUsage(db: UsageDatabase, days: number) {
+export async function showModelUsage(db: UsageDatabase, days: number) {
     const modelUsage = await db.getModelUsage(days);
 
     if (modelUsage.length === 0) {
@@ -152,7 +118,7 @@ async function showModelUsage(db: UsageDatabase, days: number) {
     }
 }
 
-async function showCostTrend(db: UsageDatabase, days: number) {
+export async function showCostTrend(db: UsageDatabase, days: number) {
     const trend = await db.getCostTrend(Math.min(days, 7));
 
     if (trend.length === 0) {
@@ -171,7 +137,7 @@ async function showCostTrend(db: UsageDatabase, days: number) {
     }
 }
 
-async function showJSON(db: UsageDatabase, days: number, _provider?: string, _model?: string) {
+export async function showJSON(db: UsageDatabase, days: number, _provider?: string, _model?: string) {
     const total = await db.getTotalUsage(days);
     const dailyUsage = await db.getDailyUsage(days);
     const providerUsage = await db.getProviderUsage(days);
@@ -198,57 +164,3 @@ async function showJSON(db: UsageDatabase, days: number, _provider?: string, _mo
 
     out.println(SafeJSON.stringify(output, null, 2));
 }
-
-async function main() {
-    const program = new Command()
-        .name("usage")
-        .description("Display usage statistics and analytics for ASK tool")
-        .option("-d, --days <number>", "Number of days to analyze", "30")
-        .option("-p, --provider <name>", "Filter by provider name")
-        .option("-m, --model <name>", "Filter by model name")
-        .option("-f, --format <format>", "Output format: table, json, summary", "table")
-        .option("-?, --help-full", "Show detailed help message");
-
-    await runTool(program, { tool: "usage" });
-
-    const options = program.opts<Options>();
-
-    // Handle custom help option
-    if (options.helpFull) {
-        showHelp();
-        process.exit(0);
-    }
-
-    try {
-        const db = new UsageDatabase();
-        const days = parseInt(options.days?.toString() || "30", 10);
-
-        if (Number.isNaN(days) || days < 1) {
-            logger.error("Invalid days value. Must be a positive number.");
-            process.exit(1);
-        }
-
-        if (options.format === "json") {
-            await showJSON(db, days, options.provider, options.model);
-        } else if (options.format === "summary") {
-            await showSummary(db, days);
-        } else {
-            // Default table format
-            await showSummary(db, days);
-            await showDailyUsage(db, days);
-            await showProviderUsage(db, days);
-            await showModelUsage(db, days);
-            await showCostTrend(db, days);
-        }
-
-        db.close();
-    } catch (error) {
-        logger.error(`Usage statistics failed: ${error}`);
-        process.exit(1);
-    }
-}
-
-main().catch((err) => {
-    logger.error(`Unexpected error: ${err}`);
-    process.exit(1);
-});

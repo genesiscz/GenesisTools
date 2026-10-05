@@ -87,12 +87,14 @@ ASK Tool - Multi-Router LLM Chat Application
 Usage:
   ${toolCommand("ask")} [options] [message]
   ${toolCommand("ask models")} [options]
+  ${toolCommand("ask usage")} [options]
 
 Arguments:
   <message>               Message to send (for non-interactive mode)
 
 Commands:
   models, model           Display pricing and detailed information for all available providers and models
+  usage                   Token and cost analytics for ask calls (--days, --provider, --model, --format)
 
 Options:
   -s, --sst <file>        Transcribe audio file

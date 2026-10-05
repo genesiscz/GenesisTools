@@ -28,6 +28,20 @@ describe("renderSchema", () => {
         expect(out).toContain("roles: string[]");
     });
 
+    // Carried over from the retired `tools json-schema`, whose default output was one line.
+    it("compact: emits the whole skeleton on one line", () => {
+        const out = renderSchema({ text: SAMPLE, format: "skeleton", name: "Root", compact: true });
+        expect(out).not.toContain("\n");
+        expect(out).toContain("id: integer");
+        expect(out).toContain("roles: string[]");
+    });
+
+    it("compact: emits JSON Schema on one line that still round-trips", () => {
+        const out = renderSchema({ text: SAMPLE, format: "schema", name: "Root", compact: true });
+        expect(out).not.toContain("\n");
+        expect(SafeJSON.parse(out).properties.id.type).toBe("integer");
+    });
+
     it("schema: emits valid JSON Schema that round-trips", () => {
         const out = renderSchema({ text: SAMPLE, format: "schema", name: "Root" });
         const parsed = SafeJSON.parse(out);

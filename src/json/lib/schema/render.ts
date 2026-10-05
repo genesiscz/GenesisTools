@@ -11,6 +11,8 @@ export interface RenderOptions {
     format: OutputFormat;
     /** Root interface name (typescript format only; no-op otherwise). */
     name: string;
+    /** One-line output instead of the indented multi-line form. */
+    compact?: boolean;
 }
 
 /**
@@ -18,7 +20,7 @@ export interface RenderOptions {
  * Reads no clock/env/fs/network — deterministic for a given input.
  * Throws on empty or invalid JSON.
  */
-export function renderSchema({ text, format, name }: RenderOptions): string {
+export function renderSchema({ text, format, name, compact }: RenderOptions): string {
     const trimmed = text.trim();
     if (trimmed.length === 0) {
         throw new Error("No JSON input provided (empty input).");
@@ -35,7 +37,7 @@ export function renderSchema({ text, format, name }: RenderOptions): string {
         throw new Error(`Invalid JSON input: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    const output = formatSchema(value, format, { pretty: true });
+    const output = formatSchema(value, format, { pretty: compact !== true });
     return applyRootName(output, format, name);
 }
 

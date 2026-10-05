@@ -7,6 +7,8 @@
  *   tools git commits --from <date> --to <date> [options]
  *   tools git merged [refs...] [--all] [--prune <ref>]
  *   tools git rebase-cascade <parent>
+ *   tools git rebranch [--dry-run]
+ *   tools git rename-commits [--commits N]
  *   tools git config show|init|check
  *   tools git base [branch]
  */
@@ -20,6 +22,8 @@ import { registerHealthCommand } from "@app/git/commands/health";
 import { registerMergedCommand } from "@app/git/commands/merged";
 import { registerMonsterCommand } from "@app/git/commands/monster";
 import { registerRebaseCascadeCommand } from "@app/git/commands/rebase-cascade";
+import { registerRebranchCommand } from "@app/git/commands/rebranch";
+import { registerRenameCommitsCommand } from "@app/git/commands/rename-commits";
 import { registerWorktreeCommand } from "@app/git/commands/worktree";
 import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -50,6 +54,8 @@ registerMonsterCommand(program, storage);
 registerHealthCommand(program, storage);
 registerMergedCommand(program, storage);
 registerRebaseCascadeCommand(program, storage);
+registerRebranchCommand(program);
+registerRenameCommitsCommand(program);
 registerConfigCommand(program, storage);
 registerBaseCommand(program, storage);
 registerWorktreeCommand(program, storage);
@@ -70,6 +76,8 @@ Commands:
   health                       Repo health as a clean report (ranked file leaderboard table)
   merged                       Is a branch or worktree already in the base? Verdict by content, not sha
   rebase-cascade               Rebase a parent and the child branches stacked on it, with backups
+  rebranch                     Split a messy branch into clean branches by grouping its commits (interactive)
+  rename-commits               Reword the last N commit messages one by one, with a confirmation (interactive)
   config                       Per-repo genesis-tools.config.json: show | init | check
   base                         Which branch is this one based on, and which rule decided
 

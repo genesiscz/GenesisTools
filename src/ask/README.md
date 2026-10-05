@@ -108,6 +108,29 @@ tools ask models --provider openai --sort output --filter-capabilities="chat|vis
 tools ask model
 ```
 
+### Usage and cost analytics
+
+`tools ask usage` reports on the local SQLite usage database that `tools ask` writes after every LLM call: how much you spent, how many tokens flowed through which model, and which days cost the most. It was `tools usage` before it moved here. Old command: `tools usage` still works and prints a note.
+
+```bash
+tools ask usage                      # last 30 days, table view
+tools ask usage --days 7
+tools ask usage --provider openai
+tools ask usage --model gpt-5
+tools ask usage --format summary     # totals only
+tools ask usage --format json        # for piping and dashboards
+```
+
+| Option | Alias | Description | Default |
+|--------|-------|-------------|---------|
+| `--days <n>` | `-d` | Number of days to analyze | `30` |
+| `--provider <name>` | `-p` | Filter by provider (openai, anthropic, groq, ...) | none |
+| `--model <name>` | `-m` | Filter by model | none |
+| `--format <fmt>` | `-f` | `table`, `json`, or `summary` | `table` |
+| `--help-full` | `-?` | Detailed help | |
+
+The table view shows a summary (totals, average cost and tokens per message), daily usage, and per-provider and per-model breakdowns. Each call is priced when it is recorded (the curated catalog first, then LiteLLM and OpenRouter rates) and the cost is stored with it. A report adds up the stored costs and fetches no prices, so past totals do not change when rates change. For Claude Code session costs use `tools claude usage`; for coding-agent token analytics use `tools ai-spend`.
+
 The pricing command displays:
 
 -   **Model information**: Name, context window, capabilities

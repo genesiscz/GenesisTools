@@ -120,6 +120,8 @@ const TOOL_ALIASES = new Map([
     // src/voice-memos/ is a stray README from before this tool moved under src/macos (#446.9);
     // `tools voice-memos` reported "Tool not found" instead of pointing at the real command.
     ["voice-memos", ["macos", "voice-memos"]],
+    // `tools usage` moved under the tool whose database it reads.
+    ["usage", ["ask", "usage"]],
 ]);
 
 /**

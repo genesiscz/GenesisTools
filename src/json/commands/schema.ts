@@ -7,6 +7,7 @@ import { type Command, Option } from "commander";
 interface SchemaOptions {
     format: OutputFormat;
     name: string;
+    compact?: boolean;
     clipboard?: boolean;
 }
 
@@ -22,6 +23,7 @@ export function registerSchemaCommand(program: Command): void {
                 .default("typescript")
         )
         .option("-n, --name <RootName>", "Root interface name (typescript only)", "Root")
+        .option("--compact", "One-line output instead of indented multi-line")
         .option("-c, --clipboard", "Copy the result to the clipboard")
         .action(async (file: string | undefined, options: SchemaOptions) => {
             if (options.format === "typescript" && !/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(options.name)) {
@@ -31,7 +33,12 @@ export function registerSchemaCommand(program: Command): void {
 
             try {
                 const { text } = await resolveInput({ arg: file, isTTY: process.stdin.isTTY === true });
-                const result = renderSchema({ text, format: options.format, name: options.name });
+                const result = renderSchema({
+                    text,
+                    format: options.format,
+                    name: options.name,
+                    compact: options.compact,
+                });
 
                 if (options.clipboard) {
                     try {

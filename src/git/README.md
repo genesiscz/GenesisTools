@@ -6,7 +6,7 @@
 
 Queries commits across a date range, extracts workitem IDs from commit messages via configurable regex patterns, attributes branches, classifies rebased commits, and maintains a list of author identities so you can slice history cleanly across name/email changes. The branch side answers "is it merged?" by content (`merged`), rebases a parent with its children (`rebase-cascade`), detects the base branch (`base`) and reads the per-repo policy file (`config`). The `gt:git` skill in `plugins/genesis-tools` is the guided workflow on top of these commands; the typed git readers they share live in `src/utils/git/` (`createGit()` and `porcelain`).
 
-This is complementary to `git-commit` (which *creates* commits) and `git-last-commits-diff` (which *renders* diffs). `tools git commits` is the reporting layer.
+`tools git commits` is the reporting layer. The same tool holds the two interactive history editors, `rebranch` and `rename-commits`.
 
 ---
 
@@ -131,6 +131,24 @@ The parent's route comes from the merged engine: `rebase` (plain), `merged` (alr
 ### `base`
 
 `tools git base [branch]` prints the base branch and the rule that chose it: `--base`, the branch's open PR/MR target, config `mainPrBranch`, the closest declared branch, or an inference (closest merge-base, then origin HEAD, then a local master/main). `--offline` skips the PR lookup, `--json` for machines.
+
+### `rebranch`
+
+Interactive split of a messy branch into several clean ones. It finds the fork point, groups the commits by conventional-commit scope or ticket id (`feat(login, PROJ-123): ...`), lets you refine each group in a searchable multiselect, names the branches, and cherry-picks each group from the fork point. `--dry-run` prints the plan and creates nothing. Commits that conflict are skipped with a warning. It needs a terminal, so an agent uses the manual flow in the `gt:git` skill (`references/recompose-branches.md`), which also proves nothing was lost.
+
+```bash
+tools git rebranch --dry-run     # the plan only
+tools git rebranch
+```
+
+### `rename-commits`
+
+Interactive reword of the last N commits: it shows each commit with its message as the default, collects the new messages, shows an OLD/NEW confirmation screen, and then rewrites history with a rebase. It checks that the commits are already pushed (or that a rebase only changed hashes) and warns before rewriting; `--force` skips that check. It rewrites history, so back the branch up first. To reshape commits from an agent use the recommit script in the `gt:git` skill instead.
+
+```bash
+tools git rename-commits --commits 3
+tools git rename-commits -c 5 --force
+```
 
 ### `config`
 
