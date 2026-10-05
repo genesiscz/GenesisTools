@@ -56,14 +56,15 @@ export function registerList(program: Command): void {
             for (const s of filtered) {
                 const tags = s.tags.length > 0 ? ` ${pc.dim(`#${s.tags.join(" #")}`)}` : "";
                 const gate = s.gateDir ? ` ${pc.yellow("⌂")}` : "";
-                ui.raw(`${pc.bold(s.name)}${tags}${gate}`);
-                ui.raw(`  ${s.description ?? pc.dim("(no description)")}`);
-                ui.raw(
+                // the list is the command's result (stdout); the count below is status (stderr)
+                out.println(`${pc.bold(s.name)}${tags}${gate}`);
+                out.println(`  ${s.description ?? pc.dim("(no description)")}`);
+                out.println(
                     pc.dim(
                         `  ${s.servers.join(", ")} · ${s.tools.length} tool(s) · ${s.runs} run(s) · ${s.project ?? "-"}`
                     )
                 );
-                ui.raw(pc.dim(`  ${s.createdFrom}`));
+                out.println(pc.dim(`  ${s.createdFrom}`));
             }
 
             const withGated = filterScripts(journal.scripts, { ...baseFilter, all: true });

@@ -617,7 +617,11 @@ if (import.meta.main) {
         process.exit(0);
     }
 
-    if (!requireInteractiveTty()) {
+    if (
+        !requireInteractiveTty({
+            hint: `for a one-shot check of what is using CPU now, run ${toolCommand("doctor cpu")}`,
+        })
+    ) {
         process.exit(1);
     }
 

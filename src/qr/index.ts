@@ -1,8 +1,13 @@
 import { runTool, suggestCommand } from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
 import { renderQr } from "@genesiscz/utils/qr";
 import { Command } from "commander";
 import { buildTextPayload, buildWifiPayload, normalizeSecurity } from "./lib/payload";
+import { useSmallRendering } from "./lib/render-mode";
+
+const smallRendering = (small: boolean | undefined) =>
+    useSmallRendering({ small, isTTY: process.stdout.isTTY === true, noColor: env.get("NO_COLOR") !== undefined });
 
 interface TextOptions {
     small?: boolean;
@@ -33,7 +38,7 @@ program
 
         const payload = buildTextPayload(text);
         logger.debug({ payload }, "qr: rendering text payload");
-        const matrix = renderQr(payload, { small: options.small ?? false });
+        const matrix = renderQr(payload, { small: smallRendering(options.small) });
         out.log.step(`QR for: ${text}`);
         out.print(matrix);
     });
@@ -77,7 +82,7 @@ program
         });
 
         logger.debug({ ssid, security, hidden: options.hidden ?? false }, "qr: rendering wifi payload");
-        const matrix = renderQr(payload, { small: options.small ?? false });
+        const matrix = renderQr(payload, { small: smallRendering(options.small) });
         out.log.step(`QR for WiFi network: ${ssid}`);
         out.print(matrix);
     });

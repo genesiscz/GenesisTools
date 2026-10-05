@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildTextPayload, buildWifiPayload, escapeWifiField, normalizeSecurity } from "./lib/payload";
+import { useSmallRendering } from "./lib/render-mode";
 
 describe("buildTextPayload", () => {
     test("passes URLs through verbatim", () => {
@@ -98,5 +99,22 @@ describe("normalizeSecurity", () => {
     test("throws on an unknown security type", () => {
         expect(() => normalizeSecurity("bogus")).toThrow(/Invalid --security/);
         expect(() => normalizeSecurity("")).toThrow(/Invalid --security/);
+    });
+});
+
+// Regression test: with no terminal or NO_COLOR, the full-size QR (drawn with ANSI background
+// colours) came out as escape codes or blank lines; the half-block mode needs no colour
+describe("useSmallRendering", () => {
+    test("an explicit --small always wins", () => {
+        expect(useSmallRendering({ small: true, isTTY: true, noColor: false })).toBe(true);
+    });
+
+    test("a colour terminal keeps the full-size rendering", () => {
+        expect(useSmallRendering({ small: undefined, isTTY: true, noColor: false })).toBe(false);
+    });
+
+    test("no terminal, or NO_COLOR, renders with block characters", () => {
+        expect(useSmallRendering({ small: undefined, isTTY: false, noColor: false })).toBe(true);
+        expect(useSmallRendering({ small: undefined, isTTY: true, noColor: true })).toBe(true);
     });
 });

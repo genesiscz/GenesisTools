@@ -15,6 +15,7 @@ import { getAllProviders } from "@genesiscz/utils/ai/providers/index.ts";
 import { formatOutput, type OutputFormat } from "@genesiscz/utils/ai/transcription-format.ts";
 import type { AIProviderType } from "@genesiscz/utils/ai/types.ts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor.ts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { copyToClipboard } from "@genesiscz/utils/clipboard.ts";
 import { isCloudProvider } from "@genesiscz/utils/config/ai.types";
 import { formatDateTime } from "@genesiscz/utils/date.ts";
@@ -86,8 +87,16 @@ export function registerVoiceMemosCommand(program: Command): void {
             await handleErrors(() => searchAction(query));
         });
 
-    // No subcommand → interactive mode
+    // No subcommand → interactive mode; without a terminal the picker would wait forever, so list instead
     vm.action(async () => {
+        if (!isInteractive()) {
+            await handleErrors(listAction);
+            out.log.info(
+                `The memo picker needs an interactive terminal. Use: ${toolCommand("macos voice-memos play")} <id>, ${toolCommand("macos voice-memos export")} <id> [dest], ${toolCommand("macos voice-memos transcribe")} <id>`
+            );
+            return;
+        }
+
         await handleErrors(interactiveMode);
     });
 

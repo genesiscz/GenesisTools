@@ -26,6 +26,9 @@ export interface PatchEntry {
 export const PATCHES: PatchEntry[] = [
     { pkg: "node_modules/cli-table3", patch: "patches/cli-table3@0.6.5.patch" },
     { pkg: "node_modules/@opentui/solid", patch: "patches/@opentui%2Fsolid@0.5.9.patch" },
+    // A spinner whose output is not a terminal prints one line per message (clack's CI mode) instead of
+    // an animation frame every 80 ms that floods logs and agent output.
+    { pkg: "node_modules/@clack/prompts", patch: "patches/@clack%2Fprompts@1.7.0.patch" },
     // Upstream fix for server.close() hanging on a mid-optimize dep; drop at vite >= 8.3.1.
     { pkg: "node_modules/vite", patch: "patches/vite@8.2.2.patch", fixedIn: "8.3.1" },
 ];

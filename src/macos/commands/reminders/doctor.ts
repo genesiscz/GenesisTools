@@ -75,7 +75,7 @@ export function registerDoctorCommand(program: Command): void {
     program
         .command("doctor")
         .description(
-            "Explain whether this process may read Reminders: authorization status, list count, host app, TCC grants. Read-only: with no recorded grant it reports that instead of asking, because the macOS dialog writes a durable TCC row."
+            "Explain whether this process may read Reminders: authorization status, list count, host app, TCC grants. Read-only: the status read never shows the macOS dialog; only --request-access asks, while macOS has not asked yet."
         )
         .option("--json", "Print the report as JSON")
         .option("--request-access", "Ask macOS for Reminders access when it has not asked yet (shows the dialog)")

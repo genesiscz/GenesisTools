@@ -1,0 +1,31 @@
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 0aa53bf..299bbba 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -962,7 +962,7 @@ const spinner = ({
+   signal: m,
+   ...I
+ } = {}) => {
+-  const u = isCI();
++  const plain = !isTTY(n), u = isCI() || plain;
+   let M, T, d = false, S = false, s = "", p, w = performance.now();
+   const x = getColumns(n), k = I?.styleFrame ?? W, g = (e) => {
+     const r = e > 1 ? O ?? settings.messages.error : G ?? settings.messages.cancel;
+@@ -973,6 +973,8 @@ const spinner = ({
+     process.removeListener("uncaughtExceptionMonitor", f), process.removeListener("unhandledRejection", f), process.removeListener("SIGINT", i), process.removeListener("SIGTERM", i), process.removeListener("exit", g), m && m.removeEventListener("abort", i);
+   }, y = () => {
+     if (p === void 0) return;
++    if (plain) { n.write(`
++`); return; }
+     u && n.write(`
+ `);
+     const r = wrapAnsi(p, x, {
+@@ -985,7 +987,7 @@ const spinner = ({
+     const r = (performance.now() - e) / 1e3, t = Math.floor(r / 60), o = Math.floor(r % 60);
+     return t > 0 ? `[${t}m ${o}s]` : `[${o}s]`;
+   }, N = I.withGuide ?? settings.withGuide, P = (e = "") => {
+-    d = true, M = block({ output: n }), s = C(e), w = performance.now(), N && n.write(`${styleText("gray", S_BAR)}
++    d = true, M = plain ? () => {} : block({ output: n }), s = C(e), w = performance.now(), N && n.write(`${styleText("gray", S_BAR)}
+ `);
+     let r = 0, t = 0;
+     A(), T = setInterval(() => {
