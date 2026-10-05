@@ -392,6 +392,17 @@ export const WEB_SERVICES = {
         note: "Bind 127.0.0.1 only. Local header X-Genesis-Mcp-Gateway. Default in mcp-manager gateway.listen.",
         matchProcess: matchGenesisTool("mcp-manager", "mcp-gateway"),
     },
+    "telegram-webhook": {
+        key: "telegram-webhook",
+        name: "Telegram Webhook",
+        description: "Loopback receiver for Telegram bot updates, reached through the public tunnel.",
+        port: 8319,
+        launch: `${toolCommand("telegram-bot start", "--webhook")}`,
+        portOverride: { flag: "--port" },
+        serviceKind: "http-api",
+        note: `Bind 127.0.0.1 only. The tunnel rule for the webhook path points here (\`${toolCommand("telegram-bot webhook tunnel")}\`).`,
+        matchProcess: matchGenesisTool("telegram-bot"),
+    },
 } as const satisfies Record<string, WebServiceEntry>;
 
 export type WebServiceKey = keyof typeof WEB_SERVICES;

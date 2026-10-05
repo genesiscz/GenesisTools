@@ -1,9 +1,9 @@
 import { loadTelegramConfig } from "@app/telegram-bot/lib/config";
+import { createTelegramApi } from "@app/telegram-bot/lib/webhook/api";
 import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { ParseMode } from "@genesiscz/utils/telegram-bot/lib/types";
 import type { Command } from "commander";
-import { Api } from "grammy";
 
 export function registerSendCommand(program: Command): void {
     program
@@ -23,7 +23,7 @@ export function registerSendCommand(program: Command): void {
                 text = await new Response(Bun.stdin.stream()).text();
             }
 
-            const api = new Api(config.botToken);
+            const api = createTelegramApi(config);
             try {
                 await api.sendMessage(config.chatId, text, {
                     parse_mode: opts.parseMode as ParseMode | undefined,

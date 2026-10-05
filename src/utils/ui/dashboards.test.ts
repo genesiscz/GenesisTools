@@ -33,7 +33,29 @@ describe("port registry", () => {
         expect(WEB_SERVICES["youtube-extension"].port).toBe(9877);
         expect(WEB_SERVICES["ai-proxy"].port).toBe(8317);
         expect(WEB_SERVICES["mcp-gateway"].port).toBe(8318);
+        expect(WEB_SERVICES["telegram-webhook"].port).toBe(8319);
         expect(registryEntryForPort(9886)?.name).toBe("YouTube Server");
+    });
+
+    test("telegram-webhook matches only the telegram-bot tool under the repo", () => {
+        const entry = WEB_SERVICES["telegram-webhook"];
+
+        expect(
+            entry.matchProcess({
+                port: 8319,
+                command: "bun",
+                fullCommand: "bun run /Users/x/GenesisTools/src/telegram-bot/index.ts start --webhook",
+                cwd: "/Users/x/GenesisTools",
+            })
+        ).toBe(true);
+        expect(
+            entry.matchProcess({
+                port: 8319,
+                command: "node",
+                fullCommand: "node /tmp/dev-server.js",
+                cwd: "/tmp",
+            })
+        ).toBe(false);
     });
 });
 
