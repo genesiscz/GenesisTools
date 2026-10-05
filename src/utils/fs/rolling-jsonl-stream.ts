@@ -49,6 +49,9 @@ export function createRollingJsonlStream<T>({
         const current = fileForNow();
 
         if (current !== file) {
+            // Lines appended to the old day file since the last poll would be dropped by the stop
+            // (the tailer polls every 300 ms): read them first.
+            tailer.flush();
             tailer.stop();
             file = current;
             tailer = new FileTailer<T>(file, { onLine });

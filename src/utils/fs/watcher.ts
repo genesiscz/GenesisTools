@@ -25,6 +25,16 @@ export interface WatcherOptions {
     transientBackoffMs?: number;
     /** Callback when a transient error causes back-off */
     onTransientError?: (err: Error, backoffMs: number) => void;
+    /**
+     * The event source; @parcel/watcher's native subscribe when omitted. Tests pass a fake: debouncing,
+     * filtering and unsubscribing are this module's own logic, and FSEvents delivery under load took
+     * seconds, which made every test that waited on it slow and flaky (2026-10-04).
+     */
+    subscribe?: (
+        dir: string,
+        callback: (err: Error | null, events: Event[]) => void,
+        opts: { ignore?: string[] }
+    ) => Promise<AsyncSubscription>;
 }
 
 export interface WatcherSubscription {
@@ -105,15 +115,27 @@ export async function createWatcher(
     const filter = opts?.filter;
     const transientBackoffMs = opts?.transientBackoffMs ?? 30000;
     const onTransientError = opts?.onTransientError;
+    // Lazy-import @parcel/watcher (native addon), unless the caller brings its own event source.
+    const subscribe = opts?.subscribe ?? (await import("@parcel/watcher")).default.subscribe;
 
     // Accumulate events for debounce (latest event type per path wins)
     const pendingEvents = new Map<string, WatcherEvent>();
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     let consecutiveErrors = 0;
     let isActive = true;
+    let subscription: AsyncSubscription | undefined;
+    let endWhenSubscribed = false;
 
-    // Lazy-import @parcel/watcher (native addon)
-    const watcher = await import("@parcel/watcher");
+    // An error source may trip the circuit breaker while `subscribe` is still running, before there is a
+    // subscription to end; it is then ended as soon as `subscribe` returns.
+    const endSubscription = async (): Promise<void> => {
+        if (!subscription) {
+            endWhenSubscribed = true;
+            return;
+        }
+
+        await subscription.unsubscribe();
+    };
 
     const flushEvents = async () => {
         debounceTimer = null;
@@ -150,12 +172,12 @@ export async function createWatcher(
 
             if (consecutiveErrors >= maxErrors) {
                 isActive = false;
-                await subscription.unsubscribe();
+                await endSubscription();
             }
         }
     };
 
-    const subscription: AsyncSubscription = await watcher.default.subscribe(
+    subscription = await subscribe(
         resolvedDir,
         (err: Error | null, events: Event[]) => {
             if (!isActive) {
@@ -167,7 +189,7 @@ export async function createWatcher(
 
                 if (consecutiveErrors >= maxErrors) {
                     isActive = false;
-                    subscription.unsubscribe().catch(async (err) => {
+                    endSubscription().catch(async (err) => {
                         const { logger } = await import("@genesiscz/utils/logger");
                         logger.warn({ err }, "[watcher] circuit-breaker unsubscribe failed");
                     });
@@ -205,6 +227,10 @@ export async function createWatcher(
         }
     );
 
+    if (endWhenSubscribed) {
+        await subscription.unsubscribe();
+    }
+
     const handle: WatcherSubscription = {
         async unsubscribe() {
             if (!isActive) {
@@ -219,7 +245,7 @@ export async function createWatcher(
             }
 
             pendingEvents.clear();
-            await subscription.unsubscribe();
+            await endSubscription();
         },
 
         get active() {

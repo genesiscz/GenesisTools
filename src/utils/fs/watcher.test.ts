@@ -4,11 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { skip } from "@genesiscz/utils/test/skip";
+import type { Event } from "@parcel/watcher";
 import { watchFileFeed } from "./file-feed-watcher";
 import {
     createWatcher,
     isTransientError,
     type WatcherEvent,
+    type WatcherOptions,
     type WatcherSubscription,
     waitForPath,
     watchPath,
@@ -37,203 +39,237 @@ afterEach(async () => {
     }
 });
 
-/** Helper: wait for callback to fire and collect events */
-function collectEvents(opts?: { debounceMs?: number; filter?: (e: WatcherEvent) => boolean }): {
-    events: WatcherEvent[];
-    waitForEvents: (minCount?: number, timeoutMs?: number) => Promise<WatcherEvent[]>;
-    startWatcher: () => Promise<void>;
-} {
-    const events: WatcherEvent[] = [];
-    let resolve: ((events: WatcherEvent[]) => void) | null = null;
-    let minExpected = 1;
+/**
+ * A stand-in for @parcel/watcher: `emit` delivers native events at once. createWatcher's own logic
+ * (type mapping, debounce, filter, unsubscribe) is tested on it. Real FSEvents delivery took seconds
+ * under load, so the tests that waited on it were slow and failed 2-3 times even alone (2026-10-04).
+ */
+function fakeSource() {
+    let deliver: ((err: Error | null, events: Event[]) => void) | null = null;
+    let unsubscribed = 0;
+    const subscribe: NonNullable<WatcherOptions["subscribe"]> = async (_dir, callback) => {
+        deliver = callback;
+        return {
+            unsubscribe: async () => {
+                unsubscribed++;
+            },
+        };
+    };
 
-    const waitForEvents = (minCount = 1, timeoutMs = 8000): Promise<WatcherEvent[]> => {
-        minExpected = minCount;
+    return {
+        subscribe,
+        emit: (events: Event[]) => deliver?.(null, events),
+        fail: (err: Error) => deliver?.(err, []),
+        unsubscribed: () => unsubscribed,
+    };
+}
 
-        if (events.length >= minExpected) {
-            return Promise.resolve(events);
+/** Every batch the watcher hands its callback, and a promise for the first `count` of them. */
+function batchesOf() {
+    const batches: WatcherEvent[][] = [];
+    const waiters: Array<{ count: number; resolve: () => void }> = [];
+
+    const until = (count: number, timeoutMs = 5_000): Promise<void> => {
+        if (batches.length >= count) {
+            return Promise.resolve();
         }
 
-        return new Promise<WatcherEvent[]>((res, rej) => {
-            resolve = res;
+        return new Promise<void>((resolve, reject) => {
+            const waiter = {
+                count,
+                resolve: () => {
+                    clearTimeout(timer);
+                    resolve();
+                },
+            };
             const timer = setTimeout(() => {
-                rej(new Error(`Timed out waiting for ${minCount} events, got ${events.length}`));
+                waiters.splice(waiters.indexOf(waiter), 1);
+                reject(new Error(`waited ${timeoutMs} ms for batch ${count}, saw ${batches.length}`));
             }, timeoutMs);
 
-            // Clean up timer when resolved
-            const originalResolve = resolve;
-            resolve = (evts) => {
-                clearTimeout(timer);
-                originalResolve(evts);
-            };
+            waiters.push(waiter);
         });
     };
 
-    const startWatcher = async () => {
-        sub = await createWatcher(
-            tempDir,
-            (batch) => {
-                events.push(...batch);
-
-                if (resolve && events.length >= minExpected) {
-                    resolve(events);
-                    resolve = null;
-                }
-            },
-            {
-                debounceMs: opts?.debounceMs ?? 300,
-                filter: opts?.filter,
+    return {
+        batches,
+        callback: (batch: WatcherEvent[]) => {
+            batches.push(batch);
+            for (const waiter of waiters.filter((w) => batches.length >= w.count)) {
+                waiter.resolve();
             }
-        );
+        },
+        until,
     };
-
-    return { events, waitForEvents, startWatcher };
 }
 
 describe("createWatcher", () => {
-    test.skipIf(skip.onWindows)(
-        "detects file creation",
-        async () => {
-            const { waitForEvents, startWatcher } = collectEvents();
-            await startWatcher();
+    test("maps native create, update and delete events into one debounced batch", async () => {
+        const source = fakeSource();
+        const seen = batchesOf();
+        sub = await createWatcher(tempDir, seen.callback, { debounceMs: 20, subscribe: source.subscribe });
 
-            // Small delay to ensure watcher is fully subscribed
-            await Bun.sleep(100);
+        source.emit([
+            { type: "create", path: "/x/a.txt" },
+            { type: "update", path: "/x/b.txt" },
+            { type: "delete", path: "/x/c.txt" },
+        ]);
+        await seen.until(1);
 
-            const filePath = join(tempDir, "new-file.txt");
-            await Bun.write(filePath, "hello world");
-
-            const events = await waitForEvents(1);
-            const createEvent = events.find((e) => e.path === filePath && e.type === "create");
-            expect(createEvent).toBeTruthy();
-        },
-        { timeout: 15_000 }
-    );
-
-    test(
-        "detects file modification",
-        async () => {
-            // Create file first before starting watcher
-            const filePath = join(tempDir, "existing.txt");
-            await Bun.write(filePath, "original");
-
-            const { events: seen, waitForEvents, startWatcher } = collectEvents();
-            await startWatcher();
-            await Bun.sleep(100);
-
-            await Bun.write(filePath, "modified content");
-
-            // Under heavy machine load (the 16x parallel suite) FSEvents can
-            // coalesce this write into the subscription's initial scan and
-            // deliver nothing. One re-touch after a quiet window keeps the test
-            // honest — it still requires a real update event to pass.
-            const nudge = setTimeout(() => {
-                if (seen.length === 0) {
-                    void Bun.write(filePath, "modified content, nudged");
-                }
-            }, 3_000);
-            const events = await waitForEvents(1);
-            clearTimeout(nudge);
-            const updateEvent = events.find((e) => e.path === filePath && e.type === "update");
-            expect(updateEvent).toBeTruthy();
-        },
-        { timeout: 15_000 }
-    );
-
-    test(
-        "detects file deletion",
-        async () => {
-            const filePath = join(tempDir, "to-delete.txt");
-            await Bun.write(filePath, "temporary");
-
-            const { waitForEvents, startWatcher } = collectEvents();
-            await startWatcher();
-            await Bun.sleep(100);
-
-            rmSync(filePath);
-
-            const events = await waitForEvents(1);
-            const deleteEvent = events.find((e) => e.path === filePath && e.type === "delete");
-            expect(deleteEvent).toBeTruthy();
-        },
-        { timeout: 15_000 }
-    );
-
-    test("debounces rapid changes into a single callback", async () => {
-        let callbackCount = 0;
-        const allEvents: WatcherEvent[] = [];
-
-        sub = await createWatcher(
-            tempDir,
-            (batch) => {
-                callbackCount++;
-                allEvents.push(...batch);
-            },
-            { debounceMs: 500 }
-        );
-
-        await Bun.sleep(100);
-
-        // Write 5 files in rapid succession
-        for (let i = 0; i < 5; i++) {
-            await Bun.write(join(tempDir, `rapid-${i}.txt`), `content-${i}`);
-        }
-
-        // Wait for debounce + processing
-        await Bun.sleep(1500);
-
-        // Should have fired once (or at most twice due to timing) with all events
-        expect(callbackCount).toBeLessThanOrEqual(2);
-        expect(allEvents.length).toBeGreaterThanOrEqual(5);
+        expect(seen.batches).toEqual([
+            [
+                { type: "create", path: "/x/a.txt" },
+                { type: "update", path: "/x/b.txt" },
+                { type: "delete", path: "/x/c.txt" },
+            ],
+        ]);
     });
 
-    test("applies filter to reject events", async () => {
-        const { events, startWatcher } = collectEvents({
+    test("debounces rapid changes into a single callback, the latest type per path winning", async () => {
+        const source = fakeSource();
+        const seen = batchesOf();
+        sub = await createWatcher(tempDir, seen.callback, { debounceMs: 40, subscribe: source.subscribe });
+
+        for (let i = 0; i < 5; i++) {
+            source.emit([{ type: "create", path: `/x/rapid-${i}.txt` }]);
+        }
+        source.emit([{ type: "update", path: "/x/rapid-0.txt" }]);
+        await seen.until(1);
+        // A second batch would need another debounce window; give it one.
+        await Bun.sleep(80);
+
+        expect(seen.batches).toHaveLength(1);
+        expect(seen.batches[0]).toHaveLength(5);
+        expect(seen.batches[0]?.find((event) => event.path === "/x/rapid-0.txt")?.type).toBe("update");
+    });
+
+    test("applies the filter before an event is queued", async () => {
+        const source = fakeSource();
+        const seen = batchesOf();
+        sub = await createWatcher(tempDir, seen.callback, {
+            debounceMs: 20,
+            subscribe: source.subscribe,
             filter: (event) => !event.path.endsWith(".tmp"),
         });
-        await startWatcher();
-        await Bun.sleep(100);
 
-        // Write a .tmp file (should be filtered out)
-        await Bun.write(join(tempDir, "ignored.tmp"), "temp");
+        source.emit([
+            { type: "create", path: "/x/ignored.tmp" },
+            { type: "create", path: "/x/kept.txt" },
+        ]);
+        await seen.until(1);
 
-        // Write a .txt file (should pass)
-        await Bun.write(join(tempDir, "kept.txt"), "kept");
-
-        await Bun.sleep(1000);
-
-        const tmpEvents = events.filter((e) => e.path.endsWith(".tmp"));
-        expect(tmpEvents.length).toBe(0);
-
-        const txtEvents = events.filter((e) => e.path.endsWith(".txt"));
-        expect(txtEvents.length).toBeGreaterThanOrEqual(1);
+        expect(seen.batches).toEqual([[{ type: "create", path: "/x/kept.txt" }]]);
     });
 
-    test("unsubscribe stops receiving events", async () => {
-        const { events, startWatcher } = collectEvents();
-        await startWatcher();
-        await Bun.sleep(100);
+    test("unsubscribe stops delivery, drops a pending batch and releases the native subscription once", async () => {
+        const source = fakeSource();
+        const seen = batchesOf();
+        sub = await createWatcher(tempDir, seen.callback, { debounceMs: 20, subscribe: source.subscribe });
 
-        await sub!.unsubscribe();
-        expect(sub!.active).toBe(false);
+        source.emit([{ type: "create", path: "/x/pending.txt" }]);
+        await sub.unsubscribe();
+        await sub.unsubscribe();
+        source.emit([{ type: "create", path: "/x/after-unsub.txt" }]);
+        await Bun.sleep(60);
 
-        // Write a file after unsubscribe
-        await Bun.write(join(tempDir, "after-unsub.txt"), "should not be seen");
-        await Bun.sleep(800);
-
-        const postUnsub = events.filter((e) => e.path.includes("after-unsub"));
-        expect(postUnsub.length).toBe(0);
+        expect(sub.active).toBe(false);
+        expect(seen.batches).toEqual([]);
+        expect(source.unsubscribed()).toBe(1);
     });
 
     test("reports active state correctly", async () => {
-        const { startWatcher } = collectEvents();
-        await startWatcher();
+        const source = fakeSource();
+        sub = await createWatcher(tempDir, () => {}, { subscribe: source.subscribe });
+        expect(sub.active).toBe(true);
 
-        expect(sub!.active).toBe(true);
-
-        await sub!.unsubscribe();
-        expect(sub!.active).toBe(false);
+        await sub.unsubscribe();
+        expect(sub.active).toBe(false);
     });
+
+    test("trips its circuit breaker after maxErrors native errors in a row", async () => {
+        const source = fakeSource();
+        sub = await createWatcher(tempDir, () => {}, { maxErrors: 3, subscribe: source.subscribe });
+
+        source.fail(new Error("one"));
+        source.fail(new Error("two"));
+        expect(sub.active).toBe(true);
+        source.fail(new Error("three"));
+
+        expect(sub.active).toBe(false);
+        expect(source.unsubscribed()).toBe(1);
+    });
+
+    test("an error delivered while subscribing trips the breaker as soon as the subscription exists", async () => {
+        let unsubscribed = 0;
+        const subscribe: NonNullable<WatcherOptions["subscribe"]> = async (_dir, callback) => {
+            callback(new Error("failed while subscribing"), []);
+
+            return {
+                unsubscribe: async () => {
+                    unsubscribed++;
+                },
+            };
+        };
+
+        sub = await createWatcher(tempDir, () => {}, { maxErrors: 1, subscribe });
+
+        expect(sub.active).toBe(false);
+        expect(unsubscribed).toBe(1);
+    });
+
+    // The one test on real FSEvents: the native addon reports what happens on disk. A probe file is
+    // written until the stream delivers, so the scenario never races the stream's start.
+    test.skipIf(skip.onWindows)(
+        "sees a real file created, modified and deleted through @parcel/watcher",
+        async () => {
+            const events: WatcherEvent[] = [];
+            let wake: () => void = () => {};
+            sub = await createWatcher(
+                tempDir,
+                (batch) => {
+                    events.push(...batch);
+                    wake();
+                },
+                { debounceMs: 50 }
+            );
+            const waitFor = async (match: () => boolean, what: string) => {
+                const deadline = Date.now() + 20_000;
+                while (!match()) {
+                    if (Date.now() > deadline) {
+                        throw new Error(`no ${what} event within 20 s; saw ${SafeJSON.stringify(events)}`);
+                    }
+                    await new Promise<void>((resolve) => {
+                        wake = resolve;
+                        setTimeout(resolve, 250);
+                    });
+                }
+            };
+
+            for (let i = 0; !events.some((event) => event.path.includes("__probe")); i++) {
+                if (i > 80) {
+                    throw new Error("the watcher delivered nothing within 20 s");
+                }
+
+                await Bun.write(join(tempDir, `__probe-${i}`), String(i));
+                // Up to 250 ms for this probe's batch before the next probe.
+                await new Promise<void>((resolve) => {
+                    wake = resolve;
+                    setTimeout(resolve, 250);
+                });
+            }
+
+            const filePath = join(tempDir, "real.txt");
+            await Bun.write(filePath, "one");
+            await waitFor(() => events.some((e) => e.path === filePath), "create");
+            await Bun.write(filePath, "two, longer");
+            await waitFor(() => events.some((e) => e.path === filePath && e.type === "update"), "update");
+            rmSync(filePath);
+            await waitFor(() => events.some((e) => e.path === filePath && e.type === "delete"), "delete");
+
+            expect(events.some((e) => e.path === filePath && e.type === "delete")).toBe(true);
+        },
+        { timeout: 70_000 }
+    );
 });
 
 describe("isTransientError", () => {
@@ -334,74 +370,83 @@ describe("watchPath / waitForPath", () => {
         renameSync(tmp, target);
     }
 
-    test("sees a file that does not exist yet land by atomic rename, twice, then an in-place write", async () => {
-        const target = join(tempDir, "reply.json");
-        const seen: WatcherEvent[] = [];
-        let expected = 0;
-        let notify: (() => void) | null = null;
-        const next = () =>
-            new Promise<void>((resolve, reject) => {
-                expected = seen.length + 1;
-                notify = resolve;
-                setTimeout(() => reject(new Error(`no event; saw ${SafeJSON.stringify(seen)}`)), 5000);
+    test(
+        "sees a file that does not exist yet land by atomic rename, twice, then an in-place write",
+        async () => {
+            const target = join(tempDir, "reply.json");
+            const seen: WatcherEvent[] = [];
+            let expected = 0;
+            let notify: (() => void) | null = null;
+            const next = () =>
+                new Promise<void>((resolve, reject) => {
+                    expected = seen.length + 1;
+                    notify = resolve;
+                    // A deadline, not a delay: generous because fs.watch delivery slows under the parallel run.
+                    setTimeout(() => reject(new Error(`no event; saw ${SafeJSON.stringify(seen)}`)), 15_000);
+                });
+
+            sub = watchPath(target, (events) => {
+                seen.push(...events);
+
+                if (seen.length >= expected && notify) {
+                    notify();
+                    notify = null;
+                }
             });
 
-        sub = watchPath(target, (events) => {
-            seen.push(...events);
+            await Bun.sleep(50);
+            let pending = next();
+            atomicWrite(target, "1");
+            await pending;
+            expect(seen[seen.length - 1]).toEqual({ type: "create", path: target });
 
-            if (seen.length >= expected && notify) {
-                notify();
-                notify = null;
-            }
-        });
+            // The inode changes on every rename; a file-bound watcher goes deaf here, this one must not.
+            pending = next();
+            atomicWrite(target, "2");
+            await pending;
+            expect(seen[seen.length - 1].path).toBe(target);
+            expect(seen[seen.length - 1].type).not.toBe("delete");
 
-        await Bun.sleep(50);
-        let pending = next();
-        atomicWrite(target, "1");
-        await pending;
-        expect(seen[seen.length - 1]).toEqual({ type: "create", path: target });
+            pending = next();
+            writeFileSync(target, "3");
+            await pending;
+            expect(seen.every((event) => event.path === target)).toBe(true);
+            expect(seen.some((event) => event.type === "update" || event.type === "create")).toBe(true);
+        },
+        { timeout: 50_000 }
+    );
 
-        // The inode changes on every rename; a file-bound watcher goes deaf here, this one must not.
-        pending = next();
-        atomicWrite(target, "2");
-        await pending;
-        expect(seen[seen.length - 1].path).toBe(target);
-        expect(seen[seen.length - 1].type).not.toBe("delete");
+    test(
+        "ignores sibling files and reports a delete",
+        async () => {
+            const target = join(tempDir, "only-me.txt");
+            writeFileSync(target, "x");
+            const seen: WatcherEvent[] = [];
+            let notify: (() => void) | null = null;
+            const gone = new Promise<void>((resolve) => {
+                notify = resolve;
+            });
 
-        pending = next();
-        writeFileSync(target, "3");
-        await pending;
-        expect(seen.every((event) => event.path === target)).toBe(true);
-        expect(seen.some((event) => event.type === "update" || event.type === "create")).toBe(true);
-    });
+            sub = watchPath(target, (events) => {
+                seen.push(...events);
 
-    test("ignores sibling files and reports a delete", async () => {
-        const target = join(tempDir, "only-me.txt");
-        writeFileSync(target, "x");
-        const seen: WatcherEvent[] = [];
-        let notify: (() => void) | null = null;
-        const gone = new Promise<void>((resolve) => {
-            notify = resolve;
-        });
+                if (events.some((event) => event.type === "delete") && notify) {
+                    notify();
+                }
+            });
 
-        sub = watchPath(target, (events) => {
-            seen.push(...events);
-
-            if (events.some((event) => event.type === "delete") && notify) {
-                notify();
-            }
-        });
-
-        await Bun.sleep(50);
-        writeFileSync(join(tempDir, "sibling.txt"), "noise");
-        await Bun.sleep(100);
-        // FSEvents may still deliver the pre-arm write of `target` itself; what must never
-        // arrive is anything about the sibling.
-        expect(seen.every((event) => event.path === target)).toBe(true);
-        rmSync(target);
-        await gone;
-        expect(seen[seen.length - 1]).toEqual({ type: "delete", path: target });
-    });
+            await Bun.sleep(50);
+            writeFileSync(join(tempDir, "sibling.txt"), "noise");
+            await Bun.sleep(100);
+            // FSEvents may still deliver the pre-arm write of `target` itself; what must never
+            // arrive is anything about the sibling.
+            expect(seen.every((event) => event.path === target)).toBe(true);
+            rmSync(target);
+            await gone;
+            expect(seen[seen.length - 1]).toEqual({ type: "delete", path: target });
+        },
+        { timeout: 20_000 }
+    );
 
     test("waitForPath resolves at once for an existing file, true on arrival, false on timeout or abort", async () => {
         const existing = join(tempDir, "here.txt");

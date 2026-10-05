@@ -85,6 +85,13 @@ export class FileTailer<T = unknown> {
         this.poll = setInterval(tick, 300);
     }
 
+    /** Reads what was appended since the last read, now: before a stop that must not lose a tail. */
+    flush(): void {
+        if (this.started) {
+            this.drain();
+        }
+    }
+
     stop(): void {
         this.fsWatcher?.close();
         this.fsWatcher = null;
