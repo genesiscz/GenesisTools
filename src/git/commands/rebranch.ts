@@ -1,11 +1,12 @@
+import { registerRebranchSplitCommands } from "@app/git/commands/rebranch-split";
 import { groupCommits, parseCommit } from "@app/git/lib/rebranch/grouping";
 import type { BranchResult, CommitGroup } from "@app/git/lib/rebranch/types";
 import * as p from "@clack/prompts";
-import { isVerbose } from "@genesiscz/utils/cli";
+import { isInteractive, isVerbose } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { DetailedCommitInfo } from "@genesiscz/utils/git";
 import { createGit } from "@genesiscz/utils/git";
-import { logger } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import { cancelSymbol, searchMultiselect } from "@genesiscz/utils/prompts/clack/search-multiselect";
 import type { Command } from "commander";
@@ -17,19 +18,28 @@ interface Options {
 
 const HELP_TEXT = `
 Usage: ${toolCommand("git rebranch")} [options]
+       ${toolCommand("git rebranch plan")} --groups name=paths [--groups …] [--source <branch>] [--base <ref>] [--json]
+       ${toolCommand("git rebranch apply")} --plan <file|-> [--dry-run] [--yes] | --continue | --abort
+       ${toolCommand("git rebranch verify")} --plan <file|-> [--json]
 
 Description:
   Split a messy branch with mixed commits into multiple clean branches.
-  Automatically groups commits by conventional commit scope/ticket,
-  lets you refine the grouping interactively, then creates new branches
+
+  With no subcommand it runs interactively: it groups commits by conventional
+  commit scope/ticket, lets you refine the grouping, then creates new branches
   via cherry-pick from the detected fork point.
 
-Options:
+  plan, apply and verify are the same split without prompts, by path groups:
+  plan classifies every commit IN / OUTSIDE / MIXED per group and prints a plan
+  file (--json), apply builds one branch per group from that file and proves
+  the result, verify runs that proof alone. Nothing is ever pushed.
+
+Options (interactive):
   --dry-run       Show execution plan without creating branches
   -v, --verbose   Show git commands being executed
 
 
-Workflow:
+Workflow (interactive):
   1. Detects your current branch and its fork point
   2. Parses commits using conventional commit format
   3. Groups commits by scope/ticket (e.g., COL-123)
@@ -41,6 +51,10 @@ Examples:
   ${toolCommand("git rebranch")}              # Interactive mode
   ${toolCommand("git rebranch")} --dry-run    # Preview without creating branches
   ${toolCommand("git rebranch")} --verbose    # Show all git commands
+  ${toolCommand("git rebranch plan")} --groups 'api=src/api/**' --groups 'web=src/web/**' --json > plan.json
+  ${toolCommand("git rebranch apply")} --plan plan.json --dry-run
+  ${toolCommand("git rebranch apply")} --plan plan.json --yes
+  ${toolCommand("git rebranch verify")} --plan plan.json
 `;
 
 function slugify(str: string): string {
@@ -53,6 +67,13 @@ function slugify(str: string): string {
 
 async function rebranch(opts: Options): Promise<void> {
     const git = createGit({ verbose: isVerbose() });
+
+    if (!isInteractive()) {
+        out.log.error("The interactive split needs a terminal. Without one, split by path groups:");
+        out.log.info(`${toolCommand("git rebranch plan")} --groups 'name=path/**' --json > plan.json`);
+        process.exitCode = 2;
+        return;
+    }
 
     p.intro(pc.bgCyan(pc.black(" git rebranch ")));
 
@@ -476,10 +497,14 @@ function displayResults(results: BranchResult[]): void {
 }
 
 export function registerRebranchCommand(program: Command): void {
-    program
+    const rebranchCommand = program
         .command("rebranch")
-        .description("Split a messy branch into multiple clean branches by commit grouping (interactive)")
-        .addHelpText("after", HELP_TEXT)
+        .description("Split a messy branch into clean branches: interactive, or plan, apply and verify by path groups")
+        .addHelpText("after", HELP_TEXT);
+
+    rebranchCommand
+        .command("interactive", { isDefault: true })
+        .description("Group commits by scope or ticket and pick them into new branches with prompts (the default)")
         .option("--dry-run", "Show execution plan without creating branches")
         .action(async (opts: Options) => {
             try {
@@ -489,4 +514,6 @@ export function registerRebranchCommand(program: Command): void {
                 process.exit(1);
             }
         });
+
+    registerRebranchSplitCommands(rebranchCommand);
 }

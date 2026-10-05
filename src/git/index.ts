@@ -8,6 +8,7 @@
  *   tools git merged [refs...] [--all] [--prune <ref>]
  *   tools git rebase-cascade <parent>
  *   tools git rebranch [--dry-run]
+ *   tools git rebranch plan --groups name=paths … | apply --plan <file> | verify --plan <file>
  *   tools git rename-commits [--commits N]
  *   tools git config show|init|check
  *   tools git base [branch]
@@ -79,7 +80,7 @@ Commands:
   health                       Repo health as a clean report (ranked file leaderboard table)
   merged                       Is a branch or worktree already in the base? Verdict by content, not sha
   rebase-cascade               Rebase a parent and the child branches stacked on it, with backups
-  rebranch                     Split a messy branch into clean branches by grouping its commits (interactive)
+  rebranch                     Split a messy branch into clean branches: interactive, or plan / apply / verify
   rename-commits               Reword the last N commit messages one by one, with a confirmation (interactive)
   config                       Per-repo genesis-tools.config.json: show | init | check
   base                         Which branch is this one based on, and which rule decided
@@ -127,6 +128,13 @@ Rebase-Cascade Options:
   --yes                        Skip the single confirmation
   --continue | --status | --abort | --restore <branch> | --cleanup
 
+Rebranch Options:
+  (no subcommand) [--dry-run]  Interactive: group by commit scope or ticket, pick into new branches
+  plan --groups <name=paths>   Classify commits IN / OUTSIDE / MIXED per path group (repeatable; --json for the plan file)
+  apply --plan <file|->        Build one branch per group with cherry-pick -x, then verify; --dry-run | --yes
+  apply --continue | --abort   Resume after a resolved conflict, or remove the branches this run created
+  verify --plan <file|->       Prove the group branches hold every change of the source; exit 1 naming each loss
+
 Changes Options:
   -c, --commits <n>            Show the files of the last N commits instead of uncommitted changes
   -C, --cwd <path>             Run against the git repo at this path
@@ -148,6 +156,11 @@ Examples:
   # Rebase feat/parent onto master and transplant its children
   ${toolCommand("git rebase-cascade")} feat/parent --dry-run
   ${toolCommand("git rebase-cascade")} feat/parent
+
+  # Split a branch into one branch per path group, then prove nothing was lost
+  ${toolCommand("git rebranch plan")} --groups 'api=src/api/**' --groups 'web=src/web/**' --json > plan.json
+  ${toolCommand("git rebranch apply")} --plan plan.json --yes
+  ${toolCommand("git rebranch verify")} --plan plan.json
 
   # Repo config and base detection
   ${toolCommand("git config show")}
