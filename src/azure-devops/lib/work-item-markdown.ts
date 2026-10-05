@@ -1,12 +1,28 @@
-import { rewriteImageUrls } from "@app/azure-devops/inline-images";
+import { rewriteImageSources, rewriteImageUrls, rewriteMarkdownImageUrls } from "@app/azure-devops/inline-images";
 import { parseAttachments, parseRelations } from "@app/azure-devops/relations";
-import type { WorkItemFull } from "@app/azure-devops/types";
+import type { Comment, WorkItemFull } from "@app/azure-devops/types";
 import { formatBytes } from "@genesiscz/utils/format";
 import { htmlToMarkdown } from "@genesiscz/utils/markdown/html-to-md";
 
 /** One table cell: a `|` would open a column and a line break would open a row. */
 export function tableCell(value: string): string {
     return value.replace(/\r?\n/g, " ").replace(/\|/g, "\\|");
+}
+
+/**
+ * A comment as markdown, its images pointed at the downloaded files when `imageMap` has them.
+ * A markdown comment is used as is: the HTML converter would escape its `![` and `**` and join its lines.
+ */
+export function commentMarkdown(comment: Comment, imageMap?: Map<string, string>): string {
+    if (comment.format !== "markdown") {
+        return htmlToMarkdown(imageMap ? rewriteImageUrls(comment.text, imageMap) : comment.text);
+    }
+
+    // Only image destinations and `<img src>` change: the same URL in a code example stays as written.
+    const text = imageMap
+        ? rewriteImageSources(rewriteMarkdownImageUrls(comment.text, imageMap), imageMap)
+        : comment.text;
+    return text.trim();
 }
 
 /**
@@ -79,8 +95,7 @@ export function formatWorkItemMarkdown(item: WorkItemFull, imageMap?: Map<string
         for (const comment of item.comments) {
             lines.push(`### ${comment.author} - ${new Date(comment.date).toLocaleString()}`);
             lines.push("");
-            const commentHtml = imageMap ? rewriteImageUrls(comment.text, imageMap) : comment.text;
-            lines.push(htmlToMarkdown(commentHtml));
+            lines.push(commentMarkdown(comment, imageMap));
             lines.push("");
         }
     }

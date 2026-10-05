@@ -62,11 +62,15 @@ export interface WorkItemFull extends WorkItem {
     updates?: WorkItemUpdate[];
 }
 
+export type CommentFormat = "markdown" | "html";
+
 export interface Comment {
     id: number;
     author: string;
     date: string;
     text: string;
+    /** A comment written in ADO's markdown editor is markdown, not HTML. Absent in caches written before 2026-10-01. */
+    format?: CommentFormat;
 }
 
 export interface Relation {
