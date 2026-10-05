@@ -37,6 +37,113 @@ function profiled(octokit: Octokit): Octokit {
     return octokit;
 }
 
+/** A GraphQL answer that names a repository or object the token cannot see (sent with HTTP 200). */
+function graphqlNotFound(data: unknown): boolean {
+    if (typeof data !== "object" || data === null || !("errors" in data) || !Array.isArray(data.errors)) {
+        return false;
+    }
+
+    return data.errors.some(
+        (error: unknown) =>
+            typeof error === "object" &&
+            error !== null &&
+            (("type" in error && (error.type === "NOT_FOUND" || error.type === "FORBIDDEN")) ||
+                ("message" in error &&
+                    typeof error.message === "string" &&
+                    error.message.startsWith("Could not resolve to a")))
+    );
+}
+
+/**
+ * A GraphQL request's body carries its text as `query`. The first keyword of the document says nothing: a
+ * write can follow a fragment (`fragment F on T {...} mutation M {...}`) or another operation chosen by
+ * `operationName`. So a document is a read only when it names no `mutation` or `subscription` anywhere. One
+ * that merely mentions the word in a string or a comment loses the fallback, which costs a retry and never
+ * a write under the wider token.
+ */
+function isGraphqlQuery(options: { url?: string; query?: unknown }): boolean {
+    return (
+        options.url === "/graphql" &&
+        typeof options.query === "string" &&
+        !/\b(?:mutation|subscription)\b/i.test(options.query)
+    );
+}
+
+/**
+ * A read token from the environment is often a fine-grained PAT scoped to some owners: a repository of
+ * another organization answers "Could not resolve to a Repository" (GraphQL) or 404/403 (REST), while
+ * the `gh` login can see it (Reservine/ReservineBack, 2026-10-04). Such a request is sent once more with
+ * the `gh` login's token. Read requests only, and only when that token differs from the env one.
+ */
+export function withGhFallback(
+    octokit: Octokit,
+    envToken: string,
+    {
+        ghToken = getGhCliToken,
+        client = (token: string) => new Octokit({ auth: token }),
+    }: {
+        ghToken?: () => string | undefined;
+        client?: (token: string) => Octokit;
+    } = {}
+): Octokit {
+    // A client of its own: the auth hook inside this one would put the env token back on the retry.
+    let fallback: Octokit | null | undefined;
+    const fallbackClient = (): Octokit | null => {
+        if (fallback === undefined) {
+            const token = ghToken();
+            fallback = token && token !== envToken ? client(token) : null;
+        }
+
+        return fallback;
+    };
+
+    octokit.hook.wrap("request", async (request, options) => {
+        const retry = (reason: string) => {
+            const client = fallbackClient();
+            if (!client) {
+                return null;
+            }
+
+            logger.debug(
+                { url: options.url, reason },
+                "github: the env token cannot see this; retrying with the gh login"
+            );
+            // Without this client's `request` options (they carry its hook and its auth) and the env
+            // token's header: with them, the retry came back through this hook with the env token, failed
+            // again and retried again (980 retries in one run, 2026-10-04).
+            const { authorization: _envAuth, ...headers } = options.headers;
+            const { request: _ownHook, ...rest } = options;
+            return client.request({ ...rest, headers });
+        };
+
+        let response: Awaited<ReturnType<typeof request>>;
+
+        try {
+            response = await request(options);
+        } catch (error) {
+            const status = typeof error === "object" && error !== null && "status" in error ? error.status : undefined;
+            const method = String(options.method ?? "GET").toUpperCase();
+            if ((status === 404 || status === 403) && (method === "GET" || isGraphqlQuery(options))) {
+                const again = retry(`http ${status}`);
+                if (again) {
+                    return await again;
+                }
+            }
+
+            throw error;
+        }
+
+        // Outside the try above: a failure here is the FALLBACK's own, never a reason to retry again.
+        if (isGraphqlQuery(options) && graphqlNotFound(response.data)) {
+            return (await retry("graphql not found")) ?? response;
+        }
+
+        return response;
+    });
+
+    return octokit;
+}
+
 let _octokit: Octokit | null = null;
 
 export type OctokitAuthMode = "default" | "prefer-gh-cli";
@@ -50,12 +157,10 @@ export function getOctokit(): Octokit {
     }
 
     const token = getGitHubToken("default");
+    const client = new Octokit({ auth: token });
+    const envToken = env.github.getToken();
 
-    _octokit = profiled(
-        new Octokit({
-            auth: token,
-        })
-    );
+    _octokit = profiled(token && token === envToken ? withGhFallback(client, envToken) : client);
 
     return _octokit;
 }
