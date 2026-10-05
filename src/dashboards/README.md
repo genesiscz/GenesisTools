@@ -6,6 +6,9 @@ The toolkit ships a dozen web UIs and listeners. This is the switch that brings 
 
 ---
 
+> `tools services up|down` does the same over the whole port registry, so a newly registered dashboard is included
+> without editing a list. This tool keeps each dashboard's own lifecycle verbs.
+
 ## Commands
 
 | Command | Description |

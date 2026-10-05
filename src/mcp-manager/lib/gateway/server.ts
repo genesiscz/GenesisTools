@@ -8,7 +8,13 @@ import { gatewayBaseUrl, gatewayListen } from "../auth/project.ts";
 import { ensureGatewayClientToken } from "../auth/secrets.ts";
 import { accessTokenForRequest } from "../auth/tokens.ts";
 import { autoLoginRefusal, type LoginLauncher } from "./auto-login.ts";
-import { headersToClient, headersToUpstream, localTokenMatches, loopbackHostOk } from "./headers.ts";
+import {
+    headersToClient,
+    headersToUpstream,
+    isDiagnosticRequest,
+    localTokenMatches,
+    loopbackHostOk,
+} from "./headers.ts";
 import { hostedHandler } from "./hosted.ts";
 import { gatewayLoginLauncher } from "./login-runner.ts";
 
@@ -77,6 +83,14 @@ function loginRequiredResponse(name: string, server: UnifiedMCPServerConfig, lau
     const extras = outcome === "started" ? "" : `${link}${code}`;
 
     return jsonRpcError(`${name} needs a login: ${lead}. Authorize it, then reconnect this server.${extras}`);
+}
+
+/**
+ * Answer a health probe that finds no usable token. A probe only looks: it neither refreshes a token (a refresh
+ * token is single use, and a failed refresh deletes the stored credentials) nor opens a browser login.
+ */
+function loginNeededResponse(name: string): Response {
+    return jsonRpcError(`${name} needs a login. Run ${toolCommand("mcp-manager auth login", name)}`);
 }
 
 function serverNameFromPath(pathname: string): string | undefined {
@@ -196,9 +210,12 @@ export async function startGatewayServer(
             const auth = serverAuth(unified);
             const resource = auth?.resource ?? upstreamUrl.replace(/\/+$/, "");
             const tokenEndpoint = auth?.tokenEndpoint;
+            const diagnostic = isDiagnosticRequest(request);
+            const loginRequired = (): Response =>
+                diagnostic ? loginNeededResponse(name) : loginRequiredResponse(name, unified, launcher);
 
             if (!tokenEndpoint) {
-                return loginRequiredResponse(name, unified, launcher);
+                return loginRequired();
             }
 
             let accessToken: string;
@@ -207,12 +224,12 @@ export async function startGatewayServer(
                 accessToken = await accessTokenForRequest(name, {
                     tokenEndpoint,
                     resource,
-                    allowRefresh: true,
+                    allowRefresh: !diagnostic,
                 });
             } catch (error) {
-                logger.warn({ server: name, error }, "gateway could not obtain an upstream token");
+                logger.warn({ server: name, error, diagnostic }, "gateway could not obtain an upstream token");
 
-                return loginRequiredResponse(name, unified, launcher);
+                return loginRequired();
             }
 
             const upstream = new URL(upstreamUrl);

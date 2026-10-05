@@ -24,6 +24,10 @@ import {
     backupAllConfigs,
     configJson,
     disableServer,
+    doctorCheck,
+    doctorEnv,
+    doctorList,
+    doctorTools,
     enableServer,
     gatewayHost,
     gatewayInstall,
@@ -370,6 +374,55 @@ gateway
     .option("--server <name>", "Server name")
     .action(async (cmdOptions) => {
         await gatewayStdio(cmdOptions.server);
+    });
+
+const doctor = program
+    .command("doctor")
+    .description("Health-check the MCP servers your clients are configured with: do they start, answer, and how fast");
+
+function withDoctorOptions(cmd: Command): Command {
+    return cmd
+        .option("--json", "Emit machine-readable JSON to stdout")
+        .option("--timeout <ms>", "Per-server probe timeout in ms", "15000")
+        .option("--slow <ms>", "Latency above which a server is flagged slow", "3000")
+        .option("--only <names>", "Restrict to comma-separated server names")
+        .option("--project <dir>", "Project root to scan for .mcp.json / .cursor/mcp.json");
+}
+
+withDoctorOptions(doctor.command("list"))
+    .description("Discover and normalize client config only, nothing is started")
+    .action(async (cmdOptions) => {
+        await doctorList(cmdOptions);
+    });
+
+withDoctorOptions(doctor.command("check", { isDefault: true }))
+    .description("Start or connect to every configured server and probe it (default)")
+    .action(async (cmdOptions) => {
+        await doctorCheck(cmdOptions);
+    });
+
+withDoctorOptions(doctor.command("tools <server>"))
+    .description("Probe one server and print its tools, resources and prompts")
+    .action(async (serverName, cmdOptions) => {
+        await doctorTools(serverName, cmdOptions);
+    });
+
+doctor
+    .command("env [command...]")
+    .description(
+        "Print the environment, PATH and cwd this process got, plus the output of the given commands, as JSON " +
+            "on stdout (diagnostics on stderr). Point an MCP client at it to see what the client passes to a server. " +
+            'COMMANDS="cmd1;cmd2" adds more commands.'
+    )
+    .option("--timeout <ms>", "Per-command timeout in ms; a command that outlives it is killed and reported", "30000")
+    .addOption(
+        new Option(
+            "-e, --env",
+            "Accepted so older client configs keep working; the report always has the environment"
+        ).hideHelp()
+    )
+    .action(async (commandArgs: string[], cmdOptions) => {
+        await doctorEnv(commandArgs, cmdOptions);
     });
 
 // config-json command

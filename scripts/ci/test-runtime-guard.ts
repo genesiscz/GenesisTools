@@ -17,7 +17,7 @@
  *
  * Concurrent files are exempt and say so. Under `describe.concurrent` every overlapping test
  * reports the whole overlap, so the sum counts the same seconds once per test:
- * src/mcp-doctor/unknown-tool.contract.test.ts sums to 19.7 s on CI and measures 2.2 s of
+ * src/mcp-manager/lib/doctor/unknown-tool.contract.test.ts sums to 19.7 s on CI and measures 2.2 s of
  * real wall time. Exempting by reading the source rather than by an allowlist means a file
  * that later drops `.concurrent` is guarded again with no list to update.
  *
@@ -241,7 +241,7 @@ export function formatTopRanking(ranked: Array<{ file: string; ms: number; tests
  *
  * Outermost rather than column zero, because `describe.concurrent(…)` legitimately wraps plain
  * `it(…)` calls and those inner tests DO run concurrently: the repo's own exempt file,
- * src/mcp-doctor/unknown-tool.contract.test.ts, is exactly that shape. Judging the outer layer
+ * src/mcp-manager/lib/doctor/unknown-tool.contract.test.ts, is exactly that shape. Judging the outer layer
  * asks the right question — did the file opt the whole thing in, or only part of it.
  */
 export function sourceIsConcurrent(file: string, root: string): boolean {

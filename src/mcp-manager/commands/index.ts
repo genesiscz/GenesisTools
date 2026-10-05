@@ -7,6 +7,7 @@ export { backupAllConfigs } from "./backup.js";
 export { openConfig } from "./config.js";
 export { configJson } from "./config-json.js";
 export { disableServer } from "./disable.js";
+export { doctorCheck, doctorEnv, doctorList, doctorTools } from "./doctor.js";
 export { enableServer } from "./enable.js";
 export {
     gatewayHost,

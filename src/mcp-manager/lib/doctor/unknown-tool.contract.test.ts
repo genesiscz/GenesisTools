@@ -4,7 +4,7 @@ import { env } from "@genesiscz/utils/env";
 import { Client, ProtocolErrorCode } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
-const SRC_ROOT = join(import.meta.dir, "..");
+const SRC_ROOT = join(import.meta.dir, "..", "..", "..");
 
 interface ServerUnderTest {
     name: string;
@@ -82,9 +82,6 @@ async function callUnknownTool(server: ServerUnderTest): Promise<{ code?: number
 // implements that branch independently, so it is asserted per server.
 //
 // This covers every in-repo stdio MCP server that can be booted hermetically.
-// The one omission is mcp-tsc, whose MCP command builds a TypeScript LSP server
-// bound to a cwd and tsconfig, so spawning it means starting a full LSP over the
-// repo to assert a single throw.
 // `concurrent`: each case boots its OWN server process and talks to it over its
 // own transport, so nothing is shared between them and the file is six process
 // startups deep. Overlapping them turns a sum into a maximum.

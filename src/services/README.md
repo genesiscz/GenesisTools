@@ -29,6 +29,26 @@ arguments, so a server started on one folder or port comes back the same.
 
 `tools update` offers the same restart after it pulls, for the services on old code.
 
+## Start and stop the registered servers
+
+```bash
+tools services up                     # start every registered server that is not listening: API servers first, then dashboards
+tools services up youtube dev-dashboard   # only these registry keys
+tools services up --except spotify,monitor
+tools services down                   # stop the detached ones, dashboards first; a launchd job is named, never stopped
+```
+
+`up` reads the whole registry in `src/utils/ui/dashboards.ts` (so a newly registered dashboard is included without
+editing a list) and starts each missing one with its registered launch command. The MCP gateway, the proxy, the YouTube
+extension dev server, the cloud dashboard and the artifact server are outside the default set because something else
+keeps them running or they need their own setup (the artifact server serves the folder it is started in, so start it
+with `tools artifact serve <folder>`); name one to include it. `tools dashboards up|down` runs each dashboard's own
+lifecycle verbs over a fixed list of eight, and stays for that.
+
+A port that already accepts connections counts as running only when its listener passes the registry entry's process
+check, the same one that decides what `tools services` lists. Any other process on a registered port is a collision:
+`up` reports it as failed and starts nothing, instead of calling it running.
+
 ## Idle shutdown
 
 ```bash

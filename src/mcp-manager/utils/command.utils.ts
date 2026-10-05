@@ -47,6 +47,11 @@ Commands:
                             - Old + new names: Rename directly
   config-json               Output servers as JSON in standard client format
                             Options: --client, --enabled-only, --servers, --bare, --clipboard
+  doctor [check]            Start or connect to every configured MCP server and probe it
+                            Options: --json, --timeout <ms>, --slow <ms>, --only <names>, --project <dir>
+  doctor list               Show the configured servers without starting anything
+  doctor tools <server>     Probe one server and print its tools, resources and prompts
+  doctor env [command...]   Print the environment, PATH and cwd a client passes to a server, as JSON
 
 Options:
   --path                   (config) Only print config file path, don't open editor
@@ -105,6 +110,13 @@ Non-Interactive Examples (for scripts and AI assistants):
 
   # Output bare mcpServers object without wrapper
   ${toolCommand("mcp-manager config-json", "--bare")}
+
+  # Health-check every configured MCP server, or just two of them
+  ${toolCommand("mcp-manager doctor")}
+  ${toolCommand("mcp-manager doctor check", "--only", "jina,github")}
+
+  # See what environment an MCP client passes to a server
+  ${toolCommand("mcp-manager doctor env", "which", "bun")}
 `);
 }
 

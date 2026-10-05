@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { env } from "@genesiscz/utils/env";
 import type { PsRow } from "@genesiscz/utils/process/ps";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { classifyPid } from "@genesiscz/utils/process-identity";
-import { getDashboard } from "@genesiscz/utils/ui/dashboards";
+import { getDashboard, type RegistryEntry } from "@genesiscz/utils/ui/dashboards";
+import { type FleetOutcome, OUTSIDE_THE_FLEET, portMove, selectFleet, startFleet, stopFleet } from "./fleet";
 import { clientPortsFrom, connectedPorts, idleDecisions, stateKey } from "./idle";
 import {
     type LaunchdJob,
@@ -12,6 +14,7 @@ import {
     relaunchArgs,
     type ServiceProbe,
     type ServiceRow,
+    verifiedRegistryPorts,
 } from "./inventory";
 import { stopService } from "./lifecycle";
 import { sourceRoots, staleFiles } from "./stale";
@@ -143,6 +146,28 @@ describe("listServices", () => {
         const rows = listServices(probe([ps(7378, 1, daemon)], {}, [{ label: "com.genesis-tools.daemon", pid: 7378 }]));
 
         expect(rows[0]).toMatchObject({ id: "daemon", port: null, managed: "launchd", launch: null });
+    });
+
+    test("verified registry ports are the ones whose listener is the registered server, not a squatter", () => {
+        const devDashboard = getDashboard("dev-dashboard");
+        const ports = verifiedRegistryPorts(
+            probe(
+                [ps(801, 1, vite), ps(802, 1, "/usr/bin/python3 -m http.server")],
+                { 801: [youtube.port], 802: [devDashboard.port] },
+                []
+            )
+        );
+
+        expect(ports.has(youtube.port)).toBe(true);
+        expect(ports.has(devDashboard.port)).toBe(false);
+    });
+
+    test("a registered server started inside an agent session is still verified, though never listed", () => {
+        const session = `${APP} /Users/example/.genesis-tools/bin/gt-task ${REPO}/src/task/index.ts run --session s1`;
+        const inventory = probe([ps(700, 1, session), ps(701, 700, vite)], { 701: [youtube.port] });
+
+        expect(listServices(inventory)).toEqual([]);
+        expect(verifiedRegistryPorts(inventory).has(youtube.port)).toBe(true);
     });
 });
 
@@ -336,5 +361,192 @@ describe("stopService", () => {
         } finally {
             child.kill();
         }
+    });
+});
+
+describe("the fleet: services up and down", () => {
+    const entry = (key: string, port: number, launch: string | null, ui: boolean) =>
+        ({
+            key,
+            name: key,
+            description: "",
+            port,
+            launch,
+            portOverride: null,
+            matchProcess: () => true,
+            ...(ui ? { strictPort: false } : {}),
+        }) as unknown as import("@genesiscz/utils/ui/dashboards").RegistryEntry;
+    const registry = [
+        entry("api", 9001, "tools api", false),
+        entry("proxy", 9002, "tools proxy", false),
+        entry("ui", 9003, "tools ui", true),
+        entry("nolaunch", 9004, null, true),
+    ];
+
+    test("no keys selects every launchable entry outside the exclusions", () => {
+        const { entries } = selectFleet({ registry });
+
+        expect(entries.map((candidate) => candidate.key)).toEqual(["api", "proxy", "ui"]);
+        expect(OUTSIDE_THE_FLEET.has("mcp-gateway")).toBe(true);
+    });
+
+    test("the real registry's default set leaves out the artifact server, whose launch command names no folder", () => {
+        expect(selectFleet().entries.map((candidate) => candidate.key)).not.toContain("artifact");
+        expect(selectFleet({ keys: ["artifact"] }).entries.map((candidate) => candidate.key)).toEqual(["artifact"]);
+    });
+
+    test("named keys select exactly those, even an excluded one, and report an unknown or unlaunchable key", () => {
+        const { entries, unknown } = selectFleet({ registry, keys: ["ui", "nolaunch", "ghost"] });
+
+        expect(entries.map((candidate) => candidate.key)).toEqual(["ui"]);
+        expect(unknown).toEqual(["nolaunch", "ghost"]);
+    });
+
+    test("except wins over a named key", () => {
+        expect(selectFleet({ registry, keys: ["api", "ui"], except: ["ui"] }).entries.map((e) => e.key)).toEqual([
+            "api",
+        ]);
+    });
+
+    test("up starts the API group before the UI group and leaves a running server alone", async () => {
+        const order: number[] = [];
+        const outcomes = await startFleet({
+            entries: selectFleet({ registry }).entries,
+            ensure: async (port) => {
+                order.push(port);
+
+                return port === 9002
+                    ? { ok: true, name: "proxy", started: false }
+                    : port === 9003
+                      ? { ok: false, code: 1, message: "did not listen" }
+                      : { ok: true, name: "api", started: true };
+            },
+            verifiedPorts: () => new Set([9002]),
+        });
+
+        expect(order).toEqual([9001, 9002, 9003]);
+        expect(outcomes.map((outcome: FleetOutcome) => [outcome.key, outcome.outcome])).toEqual([
+            ["api", "started"],
+            ["proxy", "running"],
+            ["ui", "failed"],
+        ]);
+    });
+
+    test("up reports a port held by an unrelated process as a failure, not as running", async () => {
+        const outcomes = await startFleet({
+            entries: selectFleet({ registry }).entries,
+            ensure: async (port) => ({ ok: true, name: "server", started: port === 9001 }),
+            verifiedPorts: () => new Set([9002]),
+        });
+
+        expect(outcomes.map((outcome) => [outcome.key, outcome.outcome])).toEqual([
+            ["api", "started"],
+            ["proxy", "running"],
+            ["ui", "failed"],
+        ]);
+        expect(outcomes[2].message).toContain("port 9003 is held by a process that is not ui");
+    });
+
+    test("up reads who listens once, and only when a port was already listening", async () => {
+        let reads = 0;
+        const verifiedPorts = () => {
+            reads++;
+
+            return new Set([9001, 9002, 9003]);
+        };
+
+        await startFleet({
+            entries: selectFleet({ registry }).entries,
+            ensure: async () => ({ ok: true, name: "server", started: true }),
+            verifiedPorts,
+        });
+        expect(reads).toBe(0);
+
+        await startFleet({
+            entries: selectFleet({ registry }).entries,
+            ensure: async () => ({ ok: true, name: "server", started: false }),
+            verifiedPorts,
+        });
+        expect(reads).toBe(1);
+    });
+
+    test("up reports a start that throws as that server's failure and still starts the others", async () => {
+        const started: number[] = [];
+        const outcomes = await startFleet({
+            entries: selectFleet({ registry }).entries,
+            ensure: async (port) => {
+                if (port === 9001) {
+                    throw new Error("spawn failed");
+                }
+
+                started.push(port);
+
+                return { ok: true, name: "server", started: true };
+            },
+        });
+
+        expect(started).toEqual([9002, 9003]);
+        expect(outcomes.map((outcome) => [outcome.key, outcome.outcome, outcome.message])).toEqual([
+            ["api", "failed", "spawn failed"],
+            ["proxy", "started", "listening on 9002"],
+            ["ui", "started", "listening on 9003"],
+        ]);
+    });
+
+    test("up refuses a server whose override variable moves it off the registry port, and spawns nothing for it", async () => {
+        const moved: RegistryEntry = { ...registry[2], portOverride: { env: "FLEET_TEST_UI_PORT" } };
+        const asked: number[] = [];
+
+        await env.testing.withOverrides({ FLEET_TEST_UI_PORT: "4000" }, async () => {
+            const outcomes = await startFleet({
+                entries: [moved],
+                ensure: async (port) => {
+                    asked.push(port);
+
+                    return { ok: true, name: "ui", started: true };
+                },
+            });
+
+            expect(asked).toEqual([]);
+            expect(outcomes.map((outcome) => [outcome.key, outcome.outcome])).toEqual([["ui", "failed"]]);
+            expect(outcomes[0].message).toContain("FLEET_TEST_UI_PORT moves it to port 4000");
+        });
+    });
+
+    test("an override variable that is unset, not a port or the registry port moves nothing", () => {
+        const entry: RegistryEntry = { ...registry[2], portOverride: { env: "FLEET_TEST_UI_PORT" } };
+
+        expect(portMove({ entry, vars: {} })).toBeNull();
+        expect(portMove({ entry, vars: { FLEET_TEST_UI_PORT: "abc" } })).toBeNull();
+        expect(portMove({ entry, vars: { FLEET_TEST_UI_PORT: "9003" } })).toBeNull();
+        expect(portMove({ entry, vars: { FLEET_TEST_UI_PORT: "4000" } })).toEqual({
+            variable: "FLEET_TEST_UI_PORT",
+            port: 4000,
+        });
+    });
+
+    test("down stops detached servers UI first, and names a launchd job without stopping it", async () => {
+        const stopped: number[] = [];
+        const rows = [
+            { id: "api", port: 9001, managed: "detached", label: null },
+            { id: "ui", port: 9003, managed: "launchd", label: "com.genesis-tools.ui" },
+        ] as unknown as ServiceRow[];
+
+        const outcomes = await stopFleet({
+            entries: selectFleet({ registry }).entries,
+            rows,
+            stop: async (row) => {
+                stopped.push(row.port ?? 0);
+
+                return { ok: true, message: `stopped ${row.id}` };
+            },
+        });
+
+        expect(stopped).toEqual([9001]);
+        expect(outcomes.map((outcome) => [outcome.key, outcome.outcome])).toEqual([
+            ["ui", "launchd"],
+            ["proxy", "not running"],
+            ["api", "stopped"],
+        ]);
     });
 });

@@ -1,4 +1,4 @@
-import type { DuplicateTool } from "./types";
+import type { DuplicateTool } from "./types.ts";
 
 export interface ServerTools {
     name: string;

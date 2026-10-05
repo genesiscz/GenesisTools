@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { GATEWAY_HEADER } from "../auth/constants.ts";
-import { headersToClient, headersToUpstream, localTokenMatches, loopbackHostOk } from "./headers.ts";
+import { DIAGNOSTIC_HEADER, GATEWAY_HEADER } from "../auth/constants.ts";
+import {
+    headersToClient,
+    headersToUpstream,
+    isDiagnosticRequest,
+    localTokenMatches,
+    loopbackHostOk,
+} from "./headers.ts";
 
 describe("gateway headers", () => {
     test("loopback hosts pass, others fail", () => {
@@ -32,6 +38,19 @@ describe("gateway headers", () => {
         expect(out.get("Authorization")).toBe("Bearer real-access");
         expect(out.get(GATEWAY_HEADER)).toBeNull();
         expect(out.get("Accept")).toBe("application/json");
+    });
+
+    test("a request is a diagnostic probe only when it says so with 1, and the marker never reaches upstream", () => {
+        const probe = new Request("http://127.0.0.1/mcp/rohlik", {
+            headers: { [GATEWAY_HEADER]: "local", [DIAGNOSTIC_HEADER]: "1" },
+        });
+
+        expect(isDiagnosticRequest(probe)).toBe(true);
+        expect(isDiagnosticRequest(new Request("http://127.0.0.1/mcp/rohlik"))).toBe(false);
+        expect(
+            isDiagnosticRequest(new Request("http://127.0.0.1/mcp/rohlik", { headers: { [DIAGNOSTIC_HEADER]: "0" } }))
+        ).toBe(false);
+        expect(headersToUpstream(probe, "real-access").get(DIAGNOSTIC_HEADER)).toBeNull();
     });
 
     test("strips WWW-Authenticate and Set-Cookie from upstream", () => {

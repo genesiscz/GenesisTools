@@ -20,6 +20,8 @@ export interface RemoteServer {
     transport: "http" | "sse";
     source: ConfigSource;
     url: string;
+    /** Request headers of the entry (the gateway token, a bearer token). Credentials: print names only. */
+    headers?: Record<string, string>;
     overrides?: ConfigSource;
 }
 

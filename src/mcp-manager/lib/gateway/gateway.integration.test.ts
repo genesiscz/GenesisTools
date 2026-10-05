@@ -6,9 +6,10 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { _resetSecretsForTest, secrets } from "@genesiscz/utils/security";
 import { _resetMasterKeyProviders, _setMasterKeyProvidersForTest } from "@genesiscz/utils/security/MasterKey";
-import { GATEWAY_HEADER } from "../auth/constants.ts";
+import { DIAGNOSTIC_HEADER, GATEWAY_HEADER } from "../auth/constants.ts";
+import { _resetMcpFetchForTest, _setMcpFetchForTest } from "../auth/fetch.ts";
 import { GATEWAY_CLIENT_TOKEN_PATH } from "../auth/paths.ts";
-import { writeServerTokens } from "../auth/secrets.ts";
+import { readRefreshToken, writeServerTokens } from "../auth/secrets.ts";
 import { createLoginLauncher } from "./auto-login.ts";
 import { gatewayHealth } from "./ensure.ts";
 import { type GatewayHandle, isLoopbackBindHost, startGatewayServer } from "./server.ts";
@@ -470,5 +471,94 @@ describe("gateway auto-login", () => {
         expect(body).toContain("interactive client_name");
         expect(body).not.toContain("browser window is opening");
         expect(calls).toBe(0);
+    });
+});
+
+describe("gateway diagnostic probes", () => {
+    let tokenPosts = 0;
+    const logins: string[] = [];
+
+    async function gatewayWithExpiredToken(): Promise<GatewayHandle> {
+        tokenPosts = 0;
+        logins.length = 0;
+        _setMcpFetchForTest(async (_input, init) => {
+            if (init?.method === "POST") {
+                tokenPosts += 1;
+            }
+
+            return Response.json({
+                access_token: "refreshed-access",
+                refresh_token: "rotated-refresh",
+                expires_in: 3600,
+            });
+        });
+        cleanup.push(() => _resetMcpFetchForTest());
+        await writeServerTokens("shop", {
+            accessToken: "stale",
+            refreshToken: "refresh-1",
+            expiresAt: Date.now() - 60_000,
+        });
+
+        const upstreamUrl = `http://127.0.0.1:${upstream?.port}/mcp`;
+        const launcher = createLoginLauncher({
+            login: async (server) => {
+                logins.push(server);
+            },
+            notify: async () => undefined,
+        });
+        const handle = await startGatewayServer(
+            {
+                mcpServers: {
+                    shop: {
+                        type: "http",
+                        url: upstreamUrl,
+                        auth: {
+                            kind: "oauth",
+                            gateway: true,
+                            resource: upstreamUrl,
+                            tokenEndpoint: "https://identity.example/token",
+                        },
+                    },
+                },
+            },
+            { hostname: "127.0.0.1", port: 0, loginLauncher: launcher }
+        );
+        cleanup.push(() => handle.stop());
+
+        return handle;
+    }
+
+    test("a probe with an expired token refreshes nothing, starts no login and keeps the stored refresh token", async () => {
+        const handle = await gatewayWithExpiredToken();
+
+        const response = await fetch(`http://127.0.0.1:${handle.port}/mcp/shop`, {
+            method: "POST",
+            headers: { [GATEWAY_HEADER]: LOCAL, [DIAGNOSTIC_HEADER]: "1" },
+            body: "{}",
+        });
+        const body = await response.text();
+
+        expect(response.status).toBe(401);
+        expect(body).toContain("needs a login");
+        expect(body).not.toContain("browser window");
+        expect(tokenPosts).toBe(0);
+        expect(logins).toEqual([]);
+        expect(upstreamHits).toBe(0);
+        expect(await readRefreshToken("shop")).toBe("refresh-1");
+    });
+
+    test("the same request without the marker still refreshes, so a normal client keeps working", async () => {
+        const handle = await gatewayWithExpiredToken();
+
+        const response = await fetch(`http://127.0.0.1:${handle.port}/mcp/shop`, {
+            method: "POST",
+            headers: { [GATEWAY_HEADER]: LOCAL },
+            body: "{}",
+        });
+
+        expect(response.status).toBe(200);
+        expect(tokenPosts).toBe(1);
+        expect(lastUpstreamAuth).toBe("Bearer refreshed-access");
+        expect(await readRefreshToken("shop")).toBe("rotated-refresh");
     });
 });

@@ -146,7 +146,7 @@ export function createServer(engine: ReplEngine): Server {
             default:
                 // A tool the server never advertised is a lookup failure, so it belongs in the
                 // JSON-RPC error channel, never in an isError result. Asserted for every in-repo
-                // stdio server by src/mcp-doctor/unknown-tool.contract.test.ts.
+                // stdio server by src/mcp-manager/lib/doctor/unknown-tool.contract.test.ts.
                 throw new ProtocolError(ProtocolErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
     });

@@ -229,15 +229,8 @@ export function listServices(probe: ServiceProbe = liveProbe()): ServiceRow[] {
     };
 
     const rows: ServiceRow[] = [];
-    const listeners = probe.listeners();
 
-    for (const entry of listPortRegistry()) {
-        const pid = [...listeners.entries()].find(([, ports]) => ports.includes(entry.port))?.[0];
-
-        if (pid === undefined || !matches(entry, pid, processes.get(pid), probe)) {
-            continue;
-        }
-
+    for (const { entry, pid } of registeredListeners(probe, processes)) {
         const described = describe(pid);
 
         if (described) {
@@ -262,6 +255,36 @@ export function listServices(probe: ServiceProbe = liveProbe()): ServiceRow[] {
 
     logger.debug({ services: rows.length }, "services: inventory");
     return rows;
+}
+
+/** Each registered port with a listener that passes its entry's own check, with that listener's pid. */
+function registeredListeners(
+    probe: ServiceProbe,
+    processes: Map<number, PsRow>
+): Array<{ entry: RegistryEntry; pid: number }> {
+    const listeners = probe.listeners();
+    const found: Array<{ entry: RegistryEntry; pid: number }> = [];
+
+    for (const entry of listPortRegistry()) {
+        const pid = [...listeners.entries()].find(([, ports]) => ports.includes(entry.port))?.[0];
+
+        if (pid !== undefined && matches(entry, pid, processes.get(pid), probe)) {
+            found.push({ entry, pid });
+        }
+    }
+
+    return found;
+}
+
+/**
+ * The registered ports whose listener is the registered server. A port outside this set that still accepts
+ * connections is held by something else. Unlike `listServices` it keeps a server started inside an agent
+ * session: that is still the registered server, only not one a restart may touch.
+ */
+export function verifiedRegistryPorts(probe: ServiceProbe = liveProbe()): Set<number> {
+    const processes = new Map(probe.processes().map((row) => [row.pid, row]));
+
+    return new Set(registeredListeners(probe, processes).map(({ entry }) => entry.port));
 }
 
 function matches(entry: RegistryEntry, pid: number, row: PsRow | undefined, probe: ServiceProbe): boolean {

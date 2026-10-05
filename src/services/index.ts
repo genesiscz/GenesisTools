@@ -7,6 +7,7 @@ import { formatDuration, formatList } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
 import * as p from "@genesiscz/utils/prompts/p";
+import { type FleetOutcome, selectFleet, startFleet, stopFleet } from "@genesiscz/utils/services/fleet";
 import {
     idleDecisions,
     readClientPorts,
@@ -17,7 +18,7 @@ import {
 import { listServices, type ServiceRow } from "@genesiscz/utils/services/inventory";
 import { restartService, stopService } from "@genesiscz/utils/services/lifecycle";
 import { type StaleRow, withStaleness } from "@genesiscz/utils/services/stale";
-import { createBoxTable, formatDotStatus, renderCliHeader } from "@genesiscz/utils/table";
+import { createBoxTable, type DotStatusKind, formatDotStatus, renderCliHeader } from "@genesiscz/utils/table";
 import { Command } from "commander";
 import pc from "picocolors";
 
@@ -108,6 +109,72 @@ program
             }
         }
     });
+
+function parseKeys(raw: string | undefined): string[] {
+    return (raw ?? "")
+        .split(",")
+        .map((key) => key.trim())
+        .filter(Boolean);
+}
+
+const OUTCOME_KIND = {
+    started: "ok",
+    running: "ok",
+    stopped: "ok",
+    failed: "err",
+    launchd: "dim",
+    "not running": "dim",
+} as const satisfies Record<FleetOutcome["outcome"], DotStatusKind>;
+
+function printFleet(outcomes: FleetOutcome[]): void {
+    if (outcomes.length === 0) {
+        out.println("Nothing to do.");
+        return;
+    }
+
+    const table = createBoxTable(["SERVICE", "PORT", "RESULT", "DETAIL"]);
+
+    for (const outcome of outcomes) {
+        table.push([
+            pc.white(outcome.key),
+            String(outcome.port),
+            formatDotStatus(OUTCOME_KIND[outcome.outcome], outcome.outcome),
+            outcome.message,
+        ]);
+
+        if (outcome.outcome === "failed") {
+            process.exitCode = 1;
+        }
+    }
+
+    out.println(table.toString());
+}
+
+for (const verb of ["up", "down"] as const) {
+    program
+        .command(verb)
+        .description(
+            verb === "up"
+                ? "Start the registered servers that are not running: API servers first, then dashboards"
+                : "Stop the registered detached servers: dashboards first, then API servers (never a launchd job)"
+        )
+        .argument("[keys...]", "Registry keys; none means every launchable server outside the fleet exclusions")
+        .option("--except <keys>", "Comma-separated registry keys to skip")
+        .action(async (keys: string[], options: { except?: string }) => {
+            const { entries, unknown } = selectFleet({ keys, except: parseKeys(options.except) });
+
+            if (unknown.length > 0) {
+                out.error(`Not registered, or no launch command: ${unknown.join(", ")}`);
+                process.exitCode = 1;
+                return;
+            }
+
+            logger.debug({ verb, keys: entries.map((entry) => entry.key) }, "services: fleet");
+            printFleet(
+                verb === "up" ? await startFleet({ entries }) : await stopFleet({ entries, rows: listServices() })
+            );
+        });
+}
 
 /** The rows to act on; null when the choice is invalid or cancelled (the reason is printed). */
 async function chooseRows(

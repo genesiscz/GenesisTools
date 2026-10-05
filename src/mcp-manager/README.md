@@ -49,6 +49,9 @@ tools mcp-manager install github
 
 # Show full configuration of a server
 tools mcp-manager show github
+
+# Health-check every configured MCP server (does it start, answer, and how fast)
+tools mcp-manager doctor
 ```
 
 ### Commands
@@ -68,6 +71,10 @@ tools mcp-manager show github
 | `backup-all`          | Backup all configs for all providers                     |
 | `rename`              | Rename an MCP server key across unified config/providers |
 | `config-json`         | Output servers as JSON in standard client format         |
+| `doctor list`         | Show the servers your clients are configured with, start nothing |
+| `doctor check`        | Start or connect to every configured server and probe it (default of `doctor`) |
+| `doctor tools <server>` | Probe one server and print its tools, resources and prompts |
+| `doctor env [command...]` | Print the environment, PATH and cwd a client passes to a server |
 
 ### Global Options
 
@@ -338,6 +345,106 @@ tools mcp-manager disable github
 tools mcp-manager show github
 ```
 
+## Doctor: health-check and debug the servers your clients run
+
+`tools mcp-manager doctor` answers the question you have when an assistant says a tool is unavailable: is the
+server configured, does it start, does it respond, and how slow is it. It reads the client config files
+(`~/.claude.json`, plus `.mcp.json` and `.cursor/mcp.json` of the project), not the unified config, so it checks
+what the clients really use.
+
+```bash
+tools mcp-manager doctor list                           # what is configured, without starting anything
+tools mcp-manager doctor                                # probe everything (same as `doctor check`)
+tools mcp-manager doctor check --only github,jina
+tools mcp-manager doctor check --slow 1000              # flag anything over 1s
+tools mcp-manager doctor check --timeout 30000          # be patient with slow starters
+tools mcp-manager doctor tools jina                     # tools, resources and prompts of one server
+tools mcp-manager doctor check --json | tools json
+tools mcp-manager doctor check --project ~/some/repo    # include that repo's local config
+```
+
+Every option applies to `list`, `check` and `tools`.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit machine-readable JSON to stdout |
+| `--timeout <ms>` | Per-server probe timeout (default: 15000) |
+| `--slow <ms>` | Latency above which a server is flagged slow (default: 3000) |
+| `--only <names>` | Restrict to comma-separated server names |
+| `--project <dir>` | Project root to scan for `.mcp.json` and `.cursor/mcp.json` |
+
+### `list` versus `check`
+
+`list` reads and normalizes configuration. It spawns nothing, so it is instant and safe. It prints four columns:
+`SERVER`, `TRANSPORT`, `SOURCE` and `TARGET`, where `TARGET` is the command plus its args for a stdio server, or
+the URL for a remote one. `list --json` keeps the NAMES of a server's headers and env keys and replaces their
+values with `•••`, because those values are the gateway token, bearer tokens and API keys. Nothing else is masked:
+`TARGET`, and the `args` and `url` fields of `list --json`, print as written. A key typed into a command argument or
+into a URL (`?api_key=...`) therefore reaches terminal scrollback and CI logs. Keep credentials in `env` or `headers`.
+
+`check` starts each stdio server and connects to each remote one, then completes an MCP handshake and lists the
+tools. That is the only way to tell "configured" from "working". A server whose command is missing, whose token
+expired, or which crashes on startup only shows up here. Spawning a server runs whatever command its config
+names, so `check` executes third-party code. `list` does not.
+
+`check` sends the `headers` of a remote entry on every request, exactly as the client does. Servers behind the
+local gateway need `X-Genesis-Mcp-Gateway`, and hosted servers often need `Authorization`. Before this was
+fixed the probe sent no headers, and every such server was reported as down with `missing X-Genesis-Mcp-Gateway`
+or `invalid_token`.
+
+`check` is a read-only diagnostic: it never refreshes an OAuth token, never opens a login and never writes
+configuration. A server behind the gateway is reached through the gateway, so the gateway must be running
+(`tools mcp-manager gateway status`). The probe marks its requests with `X-Genesis-Mcp-Diagnostic`. For such a
+request the gateway reads the stored token and, when it is missing or expired, answers "needs a login" instead of
+refreshing it or starting a login. That server shows as an error until you run `tools mcp-manager auth login <server>`;
+`tools mcp-manager auth status` tells you first.
+
+`doctor tools <server>` is the deep look at one server. Use it when an assistant reports a tool name you do not
+recognise, or when a server's tool set changed after an upgrade.
+
+`--project` matters because MCP config is layered. A repo can add servers through `.mcp.json` or
+`.cursor/mcp.json` that your global config knows nothing about. `${VAR}` references inside a config value are
+not expanded; the probe sends the value as written.
+
+To edit configuration rather than diagnose it, use the other commands of this tool.
+
+### `doctor env`: what does the client actually pass to my server
+
+When an MCP server misbehaves in Cursor or Claude Desktop, it is often an env, PATH or cwd problem.
+`doctor env` runs the commands you give it and prints one JSON object on stdout: `cwd`, the whole `env`, `path`
+(PATH split into entries), and for each command its `exitCode`, `stdout` and `stderr`. The debug lines go to
+stderr (visible in the client's debug console). Nothing else reaches stdout, so a client can parse it.
+
+```bash
+tools mcp-manager doctor env which playwright            # one command plus the environment it saw
+tools mcp-manager doctor env                             # only the environment
+COMMANDS="env;which playwright;echo test" tools mcp-manager doctor env
+COMMANDS="which bun" tools mcp-manager doctor env echo test    # positional command first, then COMMANDS
+tools mcp-manager doctor env -- ls -la                   # `--` lets the command carry its own flags
+```
+
+`COMMANDS` holds extra commands separated by `;`. Commands are split on whitespace, with no quote handling. The
+exit code of the process is the exit code of the last failing command, or 0. Each command gets `--timeout <ms>`
+(default 30000): one that outlives it is killed and reported as failed with a `timed out` error, and the report is
+still printed. `-e, --env` is still accepted so
+that older client configs keep working. It does nothing, because the report always has the environment.
+
+⚠️ The report prints the **whole** environment, so it contains every token the client passed. Do not paste it
+into an issue or a chat unredacted. The stderr dump is kept out of the log file on purpose.
+
+To wire it into a client, use it as the server command and restart the client:
+
+```json
+{
+  "mcpServers": {
+    "debug-me": {
+      "command": "tools",
+      "args": ["mcp-manager", "doctor", "env", "which", "bun"]
+    }
+  }
+}
+```
+
 ## Backup and Safety
 
 ### Automatic Backups
@@ -451,7 +558,7 @@ Ensure your TOML syntax is valid. The tool uses `@iarna/toml` for parsing.
 
 ## Related Tools
 
--   `mcp-tsc`: TypeScript diagnostics MCP server
+
 
 -   `mcp-web-reader`: Web content fetching MCP server
 

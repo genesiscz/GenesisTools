@@ -1,7 +1,9 @@
 import { formatDuration } from "@genesiscz/utils/format";
 import { formatTable } from "@genesiscz/utils/table";
-import { detectDuplicateTools, type ServerTools } from "./duplicates";
-import type { ConfigSource, DoctorReport, NormalizedServer, ProbeResult, Status } from "./types";
+import { REDACTED } from "../auth/constants.ts";
+import { redactHeaderValues } from "../auth/redact.ts";
+import { detectDuplicateTools, type ServerTools } from "./duplicates.ts";
+import type { ConfigSource, DoctorReport, NormalizedServer, ProbeResult, Status } from "./types.ts";
 
 /** Every config file `discover()` reads, in the order `mergeServers` layers them. */
 export const CONFIG_SOURCES: readonly ConfigSource[] = ["~/.claude.json", ".mcp.json", ".cursor/mcp.json"];
@@ -111,7 +113,7 @@ export function formatHealthTable(report: DoctorReport, slowThresholdMs = 3_000)
     const lines: string[] = [];
     const s = report.summary;
     lines.push(
-        `mcp-doctor — ${s.total} servers (${s.ok} ok · ${s.slow} slow · ${s.timeout} timeout · ${s.error} error)`
+        `mcp-manager doctor — ${s.total} servers (${s.ok} ok · ${s.slow} slow · ${s.timeout} timeout · ${s.error} error)`
     );
     lines.push("");
     lines.push(formatTable(rows, headers));
@@ -125,6 +127,23 @@ export function formatHealthTable(report: DoctorReport, slowThresholdMs = 3_000)
     }
 
     return lines.join("\n");
+}
+
+/**
+ * A server as `list --json` prints it. The names of its headers and env keys stay, because they say how the
+ * entry is wired. Their values go: a header carries the gateway token or a bearer token, and an env entry is
+ * usually an API key. This output reaches terminal scrollback and CI logs.
+ */
+export function redactServerForOutput(server: NormalizedServer): NormalizedServer {
+    if ("headers" in server && server.headers) {
+        return { ...server, headers: redactHeaderValues(server.headers) };
+    }
+
+    if ("env" in server) {
+        return { ...server, env: Object.fromEntries(Object.keys(server.env).map((key) => [key, REDACTED])) };
+    }
+
+    return server;
 }
 
 export function formatConfigTable(servers: NormalizedServer[]): string {
@@ -142,5 +161,5 @@ export function formatConfigTable(servers: NormalizedServer[]): string {
         return [s.name, s.transport, s.source, target];
     });
 
-    return `mcp-doctor — ${servers.length} servers configured (no probe)\n\n${formatTable(rows, headers)}`;
+    return `mcp-manager doctor — ${servers.length} servers configured (no probe)\n\n${formatTable(rows, headers)}`;
 }

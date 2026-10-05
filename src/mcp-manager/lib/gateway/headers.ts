@@ -1,8 +1,9 @@
 import { LOOPBACK_HOSTS } from "@genesiscz/utils/ai/oauth/callback-server";
-import { GATEWAY_HEADER } from "../auth/constants.ts";
+import { DIAGNOSTIC_HEADER, GATEWAY_HEADER } from "../auth/constants.ts";
 
 const STRIP_TO_UPSTREAM = new Set([
     GATEWAY_HEADER.toLowerCase(),
+    DIAGNOSTIC_HEADER.toLowerCase(),
     "authorization",
     "host",
     "connection",
@@ -35,6 +36,11 @@ export function localTokenMatches(request: Request, expected: string): boolean {
     const got = request.headers.get(GATEWAY_HEADER);
 
     return Boolean(got && expected && got === expected);
+}
+
+/** A health probe asks the gateway to look, not to act: it only ever removes what the gateway would do. */
+export function isDiagnosticRequest(request: Request): boolean {
+    return request.headers.get(DIAGNOSTIC_HEADER) === "1";
 }
 
 export function headersToUpstream(request: Request, accessToken: string): Headers {
