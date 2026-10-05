@@ -333,6 +333,8 @@ enum InboxSort: String, CaseIterable {
 @MainActor
 final class HubInboxModel: ObservableObject {
     @Published private(set) var sessions: [InboxSession] = []
+    /// A notification's target that is not waiting any more: said once, instead of the click doing nothing.
+    @Published var revealMissing: String?
     @Published private(set) var loading = false
     @Published private(set) var loadedAt: Date?
     @Published private(set) var error: String?
@@ -444,22 +446,25 @@ final class HubInboxModel: ObservableObject {
     private func applyReveal() {
         guard let reveal else { return }
         let match = { (id: String) in self.sessions.first { $0.sessionId?.hasPrefix(id) == true } }
+        // Once per load: a target already answered is not listed, and must not jump the list later.
+        self.reveal = nil
         switch reveal {
         case .resume(let id):
             if let session = match(id) {
                 resumeFor = session
-                self.reveal = nil
+            } else {
+                revealMissing = "Session \(id.prefix(8)) has nothing waiting in the Inbox any more"
             }
         case .info(let id):
             if let session = match(id) {
                 infoFor = session.sessionId
-                self.reveal = nil
+            } else {
+                revealMissing = "Session \(id.prefix(8)) has nothing waiting in the Inbox any more"
             }
         case .item(let id):
-            // Once per load: a card already answered is not listed, and must not jump the list later.
-            self.reveal = nil
             guard let session = sessions.first(where: { $0.items.contains { $0.id == id } }) else {
                 HubPerf.log("inbox.reveal: \(id) is not waiting in the Inbox")
+                revealMissing = "That decision is not waiting any more (already answered, or withdrawn)"
                 return
             }
             selectedID = session.id
@@ -587,7 +592,7 @@ final class HubInboxModel: ObservableObject {
     nonisolated static func sendStep(_ resolved: Result<InboxTargetResolution, Error>) -> SendStep {
         switch resolved {
         case .failure(let error):
-            return .report("Nothing was sent: finding where the answers go failed (\(String("\(error)".prefix(200))))")
+            return .report("Nothing was sent: finding where the answers go failed (\(error))")
         case .success(let target):
             return target.kind == "none" ? .askWhereToResume : .deliver(resumeTarget: nil)
         }
@@ -816,8 +821,13 @@ struct InboxListView: View {
             .padding(.bottom, 6)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
-                    if rows.isEmpty {
-                        Text(inbox.loading ? "Looking for waiting sessions…" : inbox.error ?? "Nothing is waiting for you.")
+                    if rows.isEmpty, inbox.loading {
+                        SkeletonRows(count: 6, leading: .avatar)
+                            .skeletonShimmer()
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Looking for waiting sessions")
+                    } else if rows.isEmpty {
+                        Text(inbox.error ?? "Nothing is waiting for you.")
                             .font(.system(size: 12))
                             .foregroundColor(ReviewPalette.dim)
                             .padding(14)
@@ -900,8 +910,10 @@ struct InboxMain: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 22) {
-                        if rows.isEmpty {
-                            Text(inbox.loading ? "Looking for waiting sessions…" : "No session is waiting for an answer.")
+                        if rows.isEmpty, inbox.loading {
+                            PaneSkeleton("Looking for waiting sessions")
+                        } else if rows.isEmpty {
+                            Text("No session is waiting for an answer.")
                                 .font(.system(size: 13))
                                 .foregroundColor(ReviewPalette.dim)
                                 .frame(maxWidth: .infinity)
@@ -990,6 +1002,9 @@ struct InboxMain: View {
                 Spacer()
                 if let notice = model.notice {
                     NoticePill(text: notice) { model.notice = nil }
+                }
+                if let missing = inbox.revealMissing {
+                    NoticePill(text: missing, isError: true) { inbox.revealMissing = nil }
                 }
                 if let loadedAt = inbox.loadedAt {
                     LiveAgo(date: loadedAt) { "checked \($0)" }

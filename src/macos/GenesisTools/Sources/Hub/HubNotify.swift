@@ -195,10 +195,10 @@ struct HubNotifySettings: View {
             if let status = store.status {
                 content(status)
             } else {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Reading the notification settings…").font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim)
-                }
+                SkeletonLines(count: 4)
+                    .skeletonShimmer()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Reading the notification settings")
             }
             if let message = store.message {
                 NoticePill(text: message, isError: message.contains("exited") || message.contains("failed")) { store.message = nil }

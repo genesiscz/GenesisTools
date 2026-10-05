@@ -34,7 +34,7 @@ extension HubModel {
                 case .success(let envelope):
                     self.decisions = envelope.decisions
                 case .failure(let error):
-                    self.notice = "Could not read this session's decisions: \(String("\(error)".prefix(120)))"
+                    self.notice = "Could not read this session's decisions: \(error)"
                 }
             }
         }

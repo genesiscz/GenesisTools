@@ -383,13 +383,7 @@ struct HandoffComposerSheet: View {
             }
             .opacity(loading ? 0.6 : 1)
         } else {
-            VStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Reading the transcript…")
-                    .font(.system(size: 12))
-                    .foregroundStyle(SessionPalette.dim)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            PaneSkeleton("Reading the transcript")
         }
     }
 
