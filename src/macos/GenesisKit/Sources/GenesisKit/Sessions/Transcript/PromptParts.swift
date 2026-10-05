@@ -331,7 +331,7 @@ public struct SystemPartLine: View {
                     .font(.system(size: 12))
                     .foregroundStyle(SessionPalette.dim)
                     .lineSpacing(2)
-                    .textSelection(.enabled)
+                    .hoverTextSelection()
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, 12)
                     .overlay(alignment: .leading) {
