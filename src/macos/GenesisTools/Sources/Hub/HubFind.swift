@@ -226,7 +226,8 @@ struct HubFindPanel: View {
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.genHoverRow(accent: .white, cornerRadius: 4))
-                                .instantTooltip("Open \(display(hit.path)):\(hit.line)")
+                                // The whole matching line: a long one is cut in the row.
+                                .instantTooltip("Open \(display(hit.path)):\(hit.line)\n\(hit.text.trimmingCharacters(in: .whitespaces))")
                             }
                         }
                     }

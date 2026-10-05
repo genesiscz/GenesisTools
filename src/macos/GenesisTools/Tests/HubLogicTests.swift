@@ -74,8 +74,11 @@ final class HubLogicTests: XCTestCase {
 
     /// The browser extension and pasted links hand the hub a page URL, often with a tab suffix.
     func testAPRRefReadsAPRorMRPageURL() {
-        XCTAssertEqual(HubPRRef("https://github.com/acme/App/pull/424/files"), HubPRRef(project: "acme/App", number: 424))
-        XCTAssertEqual(HubPRRef("https://gitlab.example/group/sub/app/-/merge_requests/12"), HubPRRef(project: "group/sub/app", number: 12))
+        XCTAssertEqual(HubPRRef("https://github.com/acme/App/pull/424/files")?.project, "acme/App")
+        XCTAssertEqual(HubPRRef("https://github.com/acme/App/pull/424/files")?.number, 424)
+        XCTAssertEqual(HubPRRef("https://github.com/acme/App/pull/424/files")?.pageURL, "https://github.com/acme/App/pull/424/files")
+        XCTAssertEqual(HubPRRef("https://gitlab.example/group/sub/app/-/merge_requests/12")?.project, "group/sub/app")
+        XCTAssertEqual(HubPRRef("https://gitlab.example/group/sub/app/-/merge_requests/12")?.number, 12)
         XCTAssertNil(HubPRRef("https://github.com/acme/app/issues/3"))
         XCTAssertNil(HubPRRef("https://github.com/acme/app"))
     }
@@ -698,6 +701,25 @@ final class HubLogicTests: XCTestCase {
         XCTAssertEqual(second.count, 1)
         let batches = await log.batches
         XCTAssertEqual(batches.count, 2)
+    }
+
+    private func hostPR(host: String, web: String, number: Int) throws -> HubPR {
+        let json = """
+        {"repo":"app","repoRoot":null,"origin":{"kind":"github","host":"\(host)","web":"\(web)"},
+         "number":\(number),"title":"t","state":"open","draft":false,"author":"a","headBranch":"x","baseBranch":"main",
+         "url":"\(web)/pull/\(number)","labels":[],"reviewers":[]}
+        """
+        return try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
+    }
+
+    func testAPageRefMatchesOnlyTheRowOfItsOwnForgeHost() throws {
+        let ref = try XCTUnwrap(HubPRRef("https://github.com/team/app/pull/7"))
+        let onGitHub = try hostPR(host: "github.com", web: "https://github.com/team/app", number: 7)
+        let elsewhere = try hostPR(host: "gitlab.example.test", web: "https://gitlab.example.test/team/app", number: 7)
+        XCTAssertEqual(ref.host, "github.com")
+        XCTAssertTrue(ref.matches(onGitHub))
+        XCTAssertFalse(ref.matches(elsewhere))
+        XCTAssertTrue(HubPRRef(project: "team/app", number: 7).matches(elsewhere), "a path-only ref has no host to compare")
     }
 
     func testTheBatchOutputDecodesPerToolCall() {

@@ -45,7 +45,9 @@ final class HubNotifyTests: XCTestCase {
         XCTAssertEqual(failing?.failures, 2)
         XCTAssertNotNil(failing?.lastError)
         XCTAssertEqual(status.recent.map(\.ref), ["acme/web#424", "group/shop!12"])
-        XCTAssertEqual(HubPRRef(status.recent[1].ref), HubPRRef(project: "group/shop", number: 12))
+        var merge = HubPRRef(project: "group/shop", number: 12)
+        merge.isMergeRequest = true
+        XCTAssertEqual(HubPRRef(status.recent[1].ref), merge)
     }
 
     func testDaemonTaskUnknownIsNull() throws {
@@ -72,7 +74,9 @@ final class HubNotifyTests: XCTestCase {
         let github = HubRequest(["--mode", "prs", "--pr", "acme/web#7"])
         XCTAssertEqual(github.mode, .prs)
         XCTAssertEqual(github.pr, HubPRRef(project: "acme/web", number: 7))
-        XCTAssertEqual(HubRequest(["--mode", "prs", "--pr", "group/sub/app!12"]).pr, HubPRRef(project: "group/sub/app", number: 12))
+        var mergeRequest = HubPRRef(project: "group/sub/app", number: 12)
+        mergeRequest.isMergeRequest = true
+        XCTAssertEqual(HubRequest(["--mode", "prs", "--pr", "group/sub/app!12"]).pr, mergeRequest)
         XCTAssertEqual(HubRequest(["--mode", "prs", "--pr", "42"]).pr, HubPRRef(project: nil, number: 42))
         let noPR = HubRequest(["--mode", "prs"])
         XCTAssertEqual(noPR.mode, .prs)

@@ -240,6 +240,12 @@ enum HubPaletteEngine {
                 (project?.contains(session.cwd) ?? true)
                     && (argument.isEmpty || "\(session.displayTitle) \(session.sessionId)".localizedCaseInsensitiveContains(argument))
             }
+            if matches.isEmpty {
+                // An empty box said nothing; the loaded list is only the last hours, history has the rest.
+                return [HubPaletteSuggestion(id: "session-none", title: argument.isEmpty ? "No session is loaded\(where_)" : "Search every session's history for “\(argument)”",
+                                             subtitle: argument.isEmpty ? nil : "No loaded session\(where_) matches; the list holds the last \(HubModel.recentHours) h",
+                                             symbol: "clock.arrow.circlepath", completion: nil, action: argument.isEmpty ? nil : .historySearch(argument))]
+            }
             return matches.prefix(10).map { session in
                 HubPaletteSuggestion(id: "session-\(session.id)", title: session.displayTitle, subtitle: "\(session.provider) · \((session.cwd as NSString).lastPathComponent)",
                                      symbol: command.symbol, completion: nil, action: .selectSession(session.id))
@@ -248,6 +254,10 @@ enum HubPaletteEngine {
             let matches = context.worktrees.filter { worktree in
                 (project.map { worktree.repo == $0.name || $0.contains(worktree.path) } ?? true)
                     && (argument.isEmpty || "\(worktree.branch) \(worktree.name)".localizedCaseInsensitiveContains(argument))
+            }
+            if matches.isEmpty {
+                let why = context.worktrees.isEmpty ? "Open the Worktrees mode once to find them" : "No worktree\(where_) matches “\(argument)”"
+                return [HubPaletteSuggestion(id: "wt-none", title: "No worktree found", subtitle: why, symbol: "questionmark.circle")]
             }
             return matches.prefix(10).map { worktree in
                 HubPaletteSuggestion(id: "wt-\(worktree.path)", title: worktree.branch, subtitle: worktree.path, symbol: command.symbol,

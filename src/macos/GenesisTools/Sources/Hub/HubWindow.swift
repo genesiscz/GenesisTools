@@ -202,6 +202,9 @@ func runHub(_ args: [String]) -> Never {
     let delegate = HubAppDelegate()
     app.delegate = delegate
     installBrowserURLForwarder()
+    if !request.isScripted {
+        installNotificationClicksForWindowFace()
+    }
 
     let model = HubModel(wantedSession: wantedSession, tab: tab)
     MainActor.assumeIsolated {
@@ -330,6 +333,7 @@ func runHub(_ args: [String]) -> Never {
 
     MainActor.assumeIsolated {
         HangWatch.start()
+        FrameWatch.start()
         HubStallTest.scheduleIfRequested()
         if !request.isScripted {
             HubNavInput.install(window: window, model: model)
@@ -751,7 +755,18 @@ final class HubModel: ObservableObject {
     }
 
     var selected: HubSession? {
-        sessions.first { $0.id == selectedID }
+        sessions.first { $0.id == selectedID } ?? leadOutsideList.flatMap { $0.id == selectedID ? $0 : nil }
+    }
+
+    /// The Agents mode's lead session when the Sessions list does not hold it (older than the list's window).
+    private var leadOutsideList: HubSession?
+
+    /// The Agents mode's detail: its lead session becomes the selected one, so the Changes, Files and
+    /// Decisions panes (and "Open diff") work on it exactly as in Sessions mode.
+    func selectLead(_ session: HubSession) {
+        // Replaced on every pick, so no stale snapshot of an earlier lead outlives the next one.
+        leadOutsideList = sessions.contains(where: { $0.id == session.id }) ? nil : session
+        select(session.id)
     }
 
     var filtered: [HubSession] {
@@ -766,10 +781,20 @@ final class HubModel: ObservableObject {
     func setMode(_ next: HubMode) {
         // A switch costs the renders after it: the old mode's views go and the new mode's arrive.
         MainActor.assumeIsolated { HubMainBusy.measure("mode.\(next.rawValue)") }
+        let previous = mode
         mode = next
         MainActor.assumeIsolated {
             if next == .agents {
                 agents.activate()
+                // One screen with two sidebars: the session open in Sessions stays open, as its Main row
+                // (Martin, 2026-10-01). An agent of that same session that was open stays open.
+                if previous == .sessions, let session = selected, session.provider == MonitorSessionRow.claudeProvider,
+                   agents.selectedParent?.sessionId != session.sessionId {
+                    agents.request(parent: session.sessionId, child: AgentTree.mainChild)
+                    if !agents.parents.contains(where: { $0.sessionId == session.sessionId }) {
+                        agents.refresh(sessions: [session.sessionId])
+                    }
+                }
             } else {
                 agents.deactivate()
             }
@@ -786,6 +811,8 @@ final class HubModel: ObservableObject {
         if next == .worktrees && worktrees.isEmpty && !loadingWorktrees {
             loadingWorktrees = true
             let sessions = sessions
+            // The worktree a link asked for is discovered with the session folders, whatever its repo.
+            let extra = selectedWorktree.flatMap { $0 == WorktreeCleanup.selectionID ? nil : [$0] } ?? []
             DispatchQueue.global(qos: .userInitiated).async {
                 let span = HubPerf.begin("worktrees.discover", "\(sessions.count) sessions")
                 // The last run's worktrees paint while git answers again (Hub/HubSWR.swift).
@@ -800,7 +827,7 @@ final class HubModel: ObservableObject {
                         }
                     }
                 }
-                let found = WorktreeDiscovery.discover(sessions: sessions)
+                let found = WorktreeDiscovery.discover(sessions: sessions, extra: extra)
                 span.end("\(found.count) worktrees")
                 WorktreeDiscovery.save(found)
                 DispatchQueue.main.async { [weak self] in
@@ -945,12 +972,93 @@ final class HubModel: ObservableObject {
                 if !settled {
                     settleSessions()
                 }
+                resolvePendingSession(fresh: true)
             } catch {
                 loadingSessions = false
                 showingCachedSessions = false
                 self.error = "\(error)"
                 if !settled {
                     onSettled?()
+                }
+            }
+        }
+    }
+
+    /// A `--session` a running hub got before its list held it; selected by the next list that does.
+    private var pendingSession: String?
+
+    /// After a list landed: the pending session, when it is there now; else, on the fresh list, says so.
+    @MainActor
+    private func resolvePendingSession(fresh: Bool) {
+        guard let wanted = pendingSession else { return }
+        if let match = sessions.first(where: { $0.id == wanted || $0.sessionId.hasPrefix(wanted) }) {
+            pendingSession = nil
+            select(match.id)
+        } else if fresh {
+            pendingSession = nil
+            openOlderSession(wanted, settle: false)
+        }
+    }
+
+    /// How far back a session asked for by id is looked for when the list's window does not hold it.
+    static let olderSessionHours = 24 * 30
+    private var olderSessionRequest = 0
+
+    /// A session asked for by id (`--session`, a link, Agent processes) that the list's last
+    /// `recentHours` do not hold: the list is asked once for the last 30 days, and the session joins
+    /// the list and opens. Not found, it says so. It used to open the newest session instead, saying
+    /// nothing (`settle`: a launch that must still settle on something).
+    @MainActor
+    func openOlderSession(_ wanted: String, settle: Bool) {
+        HubPerf.log("sessions.older \(wanted.prefix(8))")
+        olderSessionRequest += 1
+        let request = olderSessionRequest
+        let modeAtStart = mode
+        let selectionAtStart = selectedID
+        Task { @MainActor in
+            let rows = (try? await HubSource.sessions(hours: Self.olderSessionHours)) ?? []
+            // A newer lookup owns the navigation now, and a reader who picked another session or mode while
+            // this one ran must not be pulled back. A launch lookup (`settle`) has nobody to be pulled from.
+            guard request == olderSessionRequest, settle || (mode == modeAtStart && selectedID == selectionAtStart) else {
+                HubPerf.log("sessions.older \(wanted.prefix(8)) superseded")
+                return
+            }
+            if let match = rows.first(where: { $0.id == wanted || $0.sessionId.hasPrefix(wanted) }) {
+                if !sessions.contains(where: { $0.id == match.id }) {
+                    sessions.append(match)
+                }
+                setMode(.sessions)
+                select(match.id)
+                return
+            }
+
+            notice = "No session \(wanted.prefix(8)) in the last \(Self.olderSessionHours / 24) days"
+            if settle {
+                if let first = sessions.first {
+                    select(first.id)
+                } else {
+                    onSettled?()
+                }
+            }
+        }
+    }
+
+    /// A worktree a link or the browser extension names that the list does not hold (its repository
+    /// has no recent session): its repository's worktrees join the list, so it opens instead of
+    /// "Pick a worktree" with no word about what was asked for.
+    @MainActor
+    func addWorktreesIfMissing(_ path: String) {
+        guard !worktrees.isEmpty, !worktrees.contains(where: { $0.path == path }), FileManager.default.fileExists(atPath: path) else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let found = WorktreeDiscovery.discover(sessions: [], extra: [path])
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let added = found.filter { row in !self.worktrees.contains { $0.path == row.path } }
+                if !added.isEmpty {
+                    withAnimation(SWR.animation) { self.worktrees += added }
+                }
+                if !self.worktrees.contains(where: { $0.path == path }) {
+                    self.error = "\(path) is not a git worktree"
                 }
             }
         }
@@ -1025,6 +1133,8 @@ final class HubModel: ObservableObject {
             select(AgentProcs.selectionID)
             onSettled?()
             onSettled = nil
+        } else if let wanted = wantedSession, wantedSessionRow == nil {
+            MainActor.assumeIsolated { openOlderSession(wanted, settle: true) }
         } else if let first = wantedSessionRow ?? sessions.first {
             select(first.id)
         } else {
@@ -1035,6 +1145,8 @@ final class HubModel: ObservableObject {
     /// The PR list of every session project, once: the PRs mode and the palette's "pr" both read it.
     @MainActor
     func loadPRsIfNeeded() {
+        // Project discovery does not depend on the session roots: with none, no list load would start it.
+        prs.loadProjectsIfNeeded()
         if prs.loading { return }
         guard prs.prs.isEmpty else {
             answerWithoutLoad()
@@ -1073,7 +1185,7 @@ final class HubModel: ObservableObject {
             prs: prs.prs,
             prsLoaded: prRootsRequested != nil && !prs.loading,
             worktrees: worktrees,
-            currentPath: selected.map { $0.cwd.isEmpty ? nil : projectRoot(of: $0.cwd) } ?? nil
+            currentPath: paletteCurrentPath
         )
     }
 
@@ -1089,6 +1201,20 @@ final class HubModel: ObservableObject {
         let row = hit.sessionRow
         sessions.append(row)
         select(row.id)
+    }
+
+    /// The folder the File menu's Cursor / cmux / New session and the palette's commands act on: the
+    /// worktree or PR on screen in those modes, else the selected session's project. Only the session
+    /// was read, so in Worktrees mode they opened the wrong folder or refused.
+    @MainActor
+    private var paletteCurrentPath: String? {
+        if mode == .worktrees, let path = selectedWorktree, path != WorktreeCleanup.selectionID {
+            return path
+        }
+        if mode == .prs, let path = prs.selected?.localWorktree ?? prs.selected?.repoRoot {
+            return path
+        }
+        return selected.map { $0.cwd.isEmpty ? nil : projectRoot(of: $0.cwd) } ?? nil
     }
 
     /// Where ⌘⇧F searches: the selected session's project (or worktree, or PR checkout) and the
@@ -1253,6 +1379,12 @@ final class HubModel: ObservableObject {
         } else if let wanted = request.session, let match = sessions.first(where: { $0.id == wanted || $0.sessionId.hasPrefix(wanted) }) {
             setMode(.sessions)
             select(match.id)
+        } else if let wanted = request.session {
+            // A session newer than the list (started after this window opened): the list is asked
+            // again and selects it when it lands. Matched once and dropped, it did nothing at all.
+            setMode(.sessions)
+            pendingSession = wanted
+            loadSessions()
         } else if let mode = request.mode {
             setMode(mode)
         } else if request.inboxItem != nil {
@@ -1261,6 +1393,7 @@ final class HubModel: ObservableObject {
         if let worktree = request.worktree {
             setMode(.worktrees)
             selectedWorktree = WorktreeCleanup.selection(for: worktree)
+            MainActor.assumeIsolated { addWorktreesIfMissing(worktree) }
         }
         if let ref = request.pr {
             MainActor.assumeIsolated { prs.request(ref, reveal: request.prReveal) }
@@ -1285,12 +1418,17 @@ final class HubModel: ObservableObject {
         guard let session = selected else { return }
         decisions = []
         loadDecisions(for: session.sessionId)
-        let cwd = session.cwd
+        let moved = session.cwd.isEmpty ? nil : MovedCheckout.resolve(session.cwd)
+        let cwd = moved ?? session.cwd
         if !cwd.isEmpty, FileManager.default.fileExists(atPath: cwd) {
             // The session too: two agents in one checkout share the folder, and "Send to agent" targets `review.session`.
             if review?.repo.path != cwd || review?.session != session.sessionId {
                 let next = ReviewModel(repo: URL(fileURLWithPath: cwd), options: DiffViewOptions(), session: session.sessionId)
                 next.embedded = true
+                if moved != nil {
+                    let from = (session.cwd as NSString).abbreviatingWithTildeInPath
+                    next.notice = "\(from) holds no repository, so this shows \((cwd as NSString).abbreviatingWithTildeInPath), the checkout of the same name"
+                }
                 sessionReview = next
                 review = next
             } else {
@@ -1460,6 +1598,29 @@ private struct HubPaletteHost: View {
 
 struct HubRootView: View {
     @ObservedObject var model: HubModel
+
+    /// The open screen in words: mode, what is selected, and the session panes.
+    private var perfArea: String {
+        var parts = [model.mode.rawValue]
+        switch model.mode {
+        case .agents:
+            if let node = model.agents.selected?.node {
+                parts.append("agent " + String(node.title.prefix(40)))
+            } else if let parent = model.agents.selectedMain {
+                parts.append("main " + String(parent.displayTitle.prefix(40)))
+            }
+        case .sessions:
+            if let session = model.selected {
+                parts.append(String(session.displayTitle.prefix(40)))
+            }
+        default:
+            break
+        }
+        if model.mode == .agents || model.mode == .sessions {
+            parts.append(model.tabOrder.filter { model.panes.contains($0) }.map(\.rawValue).joined(separator: ","))
+        }
+        return parts.joined(separator: " › ")
+    }
     @AppStorage(HubGlass.key) private var glass = false
     @AppStorage("hub.prs.showDiff") private var prsShowDiff = true
     @State private var width: CGFloat = 0
@@ -1496,7 +1657,8 @@ struct HubRootView: View {
                                autoCollapse: width > 0 && sidebarRoom < Self.sidebarMinWidth,
                                // Sessions mode holds the layout for the transcript; every other
                                // mode's main view moves with the edge and reflows on release.
-                               holdsLayout: model.mode == .sessions || model.mode == .agents) {
+                               holdsLayout: model.mode == .sessions || model.mode == .agents,
+                               holdsContent: model.mode == .prs && ProcessInfo.processInfo.environment["GENESIS_HUB_HOLD_CONTENT"] != "0") {
                 SessionListView(model: model)
             }
             if model.mode == .prs {
@@ -1522,8 +1684,10 @@ struct HubRootView: View {
                 } else if model.selectedWorktree == WorktreeCleanup.selectionID, !model.loadingWorktrees {
                     WorktreeCleanupView(model: model)
                         .freezesWidthWhileDragging(panel: "hub.sidebar")
+                } else if model.loadingWorktrees {
+                    PaneSkeleton("Finding worktrees")
                 } else {
-                    Text(model.loadingWorktrees ? "Finding worktrees…" : "Pick a worktree")
+                    Text("Pick a worktree")
                         .foregroundColor(ReviewPalette.dim)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -1531,22 +1695,20 @@ struct HubRootView: View {
                 AgentProcsView(model: model)
             } else if let session = model.selected {
                 SessionDetailView(model: model, session: session)
+            } else if model.loadingSessions {
+                TranscriptSkeleton()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else {
-                VStack(spacing: 8) {
-                    if model.loadingSessions {
-                        ProgressView()
-                        Text("Loading sessions…").foregroundColor(ReviewPalette.dim)
-                    } else {
-                        Text(model.error ?? "No sessions in the last \(HubModel.recentHours) hours")
-                            .foregroundColor(ReviewPalette.dim)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Text(model.error ?? "No sessions in the last \(HubModel.recentHours) hours")
+                    .foregroundColor(ReviewPalette.dim)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .hubSurface(.content)
         .environment(\.hubGlass, glass)
         .preferredColorScheme(.dark)
+        // Every stall and dropped-frame line in app-perf.log names this (GenesisKit Perf/PerfContext.swift).
+        .task(id: perfArea) { PerfContext.area = perfArea }
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
         .onGeometryChange(for: Int.self, of: { $0.frame(in: .global).minX < -0.5 ? 1 : 0 }) { HubBench.note("hub.root.clipped", $0) }
         .background(HubWindowReader { window in
@@ -1777,6 +1939,10 @@ private struct SessionListView: View {
             HStack(spacing: 0) {
                 HubNavButtons(model: model)
                 Spacer(minLength: 0)
+                IconButton(systemName: "lock.shield", tooltip: "Permissions and settings (⌘,)") {
+                    AppMenuTarget.shared.openSettings(nil)
+                }
+                .foregroundColor(ReviewPalette.dim)
                 GlassToggle()
             }
             .padding(.horizontal, 12)
@@ -1832,6 +1998,12 @@ private struct SessionListView: View {
                     LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
                         // Hub/HubAgentProcs.swift: every agent session's process tree, orphans first.
                         AgentProcsEntry(model: model)
+                        if model.sessions.isEmpty, model.loadingSessions {
+                            SkeletonRows(count: 10, leading: .avatar)
+                                .skeletonShimmer()
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("Loading sessions")
+                        }
                         ForEach(sections, id: \.title) { section in
                             Section {
                                 if !(section.managed && prefs.collapsed.contains(section.title)) {
@@ -1939,11 +2111,15 @@ private struct SessionRowView: View {
     }
 }
 
-private struct SessionDetailView: View {
+/// The one session screen of Sessions and Agents mode: the transcript, Changes, Files and Decisions panes
+/// on the selected session. The Agents mode passes `agent`: the transcript pane then shows that agent's
+/// own file and the header its facts, while the other panes stay the lead session's.
+struct SessionDetailView: View {
     @ObservedObject var model: HubModel
     @ObservedObject private var repos = RepoFactsStore.shared
     @ObservedObject private var stuck = HubStuckStore.shared
     let session: HubSession
+    var agent: AgentPaneContext?
     /// How many of the open panes fit side by side; nil until measured (then all are shown).
     @State private var fitting: Int?
     /// A pane that did not fit, shown as a drawer over the others from its rail.
@@ -1972,22 +2148,22 @@ private struct SessionDetailView: View {
         VStack(spacing: 0) {
             header
             HStack(spacing: 0) {
-                if shown.count == 1, let only = shown.first {
-                    pane(only).freezesWidthWhileResizing()
-                } else {
-                    HSplitView {
-                        ForEach(shown, id: \.self) { tab in
-                            pane(tab)
-                                .freezesWidthWhileResizing(heavy: tab == .transcript)
-                                .frame(minWidth: tab.minPaneWidth, idealWidth: tab.idealPaneWidth, maxWidth: .infinity, maxHeight: .infinity)
-                        }
+                // One split view whatever the count: a pane that stays keeps its identity when another
+                // opens or closes. A single pane used to be a different branch, so opening Files beside
+                // the transcript made a new transcript, which loaded its page again and scrolled to the
+                // latest turn (Martin, 2026-10-02: "when i open Files, the transcript always jumps").
+                HSplitView {
+                    ForEach(shown, id: \.self) { tab in
+                        pane(tab)
+                            .freezesWidthWhileResizing(heavy: tab == .transcript)
+                            .frame(minWidth: tab.minPaneWidth, idealWidth: tab.idealPaneWidth, maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    // The side panels' grip, target and cursor on the split's bare 1 pt dividers too.
-                    .overlay(PaneDividerGrips())
-                    // The split view too: its frame changing per window-resize step made the root
-                    // hosting view rebuild the key view loop each step (72 ms with two panes).
-                    .freezesWidthWhileResizing()
                 }
+                // The side panels' grip, target and cursor on the split's bare 1 pt dividers too.
+                .overlay(PaneDividerGrips())
+                // The split view too: its frame changing per window-resize step made the root
+                // hosting view rebuild the key view loop each step (72 ms with two panes).
+                .freezesWidthWhileResizing()
                 // Panes with no room left fold to rails at the edge instead of being pushed out of
                 // the window (at 900 pt the Files pane lay past the right edge, audit 2026-09-24).
                 ForEach(railed, id: \.self) { tab in
@@ -2027,10 +2203,25 @@ private struct SessionDetailView: View {
     private func pane(_ tab: HubTab) -> some View {
         switch tab {
         case .transcript:
-            HubSessionDetailHost(session: session, onShowChange: { path, line in
-                model.showChange(path: path, line: line)
-            }, showsSidebar: model.panes.count == 1, transcriptQuery: model.transcriptQuery)
-                .id("\(session.id)|\(model.panes.count == 1)")
+            if let agent, agent.node != nil {
+                if let row = agent.transcriptRow {
+                    HubSessionDetailHost(session: row, onShowChange: { path, line in
+                        model.showChange(path: path, line: line)
+                    }, showsSidebar: model.panes.count == 1, agentChild: true)
+                        .id(agent.key)
+                } else {
+                    Text("This agent has no transcript file")
+                        .foregroundColor(ReviewPalette.dim)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else {
+                HubSessionDetailHost(session: session, onShowChange: { path, line in
+                    model.showChange(path: path, line: line)
+                }, onOpenSubagent: { agent in
+                    model.openSubagent(sessionId: session.sessionId, agentId: agent.id)
+                }, showsSidebar: model.panes.count == 1, transcriptQuery: model.transcriptQuery)
+                    .id(session.id)
+            }
         case .changes:
             HubChangesPane(model: model)
         case .files:
@@ -2070,7 +2261,33 @@ private struct SessionDetailView: View {
     /// The first row sits in the window's title bar, right of the traffic lights and the title, so the
     /// panes start right under the title bar (Martin, 2026-09-28). Its empty part zooms and drags the
     /// window (`TitlebarHeader`, `.titlebarZone()` on the root, WindowTitlebar.swift).
+    @ViewBuilder
     private var header: some View {
+        if let agent, let node = agent.node {
+            agentHeader(agent, node: node)
+        } else {
+            sessionHeader
+        }
+    }
+
+    /// An open agent: the way back to the lead, the agent's state, then the same pane buttons.
+    private func agentHeader(_ agent: AgentPaneContext, node: AgentNode) -> some View {
+        TitlebarHeader {
+            HStack(spacing: 8) {
+                AgentChildTitle(agents: agent.agents, parent: agent.parent, node: node)
+                Spacer()
+                if let notice = model.notice {
+                    NoticePill(text: notice, isError: notice.hasPrefix("cmux:") || notice.contains("failed") || notice.contains("not in")) { model.notice = nil }
+                }
+                paneToggles
+                AgentCopyIdButton(model: model, node: node)
+            }
+        } details: {
+            AgentChildDetails(agents: agent.agents, parent: agent.parent, node: node)
+        }
+    }
+
+    private var sessionHeader: some View {
         TitlebarHeader(details: model.panes.contains(.transcript) ? nil : accountRow) {
             HStack(spacing: 10) {
                 if !model.panes.contains(.transcript) {

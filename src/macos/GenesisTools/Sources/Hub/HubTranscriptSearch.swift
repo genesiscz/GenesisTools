@@ -97,11 +97,25 @@ final class HubTranscriptSearchModel: ObservableObject {
     @Published private(set) var running = false
     @Published private(set) var error: String?
     private var generation = 0
+    /// Sessions asked for; "Search more" raises it. A full page said nothing about the sessions past it.
+    @Published private(set) var limit = HubTranscriptSearchModel.pageSize
+    static let pageSize = 40
+    static let maxLimit = 200
+    var mayHaveMore: Bool { (result?.results.count ?? 0) >= limit && limit < Self.maxLimit }
+
+    func searchMore() {
+        limit = min(Self.maxLimit, limit + Self.pageSize)
+        search(keepLimit: true)
+    }
+
     /// One search at a time: the newest request waits here and starts when the running one ends.
     private var inFlight = false
     private var pending: [String]?
 
-    func search() {
+    func search(keepLimit: Bool = false) {
+        if !keepLimit {
+            limit = Self.pageSize
+        }
         let text = query.trimmingCharacters(in: .whitespaces)
         guard text.count >= 2 else {
             // The search still running, and the one waiting, were for the longer text: neither may land now.
@@ -115,7 +129,7 @@ final class HubTranscriptSearchModel: ObservableObject {
         generation += 1
         running = true
         error = nil
-        let args = HubSearchArgs.build(query: text, providers: providers, project: project, range: range)
+        let args = HubSearchArgs.build(query: text, providers: providers, project: project, range: range, limit: limit)
         if inFlight {
             pending = args
         } else {
@@ -150,7 +164,10 @@ final class HubTranscriptSearchModel: ObservableObject {
         }
     }
 
-    var summary: String { result?.summary ?? "" }
+    var summary: String {
+        guard let result else { return "" }
+        return mayHaveMore ? "\(result.summary) · the first \(limit), more may match" : result.summary
+    }
 }
 
 extension HubSearchResult {
@@ -217,11 +234,21 @@ struct HubTranscriptSearchPanel: View {
             .frame(maxHeight: 520)
             if !search.summary.isEmpty {
                 Divider().background(Color.jarvisBorder)
-                Text(verbatim: search.summary)
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundColor(.settingsTextMuted)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
+                HStack(spacing: 8) {
+                    Text(verbatim: search.summary)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundColor(.settingsTextMuted)
+                    Spacer(minLength: 0)
+                    if search.mayHaveMore {
+                        Button("Search more") { search.searchMore() }
+                            .buttonStyle(.genHoverPlain())
+                            .font(.system(size: 11))
+                            .disabled(search.running)
+                            .instantTooltip("Ask for \(HubTranscriptSearchModel.pageSize) more sessions (up to \(HubTranscriptSearchModel.maxLimit))")
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
             }
         }
         .onAppear {
