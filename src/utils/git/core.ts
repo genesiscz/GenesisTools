@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import type { ExecResult } from "@genesiscz/utils/cli";
 import { Executor } from "@genesiscz/utils/cli";
 import {
@@ -204,22 +205,35 @@ export function createGit(options?: GitOptions) {
         },
 
         /**
-         * Check if a rebase is in progress
+         * Absolute path of a file in the git dir. A linked worktree's `.git` is a file, so a path
+         * joined by hand onto `<root>/.git` names nothing there.
          */
-        async isRebaseInProgress(): Promise<boolean> {
-            const repoRoot = await this.getRepoRoot();
-            const rebaseMerge = Bun.file(`${repoRoot}/.git/rebase-merge`);
-            const rebaseApply = Bun.file(`${repoRoot}/.git/rebase-apply`);
-            return (await rebaseMerge.exists()) || (await rebaseApply.exists());
+        async gitPath(name: string): Promise<string> {
+            const result = await executor.execOrThrow(
+                ["rev-parse", "--path-format=absolute", "--git-path", name],
+                `Failed to resolve the git path ${name}`
+            );
+            return result.stdout;
         },
 
         /**
-         * Check if git repository is locked (.git/index.lock exists)
+         * Check if a rebase is in progress. `rebase-merge` is a directory, which `Bun.file().exists()`
+         * reports as absent, so this reads the filesystem through `existsSync`.
+         */
+        async isRebaseInProgress(): Promise<boolean> {
+            return existsSync(await this.gitPath("rebase-merge")) || existsSync(await this.gitPath("rebase-apply"));
+        },
+
+        /** Check if a cherry-pick stopped and waits for `--continue`, `--skip` or `--abort`. */
+        async isCherryPickInProgress(): Promise<boolean> {
+            return existsSync(await this.gitPath("CHERRY_PICK_HEAD"));
+        },
+
+        /**
+         * Check if the index is locked (`index.lock` in the git dir of this checkout)
          */
         async isGitLocked(): Promise<boolean> {
-            const repoRoot = await this.getRepoRoot();
-            const lockFile = Bun.file(`${repoRoot}/.git/index.lock`);
-            return await lockFile.exists();
+            return existsSync(await this.gitPath("index.lock"));
         },
 
         /**

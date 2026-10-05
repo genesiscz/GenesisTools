@@ -1,7 +1,5 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
+import { readStateFile, removeStateFile, writeStateFile } from "@app/git/lib/state-file";
 
 /**
  * The plan file lives in the git COMMON dir, so every worktree of the clone
@@ -70,28 +68,13 @@ export function statePath(commonDir: string): string {
 }
 
 export function loadState(commonDir: string): CascadePlan | null {
-    const path = statePath(commonDir);
-
-    if (!existsSync(path)) {
-        return null;
-    }
-
-    try {
-        return SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as CascadePlan;
-    } catch (err) {
-        logger.warn({ err, path }, "cascade: unreadable plan file");
-        return null;
-    }
+    return readStateFile<CascadePlan>(statePath(commonDir));
 }
 
 export function saveState(commonDir: string, plan: CascadePlan): void {
-    writeFileSync(statePath(commonDir), `${SafeJSON.stringify(plan, null, 2)}\n`);
+    writeStateFile(statePath(commonDir), plan);
 }
 
 export function clearState(commonDir: string): void {
-    const path = statePath(commonDir);
-
-    if (existsSync(path)) {
-        unlinkSync(path);
-    }
+    removeStateFile(statePath(commonDir));
 }
