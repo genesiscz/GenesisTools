@@ -236,6 +236,31 @@ describe("resolveSampleRoot", () => {
 });
 
 describe("tools fsevents entrypoint", () => {
+    it.skipIf(process.platform === "darwin")("refuses valid sampling on systems without FSEvents", async () => {
+        const fixtureRoot = mkdtempSync(join(tmpdir(), "gt-fsevents-platform-"));
+
+        try {
+            const proc = Bun.spawn({
+                cmd: ["bun", "run", join(import.meta.dir, "../index.ts"), "profile", "--duration", "1"],
+                env: { ...process.env, GENESIS_TOOLS_HOME: fixtureRoot, NO_COLOR: "1" },
+                stdin: "ignore",
+                stdout: "pipe",
+                stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([
+                new Response(proc.stdout).text(),
+                new Response(proc.stderr).text(),
+                proc.exited,
+            ]);
+
+            expect(exitCode).toBe(1);
+            expect(stderr).toContain("profile needs macOS");
+            expect(stdout).toBe("");
+        } finally {
+            rmSync(fixtureRoot, { recursive: true, force: true });
+        }
+    });
+
     it("prints a failure once and keeps the error with its stack in the day log", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-fsevents-home-"));
 

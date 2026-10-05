@@ -105,14 +105,14 @@ export function registerProfileCommand(program: Command): void {
         .option("-w, --watchers", "List the processes that open the FSEvents device instead (needs root)")
         .option("--json", "Print the result as JSON")
         .action(async (path: string, options: ProfileOptions) => {
+            const fallback = options.watchers ? DEFAULT_WATCHERS_DURATION_SECONDS : DEFAULT_DURATION_SECONDS;
+            const seconds = options.duration === undefined ? fallback : positiveNumber(options.duration, "--duration");
+
             if (process.platform !== "darwin") {
                 ui.err("profile needs macOS: it reads FSEvents, which other systems do not have.");
                 process.exitCode = 1;
                 return;
             }
-
-            const fallback = options.watchers ? DEFAULT_WATCHERS_DURATION_SECONDS : DEFAULT_DURATION_SECONDS;
-            const seconds = options.duration === undefined ? fallback : positiveNumber(options.duration, "--duration");
 
             if (options.watchers) {
                 await profileWatchers(options, seconds);
