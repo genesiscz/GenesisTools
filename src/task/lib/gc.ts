@@ -13,7 +13,12 @@ export async function runSessionGc(opts: { retentionDays: number }): Promise<{ r
     try {
         names = (await readdir(dir)).filter((n) => n.endsWith(".jsonl") && !n.endsWith(".ui.jsonl"));
     } catch (err) {
-        logger.warn({ err, dir }, "gc: failed to read sessions directory");
+        // no folder yet means no session was ever written: nothing to clean, not a problem
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+            logger.debug({ dir }, "gc: no sessions directory yet");
+        } else {
+            logger.warn({ err, dir }, "gc: failed to read sessions directory");
+        }
 
         return { removed: 0 };
     }

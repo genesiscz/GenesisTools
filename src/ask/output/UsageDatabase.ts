@@ -49,10 +49,17 @@ export interface ModelUsage {
 const sinceDays = (days: number) => sql<string>`date('now', ${`-${days} days`})`;
 
 export class UsageDatabase {
-    private readonly client: DatabaseClient<AskDB>;
+    private opened: DatabaseClient<AskDB> | null = null;
 
-    constructor(dbPath?: string) {
-        this.client = dbPath ? openAskDatabase(dbPath) : getAskDatabase();
+    /** The module-level instance below is built at import, so the file opens on first use: `tools ask --help` must write nothing (#446). */
+    constructor(private readonly dbPath?: string) {}
+
+    private get client(): DatabaseClient<AskDB> {
+        if (!this.opened) {
+            this.opened = this.dbPath ? openAskDatabase(this.dbPath) : getAskDatabase();
+        }
+
+        return this.opened;
     }
 
     async recordUsage(

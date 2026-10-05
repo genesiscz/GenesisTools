@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runSessionGc } from "@app/task/lib/gc";
 import {
     getTaskSessionsDir,
     isCanonicalSessionJsonlFilename,
@@ -9,6 +10,7 @@ import {
     sessionNameFromJsonlFilename,
 } from "@app/task/lib/paths";
 import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
 
 describe("task paths", () => {
     const originalHome = env.get("GENESIS_TOOLS_HOME");
@@ -57,5 +59,30 @@ describe("task paths", () => {
         expect(sessionNameFromJsonlFilename("web-app.jsonl")).toBe("web-app");
         expect(sessionNameFromJsonlFilename("web-app.ui.jsonl")).toBeNull();
         expect(sessionNameFromJsonlFilename("readme.txt")).toBeNull();
+    });
+});
+
+// Regression test: a first `tools task run` printed a WARN with a stack trace, because the session
+// cleanup read a sessions folder that does not exist until the first session is written
+describe("runSessionGc", () => {
+    it("treats a missing sessions folder as nothing to clean, without a warning", async () => {
+        const original = env.get("GENESIS_TOOLS_HOME");
+        const sandbox = mkdtempSync(join(tmpdir(), "gt-gc-"));
+        const warn = spyOn(logger, "warn");
+
+        try {
+            env.testing.set("GENESIS_TOOLS_HOME", sandbox);
+            expect(await runSessionGc({ retentionDays: 7 })).toEqual({ removed: 0 });
+            expect(warn).not.toHaveBeenCalled();
+        } finally {
+            warn.mockRestore();
+            rmSync(sandbox, { recursive: true, force: true });
+
+            if (original === undefined) {
+                env.testing.unset("GENESIS_TOOLS_HOME");
+            } else {
+                env.testing.set("GENESIS_TOOLS_HOME", original);
+            }
+        }
     });
 });

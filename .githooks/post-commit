@@ -7,6 +7,22 @@
 # of them fire on removal), so there is nowhere to put a rescue step at the end. Syncing
 # forward on every commit is the closest thing to a guarantee that git offers.
 
+# A partial commit (`git commit -- <paths>`) runs pre-commit against a temporary index. Its biome
+# pass formats that index and the working file, but git then writes the REAL index with the copy
+# it staged before the hook ran, so the tree shows `MM` with HEAD == working tree and a stale
+# unformatted index entry. Put HEAD's blob back for exactly those paths: a path whose working copy
+# differs from HEAD (deliberately staged work in progress) is never touched.
+git diff-tree --no-commit-id --name-only -r -z HEAD 2>/dev/null | while IFS= read -r -d '' f; do
+    head_blob=$(git rev-parse -q --verify "HEAD:$f") || continue
+    entry=$(git ls-files --stage -- "$f")
+    [ -n "$entry" ] || continue
+    idx_blob=$(printf '%s\n' "$entry" | cut -d' ' -f2)
+    [ "$idx_blob" = "$head_blob" ] && continue
+    [ -f "$f" ] || continue
+    [ "$(git hash-object -- "$f")" = "$head_blob" ] || continue
+    git update-index --cacheinfo "$(printf '%s\n' "$entry" | cut -d' ' -f1),$head_blob,$f"
+done
+
 [ -f ".git" ] || exit 0
 
 COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
