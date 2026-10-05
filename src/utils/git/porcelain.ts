@@ -688,6 +688,8 @@ export interface RawChangesArgs {
     range: string;
     renames?: boolean;
     paths?: string[];
+    /** Stop after this many commits (`-N`). */
+    limit?: number;
 }
 
 function withPaths(args: string[], paths: string[] | undefined): string[] {
@@ -746,7 +748,7 @@ export const porcelain = {
         parse: parseLsTreeZ,
     },
     rawChanges: {
-        args: ({ range, renames, paths }: RawChangesArgs): string[] =>
+        args: ({ range, renames, paths, limit }: RawChangesArgs): string[] =>
             withPaths(
                 [
                     "log",
@@ -756,6 +758,7 @@ export const porcelain = {
                     "--diff-merges=first-parent",
                     renames ? "--find-renames" : "--no-renames",
                     RAW_LOG_FORMAT,
+                    ...(limit === undefined ? [] : [`-${limit}`]),
                     range,
                 ],
                 paths

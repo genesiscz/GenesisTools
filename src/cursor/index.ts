@@ -49,6 +49,13 @@ Options:
     }
 }
 
+const MODES = ["ask", "plan"];
+
+if (!MODES.includes(mode)) {
+    out.error(pc.red(`Unknown --mode '${mode}'. The Cursor CLI accepts: ${MODES.join(", ")}.`));
+    process.exit(1);
+}
+
 const question = positional.join(" ").trim();
 
 if (!question) {
@@ -87,6 +94,7 @@ let wroteText = false;
 try {
     const exitCode = await streamCursorAgent(proc, {
         raw,
+        onStderr: (text) => process.stderr.write(`${text}\n`),
         onTextDelta: (text) => {
             process.stdout.write(text);
             wroteText = true;

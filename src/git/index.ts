@@ -11,9 +11,11 @@
  *   tools git rename-commits [--commits N]
  *   tools git config show|init|check
  *   tools git base [branch]
+ *   tools git changes [--commits N]
  */
 
 import { registerBaseCommand } from "@app/git/commands/base";
+import { registerChangesCommand } from "@app/git/commands/changes";
 import { registerCommitsCommand } from "@app/git/commands/commits";
 import { registerConfigCommand } from "@app/git/commands/config";
 import { registerConfigureAuthorsCommand } from "@app/git/commands/configure-authors";
@@ -58,6 +60,7 @@ registerRebranchCommand(program);
 registerRenameCommitsCommand(program);
 registerConfigCommand(program, storage);
 registerBaseCommand(program, storage);
+registerChangesCommand(program, storage);
 registerWorktreeCommand(program, storage);
 enhanceHelp(program);
 
@@ -80,6 +83,7 @@ Commands:
   rename-commits               Reword the last N commit messages one by one, with a confirmation (interactive)
   config                       Per-repo genesis-tools.config.json: show | init | check
   base                         Which branch is this one based on, and which rule decided
+  changes                      Uncommitted changes (or the last N commits) grouped by file modification time
 
 Commits Options:
   --from <YYYY-MM-DD>          Start date (required)
@@ -123,6 +127,10 @@ Rebase-Cascade Options:
   --yes                        Skip the single confirmation
   --continue | --status | --abort | --restore <branch> | --cleanup
 
+Changes Options:
+  -c, --commits <n>            Show the files of the last N commits instead of uncommitted changes
+  -C, --cwd <path>             Run against the git repo at this path
+
 Examples:
   # Query commits for a date range
   ${toolCommand("git commits")} --from 2026-02-01 --to 2026-02-08
@@ -145,6 +153,10 @@ Examples:
   ${toolCommand("git config show")}
   ${toolCommand("git config init")}
   ${toolCommand("git base")} feat/x
+
+  # What did I touch, and when?
+  ${toolCommand("git changes")}
+  ${toolCommand("git changes")} --commits 5
 
   # Show the repo's scariest files as an ASCII monster
   ${toolCommand("git monster")} src --top 10

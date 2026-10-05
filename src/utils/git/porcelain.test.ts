@@ -303,6 +303,17 @@ describe("porcelain command bundles", () => {
             "--format=%H",
             "a..b",
         ]);
+        expect(porcelain.rawChanges.args({ range: "HEAD", renames: true, limit: 3 })).toEqual([
+            "log",
+            "--raw",
+            "-z",
+            "--no-abbrev",
+            "--diff-merges=first-parent",
+            "--find-renames",
+            "--format=%H",
+            "-3",
+            "HEAD",
+        ]);
         expect(porcelain.numstat.args({ from: "a", to: "b" })).toEqual([
             "diff",
             "--numstat",

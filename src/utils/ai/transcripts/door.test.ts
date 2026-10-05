@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { pickEnumFlag } from "./door";
+import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { isTranscriptFormat, TRANSCRIPT_FORMATS, type TranscriptFormat } from "./render";
 
 const base = {

@@ -4,7 +4,6 @@ src/watch/index.ts
 
 src/timely/commands/events.ts
 src/macos/commands/mail/search.ts
-src/last-changes/index.ts
 
 src/react-compiler-debug/index.ts
 src/npm-package-diff/index.ts

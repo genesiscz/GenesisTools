@@ -1,6 +1,7 @@
 import { CursorStreamAdapter } from "@genesiscz/utils/agents/adapters/cursor";
 import { TerminalRenderer } from "@genesiscz/utils/agents/renderers/TerminalRenderer";
 import { killWithEscalation } from "@genesiscz/utils/process/killWithEscalation";
+import { stripAnsi } from "@genesiscz/utils/string";
 import type { Subprocess } from "bun";
 
 export interface StreamCursorAgentOptions {
@@ -9,6 +10,8 @@ export interface StreamCursorAgentOptions {
     renderer?: Pick<TerminalRenderer, "render">;
     onTextDelta?: (text: string) => void;
     onBlocks?: (output: string) => void;
+    /** The child's own error text, ANSI stripped, when it exits non-zero. Without it a failed login looked like silence. */
+    onStderr?: (text: string) => void;
 }
 
 export async function streamCursorAgent(proc: Subprocess, opts: StreamCursorAgentOptions = {}): Promise<number> {
@@ -91,8 +94,14 @@ export async function streamCursorAgent(proc: Subprocess, opts: StreamCursorAgen
             reader.releaseLock();
         }
 
-        await stderrPromise;
-        return await proc.exited;
+        const stderrText = stripAnsi(await stderrPromise).trim();
+        const exitCode = await proc.exited;
+
+        if (exitCode !== 0 && stderrText) {
+            opts.onStderr?.(stderrText);
+        }
+
+        return exitCode;
     } catch (err) {
         await killWithEscalation(proc);
         throw err;

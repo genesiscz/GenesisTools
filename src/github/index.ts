@@ -8,6 +8,7 @@ import { createIssueCommand, issueCommand } from "@app/github/commands/issue";
 import { createMergeCommand } from "@app/github/commands/merge";
 import { createNotificationsCommand, notificationsCommand } from "@app/github/commands/notifications";
 import { createPRCommand, prCommand } from "@app/github/commands/pr";
+import { createReleasesCommand } from "@app/github/commands/releases";
 import { createReviewCommand, reviewCommand } from "@app/github/commands/review";
 import { createSearchCommand, searchCommand } from "@app/github/commands/search";
 import { closeDatabase, getCacheStats } from "@app/github/lib/cache";
@@ -43,6 +44,7 @@ program.addCommand(createGetCommand());
 program.addCommand(createReviewCommand());
 program.addCommand(createNotificationsCommand());
 program.addCommand(createActivityCommand());
+program.addCommand(createReleasesCommand());
 
 // Status command
 program

@@ -31,13 +31,17 @@ tools cursor --raw "give me the summary" > answer.md
 | Option | Description | Default |
 |--------|-------------|---------|
 | `<question>` | Positional, all args joined | — |
-| `--mode <mode>` | `ask` or `plan` | `ask` |
+| `--mode <mode>` | `ask` or `plan` (the Cursor CLI accepts no other value) | `ask` |
 | `--model <model>` | Model override (e.g. `gpt-5`, `sonnet-4`) | — |
 | `--workspace <dir>` | Workspace root for Cursor | cwd |
 | `--raw` | Only print the final answer text | off |
 | `-h, --help` | Show help | — |
 
 ---
+
+## Login
+
+The Cursor CLI must be logged in: run `cursor agent login` once (opens a browser), or set `CURSOR_API_KEY`. When it is not, `tools cursor` prints the CLI's own `Authentication required` message and exits 1.
 
 ## How it works
 

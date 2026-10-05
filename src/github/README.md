@@ -50,6 +50,10 @@ tools github activity --since 1d --type pr
 # Fetch a raw file
 tools github get https://github.com/owner/repo/blob/main/src/index.ts --clipboard
 
+# A repository's releases as one Markdown document
+tools github releases oven-sh/bun --limit 3
+tools github releases facebook/react --since 2026-01-01 --no-prereleases -o react-releases.md
+
 # Safe stack-aware merge (retargets dependents before optional branch delete)
 tools github merge 123 --rebase           # stack-safe: restack+FF (preserves SHAs) + restack children
 tools github merge 123 --rebase --no-restack  # legacy GitHub rewrite rebase (breaks cascades)
@@ -79,6 +83,7 @@ tools github status
 | `get <file-url>` | Fetch raw file contents |
 | `notifications` | List inbox notifications with filters |
 | `activity` | Personal activity / events feed |
+| `releases <repo>` | A repository's releases as one Markdown document |
 | `status` | Auth, rate limit, and cache stats |
 
 ### `merge` — stack-safe merge
@@ -124,6 +129,29 @@ the GitHub API as data, never through a shell. `--merge` is unchanged: no
 default message is generated there. `--dry-run` resolves the PR, lists
 dependents, prints the squash message and stops before any write.
 
+### `releases` — release notes as one document
+
+`tools github releases <owner/repo>` lists a repository's releases (a `github.com` URL works too) and writes them as one Markdown document: a title, then for each release a heading with the tag, the name and the date, the release body, and the release URL. The newest release comes first.
+
+```bash
+tools github releases oven-sh/bun --limit 3                        # the three newest, to stdout
+tools github releases facebook/react --since 2026-01-01 --no-prereleases -o react-releases.md
+tools github releases https://github.com/vercel/next.js --since 1m --clipboard
+tools github releases oven-sh/bun --limit 5 --json                 # machine-readable
+```
+
+| Option | Description |
+|---|---|
+| `-L, --limit <n>` | Keep only the newest N releases |
+| `--since <date>` | Only releases published since a date: ISO 8601, or relative (`7d`, `2w`, `3m`) |
+| `--no-prereleases` | Skip pre-releases. Drafts are always skipped |
+| `--oldest` | List the oldest first instead of the newest first (applied after `--limit`) |
+| `--json` | Emit `{ tag, name, publishedAt, prerelease, url, body }` per release instead of Markdown |
+| `-o, --output <file>` | Write to a file instead of stdout |
+| `-c, --clipboard` | Copy to the clipboard instead of stdout (with `-o`, both happen) |
+
+The listing is read page by page (100 per page) until it runs out, the limit is met, or, with `--since`, a whole page is older than the date. GitHub orders that listing by creation time, not publication time, so a release published long after its commit date, more than a page away from where its date puts it, can be missed by `--limit` and `--since`; reading every page would cost one request per 100 releases. Dates are UTC days. Headings inside a release body move down two levels so they nest under that release's own heading. It only reads. A token (`GITHUB_TOKEN` or `gh auth`) raises the rate limit and lets it read private repositories.
+
 Run any subcommand with `--help` for its full option list. The most common flags (`--format ai|json`, `--limit`, `--last`, `--no-bots`, `--min-reactions`, `--stats`, `--clipboard`) work across multiple subcommands.
 
 ---
@@ -136,6 +164,5 @@ Uses `gh auth` credentials when available, otherwise works unauthenticated with 
 
 ## Related tools
 
-- `tools github-release-notes` — generate release notes from tags
 - `genesis-tools:github` skill — read-only GitHub browsing for agents
 - `genesis-tools:github-pr` skill — PR review feedback workflow

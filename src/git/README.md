@@ -4,7 +4,7 @@
 
 > **Git analysis for commits, authors, and workitem ID extraction, plus branch mechanics with proof.**
 
-Queries commits across a date range, extracts workitem IDs from commit messages via configurable regex patterns, attributes branches, classifies rebased commits, and maintains a list of author identities so you can slice history cleanly across name/email changes. The branch side answers "is it merged?" by content (`merged`), rebases a parent with its children (`rebase-cascade`), detects the base branch (`base`) and reads the per-repo policy file (`config`). The `gt:git` skill in `plugins/genesis-tools` is the guided workflow on top of these commands; the typed git readers they share live in `src/utils/git/` (`createGit()` and `porcelain`).
+Queries commits across a date range, extracts workitem IDs from commit messages via configurable regex patterns, attributes branches, classifies rebased commits, and maintains a list of author identities so you can slice history cleanly across name/email changes. The branch side answers "is it merged?" by content (`merged`), rebases a parent with its children (`rebase-cascade`), detects the base branch (`base`) and reads the per-repo policy file (`config`). `changes` shows what you touched and when. The `gt:git` skill in `plugins/genesis-tools` is the guided workflow on top of these commands; the typed git readers they share live in `src/utils/git/` (`createGit()` and `porcelain`).
 
 `tools git commits` is the reporting layer. The same tool holds the two interactive history editors, `rebranch` and `rename-commits`.
 
@@ -131,6 +131,23 @@ The parent's route comes from the merged engine: `rebase` (plain), `merged` (alr
 ### `base`
 
 `tools git base [branch]` prints the base branch and the rule that chose it: `--base`, the branch's open PR/MR target, config `mainPrBranch`, the closest declared branch, or an inference (closest merge-base, then origin HEAD, then a local master/main). `--offline` skips the PR lookup, `--json` for machines.
+
+### `changes`
+
+What did I touch, and when? Lists the uncommitted files, newest first, grouped by how long ago each was modified (`Last hour`, `Last 3 hours`, `Today`, `Yesterday`, `Last N days`, `Older`). Each row shows the status, the path, and the relative and absolute time. It only reads: nothing is staged or written.
+
+```bash
+tools git changes                  # uncommitted files grouped by modification time
+tools git changes --commits 5      # the files of the last 5 commits, grouped by commit time
+tools git changes -C ../other      # another repository
+```
+
+| Option | Description |
+|---|---|
+| `-c, --commits <n>` | Show the files of the last N commits instead of uncommitted changes; each file is stamped with its commit's committer time |
+| `-C, --cwd <path>` | Repository path |
+
+Status colors: yellow for modified, green for added, red for deleted, blue for renamed, cyan for copied, gray for untracked. A deleted file has no mtime, so it counts as modified now. An untracked directory is listed file by file. A rename is listed under its new path. In `--commits` mode a merge commit lists nothing of its own; its files appear under the commits it brought in. The status comes from the typed `git status --porcelain=v2 -z` reader in `src/utils/git/` and the paths are relative to the repository root, so the command works from any subdirectory.
 
 ### `rebranch`
 
