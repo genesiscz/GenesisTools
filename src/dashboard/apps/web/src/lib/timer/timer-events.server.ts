@@ -14,6 +14,9 @@ export interface TimerEvent {
     timerId?: string;
     snapshot?: unknown;
     payload?: unknown;
+    activityDirty?: boolean;
+    focusStatsDirty?: boolean;
+    focusSessionsDirty?: boolean;
     // Event bag — assignable to the generic bus's `{ type; [k]: unknown }`.
     [key: string]: unknown;
 }
@@ -33,6 +36,9 @@ export function subscribeTimerEvents(userId: string, listener: (event: TimerEven
             timerId: typeof event.timerId === "string" ? event.timerId : undefined,
             snapshot: event.snapshot,
             payload: event.payload,
+            activityDirty: typeof event.activityDirty === "boolean" ? event.activityDirty : undefined,
+            focusStatsDirty: typeof event.focusStatsDirty === "boolean" ? event.focusStatsDirty : undefined,
+            focusSessionsDirty: typeof event.focusSessionsDirty === "boolean" ? event.focusSessionsDirty : undefined,
         });
     });
 }

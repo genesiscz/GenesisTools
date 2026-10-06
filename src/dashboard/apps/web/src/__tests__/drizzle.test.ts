@@ -6,8 +6,9 @@
 
 import { desc, eq, inArray } from "drizzle-orm";
 import { afterAll, describe, expect, test, vi } from "vitest";
-import { activityLogs, db, readingItems, timers } from "@/drizzle";
+import { activityLogs, db, readingItems, sqlite, timers } from "@/drizzle";
 import { updateReadingItemForUser } from "@/lib/reading/reading.server";
+import { queryFocusStatsForUser, queryProductivityStatsForUser } from "@/lib/timer/timer-sync.server";
 
 describe("Drizzle ORM - Timers", () => {
     const testUserId = `test-user-${Date.now()}`;
@@ -290,6 +291,156 @@ describe("Drizzle ORM - Activity Logs", () => {
 
         expect(results.length).toBeGreaterThan(0);
         expect(results[0].userId).toBe(testUserId);
+    });
+});
+
+describe("activity aggregate queries", () => {
+    const userId = `aggregate-user-${Date.now()}`;
+    const otherUserId = `aggregate-other-${Date.now()}`;
+    const startIso = "2026-10-01T00:00:00.000Z";
+    const endIso = "2026-10-03T00:00:00.000Z";
+
+    afterAll(() => {
+        db.delete(activityLogs)
+            .where(inArray(activityLogs.userId, [userId, otherUserId]))
+            .run();
+    });
+
+    test("aggregates pause durations and completed work phases in SQL with user and range boundaries", () => {
+        const base = {
+            timerName: "Aggregate timer",
+            elapsedAtEvent: 0,
+            sessionDuration: null,
+            metadata: {},
+        };
+        db.insert(activityLogs)
+            .values([
+                {
+                    ...base,
+                    id: `${userId}-pause-a1`,
+                    timerId: "timer-a",
+                    userId,
+                    eventType: "pause",
+                    timestamp: startIso,
+                    previousValue: 0,
+                    newValue: 1_000,
+                },
+                {
+                    ...base,
+                    id: `${userId}-pause-a2`,
+                    timerId: "timer-a",
+                    userId,
+                    eventType: "pause",
+                    timestamp: "2026-10-01T12:00:00.000Z",
+                    previousValue: 1_000,
+                    newValue: 4_000,
+                },
+                {
+                    ...base,
+                    id: `${userId}-pause-b1`,
+                    timerId: "timer-b",
+                    userId,
+                    eventType: "pause",
+                    timestamp: "2026-10-02T12:00:00.000Z",
+                    previousValue: 0,
+                    newValue: 2_000,
+                },
+                {
+                    ...base,
+                    id: `${userId}-invalid-pause`,
+                    timerId: "timer-b",
+                    userId,
+                    eventType: "pause",
+                    timestamp: "2026-10-02T13:00:00.000Z",
+                    previousValue: 2_000,
+                    newValue: 2_000,
+                },
+                {
+                    ...base,
+                    id: `${userId}-work-phase`,
+                    timerId: "timer-a",
+                    userId,
+                    eventType: "pomodoro_phase_change",
+                    timestamp: "2026-10-02T14:00:00.000Z",
+                    previousValue: 0,
+                    newValue: 0,
+                    metadata: { fromPhase: "work", durationMs: 1_500_000 },
+                },
+                {
+                    ...base,
+                    id: `${userId}-break-phase`,
+                    timerId: "timer-a",
+                    userId,
+                    eventType: "pomodoro_phase_change",
+                    timestamp: "2026-10-02T15:00:00.000Z",
+                    previousValue: 0,
+                    newValue: 0,
+                    metadata: { fromPhase: "short_break", durationMs: 300_000 },
+                },
+                {
+                    ...base,
+                    id: `${otherUserId}-pause`,
+                    timerId: "timer-private",
+                    userId: otherUserId,
+                    eventType: "pause",
+                    timestamp: "2026-10-01T12:00:00.000Z",
+                    previousValue: 0,
+                    newValue: 9_000,
+                },
+                {
+                    ...base,
+                    id: `${userId}-end-exclusive`,
+                    timerId: "timer-a",
+                    userId,
+                    eventType: "pause",
+                    timestamp: endIso,
+                    previousValue: 0,
+                    newValue: 8_000,
+                },
+            ])
+            .run();
+
+        expect(queryProductivityStatsForUser({ userId, startIso, endIso })).toEqual({
+            totalTimeTracked: 6_000,
+            sessionCount: 3,
+            averageSessionDuration: 2_000,
+            longestSession: 3_000,
+            timerBreakdown: { "timer-a": 4_000, "timer-b": 2_000 },
+            dailyBreakdown: { "2026-10-01": 4_000, "2026-10-02": 2_000 },
+            pomodoroCompleted: 1,
+        });
+        expect(queryFocusStatsForUser({ userId, startIso, endIso })).toEqual({
+            timeFocusedTodayMs: 6_000,
+            sessionsToday: 3,
+        });
+    });
+
+    test("returns zero-valued aggregates for an empty range", () => {
+        expect(
+            queryProductivityStatsForUser({
+                userId,
+                startIso: "2026-11-01T00:00:00.000Z",
+                endIso: "2026-11-02T00:00:00.000Z",
+            })
+        ).toEqual({
+            totalTimeTracked: 0,
+            sessionCount: 0,
+            averageSessionDuration: 0,
+            longestSession: 0,
+            timerBreakdown: {},
+            dailyBreakdown: {},
+            pomodoroCompleted: 0,
+        });
+    });
+
+    test("uses the composite user/timestamp index for the aggregate range", () => {
+        const plan = sqlite
+            .prepare(
+                "EXPLAIN QUERY PLAN SELECT count(*) FROM activity_logs WHERE user_id = ? AND timestamp >= ? AND timestamp < ?"
+            )
+            .all(userId, startIso, endIso) as Array<{ detail: string }>;
+
+        expect(plan.some((row) => row.detail.includes("idx_activity_logs_user_timestamp"))).toBe(true);
     });
 });
 

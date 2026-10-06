@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { emitTimerEvent, subscribeTimerEvents } from "@/lib/timer/timer-events.server";
 import { type DomainEvent, emitDomainEvent, subscribeEvents } from "./event-bus.server";
 
 describe("event-bus.server", () => {
@@ -66,6 +67,28 @@ describe("event-bus.server", () => {
 
         expect(timerOnly).toHaveLength(1);
         expect(timerOnly[0].domain).toBe("timer");
+        unsub();
+    });
+
+    it("preserves timer aggregate dirtiness through the compatibility subscription", () => {
+        const received: Array<{ activityDirty?: boolean }> = [];
+        const unsub = subscribeTimerEvents("user-e", (event) => received.push(event));
+
+        emitTimerEvent("user-e", {
+            type: "timer_changed",
+            timerId: "t1",
+            activityDirty: true,
+            focusSessionsDirty: true,
+        });
+
+        expect(received).toEqual([
+            {
+                type: "timer_changed",
+                timerId: "t1",
+                activityDirty: true,
+                focusSessionsDirty: true,
+            },
+        ]);
         unsub();
     });
 });

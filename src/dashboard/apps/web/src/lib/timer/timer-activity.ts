@@ -5,6 +5,20 @@ export interface TimerActivityEvent {
     payload?: unknown;
 }
 
+export interface TimerQueryDirtiness {
+    activityDirty: boolean;
+    focusStatsDirty: boolean;
+    focusSessionsDirty: boolean;
+}
+
+export function timerQueryDirtiness(activityTypes: string[]): TimerQueryDirtiness {
+    return {
+        activityDirty: activityTypes.length > 0,
+        focusStatsDirty: activityTypes.includes("pause"),
+        focusSessionsDirty: activityTypes.includes("pomodoro_phase_change"),
+    };
+}
+
 export function activityLogValues(options: { current: Timer; updated: Timer; event: TimerActivityEvent }): {
     elapsedAtEvent: number;
     previousValue: number;

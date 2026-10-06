@@ -8,10 +8,15 @@
 
 import type { PomodoroSettings, ProductivityStats } from "@dashboard/shared";
 import { createServerFn } from "@tanstack/react-start";
-import { and, desc, eq, gte, lt } from "drizzle-orm";
+import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { type ActivityLog, activityLogs, db, type NewTimer, type Timer, timers } from "@/drizzle";
 import { requireUserId } from "@/lib/auth/requireUser";
-import { activityLogValues, type FocusSessionBlock, focusSessionsFromPomodoroRows } from "./timer-activity";
+import {
+    activityLogValues,
+    type FocusSessionBlock,
+    focusSessionsFromPomodoroRows,
+    timerQueryDirtiness,
+} from "./timer-activity";
 import { emitTimerEvent } from "./timer-events.server";
 import { applyAction } from "./timer-state-machine";
 
@@ -63,7 +68,7 @@ function mutate({ id, userId, expectedVersion, transform }: MutateOptions): Time
     // Atomic: the version-checked update and its activity-log row commit
     // together or not at all. A crash between them used to leave the timer
     // advanced with no log row → permanent drift in focus/productivity stats.
-    const { final, events } = db.transaction((tx) => {
+    const { final, events, activityDirty, focusStatsDirty, focusSessionsDirty } = db.transaction((tx) => {
         const current = tx
             .select()
             .from(timers)
@@ -120,7 +125,13 @@ function mutate({ id, userId, expectedVersion, transform }: MutateOptions): Time
                 .run();
         }
 
-        return { final: updated, events };
+        const activityTypes = loggable.map((event) => EVENT_TO_ACTIVITY[event.type]);
+
+        return {
+            final: updated,
+            events,
+            ...timerQueryDirtiness(activityTypes),
+        };
     });
 
     // Side effects after commit — never roll back on an emit failure.
@@ -128,7 +139,14 @@ function mutate({ id, userId, expectedVersion, transform }: MutateOptions): Time
         emitTimerEvent(userId, { ...ev, timerId: id });
     }
 
-    emitTimerEvent(userId, { type: "timer_changed", timerId: id, snapshot: final });
+    emitTimerEvent(userId, {
+        type: "timer_changed",
+        timerId: id,
+        snapshot: final,
+        activityDirty,
+        focusStatsDirty,
+        focusSessionsDirty,
+    });
     return final;
 }
 
@@ -425,74 +443,104 @@ export const clearActivityLogs = createServerFn({ method: "POST" }).handler(
 // Productivity Stats Aggregation
 // ============================================
 
+const validPauseDuration = sql`${activityLogs.eventType} = 'pause'
+    AND ${activityLogs.newValue} IS NOT NULL
+    AND ${activityLogs.previousValue} IS NOT NULL
+    AND ${activityLogs.newValue} > ${activityLogs.previousValue}`;
+const pauseDuration = sql`${activityLogs.newValue} - ${activityLogs.previousValue}`;
+
+export function queryProductivityStatsForUser(options: {
+    userId: string;
+    startIso: string;
+    endIso: string;
+}): ProductivityStats {
+    const range = and(
+        eq(activityLogs.userId, options.userId),
+        gte(activityLogs.timestamp, options.startIso),
+        lt(activityLogs.timestamp, options.endIso)
+    );
+    const summary = db
+        .select({
+            totalTimeTracked: sql<number>`coalesce(sum(case when ${validPauseDuration} then ${pauseDuration} else 0 end), 0)`,
+            sessionCount: sql<number>`coalesce(sum(case when ${validPauseDuration} then 1 else 0 end), 0)`,
+            longestSession: sql<number>`coalesce(max(case when ${validPauseDuration} then ${pauseDuration} else 0 end), 0)`,
+            pomodoroCompleted: sql<number>`coalesce(sum(case when ${activityLogs.eventType} = 'pomodoro_phase_change'
+                and json_extract(${activityLogs.metadata}, '$.fromPhase') = 'work' then 1 else 0 end), 0)`,
+        })
+        .from(activityLogs)
+        .where(range)
+        .get();
+    const timerRows = db
+        .select({
+            timerId: activityLogs.timerId,
+            duration: sql<number>`sum(${pauseDuration})`,
+        })
+        .from(activityLogs)
+        .where(and(range, validPauseDuration))
+        .groupBy(activityLogs.timerId)
+        .all();
+    const dayExpression = sql<string>`substr(${activityLogs.timestamp}, 1, 10)`;
+    const dayRows = db
+        .select({
+            day: dayExpression,
+            duration: sql<number>`sum(${pauseDuration})`,
+        })
+        .from(activityLogs)
+        .where(and(range, validPauseDuration))
+        .groupBy(dayExpression)
+        .all();
+    const totalTimeTracked = summary?.totalTimeTracked ?? 0;
+    const sessionCount = summary?.sessionCount ?? 0;
+
+    return {
+        totalTimeTracked,
+        sessionCount,
+        averageSessionDuration: sessionCount > 0 ? totalTimeTracked / sessionCount : 0,
+        longestSession: summary?.longestSession ?? 0,
+        timerBreakdown: Object.fromEntries(timerRows.map((row) => [row.timerId, row.duration])),
+        dailyBreakdown: Object.fromEntries(dayRows.map((row) => [row.day, row.duration])),
+        pomodoroCompleted: summary?.pomodoroCompleted ?? 0,
+    };
+}
+
 export const getProductivityStats = createServerFn({ method: "GET" })
     .inputValidator((d: { startIso: string; endIso: string }) => d)
     .handler(async ({ data }): Promise<ProductivityStats> => {
         const userId = await requireUserId();
 
-        const rows = db
-            .select()
-            .from(activityLogs)
-            .where(
-                and(
-                    eq(activityLogs.userId, userId),
-                    gte(activityLogs.timestamp, data.startIso),
-                    lt(activityLogs.timestamp, data.endIso)
-                )
-            )
-            .orderBy(desc(activityLogs.timestamp))
-            .all();
-
-        const timerBreakdown: Record<string, number> = {};
-        const dailyBreakdown: Record<string, number> = {};
-        let pomodoroCompleted = 0;
-        const sessionDurations: number[] = [];
-
-        for (const row of rows) {
-            // Completed pomodoro = phase_change where fromPhase was "work"
-            if (row.eventType === "pomodoro_phase_change") {
-                const meta = row.metadata as { fromPhase?: string } | null;
-
-                if (meta?.fromPhase === "work") {
-                    pomodoroCompleted += 1;
-                }
-            }
-
-            // Derive session duration from pause rows (see D1)
-            if (
-                row.eventType === "pause" &&
-                row.newValue !== null &&
-                row.previousValue !== null &&
-                row.newValue > row.previousValue
-            ) {
-                const duration = row.newValue - row.previousValue;
-                sessionDurations.push(duration);
-
-                const day = row.timestamp.slice(0, 10);
-                dailyBreakdown[day] = (dailyBreakdown[day] ?? 0) + duration;
-                timerBreakdown[row.timerId] = (timerBreakdown[row.timerId] ?? 0) + duration;
-            }
-        }
-
-        const totalTimeTracked = sessionDurations.reduce((a, b) => a + b, 0);
-        const sessionCount = sessionDurations.length;
-        const averageSessionDuration = sessionCount > 0 ? totalTimeTracked / sessionCount : 0;
-        const longestSession = sessionDurations.length > 0 ? Math.max(...sessionDurations) : 0;
-
-        return {
-            totalTimeTracked,
-            sessionCount,
-            averageSessionDuration,
-            longestSession,
-            timerBreakdown,
-            dailyBreakdown,
-            pomodoroCompleted,
-        };
+        return queryProductivityStatsForUser({ userId, startIso: data.startIso, endIso: data.endIso });
     });
 
 export interface FocusStatsForToday {
     timeFocusedTodayMs: number;
     sessionsToday: number;
+}
+
+export function queryFocusStatsForUser(options: {
+    userId: string;
+    startIso: string;
+    endIso: string;
+}): FocusStatsForToday {
+    const summary = db
+        .select({
+            timeFocusedTodayMs: sql<number>`coalesce(sum(${pauseDuration}), 0)`,
+            sessionsToday: sql<number>`count(*)`,
+        })
+        .from(activityLogs)
+        .where(
+            and(
+                eq(activityLogs.userId, options.userId),
+                gte(activityLogs.timestamp, options.startIso),
+                lt(activityLogs.timestamp, options.endIso),
+                validPauseDuration
+            )
+        )
+        .get();
+
+    return {
+        timeFocusedTodayMs: summary?.timeFocusedTodayMs ?? 0,
+        sessionsToday: summary?.sessionsToday ?? 0,
+    };
 }
 
 export const aggregateFocusStats = createServerFn({ method: "GET" }).handler(async (): Promise<FocusStatsForToday> => {
@@ -505,34 +553,11 @@ export const aggregateFocusStats = createServerFn({ method: "GET" }).handler(asy
     const startOfTomorrow = new Date(startOfToday);
     startOfTomorrow.setUTCDate(startOfTomorrow.getUTCDate() + 1);
 
-    const rows = db
-        .select()
-        .from(activityLogs)
-        .where(
-            and(
-                eq(activityLogs.userId, userId),
-                gte(activityLogs.timestamp, startOfToday.toISOString()),
-                lt(activityLogs.timestamp, startOfTomorrow.toISOString())
-            )
-        )
-        .all();
-
-    let timeFocusedTodayMs = 0;
-    let sessionsToday = 0;
-
-    for (const row of rows) {
-        if (
-            row.eventType === "pause" &&
-            row.newValue !== null &&
-            row.previousValue !== null &&
-            row.newValue > row.previousValue
-        ) {
-            timeFocusedTodayMs += row.newValue - row.previousValue;
-            sessionsToday += 1;
-        }
-    }
-
-    return { timeFocusedTodayMs, sessionsToday };
+    return queryFocusStatsForUser({
+        userId,
+        startIso: startOfToday.toISOString(),
+        endIso: startOfTomorrow.toISOString(),
+    });
 });
 
 export const aggregateFocusSessions = createServerFn({ method: "GET" }).handler(
@@ -546,7 +571,13 @@ export const aggregateFocusSessions = createServerFn({ method: "GET" }).handler(
         startOfTomorrow.setUTCDate(startOfTomorrow.getUTCDate() + 1);
 
         const rows = db
-            .select()
+            .select({
+                timerId: activityLogs.timerId,
+                timestamp: activityLogs.timestamp,
+                elapsedAtEvent: activityLogs.elapsedAtEvent,
+                previousValue: activityLogs.previousValue,
+                metadata: activityLogs.metadata,
+            })
             .from(activityLogs)
             .where(
                 and(
