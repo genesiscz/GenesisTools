@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { checkSource, pluginsDisabledFor } from "./lint-rules";
 
 /**
@@ -237,5 +241,66 @@ describe("swift-wait-without-timeout", () => {
         expect(rules("if done.wait(timeout: .now() + 10) == .timedOut {", SWIFT)).toEqual([]);
         expect(rules("// sem.wait() would hang here", SWIFT)).toEqual([]);
         expect(rules("// lint-rules-ignore: main thread must block\nsem.wait()", SWIFT)).toEqual([]);
+    });
+});
+
+describe("lint-changed wrapper dispatch", () => {
+    test("Swift-only and empty diffs still run repo rules while Biome remains scoped", () => {
+        const dir = mkdtempSync(join(tmpdir(), "lint-changed-"));
+        const trace = join(dir, "trace");
+        const run = (args: string[], extraEnv: Record<string, string> = {}) =>
+            spawnSync(args[0]!, args.slice(1), {
+                cwd: dir,
+                encoding: "utf8",
+                env: {
+                    ...process.env,
+                    PATH: `${join(dir, "bin")}:${process.env.PATH ?? ""}`,
+                    LINT_TRACE: trace,
+                    ...extraEnv,
+                },
+            });
+
+        try {
+            mkdirSync(join(dir, "scripts", "ci"), { recursive: true });
+            mkdirSync(join(dir, "node_modules", ".bin"), { recursive: true });
+            mkdirSync(join(dir, "bin"), { recursive: true });
+            cpSync(join(import.meta.dir, "lint-changed.sh"), join(dir, "scripts", "ci", "lint-changed.sh"));
+            writeFileSync(
+                join(dir, "node_modules", ".bin", "biome"),
+                '#!/bin/sh\nprintf "biome %s\\n" "$*" >> "$LINT_TRACE"\n'
+            );
+            writeFileSync(
+                join(dir, "bin", "bun"),
+                '#!/bin/sh\nprintf "bun %s\\n" "$*" >> "$LINT_TRACE"\nexit "${FAKE_BUN_EXIT:-0}"\n'
+            );
+            chmodSync(join(dir, "node_modules", ".bin", "biome"), 0o755);
+            chmodSync(join(dir, "bin", "bun"), 0o755);
+            expect(run(["git", "init", "-q"]).status).toBe(0);
+            expect(run(["git", "config", "user.name", "Fixture User"]).status).toBe(0);
+            expect(run(["git", "config", "user.email", "fixture@example.com"]).status).toBe(0);
+            writeFileSync(join(dir, "Native.swift"), "let ready = true\n");
+            expect(run(["git", "add", "Native.swift"]).status).toBe(0);
+            expect(run(["git", "commit", "-qm", "base"]).status).toBe(0);
+            const base = run(["git", "rev-parse", "HEAD"]).stdout.trim();
+
+            writeFileSync(join(dir, "Native.swift"), "let ready = sem.wait()\n");
+            const swiftOnly = run(["bash", "scripts/ci/lint-changed.sh", base]);
+            expect(swiftOnly.status).toBe(0);
+            expect(readFileSync(trace, "utf8")).toBe(`bun scripts/ci/lint-rules.ts --changed ${base}\n`);
+
+            writeFileSync(trace, "");
+            expect(run(["git", "add", "Native.swift"]).status).toBe(0);
+            expect(run(["git", "commit", "-qm", "swift"]).status).toBe(0);
+            const current = run(["git", "rev-parse", "HEAD"]).stdout.trim();
+            const empty = run(["bash", "scripts/ci/lint-changed.sh", current]);
+            expect(empty.status).toBe(0);
+            expect(readFileSync(trace, "utf8")).toBe(`bun scripts/ci/lint-rules.ts --changed ${current}\n`);
+
+            writeFileSync(trace, "");
+            const crashed = run(["bash", "scripts/ci/lint-changed.sh", current], { FAKE_BUN_EXIT: "7" });
+            expect(crashed.status).toBe(7);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });

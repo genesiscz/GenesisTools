@@ -49,10 +49,12 @@ while IFS= read -r file; do
 done <<<"$diff_output"
 
 if [ ${#files[@]} -eq 0 ]; then
-    echo "lint-changed: no changed lintable files"
-    exit 0
+    echo "lint-changed: no changed Biome files against ${BASE}"
+else
+    echo "lint-changed: ${#files[@]} changed Biome file(s) against ${BASE}"
+    ./node_modules/.bin/biome check "${files[@]}"
 fi
 
-echo "lint-changed: ${#files[@]} changed file(s) against ${BASE}"
-./node_modules/.bin/biome check "${files[@]}"
+# Repo rules own a wider source set than Biome, including Swift. They must run
+# even when the TypeScript/JavaScript list above is empty.
 bun scripts/ci/lint-rules.ts --changed "$BASE"

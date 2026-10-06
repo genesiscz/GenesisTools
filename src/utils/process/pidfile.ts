@@ -3,6 +3,7 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { tryWithPathArbitration, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import {
     classifyPid,
     type PidIdentity,
@@ -200,12 +201,12 @@ export function serializePidRecord(record: PidRecord): string {
  * breaks single-winner guarantees (see `src/daemon/daemon.ts`).
  */
 export function writePidFile(path: string, opts: { pid?: number; exclusive?: boolean } = {}): PidRecord {
-    const record = buildPidRecord(opts.pid);
-
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, serializePidRecord(record), opts.exclusive ? { flag: "wx" } : {});
-
-    return record;
+    return withPathArbitrationSync(path, () => {
+        const record = buildPidRecord(opts.pid);
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, serializePidRecord(record), opts.exclusive ? { flag: "wx" } : {});
+        return record;
+    });
 }
 
 /**
@@ -272,20 +273,27 @@ export function ownsPidFile(path: string): boolean {
  * not delete the new owner's file on its way out.
  */
 export function clearPidFile(path: string, opts: { force?: boolean } = {}): boolean {
-    if (!existsSync(path)) {
-        return false;
-    }
-
-    if (!opts.force && !ownsPidFile(path)) {
-        logger.debug({ path }, "[pidfile] not clearing a pidfile owned by someone else");
-        return false;
-    }
-
     try {
-        unlinkSync(path);
-        return true;
+        return withPathArbitrationSync(path, () => {
+            if (!existsSync(path)) {
+                return false;
+            }
+
+            if (!opts.force && !ownsPidFile(path)) {
+                logger.debug({ path }, "[pidfile] not clearing a pidfile owned by someone else");
+                return false;
+            }
+
+            try {
+                unlinkSync(path);
+                return true;
+            } catch (err) {
+                logger.debug({ err, path }, "[pidfile] could not remove file");
+                return false;
+            }
+        });
     } catch (err) {
-        logger.debug({ err, path }, "[pidfile] could not remove file");
+        logger.debug({ err, path }, "[pidfile] claim arbitration busy during clear");
         return false;
     }
 }
@@ -311,7 +319,7 @@ function errnoCode(err: unknown): string | undefined {
  * The sync `writePidFile({ exclusive })` above is therefore NOT a race
  * primitive; racing callers belong here.
  */
-export async function attemptStaleTakeover(
+async function attemptStaleTakeoverUnlocked(
     path: string,
     expectedContent: string,
     opts: { claim?: boolean } = {}
@@ -384,4 +392,15 @@ export async function attemptStaleTakeover(
     }
 
     return true;
+}
+
+export async function attemptStaleTakeover(
+    path: string,
+    expectedContent: string,
+    opts: { claim?: boolean } = {}
+): Promise<boolean> {
+    const arbitration = await tryWithPathArbitration(path, () =>
+        attemptStaleTakeoverUnlocked(path, expectedContent, opts)
+    );
+    return arbitration.acquired ? arbitration.value : false;
 }

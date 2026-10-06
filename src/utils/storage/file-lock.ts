@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
 import {
     buildPidRecord,
     classifyPidRecord,
@@ -61,7 +62,7 @@ function isEnoent(err: unknown): boolean {
  *
  * Exported for direct race testing (see file-lock.test.ts).
  */
-export async function attemptRenameSteal(lockPath: string, expectedContent: string): Promise<boolean> {
+async function attemptRenameStealUnlocked(lockPath: string, expectedContent: string): Promise<boolean> {
     const tempPath = `${lockPath}.stale-${process.pid}-${crypto.randomUUID().slice(0, 8)}`;
 
     try {
@@ -127,6 +128,13 @@ export async function attemptRenameSteal(lockPath: string, expectedContent: stri
     return true;
 }
 
+export async function attemptRenameSteal(lockPath: string, expectedContent: string): Promise<boolean> {
+    const arbitration = await tryWithPathArbitration(lockPath, () =>
+        attemptRenameStealUnlocked(lockPath, expectedContent)
+    );
+    return arbitration.acquired ? arbitration.value : false;
+}
+
 /**
  * Try to acquire a lock file atomically.
  * Uses O_CREAT|O_EXCL semantics (writeFile flag:'wx') so two processes
@@ -136,7 +144,7 @@ export async function attemptRenameSteal(lockPath: string, expectedContent: stri
  * exercising `withFileLock`'s polling loop end-to-end would obscure the
  * single-winner guarantee this function itself must provide.
  */
-export async function tryAcquireLock(lockPath: string): Promise<boolean> {
+async function tryAcquireLockUnlocked(lockPath: string): Promise<boolean> {
     const dir = dirname(lockPath);
 
     if (!existsSync(dir)) {
@@ -189,7 +197,7 @@ export async function tryAcquireLock(lockPath: string): Promise<boolean> {
                 // Still empty after grace — orphaned. Steal (expecting the
                 // empty artifact we validated).
                 logger.debug(`Stealing orphaned lock at ${lockPath} (no PID content)`);
-                return await attemptRenameSteal(lockPath, content);
+                return await attemptRenameStealUnlocked(lockPath, content);
             }
             // Owner finished its write during the grace — fall through to the
             // normal alive/dead check below.
@@ -210,29 +218,38 @@ export async function tryAcquireLock(lockPath: string): Promise<boolean> {
             logger.debug(`Stealing stale lock at ${lockPath} (PID ${record.pid} is dead)`);
         }
 
-        return await attemptRenameSteal(lockPath, content);
+        return await attemptRenameStealUnlocked(lockPath, content);
     }
+}
+
+export async function tryAcquireLock(lockPath: string): Promise<boolean> {
+    const arbitration = await tryWithPathArbitration(lockPath, () => tryAcquireLockUnlocked(lockPath));
+    return arbitration.acquired ? arbitration.value : false;
 }
 
 /**
  * Release a lock file by deleting it.
  */
-function releaseLock(lockPath: string): void {
-    try {
-        if (!existsSync(lockPath)) {
+async function releaseLock(lockPath: string): Promise<void> {
+    const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
+    while (Date.now() <= deadline) {
+        const arbitration = await tryWithPathArbitration(lockPath, async () => {
+            if (!existsSync(lockPath)) {
+                return;
+            }
+
+            if (parsePidRecord(readFileSync(lockPath, "utf-8"))?.pid === process.pid) {
+                unlinkSync(lockPath);
+            }
+        });
+        if (arbitration.acquired) {
             return;
         }
 
-        // Only delete if we still own it (our PID is in the file). Parsed, not
-        // string-compared: the lock records the holder's command line too, so a
-        // literal `content === String(process.pid)` would never match and every
-        // holder would leak its lock until the next acquirer stole it.
-        if (parsePidRecord(readFileSync(lockPath, "utf-8"))?.pid === process.pid) {
-            unlinkSync(lockPath);
-        }
-    } catch (error) {
-        logger.error(`Failed to release lock at ${lockPath}: ${error}`);
+        await sleep(POLL_INTERVAL_MS);
     }
+
+    logger.error(`Failed to release lock at ${lockPath}: claim arbitration remained busy`);
 }
 
 /**
@@ -274,6 +291,6 @@ export async function withFileLock<T>(
     try {
         return await fn();
     } finally {
-        releaseLock(lockPath);
+        await releaseLock(lockPath);
     }
 }

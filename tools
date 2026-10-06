@@ -5,7 +5,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { namedBunExecPath } from "@genesiscz/utils/cli/bun-link";
 import { takeDetachedMarker } from "@genesiscz/utils/cli/detached";
-import { planToolExec } from "@genesiscz/utils/cli/tool-exec";
+import { planToolExec, terminateOrphanedChild } from "@genesiscz/utils/cli/tool-exec";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { refreshInstallRecord } from "@genesiscz/utils/install-record";
@@ -381,23 +381,16 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string, exec
         // get reparented to launchd (PPID=1) — without this poll, a long-lived
         // dashboard (`tools <foo> --dashboard`) survives invisibly and burns
         // CPU/holds DB locks for days. Detect reparent → kill child → exit.
+        let orphanCleanup: (() => void) | undefined;
         const orphanTimer = detached ? undefined : setInterval(() => {
-            if (process.ppid === 1) {
-                try {
-                    child.kill("SIGTERM");
-                } catch (err) {
-                    logger.debug({ err }, "[tools] orphan SIGTERM threw");
-                }
-                setTimeout(() => {
-                    if (!child.killed) {
-                        try {
-                            child.kill("SIGKILL");
-                        } catch (err) {
-                            logger.debug({ err }, "[tools] orphan SIGKILL threw");
-                        }
-                    }
-                }, 5000).unref();
+            if (process.ppid !== 1) {
+                return;
             }
+
+            clearInterval(orphanTimer);
+            orphanCleanup = terminateOrphanedChild(child, {
+                onSignalError: (err, signal) => logger.debug({ err, signal }, `[tools] orphan ${signal} threw`),
+            });
         }, 2000);
         orphanTimer?.unref();
 
@@ -420,6 +413,7 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string, exec
 
         const cleanup = () => {
             clearInterval(orphanTimer);
+            orphanCleanup?.();
             for (const [sig, handler] of signalHandlers) {
                 process.off(sig, handler);
             }

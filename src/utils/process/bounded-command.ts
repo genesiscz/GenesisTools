@@ -16,6 +16,7 @@ export async function boundedCommand(options: {
     signal?: AbortSignal;
     maxBufferBytes?: number;
     cwd?: string;
+    environment?: NodeJS.ProcessEnv;
 }): Promise<BoundedCommandResult> {
     options.signal?.throwIfAborted();
     const timeoutMs = Math.floor(options.timeoutMs);
@@ -39,7 +40,7 @@ export async function boundedCommand(options: {
                 stdio: ["ignore", "pipe", "pipe"],
                 detached: true,
                 cwd: options.cwd,
-                env: env.getProcessEnv(),
+                env: options.environment ?? env.getProcessEnv(),
             });
         } catch (error) {
             resolve({

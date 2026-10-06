@@ -3,7 +3,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
 import {
+    attemptStaleTakeover,
     classifyPidRecord,
     clearPidFile,
     inspectPidFile,
@@ -183,6 +185,29 @@ describe("pidfile", () => {
                 await stranger.exited;
             }
         });
+    });
+
+    test("stale takeover cannot rename a fresh pidfile during claim arbitration", async () => {
+        let releaseOwner: () => void = () => {};
+        let ownerReady: () => void = () => {};
+        const ownerStarted = new Promise<void>((resolve) => {
+            ownerReady = resolve;
+        });
+        const ownerRelease = new Promise<void>((resolve) => {
+            releaseOwner = resolve;
+        });
+        const owner = tryWithPathArbitration(path, async () => {
+            writeFileSync(path, String(process.pid));
+            ownerReady();
+            await ownerRelease;
+        });
+        await ownerStarted;
+
+        expect(await attemptStaleTakeover(path, String(DEAD_PID))).toBe(false);
+        expect(readFileSync(path, "utf8").trim()).toBe(String(process.pid));
+
+        releaseOwner();
+        expect((await owner).acquired).toBe(true);
     });
 
     test("exclusive write refuses to clobber an existing claim", () => {

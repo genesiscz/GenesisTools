@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { planToolExec, type ToolExecInput } from "./tool-exec";
+import { EventEmitter } from "node:events";
+import { planToolExec, type ToolExecInput, terminateOrphanedChild } from "./tool-exec";
 
 const base: ToolExecInput = {
     launcher: "/Apps/Example.app/Contents/MacOS/Example",
@@ -61,5 +62,47 @@ describe("planToolExec", () => {
 
             expect(argv).not.toContain(base.orphanWatchdogPreload);
         }
+    });
+});
+
+class FakeChild extends EventEmitter {
+    exitCode: number | null = null;
+    signalCode: NodeJS.Signals | null = null;
+    signals: NodeJS.Signals[] = [];
+    exitOnTerm = false;
+
+    kill(signal: NodeJS.Signals): boolean {
+        this.signals.push(signal);
+        if (signal === "SIGTERM" && this.exitOnTerm) {
+            this.exitCode = 0;
+            this.emit("exit");
+        }
+
+        return true;
+    }
+}
+
+describe("orphan fallback termination", () => {
+    it("escalates a child that accepted TERM but stayed alive", async () => {
+        const child = new FakeChild();
+        const cleanup = terminateOrphanedChild(child, { graceMs: 20 });
+
+        await Bun.sleep(40);
+        cleanup();
+
+        expect(child.signals).toEqual(["SIGTERM", "SIGKILL"]);
+    });
+
+    it("cancels escalation after actual exit and does nothing to an already exited child", async () => {
+        const child = new FakeChild();
+        child.exitOnTerm = true;
+        terminateOrphanedChild(child, { graceMs: 20 });
+        await Bun.sleep(40);
+        expect(child.signals).toEqual(["SIGTERM"]);
+
+        const exited = new FakeChild();
+        exited.exitCode = 0;
+        terminateOrphanedChild(exited, { graceMs: 20 });
+        expect(exited.signals).toEqual([]);
     });
 });

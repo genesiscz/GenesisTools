@@ -1,4 +1,9 @@
 import { expect, test } from "bun:test";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { waitForSession as waitForSessionRecord } from "@app/task/lib/wait-for-session";
+import { env as processEnv } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { setupTaskIntegrationHome, waitForSession, withTaskSession } from "./task-integration-env";
 
 const env = setupTaskIntegrationHome();
@@ -67,5 +72,42 @@ test("wait without --exit-on-match waits for session exit + --propagate-exit (F1
         const r = env.task(["wait", "--session", S, "--timeout", "10", "--propagate-exit"], { timeout: 12000 });
 
         expect(r.code).toBe(17);
+    });
+});
+
+test("wait observes terminal records appended across snapshot startup", async () => {
+    await processEnv.testing.withOverrides({ GENESIS_TOOLS_HOME: env.homeDir }, async () => {
+        for (const kind of ["exit", "match"] as const) {
+            const session = `wait-boundary-${kind}-${Date.now()}`;
+            const path = join(env.sessionsDir(), `${session}.jsonl`);
+            mkdirSync(dirname(path), { recursive: true });
+            writeFileSync(path, "");
+            const appended =
+                kind === "exit"
+                    ? { type: "exit", code: 23, durationMs: 1, ts: "2026-10-06T00:00:00.000Z" }
+                    : { type: "line", seq: 1, out: "stdout", ts: 1, text: "boundary-ready" };
+
+            const result = await waitForSessionRecord(
+                {
+                    session,
+                    waitForExit: kind === "exit",
+                    exitOnMatch: kind === "match" ? /boundary-ready/ : undefined,
+                    timeoutMs: 500,
+                },
+                {
+                    readExisting: async () => {
+                        appendFileSync(path, `${SafeJSON.stringify(appended, { jsonl: true })}\n`);
+                        await Bun.sleep(25);
+                        return [];
+                    },
+                }
+            );
+
+            expect(result).toEqual(
+                kind === "exit"
+                    ? { reason: "session-exit", sessionExitCode: 23 }
+                    : { reason: "match", matchedLine: "boundary-ready" }
+            );
+        }
     });
 });

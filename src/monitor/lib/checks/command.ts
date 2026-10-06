@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import type { CheckResult, Watcher } from "../types";
 
 const MAX_OUTPUT = 4_000;
@@ -19,76 +20,65 @@ function lastLine(text: string): string {
  */
 export async function checkCommand(watcher: Pick<Watcher, "target" | "config" | "timeoutMs">): Promise<CheckResult> {
     const started = performance.now();
-    const proc = Bun.spawn(["sh", "-c", watcher.target], { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
-    // Read both pipes from the start: a command that fills one would block on
-    // write and never exit if we only started reading after `proc.exited`.
-    const pipes = Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]).catch(
-        (readError): [string, string] => {
-            logger.debug({ readError, target: watcher.target }, "monitor: command output unreadable");
+    const result = await boundedCommand({
+        command: ["sh", "-c", watcher.target],
+        timeoutMs: watcher.timeoutMs,
+        maxBufferBytes: 256 * 1024,
+    });
+    const latencyMs = Math.round(performance.now() - started);
+    const output = `${result.stdout}\n${result.stderr}`.slice(-MAX_OUTPUT);
+    const tail = lastLine(result.stderr) || lastLine(result.stdout);
+    const exitCode = result.status ?? 1;
+    const meta = { exitCode, output: output.trim().slice(-800) };
 
-            return ["", ""];
-        }
-    );
-    let timedOut = false;
-    const timer = setTimeout(() => {
-        timedOut = true;
-        // SIGKILL, not SIGTERM: a command that traps SIGTERM would otherwise
-        // keep the watcher marked in-flight and it would never run again.
-        proc.kill("SIGKILL");
-    }, watcher.timeoutMs);
-
-    try {
-        const exitCode = await proc.exited;
-        // A background descendant can inherit the pipes and hold them open
-        // after the shell is gone, so give the readers a moment and move on.
-        const [stdout, stderr] = await Promise.race([pipes, Bun.sleep(250).then((): [string, string] => ["", ""])]);
-        const latencyMs = Math.round(performance.now() - started);
-        const output = `${stdout}\n${stderr}`.slice(-MAX_OUTPUT);
-        const tail = lastLine(stderr) || lastLine(stdout);
-        const meta = { exitCode, output: output.trim().slice(-800) };
-
-        if (timedOut) {
-            return {
-                status: "down",
-                latencyMs,
-                httpStatus: null,
-                detail: `killed after ${Math.round(watcher.timeoutMs / 1000)} s${tail ? ` · ${tail}` : ""}`,
-                meta,
-            };
-        }
-
-        if (exitCode !== 0) {
-            logger.debug({ exitCode, tail, target: watcher.target }, "monitor: command check failed");
-
-            return {
-                status: "down",
-                latencyMs,
-                httpStatus: null,
-                detail: `exit ${exitCode}${tail ? ` · ${tail}` : ""}`,
-                meta,
-            };
-        }
-
-        const threshold = watcher.config.degradedAboveMs;
-
-        if (threshold !== undefined && latencyMs > threshold) {
-            return {
-                status: "degraded",
-                latencyMs,
-                httpStatus: null,
-                detail: `exit 0 · ${latencyMs} ms (slower than ${threshold} ms)${tail ? ` · ${tail}` : ""}`,
-                meta,
-            };
-        }
-
+    if (result.error?.code === "ETIMEDOUT") {
         return {
-            status: "up",
+            status: "down",
             latencyMs,
             httpStatus: null,
-            detail: `exit 0 · ${latencyMs} ms${tail ? ` · ${tail}` : ""}`,
+            detail: `killed after ${Math.round(watcher.timeoutMs / 1000)} s${tail ? ` · ${tail}` : ""}`,
             meta,
         };
-    } finally {
-        clearTimeout(timer);
     }
+
+    if (result.error) {
+        logger.debug({ error: result.error, target: watcher.target }, "monitor: command check failed");
+        return {
+            status: "down",
+            latencyMs,
+            httpStatus: null,
+            detail: `${result.error.code === "ENOBUFS" ? "output limit exceeded" : result.error.message}${tail ? ` · ${tail}` : ""}`,
+            meta,
+        };
+    }
+
+    if (exitCode !== 0) {
+        logger.debug({ exitCode, tail, target: watcher.target }, "monitor: command check failed");
+        return {
+            status: "down",
+            latencyMs,
+            httpStatus: null,
+            detail: `exit ${exitCode}${tail ? ` · ${tail}` : ""}`,
+            meta,
+        };
+    }
+
+    const threshold = watcher.config.degradedAboveMs;
+    if (threshold !== undefined && latencyMs > threshold) {
+        return {
+            status: "degraded",
+            latencyMs,
+            httpStatus: null,
+            detail: `exit 0 · ${latencyMs} ms (slower than ${threshold} ms)${tail ? ` · ${tail}` : ""}`,
+            meta,
+        };
+    }
+
+    return {
+        status: "up",
+        latencyMs,
+        httpStatus: null,
+        detail: `exit 0 · ${latencyMs} ms${tail ? ` · ${tail}` : ""}`,
+        meta,
+    };
 }

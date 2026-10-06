@@ -19,6 +19,62 @@
  * the launcher (from a GenesisTools app face) gets the orphan watchdog as a preload instead.
  */
 
+export interface OrphanedChild {
+    readonly exitCode: number | null;
+    readonly signalCode: NodeJS.Signals | null;
+    kill(signal: NodeJS.Signals): boolean;
+    once(event: "exit", listener: () => void): unknown;
+    off(event: "exit", listener: () => void): unknown;
+}
+
+/** Send one TERM and escalate only while the child has not actually exited. */
+export function terminateOrphanedChild(
+    child: OrphanedChild,
+    opts: { graceMs?: number; onSignalError?: (error: unknown, signal: NodeJS.Signals) => void } = {}
+): () => void {
+    const graceMs = opts.graceMs ?? 5_000;
+    let escalation: ReturnType<typeof setTimeout> | undefined;
+    let cleaned = false;
+    const exited = (): boolean => child.exitCode !== null || child.signalCode !== null;
+    const cleanup = (): void => {
+        if (cleaned) {
+            return;
+        }
+
+        cleaned = true;
+        clearTimeout(escalation);
+        child.off("exit", cleanup);
+    };
+
+    child.once("exit", cleanup);
+    if (exited()) {
+        cleanup();
+        return cleanup;
+    }
+
+    escalation = setTimeout(() => {
+        if (exited()) {
+            cleanup();
+            return;
+        }
+
+        try {
+            child.kill("SIGKILL");
+        } catch (error) {
+            opts.onSignalError?.(error, "SIGKILL");
+        }
+    }, graceMs);
+    escalation.unref?.();
+
+    try {
+        child.kill("SIGTERM");
+    } catch (error) {
+        opts.onSignalError?.(error, "SIGTERM");
+    }
+
+    return cleanup;
+}
+
 export interface ToolExecInput {
     /** The GenesisTools.app launcher to go through, or null when this process skips it. */
     launcher: string | null;

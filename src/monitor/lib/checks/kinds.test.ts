@@ -1,4 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { TCPSocketListener } from "bun";
 import { checkCommand } from "./command";
 import { checkJson, getPath, renderValue } from "./json";
@@ -190,5 +194,25 @@ describe("tls judgement", () => {
         expect(judgeCertificate(60, {}).status).toBe("up");
         expect(judgeCertificate(5, { minDays: 7 }).status).toBe("down");
         expect(judgeCertificate(20, { warnDays: 30 }).status).toBe("degraded");
+    });
+});
+
+describe("checkCommand descendant ownership", () => {
+    test("a timed-out shell cannot leave a descendant writing after return", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "monitor-command-"));
+        const sentinel = join(dir, "leaked");
+        const childScript = `setTimeout(() => require('node:fs').writeFileSync(${SafeJSON.stringify(sentinel)}, 'leaked'), 700); setInterval(() => {}, 1000);`;
+        const target = `${process.execPath} -e ${SafeJSON.stringify(childScript)} & wait`;
+
+        try {
+            const result = await checkCommand({ ...base, timeoutMs: 200, target });
+            await Bun.sleep(900);
+
+            expect(result.status).toBe("down");
+            expect(result.detail).toContain("killed");
+            expect(existsSync(sentinel)).toBe(false);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });

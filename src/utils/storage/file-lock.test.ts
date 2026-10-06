@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
 import { parsePidRecord, serializePidRecord } from "@genesiscz/utils/process/pidfile";
 import { attemptRenameSteal, LockTimeoutError, tryAcquireLock, withFileLock } from "./file-lock";
 
@@ -142,6 +143,31 @@ describe("file-lock: stale/orphaned lock handling", () => {
         expect(held?.command ?? "").toContain("bun");
 
         expect(readdirSync(dir)).toEqual(["target.lock"]);
+    });
+
+    it("a fresh claim cannot be renamed while another claimant owns arbitration", async () => {
+        const lockPath = join(dir, "target.lock");
+        let releaseOwner: () => void = () => {};
+        let ownerReady: () => void = () => {};
+        const ownerStarted = new Promise<void>((resolve) => {
+            ownerReady = resolve;
+        });
+        const ownerRelease = new Promise<void>((resolve) => {
+            releaseOwner = resolve;
+        });
+        const owner = tryWithPathArbitration(lockPath, async () => {
+            writeFileSync(lockPath, String(process.pid));
+            ownerReady();
+            await ownerRelease;
+        });
+        await ownerStarted;
+
+        expect(await attemptRenameSteal(lockPath, "999999999")).toBe(false);
+        expect(await tryAcquireLock(lockPath)).toBe(false);
+        expect(readFileSync(lockPath, "utf8").trim()).toBe(String(process.pid));
+
+        releaseOwner();
+        expect((await owner).acquired).toBe(true);
     });
 
     it("a steal that grabs a FRESH lock restores it and loses (TOCTOU guard)", async () => {

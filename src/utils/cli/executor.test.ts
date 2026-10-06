@@ -9,6 +9,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { enhanceHelp } from "@genesiscz/utils/cli";
 import {
+    Executor,
     formatMissingEnumHelp,
     setSuggestCommandProgram,
     spawnLabel,
@@ -316,5 +317,39 @@ describe("toolCommand", () => {
         expect(toolCommand("macos permissions open", "--pane", "full disk")).toBe(
             'tools macos permissions open --pane "full disk"'
         );
+    });
+});
+
+describe("Executor bounded calls", () => {
+    test("a resistant child cannot extend the advertised timeout to its natural exit", async () => {
+        const executor = new Executor();
+        const started = performance.now();
+
+        await expect(
+            executor.exec(
+                [
+                    process.execPath,
+                    "-e",
+                    "process.on('SIGTERM', () => {}); setTimeout(() => process.exit(0), 1600); setInterval(() => {}, 1000);",
+                ],
+                { timeout: 300 }
+            )
+        ).rejects.toThrow("Command timed out after 300ms");
+
+        expect(performance.now() - started).toBeLessThan(1_200);
+    });
+
+    test("a bounded normal command preserves environment and both output streams", async () => {
+        const executor = new Executor({ env: { EXECUTOR_FIXTURE: "base" } });
+        const result = await executor.exec(
+            [
+                process.execPath,
+                "-e",
+                "process.stdout.write(process.env.EXECUTOR_FIXTURE ?? 'missing'); process.stderr.write('diagnostic');",
+            ],
+            { timeout: 2_000, env: { EXECUTOR_FIXTURE: "call" } }
+        );
+
+        expect(result).toMatchObject({ success: true, exitCode: 0, stdout: "call", stderr: "diagnostic" });
     });
 });

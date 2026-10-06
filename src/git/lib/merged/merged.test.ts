@@ -730,6 +730,74 @@ describe("review round 1", () => {
         expect(report.verdict).toBe("MERGED");
     });
 
+    it("refuses a branch that moved after confirmation before removing its worktree", async () => {
+        const r = await repoWithFeature();
+        await r.squashMerge("feat/x");
+        const wt = await r.worktreeAdd({ name: "wt-moved", ref: "feat/x" });
+        const ctx = await pruneCtxFor(r);
+        const { plans } = await planPrune(ctx, ["feat/x"]);
+        const approved = plans[0].tipSha;
+
+        await r.commit({ file: "late.txt", content: "late\n", message: "late branch work", cwd: wt });
+        const moved = await r.sha("feat/x");
+        const outcomes = await executePrune(ctx, plans);
+
+        expect(moved).not.toBe(approved);
+        expect(outcomes[0].removedWorktree).toBeNull();
+        expect(outcomes[0].deletedBranch).toBeNull();
+        expect(outcomes[0].failures.join("\n")).toContain("moved after confirmation");
+        expect(existsSync(wt)).toBe(true);
+        expect(await r.sha("feat/x")).toBe(moved);
+    });
+
+    it("preserves a branch checked out in a new worktree after confirmation", async () => {
+        const r = await repoWithFeature();
+        await r.squashMerge("feat/x");
+        const ctx = await pruneCtxFor(r);
+        const { plans } = await planPrune(ctx, ["feat/x"]);
+        const expected = plans[0].tipSha;
+        if (!expected) {
+            throw new Error("prune plan did not retain the confirmed branch SHA");
+        }
+
+        const lateWorktree = await r.worktreeAdd({ name: "wt-late", ref: "feat/x" });
+        const outcomes = await executePrune(ctx, plans);
+
+        expect(outcomes[0].deletedBranch).toBeNull();
+        expect(outcomes[0].failures.join("\n")).toContain(`checked out in ${lateWorktree}`);
+        expect(await r.sha("feat/x")).toBe(expected);
+        expect(existsSync(lateWorktree)).toBe(true);
+    });
+
+    it("a remote lease preserves work pushed after confirmation", async () => {
+        const r = await repo();
+        await feature(r, "feat/remote-moved");
+        await r.addOrigin(["feat/remote-moved"]);
+        await r.squashMerge("feat/remote-moved");
+        await r.git(["branch", "-D", "feat/remote-moved"]);
+        const ctx = await pruneCtxFor(r, {
+            remote: true,
+            driver: { kind: "github", prForHead: async () => ({ pr: null, error: null }) },
+            policyFor: () => ({ push: "allowed", matchedBy: "catchAll" }),
+        });
+        const { plans } = await planPrune(ctx, ["origin/feat/remote-moved"]);
+        const approved = plans[0].remoteSha;
+
+        await r.importCommits({
+            branch: "late-remote",
+            from: "refs/remotes/origin/feat/remote-moved",
+            commits: [{ files: { "late-remote.txt": "late\n" }, message: "late remote work" }],
+        });
+        await r.git(["push", "origin", "late-remote:refs/heads/feat/remote-moved"]);
+        const moved = (await r.git(["ls-remote", "--heads", "origin", "feat/remote-moved"])).split(/\s+/)[0];
+        const outcomes = await executePrune(ctx, plans);
+
+        expect(moved).not.toBe(approved);
+        expect(outcomes[0].deletedRemote).toBeNull();
+        expect(outcomes[0].failures.join("\n")).toContain("leased remote delete");
+        expect(await r.git(["ls-remote", "--heads", "origin", "feat/remote-moved"])).toContain(moved);
+    });
+
     it("prunes a worktree whose directory vanished without failing and keeps pruning the rest", async () => {
         const r = await repo();
         await feature(r, "feat/gone", "feat/fine");

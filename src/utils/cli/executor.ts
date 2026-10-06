@@ -1,6 +1,7 @@
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { profiler } from "@genesiscz/utils/profile";
 import { type Command, Help, type Option } from "commander";
 import pc from "picocolors";
@@ -548,57 +549,56 @@ export class Executor {
         }
 
         const stopTimer = spawnProf.start(spawnLabel(cmd));
-        const proc = Bun.spawn({
-            cmd,
-            cwd,
-            env,
-            stdio: ["ignore", "pipe", "pipe"],
-        });
+        let result: ExecResult;
 
-        const collectOutput = Promise.all([
-            new Response(proc.stdout).text(),
-            new Response(proc.stderr).text(),
-            proc.exited,
-        ]);
-
-        let stdout: string;
-        let stderr: string;
-        let exitCode: number;
-
-        if (options?.timeout) {
+        if (options?.timeout !== undefined) {
             const timeoutMs = options.timeout;
-            // Cleared after the race — an uncleared timer keeps the event loop
-            // (and the whole CLI process) alive for the full timeout after exit.
-            let timer: ReturnType<typeof setTimeout> | undefined;
+            const bounded = await boundedCommand({
+                command: cmd,
+                timeoutMs,
+                cwd,
+                environment: env,
+                maxBufferBytes: 64 * 1024 * 1024,
+            });
 
-            const timeoutResult = await Promise.race([
-                collectOutput.then((r) => ({ type: "done" as const, value: r })),
-                new Promise<{ type: "timeout" }>((resolve) => {
-                    timer = setTimeout(() => resolve({ type: "timeout" }), timeoutMs);
-                }),
-            ]);
-            clearTimeout(timer);
+            if (bounded.error) {
+                stopTimer(bounded.error.code === "ETIMEDOUT" ? "timeout" : "error");
 
-            if (timeoutResult.type === "timeout") {
-                proc.kill();
-                await proc.exited;
-                stopTimer("timeout");
-                throw new Error(`Command timed out after ${timeoutMs}ms: ${cmd.join(" ")}`);
+                if (bounded.error.code === "ETIMEDOUT") {
+                    throw new Error(`Command timed out after ${timeoutMs}ms: ${cmd.join(" ")}`);
+                }
+
+                throw bounded.error;
             }
 
-            [stdout, stderr, exitCode] = timeoutResult.value;
+            const exitCode = bounded.status ?? 1;
+            stopTimer(`exit=${exitCode}`);
+            result = {
+                success: exitCode === 0,
+                stdout: bounded.stdout.trim(),
+                stderr: bounded.stderr.trim(),
+                exitCode,
+            };
         } else {
-            [stdout, stderr, exitCode] = await collectOutput;
+            const proc = Bun.spawn({
+                cmd,
+                cwd,
+                env,
+                stdio: ["ignore", "pipe", "pipe"],
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([
+                new Response(proc.stdout).text(),
+                new Response(proc.stderr).text(),
+                proc.exited,
+            ]);
+            stopTimer(`exit=${exitCode}`);
+            result = {
+                success: exitCode === 0,
+                stdout: stdout.trim(),
+                stderr: stderr.trim(),
+                exitCode,
+            };
         }
-
-        stopTimer(`exit=${exitCode}`);
-
-        const result: ExecResult = {
-            success: exitCode === 0,
-            stdout: stdout.trim(),
-            stderr: stderr.trim(),
-            exitCode,
-        };
 
         if (this.debug) {
             if (result.stdout) {
@@ -608,7 +608,7 @@ export class Executor {
                 out.println(pc.dim(`  [${this.label}:err] ${result.stderr.substring(0, 200)}`));
             }
             if (!result.success) {
-                out.println(pc.red(`  [${this.label}] exit ${exitCode}`));
+                out.println(pc.red(`  [${this.label}] exit ${result.exitCode}`));
             }
         }
 

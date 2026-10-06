@@ -287,7 +287,19 @@ async function removeWorktree(ctx: PruneContext, path: string, prunable: string 
     return forced.success ? null : `worktree remove --force failed: ${forced.stderr}`;
 }
 
-/** Run the confirmed plans in order: worktree, then branch, then remote. Each failure is recorded, never fatal. */
+async function localBranchRefusal(ctx: PruneContext, branch: string, expectedSha: string): Promise<string | null> {
+    const git = createGit({ cwd: ctx.repoRoot });
+    const ref = `refs/heads/${branch}`;
+    const current = await git.executor.exec(["rev-parse", "--verify", ref]);
+    if (!current.success || current.stdout.trim() !== expectedSha) {
+        return `${branch} moved after confirmation; expected ${expectedSha}, found ${current.success ? current.stdout.trim() : "missing"}`;
+    }
+
+    const checkedOut = (await listWorktrees(ctx.repoRoot)).find((worktree) => worktree.branch === branch);
+    return checkedOut ? `${branch} is checked out in ${checkedOut.path}` : null;
+}
+
+/** Run confirmed plans in order, refusing any ref that moved after confirmation. */
 export async function executePrune(ctx: PruneContext, plans: PrunePlan[]): Promise<PruneOutcome[]> {
     const git = createGit({ cwd: ctx.repoRoot });
     const outcomes: PruneOutcome[] = [];
@@ -302,14 +314,22 @@ export async function executePrune(ctx: PruneContext, plans: PrunePlan[]): Promi
             failures: [],
         };
 
-        if (plan.worktreePath) {
-            const failure = await removeWorktree(ctx, plan.worktreePath, plan.report.prunable);
+        if (plan.branch && plan.tipSha) {
+            const ref = `refs/heads/${plan.branch}`;
+            const current = await git.executor.exec(["rev-parse", "--verify", ref]);
+            if (!current.success || current.stdout.trim() !== plan.tipSha) {
+                outcome.failures.push(
+                    `${plan.branch} moved after confirmation; expected ${plan.tipSha}, found ${current.success ? current.stdout.trim() : "missing"}`
+                );
+            }
+        }
 
+        if (plan.worktreePath && outcome.failures.length === 0) {
+            const failure = await removeWorktree(ctx, plan.worktreePath, plan.report.prunable);
             if (failure) {
                 outcome.failures.push(failure);
             } else {
                 outcome.removedWorktree = plan.worktreePath;
-
                 if (plan.report.prunable && existsSync(plan.worktreePath)) {
                     outcome.leftFolder = plan.worktreePath;
                 }
@@ -317,22 +337,32 @@ export async function executePrune(ctx: PruneContext, plans: PrunePlan[]): Promi
         }
 
         if (plan.branch && plan.tipSha && outcome.failures.length === 0) {
-            const res = await git.executor.exec(["branch", "-D", plan.branch]);
-
-            if (res.success) {
-                outcome.deletedBranch = { name: plan.branch, sha: plan.tipSha };
+            const refusal = await localBranchRefusal(ctx, plan.branch, plan.tipSha);
+            if (refusal) {
+                outcome.failures.push(refusal);
             } else {
-                outcome.failures.push(`branch -D ${plan.branch}: ${res.stderr}`);
+                const ref = `refs/heads/${plan.branch}`;
+                const res = await git.executor.exec(["update-ref", "-d", ref, plan.tipSha]);
+                if (res.success) {
+                    outcome.deletedBranch = { name: plan.branch, sha: plan.tipSha };
+                } else {
+                    outcome.failures.push(`conditional delete ${plan.branch}: ${res.stderr}`);
+                }
             }
         }
 
         if (plan.remoteBranch && outcome.failures.length === 0) {
-            const res = await git.executor.exec(["push", "origin", "--delete", plan.remoteBranch], { timeout: 60_000 });
-
-            if (res.success) {
-                outcome.deletedRemote = { name: plan.remoteBranch, sha: plan.remoteSha ?? "" };
+            if (!plan.remoteSha) {
+                outcome.failures.push(`remote ${plan.remoteBranch} had no confirmed SHA; refusing deletion`);
             } else {
-                outcome.failures.push(`push origin --delete ${plan.remoteBranch}: ${res.stderr}`);
+                const lease = `--force-with-lease=refs/heads/${plan.remoteBranch}:${plan.remoteSha}`;
+                const refspec = `:refs/heads/${plan.remoteBranch}`;
+                const res = await git.executor.exec(["push", lease, "origin", refspec], { timeout: 60_000 });
+                if (res.success) {
+                    outcome.deletedRemote = { name: plan.remoteBranch, sha: plan.remoteSha };
+                } else {
+                    outcome.failures.push(`leased remote delete ${plan.remoteBranch}: ${res.stderr}`);
+                }
             }
         }
 

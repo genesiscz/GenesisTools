@@ -625,7 +625,13 @@ function changedFiles(base: string): Set<string> | null {
         return null;
     }
 
-    return new Set(diff.stdout.toString().split("\0").filter(Boolean));
+    const changed = new Set(diff.stdout.toString().split("\0").filter(Boolean));
+    const ruleInputs = new Set(["biome.json", "scripts/ci/lint-rules.ts", "scripts/ci/lint-changed.sh"]);
+    if ([...changed].some((file) => ruleInputs.has(file))) {
+        return null;
+    }
+
+    return changed;
 }
 
 async function targetFiles(): Promise<string[]> {
