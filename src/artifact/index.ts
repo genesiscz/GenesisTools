@@ -13,10 +13,8 @@ import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { DASHBOARDS } from "@genesiscz/utils/ui/dashboards";
 import { Command } from "commander";
 import pc from "picocolors";
-import { buildSingleFile, embedScopeFor, resolveEntry, watchAndRebuild } from "./lib/build";
-import { filterKitDts, kitApiDts, writeEditorTsconfig } from "./lib/kit-types";
-import { startLibrary } from "./lib/library";
 import { openArtifact } from "./lib/open";
+import { RUNTIME_DIR } from "./lib/paths";
 import { addEntry, entryUrlPath, loadRegistry, removeEntry, resolveTarget } from "./lib/registry";
 import {
     findRunning,
@@ -26,9 +24,7 @@ import {
     removeRunning,
     runningOutsideRegistry,
 } from "./lib/running";
-import { serveArtifacts } from "./lib/serve";
 import { describeShippedTemplates, resolveTemplateDir } from "./lib/templates";
-import { RUNTIME_DIR } from "./lib/vite";
 
 const DEFAULT_PORT = DASHBOARDS.artifact.port;
 
@@ -153,6 +149,7 @@ program
                 return;
             }
 
+            const { serveArtifacts } = await import("./lib/serve");
             const resolved = resolveTarget(target);
             let name = resolved.registryEntry?.name ?? basename(resolved.dir);
 
@@ -339,6 +336,7 @@ library
     .option("--template <nameOrDir>", "page-chrome template")
     .option("--no-open", "do not open the browser")
     .action(async (opts: { port: string; host: string; template?: string; open: boolean }) => {
+        const { startLibrary } = await import("./lib/library");
         const port = Number.parseInt(opts.port, 10);
         const library = await startLibrary({ port, host: opts.host, templateDir: resolveTemplateDir(opts.template) });
         const url = `http://${opts.host}:${library.port}/`;
@@ -374,6 +372,7 @@ program
     .description("Print the @artifact/kit typed API (generated .d.ts) — author against it without reading source")
     .argument("[names...]", "print only declarations mentioning these names (e.g. Tabs DayChart QA)")
     .action(async (names: string[]) => {
+        const { filterKitDts, kitApiDts } = await import("./lib/kit-types");
         const dts = await kitApiDts();
         out.print(names.length > 0 ? filterKitDts(dts, names) : dts);
     });
@@ -385,6 +384,7 @@ program
     )
     .argument("[dir]", "artifact folder (default: cwd)")
     .action(async (dir: string | undefined) => {
+        const { writeEditorTsconfig } = await import("./lib/kit-types");
         const result = await writeEditorTsconfig(resolve(dir ?? process.cwd()));
 
         if (result.created) {
@@ -427,6 +427,7 @@ program
                 return;
             }
 
+            const { buildSingleFile, embedScopeFor, resolveEntry, watchAndRebuild } = await import("./lib/build");
             const resolved = resolveTarget(target);
             const entry = resolveEntry(resolved.dir, opts.entry ?? resolved.entry ?? resolved.registryEntry?.entry);
             const buildOpts = {

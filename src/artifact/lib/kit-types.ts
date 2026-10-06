@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { REPO_ROOT, RUNTIME_DIR } from "./vite";
+import { REPO_ROOT, RUNTIME_DIR } from "./paths";
 
 /**
  * Agent/editor DX without a folder scaffold:

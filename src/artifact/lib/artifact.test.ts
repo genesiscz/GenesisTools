@@ -588,6 +588,25 @@ describe("templates", () => {
     });
 });
 
+describe("lightweight command imports", () => {
+    test("the entry loads build, server, library and compiler modules only inside their actions", () => {
+        const source = readFileSync(join(import.meta.dir, "..", "index.ts"), "utf8");
+
+        for (const module of ["build", "serve", "library", "kit-types"]) {
+            expect(source).not.toMatch(new RegExp(`^import .*\\./lib/${module}`, "m"));
+            expect(source).toContain(`import("./lib/${module}")`);
+        }
+    });
+
+    test("lightweight path consumers do not load the Vite plugin module for constants", () => {
+        for (const file of ["catalog.ts", "templates.ts", "page-extras.ts", "kit-types.ts"]) {
+            const source = readFileSync(join(import.meta.dir, file), "utf8");
+            expect(source).not.toContain('from "./vite"');
+            expect(source).toContain('from "./paths"');
+        }
+    });
+});
+
 describe("dev-server filesystem exposure", () => {
     // Vite serves every allowed path over /@fs/<absolute path>, and `serve --host`
     // publishes that beyond loopback, so this list IS the blast radius.

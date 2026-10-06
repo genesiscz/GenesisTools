@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MERMAID_FENCE_CLASS } from "./markdown";
-import { RUNTIME_DIR } from "./vite";
+import { RUNTIME_DIR } from "./paths";
 
 /**
  * What a served or built .md page needs beyond TITLE/CONTENT/THEME so it

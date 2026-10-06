@@ -6,8 +6,8 @@ import { logger } from "@genesiscz/utils/logger";
 import type { Plugin } from "vite";
 import { renderMarkdown } from "./markdown";
 import { mdPageExtras } from "./page-extras";
+import { RUNTIME_DIR } from "./paths";
 import { encodeHrefPath, escapeHtml, loadTemplate, loadThemeCss, renderTemplate, themeCssPath } from "./templates";
-import { RUNTIME_DIR } from "./vite";
 
 const TSX_ENTRY_PREFIX = "/__artifact-entry/";
 const TSX_ENTRY_RESOLVED = "\0artifact-entry:";

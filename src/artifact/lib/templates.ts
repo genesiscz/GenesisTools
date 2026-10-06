@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { escapeHtml } from "@genesiscz/utils/string";
-import { RUNTIME_DIR } from "./vite";
+import { RUNTIME_DIR } from "./paths";
 
 // Re-exported so the page-rendering modules keep one import site for their
 // template helpers; the implementation is the shared one.

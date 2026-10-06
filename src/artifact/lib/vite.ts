@@ -4,12 +4,9 @@ import tailwindcss from "@tailwindcss/vite";
 import viteReact from "@vitejs/plugin-react";
 import type { Plugin, PluginOption } from "vite";
 import { HLJS_LANGUAGES } from "./highlight";
+import { REPO_ROOT, RUNTIME_DIR } from "./paths";
 
-/** GenesisTools repo root (this file lives at src/artifact/lib/). */
-export const REPO_ROOT = resolve(__dirname, "../../..");
-
-/** Runtime assets shipped with the tool (Tailwind entry CSS, mount shell). */
-export const RUNTIME_DIR = resolve(__dirname, "../runtime");
+export { REPO_ROOT, RUNTIME_DIR } from "./paths";
 
 /**
  * Resolve bare imports (react, react-dom, …) from the GenesisTools repo when the
