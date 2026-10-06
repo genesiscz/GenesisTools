@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { confinedPath } from "./apply-recovery";
 import { ApplySession } from "./apply-session";
 
 let stateDir: string;
@@ -15,6 +16,11 @@ beforeEach(async () => {
 afterEach(async () => {
     await rm(stateDir, { recursive: true, force: true });
     await rm(projectDir, { recursive: true, force: true });
+});
+
+test("confinedPath normalizes trailing separators and relative project roots", async () => {
+    expect(await confinedPath(`${projectDir}/`, "a.ts")).toBe(join(projectDir, "a.ts"));
+    expect(await confinedPath(relative(process.cwd(), projectDir), "a.ts")).toBe(join(projectDir, "a.ts"));
 });
 
 const BASE_ARGS = {

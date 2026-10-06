@@ -13,14 +13,15 @@ export interface ApplyRecoverySnapshot {
 }
 
 export async function confinedPath(root: string, file: string): Promise<string> {
-    const absolute = resolve(root, file);
-    const rel = relative(root, absolute);
+    const normalizedRoot = resolve(root);
+    const absolute = resolve(normalizedRoot, file);
+    const rel = relative(normalizedRoot, absolute);
     if (!rel || isAbsolute(file) || rel === ".." || rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)) {
         throw new Error(`Stash path leaves project: ${file}`);
     }
 
     let parent = dirname(absolute);
-    while (parent !== root) {
+    while (parent !== normalizedRoot) {
         const stat = await lstat(parent).catch((error: NodeJS.ErrnoException) => {
             if (error.code === "ENOENT") {
                 return null;
@@ -119,6 +120,10 @@ export async function restoreApplySnapshot(args: {
                 await symlink(before.data, temporary);
             } else {
                 await writeFile(temporary, Buffer.from(before.data, "base64"), { flag: "wx", mode: before.mode });
+            }
+            const latest = await snapshotFile(args.root, file);
+            if (!equal(latest, current.files[file])) {
+                throw new Error(`File changed while preparing stash recovery: ${file}`);
             }
             await rename(temporary, absolute);
         }
