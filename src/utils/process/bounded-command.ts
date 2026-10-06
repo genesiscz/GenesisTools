@@ -19,8 +19,12 @@ interface GenericSpawnOptions {
 }
 
 /** Expo narrows global ProcessEnv, while Node spawn accepts this generic runtime environment map. */
-function spawnWithEnvironment(command: string, args: string[], options: GenericSpawnOptions): ReturnType<typeof spawn> {
-    return Reflect.apply(spawn, undefined, [command, args, options]);
+function spawnWithEnvironment(input: {
+    command: string;
+    args: string[];
+    options: GenericSpawnOptions;
+}): ReturnType<typeof spawn> {
+    return Reflect.apply(spawn, undefined, [input.command, input.args, input.options]);
 }
 
 export async function boundedCommand(options: {
@@ -49,11 +53,15 @@ export async function boundedCommand(options: {
         let child: ReturnType<typeof spawn>;
         try {
             const command = argvWithChildDeadline(options.command, timeoutMs);
-            child = spawnWithEnvironment(command[0], command.slice(1), {
-                stdio: ["ignore", "pipe", "pipe"],
-                detached: true,
-                cwd: options.cwd,
-                env: options.environment ?? env.getProcessEnv(),
+            child = spawnWithEnvironment({
+                command: command[0],
+                args: command.slice(1),
+                options: {
+                    stdio: ["ignore", "pipe", "pipe"],
+                    detached: true,
+                    cwd: options.cwd,
+                    env: options.environment ?? env.getProcessEnv(),
+                },
             });
         } catch (error) {
             resolve({
