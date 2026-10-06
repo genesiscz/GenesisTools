@@ -109,7 +109,9 @@ function asAs(value: unknown): AuthorizationServerMetadata | undefined {
     if (
         typeof rec.issuer !== "string" ||
         typeof rec.token_endpoint !== "string" ||
-        typeof rec.authorization_endpoint !== "string"
+        typeof rec.authorization_endpoint !== "string" ||
+        (rec.registration_endpoint !== undefined && typeof rec.registration_endpoint !== "string") ||
+        (rec.device_authorization_endpoint !== undefined && typeof rec.device_authorization_endpoint !== "string")
     ) {
         return undefined;
     }
@@ -189,6 +191,17 @@ export async function discoverAuthorizationServer(
         const meta = asAs(await getJson(candidate, origin));
 
         if (meta) {
+            for (const endpoint of [
+                meta.authorization_endpoint,
+                meta.token_endpoint,
+                meta.registration_endpoint,
+                meta.device_authorization_endpoint,
+            ]) {
+                if (endpoint) {
+                    await assertDiscoveryTarget(endpoint, origin);
+                }
+            }
+
             return meta;
         }
     }

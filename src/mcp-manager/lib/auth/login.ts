@@ -18,6 +18,7 @@ import { type DcrFailureView, describeDcrFailure } from "./presets.ts";
 import { safeTokenErrorCode } from "./redact.ts";
 import { replaceServerTokens } from "./secrets.ts";
 import { writeAuthStatus } from "./status.ts";
+import { assertDiscoveryTarget } from "./url-policy.ts";
 
 export class DynamicClientRegistrationError extends Error {
     readonly view: DcrFailureView;
@@ -65,12 +66,13 @@ async function registerClient(
     client_id: string;
     client_secret?: string;
 }> {
+    const safeRegistrationEndpoint = (await assertDiscoveryTarget(registrationEndpoint, hint.mcpUrl)).toString();
     const methods = ["client_secret_post", "none"] as const;
     let lastBody = "";
     let lastStatus = 0;
 
     for (const method of methods) {
-        const response = await mcpFetch(registrationEndpoint, {
+        const response = await mcpFetch(safeRegistrationEndpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json" },
             body: SafeJSON.stringify({
@@ -112,6 +114,7 @@ async function exchangeCode(opts: {
     clientSecret?: string;
     verifier: string;
     resource: string;
+    trustBaseline: string;
 }): Promise<{ access_token: string; refresh_token?: string; expires_in?: number }> {
     const body: Record<string, string> = {
         grant_type: "authorization_code",
@@ -126,7 +129,8 @@ async function exchangeCode(opts: {
         body.client_secret = opts.clientSecret;
     }
 
-    const response = await mcpFetch(opts.tokenEndpoint, {
+    const safeTokenEndpoint = (await assertDiscoveryTarget(opts.tokenEndpoint, opts.trustBaseline)).toString();
+    const response = await mcpFetch(safeTokenEndpoint, {
         method: "POST",
         headers: {
             Accept: "application/json",
@@ -246,6 +250,9 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
                 throw new Error(`${as.issuer} has no device_authorization_endpoint`);
             }
 
+            await assertDiscoveryTarget(as.device_authorization_endpoint, mcpUrl);
+            await assertDiscoveryTarget(as.token_endpoint, mcpUrl);
+
             const deviceConfig: DeviceFlowConfig = {
                 clientId,
                 clientSecret: registered.client_secret,
@@ -330,6 +337,7 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
             clientSecret: registered.client_secret,
             verifier: pkce.verifier,
             resource,
+            trustBaseline: mcpUrl,
         });
         const expiresAt = Date.now() + (tokens.expires_in ?? 3600) * 1000;
         await replaceServerTokens(options.server, {

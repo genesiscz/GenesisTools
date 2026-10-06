@@ -25,6 +25,8 @@
       "@ui": ["../../../utils/ui/index.ts"],
       "@ui/*": ["../../../utils/ui/*"],
       "@genesiscz/utils/logger/client": ["../../../utils/logger/client.ts"],
+      "@genesiscz/utils/net/outbound-policy": ["../../../utils/net/outbound-policy.ts"],
+      "@genesiscz/utils/net/pinned-fetch": ["../../../utils/net/pinned-fetch.ts"],
       "@genesiscz/utils/json": ["../../../utils/json.ts"],
       "@genesiscz/utils/cli/tool-command": ["../../../utils/cli/tool-command.ts"],
       "@genesiscz/utils/env.client": ["../../../utils/env.client.ts"],

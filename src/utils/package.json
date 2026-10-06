@@ -315,6 +315,16 @@
             "types": "./network.ts",
             "default": "./network.ts"
         },
+        "./net/outbound-policy": {
+            "bun": "./net/outbound-policy.ts",
+            "types": "./net/outbound-policy.ts",
+            "default": "./net/outbound-policy.ts"
+        },
+        "./net/pinned-fetch": {
+            "bun": "./net/pinned-fetch.ts",
+            "types": "./net/pinned-fetch.ts",
+            "default": "./net/pinned-fetch.ts"
+        },
         "./notifications": {
             "bun": "./notifications/index.ts",
             "types": "./notifications/index.ts",

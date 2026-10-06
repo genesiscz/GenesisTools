@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fetchPinnedPublicUrl } from "@genesiscz/utils/net/pinned-fetch";
+import { discoverAuthorizationServer } from "./discovery.ts";
+import { _resetMcpFetchForTest, _setMcpFetchForTest } from "./fetch.ts";
 import {
     _resetLookupForTest,
     _setLookupForTest,
@@ -16,6 +19,48 @@ function publicLookup() {
 
 afterEach(() => {
     _resetLookupForTest();
+    _resetMcpFetchForTest();
+});
+
+describe("authorization server metadata endpoints", () => {
+    test("private registration and token endpoints are rejected before a consuming POST", async () => {
+        publicLookup();
+        let posts = 0;
+        _setMcpFetchForTest(async (_input, init) => {
+            if (init?.method === "POST") {
+                posts += 1;
+                throw new Error("credential POST reached");
+            }
+
+            return Response.json({
+                issuer: "https://identity.example",
+                authorization_endpoint: "https://identity.example/authorize",
+                token_endpoint: "http://127.0.0.1:3042/token",
+                registration_endpoint: "http://[::1]:3042/register",
+            });
+        });
+
+        await expect(discoverAuthorizationServer("https://identity.example", PUBLIC_MCP)).rejects.toThrow(
+            OutboundUrlPolicyError
+        );
+        expect(posts).toBe(0);
+    });
+
+    test("a different public authorization-server origin remains valid", async () => {
+        publicLookup();
+        _setMcpFetchForTest(async () =>
+            Response.json({
+                issuer: "https://identity.example",
+                authorization_endpoint: "https://login.example/authorize",
+                token_endpoint: "https://login.example/token",
+                registration_endpoint: "https://register.example/client",
+            })
+        );
+
+        const metadata = await discoverAuthorizationServer("https://identity.example", PUBLIC_MCP);
+        expect(metadata.registration_endpoint).toBe("https://register.example/client");
+        expect(metadata.token_endpoint).toBe("https://login.example/token");
+    });
 });
 
 describe("isPrivateHost", () => {
@@ -203,13 +248,34 @@ describe("DNS resolution is validated, not just the hostname text", () => {
         expect(url.host).toBe("api.figma.com");
     });
 
-    test("a name that does not resolve is left to fail on its own terms", async () => {
+    test("a name that does not resolve is rejected before a request", async () => {
         _setLookupForTest(async () => {
             throw new Error("ENOTFOUND");
         });
 
-        const url = await assertDiscoveryTarget("https://nope.example.com/x", PUBLIC_MCP);
+        await expect(assertDiscoveryTarget("https://nope.example.com/x", PUBLIC_MCP)).rejects.toThrow(
+            /DNS resolution failed/
+        );
+    });
 
-        expect(url.host).toBe("nope.example.com");
+    test("a pinned fetch passes the approved address to the connector without a second lookup", async () => {
+        let lookups = 0;
+        _setLookupForTest(async () => {
+            lookups += 1;
+            return [{ address: lookups === 1 ? "93.184.216.34" : "127.0.0.1" }];
+        });
+        const seen: string[] = [];
+
+        const response = await fetchPinnedPublicUrl({
+            target: "https://public.example/page",
+            request: async ({ address }) => {
+                seen.push(address);
+                return new Response("ok");
+            },
+        });
+
+        expect(await response.text()).toBe("ok");
+        expect(seen).toEqual(["93.184.216.34"]);
+        expect(lookups).toBe(1);
     });
 });

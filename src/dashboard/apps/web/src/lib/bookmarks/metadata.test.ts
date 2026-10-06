@@ -1,5 +1,15 @@
-import { describe, expect, it } from "vitest";
+import {
+    _resetOutboundLookupForTest,
+    _setOutboundLookupForTest,
+    OutboundUrlPolicyError,
+} from "@genesiscz/utils/net/outbound-policy";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fetchPublicUrlMetadata } from "./fetch-metadata";
 import { extractHtmlMetadata } from "./metadata";
+
+afterEach(() => {
+    _resetOutboundLookupForTest();
+});
 
 describe("extractHtmlMetadata", () => {
     it("extracts <title> tag", () => {
@@ -66,5 +76,59 @@ describe("extractHtmlMetadata", () => {
         expect(result.title).toBe("");
         expect(result.description).toBe("");
         expect(result.faviconUrl).toBe("https://example.com/favicon.ico");
+    });
+});
+
+describe("fetchPublicUrlMetadata outbound policy", () => {
+    it("rejects private IPv6 and mapped-loopback literals before the request sink", async () => {
+        _setOutboundLookupForTest(async () => [{ address: "93.184.216.34" }]);
+        const request = vi.fn(async () => new Response("<title>should not run</title>"));
+
+        for (const target of ["http://[::1]:3042/", "http://[::ffff:127.0.0.1]:3042/", "http://[fd00::1]/"]) {
+            await expect(fetchPublicUrlMetadata({ target, request })).rejects.toThrow(OutboundUrlPolicyError);
+        }
+        expect(request).not.toHaveBeenCalled();
+    });
+
+    it("rejects a public-looking name when any resolved address is private", async () => {
+        _setOutboundLookupForTest(async () => [{ address: "93.184.216.34" }, { address: "10.0.0.8" }]);
+        const request = vi.fn(async () => new Response("<title>should not run</title>"));
+
+        await expect(fetchPublicUrlMetadata({ target: "https://mixed.example/page", request })).rejects.toThrow(
+            /private address 10\.0\.0\.8/
+        );
+        expect(request).not.toHaveBeenCalled();
+    });
+
+    it("revalidates redirects and keeps the request pinned to the approved address", async () => {
+        let lookups = 0;
+        _setOutboundLookupForTest(async () => {
+            lookups += 1;
+            return [{ address: lookups === 1 ? "93.184.216.34" : "127.0.0.1" }];
+        });
+        const request = vi.fn(async ({ address }: { address: string }) => {
+            expect(address).toBe("93.184.216.34");
+            return new Response(null, { status: 302, headers: { location: "http://127.0.0.1/private" } });
+        });
+
+        await expect(fetchPublicUrlMetadata({ target: "https://public.example/page", request })).rejects.toThrow(
+            OutboundUrlPolicyError
+        );
+        expect(request).toHaveBeenCalledTimes(1);
+    });
+
+    it("fetches and parses a normal public page", async () => {
+        _setOutboundLookupForTest(async () => [{ address: "93.184.216.34" }]);
+        const request = vi.fn(async ({ url, address }: { url: URL; address: string }) => {
+            expect(url.hostname).toBe("public.example");
+            expect(address).toBe("93.184.216.34");
+            return new Response('<title>Public page</title><meta name="description" content="Normal">', {
+                status: 200,
+            });
+        });
+
+        const result = await fetchPublicUrlMetadata({ target: "https://public.example/page", request });
+        expect(result).toMatchObject({ title: "Public page", description: "Normal" });
+        expect(request).toHaveBeenCalledTimes(1);
     });
 });

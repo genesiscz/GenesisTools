@@ -3,7 +3,8 @@ import { and, desc, eq } from "drizzle-orm";
 import { type Bookmark, bookmarks, db, type NewBookmark } from "@/drizzle";
 import { requireUserId } from "@/lib/auth/requireUser";
 import { emitDomainEvent } from "@/lib/events/event-bus.server";
-import { extractHtmlMetadata, type UrlMetadata } from "./metadata";
+import { fetchPublicUrlMetadata } from "./fetch-metadata";
+import type { UrlMetadata } from "./metadata";
 
 // ============================================
 // Types
@@ -122,100 +123,16 @@ export const deleteBookmark = createServerFn({ method: "POST" })
 // fetchUrlMetadata — server-side URL scrape
 // ============================================
 
-/** Private IPs / localhost patterns to block (SSRF guard). */
-const PRIVATE_HOST_RE =
-    /^(localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|::1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|169\.254\.\d+\.\d+)$/i;
-
-function assertSafeUrl(raw: string): URL {
-    let parsed: URL;
-    try {
-        parsed = new URL(raw);
-    } catch {
-        throw new Error(`Invalid URL: ${raw}`);
-    }
-
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        throw new Error(`Only http/https URLs are allowed. Got: ${parsed.protocol}`);
-    }
-
-    const hostname = parsed.hostname;
-    if (PRIVATE_HOST_RE.test(hostname)) {
-        throw new Error(`Blocked private/localhost URL: ${hostname}`);
-    }
-
-    return parsed;
-}
-
 export const fetchUrlMetadata = createServerFn({ method: "POST" })
     .inputValidator((d: { url: string }) => d)
     .handler(async ({ data }): Promise<UrlMetadata> => {
         await requireUserId();
-        const parsed = assertSafeUrl(data.url);
 
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 8_000);
 
         try {
-            // Re-validate every redirect hop: assertSafeUrl only checked the
-            // initial URL; a 30x to localhost / 169.254.169.254 would otherwise
-            // bypass the SSRF guard. redirect:"manual" + bounded hop loop.
-            let currentUrl = parsed.href;
-            let response: Response;
-            const MAX_HOPS = 5;
-            for (let hop = 0; ; hop++) {
-                response = await fetch(currentUrl, {
-                    signal: controller.signal,
-                    redirect: "manual",
-                    headers: {
-                        "User-Agent": "GenesisTools-Dashboard/1.0 (bookmark-metadata-fetcher)",
-                        Accept: "text/html,application/xhtml+xml",
-                    },
-                });
-
-                if (response.status >= 300 && response.status < 400) {
-                    const loc = response.headers.get("location");
-                    if (!loc) {
-                        break;
-                    }
-
-                    if (hop >= MAX_HOPS) {
-                        throw new Error(`Too many redirects fetching ${parsed.href}`);
-                    }
-
-                    currentUrl = assertSafeUrl(new URL(loc, currentUrl).href).href;
-                    continue;
-                }
-
-                break;
-            }
-
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status} fetching ${parsed.href}`);
-            }
-
-            // Read only the first 64 KB — enough to cover <head>
-            const reader = response.body?.getReader();
-            if (!reader) {
-                throw new Error("Response body is null");
-            }
-
-            const decoder = new TextDecoder();
-            let html = "";
-            let bytesRead = 0;
-            const MAX_BYTES = 64 * 1024;
-
-            while (bytesRead < MAX_BYTES) {
-                const { done, value } = await reader.read();
-                if (done) {
-                    break;
-                }
-                html += decoder.decode(value, { stream: true });
-                bytesRead += value.byteLength;
-            }
-            reader.cancel();
-
-            const metadata = extractHtmlMetadata(html, parsed.href);
-            return metadata;
+            return await fetchPublicUrlMetadata({ target: data.url, signal: controller.signal });
         } catch (err) {
             console.error("[bookmarks] fetchUrlMetadata failed:", err);
             throw err;
