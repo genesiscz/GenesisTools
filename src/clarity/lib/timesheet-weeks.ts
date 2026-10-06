@@ -320,6 +320,31 @@ export interface TimesheetWeeks {
     records: Map<number, TimesheetRecord>;
 }
 
+/** Reuse a full timesheet read from discovery, fetching it only when discovery had no record. */
+export async function getTimesheetRecord({
+    api,
+    records,
+    timesheetId,
+}: {
+    api: Pick<TimesheetWeekReader, "getTimesheet">;
+    records: Map<number, TimesheetRecord>;
+    timesheetId: number;
+}): Promise<TimesheetRecord | undefined> {
+    const known = records.get(timesheetId);
+
+    if (known) {
+        return known;
+    }
+
+    const record = (await api.getTimesheet(timesheetId)).timesheets._results[0];
+
+    if (record) {
+        records.set(timesheetId, record);
+    }
+
+    return record;
+}
+
 export async function getTimesheetWeeks(
     api: TimesheetWeekReader,
     month?: number,

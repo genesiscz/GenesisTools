@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
     findPeriodForDate,
     findWeekForDate,
+    getTimesheetRecord,
     parseTimesheetArg,
     selectWeeksForDateArg,
     type TimesheetWeek,
@@ -170,5 +171,43 @@ describe("weeksTouchingMonth", () => {
         };
 
         expect(weeksTouchingMonth([week], 2026, 8).map((w) => w.timePeriodId)).toEqual([400009]);
+    });
+});
+
+describe("getTimesheetRecord", () => {
+    test("reuses a discovery record without another full read", async () => {
+        const record = { _internalId: 555001 } as never;
+        const records = new Map([[555001, record]]);
+        let reads = 0;
+
+        const result = await getTimesheetRecord({
+            api: {
+                getTimesheet: async () => {
+                    reads++;
+                    return { timesheets: { _results: [] } } as never;
+                },
+            },
+            records,
+            timesheetId: 555001,
+        });
+
+        expect(result).toBe(record);
+        expect(reads).toBe(0);
+    });
+
+    test("fetches a missing record once and makes it reusable", async () => {
+        const record = { _internalId: 555002 } as never;
+        const records = new Map();
+        let reads = 0;
+        const api = {
+            getTimesheet: async () => {
+                reads++;
+                return { timesheets: { _results: [record] } } as never;
+            },
+        };
+
+        expect(await getTimesheetRecord({ api, records, timesheetId: 555002 })).toBe(record);
+        expect(await getTimesheetRecord({ api, records, timesheetId: 555002 })).toBe(record);
+        expect(reads).toBe(1);
     });
 });

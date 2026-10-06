@@ -8,7 +8,12 @@ import {
     type ExecuteFillResult,
     type FillEntryResult,
 } from "@app/clarity/lib/fill-utils";
-import { findWeekForDate, getTimesheetWeeks, hasTimesheetId } from "@app/clarity/lib/timesheet-weeks";
+import {
+    findWeekForDate,
+    getTimesheetRecord,
+    getTimesheetWeeks,
+    hasTimesheetId,
+} from "@app/clarity/lib/timesheet-weeks";
 import { requireAdoTimeLogConfig } from "@app/clarity/ui/src/server/ado-config";
 import type { ApiDebugInfo, TimeEntryRecord, TimeSeriesValue } from "@genesiscz/utils/clarity";
 import { ClarityApi } from "@genesiscz/utils/clarity";
@@ -151,7 +156,7 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
         };
     }
 
-    const { weeks: clarityWeeks, userId } = await getTimesheetWeeks(clarityApi, month, year);
+    const { weeks: clarityWeeks, userId, records } = await getTimesheetWeeks(clarityApi, month, year);
     // The same check `resolveFillWeeks` runs for the CLI: a day carrying mapped hours that no
     // opened period covers is dropped by the write.
     const unresolvedDates = [...new Set([...fillMap.values()].flatMap((fill) => Object.keys(fill.dayMinutes)))]
@@ -248,8 +253,7 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
     await Promise.all(
         weekPreviews.map(async (wp) => {
             try {
-                const tsData = await clarityApi.getTimesheet(wp.timesheetId);
-                const ts = tsData.timesheets._results[0];
+                const ts = await getTimesheetRecord({ api: clarityApi, records, timesheetId: wp.timesheetId });
 
                 if (!ts) {
                     return;
