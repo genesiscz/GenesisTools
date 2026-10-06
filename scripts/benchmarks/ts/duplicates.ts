@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -63,7 +64,7 @@ interface Measurement extends WorkerResult {
 }
 
 const ROOT = join(import.meta.dir, "../../..");
-const SCRATCH_PREFIX = "/tmp/cc/GenesisTools/typescript-performance/run-";
+const SCRATCH_PREFIX = join(tmpdir(), "cc", "GenesisTools", "typescript-performance", "run-");
 const INSTRUMENTED_FILES = ["skeleton.ts", "duplicates.ts", "refactors/shadowed.ts"];
 
 function flag(name: string): string | undefined {

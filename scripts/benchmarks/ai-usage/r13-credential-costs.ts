@@ -7,6 +7,7 @@
  */
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _resetMcpFetchForTest, _setMcpFetchForTest, mcpFetch, readJsonRecord } from "@app/mcp-manager/lib/auth/fetch";
 import {
@@ -38,7 +39,13 @@ import { formatTable } from "@genesiscz/utils/table";
 import { Command } from "commander";
 
 const WORKER_ARG = "--worker";
-const SCRATCH_ROOT = "/tmp/cc/GenesisTools/finish-sol-report-fixes-credentials/r13-credential-costs";
+const SCRATCH_ROOT = join(
+    tmpdir(),
+    "cc",
+    "GenesisTools",
+    "finish-sol-report-fixes-credentials",
+    "r13-credential-costs"
+);
 const KEY = Buffer.alloc(32, 0x3a);
 
 type Arm =
