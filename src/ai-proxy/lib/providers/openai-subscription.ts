@@ -5,7 +5,7 @@ import { captureUpstreamFailure } from "@app/ai-proxy/lib/debug-capture";
 import { clientAbortResponse } from "@app/ai-proxy/lib/providers/client-abort";
 import { cooldownRemainingMs, markRateLimited, markSuccess, markUnhealthy } from "@app/ai-proxy/lib/providers/cooldown";
 import { resolveOpenAiSubFailoverToken, resolveOpenAiSubToken } from "@app/ai-proxy/lib/providers/openai-sub-token";
-import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
+import type { OpenAiModel, ProviderInspectionOptions, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { mapWhamError, parseRetryAfterSeconds } from "@app/ai-proxy/lib/providers/wham-errors";
 import {
     createWhamItemHarvestTransform,
@@ -59,8 +59,8 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         return new OpenAiSubscriptionProvider(account);
     }
 
-    async listModels(): Promise<OpenAiModel[]> {
-        const { token, accountId } = await resolveOpenAiSubToken(this.account);
+    async listModels(options?: ProviderInspectionOptions): Promise<OpenAiModel[]> {
+        const { token, accountId } = await resolveOpenAiSubToken(this.account, { noRefresh: options?.probe });
         const records = await fetchWhamModels(token, accountId);
 
         return records
@@ -447,7 +447,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         });
     }
 
-    async getUsage(): Promise<UsageSummary> {
+    async getUsage(options?: ProviderInspectionOptions): Promise<UsageSummary> {
         // ChatGPT exposes no plan-quota endpoint we can trust, so this reports
         // proxy-observed traffic from the local usage store — never claim
         // upstream weekly-limit numbers here.
@@ -459,7 +459,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
 
         let tier: string | undefined;
         try {
-            const { token } = await resolveOpenAiSubToken(this.account);
+            const { token } = await resolveOpenAiSubToken(this.account, { noRefresh: options?.probe });
             tier = extractPlanType(token);
         } catch (err) {
             logger.debug(

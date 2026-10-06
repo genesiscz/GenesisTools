@@ -63,7 +63,7 @@ export async function buildProviderMap(
 
 export async function createProvider(account: AiProxyAccountConfig): Promise<ProxyProvider> {
     if (account.provider === "grok-subscription") {
-        return GrokSubscriptionProvider.create(account);
+        return GrokSubscriptionProvider.create({ account });
     }
 
     if (account.provider === "github-copilot-subscription") {
@@ -91,6 +91,14 @@ export async function createProvider(account: AiProxyAccountConfig): Promise<Pro
     }
 
     throw new Error(`Provider not implemented yet: ${account.provider}`);
+}
+
+export async function createProviderForInspection(account: AiProxyAccountConfig): Promise<ProxyProvider> {
+    if (account.provider === "grok-subscription") {
+        return GrokSubscriptionProvider.create({ account, options: { probe: true } });
+    }
+
+    return createProvider(account);
 }
 
 /**

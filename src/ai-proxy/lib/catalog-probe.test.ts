@@ -19,6 +19,7 @@ setupStorageSandbox();
 
 /** Every refresh a catalog build set off. Must stay empty under `probe`. */
 const spent: string[] = [];
+let throwOnSpend = false;
 
 function resolveOrRefuse(name: string, options?: { noRefresh?: boolean }): { token: string; accountId?: string } {
     if (options?.noRefresh) {
@@ -27,6 +28,10 @@ function resolveOrRefuse(name: string, options?: { noRefresh?: boolean }): { tok
     }
 
     spent.push(name);
+
+    if (throwOnSpend) {
+        throw new Error(`single-use refresh reached for ${name}`);
+    }
 
     return { token: "fresh-after-refresh", accountId: "acct-1" };
 }
@@ -98,6 +103,7 @@ const codex: AiProxyAccountConfig = {
 
 afterEach(() => {
     spent.length = 0;
+    throwOnSpend = false;
     anthropicLiveCalls = 0;
     whamLiveCalls = 0;
     activeWham = 0;
@@ -161,5 +167,25 @@ describe("buildProxyModelCatalog under probe", () => {
         expect(anthropicLiveCalls).toBe(1);
         expect(whamLiveCalls).toBe(1);
         expect(models.some((model) => model.source === "api-catalog")).toBe(true);
+    });
+
+    it("does not spend a managed OpenAI grant while inspecting account usage", async () => {
+        const { OpenAiSubscriptionProvider } = await import("./providers/openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(codex);
+        throwOnSpend = true;
+
+        const usage = await provider.getUsage({ probe: true });
+
+        expect(usage.summary).toContain("proxy-observed");
+        expect(spent).toEqual([]);
+    });
+
+    it("still refreshes managed OpenAI usage during normal runtime inspection", async () => {
+        const { OpenAiSubscriptionProvider } = await import("./providers/openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(codex);
+
+        await provider.getUsage();
+
+        expect(spent).toEqual(["personal"]);
     });
 });

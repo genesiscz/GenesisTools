@@ -14,10 +14,15 @@ export interface RealtimeConnectTarget {
     headers: Record<string, string>;
 }
 
+export interface ProviderInspectionOptions {
+    /** Diagnostic inspection must not rotate or persist credentials. */
+    probe?: boolean;
+}
+
 export interface ProxyProvider {
     id: string;
     readonly accountFingerprint: string;
-    listModels(): Promise<OpenAiModel[]>;
+    listModels(options?: ProviderInspectionOptions): Promise<OpenAiModel[]>;
     chatCompletions(
         req: Request,
         model: string,
@@ -25,7 +30,7 @@ export interface ProxyProvider {
         options?: { thinkingMode?: ThinkingPresentationMode }
     ): Promise<Response>;
     responses(req: Request, model: string, bodyText: string): Promise<Response>;
-    getUsage(): Promise<UsageSummary>;
+    getUsage(options?: ProviderInspectionOptions): Promise<UsageSummary>;
     /** Providers with a realtime WS API return the upstream connect target; absent = unsupported. */
     realtimeConnect?(model: string): RealtimeConnectTarget;
     /** POST /realtime/client_secrets pass-through (ephemeral token mint); absent = unsupported. */

@@ -282,7 +282,7 @@ describe("resolveGrokSubToken: a grant stored by tools grok login", () => {
         expect(storedGrantCalls).toEqual([{ name: "grok", options: { noRefresh: true } }]);
 
         await resolved.storedGrant?.refresh("upstream returned 401", true);
-        expect(storedGrantCalls[1]).toEqual({ name: "grok", options: { force: true } });
+        expect(storedGrantCalls[1]).toEqual({ name: "grok", options: { force: true, noRefresh: true } });
     });
 
     // The issuer may answer a grant without a new refresh token. Routing that on the

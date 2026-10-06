@@ -2,7 +2,7 @@ import { accountConfigFingerprint, resolveGrokAuthPath } from "@app/ai-proxy/lib
 import { listGrokProxyModels } from "@app/ai-proxy/lib/model-meta";
 import { mapGrokError } from "@app/ai-proxy/lib/providers/grok-errors";
 import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
-import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
+import type { OpenAiModel, ProviderInspectionOptions, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { parseRetryAfterSeconds } from "@app/ai-proxy/lib/providers/wham-errors";
 import { harvestResponsesOutput, whamItemScope } from "@app/ai-proxy/lib/providers/wham-item-store";
 import { prepareGrokUpstreamBody } from "@app/ai-proxy/lib/rewrite-upstream-body";
@@ -63,12 +63,20 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         this.client = client;
     }
 
-    static async create(account: AiProxyAccountConfig): Promise<GrokSubscriptionProvider> {
+    static async create({
+        account,
+        options,
+    }: {
+        account: AiProxyAccountConfig;
+        options?: ProviderInspectionOptions;
+    }): Promise<GrokSubscriptionProvider> {
         // grok-sub account in ~/.genesis-tools/ai/config.json — resolves the
         // token via the account's authFile reference (same store the other
         // subscription providers bill through).
         if (account.grok?.accountName) {
-            const { token, authPath, storedGrant } = await resolveGrokSubToken(account.grok.accountName);
+            const { token, authPath, storedGrant } = await resolveGrokSubToken(account.grok.accountName, {
+                noRefresh: options?.probe,
+            });
             const client = new GrokSubscriptionClient({
                 token,
                 ...(authPath === undefined ? {} : { authPath }),

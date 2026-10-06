@@ -132,7 +132,11 @@ export async function resolveGrokSubToken(
                 ...(options?.noRefresh === undefined ? {} : { noRefresh: options.noRefresh }),
             }),
             storedGrant: {
-                refresh: (_reason, force) => resolveStoredGrokGrant(name, { force }),
+                refresh: (_reason, force) =>
+                    resolveStoredGrokGrant(name, {
+                        force,
+                        ...(options?.noRefresh === undefined ? {} : { noRefresh: options.noRefresh }),
+                    }),
                 hint: `Run: ${toolCommand("grok login")} ${name}`,
             },
             account: pick(account),

@@ -1,7 +1,7 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { clientAbortResponse } from "@app/ai-proxy/lib/providers/client-abort";
 import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
-import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
+import type { OpenAiModel, ProviderInspectionOptions, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import {
     anthropicMessageToOpenAiCompletion,
     anthropicSseToOpenAiChatStream,
@@ -122,7 +122,7 @@ export class AnthropicSubscriptionProvider implements ProxyProvider {
         return new AnthropicSubscriptionProvider(account);
     }
 
-    async listModels(): Promise<OpenAiModel[]> {
+    async listModels(options?: ProviderInspectionOptions): Promise<OpenAiModel[]> {
         const aliases: OpenAiModel[] = ANTHROPIC_SUB_ALIASES.map((alias) => ({
             id: `${this.account.name}/${this.account.providerSlug}/${alias}`,
             object: "model",
@@ -131,7 +131,7 @@ export class AnthropicSubscriptionProvider implements ProxyProvider {
             description: `Claude ${alias} via subscription (${resolveAnthropicSubModel(alias)})`,
         }));
 
-        const { token } = await resolveAccountToken(this.billingAccountName);
+        const { token } = await resolveAccountToken(this.billingAccountName, { noRefresh: options?.probe });
         const records = await fetchAnthropicSubModels(token);
 
         return [

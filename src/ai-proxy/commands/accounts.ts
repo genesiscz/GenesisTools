@@ -2,7 +2,7 @@ import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
 import { loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { type AccountListRow, displayAccountsTable, displayAccountTestResult } from "@app/ai-proxy/lib/display";
 import { apiKeyStatus, defaultApiKeyEnvName, findEnvSourceFile } from "@app/ai-proxy/lib/providers/api-key-state";
-import { createProvider, isProviderImplemented } from "@app/ai-proxy/lib/providers/registry";
+import { createProviderForInspection, isProviderImplemented } from "@app/ai-proxy/lib/providers/registry";
 import type {
     AiProxyAccountConfig,
     AiProxyOpenRouterAccountConfig,
@@ -67,9 +67,9 @@ export async function runAccountsTest(name: string): Promise<void> {
     }
 
     try {
-        const provider = await createProvider(account);
-        const usage = await provider.getUsage();
-        const models = await provider.listModels();
+        const provider = await createProviderForInspection(account);
+        const usage = await provider.getUsage({ probe: true });
+        const models = await buildProxyModelCatalog([account], { probe: true });
 
         displayAccountTestResult({
             name,
@@ -77,7 +77,7 @@ export async function runAccountsTest(name: string): Promise<void> {
             providerSlug: account.providerSlug,
             summary: usage.summary,
             modelCount: models.length,
-            modelsSample: models.map((model) => model.id),
+            modelsSample: models.map((model) => model.proxyId),
         });
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
