@@ -231,3 +231,38 @@ test("a failed write is not tracked, on any harness", async () => {
 
     expect(readJson<unknown>("sessions", "s4.json")).rejects.toThrow();
 });
+
+test("concurrent hook processes preserve the union of edited paths", async () => {
+    const paths = Array.from({ length: 16 }, (_, index) => `/repo/concurrent-${index}.ts`);
+
+    const exits = await Promise.all(
+        paths.map((filePath) =>
+            runHook({
+                session_id: "shared-session",
+                hook_event_name: "PostToolUse",
+                tool_name: "Edit",
+                tool_input: { file_path: filePath },
+                transcript_path: CLAUDE_TRANSCRIPT,
+            })
+        )
+    );
+
+    expect(exits).toEqual(paths.map(() => 0));
+    expect((await readJson<{ files: string[] }>("sessions", "shared-session.json")).files.sort()).toEqual(paths.sort());
+});
+
+test("repeated SessionStart runs cleanup at most once per cadence", async () => {
+    const payload = {
+        session_id: "start-session",
+        hook_event_name: "SessionStart",
+        transcript_path: CLAUDE_TRANSCRIPT,
+    };
+    await mkdir(join(home, ".genesis-tools", "claude-code", "sessions"), { recursive: true });
+
+    await runHook(payload);
+    const stamp = join(home, ".genesis-tools", "claude-code", "sessions", ".cleanup-stamp");
+    const first = await readFile(stamp, "utf8");
+    await runHook(payload);
+
+    expect(await readFile(stamp, "utf8")).toBe(first);
+});

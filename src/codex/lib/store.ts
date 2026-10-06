@@ -25,6 +25,8 @@ export interface CodexSessionMeta {
     accountId?: string;
     accountName?: string;
     name: string;
+    /** Unique launch lifetime; controls from an earlier owner of the same name are inert. */
+    generation?: string;
     daemonPid: number;
     /**
      * The process that CLAIMED this name, held only between the claim and the daemon's first

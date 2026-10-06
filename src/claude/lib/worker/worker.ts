@@ -5,9 +5,11 @@ import { resolveClaudeBinaryForTeammates } from "@app/claude/lib/teammate-wrappe
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { withFileLock } from "@genesiscz/utils/storage";
 import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
 import { isText, isTurnCompleted, isTurnFailed, type WorkerEvent } from "@genesiscz/utils/worker/events";
-import { workerTurnErrPath, workerTurnLogPath } from "./paths";
+import { workerMetaPath, workerTurnErrPath, workerTurnLogPath } from "./paths";
 import { type ClaudeWorkerMeta, ClaudeWorkerStore } from "./store";
 import { parseTurnEvents } from "./stream";
 
@@ -111,7 +113,10 @@ export function claimTurnLog(args: { store: ClaudeWorkerStore; name: string; tur
         throw err;
     }
 
-    store.updateMeta(name, { turns: turn });
+    store.updateMeta(name, {
+        turns: turn,
+        activeTurn: { turn, ownerPid: process.pid, startedAt: new Date().toISOString() },
+    });
 
     return fd;
 }
@@ -120,90 +125,105 @@ interface RunTurnOptions {
     store: ClaudeWorkerStore;
     meta: ClaudeWorkerMeta;
     account: PinnedAccount;
-    turn: number;
     prompt: string;
     safeMode?: boolean;
 }
 
 async function runTurn(options: RunTurnOptions): Promise<ClaudeTurnResult> {
-    const { store, meta, account, turn, prompt, safeMode } = options;
+    const { store, account, prompt, safeMode } = options;
 
-    if (account.name !== meta.account) {
-        // The identity is the whole point of this backend: a turn on a different
-        // account splits the conversation's billing and its usage window.
-        throw new Error(
-            `Claude worker '${meta.name}' is pinned to account '${meta.account}'; refusing to run a turn as '${account.name}'.`
-        );
-    }
+    return withFileLock(`${workerMetaPath(options.meta.name)}.turn.lock`, async () => {
+        const meta = store.readMeta(options.meta.name);
+        if (!meta) {
+            throw new Error(`Claude worker not found: ${options.meta.name}`);
+        }
+        if (meta.activeTurn?.childPid && isProcessAlive(meta.activeTurn.childPid)) {
+            throw new Error(
+                `Claude worker '${meta.name}' still has turn ${meta.activeTurn.turn} running (pid ${meta.activeTurn.childPid})`
+            );
+        }
+        const turn = meta.turns + 1;
 
-    // Never bare Bun.which here. This repo used to depend on @anthropic-ai/claude-code, so
-    // node_modules/.bin put a stale pinned CLI first on PATH under `bun run` and it refused to
-    // nest; that dependency is gone, but a bare lookup still resolves whatever `claude` happens to
-    // be first, a wrapper script included. (Not a shell alias or function: `Bun.which` walks PATH
-    // for executable files, as src/claude/lib/teammate-wrapper.ts spells out.) The teammate
-    // resolver picks the user's real install.
-    const binary = resolveClaudeBinaryForTeammates();
+        if (account.name !== meta.account) {
+            // The identity is the whole point of this backend: a turn on a different
+            // account splits the conversation's billing and its usage window.
+            throw new Error(
+                `Claude worker '${meta.name}' is pinned to account '${meta.account}'; refusing to run a turn as '${account.name}'.`
+            );
+        }
 
-    const logPath = workerTurnLogPath(meta.name, turn);
-    const errPath = workerTurnErrPath(meta.name, turn);
-    const args = turnArgs({ meta, first: turn === 1, safeMode });
-    // The prompt is user text and can carry credentials or private code, so the
-    // day-stamped log gets the shape of the invocation, never its payload.
-    log.info({ name: meta.name, turn, account: account.name, logPath }, "starting claude worker turn");
+        // Never bare Bun.which here. This repo used to depend on @anthropic-ai/claude-code, so
+        // node_modules/.bin put a stale pinned CLI first on PATH under `bun run` and it refused to
+        // nest; that dependency is gone, but a bare lookup still resolves whatever `claude` happens to
+        // be first, a wrapper script included. (Not a shell alias or function: `Bun.which` walks PATH
+        // for executable files, as src/claude/lib/teammate-wrapper.ts spells out.) The teammate
+        // resolver picks the user's real install.
+        const binary = resolveClaudeBinaryForTeammates();
 
-    const logFd = claimTurnLog({ store, name: meta.name, turn });
-    let errFd: number;
+        const logPath = workerTurnLogPath(meta.name, turn);
+        const errPath = workerTurnErrPath(meta.name, turn);
+        const args = turnArgs({ meta, first: turn === 1, safeMode });
+        // The prompt is user text and can carry credentials or private code, so the
+        // day-stamped log gets the shape of the invocation, never its payload.
+        log.info({ name: meta.name, turn, account: account.name, logPath }, "starting claude worker turn");
 
-    try {
-        errFd = openSync(errPath, "w", 0o600);
-    } catch (err) {
-        closeSync(logFd);
-        throw err;
-    }
+        const logFd = claimTurnLog({ store, name: meta.name, turn });
+        let errFd: number;
 
-    // The worker is routinely spawned FROM a Claude Code session (that is what
-    // a handoff is), and the claude CLI refuses to start when it sees the
-    // parent's CLAUDECODE marker: "Claude Code cannot be launched inside
-    // another Claude Code session… unset the CLAUDECODE environment variable."
-    // The session markers go with it so the child never mistakes itself for
-    // the parent's session.
-    const childEnv: Record<string, string | undefined> = {
-        ...env.getProcessEnv(),
-        ...pinnedLaunchEnv({ name: account.name, label: account.label }, account.token),
-    };
-    delete childEnv.CLAUDECODE;
-    delete childEnv.CLAUDE_CODE_SESSION_ID;
-    delete childEnv.CLAUDE_CODE_ENTRYPOINT;
+        try {
+            errFd = openSync(errPath, "w", 0o600);
+        } catch (err) {
+            closeSync(logFd);
+            throw err;
+        }
 
-    let exitCode: number | null = null;
-    try {
-        const proc = Bun.spawn({
-            cmd: [binary, ...args],
-            cwd: meta.cwd,
-            env: childEnv,
-            // The prompt reaches the child here, never as an argv element.
-            stdin: new TextEncoder().encode(prompt),
-            stdout: logFd,
-            stderr: errFd,
+        // The worker is routinely spawned FROM a Claude Code session (that is what
+        // a handoff is), and the claude CLI refuses to start when it sees the
+        // parent's CLAUDECODE marker: "Claude Code cannot be launched inside
+        // another Claude Code session… unset the CLAUDECODE environment variable."
+        // The session markers go with it so the child never mistakes itself for
+        // the parent's session.
+        const childEnv: Record<string, string | undefined> = {
+            ...env.getProcessEnv(),
+            ...pinnedLaunchEnv({ name: account.name, label: account.label }, account.token),
+        };
+        delete childEnv.CLAUDECODE;
+        delete childEnv.CLAUDE_CODE_SESSION_ID;
+        delete childEnv.CLAUDE_CODE_ENTRYPOINT;
+
+        let exitCode: number | null = null;
+        try {
+            const proc = Bun.spawn({
+                cmd: [binary, ...args],
+                cwd: meta.cwd,
+                env: childEnv,
+                // The prompt reaches the child here, never as an argv element.
+                stdin: new TextEncoder().encode(prompt),
+                stdout: logFd,
+                stderr: errFd,
+            });
+            store.updateMeta(meta.name, {
+                activeTurn: { turn, ownerPid: process.pid, childPid: proc.pid, startedAt: new Date().toISOString() },
+            });
+            exitCode = await proc.exited;
+        } finally {
+            closeSync(logFd);
+            closeSync(errFd);
+        }
+
+        const transcript = existsSync(logPath) ? readFileSync(logPath, "utf8") : "";
+        const events = parseTurnEvents(transcript, meta.sessionId);
+        const completed = events.some(isTurnCompleted) && !events.some(isTurnFailed);
+        const report = events.filter(isText).at(-1)?.text ?? "";
+        const stderr = existsSync(errPath) ? readFileSync(errPath, "utf8") : "";
+        const updated = store.updateMeta(meta.name, {
+            lastTurn: { turn, exitCode, at: new Date().toISOString() },
+            activeTurn: undefined,
         });
-        exitCode = await proc.exited;
-    } finally {
-        closeSync(logFd);
-        closeSync(errFd);
-    }
+        log.info({ name: meta.name, turn, exitCode, completed, events: events.length }, "claude worker turn finished");
 
-    const transcript = existsSync(logPath) ? readFileSync(logPath, "utf8") : "";
-    const events = parseTurnEvents(transcript, meta.sessionId);
-    const completed = events.some(isTurnCompleted) && !events.some(isTurnFailed);
-    const report = events.filter(isText).at(-1)?.text ?? "";
-    const stderr = existsSync(errPath) ? readFileSync(errPath, "utf8") : "";
-    const updated = store.updateMeta(meta.name, {
-        turns: turn,
-        lastTurn: { turn, exitCode, at: new Date().toISOString() },
+        return { meta: updated, turn, events, report, completed, exitCode, stderr, logPath };
     });
-    log.info({ name: meta.name, turn, exitCode, completed, events: events.length }, "claude worker turn finished");
-
-    return { meta: updated, turn, events, report, completed, exitCode, stderr, logPath };
 }
 
 export async function spawnWorker(options: SpawnWorkerOptions): Promise<ClaudeTurnResult> {
@@ -220,7 +240,7 @@ export async function spawnWorker(options: SpawnWorkerOptions): Promise<ClaudeTu
     };
     store.createMeta(meta);
 
-    return runTurn({ store, meta, account: options.account, turn: 1, prompt: options.prompt, safeMode: meta.safeMode });
+    return runTurn({ store, meta, account: options.account, prompt: options.prompt, safeMode: meta.safeMode });
 }
 
 export async function steerWorker(options: SteerWorkerOptions): Promise<ClaudeTurnResult> {
@@ -236,7 +256,6 @@ export async function steerWorker(options: SteerWorkerOptions): Promise<ClaudeTu
         store,
         meta,
         account: options.account,
-        turn: meta.turns + 1,
         prompt: options.prompt,
         safeMode: meta.safeMode,
     });

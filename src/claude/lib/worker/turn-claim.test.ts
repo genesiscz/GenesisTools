@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { type ClaudeWorkerMeta, ClaudeWorkerStore } from "./store";
-import { claimTurnLog } from "./worker";
+import { claimTurnLog, steerWorker } from "./worker";
 
 function makeMeta(): ClaudeWorkerMeta {
     return {
@@ -51,6 +51,28 @@ describe("claimTurnLog", () => {
             closeSync(claimTurnLog({ store, name: "reviewer", turn: 1 }));
 
             expect(() => claimTurnLog({ store, name: "reviewer", turn: 1 })).toThrow(/already has a transcript/);
+        });
+    });
+
+    test("a live orphan child blocks a competing turn after its launcher dies", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-claude-turn-owner-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new ClaudeWorkerStore();
+            store.createMeta({
+                ...makeMeta(),
+                turns: 1,
+                activeTurn: {
+                    turn: 1,
+                    ownerPid: -1,
+                    childPid: process.pid,
+                    startedAt: new Date().toISOString(),
+                },
+            });
+
+            await expect(
+                steerWorker({ name: "reviewer", account: { name: "work", token: "fixture" }, prompt: "next" })
+            ).rejects.toThrow(/still has turn 1 running/);
         });
     });
 });

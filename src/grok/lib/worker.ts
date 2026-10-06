@@ -6,6 +6,8 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { defaultWorkerHomeFor, managedHomeSkillsPolicy } from "@genesiscz/utils/grok/worker-paths";
 import { logger } from "@genesiscz/utils/logger";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { withFileLock } from "@genesiscz/utils/storage";
 import { accountPinRefusal } from "@genesiscz/utils/worker/capabilities";
 import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
 import {
@@ -16,7 +18,7 @@ import {
     type WorkerSurfaces,
 } from "@genesiscz/utils/worker/isolation";
 import { printWorkerTurn, type WorkerTurnReport } from "@genesiscz/utils/worker/turn-report";
-import { turnErrPath, turnLogPath } from "./paths";
+import { sessionMetaPath, turnErrPath, turnLogPath } from "./paths";
 import { type GrokSessionMeta, GrokSessionStore } from "./store";
 import { type GrokTurnSummary, parseTurnLog } from "./stream";
 import { type WorktreeDelta, worktreeDelta, worktreeState } from "./worktree";
@@ -191,6 +193,18 @@ export function buildSteerArgs(
     return args;
 }
 
+export function buildNextTurnArgs(
+    meta: GrokSessionMeta,
+    readOnly: boolean,
+    surfaces: WorkerSurfaces,
+    promptArguments: string[]
+): string[] {
+    const retryInitialStart = meta.turns === 1 && !meta.lastTurn?.ended;
+    return retryInitialStart
+        ? buildRunArgs({ ...meta, readOnly, surfaces }, promptArguments)
+        : buildSteerArgs({ ...meta, surfaces }, readOnly, promptArguments);
+}
+
 export function resolveGrokBinary(): string {
     // `Bun.which("grok")` searches the PATH the PROCESS STARTED WITH, not the
     // current one, so a PATH set after startup is invisible to it. Passing the
@@ -244,13 +258,25 @@ export function redactArgs(args: string[]): string[] {
     return args.map((arg, i) => (i > 0 && PROMPT_FLAGS.has(args[i - 1]) ? "<redacted>" : arg));
 }
 
-function openTurnLog(logPath: string, name: string, turn: number): number {
+export function claimTurnLog(options: {
+    store: GrokSessionStore;
+    name: string;
+    turn: number;
+    metaPatch?: Partial<GrokSessionMeta>;
+}): number {
+    const logPath = turnLogPath(options.name, options.turn);
     try {
-        return openSync(logPath, "wx");
+        const fd = openSync(logPath, "wx");
+        options.store.updateMeta(options.name, {
+            turns: options.turn,
+            activeTurn: { turn: options.turn, ownerPid: process.pid, startedAt: new Date().toISOString() },
+            ...options.metaPatch,
+        });
+        return fd;
     } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "EEXIST") {
             throw new Error(
-                `Turn ${turn} of grok session '${name}' already has a transcript — another turn is running or died uncleanly. Read it with '${toolCommand("grok read")} --name ${name} --turn ${turn}'.`
+                `Turn ${options.turn} of grok session '${options.name}' already has a transcript — another turn is running or died uncleanly. Read it with '${toolCommand("grok read")} --name ${options.name} --turn ${options.turn}'.`
             );
         }
 
@@ -261,7 +287,6 @@ function openTurnLog(logPath: string, name: string, turn: number): number {
 async function runTurn(
     store: GrokSessionStore,
     meta: GrokSessionMeta,
-    turn: number,
     turnArgs: string[],
     /**
      * Metadata to persist only once this turn has WON the reservation below.
@@ -273,102 +298,117 @@ async function runTurn(
      */
     reservedMetaPatch?: Partial<GrokSessionMeta>
 ): Promise<TurnResult> {
-    const binary = resolveGrokBinary();
-    const logPath = turnLogPath(meta.name, turn);
-    const errPath = turnErrPath(meta.name, turn);
-    const args = [...turnArgs, "--cwd", meta.cwd, "--output-format", "streaming-json"];
-    const authPath = subscriptionAuthPath(env.getProcessEnv());
-    const authMode = resolveAuthMode(meta.auth, authPath);
-    if (authMode === "subscription" && !existsSync(authPath)) {
-        throw new Error(
-            `grok subscription login not found at ${authPath}. Run 'grok login' first, or start the session with --auth api-key.`
-        );
-    }
-
-    // The prompt is user text and can carry credentials or private code, so the
-    // day-stamped log gets the shape of the invocation, never its payload.
-    log.info({ name: meta.name, turn, binary, args: redactArgs(args), logPath, auth: authMode }, "starting grok turn");
-
-    // O_EXCL: the turn log doubles as the turn reservation. Two concurrent
-    // steers derive the same next turn from the same metadata, and "w" would
-    // let the loser silently truncate the winner's transcript.
-    const logFd = openTurnLog(logPath, meta.name, turn);
-    let errFd: number;
-
-    try {
-        if (reservedMetaPatch) {
-            store.updateMeta(meta.name, reservedMetaPatch);
+    return withFileLock(`${sessionMetaPath(meta.name)}.turn.lock`, async () => {
+        const fresh = store.readMeta(meta.name);
+        if (!fresh) {
+            throw new Error(`Grok session not found: ${meta.name}`);
         }
-
-        errFd = openSync(errPath, "w");
-    } catch (err) {
-        // Anything between winning the reservation and entering the spawn block
-        // used to leak logFd, because the try/finally that closes it started
-        // after both opens had succeeded (PR #330 review t12).
-        closeSync(logFd);
-        throw err;
-    }
-
-    // Snapshot before the spawn so the report can say whether the turn did anything.
-    const worktreeBefore = worktreeState(meta.cwd);
-
-    let exitCode: number | null = null;
-    try {
-        const surfaces = meta.surfaces ?? DEFAULT_SURFACES;
-        // `~/.agents/skills` has no env toggle; `--no-skills` lives in the worker
-        // home's config.toml. A managed (shared) home has ONE fixed policy, so
-        // parallel sessions never rewrite it under each other; only a
-        // caller-chosen --worker-home follows the session's own choice.
-        const homePolicy = managedHomeSkillsPolicy(meta.workerHome);
-        const configSurfaces = homePolicy === null ? surfaces : { ...surfaces, skills: homePolicy };
-        if (homePolicy !== null && homePolicy !== surfaces.skills) {
-            log.warn(
-                { name: meta.name, workerHome: meta.workerHome, skills: surfaces.skills },
-                "the ~/.agents skills tier follows the shared home's fixed policy; only ~/.claude skills flip mid-session"
+        if (fresh.activeTurn?.childPid && isProcessAlive(fresh.activeTurn.childPid)) {
+            throw new Error(
+                `Grok session '${meta.name}' still has turn ${fresh.activeTurn.turn} running (pid ${fresh.activeTurn.childPid})`
+            );
+        }
+        const turn = fresh.turns + 1;
+        meta = { ...fresh, readOnly: meta.readOnly, surfaces: meta.surfaces };
+        const binary = resolveGrokBinary();
+        const logPath = turnLogPath(meta.name, turn);
+        const errPath = turnErrPath(meta.name, turn);
+        const args = [...turnArgs, "--cwd", meta.cwd, "--output-format", "streaming-json"];
+        const authPath = subscriptionAuthPath(env.getProcessEnv());
+        const authMode = resolveAuthMode(meta.auth, authPath);
+        if (authMode === "subscription" && !existsSync(authPath)) {
+            throw new Error(
+                `grok subscription login not found at ${authPath}. Run 'grok login' first, or start the session with --auth api-key.`
             );
         }
 
-        ensureGrokWorkerConfig(meta.workerHome, configSurfaces);
-        const proc = Bun.spawn({
-            cmd: [binary, ...args],
-            cwd: meta.cwd,
-            env: buildTurnEnv(
-                env.getProcessEnv(),
-                meta.workerHome,
-                meta.rendezvousSession,
-                { mode: authMode, authPath },
-                surfaces
-            ),
-            stdin: "ignore",
-            stdout: logFd,
-            stderr: errFd,
+        // The prompt is user text and can carry credentials or private code, so the
+        // day-stamped log gets the shape of the invocation, never its payload.
+        log.info(
+            { name: meta.name, turn, binary, args: redactArgs(args), logPath, auth: authMode },
+            "starting grok turn"
+        );
+
+        // O_EXCL: the turn log doubles as the turn reservation. Two concurrent
+        // steers derive the same next turn from the same metadata, and "w" would
+        // let the loser silently truncate the winner's transcript.
+        const logFd = claimTurnLog({ store, name: meta.name, turn, metaPatch: reservedMetaPatch });
+        let errFd: number;
+
+        try {
+            errFd = openSync(errPath, "w");
+        } catch (err) {
+            // Anything between winning the reservation and entering the spawn block
+            // used to leak logFd, because the try/finally that closes it started
+            // after both opens had succeeded (PR #330 review t12).
+            closeSync(logFd);
+            throw err;
+        }
+
+        // Snapshot before the spawn so the report can say whether the turn did anything.
+        const worktreeBefore = worktreeState(meta.cwd);
+
+        let exitCode: number | null = null;
+        try {
+            const surfaces = meta.surfaces ?? DEFAULT_SURFACES;
+            // `~/.agents/skills` has no env toggle; `--no-skills` lives in the worker
+            // home's config.toml. A managed (shared) home has ONE fixed policy, so
+            // parallel sessions never rewrite it under each other; only a
+            // caller-chosen --worker-home follows the session's own choice.
+            const homePolicy = managedHomeSkillsPolicy(meta.workerHome);
+            const configSurfaces = homePolicy === null ? surfaces : { ...surfaces, skills: homePolicy };
+            if (homePolicy !== null && homePolicy !== surfaces.skills) {
+                log.warn(
+                    { name: meta.name, workerHome: meta.workerHome, skills: surfaces.skills },
+                    "the ~/.agents skills tier follows the shared home's fixed policy; only ~/.claude skills flip mid-session"
+                );
+            }
+
+            ensureGrokWorkerConfig(meta.workerHome, configSurfaces);
+            const proc = Bun.spawn({
+                cmd: [binary, ...args],
+                cwd: meta.cwd,
+                env: buildTurnEnv(
+                    env.getProcessEnv(),
+                    meta.workerHome,
+                    meta.rendezvousSession,
+                    { mode: authMode, authPath },
+                    surfaces
+                ),
+                stdin: "ignore",
+                stdout: logFd,
+                stderr: errFd,
+            });
+            store.updateMeta(meta.name, {
+                activeTurn: { turn, ownerPid: process.pid, childPid: proc.pid, startedAt: new Date().toISOString() },
+            });
+            exitCode = await proc.exited;
+        } finally {
+            closeSync(logFd);
+            closeSync(errFd);
+        }
+
+        const worktree = worktreeDelta(worktreeBefore, worktreeState(meta.cwd));
+        const summary = parseTurnLog(existsSync(logPath) ? readFileSync(logPath, "utf8") : "");
+        const stderr = existsSync(errPath) ? readFileSync(errPath, "utf8") : "";
+        const updated = store.updateMeta(meta.name, {
+            lastTurn: { turn, ended: summary.ended, exitCode, at: new Date().toISOString() },
+            activeTurn: undefined,
         });
-        exitCode = await proc.exited;
-    } finally {
-        closeSync(logFd);
-        closeSync(errFd);
-    }
+        log.info(
+            {
+                name: meta.name,
+                turn,
+                exitCode,
+                ended: summary.ended,
+                toolCalls: summary.toolCalls.length,
+                changedThisTurn: worktree?.changedThisTurn ?? null,
+            },
+            "grok turn finished"
+        );
 
-    const worktree = worktreeDelta(worktreeBefore, worktreeState(meta.cwd));
-    const summary = parseTurnLog(existsSync(logPath) ? readFileSync(logPath, "utf8") : "");
-    const stderr = existsSync(errPath) ? readFileSync(errPath, "utf8") : "";
-    const updated = store.updateMeta(meta.name, {
-        turns: turn,
-        lastTurn: { turn, ended: summary.ended, exitCode, at: new Date().toISOString() },
+        return { meta: updated, turn, summary, exitCode, stderr, logPath, errPath, worktree };
     });
-    log.info(
-        {
-            name: meta.name,
-            turn,
-            exitCode,
-            ended: summary.ended,
-            toolCalls: summary.toolCalls.length,
-            changedThisTurn: worktree?.changedThisTurn ?? null,
-        },
-        "grok turn finished"
-    );
-
-    return { meta: updated, turn, summary, exitCode, stderr, logPath, errPath, worktree };
 }
 
 /**
@@ -435,7 +475,7 @@ export async function runSession(options: RunSessionOptions): Promise<TurnResult
     };
     store.createMeta(meta);
 
-    return runTurn(store, meta, 1, buildRunArgs(meta, promptArguments));
+    return runTurn(store, meta, buildRunArgs(meta, promptArguments));
 }
 
 export async function steerSession(options: SteerSessionOptions): Promise<TurnResult> {
@@ -448,14 +488,14 @@ export async function steerSession(options: SteerSessionOptions): Promise<TurnRe
     const readOnly = options.readOnly ?? meta.readOnly;
     const previous = meta.surfaces ?? DEFAULT_SURFACES;
     const surfaces = surfacesFromFlags(options.surfaces ?? {}, previous);
-    const args = buildSteerArgs({ ...meta, surfaces }, readOnly, promptArgs(options));
+    const args = buildNextTurnArgs(meta, readOnly, surfaces, promptArgs(options));
     const surfacesChanged = surfaces.skills !== previous.skills || surfaces.rules !== previous.rules;
     const modeChange =
         readOnly === meta.readOnly && !surfacesChanged
             ? undefined
             : { ...(readOnly === meta.readOnly ? {} : { readOnly }), ...(surfacesChanged ? { surfaces } : {}) };
 
-    return runTurn(store, { ...meta, readOnly, surfaces }, meta.turns + 1, args, modeChange);
+    return runTurn(store, { ...meta, readOnly, surfaces }, args, modeChange);
 }
 
 /** The turn report a finished grok turn renders as, for the shared worker verbs. */

@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { ensureSessionDir, sessionPaths } from "@app/agents/lib/paths";
 import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -61,6 +63,27 @@ export function resolveWritePolicy(
     }
 
     return { writePolicy: "deny", sandbox: "read-only", approvalPolicy: "never" };
+}
+
+export function resolveWritableRoots(options: {
+    requested?: string[];
+    agentsEnabled: boolean;
+    sandbox: CodexSessionMeta["sandbox"];
+    rendezvousSession?: string;
+}): string[] {
+    const writableRoots = [...(options.requested ?? [])];
+
+    if (options.agentsEnabled && options.sandbox === "workspace-write") {
+        if (!options.rendezvousSession) {
+            throw new Error("A parent agents session is required to construct writable roots");
+        }
+
+        const paths = sessionPaths(options.rendezvousSession);
+        ensureSessionDir(paths);
+        writableRoots.push(paths.sessionDir);
+    }
+
+    return [...new Set(writableRoots.map((path) => resolve(path)))];
 }
 
 /**
@@ -213,11 +236,12 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSes
     const now = new Date().toISOString();
     const cwd = resolve(options.cwd ?? process.cwd());
     const policy = resolveWritePolicy(options.write);
-    const writableRoots = [...(options.writableRoots ?? [])];
-
-    if (agentsEnabled && policy.sandbox === "workspace-write") {
-        writableRoots.push(join(env.tools.getHome(), ".genesis-tools"));
-    }
+    const writableRoots = resolveWritableRoots({
+        requested: options.writableRoots,
+        agentsEnabled,
+        sandbox: policy.sandbox,
+        rendezvousSession: rendezvousSession ?? undefined,
+    });
 
     // Always record the home this session will actually run in. Leaving it unset let the daemon
     // configure Computer Use against ~/.codex while the app-server inherited an ambient
@@ -229,7 +253,7 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSes
         ...(account ? { accountId: account.accountId } : {}),
         name: options.name,
         mode: options.mode ?? "task",
-        writableRoots: [...new Set(writableRoots.map((path) => resolve(path)))],
+        writableRoots,
         ...(options.prompt ? { prompt: options.prompt } : {}),
     };
     if (options.computerUse) {
@@ -246,6 +270,7 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSes
     const meta: CodexSessionMeta = {
         ...(account ? { accountId: account.accountId, accountName: account.name } : {}),
         name: options.name,
+        generation: randomUUID(),
         daemonPid: 0,
         cwd,
         home,

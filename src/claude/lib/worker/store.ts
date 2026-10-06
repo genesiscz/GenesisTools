@@ -24,6 +24,7 @@ export interface ClaudeWorkerMeta {
     turns: number;
     createdAt: string;
     lastTurn?: ClaudeWorkerTurnRecord;
+    activeTurn?: { turn: number; ownerPid: number; childPid?: number; startedAt: string };
 }
 
 function isNonEmpty(value: unknown): value is string {

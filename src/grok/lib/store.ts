@@ -29,6 +29,7 @@ export interface GrokSessionMeta {
     /** The agents-bus swarm of the session that started this worker, if any. */
     rendezvousSession?: string;
     lastTurn?: GrokTurnRecord;
+    activeTurn?: { turn: number; ownerPid: number; childPid?: number; startedAt: string };
 }
 
 function isNonEmpty(value: unknown): value is string {

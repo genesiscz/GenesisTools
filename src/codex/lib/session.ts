@@ -1,3 +1,4 @@
+import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
 import type {
@@ -15,6 +16,7 @@ import type { RpcNotification, RpcServerRequest } from "./app-server-client";
 import type { CodexControl } from "./control";
 import { buildAgentInstructions } from "./seed-instructions";
 import type { CodexSessionMeta, CodexSessionStore } from "./store";
+import { codexTurnOutcome } from "./terminal-outcome";
 
 const log = logger.child({ component: "codex:session" });
 
@@ -30,6 +32,7 @@ interface RuntimeOptions {
     store: CodexSessionStore;
     meta: CodexSessionMeta;
     onApprovalRequest?: (notice: Record<string, unknown>) => void | Promise<void>;
+    unsubscribeTimeoutMs?: number;
 }
 
 interface ThreadStartResult {
@@ -91,6 +94,7 @@ export class CodexSessionRuntime {
     private readonly store: CodexSessionStore;
     private meta: CodexSessionMeta;
     private readonly onApprovalRequest: RuntimeOptions["onApprovalRequest"];
+    private readonly unsubscribeTimeoutMs: number;
     private readonly pendingApprovalDecisions = new Map<string, PendingApprovalDecision>();
 
     constructor(options: RuntimeOptions) {
@@ -99,6 +103,7 @@ export class CodexSessionRuntime {
         this.store = options.store;
         this.meta = options.meta;
         this.onApprovalRequest = options.onApprovalRequest;
+        this.unsubscribeTimeoutMs = options.unsubscribeTimeoutMs ?? 1000;
     }
 
     async start(options: { prompt?: string }): Promise<void> {
@@ -177,14 +182,12 @@ export class CodexSessionRuntime {
             return;
         }
 
-        if (notification.method === "turn/completed") {
+        const terminal = codexTurnOutcome(notification);
+        if (terminal) {
             await this.updateMeta({ activeTurnId: undefined, status: "ready", lastEventAt });
-            await this.deliverQueuedSteer();
-            return;
-        }
-
-        if (notification.method === "turn/failed") {
-            await this.updateMeta({ activeTurnId: undefined, status: "ready", lastEventAt });
+            if (terminal.outcome !== "interrupted") {
+                await this.deliverQueuedSteer();
+            }
             return;
         }
 
@@ -267,17 +270,20 @@ export class CodexSessionRuntime {
         }
         this.pendingApprovalDecisions.clear();
 
-        if (this.meta.threadId) {
-            const params: ThreadUnsubscribeParams = { threadId: this.meta.threadId };
-            try {
-                await this.client.request("thread/unsubscribe", params);
-            } catch (err) {
-                log.debug({ err, threadId: this.meta.threadId }, "thread unsubscribe failed during close");
-                // The child may already be gone; close still needs to release local resources.
+        try {
+            if (this.meta.threadId) {
+                const params: ThreadUnsubscribeParams = { threadId: this.meta.threadId };
+                await withTimeout(
+                    this.client.request("thread/unsubscribe", params),
+                    this.unsubscribeTimeoutMs,
+                    new Error("Codex thread unsubscribe timed out")
+                );
             }
+        } catch (err) {
+            log.debug({ err, threadId: this.meta.threadId }, "thread unsubscribe failed during close");
+        } finally {
+            await this.client.close();
         }
-
-        await this.client.close();
         await this.updateMeta({
             activeTurnId: undefined,
             status: "closed",

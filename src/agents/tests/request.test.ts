@@ -4,11 +4,45 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
-import { appendFeed, appendMessage, readFeed } from "../lib/feed";
+import { appendFeed, appendMessage, FeedLogCursor, readFeed } from "../lib/feed";
 import { ensureSessionDir, sessionPaths } from "../lib/paths";
 import { sendRequest } from "../lib/request";
 
 describe("agents request", () => {
+    test("feed cursors parse only appended records after the initial catch-up", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-feed-cursor-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const paths = sessionPaths("cursor-test");
+            ensureSessionDir(paths);
+            const first = await appendFeed(paths, {
+                type: "registered",
+                agent_name: "lead",
+                agent_id: "main_test",
+                awaiting_login: false,
+                is_main: true,
+                role: null,
+                meta: {},
+            });
+            const samples: Array<{ bytes: number; records: number }> = [];
+            const cursor = new FeedLogCursor({ paths, sinceSeq: 0, onRead: (sample) => samples.push(sample) });
+
+            expect(await cursor.readAppended()).toEqual([first]);
+            const afterCatchUp = [...samples];
+            expect(await cursor.readAppended()).toEqual([]);
+            expect(samples).toEqual(afterCatchUp);
+
+            const second = await appendFeed(paths, {
+                type: "logged_in",
+                agent_id: "main_test",
+                agent_name: "lead",
+                mode: "stream",
+            });
+            expect(await cursor.readAppended()).toEqual([second]);
+            expect(samples.at(-1)?.records).toBe(1);
+        });
+    });
+
     test("blocks until a correlated reply arrives", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-agents-request-"));
 

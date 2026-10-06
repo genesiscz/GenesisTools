@@ -7,7 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { deriveRegistry } from "../lib/derived-registry";
-import { readFeed, readFeedSince } from "../lib/feed";
+import { FeedLogCursor, readFeed } from "../lib/feed";
 import { formatEventPretty } from "../lib/format-pretty";
 import { onShutdown } from "../lib/lifecycle";
 import { agentsRoot, ensureSessionDir, sessionPaths } from "../lib/paths";
@@ -186,6 +186,9 @@ export async function runListen(opts: ListenOpts): Promise<void> {
             lastSeq = event.seq;
         }
     }
+    // Start from byte zero once and filter by lastSeq. Priming directly at EOF would lose an event
+    // appended in the gap between the initial read above and cursor construction.
+    const feedCursor = new FeedLogCursor({ paths, sinceSeq: lastSeq });
 
     // watchFileFeed always runs a poll-fallback timer alongside fs.watch (not
     // gated on watch() succeeding), so a watcher setup/runtime failure can't
@@ -196,7 +199,7 @@ export async function runListen(opts: ListenOpts): Promise<void> {
         debounceMs: WATCH_DEBOUNCE_MS,
         signal: controller.signal,
         onChange: async () => {
-            const next = await readFeedSince(paths, lastSeq);
+            const next = await feedCursor.readAppended();
 
             for (const event of next) {
                 emitPretty(event, format);

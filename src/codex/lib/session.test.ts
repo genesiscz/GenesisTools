@@ -206,6 +206,28 @@ describe("CodexSessionRuntime", () => {
         });
     });
 
+    test("delivers a queued steer after a legacy turn failure", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-failed-queue-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new CodexSessionStore();
+            const meta = makeMeta(home);
+            store.writeMeta(meta);
+            const client = new FakeRpcClient();
+            const runtime = new CodexSessionRuntime({ client, store, meta });
+            await runtime.start({ prompt: "Begin" });
+            client.rejectNextTurn = new Error("active turn cannot accept same-turn steering");
+
+            await runtime.execute({ op: "steer", body: "Recover after failure", force: false });
+            await runtime.handleNotification({ method: "turn/failed", params: { turn: { id: "turn-1" } } });
+
+            expect(client.requests.at(-1)?.params).toMatchObject({
+                input: [{ type: "text", text: "Recover after failure", text_elements: [] }],
+            });
+            expect((await store.readMeta("reviewer"))?.queuedSteers).toEqual([]);
+        });
+    });
+
     test("interrupts, rolls back, and reads the thread", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-controls-"));
 
@@ -353,6 +375,30 @@ describe("CodexSessionRuntime", () => {
 
             await expect(pending).resolves.toEqual({ decision: "decline" });
             expect((await store.readMeta("reviewer"))?.pendingApprovals).toEqual({});
+        });
+    });
+
+    test("reaches the client reaper when unsubscribe never settles", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-close-timeout-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new CodexSessionStore();
+            const meta = { ...makeMeta(home), threadId: "thread-1", status: "ready" as const };
+            store.writeMeta(meta);
+            let closed = false;
+            const client: RpcClient = {
+                request: async () => new Promise<never>(() => {}),
+                notify: async () => {},
+                close: async () => {
+                    closed = true;
+                },
+            };
+            const runtime = new CodexSessionRuntime({ client, store, meta, unsubscribeTimeoutMs: 10 });
+
+            await runtime.close();
+
+            expect(closed).toBe(true);
+            expect((await store.readMeta("reviewer"))?.status).toBe("closed");
         });
     });
 });

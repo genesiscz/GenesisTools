@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { sessionMetaPath } from "./paths";
+import { sessionMetaPath, turnLogPath } from "./paths";
 import { GrokSessionStore } from "./store";
-import { promptArgs, runSession } from "./worker";
+import { claimTurnLog, promptArgs, runSession, steerSession } from "./worker";
 
 /**
  * Regression tests: PR #330 review. `createMeta` is an O_EXCL claim on the
@@ -73,6 +73,61 @@ describe("listNames does not create the sessions directory", () => {
             expect(store.listNames()).toEqual([]);
             // `sessions` is a diagnostic. Inspecting grok must not leave a directory behind.
             expect(existsSync(join(home, ".genesis-tools", "grok", "sessions"))).toBe(false);
+        });
+    });
+});
+
+describe("turn reservations", () => {
+    test("a dead launcher leaves a high-water mark so the next turn advances", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-grok-turn-reservation-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+            const store = new GrokSessionStore();
+            store.createMeta({
+                name: "reviewer",
+                sessionId: "3f1d2a9c-0000-4000-8000-000000000000",
+                cwd: home,
+                workerHome: join(home, "worker"),
+                readOnly: true,
+                turns: 0,
+                createdAt: new Date(0).toISOString(),
+            });
+
+            closeSync(claimTurnLog({ store, name: "reviewer", turn: 1 }));
+            const next = (store.readMeta("reviewer")?.turns ?? 0) + 1;
+            closeSync(claimTurnLog({ store, name: "reviewer", turn: next }));
+
+            expect(next).toBe(2);
+            expect(store.readMeta("reviewer")?.turns).toBe(2);
+            expect(existsSync(turnLogPath("reviewer", 1))).toBe(true);
+            expect(existsSync(turnLogPath("reviewer", 2))).toBe(true);
+        });
+    });
+
+    test("a live orphan child blocks a competing turn after its launcher dies", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-grok-turn-owner-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new GrokSessionStore();
+            store.createMeta({
+                name: "reviewer",
+                sessionId: "3f1d2a9c-0000-4000-8000-000000000000",
+                cwd: home,
+                workerHome: join(home, "worker"),
+                readOnly: true,
+                turns: 1,
+                createdAt: new Date(0).toISOString(),
+                activeTurn: {
+                    turn: 1,
+                    ownerPid: -1,
+                    childPid: process.pid,
+                    startedAt: new Date().toISOString(),
+                },
+            });
+
+            await expect(steerSession({ name: "reviewer", prompt: "next" })).rejects.toThrow(
+                /still has turn 1 running/
+            );
         });
     });
 });

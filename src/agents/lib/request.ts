@@ -1,6 +1,6 @@
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { deriveRegistry } from "./derived-registry";
-import { readFeedSince, withFeedLock } from "./feed";
+import { FeedLogCursor, withFeedLock } from "./feed";
 import { ensureSessionDir, sessionPaths } from "./paths";
 import { resolveMany, resolveOne } from "./resolve-token";
 import type { MessageEvent } from "./types";
@@ -39,8 +39,9 @@ export async function sendRequest(options: {
     // It used to re-read and re-parse the WHOLE feed every 20 ms: on a 2000-event feed that was
     // 44 reads a second and 26 MB/s of parsing, for the entire timeout, which defaults to 300 s.
     let reply: MessageEvent | undefined;
+    const feedCursor = new FeedLogCursor({ paths, sinceSeq: request.seq });
     const lookUp = async (): Promise<{ done: boolean }> => {
-        const events = await readFeedSince(paths, request.seq);
+        const events = await feedCursor.readAppended();
         reply = events.find(
             (event): event is MessageEvent =>
                 event.type === "message" &&

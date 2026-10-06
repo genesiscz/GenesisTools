@@ -1,6 +1,7 @@
 import { deriveRegistry } from "@app/agents/lib/derived-registry";
-import { readFeed } from "@app/agents/lib/feed";
-import { sessionPaths } from "@app/agents/lib/paths";
+import { readFeed, withFeedLock } from "@app/agents/lib/feed";
+import { ensureSessionDir, sessionPaths } from "@app/agents/lib/paths";
+import { resolveMany, resolveOne } from "@app/agents/lib/resolve-token";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
@@ -8,6 +9,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { RpcNotification } from "./app-server-client";
 import { type CodexControl, parseControlBody } from "./control";
+import { codexTurnOutcome } from "./terminal-outcome";
 
 const log = logger.child({ component: "codex:agents-bridge" });
 
@@ -28,6 +30,7 @@ interface AgentsBridgeOptions {
     onControl: (control: CodexControl) => void | Promise<void>;
     onSeq?: (seq: number) => void | Promise<void>;
     afterSeq?: number;
+    maxPendingSends?: number;
 }
 
 interface MessageFeedEvent {
@@ -118,12 +121,19 @@ function eventEnvelope(notification: RpcNotification): Record<string, unknown> |
         return { event: "turn_started", turnId: nestedRecord(notification.params, "turn")?.id };
     }
 
-    if (notification.method === "turn/completed") {
-        return { event: "turn_completed", turnId: nestedRecord(notification.params, "turn")?.id };
-    }
+    const terminal = codexTurnOutcome(notification);
+    if (terminal) {
+        if (terminal.outcome === "completed") {
+            return { event: "turn_completed", turnId: terminal.turnId };
+        }
 
-    if (notification.method === "turn/failed") {
-        return { event: "error", message: "Codex turn failed", detail: notification.params };
+        return {
+            event: "error",
+            message: terminal.outcome === "interrupted" ? "Codex turn interrupted" : "Codex turn failed",
+            outcome: terminal.outcome,
+            turnId: terminal.turnId,
+            detail: terminal.detail,
+        };
     }
 
     if (notification.method === "error") {
@@ -158,6 +168,8 @@ export class AgentsBridge {
     private agentId: string | null = null;
     private lastSeq: number;
     private outbound = Promise.resolve();
+    private pendingSends = 0;
+    private readonly maxPendingSends: number;
 
     constructor(options: AgentsBridgeOptions) {
         this.agentName = options.agentName;
@@ -166,6 +178,7 @@ export class AgentsBridge {
         this.onControl = options.onControl;
         this.onSeq = options.onSeq;
         this.lastSeq = options.afterSeq ?? 0;
+        this.maxPendingSends = options.maxPendingSends ?? 256;
     }
 
     async start(): Promise<string> {
@@ -206,13 +219,22 @@ export class AgentsBridge {
     }
 
     private async enqueue(options: { from: string; to: string; body: string; session: string }): Promise<void> {
+        while (this.pendingSends >= this.maxPendingSends) {
+            await this.outbound;
+        }
+
+        this.pendingSends += 1;
         const send = this.outbound.then(() => this.transport.send(options));
-        this.outbound = send.catch((err) => {
-            log.debug(
-                { err, session: this.session, to: options.to },
-                "agents outbound queue recovered after send failure"
-            );
-        });
+        this.outbound = send
+            .catch((err) => {
+                log.debug(
+                    { err, session: this.session, to: options.to },
+                    "agents outbound queue recovered after send failure"
+                );
+            })
+            .finally(() => {
+                this.pendingSends -= 1;
+            });
         await send;
     }
 
@@ -248,28 +270,6 @@ export class AgentsBridge {
 
         await this.onControl(control);
     }
-}
-
-async function runAgentsCommand(args: string[]): Promise<string> {
-    const proc = Bun.spawn({
-        cmd: ["tools", "agents", ...args],
-        env: env.getProcessEnv(),
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-    ]);
-    if (exitCode !== 0) {
-        throw new Error(
-            `${toolCommand("agents")} ${args[0] ?? "command"} failed: ${stderr.trim() || `exit ${exitCode}`}`
-        );
-    }
-
-    return stdout;
 }
 
 export class CliAgentsTransport implements AgentsTransport {
@@ -337,17 +337,23 @@ export class CliAgentsTransport implements AgentsTransport {
     }
 
     async send(options: { from: string; to: string; body: string; session: string }): Promise<void> {
-        await runAgentsCommand([
-            "message",
-            "--from",
-            options.from,
-            "--to",
-            options.to,
-            "--body",
-            options.body,
-            "--session",
-            options.session,
-        ]);
+        const paths = sessionPaths(options.session);
+        ensureSessionDir(paths);
+        await withFeedLock(paths, ({ events, appendMessageEvent }) => {
+            const registry = deriveRegistry(events);
+            const sender = resolveOne(registry, options.from, "sender");
+            const recipients = resolveMany(registry, options.to, "recipient");
+
+            appendMessageEvent({
+                type: "message",
+                from_agent_id: sender.agent_id,
+                from_agent_name: sender.agent_name,
+                to_agent_ids: recipients,
+                body: options.body,
+                meta: {},
+                private: false,
+            });
+        });
     }
 
     async observe(

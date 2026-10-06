@@ -1,5 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { AgentsBridge, type AgentsTransport, type AgentsTransportSubscription } from "./agents-bridge";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { appendFeed, readFeed } from "@app/agents/lib/feed";
+import { ensureSessionDir, sessionPaths } from "@app/agents/lib/paths";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import {
+    AgentsBridge,
+    type AgentsTransport,
+    type AgentsTransportSubscription,
+    CliAgentsTransport,
+} from "./agents-bridge";
 import type { CodexControl } from "./control";
 
 class FakeAgentsTransport implements AgentsTransport {
@@ -24,6 +36,47 @@ class FakeAgentsTransport implements AgentsTransport {
 }
 
 describe("AgentsBridge", () => {
+    test("the default transport appends messages in-process", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-agents-transport-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const paths = sessionPaths("parent-1");
+            ensureSessionDir(paths);
+            await appendFeed(paths, {
+                type: "registered",
+                agent_name: "lead",
+                agent_id: "main_parent",
+                awaiting_login: false,
+                is_main: true,
+                role: null,
+                meta: {},
+            });
+            await appendFeed(paths, {
+                type: "registered",
+                agent_name: "codex_reviewer",
+                agent_id: "agt_0002",
+                awaiting_login: false,
+                is_main: false,
+                role: null,
+                meta: {},
+            });
+
+            await new CliAgentsTransport().send({
+                from: "codex_reviewer",
+                to: "lead",
+                body: '{"event":"turn_completed"}',
+                session: "parent-1",
+            });
+
+            expect((await readFeed(paths)).at(-1)).toMatchObject({
+                type: "message",
+                from_agent_id: "agt_0002",
+                to_agent_ids: ["main_parent"],
+                body: '{"event":"turn_completed"}',
+            });
+        });
+    });
+
     test("auto-registers and routes addressed controls", async () => {
         const transport = new FakeAgentsTransport();
         const controls: CodexControl[] = [];
@@ -85,5 +138,35 @@ describe("AgentsBridge", () => {
         expect(transport.sent[1]?.body).toContain('"itemType":"commandExecution"');
         expect(transport.sent[1]?.body).toContain('"summary":"tools agents message --to lead (exit 0)"');
         expect(transport.sent[1]?.body).not.toContain("private command output");
+    });
+
+    test("publishes failed and interrupted completed turns as errors", async () => {
+        const transport = new FakeAgentsTransport();
+        const bridge = new AgentsBridge({
+            agentName: "codex_reviewer",
+            rendezvousSession: "parent-1",
+            transport,
+            onControl: async () => {},
+        });
+        await bridge.start();
+
+        await bridge.publish({
+            method: "turn/completed",
+            params: { turn: { id: "turn-failed", status: "failed", error: { message: "bad tool" } } },
+        });
+        await bridge.publish({
+            method: "turn/completed",
+            params: { turn: { id: "turn-stop", status: "interrupted" } },
+        });
+        await bridge.publish({
+            method: "turn/completed",
+            params: { turn: { id: "turn-ok", status: "completed" } },
+        });
+
+        expect(transport.sent.map((entry) => SafeJSON.parse(entry.body, { strict: true }))).toEqual([
+            expect.objectContaining({ event: "error", outcome: "failed", turnId: "turn-failed" }),
+            expect.objectContaining({ event: "error", outcome: "interrupted", turnId: "turn-stop" }),
+            expect.objectContaining({ event: "turn_completed", turnId: "turn-ok" }),
+        ]);
     });
 });

@@ -82,7 +82,11 @@ async function createControlFile(requests: number): Promise<{ name: string; cont
     const name = `bench-${Date.now()}`;
 
     for (let i = 0; i < requests; i++) {
-        await appendControlRequest(name, { op: "steer", body: `queued control request ${i}`, force: false });
+        await appendControlRequest(name, "benchmark", {
+            op: "steer",
+            body: `queued control request ${i}`,
+            force: false,
+        });
     }
 
     const controlPath = sessionControlPath(name);

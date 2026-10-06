@@ -1,6 +1,7 @@
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { parseJsonl } from "@genesiscz/utils/jsonl";
 import { readJsonlFile } from "@genesiscz/utils/log-session/jsonl-reader";
 import { withFileLock } from "@genesiscz/utils/storage";
 import type { FeedEvent, MessageEvent, SessionPaths } from "./types";
@@ -37,6 +38,77 @@ export async function readFeed(paths: SessionPaths): Promise<FeedEvent[]> {
 export async function readFeedSince(paths: SessionPaths, sinceSeq: number): Promise<FeedEvent[]> {
     const all = await readFeed(paths);
     return all.filter((e) => e.seq > sinceSeq);
+}
+
+export class FeedLogCursor {
+    private offset = 0;
+    private partial = Buffer.alloc(0);
+    private identity: string | null = null;
+    private sinceSeq: number;
+
+    constructor(
+        private readonly options: {
+            paths: SessionPaths;
+            sinceSeq: number;
+            onRead?: (sample: { bytes: number; records: number }) => void;
+        }
+    ) {
+        this.sinceSeq = options.sinceSeq;
+    }
+
+    async readAppended(): Promise<FeedEvent[]> {
+        const path = this.options.paths.feedPath;
+        if (!existsSync(path)) {
+            this.offset = 0;
+            this.partial = Buffer.alloc(0);
+            this.identity = null;
+            return [];
+        }
+
+        const stat = statSync(path);
+        const identity = `${stat.dev}:${stat.ino}`;
+        if (this.identity !== identity || stat.size < this.offset) {
+            this.offset = 0;
+            this.partial = Buffer.alloc(0);
+            this.identity = identity;
+        }
+        if (stat.size === this.offset) {
+            return [];
+        }
+
+        const length = stat.size - this.offset;
+        const chunk = Buffer.allocUnsafe(length);
+        const fd = openSync(path, "r");
+        let bytesRead = 0;
+        try {
+            while (bytesRead < length) {
+                const read = readSync(fd, chunk, bytesRead, length - bytesRead, this.offset + bytesRead);
+                if (read === 0) {
+                    break;
+                }
+                bytesRead += read;
+            }
+        } finally {
+            closeSync(fd);
+        }
+
+        this.offset += bytesRead;
+        const combined = Buffer.concat([this.partial, chunk.subarray(0, bytesRead)]);
+        const lastNewline = combined.lastIndexOf(0x0a);
+        if (lastNewline < 0) {
+            this.partial = combined;
+            this.options.onRead?.({ bytes: bytesRead, records: 0 });
+            return [];
+        }
+
+        const complete = combined.subarray(0, lastNewline).toString("utf8").trim();
+        this.partial = Buffer.from(combined.subarray(lastNewline + 1));
+        const events = complete ? parseJsonl<FeedEvent>(complete) : [];
+        this.options.onRead?.({ bytes: bytesRead, records: events.length });
+        const appended = events.filter((event) => event.seq > this.sinceSeq);
+        this.sinceSeq = Math.max(this.sinceSeq, ...appended.map((event) => event.seq));
+        return appended;
+    }
 }
 
 function nextSeqFromEvents(events: FeedEvent[]): number {

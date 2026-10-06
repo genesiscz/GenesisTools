@@ -6,6 +6,7 @@ import { env } from "@genesiscz/utils/env";
 import { turnLogPath } from "./paths";
 import { GrokSessionStore } from "./store";
 import {
+    buildNextTurnArgs,
     buildRunArgs,
     buildSteerArgs,
     buildTurnEnv,
@@ -165,6 +166,33 @@ describe("read-only tool restriction", () => {
 
         expect(args).toContain("--resume");
         expect(args).not.toContain("--tools");
+    });
+});
+
+describe("interrupted initial launch", () => {
+    test("retries session creation before using resume", () => {
+        const meta = {
+            name: "reviewer",
+            sessionId: "s-1",
+            cwd: "/repo",
+            workerHome: "/tmp/worker",
+            readOnly: true,
+            turns: 1,
+            createdAt: new Date(0).toISOString(),
+        };
+
+        const retry = buildNextTurnArgs(meta, true, { skills: true, rules: true }, ["-p", "retry"]);
+        const resumed = buildNextTurnArgs(
+            { ...meta, lastTurn: { turn: 1, ended: true, exitCode: 0, at: new Date(0).toISOString() } },
+            true,
+            { skills: true, rules: true },
+            ["-p", "continue"]
+        );
+
+        expect(retry).toContain("--session-id");
+        expect(retry).not.toContain("--resume");
+        expect(resumed).toContain("--resume");
+        expect(resumed).not.toContain("--session-id");
     });
 });
 

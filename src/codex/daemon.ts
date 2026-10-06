@@ -10,7 +10,7 @@ import { CodexAccountBinding } from "./lib/account";
 import { AgentsBridge } from "./lib/agents-bridge";
 import { AppServerClient, type RpcNotification, spawnAppServer } from "./lib/app-server-client";
 import { computerUseOverrides } from "./lib/computer-use";
-import { readControlRequests, respondToControl } from "./lib/control-channel";
+import { ControlLogCursor, respondToControl } from "./lib/control-channel";
 import { buildAccountLaunchOptions } from "./lib/launch-options";
 import { sessionControlPath, sessionDaemonLogPath, sessionLaunchPath } from "./lib/paths";
 import { CodexSessionRuntime } from "./lib/session";
@@ -168,12 +168,12 @@ async function run(): Promise<void> {
             await store.updateMeta(name, { agentId });
         }
 
-        let lastControlSeq = 0;
+        const generation = meta.generation ?? meta.startedAt;
+        const controlCursor = new ControlLogCursor({ name, generation });
         const drainControl = async (): Promise<{ done: boolean }> => {
-            const requests = await readControlRequests(name, lastControlSeq);
+            const requests = await controlCursor.readAppendedRequests();
 
             for (const request of requests) {
-                lastControlSeq = request.seq;
                 store.appendEvent(name, { source: "control", method: request.control.op, params: request.control });
 
                 if (request.control.op === "stop") {

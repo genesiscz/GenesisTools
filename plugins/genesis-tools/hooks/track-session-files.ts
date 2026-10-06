@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 import {
+    closeSync,
     existsSync,
     mkdirSync,
+    openSync,
     readdirSync,
     readFileSync,
     renameSync,
@@ -258,6 +260,9 @@ interface SessionData {
 const HOME = process.env.GENESIS_TOOLS_HOME || homedir();
 const STORAGE_DIR = join(HOME, ".genesis-tools", "claude-code", "sessions");
 const CLEANUP_DAYS = 30;
+const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const LOCK_STALE_MS = 30_000;
+const LOCK_WAIT_MS = 1000;
 
 function ensureDir() {
     if (!existsSync(STORAGE_DIR)) {
@@ -265,26 +270,117 @@ function ensureDir() {
     }
 }
 
-function cleanupOldSessions() {
+function processIsAlive(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function withBoundedLock<T>(lockPath: string, fn: () => T | Promise<T>, waitMs = LOCK_WAIT_MS): Promise<T> {
+    const deadline = Date.now() + waitMs;
+
+    while (true) {
+        try {
+            const fd = openSync(lockPath, "wx", 0o600);
+            writeFileSync(fd, SafeJSON.stringify({ pid: process.pid, at: Date.now() }));
+            closeSync(fd);
+            break;
+        } catch (error) {
+            const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+            if (code !== "EEXIST") {
+                throw error;
+            }
+
+            try {
+                const holder: unknown = SafeJSON.parse(readFileSync(lockPath, "utf8"));
+                const pid =
+                    holder && typeof holder === "object" && "pid" in holder && typeof holder.pid === "number"
+                        ? holder.pid
+                        : 0;
+                const age = Date.now() - statSync(lockPath).mtimeMs;
+                if (age > LOCK_STALE_MS || (pid > 0 && !processIsAlive(pid))) {
+                    unlinkSync(lockPath);
+                    continue;
+                }
+            } catch {
+                try {
+                    if (Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS) {
+                        unlinkSync(lockPath);
+                        continue;
+                    }
+                } catch {
+                    continue;
+                }
+            }
+
+            if (Date.now() >= deadline) {
+                throw new Error(`Timed out waiting for session tracker lock: ${lockPath}`);
+            }
+
+            await Bun.sleep(20);
+        }
+    }
+
+    try {
+        return await fn();
+    } finally {
+        try {
+            const holder: unknown = SafeJSON.parse(readFileSync(lockPath, "utf8"));
+            if (holder && typeof holder === "object" && "pid" in holder && holder.pid === process.pid) {
+                unlinkSync(lockPath);
+            }
+        } catch {
+            // A stale-lock recovery may already have replaced it; never remove another owner's lock.
+        }
+    }
+}
+
+async function cleanupOldSessions() {
     if (!existsSync(STORAGE_DIR)) {
         return;
     }
 
-    const cutoff = Date.now() - CLEANUP_DAYS * 24 * 60 * 60 * 1000;
-    const files = readdirSync(STORAGE_DIR);
+    const stamp = join(STORAGE_DIR, ".cleanup-stamp");
+    if (existsSync(stamp) && Date.now() - statSync(stamp).mtimeMs < CLEANUP_INTERVAL_MS) {
+        return;
+    }
 
-    for (const file of files) {
-        if (!file.endsWith(".json")) {
-            continue;
-        }
-        const filePath = join(STORAGE_DIR, file);
-        try {
-            const stats = statSync(filePath);
-            if (stats.mtimeMs < cutoff) {
-                unlinkSync(filePath);
-            }
-        } catch {
-            // Ignore transient fs errors (file deleted, permissions changed, etc.)
+    try {
+        await withBoundedLock(
+            `${stamp}.lock`,
+            () => {
+                if (existsSync(stamp) && Date.now() - statSync(stamp).mtimeMs < CLEANUP_INTERVAL_MS) {
+                    return;
+                }
+
+                const cutoff = Date.now() - CLEANUP_DAYS * 24 * 60 * 60 * 1000;
+                const files = readdirSync(STORAGE_DIR);
+
+                for (const file of files) {
+                    if (!file.endsWith(".json")) {
+                        continue;
+                    }
+                    const filePath = join(STORAGE_DIR, file);
+                    try {
+                        const stats = statSync(filePath);
+                        if (stats.mtimeMs < cutoff) {
+                            unlinkSync(filePath);
+                        }
+                    } catch (error) {
+                        console.warn(`[track-session-files] Failed to inspect cleanup candidate: ${filePath}`, error);
+                    }
+                }
+
+                writeFileSync(stamp, new Date().toISOString());
+            },
+            0
+        );
+    } catch (error) {
+        if (!(error instanceof Error) || !error.message.startsWith("Timed out waiting for session tracker lock:")) {
+            console.warn("[track-session-files] Session cleanup failed", error);
         }
     }
 }
@@ -298,39 +394,40 @@ function createFreshSessionData(sessionId: string): SessionData {
     };
 }
 
-function trackFile(sessionId: string, filePath: string) {
+async function trackFile(sessionId: string, filePath: string) {
     ensureDir();
 
     const sessionFile = join(STORAGE_DIR, `${sessionId}.json`);
-
-    let sessionData: SessionData;
-    if (existsSync(sessionFile)) {
-        try {
-            sessionData = SafeJSON.parse(readFileSync(sessionFile, "utf-8")) as SessionData;
-        } catch (_err) {
-            // Corrupted JSON - backup and recreate
-            console.warn(`[track-session-files] Corrupted session file, recreating: ${sessionFile}`);
+    await withBoundedLock(`${sessionFile}.lock`, () => {
+        let sessionData: SessionData;
+        if (existsSync(sessionFile)) {
             try {
-                renameSync(sessionFile, `${sessionFile}.bak`);
-            } catch {
-                // Ignore backup failure
+                sessionData = SafeJSON.parse(readFileSync(sessionFile, "utf-8")) as SessionData;
+            } catch (_err) {
+                // Corrupted JSON - backup and recreate
+                console.warn(`[track-session-files] Corrupted session file, recreating: ${sessionFile}`);
+                try {
+                    renameSync(sessionFile, `${sessionFile}.bak`);
+                } catch {
+                    // Ignore backup failure
+                }
+                sessionData = createFreshSessionData(sessionId);
             }
+        } else {
             sessionData = createFreshSessionData(sessionId);
         }
-    } else {
-        sessionData = createFreshSessionData(sessionId);
-    }
 
-    // Add file if not already tracked
-    if (!sessionData.files.includes(filePath)) {
-        sessionData.files.push(filePath);
-    }
-    sessionData.last_updated = new Date().toISOString();
+        // Add file if not already tracked
+        if (!sessionData.files.includes(filePath)) {
+            sessionData.files.push(filePath);
+        }
+        sessionData.last_updated = new Date().toISOString();
 
-    // Atomic write: write to temp file then rename (avoids race conditions)
-    const tempFile = `${sessionFile}.tmp.${Date.now()}`;
-    writeFileSync(tempFile, SafeJSON.stringify(sessionData, null, 2));
-    renameSync(tempFile, sessionFile);
+        // Atomic write: write to temp file then rename (avoids torn JSON).
+        const tempFile = `${sessionFile}.tmp.${process.pid}`;
+        writeFileSync(tempFile, SafeJSON.stringify(sessionData, null, 2));
+        renameSync(tempFile, sessionFile);
+    });
 }
 
 async function main() {
@@ -344,7 +441,7 @@ async function main() {
     // On SessionStart, output session ID and clean up old sessions.
     if (hook_event_name === "SessionStart") {
         console.log(SafeJSON.stringify({ hookSpecificOutput: sessionStartOutput(input) }));
-        cleanupOldSessions();
+        await cleanupOldSessions();
         process.exit(0);
     }
 
@@ -375,7 +472,7 @@ async function main() {
         }
 
         for (const filePath of filePaths) {
-            trackFile(session_id, filePath);
+            await trackFile(session_id, filePath);
         }
     }
 

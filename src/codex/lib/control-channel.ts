@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -13,12 +13,20 @@ import { CodexSessionStore } from "./store";
 
 export interface ControlRequest {
     id: string;
+    generation: string;
     seq: number;
     ts: string;
     control: CodexControl;
 }
 
 export type ControlResponse = { ok: true; result?: unknown } | { ok: false; error: string };
+
+export interface ControlLogReadSample {
+    bytes: number;
+    records: number;
+}
+
+const MAX_CONTROL_RECORD_BYTES = 16 * 1024 * 1024;
 
 function readRequests(path: string): ControlRequest[] {
     if (!existsSync(path)) {
@@ -29,7 +37,88 @@ function readRequests(path: string): ControlRequest[] {
     return text.trim() ? parseJsonl<ControlRequest>(text) : [];
 }
 
-export async function appendControlRequest(name: string, control: CodexControl): Promise<ControlRequest> {
+export class ControlLogCursor {
+    private afterSeq = 0;
+    private offset = 0;
+    private partial = Buffer.alloc(0);
+    private identity: string | null = null;
+
+    constructor(
+        private readonly options: {
+            name: string;
+            generation: string;
+            onRead?: (sample: ControlLogReadSample) => void;
+        }
+    ) {}
+
+    async readAppendedRequests(): Promise<ControlRequest[]> {
+        const path = sessionControlPath(this.options.name);
+        if (!existsSync(path)) {
+            this.offset = 0;
+            this.partial = Buffer.alloc(0);
+            this.identity = null;
+            return [];
+        }
+
+        const stat = statSync(path);
+        const identity = `${stat.dev}:${stat.ino}`;
+        if (this.identity !== identity || stat.size < this.offset) {
+            this.offset = 0;
+            this.partial = Buffer.alloc(0);
+            this.identity = identity;
+        }
+        if (stat.size === this.offset) {
+            return [];
+        }
+
+        const length = stat.size - this.offset;
+        const chunk = Buffer.allocUnsafe(length);
+        const fd = openSync(path, "r");
+        let bytesRead = 0;
+        try {
+            while (bytesRead < length) {
+                const read = readSync(fd, chunk, bytesRead, length - bytesRead, this.offset + bytesRead);
+                if (read === 0) {
+                    break;
+                }
+                bytesRead += read;
+            }
+        } finally {
+            closeSync(fd);
+        }
+
+        this.offset += bytesRead;
+        const combined = Buffer.concat([this.partial, chunk.subarray(0, bytesRead)]);
+        if (combined.length > MAX_CONTROL_RECORD_BYTES && combined.indexOf(0x0a) < 0) {
+            throw new Error(`Codex control record exceeds ${MAX_CONTROL_RECORD_BYTES} bytes`);
+        }
+        const lastNewline = combined.lastIndexOf(0x0a);
+        if (lastNewline < 0) {
+            this.partial = combined;
+            this.options.onRead?.({ bytes: bytesRead, records: 0 });
+            return [];
+        }
+
+        const complete = combined.subarray(0, lastNewline).toString("utf8").trim();
+        if (complete.split("\n").some((line) => Buffer.byteLength(line) > MAX_CONTROL_RECORD_BYTES)) {
+            throw new Error(`Codex control record exceeds ${MAX_CONTROL_RECORD_BYTES} bytes`);
+        }
+        this.partial = Buffer.from(combined.subarray(lastNewline + 1));
+        const requests = complete ? parseJsonl<ControlRequest>(complete) : [];
+        this.options.onRead?.({ bytes: bytesRead, records: requests.length });
+        const appended = requests.filter(
+            (request) => request.seq > this.afterSeq && request.generation === this.options.generation
+        );
+        this.afterSeq = Math.max(this.afterSeq, ...appended.map((request) => request.seq));
+        return appended;
+    }
+}
+
+export async function appendControlRequest(
+    name: string,
+    generation: string,
+    control: CodexControl
+): Promise<ControlRequest> {
     const path = sessionControlPath(name);
     mkdirSync(dirname(path), { recursive: true });
 
@@ -37,6 +126,7 @@ export async function appendControlRequest(name: string, control: CodexControl):
         const existing = readRequests(path);
         const request: ControlRequest = {
             id: randomUUID(),
+            generation,
             seq: (existing.at(-1)?.seq ?? 0) + 1,
             ts: new Date().toISOString(),
             control,
@@ -46,8 +136,14 @@ export async function appendControlRequest(name: string, control: CodexControl):
     });
 }
 
-export async function readControlRequests(name: string, afterSeq: number): Promise<ControlRequest[]> {
-    return readRequests(sessionControlPath(name)).filter((request) => request.seq > afterSeq);
+export async function readControlRequests(
+    name: string,
+    afterSeq: number,
+    generation?: string
+): Promise<ControlRequest[]> {
+    return readRequests(sessionControlPath(name)).filter(
+        (request) => request.seq > afterSeq && (generation === undefined || request.generation === generation)
+    );
 }
 
 export function respondToControl(name: string, requestId: string, response: ControlResponse): void {
@@ -95,6 +191,7 @@ export async function sendControlRequest(
         throw new Error(`Codex session "${name}" daemon is not running (pid ${meta.daemonPid})`);
     }
 
-    const request = await appendControlRequest(name, control);
+    const generation = meta.generation ?? meta.startedAt;
+    const request = await appendControlRequest(name, generation, control);
     return waitForControlResponse(name, request.id, timeoutMs);
 }

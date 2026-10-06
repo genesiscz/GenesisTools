@@ -10,7 +10,7 @@ import type { Command } from "commander";
 import { readCursor, writeCursor } from "../lib/cursor";
 import { deriveRegistry, findById, findByName, nextSubagentId } from "../lib/derived-registry";
 import { FriendlyError, runWithFriendlyErrors } from "../lib/errors";
-import { readFeedSince, withFeedLock } from "../lib/feed";
+import { FeedLogCursor, withFeedLock } from "../lib/feed";
 import { isVisibleToAgent } from "../lib/filter";
 import { formatEventPretty } from "../lib/format-pretty";
 import { deriveMainAgentId, isMainId } from "../lib/id-gen";
@@ -53,6 +53,7 @@ interface ActiveLogin {
     observer: boolean;
     format: "pretty" | "json";
     cursorSeq: number;
+    feedCursor: FeedLogCursor;
     listenerFilter: (event: FeedEvent) => boolean;
 }
 
@@ -301,7 +302,7 @@ async function emitVisibleEvent(event: FeedEvent, active: ActiveLogin): Promise<
 }
 
 async function drainPending(active: ActiveLogin): Promise<number> {
-    const events = await readFeedSince(active.paths, active.cursorSeq);
+    const events = await active.feedCursor.readAppended();
     let lastSeq = active.cursorSeq;
     let emitted = 0;
 
@@ -432,6 +433,7 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
     try {
         const meta = readSessionMeta(paths);
         const format: "pretty" | "json" = opts.format ?? (opts.observer && process.stdout.isTTY ? "pretty" : "json");
+        const cursorSeq = readCursor(paths, record.agent_id);
         active = {
             paths,
             record,
@@ -440,7 +442,8 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
             meta,
             observer: Boolean(opts.observer),
             format,
-            cursorSeq: readCursor(paths, record.agent_id),
+            cursorSeq,
+            feedCursor: new FeedLogCursor({ paths, sinceSeq: cursorSeq }),
             listenerFilter: createListenerFilter({ kinds: opts.kinds, expression: opts.filter }),
         };
 
