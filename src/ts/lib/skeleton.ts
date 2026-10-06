@@ -530,28 +530,57 @@ export function parseSource(filePath: string, text: string): ts.SourceFile {
  */
 const NAME_PLACEHOLDER = "·";
 
-/**
- * The declaration reduced to what a reader would call "the same code": comments gone, the
- * declaration's OWN name blanked, whitespace collapsed.
- *
- * 🛑 Blanking the name is what makes a renamed copy visible. `walkFiles` and `walk` in
- * a sibling repo are the same six lines under two names, and a fingerprint that kept the name
- * would have called them unrelated. Only the declared name is blanked, never every
- * identifier, so two genuinely different functions do not collapse into one.
- */
-export function normalizeDeclaration(text: string, name: string): string {
-    const fileName = "declaration.ts";
-    let source = parseSource(fileName, text);
-    let offset = 0;
+interface SourceFileWithParseDiagnostics extends ts.SourceFile {
+    parseDiagnostics?: readonly ts.Diagnostic[];
+}
 
-    // A class member (`alpha() {}`, `x = 1;`) does not parse on its own; inside a class it does.
-    if (hasParseErrors(source)) {
-        const prefix = "class __Declaration__ {\n";
-        source = parseSource(fileName, `${prefix}${text}\n}`);
-        offset = prefix.length;
+export interface DeclarationNormalizationStats {
+    parses: number;
+    tokens: number;
+    wraps: number;
+    programs: number;
+    checkers: number;
+    lexicalFastPaths: number;
+}
+
+export interface DeclarationShape {
+    normalized: string;
+    tokens: string[];
+}
+
+function increment(stats: DeclarationNormalizationStats | undefined, key: keyof DeclarationNormalizationStats): void {
+    if (stats) {
+        stats[key] += 1;
+    }
+}
+
+function parseDeclaration(options: { text: string; stats: DeclarationNormalizationStats | undefined }): {
+    source: ts.SourceFile;
+    offset: number;
+} {
+    const { text, stats } = options;
+    const fileName = "declaration.ts";
+    increment(stats, "parses");
+    const source = parseSource(fileName, text);
+    const parsed: SourceFileWithParseDiagnostics = source;
+
+    if (!parsed.parseDiagnostics?.length) {
+        return { source, offset: 0 };
     }
 
-    const checker = declarationProgram(source).getTypeChecker();
+    const prefix = "class __Declaration__ {\n";
+    increment(stats, "parses");
+    increment(stats, "wraps");
+    return { source: parseSource(fileName, `${prefix}${text}\n}`), offset: prefix.length };
+}
+
+function leafTokens(options: {
+    source: ts.SourceFile;
+    offset: number;
+    length: number;
+    stats: DeclarationNormalizationStats | undefined;
+}): ts.Node[] {
+    const { source, offset, length, stats } = options;
     const tokens: ts.Node[] = [];
     const collect = (node: ts.Node): void => {
         const children = node.getChildren(source);
@@ -559,49 +588,22 @@ export function normalizeDeclaration(text: string, name: string): string {
             for (const child of children) {
                 collect(child);
             }
-        } else if (node.getStart(source) >= offset && node.end <= offset + text.length && node.getWidth(source) > 0) {
+        } else if (node.getStart(source) >= offset && node.end <= offset + length && node.getWidth(source) > 0) {
             tokens.push(node);
         }
     };
     collect(source);
-    const named = tokens.filter((node): node is ts.Identifier => ts.isIdentifier(node) && node.text === name);
-    // The identifier that DECLARES the name, not merely the first one spelled like it: in
-    // `@alpha class alpha {}` the decorator comes first and resolves to another binding.
-    const declared =
-        named.find((node) =>
-            checker
-                .getSymbolAtLocation(node)
-                ?.declarations?.some((declaration) => ts.getNameOfDeclaration(declaration) === node)
-        ) ?? named[0];
-    const symbol = declared ? checker.getSymbolAtLocation(declared) : undefined;
-    return tokens
-        .map((node) => {
-            if (symbol && ts.isIdentifier(node) && checker.getSymbolAtLocation(node) === symbol) {
-                return NAME_PLACEHOLDER;
-            }
 
-            return node.getText(source);
-        })
-        .join(" ");
-}
-
-/**
- * `parseDiagnostics` is not in the compiler's public typings, but reading it saves building a
- * whole Program just to ask whether the text parsed. Should it ever disappear, ask a Program.
- */
-function hasParseErrors(source: ts.SourceFile): boolean {
-    const diagnostics: unknown = Reflect.get(source, "parseDiagnostics");
-
-    if (Array.isArray(diagnostics)) {
-        return diagnostics.length > 0;
+    if (stats) {
+        stats.tokens += tokens.length;
     }
 
-    return declarationProgram(source).getSyntacticDiagnostics(source).length > 0;
+    return tokens;
 }
 
-/** A one-file Program over an already parsed declaration: no lib, no module resolution. */
-function declarationProgram(source: ts.SourceFile): ts.Program {
+function programFor(source: ts.SourceFile, stats: DeclarationNormalizationStats | undefined): ts.Program {
     const fileName = source.fileName;
+    const options: ts.CompilerOptions = { noLib: true, noResolve: true };
     const host: ts.CompilerHost = {
         getSourceFile: (file) => (file === fileName ? source : undefined),
         getDefaultLibFileName: () => "",
@@ -614,26 +616,76 @@ function declarationProgram(source: ts.SourceFile): ts.Program {
         useCaseSensitiveFileNames: () => true,
         getNewLine: () => "\n",
     };
+    increment(stats, "programs");
+    return ts.createProgram([fileName], options, host);
+}
 
-    return ts.createProgram([fileName], { noLib: true, noResolve: true }, host);
+function comparableTokens(normalized: string): string[] {
+    return normalized.match(/[A-Za-z_$][\w$]*|\d+|[^\sA-Za-z0-9_$]/g) ?? [];
+}
+
+/**
+ * The declaration reduced to what a reader would call "the same code": comments gone, the
+ * declaration's OWN name blanked, whitespace collapsed.
+ *
+ * 🛑 Blanking the name is what makes a renamed copy visible. `walkFiles` and `walk` in
+ * a sibling repo are the same six lines under two names, and a fingerprint that kept the name
+ * would have called them unrelated. Only the declared name is blanked, never every
+ * identifier, so two genuinely different functions do not collapse into one.
+ */
+export function declarationShape(options: {
+    text: string;
+    name: string;
+    stats?: DeclarationNormalizationStats;
+}): DeclarationShape {
+    const { text, name, stats } = options;
+    const { source, offset } = parseDeclaration({ text, stats });
+    const leaves = leafTokens({ source, offset, length: text.length, stats });
+    const matching = leaves.filter((node) => ts.isIdentifier(node) && node.text === name);
+    let normalized: string;
+
+    if (matching.length <= 1) {
+        increment(stats, "lexicalFastPaths");
+        const own = matching[0];
+        normalized = leaves.map((node) => (node === own ? NAME_PLACEHOLDER : node.getText(source))).join(" ");
+    } else {
+        const program = programFor(source, stats);
+        increment(stats, "checkers");
+        const checker = program.getTypeChecker();
+        // The identifier that DECLARES the name, not merely the first one spelled like it: in
+        // `@alpha class alpha {}` the decorator comes first and resolves to another binding.
+        const declared =
+            matching.find((node) =>
+                checker
+                    .getSymbolAtLocation(node)
+                    ?.declarations?.some((declaration) => ts.getNameOfDeclaration(declaration) === node)
+            ) ?? matching[0];
+        const symbol = declared ? checker.getSymbolAtLocation(declared) : undefined;
+        normalized = leaves
+            .map((node) => {
+                if (symbol && ts.isIdentifier(node) && checker.getSymbolAtLocation(node) === symbol) {
+                    return NAME_PLACEHOLDER;
+                }
+
+                return node.getText(source);
+            })
+            .join(" ");
+    }
+
+    return { normalized, tokens: comparableTokens(normalized) };
+}
+
+export function normalizeDeclaration(text: string, name: string): string {
+    return declarationShape({ text, name }).normalized;
 }
 
 export function hashDeclaration(text: string, name: string): string {
-    return hashNormalized(normalizeDeclaration(text, name));
-}
-
-/** The fingerprint of an already normalised declaration, so a caller that also tokenises normalises once. */
-export function hashNormalized(normalized: string): string {
-    return createHash("sha1").update(normalized).digest("hex").slice(0, 12);
+    return createHash("sha1").update(declarationShape({ text, name }).normalized).digest("hex").slice(0, 12);
 }
 
 /** The normalised declaration split into comparable pieces: identifiers, literals, operators. */
 export function tokenizeDeclaration(text: string, name: string): string[] {
-    return tokenizeNormalized(normalizeDeclaration(text, name));
-}
-
-export function tokenizeNormalized(normalized: string): string[] {
-    return normalized.match(/[A-Za-z_$][\w$]*|\d+|[^\sA-Za-z0-9_$]/g) ?? [];
+    return declarationShape({ text, name }).tokens;
 }
 
 export interface EnrichOptions {

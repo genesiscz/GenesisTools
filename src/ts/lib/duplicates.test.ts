@@ -1,10 +1,18 @@
 import { describe, expect, it } from "bun:test";
-import { declarationSimilarity, type FileSymbols, findDuplicates } from "./duplicates";
+import { declarationSimilarity, type FileSymbols, findDuplicates, prepareDeclarationAnalysis } from "./duplicates";
 import { parseModule } from "./parse";
 import { runRefactors } from "./refactors";
 import { shadowedAnalyser } from "./refactors/shadowed";
 import { parameterCount, parameterTypes, returnType, signatureSimilarity } from "./signature";
-import { enrichSymbols, extractSkeleton, hashDeclaration, normalizeDeclaration, parseSource } from "./skeleton";
+import {
+    type DeclarationNormalizationStats,
+    declarationShape,
+    enrichSymbols,
+    extractSkeleton,
+    hashDeclaration,
+    normalizeDeclaration,
+    parseSource,
+} from "./skeleton";
 import type { ParsedModule } from "./types";
 
 function entry(file: string, text: string, locals = false): FileSymbols {
@@ -22,6 +30,10 @@ const REQUIRE_TOKEN = `async function requireToken(): Promise<string> {
 \t}
 }
 `;
+
+function normalizationStats(): DeclarationNormalizationStats {
+    return { parses: 0, tokens: 0, wraps: 0, programs: 0, checkers: 0, lexicalFastPaths: 0 };
+}
 
 describe("normalizeDeclaration", () => {
     it("blanks the declared name, so a renamed copy fingerprints the same", () => {
@@ -83,6 +95,82 @@ describe("normalizeDeclaration", () => {
         expect(normalizeDeclaration("// one\nconst a = 1;", "a")).toBe(
             normalizeDeclaration("/* two */\nconst a = 1;", "a")
         );
+    });
+
+    it("uses the lexical path when the declaration name occurs once", () => {
+        const stats = normalizationStats();
+        const shape = declarationShape({
+            text: "function alpha(value: string) { return value.trim(); }",
+            name: "alpha",
+            stats,
+        });
+
+        expect(shape.normalized).toContain("function ·");
+        expect(stats.lexicalFastPaths).toBe(1);
+        expect(stats.programs).toBe(0);
+        expect(stats.checkers).toBe(0);
+    });
+
+    it("creates a checker only when repeated names need symbol identity", () => {
+        const stats = normalizationStats();
+        const shape = declarationShape({
+            text: "function walk(dir: string) { return walk(dir); }",
+            name: "walk",
+            stats,
+        });
+
+        expect(shape.normalized.match(/·/g)).toHaveLength(2);
+        expect(stats.programs).toBe(1);
+        expect(stats.checkers).toBe(1);
+    });
+
+    it("wraps method fragments and preserves recursive method identity", () => {
+        const leftStats = normalizationStats();
+        const rightStats = normalizationStats();
+        const left = declarationShape({
+            text: "walk(dir: string) { return this.walk(dir); }",
+            name: "walk",
+            stats: leftStats,
+        });
+        const right = declarationShape({
+            text: "visit(dir: string) { return this.visit(dir); }",
+            name: "visit",
+            stats: rightStats,
+        });
+
+        expect(left.normalized).toBe(right.normalized);
+        expect(leftStats.wraps).toBe(1);
+        expect(leftStats.programs).toBe(1);
+        expect(rightStats.programs).toBe(1);
+    });
+});
+
+describe("declaration analysis cache", () => {
+    it("reuses slices and shapes across duplicate passes", () => {
+        const entries = [entry("one.ts", REQUIRE_TOKEN), entry("two.ts", REQUIRE_TOKEN)];
+        const stats = prepareDeclarationAnalysis({ entries });
+
+        findDuplicates(entries);
+        const shapesAfterFirst = stats.shapes;
+        findDuplicates(entries);
+
+        expect(shapesAfterFirst).toBe(2);
+        expect(stats.shapes).toBe(2);
+        expect(stats.cacheHits).toBe(2);
+        expect(stats.retainedBytes).toBeGreaterThan(0);
+    });
+
+    it("stops retaining shapes at the byte ceiling", () => {
+        const entries = [entry("one.ts", REQUIRE_TOKEN), entry("two.ts", REQUIRE_TOKEN)];
+        const stats = prepareDeclarationAnalysis({ entries, maxBytes: 1 });
+
+        findDuplicates(entries);
+        findDuplicates(entries);
+
+        expect(stats.saturated).toBe(true);
+        expect(stats.retainedBytes).toBeLessThanOrEqual(1);
+        expect(stats.shapes).toBe(4);
+        expect(stats.cacheHits).toBe(0);
     });
 });
 

@@ -1,10 +1,5 @@
-import {
-    hashNormalized,
-    normalizeDeclaration,
-    type SkeletonSymbol,
-    tokenizeDeclaration,
-    tokenizeNormalized,
-} from "./skeleton";
+import { createHash } from "node:crypto";
+import { type DeclarationNormalizationStats, declarationShape, type SkeletonSymbol } from "./skeleton";
 
 export interface FileSymbols {
     /** Repo-relative, because it is what every report prints. */
@@ -96,6 +91,8 @@ const ROWS = HASH_COUNT / BANDS;
  * 48 page objects plus their neighbours, and the groups it produced were all patterns anyway.
  */
 const MAX_BUCKET = 800;
+const MAX_ANALYSIS_CACHE_BYTES = 8 * 1024 * 1024;
+const ANALYSIS_CONTEXT: unique symbol = Symbol("ts-declaration-analysis");
 
 function fnv1a(value: string): number {
     let hash = 2166136261;
@@ -167,6 +164,193 @@ function jaccard(left: Set<number>, right: Set<number>): number {
     return shared / (left.size + right.size - shared);
 }
 
+export interface DeclarationAnalysisStats {
+    slices: number;
+    cacheHits: number;
+    shapes: number;
+    retainedBytes: number;
+    saturated: boolean;
+    normalization: DeclarationNormalizationStats;
+}
+
+export interface DeclarationAnalysis {
+    text: string;
+    normalized: string;
+    tokens: string[];
+    shingles: Set<number>;
+    signature: Uint32Array;
+    hash: string;
+}
+
+interface FileAnalysis {
+    offsets?: number[];
+    declarations: Map<SkeletonSymbol, DeclarationAnalysis>;
+}
+
+interface AnalysisContext {
+    files: Map<FileSymbols, FileAnalysis>;
+    maxBytes: number;
+    stats: DeclarationAnalysisStats;
+}
+
+type AnalysedFileSymbols = FileSymbols & { [ANALYSIS_CONTEXT]?: AnalysisContext };
+
+function newAnalysisContext(maxBytes: number): AnalysisContext {
+    return {
+        files: new Map(),
+        maxBytes,
+        stats: {
+            slices: 0,
+            cacheHits: 0,
+            shapes: 0,
+            retainedBytes: 0,
+            saturated: false,
+            normalization: {
+                parses: 0,
+                tokens: 0,
+                wraps: 0,
+                programs: 0,
+                checkers: 0,
+                lexicalFastPaths: 0,
+            },
+        },
+    };
+}
+
+export function prepareDeclarationAnalysis(options: {
+    entries: FileSymbols[];
+    maxBytes?: number;
+}): DeclarationAnalysisStats {
+    const { entries, maxBytes = MAX_ANALYSIS_CACHE_BYTES } = options;
+    const existing = (entries[0] as AnalysedFileSymbols | undefined)?.[ANALYSIS_CONTEXT];
+    const context = existing ?? newAnalysisContext(maxBytes);
+
+    for (const entry of entries) {
+        const analysed = entry as AnalysedFileSymbols;
+        if (!analysed[ANALYSIS_CONTEXT]) {
+            Object.defineProperty(analysed, ANALYSIS_CONTEXT, { value: context });
+        }
+    }
+
+    return context.stats;
+}
+
+function analysisContext(entry: FileSymbols): AnalysisContext {
+    const analysed = entry as AnalysedFileSymbols;
+    let context = analysed[ANALYSIS_CONTEXT];
+    if (!context) {
+        prepareDeclarationAnalysis({ entries: [entry] });
+        context = analysed[ANALYSIS_CONTEXT];
+    }
+
+    if (!context) {
+        throw new Error("Declaration analysis context was not initialized");
+    }
+
+    return context;
+}
+
+function lineOffsets(text: string): number[] {
+    const offsets = [0];
+
+    for (let index = 0; index < text.length; index += 1) {
+        if (text.charCodeAt(index) === 10) {
+            offsets.push(index + 1);
+        }
+    }
+
+    return offsets;
+}
+
+function scanLineStart(text: string, line: number): number {
+    let current = 1;
+
+    for (let index = 0; index < text.length; index += 1) {
+        if (current === line) {
+            return index;
+        }
+
+        if (text.charCodeAt(index) === 10) {
+            current += 1;
+        }
+    }
+
+    return text.length;
+}
+
+function declarationSlice(entry: FileSymbols, symbol: SkeletonSymbol, context: AnalysisContext): string {
+    let file = context.files.get(entry);
+    if (!file) {
+        file = { declarations: new Map() };
+        const offsets = lineOffsets(entry.text);
+        const bytes = offsets.length * 8;
+
+        if (context.stats.retainedBytes + bytes <= context.maxBytes) {
+            file.offsets = offsets;
+            context.stats.retainedBytes += bytes;
+        } else {
+            context.stats.saturated = true;
+        }
+
+        context.files.set(entry, file);
+    }
+
+    const start = file.offsets?.[symbol.startLine - 1] ?? scanLineStart(entry.text, symbol.startLine);
+    const nextLine = symbol.endLine + 1;
+    const nextStart = file.offsets?.[nextLine - 1] ?? scanLineStart(entry.text, nextLine);
+    const end = nextStart < entry.text.length ? nextStart - 1 : entry.text.length;
+    context.stats.slices += 1;
+    return entry.text.slice(start, end);
+}
+
+function retainedBytesOf(analysis: DeclarationAnalysis): number {
+    return (
+        analysis.text.length * 2 +
+        analysis.normalized.length * 2 +
+        analysis.tokens.reduce((total, token) => total + token.length * 2, 0) +
+        analysis.shingles.size * 8 +
+        analysis.signature.byteLength
+    );
+}
+
+export function declarationAnalysis(entry: FileSymbols, symbol: SkeletonSymbol): DeclarationAnalysis {
+    const context = analysisContext(entry);
+    const file = context.files.get(entry);
+    const cached = file?.declarations.get(symbol);
+    if (cached) {
+        context.stats.cacheHits += 1;
+        return cached;
+    }
+
+    const text = declarationSlice(entry, symbol, context);
+    const shape = declarationShape({ text, name: symbol.name, stats: context.stats.normalization });
+    const shingles = shinglesOf(shape.tokens);
+    const analysis: DeclarationAnalysis = {
+        text,
+        normalized: shape.normalized,
+        tokens: shape.tokens,
+        shingles,
+        signature: signatureOf(shingles),
+        hash: createHash("sha1").update(shape.normalized).digest("hex").slice(0, 12),
+    };
+    context.stats.shapes += 1;
+    const retainedBytes = retainedBytesOf(analysis);
+
+    if (context.stats.retainedBytes + retainedBytes <= context.maxBytes) {
+        const currentFile = context.files.get(entry);
+        currentFile?.declarations.set(symbol, analysis);
+        context.stats.retainedBytes += retainedBytes;
+    } else {
+        context.stats.saturated = true;
+    }
+
+    return analysis;
+}
+
+export function declarationAnalysisSimilarity(left: DeclarationAnalysis, right: DeclarationAnalysis): number {
+    return jaccard(left.shingles, right.shingles);
+}
+
 interface Candidate {
     member: DuplicateMember;
     shingles: Set<number>;
@@ -181,10 +365,9 @@ export function declarationSimilarity(
     left: { text: string; name: string },
     right: { text: string; name: string }
 ): number {
-    return jaccard(
-        shinglesOf(tokenizeDeclaration(left.text, left.name)),
-        shinglesOf(tokenizeDeclaration(right.text, right.name))
-    );
+    const leftShape = declarationShape({ text: left.text, name: left.name });
+    const rightShape = declarationShape({ text: right.text, name: right.name });
+    return jaccard(shinglesOf(leftShape.tokens), shinglesOf(rightShape.tokens));
 }
 
 function directoryOf(file: string): string {
@@ -405,14 +588,13 @@ export function findDuplicates(entries: FileSymbols[], options: DuplicateOptions
     const kinds = new Set(options.kinds ?? DEFAULT_KINDS);
     const sharedDirs = options.sharedDirs ?? SHARED_DIRS;
     const scanRoot = commonPrefix(entries.map((entry) => entry.file));
+    prepareDeclarationAnalysis({ entries });
 
     const candidates: Candidate[] = [];
     let symbols = 0;
     let tooSmall = 0;
 
     for (const entry of entries) {
-        const lines = entry.text.split("\n");
-
         for (const symbol of entry.symbols) {
             symbols += 1;
 
@@ -427,10 +609,7 @@ export function findDuplicates(entries: FileSymbols[], options: DuplicateOptions
                 continue;
             }
 
-            const declaration = lines.slice(symbol.startLine - 1, symbol.endLine).join("\n");
-            // Normalising builds a type checker, so the hash and the shingles share one pass.
-            const normalized = normalizeDeclaration(declaration, symbol.name);
-            const shingles = shinglesOf(tokenizeNormalized(normalized));
+            const analysis = declarationAnalysis(entry, symbol);
 
             candidates.push({
                 member: {
@@ -443,10 +622,10 @@ export function findDuplicates(entries: FileSymbols[], options: DuplicateOptions
                     exported: symbol.exported,
                     local: symbol.local === true,
                     signature: symbol.signature,
-                    hash: symbol.hash ?? hashNormalized(normalized),
+                    hash: symbol.hash ?? analysis.hash,
                 },
-                shingles,
-                signature: signatureOf(shingles),
+                shingles: analysis.shingles,
+                signature: analysis.signature,
             });
         }
     }

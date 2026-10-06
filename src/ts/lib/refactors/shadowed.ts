@@ -1,11 +1,16 @@
-import { declarationSimilarity } from "../duplicates";
+import {
+    declarationAnalysis,
+    declarationAnalysisSimilarity,
+    type FileSymbols,
+    prepareDeclarationAnalysis,
+} from "../duplicates";
 import { analysedSignature, signatureSimilarity } from "../signature";
 import type { SkeletonSymbol } from "../skeleton";
 import { type Analyser, importedNames, isSharedModule, type Recommendation, type RefactorSite } from "./types";
 
 interface Placed {
     file: string;
-    text: string;
+    entry: FileSymbols;
     symbol: SkeletonSymbol;
 }
 
@@ -20,13 +25,6 @@ const CODE_KINDS = new Set(["function", "method", "const", "class"]);
  * functions reported as copies of one another. Sharing a name is not sharing a job.
  */
 const SHAPE_FLOOR = 0.5;
-
-function declarationText(text: string, symbol: SkeletonSymbol): string {
-    return text
-        .split("\n")
-        .slice(symbol.startLine - 1, symbol.endLine)
-        .join("\n");
-}
 
 /**
  * A private helper whose name is already exported from a shared module. This is the shape
@@ -43,6 +41,7 @@ export const shadowedAnalyser: Analyser = {
     summary: "A local helper whose name is already exported from a shared module",
     run: ({ entries, modules, options }): Recommendation[] => {
         const minLines = options.minLines ?? 3;
+        prepareDeclarationAnalysis({ entries });
         // Every shared export of a name, not one winner per name.
         //
         // 🛑 Keeping a single home and breaking ties by body length lost the finding this
@@ -63,7 +62,7 @@ export const shadowedAnalyser: Analyser = {
                     continue;
                 }
 
-                const placed: Placed = { file: entry.file, text: entry.text, symbol };
+                const placed: Placed = { file: entry.file, entry, symbol };
                 const existing = homes.get(symbol.name);
 
                 if (existing) {
@@ -100,7 +99,7 @@ export const shadowedAnalyser: Analyser = {
                     continue;
                 }
 
-                const copyText = declarationText(entry.text, symbol);
+                const copyAnalysis = declarationAnalysis(entry, symbol);
                 let home: Placed | null = null;
                 let bestShape = 0;
 
@@ -113,9 +112,9 @@ export const shadowedAnalyser: Analyser = {
 
                     const shape = Math.max(
                         signatureSimilarity(analysedSignature(candidate.symbol), analysedSignature(symbol)),
-                        declarationSimilarity(
-                            { text: declarationText(candidate.text, candidate.symbol), name: candidate.symbol.name },
-                            { text: copyText, name: symbol.name }
+                        declarationAnalysisSimilarity(
+                            declarationAnalysis(candidate.entry, candidate.symbol),
+                            copyAnalysis
                         )
                     );
 
@@ -133,9 +132,9 @@ export const shadowedAnalyser: Analyser = {
                 const group = byName.get(key);
 
                 if (group) {
-                    group.copies.push({ file: entry.file, text: entry.text, symbol });
+                    group.copies.push({ file: entry.file, entry, symbol });
                 } else {
-                    byName.set(key, { home, copies: [{ file: entry.file, text: entry.text, symbol }] });
+                    byName.set(key, { home, copies: [{ file: entry.file, entry, symbol }] });
                 }
             }
         }
@@ -144,13 +143,10 @@ export const shadowedAnalyser: Analyser = {
 
         for (const { home, copies } of byName.values()) {
             const name = home.symbol.name;
-            const homeText = declarationText(home.text, home.symbol);
+            const homeAnalysis = declarationAnalysis(home.entry, home.symbol);
             const bodyBest = Math.max(
                 ...copies.map((copy) =>
-                    declarationSimilarity(
-                        { text: homeText, name },
-                        { text: declarationText(copy.text, copy.symbol), name: copy.symbol.name }
-                    )
+                    declarationAnalysisSimilarity(homeAnalysis, declarationAnalysis(copy.entry, copy.symbol))
                 )
             );
             const shapeBest = Math.max(
