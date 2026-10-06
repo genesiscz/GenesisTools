@@ -79,24 +79,39 @@ type ReadingItemPatch = Partial<
     >
 >;
 
+interface UpdateReadingItemForUserOptions {
+    userId: string;
+    data: { id: string; patch: ReadingItemPatch };
+    onUpdated?: (userId: string) => void;
+}
+
+export function updateReadingItemForUser({
+    userId,
+    data,
+    onUpdated = (updatedUserId) => emitDomainEvent(updatedUserId, "reading", { type: "updated" }),
+}: UpdateReadingItemForUserOptions): ReadingItemRow {
+    const updated = db
+        .update(readingItems)
+        .set({ ...data.patch, updatedAt: new Date().toISOString() })
+        .where(and(eq(readingItems.id, data.id), eq(readingItems.userId, userId)))
+        .returning()
+        .get();
+
+    if (!updated) {
+        throw new Error(`[reading] updateReadingItem: item ${data.id} not found after update`);
+    }
+
+    onUpdated(userId);
+
+    return toReadingItemRow(updated);
+}
+
 export const updateReadingItem = createServerFn({ method: "POST" })
     .inputValidator((d: { id: string; patch: ReadingItemPatch }) => d)
     .handler(async ({ data }): Promise<ReadingItemRow> => {
         const userId = await requireUserId();
         try {
-            const now = new Date().toISOString();
-            db.update(readingItems)
-                .set({ ...data.patch, updatedAt: now })
-                .where(and(eq(readingItems.id, data.id), eq(readingItems.userId, userId)))
-                .run();
-            const updated = db.select().from(readingItems).where(eq(readingItems.id, data.id)).get();
-            if (!updated) {
-                throw new Error(`[reading] updateReadingItem: item ${data.id} not found after update`);
-            }
-
-            emitDomainEvent(userId, "reading", { type: "updated" });
-
-            return toReadingItemRow(updated);
+            return updateReadingItemForUser({ userId, data });
         } catch (err) {
             console.error("[reading] updateReadingItem failed:", err);
             throw err;
