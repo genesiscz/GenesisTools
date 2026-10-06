@@ -10,13 +10,26 @@ export interface BoundedCommandResult {
     stderr: string;
     error?: Error & { code?: string };
 }
+
+interface GenericSpawnOptions {
+    stdio: ["ignore", "pipe", "pipe"];
+    detached: true;
+    cwd?: string;
+    env?: Record<string, string | undefined>;
+}
+
+/** Expo narrows global ProcessEnv, while Node spawn accepts this generic runtime environment map. */
+function spawnWithEnvironment(command: string, args: string[], options: GenericSpawnOptions): ReturnType<typeof spawn> {
+    return Reflect.apply(spawn, undefined, [command, args, options]);
+}
+
 export async function boundedCommand(options: {
     command: string[];
     timeoutMs: number;
     signal?: AbortSignal;
     maxBufferBytes?: number;
     cwd?: string;
-    environment?: NodeJS.ProcessEnv;
+    environment?: Record<string, string | undefined>;
 }): Promise<BoundedCommandResult> {
     options.signal?.throwIfAborted();
     const timeoutMs = Math.floor(options.timeoutMs);
@@ -36,7 +49,7 @@ export async function boundedCommand(options: {
         let child: ReturnType<typeof spawn>;
         try {
             const command = argvWithChildDeadline(options.command, timeoutMs);
-            child = spawn(command[0], command.slice(1), {
+            child = spawnWithEnvironment(command[0], command.slice(1), {
                 stdio: ["ignore", "pipe", "pipe"],
                 detached: true,
                 cwd: options.cwd,
