@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import {
     confirmLanguage as promptLanguage,
@@ -11,9 +11,10 @@ import {
 } from "@app/macos/lib/voice-memos/prompts.ts";
 import * as p from "@clack/prompts";
 import { AI } from "@genesiscz/utils/ai/index.ts";
+import type { LanguageDetectionResult } from "@genesiscz/utils/ai/LanguageDetector.ts";
 import { getAllProviders } from "@genesiscz/utils/ai/providers/index.ts";
 import { formatOutput, type OutputFormat } from "@genesiscz/utils/ai/transcription-format.ts";
-import type { AIProviderType } from "@genesiscz/utils/ai/types.ts";
+import type { AIProviderType, TranscriptionResult as AITranscriptionResult } from "@genesiscz/utils/ai/types.ts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor.ts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { copyToClipboard } from "@genesiscz/utils/clipboard.ts";
@@ -21,6 +22,7 @@ import { isCloudProvider } from "@genesiscz/utils/config/ai.types";
 import { formatDateTime } from "@genesiscz/utils/date.ts";
 import { formatDuration } from "@genesiscz/utils/format.ts";
 import { out } from "@genesiscz/utils/logger";
+import type { TranscriptionResult as EmbeddedTranscriptionResult } from "@genesiscz/utils/macos/voice-memos.ts";
 import {
     extractTranscript,
     getMemo,
@@ -73,7 +75,7 @@ export function registerVoiceMemosCommand(program: Command): void {
         .option("--local", "Shorthand for --provider local-hf")
         .option("--model <model>", "Model name/id to use")
         .option("--format <format>", "Output format (text, json, srt, vtt)")
-        .option("-o, --output <path>", "Write output to file")
+        .option("-o, --output <path>", "Write output to a file (or a per-memo directory with --all)")
         .option("-c, --clipboard", "Copy output to clipboard")
         .option("--sensitive", "Lower thresholds to capture quiet/background speakers")
         .action(async (id: number | undefined, opts: TranscribeOpts) => {
@@ -285,12 +287,17 @@ async function transcribeAction(id: number | undefined, opts: TranscribeOpts): P
     validateProviderOption(opts.provider);
     validateModelOption(opts.model, opts.local ? "local-hf" : opts.provider);
 
-    if (opts.all) {
-        transcribeAll(opts.force ?? false);
-        return;
+    if (opts.all && opts.clipboard) {
+        throw new Error("--clipboard cannot be combined with --all; use --output <directory> or terminal output");
     }
 
     opts.provider = await ensureTranscribeProvider(opts);
+
+    if (opts.all) {
+        const resolved = await resolveTranscribeOptions(opts);
+        await transcribeAll(resolved);
+        return;
+    }
 
     // If no ID provided, prompt for memo selection (TTY) or error (non-TTY)
     let resolvedId = id;
@@ -365,7 +372,7 @@ function validateModelOption(model: string | undefined, provider: string | undef
     }
 }
 
-interface ResolvedTranscribeOpts {
+export interface ResolvedTranscribeOpts {
     force?: boolean;
     lang?: string;
     provider?: string;
@@ -374,6 +381,100 @@ interface ResolvedTranscribeOpts {
     output?: string;
     clipboard?: boolean;
     sensitive?: boolean;
+}
+
+interface MemoTranscriber {
+    transcribe: (
+        filePath: string,
+        opts: {
+            language?: string;
+            model?: string;
+            onProgress: (info: { message: string }) => void;
+            onSegment: (seg: { start: number; text: string }) => void;
+            confirmLanguage?: (detected: LanguageDetectionResult) => Promise<string>;
+            thresholds?: {
+                noSpeechThreshold: number;
+                logprobThreshold: number;
+                compressionRatioThreshold: number;
+            };
+        }
+    ) => Promise<AITranscriptionResult>;
+    dispose: () => void;
+}
+
+export interface TranscriptDeliveryDeps {
+    copy: (value: string) => Promise<void>;
+    write: (filePath: string, value: string) => Promise<void>;
+    print: (value?: string) => void;
+}
+
+const DEFAULT_DELIVERY_DEPS: TranscriptDeliveryDeps = {
+    copy: async (value) => {
+        await copyToClipboard(value, { label: "transcription" });
+    },
+    write: async (filePath, value) => {
+        await Bun.write(filePath, value);
+    },
+    print: (value = "") => out.println(value),
+};
+
+export interface TranscribeOneDeps {
+    resolveMemo: (id: number) => VoiceMemo;
+    extractTranscript: (filePath: string) => EmbeddedTranscriptionResult | null;
+    createTranscriber: (opts: { provider?: string; model?: string }) => Promise<MemoTranscriber>;
+    deliver: typeof deliverMemoTranscript;
+}
+
+const DEFAULT_TRANSCRIBE_ONE_DEPS: TranscribeOneDeps = {
+    resolveMemo,
+    extractTranscript,
+    createTranscriber: async (opts) => AI.Transcriber.create({ ...opts, persist: true }),
+    deliver: deliverMemoTranscript,
+};
+
+export function embeddedTranscriptResult(transcript: EmbeddedTranscriptionResult): AITranscriptionResult {
+    let previousEnd = 0;
+    const segments = transcript.segments.map((segment, index) => {
+        const start = segment.startTime ?? previousEnd;
+        const nextStart = transcript.segments[index + 1]?.startTime;
+        const end = Math.max(start, segment.endTime ?? nextStart ?? start + 2);
+        previousEnd = end;
+        return { text: segment.text, start, end };
+    });
+
+    return { text: transcript.text, segments };
+}
+
+export async function deliverMemoTranscript(
+    args: {
+        result: AITranscriptionResult;
+        format?: OutputFormat;
+        output?: string;
+        clipboard?: boolean;
+    },
+    deps: TranscriptDeliveryDeps = DEFAULT_DELIVERY_DEPS
+): Promise<{ formatted: string; outputPath: string | null }> {
+    const format = args.format ?? "text";
+    const formatted = formatOutput(args.result, format);
+
+    if (args.clipboard) {
+        await deps.copy(formatted);
+    }
+
+    const outputPath = args.output ? resolve(args.output) : null;
+    if (outputPath) {
+        await deps.write(outputPath, formatted);
+    } else if (format === "text" && args.result.segments?.length) {
+        deps.print();
+        for (const segment of args.result.segments) {
+            const start = formatDuration(segment.start * 1000, "ms", "tiered");
+            deps.print(`${pc.dim(`[${start}]`)} ${segment.text.trim()}`);
+        }
+    } else {
+        deps.print(formatted);
+    }
+
+    return { formatted, outputPath };
 }
 
 async function resolveTranscribeOptions(opts: TranscribeOpts): Promise<ResolvedTranscribeOpts> {
@@ -441,33 +542,36 @@ async function resolveTranscribeOptions(opts: TranscribeOpts): Promise<ResolvedT
     return resolved;
 }
 
-async function transcribeOne(opts: {
-    id: number;
-    force?: boolean;
-    lang?: string;
-    provider?: string;
-    model?: string;
-    format?: OutputFormat;
-    output?: string;
-    clipboard?: boolean;
-    sensitive?: boolean;
-}): Promise<void> {
-    const memo = resolveMemo(opts.id);
+export async function transcribeOne(
+    opts: {
+        id: number;
+        force?: boolean;
+        lang?: string;
+        provider?: string;
+        model?: string;
+        format?: OutputFormat;
+        output?: string;
+        clipboard?: boolean;
+        sensitive?: boolean;
+    },
+    deps: TranscribeOneDeps = DEFAULT_TRANSCRIBE_ONE_DEPS
+): Promise<void> {
+    const memo = deps.resolveMemo(opts.id);
 
     // Check for embedded transcript (tsrp) first — skip if --force
     if (!opts.force) {
-        const transcript = extractTranscript(memo.path);
+        const transcript = deps.extractTranscript(memo.path);
 
         if (transcript) {
             p.log.info(`${pc.bold(memo.title)} — embedded transcript found`);
-            out.println();
-
-            for (const segment of transcript.segments) {
-                const timePrefix =
-                    segment.startTime !== undefined
-                        ? pc.dim(`[${formatDuration(segment.startTime * 1000, "ms", "tiered")}] `)
-                        : "";
-                out.println(`${timePrefix}${segment.text}`);
+            const delivery = await deps.deliver({
+                result: embeddedTranscriptResult(transcript),
+                format: opts.format,
+                output: opts.output,
+                clipboard: opts.clipboard,
+            });
+            if (delivery.outputPath) {
+                p.log.success(`Written to ${delivery.outputPath}`);
             }
 
             return;
@@ -530,13 +634,12 @@ async function transcribeOne(opts: {
         };
     }
 
-    let transcriber = await AI.Transcriber.create({
+    let transcriber = await deps.createTranscriber({
         provider: opts.provider,
         model: opts.model,
-        persist: true,
     });
 
-    let result: import("@genesiscz/utils/ai/types.ts").TranscriptionResult;
+    let result: AITranscriptionResult;
 
     try {
         result = await transcriber.transcribe(memo.path, transcribeOpts);
@@ -549,10 +652,9 @@ async function transcribeOne(opts: {
             p.log.warning("Re-downloading model...");
             s.start("Downloading model...");
 
-            transcriber = await AI.Transcriber.create({
+            transcriber = await deps.createTranscriber({
                 provider: opts.provider,
                 model: opts.model,
-                persist: true,
             });
 
             // On retry: use the language already confirmed, skip re-detection/re-prompting
@@ -571,73 +673,79 @@ async function transcribeOne(opts: {
     s.stop("Transcription complete");
 
     try {
-        const format = opts.format ?? "text";
-        const formatted = formatOutput(result, format);
-
-        if (opts.clipboard) {
-            await copyToClipboard(formatted, { label: "transcription" });
-        }
-
-        if (opts.output) {
-            const outputPath = resolve(opts.output);
-            await Bun.write(outputPath, formatted);
-            p.log.success(`Written to ${outputPath}`);
-        }
-
-        if (!opts.output) {
-            if (format === "text" && result.segments?.length) {
-                out.println();
-
-                for (const seg of result.segments) {
-                    const start = formatDuration(seg.start * 1000, "ms", "tiered");
-                    out.println(`${pc.dim(`[${start}]`)} ${seg.text.trim()}`);
-                }
-            } else {
-                out.println(formatted);
-            }
+        const delivery = await deps.deliver({
+            result,
+            format: opts.format,
+            output: opts.output,
+            clipboard: opts.clipboard,
+        });
+        if (delivery.outputPath) {
+            p.log.success(`Written to ${delivery.outputPath}`);
         }
     } finally {
         transcriber.dispose();
     }
 }
 
-function transcribeAll(force: boolean): void {
-    const memos = listMemos();
+export async function transcribeAll(
+    opts: ResolvedTranscribeOpts,
+    deps: {
+        listMemos: () => VoiceMemo[];
+        exists: (filePath: string) => boolean;
+        transcribe: typeof transcribeOne;
+    } = { listMemos, exists: existsSync, transcribe: transcribeOne }
+): Promise<void> {
+    const memos = deps.listMemos();
 
     if (memos.length === 0) {
         p.log.info("No voice memos found.");
         return;
     }
 
+    if (opts.clipboard) {
+        throw new Error("--clipboard cannot be combined with --all; use --output <directory> or terminal output");
+    }
+
+    const outputDir = opts.output ? resolve(opts.output) : null;
+    if (outputDir) {
+        if (existsSync(outputDir) && !statSync(outputDir).isDirectory()) {
+            throw new Error(`--output must be a directory with --all: ${outputDir}`);
+        }
+
+        mkdirSync(outputDir, { recursive: true });
+    }
+
     let transcribed = 0;
     let skipped = 0;
-    let noTranscript = 0;
+    let failed = 0;
+    const extension = opts.format === "text" || opts.format === undefined ? "txt" : opts.format;
 
     for (const memo of memos) {
-        if (!existsSync(memo.path)) {
+        if (!deps.exists(memo.path)) {
             skipped++;
             continue;
         }
 
-        if (memo.hasTranscript && !force) {
+        try {
+            await deps.transcribe({
+                id: memo.id,
+                ...opts,
+                output: outputDir ? join(outputDir, `${memo.id}.${extension}`) : undefined,
+            });
             transcribed++;
-            continue;
-        }
-
-        const transcript = extractTranscript(memo.path);
-
-        if (transcript) {
-            transcribed++;
-            p.log.success(`${memo.title}: ${transcript.text.slice(0, 80)}${transcript.text.length > 80 ? "..." : ""}`);
-        } else {
-            noTranscript++;
+        } catch (err) {
+            failed++;
+            p.log.error(`${memo.title}: ${err instanceof Error ? err.message : String(err)}`);
         }
     }
 
     out.println();
     p.log.info(
-        `${pc.bold(String(transcribed))} transcribed, ${pc.bold(String(noTranscript))} without transcript, ${pc.bold(String(skipped))} skipped (missing file)`
+        `${pc.bold(String(transcribed))} transcribed, ${pc.bold(String(failed))} failed, ${pc.bold(String(skipped))} skipped (missing file)`
     );
+    if (failed > 0) {
+        throw new Error(`${failed} voice memo transcription${failed === 1 ? "" : "s"} failed`);
+    }
 }
 
 function searchAction(query: string): void {
