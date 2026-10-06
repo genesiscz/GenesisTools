@@ -46,6 +46,8 @@ export interface KitOptions {
     disableOAuth?: boolean;
     /** Per-call timeout in ms. Default 120s, since browser and search tools are slow. */
     timeoutMs?: number;
+    /** Operation-scoped registry snapshot; selector discovery uses this to avoid a second provider scan. */
+    registry?: Registry;
 }
 
 export interface Kit {
@@ -77,7 +79,7 @@ const quietLogger: RuntimeLogger = {
 };
 
 export async function createKit(options: KitOptions = {}): Promise<Kit> {
-    const registry = await loadRegistry({ refresh: options.refresh, persist: options.persist });
+    const registry = options.registry ?? (await loadRegistry({ refresh: options.refresh, persist: options.persist }));
     const { definitions, authProblems } = await toServerDefinitions(registry, options.servers, {
         refreshAuth: options.refresh,
     });

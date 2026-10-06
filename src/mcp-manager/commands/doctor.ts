@@ -1,3 +1,4 @@
+import { concurrentMap } from "@genesiscz/utils/async";
 import { Executor } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -59,11 +60,23 @@ async function discover(opts: DoctorOptions): Promise<NormalizedServer[]> {
     return filterByOnly(mergeServers(blobs), opts.only);
 }
 
-async function probeAll(servers: NormalizedServer[], opts: DoctorOptions): Promise<ProbeResult[]> {
+export async function probeAll(
+    servers: NormalizedServer[],
+    opts: DoctorOptions,
+    dependencies: { probe?: typeof probeServer; concurrency?: number } = {}
+): Promise<ProbeResult[]> {
     const timeoutMs = parsePositiveMs("--timeout", opts.timeout);
     const slowThresholdMs = parsePositiveMs("--slow", opts.slow);
+    const results = await concurrentMap({
+        items: servers,
+        concurrency: dependencies.concurrency ?? 4,
+        fn: (server) => (dependencies.probe ?? probeServer)(server, { timeoutMs, slowThresholdMs }),
+    });
 
-    return Promise.all(servers.map((server) => probeServer(server, { timeoutMs, slowThresholdMs })));
+    return servers.flatMap((server) => {
+        const result = results.get(server);
+        return result ? [result] : [];
+    });
 }
 
 export async function doctorList(opts: DoctorOptions): Promise<void> {

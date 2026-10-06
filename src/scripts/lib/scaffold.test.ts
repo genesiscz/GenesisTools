@@ -79,6 +79,36 @@ describe("renderToolsModule", () => {
         expect(module).toContain('"weird\\nname"');
         expect(module).not.toContain('weird\nname"');
     });
+
+    it("forwards arguments declared through a root allOf schema", async () => {
+        const composed = {
+            name: "create_item",
+            inputSchema: {
+                allOf: [
+                    {
+                        type: "object",
+                        properties: { title: { type: "string" } },
+                        required: ["title"],
+                    },
+                ],
+            },
+        };
+        const module = renderToolsModule(
+            bindNames([{ server: "fixture", tool: composed }]),
+            ["fixture.create_item"],
+            "2026-08-17T00:00:00.000Z"
+        );
+        expect(module).toContain("createItem = (kit: Kit, args: CreateItemArgs)");
+
+        const runnableSource = module.replace('import type { Kit } from "@gt/scripts/kit";', "");
+        const javascript = new Bun.Transpiler({ loader: "ts" }).transformSync(runnableSource);
+        const generated = await import(`data:text/javascript;base64,${Buffer.from(javascript).toString("base64")}`);
+        const calls: unknown[] = [];
+        const kit = { call: (...args: unknown[]) => calls.push(args) };
+        generated.createItem(kit, { title: "kept" });
+
+        expect(calls).toEqual([["fixture", "create_item", { title: "kept" }]]);
+    });
 });
 
 describe("renderScriptModule", () => {
@@ -106,6 +136,26 @@ describe("renderScriptModule", () => {
 
         expect(script).toContain("// Every bound tool needs arguments. handoffPost expects:");
         expect(script).toContain("// const result = await T.handoffPost(kit, { /* ... */ });");
+    });
+
+    it("does not select a composed required schema as a runnable starter", () => {
+        const composed = {
+            name: "create_item",
+            inputSchema: {
+                allOf: [
+                    {
+                        type: "object",
+                        properties: { title: { type: "string" } },
+                        required: ["title"],
+                    },
+                ],
+            },
+        };
+        const bound = bindNames([{ server: "fixture", tool: composed }]);
+        const script = renderScriptModule({ ...base, servers: ["fixture"], bound });
+
+        expect(script).toContain("// Every bound tool needs arguments. createItem expects:");
+        expect(script).not.toContain("const result = await T.createItem(kit, {});");
     });
 
     it("renders a bindings-free scaffold when nothing was imported", () => {

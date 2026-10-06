@@ -203,14 +203,53 @@ export function schemaToType(schema: unknown, depth = 0): string {
     return render(schema, schema, depth, new Set());
 }
 
+function inspectArguments(
+    schema: Schema | undefined,
+    root: Schema,
+    depth: number,
+    seen: Set<Schema>
+): { hasArguments: boolean; allOptional: boolean } {
+    if (!schema || !isSchema(schema) || depth > 8 || seen.has(schema)) {
+        return { hasArguments: true, allOptional: false };
+    }
+
+    const nextSeen = new Set([...seen, schema]);
+    if (schema.$ref) {
+        const target = resolveRef(schema.$ref, root);
+        return target
+            ? inspectArguments(target, root, depth + 1, nextSeen)
+            : { hasArguments: true, allOptional: false };
+    }
+
+    if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
+        const parts = schema.allOf.map((part) => inspectArguments(part, root, depth + 1, nextSeen));
+        return {
+            hasArguments: parts.some((part) => part.hasArguments),
+            allOptional: parts.every((part) => part.allOptional),
+        };
+    }
+
+    const union = schema.anyOf ?? schema.oneOf;
+    if (Array.isArray(union) && union.length > 0) {
+        const parts = union.map((part) => inspectArguments(part, root, depth + 1, nextSeen));
+        return {
+            hasArguments: true,
+            allOptional: parts.every((part) => part.allOptional),
+        };
+    }
+
+    const properties = schema.properties ?? {};
+    const hasArguments = Object.keys(properties).length > 0 || Boolean(schema.additionalProperties);
+    return { hasArguments, allOptional: !hasArguments || (schema.required ?? []).length === 0 };
+}
+
 /** True when the schema has no properties, i.e. the tool takes no arguments. */
 export function isEmptySchema(schema: unknown): boolean {
     if (!isSchema(schema)) {
         return true;
     }
 
-    const props = schema.properties;
-    return !props || Object.keys(props).length === 0;
+    return !inspectArguments(schema, schema, 0, new Set()).hasArguments;
 }
 
 /** True when every property is optional, so the whole args object can be. */
@@ -219,5 +258,5 @@ export function allOptional(schema: unknown): boolean {
         return true;
     }
 
-    return (schema.required ?? []).length === 0;
+    return inspectArguments(schema, schema, 0, new Set()).allOptional;
 }

@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { probeAll } from "../../commands/doctor.ts";
 import { DIAGNOSTIC_HEADER, GATEWAY_HEADER, REDACTED } from "../auth/constants.ts";
 import { mergeServers } from "./discovery.ts";
 import { detectDuplicateTools } from "./duplicates.ts";
@@ -559,6 +560,48 @@ describe("probeServer", () => {
         expect(result.status).not.toBe("invalid");
         expect(result.error).toBeTruthy();
         expect(result.name).toBe("broken-remote");
+    });
+
+    it("bounds connection fanout and preserves server order", async () => {
+        const servers: NormalizedServer[] = Array.from({ length: 9 }, (_, index) => ({
+            name: `server-${index}`,
+            transport: "http" as const,
+            source: "~/.claude.json" as const,
+            url: `https://server-${index}.example.com/mcp`,
+        }));
+        let active = 0;
+        let peak = 0;
+
+        const results = await probeAll(
+            servers,
+            { timeout: "1000", slow: "3000" },
+            {
+                concurrency: 4,
+                probe: async (server) => {
+                    active += 1;
+                    peak = Math.max(peak, active);
+                    await Bun.sleep(1);
+                    active -= 1;
+
+                    return {
+                        name: server.name,
+                        source: server.source,
+                        transport: server.transport,
+                        status: "ok",
+                        latencyMs: 1,
+                        toolCount: 0,
+                        tools: [],
+                        resourceCount: 0,
+                        promptCount: 0,
+                        serverInfo: null,
+                        error: null,
+                    };
+                },
+            }
+        );
+
+        expect(peak).toBe(4);
+        expect(results.map((result) => result.name)).toEqual(servers.map((server) => server.name));
     });
 
     it("does not reject the surrounding Promise.all when one server has a malformed URL", async () => {

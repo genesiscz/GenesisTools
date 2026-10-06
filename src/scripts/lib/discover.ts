@@ -3,6 +3,8 @@
  * servers a selector can reach. This is the difference between spawning one
  * stdio server and spawning all thirty.
  */
+
+import { concurrentMap } from "@genesiscz/utils/async";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import { createKit } from "./kit.ts";
@@ -94,6 +96,10 @@ export interface DiscoverOptions {
     refresh?: boolean;
     /** Skip cache writes. `--dry-run` promises "write nothing", which includes caches. */
     persist?: boolean;
+    /** Operation-scoped snapshot already used to match selectors. */
+    registry?: Registry;
+    /** Maximum simultaneous cold server connections. */
+    concurrency?: number;
 }
 
 /**
@@ -112,11 +118,18 @@ export async function discoverTools(servers: string[], options: DiscoverOptions 
     if (stale.length > 0) {
         ui.dim(`probing ${stale.length} server(s): ${stale.join(", ")}`);
         logger.debug({ stale, persist: options.persist !== false }, "probing mcp servers");
-        const kit = await createKit({ servers: stale, refresh: options.refresh, persist: options.persist });
+        const kit = await createKit({
+            servers: stale,
+            refresh: options.refresh,
+            persist: options.persist,
+            registry: options.registry,
+        });
 
         try {
-            await Promise.all(
-                stale.map(async (server) => {
+            await concurrentMap({
+                items: stale,
+                concurrency: options.concurrency ?? 4,
+                fn: async (server) => {
                     try {
                         const tools = await kit.listTools(server, { includeSchema: true });
                         cache[server] = {
@@ -134,8 +147,8 @@ export async function discoverTools(servers: string[], options: DiscoverOptions 
                         logger.debug({ server, error }, "server probe failed");
                         cache[server] = { server, fetchedAt: new Date().toISOString(), tools: [], error: message };
                     }
-                })
-            );
+                },
+            });
         } finally {
             await kit.close();
         }
@@ -204,7 +217,7 @@ export async function resolveSelectors(selectors: string[], options: DiscoverOpt
         return { registry, available, parsed, matched: [], found: [], errors: [] };
     }
 
-    const { found, errors } = await discoverTools(serversToProbe, options);
+    const { found, errors } = await discoverTools(serversToProbe, { ...options, registry });
     const matched = found.filter(({ server, tool }) => parsed.some((p) => matchesSelector(p, server, tool.name)));
 
     return { registry, available, parsed, matched, found, errors };

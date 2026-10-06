@@ -76,4 +76,30 @@ describe("isEmptySchema / allOptional", () => {
         expect(allOptional({ type: "object", properties: { a: { type: "string" } }, required: ["a"] })).toBe(false);
         expect(allOptional(null)).toBe(true);
     });
+
+    it("follows root composition and references", () => {
+        const composed = {
+            allOf: [{ $ref: "#/$defs/Input" }],
+            $defs: {
+                Input: {
+                    type: "object",
+                    properties: { title: { type: "string" } },
+                    required: ["title"],
+                },
+            },
+        };
+
+        expect(isEmptySchema(composed)).toBe(false);
+        expect(allOptional(composed)).toBe(false);
+        expect(isEmptySchema({ $ref: "#/missing/Input" })).toBe(false);
+        expect(allOptional({ $ref: "#/missing/Input" })).toBe(false);
+        expect(
+            allOptional({
+                oneOf: [
+                    { type: "object", properties: { title: { type: "string" } }, required: ["title"] },
+                    { type: "object", properties: { id: { type: "string" } } },
+                ],
+            })
+        ).toBe(false);
+    });
 });

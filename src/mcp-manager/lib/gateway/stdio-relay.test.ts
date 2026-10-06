@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { GATEWAY_HEADER } from "../auth/constants.ts";
-import { encodeStdioMessage, jsonRpcBodiesFromHttp, parseStdioMessages, runStdioHttpRelay } from "./stdio-relay.ts";
+import {
+    encodeStdioMessage,
+    jsonRpcBodiesFromHttp,
+    jsonRpcBodiesFromHttpStream,
+    parseStdioMessages,
+    runStdioHttpRelay,
+} from "./stdio-relay.ts";
 
 describe("stdio newline JSON-RPC", () => {
     test("round-trips a JSON-RPC initialize", () => {
@@ -51,6 +57,29 @@ describe("jsonRpcBodiesFromHttp", () => {
             '{"id":1,"result":{"ok":true}}',
             '{"method":"notifications/progress"}',
         ]);
+    });
+
+    test("emits a chunk-split multi-line SSE event before EOF", async () => {
+        let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+        const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+                streamController = controller;
+            },
+        });
+        const response = new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+        const iterator = jsonRpcBodiesFromHttpStream(response)[Symbol.asyncIterator]();
+        const first = iterator.next();
+
+        streamController?.enqueue(Buffer.from('event: message\r\ndata: {"jsonrpc":"2.0",\r\n', "utf8"));
+        streamController?.enqueue(Buffer.from('data: "id":2,"result":{"q":"café"}}\r\n\r', "utf8"));
+        streamController?.enqueue(Buffer.from("\n", "utf8"));
+
+        await expect(first).resolves.toEqual({
+            done: false,
+            value: '{"jsonrpc":"2.0","id":2,"result":{"q":"café"}}',
+        });
+        streamController?.close();
+        await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
     });
 });
 
@@ -323,9 +352,346 @@ describe("runStdioHttpRelay", () => {
 
         expect(seen).toEqual([null, "sess-1", null]);
     });
+
+    test("answers a rejected request while stdin remains open", async () => {
+        const chunks: Buffer[] = [];
+        let errorWritten: (() => void) | undefined;
+        const sawError = new Promise<void>((resolve) => {
+            errorWritten = resolve;
+        });
+        let calls = 0;
+        const stdin = (async function* () {
+            yield Buffer.from('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n', "utf8");
+            yield Buffer.from('{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n', "utf8");
+            await sawError;
+        })();
+
+        await runStdioHttpRelay({
+            url: "http://fixture.invalid/mcp",
+            headers: {},
+            stdin,
+            stdout: {
+                write(chunk) {
+                    chunks.push(Buffer.from(chunk));
+                    if (chunks.length === 2) {
+                        errorWritten?.();
+                    }
+                },
+            },
+            fetchImpl: async () => {
+                calls += 1;
+                if (calls === 1) {
+                    return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+
+                throw new Error("synthetic disconnect");
+            },
+        });
+
+        expect(parseStdioMessages(Buffer.concat(chunks)).messages).toEqual([
+            '{"jsonrpc":"2.0","id":1,"result":{}}',
+            '{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"gateway transport failed"}}',
+        ]);
+    });
+
+    test("aborts a stalled request at its deadline and correlates the error", async () => {
+        const chunks: Buffer[] = [];
+        let calls = 0;
+        let stalledSignal: AbortSignal | undefined;
+        const stdin = (async function* () {
+            yield Buffer.from('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n', "utf8");
+            yield Buffer.from('{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n', "utf8");
+        })();
+
+        await runStdioHttpRelay({
+            url: "http://fixture.invalid/mcp",
+            headers: {},
+            stdin,
+            stdout: { write: (chunk) => chunks.push(Buffer.from(chunk)) },
+            requestTimeoutMs: 10,
+            shutdownTimeoutMs: 100,
+            fetchImpl: async (_input, init) => {
+                calls += 1;
+                if (calls === 1) {
+                    return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+
+                stalledSignal = init?.signal ?? undefined;
+                return new Promise<Response>((_resolve, reject) => {
+                    stalledSignal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+                        once: true,
+                    });
+                });
+            },
+        });
+
+        expect(stalledSignal?.aborted).toBe(true);
+        expect(parseStdioMessages(Buffer.concat(chunks)).messages.at(-1)).toContain(
+            '"id":2,"error":{"code":-32000,"message":"gateway request timed out"}'
+        );
+    });
+
+    test("does not invent a response when a notification transport fails", async () => {
+        const chunks: Buffer[] = [];
+        let calls = 0;
+        const stdin = (async function* () {
+            yield Buffer.from('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n', "utf8");
+            yield Buffer.from('{"jsonrpc":"2.0","method":"notifications/initialized"}\n', "utf8");
+        })();
+
+        await runStdioHttpRelay({
+            url: "http://fixture.invalid/mcp",
+            headers: {},
+            stdin,
+            stdout: { write: (chunk) => chunks.push(Buffer.from(chunk)) },
+            fetchImpl: async () => {
+                calls += 1;
+                if (calls === 1) {
+                    return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+
+                throw new Error("synthetic disconnect");
+            },
+        });
+
+        expect(parseStdioMessages(Buffer.concat(chunks)).messages).toEqual(['{"jsonrpc":"2.0","id":1,"result":{}}']);
+    });
+
+    test("cancellation aborts the matching request while still reaching upstream", async () => {
+        const chunks: Buffer[] = [];
+        const seen: number[] = [];
+        let slowSignal: AbortSignal | undefined;
+        const stdin = (async function* () {
+            yield Buffer.from('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n', "utf8");
+            yield Buffer.from('{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{}}\n', "utf8");
+            yield Buffer.from(
+                '{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}\n',
+                "utf8"
+            );
+        })();
+
+        await runStdioHttpRelay({
+            url: "http://fixture.invalid/mcp",
+            headers: {},
+            stdin,
+            stdout: { write: (chunk) => chunks.push(Buffer.from(chunk)) },
+            fetchImpl: async (_input, init) => {
+                const body = SafeJSON.parse(String(init?.body), { strict: true }) as { id?: number };
+                seen.push(body.id ?? 0);
+                if (body.id === 1) {
+                    return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+                if (body.id === 2) {
+                    slowSignal = init?.signal ?? undefined;
+                    return new Promise<Response>((_resolve, reject) => {
+                        slowSignal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+                            once: true,
+                        });
+                    });
+                }
+
+                return new Response(null, { status: 202 });
+            },
+        });
+
+        expect(slowSignal?.aborted).toBe(true);
+        expect(seen).toEqual([1, 2, 0]);
+        expect(parseStdioMessages(Buffer.concat(chunks)).messages.at(-1)).toContain(
+            '"id":2,"error":{"code":-32000,"message":"gateway request cancelled"}'
+        );
+    });
+
+    test("bounds shutdown even when fetch ignores abort", async () => {
+        let stalledSignal: AbortSignal | undefined;
+        let calls = 0;
+        const stdin = (async function* () {
+            yield Buffer.from('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n', "utf8");
+            yield Buffer.from('{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n', "utf8");
+        })();
+
+        await runStdioHttpRelay({
+            url: "http://fixture.invalid/mcp",
+            headers: {},
+            stdin,
+            stdout: { write() {} },
+            requestTimeoutMs: 1000,
+            shutdownTimeoutMs: 10,
+            fetchImpl: async (_input, init) => {
+                calls += 1;
+                if (calls === 1) {
+                    return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+
+                stalledSignal = init?.signal ?? undefined;
+                return new Promise<Response>(() => {});
+            },
+        });
+
+        expect(stalledSignal?.aborted).toBe(true);
+        expect(stalledSignal?.reason).toBe("shutdown");
+    });
+
+    test("rejects an oversized complete line delivered in one chunk", async () => {
+        let fetchCalls = 0;
+        const stdin = (async function* () {
+            yield Buffer.from(
+                '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"padding":"xxxxxxxxxxxxxxxx"}}\n',
+                "utf8"
+            );
+        })();
+
+        await expect(
+            runStdioHttpRelay({
+                url: "http://fixture.invalid/mcp",
+                headers: {},
+                stdin,
+                stdout: { write() {} },
+                maxMessageBytes: 32,
+                fetchImpl: async () => {
+                    fetchCalls += 1;
+                    return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+                        headers: { "Content-Type": "application/json" },
+                    });
+                },
+            })
+        ).rejects.toThrow("stdio relay message exceeds 32 bytes");
+        expect(fetchCalls).toBe(0);
+    });
+
+    test("reads cancellation while the request limit is saturated", async () => {
+        const seen: string[] = [];
+        let slowSignal: AbortSignal | undefined;
+        const stdin = (async function* () {
+            yield Buffer.from('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n', "utf8");
+            yield Buffer.from(
+                '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{}}\n' +
+                    '{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}\n',
+                "utf8"
+            );
+        })();
+
+        await runStdioHttpRelay({
+            url: "http://fixture.invalid/mcp",
+            headers: {},
+            stdin,
+            stdout: { write() {} },
+            maxInFlight: 1,
+            requestTimeoutMs: 30,
+            shutdownTimeoutMs: 100,
+            fetchImpl: async (_input, init) => {
+                const body = SafeJSON.parse(String(init?.body), { strict: true }) as {
+                    id?: number;
+                    method?: string;
+                };
+                seen.push(body.method ?? `id:${body.id}`);
+                if (body.id === 1) {
+                    return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+                if (body.id === 2) {
+                    slowSignal = init?.signal ?? undefined;
+                    return new Promise<Response>((_resolve, reject) => {
+                        slowSignal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+                            once: true,
+                        });
+                    });
+                }
+
+                return new Response(null, { status: 202 });
+            },
+        });
+
+        expect(slowSignal?.reason).toBe("cancelled");
+        expect(seen).toEqual(["initialize", "tools/call", "notifications/cancelled"]);
+    });
+
+    test("shutdown owns and aborts a stalled notification controller", async () => {
+        let notificationSignal: AbortSignal | undefined;
+        let calls = 0;
+        const stdin = (async function* () {
+            yield Buffer.from('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n', "utf8");
+            yield Buffer.from('{"jsonrpc":"2.0","method":"notifications/initialized"}\n', "utf8");
+        })();
+
+        await runStdioHttpRelay({
+            url: "http://fixture.invalid/mcp",
+            headers: {},
+            stdin,
+            stdout: { write() {} },
+            requestTimeoutMs: 1000,
+            shutdownTimeoutMs: 10,
+            fetchImpl: async (_input, init) => {
+                calls += 1;
+                if (calls === 1) {
+                    return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+
+                notificationSignal = init?.signal ?? undefined;
+                return new Promise<Response>(() => {});
+            },
+        });
+
+        expect(notificationSignal?.aborted).toBe(true);
+        expect(notificationSignal?.reason).toBe("shutdown");
+    });
 });
 
 describe("runStdioHttpRelay concurrency", () => {
+    test("awaits and serializes asynchronous stdout writes", async () => {
+        let activeWrites = 0;
+        let peakWrites = 0;
+        let calls = 0;
+        const stdin = (async function* () {
+            yield Buffer.from(
+                '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n' +
+                    '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n' +
+                    '{"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}}\n',
+                "utf8"
+            );
+        })();
+
+        await runStdioHttpRelay({
+            url: "http://fixture.invalid/mcp",
+            headers: {},
+            stdin,
+            stdout: {
+                async write() {
+                    calls += 1;
+                    if (calls === 1) {
+                        return;
+                    }
+
+                    activeWrites += 1;
+                    peakWrites = Math.max(peakWrites, activeWrites);
+                    await Bun.sleep(10);
+                    activeWrites -= 1;
+                },
+            },
+            fetchImpl: async (_input, init) => {
+                const body = SafeJSON.parse(String(init?.body), { strict: true }) as { id: number };
+                return new Response(`{"jsonrpc":"2.0","id":${body.id},"result":{}}`, {
+                    headers: { "Content-Type": "application/json" },
+                });
+            },
+        });
+
+        expect(peakWrites).toBe(1);
+        expect(activeWrites).toBe(0);
+    });
+
     test("a slow call does not hold up the messages queued behind it", async () => {
         const order: string[] = [];
         let releaseSlow: (() => void) | undefined;
