@@ -34,6 +34,15 @@ describe("scanShell", () => {
 
         expect(scan.units.length).toBeGreaterThan(1);
     });
+
+    it("treats backticks and literal shell command arguments as executable units", () => {
+        const command = "echo `git status`; bash -lc 'git diff --stat'";
+        const scan = scanShell(command);
+        const statements = scan.units.flat().map((unit) => ({ text: unit.text, start: unit.start }));
+
+        expect(statements).toContainEqual({ text: "git status", start: command.indexOf("git status") });
+        expect(statements).toContainEqual({ text: "git diff --stat", start: command.indexOf("git diff --stat") });
+    });
 });
 
 describe("the helpers the rules match with", () => {

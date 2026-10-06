@@ -97,6 +97,24 @@ describe("git-checkout-overwrites-file: fires", () => {
         expect(ids("sudo git checkout -- a.ts")).toEqual([CHECKOUT]);
         expect(ids("echo a.ts | xargs git checkout --")).toEqual([CHECKOUT]);
     });
+
+    it("inside executable substitutions and literal shell command arguments", () => {
+        const commands = [
+            "echo `git restore fixture.ts`",
+            'echo "result=`git restore fixture.ts`"',
+            "echo $(git restore fixture.ts)",
+            "sh -c 'git restore fixture.ts'",
+            "bash -lc 'git restore fixture.ts'",
+            "bash <<'EOF'\ngit restore fixture.ts\nEOF",
+        ];
+
+        for (const command of commands) {
+            const violation = only(command, CHECKOUT);
+            expect(violation?.severity).toBe("block");
+            expect(violation?.index).toBe(command.indexOf("git restore"));
+            expect(violation?.matched).toBe("git restore fixture.ts");
+        }
+    });
 });
 
 describe("git-checkout-overwrites-file: does not fire", () => {
@@ -126,6 +144,7 @@ describe("git-checkout-overwrites-file: does not fire", () => {
         expect(ids("cat <<'EOF'\ngit checkout -- a\nEOF")).toEqual([]);
         expect(ids("rg 'checkout --' docs")).toEqual([]);
         expect(ids("gh pr checkout 42")).toEqual([]);
+        expect(ids("bash -c 'echo git restore fixture.ts'")).toEqual([]);
     });
 });
 

@@ -305,6 +305,10 @@ export interface Span {
     start: number;
 }
 
+interface ExecutableBody extends Span {
+    end: number;
+}
+
 // The basename of a command token: `/usr/bin/find` → `find`.
 export function commandWord(token: string): string {
     return token.split("/").pop() ?? token;
@@ -433,10 +437,18 @@ export function commandTokenIndex(tokens: Span[]): number {
 // `log show --predicate 'x'` cleans to `log show --predicate`. Walk the blank
 // tail up to the next separator in the cleaned text, then drop the real
 // trailing whitespace, and the excerpt carries the quoted argument again.
-export function originalSlice(scan: { command: string; cleaned: string }, start: number, cleanedEnd: number): string {
+export function originalSlice(
+    scan: { command: string; cleaned: string; executableRanges?: Array<{ start: number; end: number }> },
+    start: number,
+    cleanedEnd: number
+): string {
     let end = cleanedEnd;
+    const range = scan.executableRanges
+        ?.filter((candidate) => start >= candidate.start && start < candidate.end)
+        .sort((a, b) => a.end - a.start - (b.end - b.start))[0];
+    const limit = range?.end ?? scan.cleaned.length;
 
-    while (end < scan.cleaned.length && (scan.cleaned[end] === " " || scan.cleaned[end] === "\t")) {
+    while (end < limit && (scan.cleaned[end] === " " || scan.cleaned[end] === "\t")) {
         end++;
     }
 
@@ -559,16 +571,167 @@ export function splitPipeline(statement: Span): Span[] {
     return splitWithOffsets(normalized, /\|/);
 }
 
+const EXECUTABLE_SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
+const MAX_EXECUTABLE_BODY_DEPTH = 4;
+
+function backtickBodies(source: string, base: number): ExecutableBody[] {
+    const bodies: ExecutableBody[] = [];
+    let quote: "'" | '"' | null = null;
+    let i = 0;
+
+    while (i < source.length) {
+        const ch = source[i];
+        if (ch === "\\") {
+            i += 2;
+            continue;
+        }
+        if (ch === "'" && quote !== '"') {
+            quote = quote === "'" ? null : "'";
+            i++;
+            continue;
+        }
+        if (ch === '"' && quote !== "'") {
+            quote = quote === '"' ? null : '"';
+            i++;
+            continue;
+        }
+        if (ch !== "`" || quote === "'") {
+            i++;
+            continue;
+        }
+
+        let end = i + 1;
+        while (end < source.length) {
+            if (source[end] === "\\") {
+                end += 2;
+                continue;
+            }
+            if (source[end] === "`") {
+                break;
+            }
+            end++;
+        }
+
+        const bodyEnd = Math.min(end, source.length);
+        bodies.push({ text: source.slice(i + 1, bodyEnd), start: base + i + 1, end: base + bodyEnd });
+        i = end < source.length ? end + 1 : source.length;
+    }
+
+    return bodies;
+}
+
+function rawArgumentBody(source: string, from: number, base: number): ExecutableBody | null {
+    let start = from;
+    while (start < source.length && /\s/.test(source[start])) {
+        start++;
+    }
+    if (start >= source.length) {
+        return null;
+    }
+
+    const quote = source[start];
+    if (quote === "'" || quote === '"') {
+        let end = start + 1;
+        while (end < source.length) {
+            if (quote === '"' && source[end] === "\\") {
+                end += 2;
+                continue;
+            }
+            if (source[end] === quote) {
+                return {
+                    text: source.slice(start + 1, end),
+                    start: base + start + 1,
+                    end: base + end,
+                };
+            }
+            end++;
+        }
+
+        return { text: source.slice(start + 1), start: base + start + 1, end: base + source.length };
+    }
+
+    let end = start;
+    while (end < source.length && !/\s|[;&|]/.test(source[end])) {
+        end++;
+    }
+    return { text: source.slice(start, end), start: base + start, end: base + end };
+}
+
+function shellCommandBodies(source: string, base: number): ExecutableBody[] {
+    const cleaned = stripShellNoise(source);
+    const bodies: ExecutableBody[] = [];
+
+    for (const unit of splitSubstitutions(cleaned, base)) {
+        for (const statement of splitStatements(unit)) {
+            for (const element of splitPipeline(statement)) {
+                const tokens = tokenize(element);
+                const commandIndex = commandTokenIndex(tokens);
+                if (commandIndex < 0 || !EXECUTABLE_SHELLS.has(commandWord(tokens[commandIndex].text))) {
+                    continue;
+                }
+
+                const commandOption = tokens
+                    .slice(commandIndex + 1)
+                    .find((token) => token.text === "--command" || /^-[A-Za-z]*c[A-Za-z]*$/.test(token.text));
+                if (!commandOption) {
+                    continue;
+                }
+
+                const localEnd = commandOption.start - base + commandOption.text.length;
+                const body = rawArgumentBody(source, localEnd, base);
+                if (body) {
+                    bodies.push(body);
+                }
+            }
+        }
+    }
+
+    return bodies;
+}
+
+function executableBodies(source: string, base = 0, depth = 0, seen = new Set<string>()): ExecutableBody[] {
+    if (depth >= MAX_EXECUTABLE_BODY_DEPTH) {
+        return [];
+    }
+
+    const direct = [...backtickBodies(source, base), ...shellCommandBodies(source, base)];
+    const bodies: ExecutableBody[] = [];
+    for (const body of direct) {
+        const key = `${body.start}:${body.end}`;
+        if (seen.has(key)) {
+            continue;
+        }
+
+        seen.add(key);
+        bodies.push(body, ...executableBodies(body.text, body.start, depth + 1, seen));
+    }
+
+    return bodies;
+}
+
 // Everything a rule needs, computed once per command.
 export interface ShellScan {
     command: string;
     cleaned: string;
     /** The outer command and each command substitution, as statement lists. */
     units: Span[][];
+    /** Bounds of quoted/backtick bodies that are executable, used to keep violation excerpts inside the body. */
+    executableRanges: Array<{ start: number; end: number }>;
 }
 
 export function scanShell(command: string): ShellScan {
     const cleaned = stripShellNoise(command);
-    const units = splitSubstitutions(cleaned).map((unit) => splitStatements(unit));
-    return { command, cleaned, units };
+    const bodies = executableBodies(command);
+    const units = [
+        ...splitSubstitutions(cleaned).map((unit) => splitStatements(unit)),
+        ...bodies.flatMap((body) =>
+            splitSubstitutions(stripShellNoise(body.text), body.start).map((unit) => splitStatements(unit))
+        ),
+    ];
+    return {
+        command,
+        cleaned,
+        units,
+        executableRanges: bodies.map(({ start, end }) => ({ start, end })),
+    };
 }
