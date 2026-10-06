@@ -1,7 +1,7 @@
 import { exportMonth } from "@app/azure-devops/lib/timelog/export";
 import { formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
-import type { TimeEntryRecord, TimeSeriesValue } from "@genesiscz/utils/clarity";
+import type { TimeEntryRecord, TimeSegment, TimeSeriesValue } from "@genesiscz/utils/clarity";
 import { ClarityApi } from "@genesiscz/utils/clarity";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -14,7 +14,7 @@ import pc from "picocolors";
 import { requireConfig } from "../config.js";
 import { buildPeriodComment } from "../lib/comment-builder.js";
 import { checkUnmapped } from "../lib/fill-guard.js";
-import { buildFillMap, buildTimeSegments, type FillEntry } from "../lib/fill-utils.js";
+import { buildFillMap, buildMonthAwareTimeSegments, type FillEntry } from "../lib/fill-utils.js";
 import { resolveFillWeeks } from "../lib/fill-weeks.js";
 
 type TimesheetRecordLike = Awaited<ReturnType<ClarityApi["getTimesheet"]>>["timesheets"]["_results"][number];
@@ -33,6 +33,7 @@ interface WeekPlan {
         fill: FillEntry;
         timeEntryId: number;
         taskId: number;
+        existingSegments: TimeSegment[];
     }>;
     unmappedWorkItems: Array<{ workItemId: number; minutes: number }>;
 }
@@ -342,6 +343,7 @@ export function registerFillCommand(program: Command): void {
                         fill,
                         timeEntryId: timeEntry._internalId,
                         taskId: timeEntry.taskId,
+                        existingSegments: timeEntry.actuals.segmentList.segments,
                     });
                 }
 
@@ -372,7 +374,14 @@ export function registerFillCommand(program: Command): void {
                 for (const entry of plan.entries) {
                     // periodFinish is inclusive (last day) — add 1 day for exclusive loop bound
                     const exclusiveEnd = `${addDay(plan.periodFinishInclusive.split("T")[0])}T00:00:00`;
-                    const segments = buildTimeSegments(plan.periodStart, exclusiveEnd, entry.fill.dayMinutes);
+                    const segments = buildMonthAwareTimeSegments({
+                        periodStart: plan.periodStart,
+                        periodFinishExclusive: exclusiveEnd,
+                        year,
+                        month: options.month,
+                        dayMinutes: entry.fill.dayMinutes,
+                        existingSegments: entry.existingSegments,
+                    });
                     const totalSeconds = segments.reduce((sum, s) => sum + s.value, 0);
 
                     if (totalSeconds === 0) {

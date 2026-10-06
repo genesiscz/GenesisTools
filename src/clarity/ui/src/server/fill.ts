@@ -4,7 +4,7 @@ import { requireConfig } from "@app/clarity/config";
 import { checkUnmapped } from "@app/clarity/lib/fill-guard";
 import {
     buildFillMap,
-    buildTimeSegments,
+    buildMonthAwareTimeSegments,
     type ExecuteFillResult,
     type FillEntryResult,
 } from "@app/clarity/lib/fill-utils";
@@ -430,7 +430,14 @@ export async function executeFill(
             // timePeriodFinish is inclusive (last day e.g. Sunday "2026-02-08T00:00:00")
             // buildTimeSegments needs exclusive end for its loop
             const exclusiveEnd = `${addDay(ts.timePeriodFinish.split("T")[0])}T00:00:00`;
-            const segments = buildTimeSegments(ts.timePeriodStart, exclusiveEnd, fill.dayMinutes);
+            const segments = buildMonthAwareTimeSegments({
+                periodStart: ts.timePeriodStart,
+                periodFinishExclusive: exclusiveEnd,
+                year,
+                month,
+                dayMinutes: fill.dayMinutes,
+                existingSegments: timeEntry.actuals.segmentList.segments,
+            });
             const totalSeconds = segments.reduce((sum, s) => sum + s.value, 0);
 
             // Skip zero-minute updates to avoid wiping existing Clarity entries

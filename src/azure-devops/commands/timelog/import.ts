@@ -18,6 +18,19 @@ import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 
+export function buildDryRunPreview<T extends TimeLogImportFile>(data: T, workitemTitles: Map<number, string>): T {
+    return {
+        ...data,
+        entries: normalizeTimelogEntries(
+            data.entries.map((entry) => {
+                const title = workitemTitles.get(entry.workItemId) ?? readEntryWorkItemTitle(entry);
+
+                return title ? setEntryWorkItemTitle(entry, title) : entry;
+            })
+        ),
+    };
+}
+
 export function registerImportSubcommand(parent: Command): void {
     parent
         .command("import")
@@ -247,23 +260,11 @@ export function registerImportSubcommand(parent: Command): void {
             }
 
             if (options.dryRun) {
-                const serializedBefore = SafeJSON.stringify(data.entries, null, 2);
-                data.entries = normalizeTimelogEntries(
-                    data.entries.map((entry) => {
-                        const title = workitemTitles.get(entry.workItemId) ?? readEntryWorkItemTitle(entry);
-
-                        if (title) {
-                            return setEntryWorkItemTitle(entry, title);
-                        }
-
-                        return entry;
-                    })
-                );
-                const serializedAfter = SafeJSON.stringify(data.entries, null, 2);
-
-                if (serializedBefore !== serializedAfter) {
-                    await Bun.write(file, `${serializedAfter}\n`);
-                    out.println(pc.dim(`Updated ${file} with resolved workItemTitle values.\n`));
+                const preview = buildDryRunPreview(data, workitemTitles);
+                if (SafeJSON.stringify(data.entries) !== SafeJSON.stringify(preview.entries)) {
+                    out.println(
+                        pc.dim("Validated normalized workItemTitle values without modifying the input file.\n")
+                    );
                 }
 
                 out.println("\u2714 Dry run complete. Valid entries:");

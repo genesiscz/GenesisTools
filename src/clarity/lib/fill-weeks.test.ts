@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { buildMonthAwareTimeSegments } from "@app/clarity/lib/fill-utils";
 import { resolveFillWeeks } from "@app/clarity/lib/fill-weeks";
 
 function carouselEntry({
@@ -145,5 +146,46 @@ describe("resolveFillWeeks carousel use", () => {
 
         expect(api.timesheetAppCalls[0]).toBeUndefined();
         expect(api.timesheetAppCalls.slice(1).every((id) => typeof id === "number")).toBe(true);
+    });
+});
+
+describe("buildMonthAwareTimeSegments", () => {
+    test("preserves adjacent-month actuals while replacing every requested-month day", () => {
+        const segments = buildMonthAwareTimeSegments({
+            periodStart: "2026-09-28T00:00:00",
+            periodFinishExclusive: "2026-10-05T00:00:00",
+            year: 2026,
+            month: 10,
+            dayMinutes: { "2026-10-01": 60 },
+            existingSegments: [
+                { start: "2026-09-30T00:00:00", finish: "2026-09-30T00:00:00", value: 7_200 },
+                { start: "2026-10-02T00:00:00", finish: "2026-10-02T00:00:00", value: 1_800 },
+            ],
+        });
+
+        expect(segments.map(({ start, value }) => [start.slice(0, 10), value])).toEqual([
+            ["2026-09-28", 0],
+            ["2026-09-29", 0],
+            ["2026-09-30", 7_200],
+            ["2026-10-01", 3_600],
+            ["2026-10-02", 0],
+            ["2026-10-03", 0],
+            ["2026-10-04", 0],
+        ]);
+        expect(segments.reduce((sum, segment) => sum + segment.value, 0)).toBe(10_800);
+    });
+
+    test("preserves the following month across a leap-year boundary", () => {
+        const segments = buildMonthAwareTimeSegments({
+            periodStart: "2028-02-28T00:00:00",
+            periodFinishExclusive: "2028-03-06T00:00:00",
+            year: 2028,
+            month: 2,
+            dayMinutes: { "2028-02-29": 30 },
+            existingSegments: [{ start: "2028-03-01T00:00:00", finish: "2028-03-01T00:00:00", value: 900 }],
+        });
+
+        expect(segments.find((segment) => segment.start.startsWith("2028-02-29"))?.value).toBe(1_800);
+        expect(segments.find((segment) => segment.start.startsWith("2028-03-01"))?.value).toBe(900);
     });
 });

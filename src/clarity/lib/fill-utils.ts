@@ -59,6 +59,38 @@ export function buildTimeSegments(
     }));
 }
 
+/**
+ * Build a complete Clarity period replacement for one requested month.
+ * Days inside the month come from the fill (missing means an intentional zero),
+ * while adjacent-month days in a straddling week retain their current actuals.
+ */
+export function buildMonthAwareTimeSegments(options: {
+    periodStart: string;
+    periodFinishExclusive: string;
+    year: number;
+    month: number;
+    dayMinutes: Record<string, number>;
+    existingSegments?: TimeSegment[];
+}): TimeSegment[] {
+    const existingMinutes: Record<string, number> = {};
+
+    for (const segment of options.existingSegments ?? []) {
+        const date = segment.start.split("T")[0];
+        existingMinutes[date] = (existingMinutes[date] ?? 0) + segment.value / 60;
+    }
+
+    const requestedMonth = `${options.year}-${String(options.month).padStart(2, "0")}`;
+    const mergedMinutes = { ...existingMinutes };
+
+    for (const day of buildDailyValues(options.periodStart, options.periodFinishExclusive, (date) => date)) {
+        if (day.date.startsWith(`${requestedMonth}-`)) {
+            mergedMinutes[day.date] = options.dayMinutes[day.date] ?? 0;
+        }
+    }
+
+    return buildTimeSegments(options.periodStart, options.periodFinishExclusive, mergedMinutes);
+}
+
 interface AdoEntry {
     workItemId: number;
     workItemTitle?: string;
