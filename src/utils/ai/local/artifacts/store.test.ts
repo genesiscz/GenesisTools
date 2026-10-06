@@ -1,9 +1,19 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    rmSync,
+    symlinkSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ArtifactRef } from "../descriptors/types";
 import { HfSource } from "./sources/hf";
+import { parseTarVerboseListing, UrlSource } from "./sources/url";
 import { ArtifactStore } from "./store";
 
 let root: string;
@@ -133,6 +143,7 @@ describe("ensure", () => {
         expect(resolved[0]?.cached).toBe(false);
         expect(existsSync(resolved[0]?.path as string)).toBe(true);
         expect((await store.list()).some((a) => a.id.endsWith(".tar.bz2"))).toBe(false);
+        expect(readdirSync(root).some((name) => name.includes(".download-"))).toBe(false);
     });
 
     test("an archive that does not yield the expected file is an error, not a silent success", async () => {
@@ -178,6 +189,176 @@ describe("ensure", () => {
         });
         expect(resolved[1]?.cached).toBe(false);
         expect(resolved[1]?.path).toBe(join(hubDir, "models--not--downloaded"));
+    });
+
+    test("streams a response into the final file without publishing the staging name", async () => {
+        let pulls = 0;
+        const source = new UrlSource({
+            fetcher: async () =>
+                new Response(
+                    new ReadableStream<Uint8Array>({
+                        pull(controller) {
+                            pulls += 1;
+                            controller.enqueue(new TextEncoder().encode(`chunk-${pulls}\n`));
+                            if (pulls === 3) {
+                                controller.close();
+                            }
+                        },
+                    })
+                ),
+            maxDownloadBytes: 1024,
+        });
+        const file = join(root, "streamed.onnx");
+
+        await source.ensure({ source: "url", locator: "https://example.invalid/streamed.onnx", file });
+
+        expect(await Bun.file(file).text()).toBe("chunk-1\nchunk-2\nchunk-3\n");
+        expect(readdirSync(root).some((name) => name.includes(".download-"))).toBe(false);
+    });
+
+    test("rejects a chunked overflow and publishes no file", async () => {
+        const source = new UrlSource({
+            fetcher: async () =>
+                new Response(
+                    new ReadableStream<Uint8Array>({
+                        start(controller) {
+                            controller.enqueue(new Uint8Array(6));
+                            controller.enqueue(new Uint8Array(6));
+                            controller.close();
+                        },
+                    })
+                ),
+            maxDownloadBytes: 8,
+        });
+        const file = join(root, "oversized.onnx");
+
+        await expect(
+            source.ensure({ source: "url", locator: "https://example.invalid/oversized.onnx", file })
+        ).rejects.toThrow(/exceeds 8 bytes/);
+        expect(existsSync(file)).toBe(false);
+        expect(readdirSync(root).some((name) => name.includes(".download-"))).toBe(false);
+    });
+
+    test("cleans the staged file when a response stream aborts", async () => {
+        const source = new UrlSource({
+            fetcher: async () =>
+                new Response(
+                    new ReadableStream<Uint8Array>({
+                        start(controller) {
+                            controller.enqueue(new Uint8Array([1, 2, 3]));
+                            controller.error(new Error("synthetic stream abort"));
+                        },
+                    })
+                ),
+        });
+        const file = join(root, "aborted.onnx");
+
+        await expect(
+            source.ensure({ source: "url", locator: "https://example.invalid/aborted.onnx", file })
+        ).rejects.toThrow(/synthetic stream abort/);
+        expect(existsSync(file)).toBe(false);
+        expect(readdirSync(root).some((name) => name.includes(".download-"))).toBe(false);
+    });
+
+    test("rejects an oversized Content-Length before pulling the response body", async () => {
+        let pulls = 0;
+        let canceled = false;
+        const source = new UrlSource({
+            fetcher: async () =>
+                new Response(
+                    new ReadableStream<Uint8Array>({
+                        pull(controller) {
+                            pulls += 1;
+                            controller.enqueue(new Uint8Array(1));
+                        },
+                        cancel() {
+                            canceled = true;
+                        },
+                    }),
+                    { headers: { "content-length": "9" } }
+                ),
+            maxDownloadBytes: 8,
+        });
+        const file = join(root, "declared-oversized.onnx");
+
+        await expect(
+            source.ensure({ source: "url", locator: "https://example.invalid/declared.onnx", file })
+        ).rejects.toThrow(/exceeds 8 bytes/);
+        expect(pulls).toBeLessThanOrEqual(1);
+        expect(canceled).toBe(true);
+        expect(existsSync(file)).toBe(false);
+    });
+
+    test("rejects an archive whose declared expansion exceeds its budget before publish", async () => {
+        const stage = join(root, "bounded-stage");
+        mkdirSync(join(stage, "model"), { recursive: true });
+        writeFileSync(join(stage, "model", "model.onnx"), Buffer.alloc(16));
+        const archive = join(root, "bounded.tar.bz2");
+        await Bun.spawn(["tar", "cjf", archive, "-C", stage, "model"], { env: process.env }).exited;
+        const archiveBytes = await Bun.file(archive).arrayBuffer();
+        const target = join(root, "bounded-target");
+        const source = new UrlSource({
+            fetcher: async () => archiveBytes,
+            maxArchiveExpandedBytes: 8,
+        });
+
+        await expect(
+            source.ensure({
+                source: "url",
+                locator: "https://example.invalid/bounded.tar.bz2",
+                file: join(target, "model", "model.onnx"),
+                archive: "tar.bz2",
+                archiveRoot: target,
+            })
+        ).rejects.toThrow(/expanded size/);
+        expect(existsSync(target)).toBe(false);
+    });
+
+    test("rejects archive links before extraction", async () => {
+        const stage = join(root, "link-stage");
+        mkdirSync(join(stage, "model"), { recursive: true });
+        symlinkSync("/tmp/synthetic-outside", join(stage, "model", "model.onnx"));
+        const archive = join(root, "link.tar.bz2");
+        await Bun.spawn(["tar", "cjf", archive, "-C", stage, "model"], { env: process.env }).exited;
+        const archiveBytes = await Bun.file(archive).arrayBuffer();
+        const target = join(root, "link-target");
+        const source = new UrlSource(async () => archiveBytes);
+
+        await expect(
+            source.ensure({
+                source: "url",
+                locator: "https://example.invalid/link.tar.bz2",
+                file: join(target, "model", "model.onnx"),
+                archive: "tar.bz2",
+                archiveRoot: target,
+            })
+        ).rejects.toThrow(/link or unsupported entry/);
+        expect(existsSync(target)).toBe(false);
+    });
+});
+
+describe("tar verbose listing", () => {
+    test("counts both BSD and GNU tar size columns", () => {
+        const bsd = [
+            "drwxr-xr-x  0 work staff       0 Oct  6 23:15 model/",
+            "-rw-r--r--  0 work staff      16 Oct  6 23:15 model/model.onnx",
+        ].join("\n");
+        const gnu = [
+            "drwxr-xr-x work/staff 0 2026-10-06 23:15 model/",
+            "-rw-r--r-- work/staff 16 2026-10-06 23:15 model/model.onnx",
+        ].join("\n");
+
+        expect(parseTarVerboseListing(bsd, 32)).toBe(16);
+        expect(parseTarVerboseListing(gnu, 32)).toBe(16);
+    });
+
+    test("rejects links and portable-listing overflow", () => {
+        expect(() => parseTarVerboseListing("lrwxr-xr-x work/staff 0 2026-10-06 link -> /tmp/x", 32)).toThrow(
+            /link or unsupported/
+        );
+        expect(() => parseTarVerboseListing("-rw-r--r-- work/staff 33 2026-10-06 model/model.onnx", 32)).toThrow(
+            /expanded size/
+        );
     });
 });
 
