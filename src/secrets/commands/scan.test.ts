@@ -11,6 +11,7 @@ import { scanContent } from "@app/secrets/lib/scan-content";
 import { scanDirectory } from "@app/secrets/lib/scan-dir";
 import { defaultScanConfig, type ScanResult } from "@app/secrets/lib/types";
 import { walkFiles } from "@app/secrets/lib/walk";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 describe("maskSecret", () => {
     test("keeps first 4 and last 4 with ellipsis for long secrets", () => {
@@ -188,6 +189,31 @@ describe("scanContent", () => {
         const findings = scanContent({ content, file: "a.ts", config: cfg });
         const spans = new Set(findings.map((f) => `${f.line}:${f.column}:${f.masked}`));
         expect(spans.size).toBe(findings.length);
+    });
+
+    test("every preview masks every accepted secret on its source line", () => {
+        const first = "aB3xZ9qLkP2mWvT7uYrEoNcDfGhJ";
+        const second = "Qp8rSv4xLm2nBt6cKd9wYz3fUa7e";
+        const content = `firstToken = "${first}"; secondToken = "${second}";`;
+        const findings = scanContent({ content, file: "a.ts", config: cfg });
+        const serialized = SafeJSON.stringify(
+            toJsonResult({
+                scannedFiles: 1,
+                skippedFiles: 0,
+                skips: [],
+                findingCount: findings.length,
+                findings,
+                scannedAt: "2026-10-06T00:00:00.000Z",
+            })
+        );
+
+        expect(findings).toHaveLength(2);
+        expect(serialized).not.toContain(first);
+        expect(serialized).not.toContain(second);
+        expect(findings.map(({ line, column }) => ({ line, column }))).toEqual([
+            { line: 1, column: content.indexOf(first) + 1 },
+            { line: 1, column: content.indexOf(second) + 1 },
+        ]);
     });
 });
 

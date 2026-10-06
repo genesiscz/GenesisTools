@@ -11,6 +11,12 @@ interface ScanContentArgs {
     config: ScanConfig;
 }
 
+interface AcceptedMatch {
+    finding: Omit<Finding, "preview">;
+    start: number;
+    length: number;
+}
+
 function isAllowlisted(secret: string, line: string, config: ScanConfig): boolean {
     for (const pattern of config.ignorePatterns) {
         pattern.lastIndex = 0;
@@ -22,8 +28,29 @@ function isAllowlisted(secret: string, line: string, config: ScanConfig): boolea
     return false;
 }
 
-function buildPreview(line: string, start: number, length: number, masked: string): string {
-    const replaced = `${line.slice(0, start)}${masked}${line.slice(start + length)}`.trim();
+function buildPreview(line: string, matches: AcceptedMatch[]): string {
+    const ranges = matches
+        .map(({ start, length }) => ({ start, end: start + length }))
+        .sort((a, b) => a.start - b.start);
+    const merged: Array<{ start: number; end: number }> = [];
+
+    for (const range of ranges) {
+        const previous = merged.at(-1);
+        if (previous && range.start <= previous.end) {
+            previous.end = Math.max(previous.end, range.end);
+            continue;
+        }
+
+        merged.push({ ...range });
+    }
+
+    let replaced = line;
+    for (const range of merged.reverse()) {
+        const masked = maskSecret(line.slice(range.start, range.end));
+        replaced = `${replaced.slice(0, range.start)}${masked}${replaced.slice(range.end)}`;
+    }
+
+    replaced = replaced.trim();
     if (replaced.length <= PREVIEW_MAX) {
         return replaced;
     }
@@ -43,6 +70,7 @@ export function scanContent({ content, file, config }: ScanContentArgs): Finding
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
+        const acceptedMatches: AcceptedMatch[] = [];
 
         if (line.includes(INLINE_IGNORE)) {
             continue;
@@ -63,13 +91,16 @@ export function scanContent({ content, file, config }: ScanContentArgs): Finding
                 if (accepted && !seen.has(dedupeKey) && !isAllowlisted(secret, line, config)) {
                     seen.add(dedupeKey);
                     const masked = maskSecret(secret);
-                    findings.push({
-                        file,
-                        line: i + 1,
-                        column,
-                        detector: detector.name,
-                        masked,
-                        preview: buildPreview(line, secretStart, secret.length, masked),
+                    acceptedMatches.push({
+                        finding: {
+                            file,
+                            line: i + 1,
+                            column,
+                            detector: detector.name,
+                            masked,
+                        },
+                        start: secretStart,
+                        length: secret.length,
                     });
                 }
 
@@ -79,6 +110,11 @@ export function scanContent({ content, file, config }: ScanContentArgs): Finding
 
                 match = detector.regex.exec(line);
             }
+        }
+
+        if (acceptedMatches.length > 0) {
+            const preview = buildPreview(line, acceptedMatches);
+            findings.push(...acceptedMatches.map(({ finding }) => ({ ...finding, preview })));
         }
     }
 
