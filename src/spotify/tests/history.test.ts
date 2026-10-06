@@ -4,7 +4,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { Ctx } from "@app/spotify/lib/context";
-import { albumKey, localTime, songKey, songKeyOf } from "@app/spotify/lib/history";
+import { albumKey, applyFilter, applySortedFilter, localTime, songKey, songKeyOf } from "@app/spotify/lib/history";
 import { timelineReport } from "@app/spotify/lib/reports/time";
 import { denseBuckets } from "@app/spotify/lib/series";
 
@@ -23,6 +23,13 @@ const play = (name: string, artist: string, album = "") => ({
     skipped: false,
     offline: false,
     incognito: false,
+});
+
+const timelinePlay = (timestamp: string) => ({
+    ...play("Signal Fires", "North Avenue"),
+    ts: Date.parse(timestamp),
+    ms: 45_000,
+    uri: `track:${timestamp}`,
 });
 
 describe("localTime", () => {
@@ -87,13 +94,6 @@ describe("composite keys", () => {
 });
 
 describe("weekly timelines", () => {
-    const timelinePlay = (timestamp: string) => ({
-        ...play("Signal Fires", "North Avenue"),
-        ts: Date.parse(timestamp),
-        ms: 45_000,
-        uri: `track:${timestamp}`,
-    });
-
     test("fills silent weeks and keeps their report values at zero", () => {
         const plays = [timelinePlay("2026-01-05T12:00:00Z"), timelinePlay("2026-01-19T12:00:00Z")];
         const ctx: Ctx = {
@@ -136,5 +136,46 @@ describe("weekly timelines", () => {
                 "week"
             )
         ).toEqual(["2025-03-24", "2025-03-31", "2025-04-07"]);
+    });
+});
+
+describe("sorted date-window filtering", () => {
+    test("matches the full scan across Prague DST boundaries and keeps non-date filters", () => {
+        const plays = [
+            timelinePlay("2025-03-29T23:30:00Z"),
+            timelinePlay("2025-03-30T00:30:00Z"),
+            timelinePlay("2025-03-30T01:30:00Z"),
+            { ...timelinePlay("2025-03-30T22:30:00Z"), artist: "Other" },
+            timelinePlay("2025-03-31T22:30:00Z"),
+        ];
+        const filter = { since: "2025-03-30", until: "2025-03-31", artist: "North" };
+
+        expect(applySortedFilter(plays, "Europe/Prague", filter)).toEqual(applyFilter(plays, "Europe/Prague", filter));
+    });
+
+    test("reads logarithmically many timestamps before filtering a narrow sorted window", () => {
+        let timestampReads = 0;
+        const start = Date.parse("2025-01-01T00:00:00Z");
+        const plays = Array.from({ length: 10_000 }, (_, index) => {
+            const row = timelinePlay(new Date(start + index * 3_600_000).toISOString());
+            Object.defineProperty(row, "ts", {
+                get: () => {
+                    timestampReads++;
+                    return start + index * 3_600_000;
+                },
+            });
+            return row;
+        });
+
+        const filter = { since: "2025-01-10", until: "2025-01-10" };
+        const baseline = applyFilter(plays, "UTC", filter);
+        expect(baseline).toHaveLength(24);
+        expect(timestampReads).toBe(10_000);
+
+        timestampReads = 0;
+        const selected = applySortedFilter(plays, "UTC", filter);
+        expect(selected).toHaveLength(24);
+        expect(selected).toEqual(baseline);
+        expect(timestampReads).toBeLessThan(80);
     });
 });

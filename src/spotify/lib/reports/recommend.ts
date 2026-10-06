@@ -25,7 +25,7 @@ import {
     type ReportHead,
     windowOptions,
 } from "@app/spotify/lib/context";
-import { applyFilter, PLAY_MS, type Play, songKey } from "@app/spotify/lib/history";
+import { applySortedFilter, PLAY_MS, type Play, songKey } from "@app/spotify/lib/history";
 import { type LibTrack, loadLibrary } from "@app/spotify/lib/library";
 import { sessionize } from "@app/spotify/lib/stats";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -652,7 +652,11 @@ export function recommendReport(o: RecommendOpts): RecommendReport {
     // "Now" comes from every play in the date window and every like, whatever the artist, genre or
     // platform filter kept. From the filtered plays, `--artist Gone` stopped the clock at Gone's own
     // last play, so an old love was never silent, and the neighbours' "recent" window moved with it.
-    const now = newestMoment({ plays: applyFilter(ctx.all, ctx.tz, windowOptions(o)), library: fullLibrary, minMs });
+    const now = newestMoment({
+        plays: applySortedFilter(ctx.all, ctx.tz, windowOptions(o)),
+        library: fullLibrary,
+        minMs,
+    });
     const index = buildArtistIndex({ plays: ctx.plays, library, minMs, history: ctx.all, now });
     const top = ctx.top;
 

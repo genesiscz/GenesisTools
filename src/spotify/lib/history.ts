@@ -569,6 +569,36 @@ export function applyFilter(plays: Play[], tz: string, f: Filter): Play[] {
     });
 }
 
+/** Date-window fast path for history arrays sorted by ascending `ts`. */
+export function applySortedFilter(plays: Play[], tz: string, f: Filter): Play[] {
+    let since = f.since;
+    let until = f.until;
+    if (f.year) {
+        since = `${f.year}-01-01`;
+        until = `${f.year}-12-31`;
+    }
+
+    const lowerBound = (accept: (date: string) => boolean): number => {
+        let low = 0;
+        let high = plays.length;
+        while (low < high) {
+            const middle = low + Math.floor((high - low) / 2);
+            if (accept(localTime(plays[middle]!.ts, tz).date)) {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+
+        return low;
+    };
+    const start = since ? lowerBound((date) => date >= since) : 0;
+    const end = until ? lowerBound((date) => date > until) : plays.length;
+    const nonDateFilter = { ...f, since: undefined, until: undefined, year: undefined };
+
+    return applyFilter(plays.slice(start, end), tz, nonDateFilter);
+}
+
 export interface Agg {
     key: string;
     label: string;

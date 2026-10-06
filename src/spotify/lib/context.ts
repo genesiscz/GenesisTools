@@ -4,7 +4,7 @@
  * their statistic — and so the CLI, the HTTP routes and the dashboard all resolve a
  * window in exactly the same way.
  */
-import { applyFilter, type Filter, loadAllPlays, PLAY_MS, type Play } from "@app/spotify/lib/history";
+import { applySortedFilter, type Filter, loadAllPlays, PLAY_MS, type Play } from "@app/spotify/lib/history";
 import { type GenreResolver, genreResolver } from "@app/spotify/lib/library";
 import { DEFAULT_TIMEZONE, getProfile, type Profile } from "@app/spotify/lib/profiles";
 
@@ -165,7 +165,7 @@ export function context(o: CommonOpts): Ctx {
         filter.genreOf = undefined;
     }
 
-    let plays = applyFilter(all, tz, filter);
+    let plays = applySortedFilter(all, tz, filter);
     if (o.genre) {
         const want = o.genre.toLowerCase();
         plays = plays.filter((p) => genres.forPlay(p.uri, p.artist).includes(want));
