@@ -44,4 +44,56 @@ describe("readRawBody", () => {
         const json = (await res?.json()) as { a: number };
         expect(json).toEqual({ a: 7 });
     });
+
+    it("returns 413 before an oversized chunked body reaches route work", async () => {
+        const chunk = new Uint8Array(1024 * 1024);
+        let pulls = 0;
+        let afterRead = false;
+        const body = new ReadableStream<Uint8Array>({
+            pull(controller) {
+                pulls += 1;
+                controller.enqueue(chunk);
+                if (pulls === 12) {
+                    controller.close();
+                }
+            },
+        });
+        const router = new Router().add({
+            method: "POST",
+            pattern: "/api/echo-json",
+            handler: async (ctx) => {
+                await ctx.readRawBody();
+                afterRead = true;
+                return { kind: "json", status: 200, body: { ok: true } };
+            },
+        });
+        const req = new Request("http://x/api/echo-json", {
+            method: "POST",
+            body,
+            // Request streams require this in Bun/Node even though it is not in lib.dom's RequestInit.
+            duplex: "half",
+        } as RequestInit & { duplex: "half" });
+        const res = await routerToResponse(router, req, { services });
+
+        expect(res?.status).toBe(413);
+        expect(afterRead).toBe(false);
+        expect(pulls).toBeLessThan(12);
+    });
+
+    it("keeps a near-limit JSON request working", async () => {
+        const payload = SafeJSON.stringify({ value: "x".repeat(64 * 1024) });
+        const router = new Router().add({
+            method: "POST",
+            pattern: "/api/echo-json",
+            handler: async (ctx) => ({ kind: "json", status: 200, body: await ctx.readJson() }),
+        });
+        const res = await routerToResponse(
+            router,
+            new Request("http://x/api/echo-json", { method: "POST", body: payload }),
+            { services }
+        );
+
+        expect(res?.status).toBe(200);
+        expect((await res?.json()) as { value: string }).toEqual({ value: "x".repeat(64 * 1024) });
+    });
 });

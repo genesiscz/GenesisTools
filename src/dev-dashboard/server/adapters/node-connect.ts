@@ -3,20 +3,11 @@ import type { RouteMatch, Router } from "@app/dev-dashboard/server/router";
 import type { RouteContext, RouteResult, RouteServices, SseEmitter } from "@app/dev-dashboard/server/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { profiler } from "@genesiscz/utils/profile";
+import { RequestBodyTooLargeError, readBoundedNodeBody, requestBodyLimit } from "./body-reader";
 
 // Per-endpoint handler time, keyed by route pattern so `:id` routes aggregate.
 //   PROFILE=route,ttyd,tmux tools dev-dashboard …
 const prof = profiler.scope("route");
-
-async function readRawBytes(req: IncomingMessage): Promise<Uint8Array> {
-    const chunks: Buffer[] = [];
-
-    for await (const chunk of req) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-
-    return new Uint8Array(Buffer.concat(chunks));
-}
 
 function lowerHeaders(req: IncomingMessage): Record<string, string> {
     const out: Record<string, string> = {};
@@ -104,9 +95,15 @@ export async function handleWithRouter(
         return false;
     }
 
+    let bodyLimitError: RequestBodyTooLargeError | undefined;
     let rawBodyPromise: Promise<Uint8Array> | undefined;
     const readRawBody = (): Promise<Uint8Array> => {
-        rawBodyPromise ??= readRawBytes(req);
+        rawBodyPromise ??= readBoundedNodeBody(req, requestBodyLimit(url.pathname)).catch((error) => {
+            if (error instanceof RequestBodyTooLargeError) {
+                bodyLimitError = error;
+            }
+            throw error;
+        });
         return rawBodyPromise;
     };
     const ctx: RouteContext = {
@@ -124,8 +121,23 @@ export async function handleWithRouter(
     };
 
     const label = `${matched.def.method} ${matched.def.pattern}`;
-    const result = await prof.measureAsync(label, async () => matched.def.handler(ctx));
-    writeResult(res, result);
+    try {
+        const result = await prof.measureAsync(label, async () => matched.def.handler(ctx));
+        if (bodyLimitError) {
+            throw bodyLimitError;
+        }
+        writeResult(res, result);
+    } catch (error) {
+        if (!(error instanceof RequestBodyTooLargeError)) {
+            throw error;
+        }
+
+        writeResult(res, {
+            kind: "json",
+            status: 413,
+            body: { error: error.message, maxBytes: error.maxBytes },
+        });
+    }
 
     return true;
 }

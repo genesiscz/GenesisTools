@@ -4,6 +4,11 @@ import { allowsBrowserProvenance, LOCAL_ORIGIN_HEADER } from "@app/dev-dashboard
 import type { KeyPair } from "@app/dev-dashboard/lib/e2e/box";
 import { fromBase64, loadOrCreateAgentKeys, naclBoxCipher } from "@app/dev-dashboard/lib/e2e/box";
 import { isLoopbackOnlyOrigin } from "@app/dev-dashboard/lib/front-proxy";
+import {
+    E2E_REQUEST_BODY_BYTES,
+    RequestBodyTooLargeError,
+    readBoundedRequestText,
+} from "@app/dev-dashboard/server/adapters/body-reader";
 import { routerToResponse } from "@app/dev-dashboard/server/adapters/bun-serve";
 import type { AuthResult } from "@app/dev-dashboard/server/auth-guard";
 import { decideApiAuth } from "@app/dev-dashboard/server/auth-guard";
@@ -65,7 +70,7 @@ async function serveE2eRpc(
     services: RouteServices
 ): Promise<Response> {
     try {
-        const rawEnvelope = await req.text();
+        const rawEnvelope = await readBoundedRequestText(req, E2E_REQUEST_BODY_BYTES);
         const peers = await loadPeers();
         const resolvePeerKey = (epkB64: string): Uint8Array | null => {
             const record = peers[epkB64];
@@ -85,6 +90,13 @@ async function serveE2eRpc(
             headers: { "Content-Type": "application/json" },
         });
     } catch (err) {
+        if (err instanceof RequestBodyTooLargeError) {
+            return new Response("Payload Too Large", {
+                status: 413,
+                headers: { "Content-Type": "text/plain; charset=utf-8" },
+            });
+        }
+
         logger.warn({ err }, "dev-dashboard: e2e rpc rejected");
         return new Response("Forbidden", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     }

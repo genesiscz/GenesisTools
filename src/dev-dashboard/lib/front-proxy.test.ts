@@ -8,13 +8,17 @@ import {
 } from "@app/dev-dashboard/lib/auth";
 import {
     assetCacheControl,
+    canSendWebSocketMessage,
     classifyUpstreamFailure,
     decideProxyAuth,
     fetchProxiedUpstream,
     isLongLivedProxiedStream,
     isLoopbackOnlyOrigin,
     isResponseRetryableMethod,
+    MAX_WS_FRAME_BYTES,
+    MAX_WS_PENDING_BYTES,
     proxyFailureLogLevel,
+    queuePendingWebSocketMessage,
     SCAN_UPSTREAM_TIMEOUT_MS,
     SLOW_UPSTREAM_TIMEOUT_MS,
     UPSTREAM_TIMEOUT_MS,
@@ -174,6 +178,43 @@ describe("LOCAL_ORIGIN_HEADER invariant", () => {
         // trust into a fail-open auth bypass — pin the value.
         expect(LOCAL_ORIGIN_HEADER).toBe("x-dd-local-origin");
         expect(LOCAL_ORIGIN_HEADER).toBe(LOCAL_ORIGIN_HEADER.toLowerCase());
+    });
+});
+
+describe("terminal WebSocket byte budgets", () => {
+    test("bounds the pre-open queue by frame bytes and total bytes", () => {
+        const state = { queue: [] as Array<string | Buffer<ArrayBuffer>>, queuedBytes: 0 };
+        const frame = Buffer.alloc(4 * 1024);
+
+        for (let index = 0; index < MAX_WS_PENDING_BYTES / frame.byteLength; index++) {
+            expect(queuePendingWebSocketMessage(state, frame)).toBe(true);
+        }
+        expect(state.queuedBytes).toBe(MAX_WS_PENDING_BYTES);
+        expect(queuePendingWebSocketMessage(state, frame)).toBe(false);
+        expect(state.queuedBytes).toBe(MAX_WS_PENDING_BYTES);
+    });
+
+    test("refuses one oversized frame without retaining it", () => {
+        const state = { queue: [] as Array<string | Buffer<ArrayBuffer>>, queuedBytes: 0 };
+        const oversized = Buffer.alloc(MAX_WS_FRAME_BYTES + 1);
+
+        expect(queuePendingWebSocketMessage(state, oversized)).toBe(false);
+        expect(state).toEqual({ queue: [], queuedBytes: 0 });
+    });
+
+    test("keeps normal text frames ordered", () => {
+        const state = { queue: [] as Array<string | Buffer<ArrayBuffer>>, queuedBytes: 0 };
+
+        expect(queuePendingWebSocketMessage(state, "first")).toBe(true);
+        expect(queuePendingWebSocketMessage(state, "second")).toBe(true);
+        expect(state.queue).toEqual(["first", "second"]);
+        expect(state.queuedBytes).toBe(11);
+    });
+
+    test("closes established slow-consumer paths before buffered bytes exceed the cap", () => {
+        expect(canSendWebSocketMessage(0, "normal")).toBe(true);
+        expect(canSendWebSocketMessage(MAX_WS_PENDING_BYTES - 2, "abc")).toBe(false);
+        expect(canSendWebSocketMessage(0, Buffer.alloc(MAX_WS_FRAME_BYTES + 1))).toBe(false);
     });
 });
 

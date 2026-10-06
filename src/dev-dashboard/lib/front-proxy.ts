@@ -493,6 +493,8 @@ interface BridgeData {
     protocols: string[];
     out: WebSocket | null;
     queue: (string | Buffer<ArrayBuffer>)[];
+    queuedBytes: number;
+    connectTimer: ReturnType<typeof setTimeout> | null;
     closed: boolean;
 }
 
@@ -507,6 +509,76 @@ function normalizeCloseCode(code: number): number {
 // Cap frames buffered before the upstream WS opens, so a flooding client
 // can't grow the queue unbounded while the upstream is slow/stalled.
 const MAX_WS_QUEUE = 256;
+export const MAX_WS_FRAME_BYTES = 256 * 1024;
+export const MAX_WS_PENDING_BYTES = 1024 * 1024;
+const WS_CONNECT_TIMEOUT_MS = 10_000;
+
+export function webSocketMessageBytes(message: string | Buffer<ArrayBuffer> | ArrayBuffer | Blob): number {
+    if (typeof message === "string") {
+        return Buffer.byteLength(message);
+    }
+
+    return message instanceof Blob ? message.size : message.byteLength;
+}
+
+export function queuePendingWebSocketMessage(
+    state: { queue: (string | Buffer<ArrayBuffer>)[]; queuedBytes: number },
+    message: string | Buffer<ArrayBuffer>
+): boolean {
+    const bytes = webSocketMessageBytes(message);
+    if (
+        bytes > MAX_WS_FRAME_BYTES ||
+        state.queue.length >= MAX_WS_QUEUE ||
+        state.queuedBytes + bytes > MAX_WS_PENDING_BYTES
+    ) {
+        return false;
+    }
+
+    state.queue.push(message);
+    state.queuedBytes += bytes;
+    return true;
+}
+
+export function canSendWebSocketMessage(
+    bufferedBytes: number,
+    message: string | Buffer<ArrayBuffer> | ArrayBuffer | Blob
+): boolean {
+    const bytes = webSocketMessageBytes(message);
+    return bytes <= MAX_WS_FRAME_BYTES && bufferedBytes + bytes <= MAX_WS_PENDING_BYTES;
+}
+
+function resetBridgeQueue(data: BridgeData): void {
+    data.queue = [];
+    data.queuedBytes = 0;
+}
+
+function clearBridgeConnectTimer(data: BridgeData): void {
+    if (data.connectTimer) {
+        clearTimeout(data.connectTimer);
+        data.connectTimer = null;
+    }
+}
+
+function closeBridge(ws: ServerWebSocket<BridgeData>, code: number, reason: string): void {
+    const data = ws.data;
+    if (data.closed) {
+        return;
+    }
+
+    data.closed = true;
+    clearBridgeConnectTimer(data);
+    resetBridgeQueue(data);
+    try {
+        data.out?.close(code, reason);
+    } catch {
+        // upstream already gone
+    }
+    try {
+        ws.close(code, reason);
+    } catch {
+        // client already gone
+    }
+}
 
 export function startFrontProxy(opts: {
     publicPort: number;
@@ -605,7 +677,15 @@ export function startFrontProxy(opts: {
                           .filter(Boolean)
                     : [];
                 const upgraded = srv.upgrade(req, {
-                    data: { targetWsUrl: wsTarget, protocols, out: null, queue: [], closed: false },
+                    data: {
+                        targetWsUrl: wsTarget,
+                        protocols,
+                        out: null,
+                        queue: [],
+                        queuedBytes: 0,
+                        connectTimer: null,
+                        closed: false,
+                    },
                     headers: protocols.length > 0 ? { "Sec-WebSocket-Protocol": protocols[0] } : undefined,
                 });
 
@@ -697,6 +777,8 @@ export function startFrontProxy(opts: {
             open(ws: ServerWebSocket<BridgeData>) {
                 const data = ws.data;
 
+                const closeBoth = (code: number, reason: string): void => closeBridge(ws, code, reason);
+
                 let out: WebSocket;
 
                 try {
@@ -719,13 +801,21 @@ export function startFrontProxy(opts: {
 
                 out.binaryType = "arraybuffer";
                 data.out = out;
+                data.connectTimer = setTimeout(() => {
+                    closeBoth(1013, "upstream connect timeout");
+                }, WS_CONNECT_TIMEOUT_MS);
 
                 out.onopen = () => {
-                    for (const queued of data.queue) {
+                    clearBridgeConnectTimer(data);
+                    const queuedMessages = data.queue;
+                    resetBridgeQueue(data);
+                    for (const queued of queuedMessages) {
+                        if (!canSendWebSocketMessage(out.bufferedAmount, queued)) {
+                            closeBoth(1013, "terminal buffer limit");
+                            return;
+                        }
                         out.send(queued);
                     }
-
-                    data.queue = [];
                 };
 
                 out.onmessage = (event: MessageEvent) => {
@@ -734,13 +824,19 @@ export function startFrontProxy(opts: {
                     }
 
                     try {
+                        if (!canSendWebSocketMessage(ws.getBufferedAmount(), event.data)) {
+                            closeBoth(1013, "terminal buffer limit");
+                            return;
+                        }
                         ws.send(event.data);
                     } catch {
-                        // client closed between the check and the send
+                        closeBoth(1011, "terminal relay failed");
                     }
                 };
 
                 out.onclose = (event: CloseEvent) => {
+                    clearBridgeConnectTimer(data);
+                    resetBridgeQueue(data);
                     data.closed = true;
 
                     try {
@@ -751,28 +847,31 @@ export function startFrontProxy(opts: {
                 };
 
                 out.onerror = () => {
-                    try {
-                        ws.close(1011);
-                    } catch {
-                        // client already gone
-                    }
+                    closeBoth(1011, "terminal upstream error");
                 };
             },
             message(ws: ServerWebSocket<BridgeData>, message) {
                 const out = ws.data.out;
+                const bytes = webSocketMessageBytes(message);
+
+                if (bytes > MAX_WS_FRAME_BYTES) {
+                    closeBridge(ws, 1013, "terminal frame limit");
+                    return;
+                }
 
                 if (!out || out.readyState !== WebSocket.OPEN) {
-                    if (ws.data.queue.length >= MAX_WS_QUEUE) {
-                        // Upstream stalled while the client floods; cap memory.
-                        ws.close(1013, "upstream not ready");
+                    if (!queuePendingWebSocketMessage(ws.data, message)) {
+                        closeBridge(ws, 1013, "terminal buffer limit");
                         return;
                     }
-
-                    ws.data.queue.push(message);
                     return;
                 }
 
                 try {
+                    if (!canSendWebSocketMessage(out.bufferedAmount, message)) {
+                        closeBridge(ws, 1013, "terminal buffer limit");
+                        return;
+                    }
                     out.send(message);
                 } catch {
                     // upstream closed between the readyState check and the send
@@ -781,6 +880,8 @@ export function startFrontProxy(opts: {
             close(ws: ServerWebSocket<BridgeData>, code, reason) {
                 const data = ws.data;
                 data.closed = true;
+                clearBridgeConnectTimer(data);
+                resetBridgeQueue(data);
                 const out = data.out;
 
                 if (out && (out.readyState === WebSocket.OPEN || out.readyState === WebSocket.CONNECTING)) {

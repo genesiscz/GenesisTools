@@ -55,6 +55,27 @@ function mockReq(method: string, url: string): IncomingMessage {
     return { method, url, headers: { host: "localhost" } } as unknown as IncomingMessage;
 }
 
+function bodyReq(chunks: Uint8Array[], contentLength?: number): { req: IncomingMessage; resumed: () => boolean } {
+    let didResume = false;
+    const req = {
+        method: "POST",
+        url: "/api/echo-json",
+        headers: {
+            host: "localhost",
+            ...(contentLength === undefined ? {} : { "content-length": String(contentLength) }),
+        },
+        resume() {
+            didResume = true;
+        },
+        async *[Symbol.asyncIterator]() {
+            for (const chunk of chunks) {
+                yield chunk;
+            }
+        },
+    } as unknown as IncomingMessage;
+    return { req, resumed: () => didResume };
+}
+
 describe("handleWithRouter (node/connect)", () => {
     it("serializes a json result with status + content-type", async () => {
         const router = new Router().add({
@@ -81,5 +102,26 @@ describe("handleWithRouter (node/connect)", () => {
         });
 
         expect(handled).toBe(false);
+    });
+
+    it("returns 413 from Content-Length before Node retains or parses the body", async () => {
+        let routeWork = false;
+        const router = new Router().add({
+            method: "POST",
+            pattern: "/api/echo-json",
+            handler: async (ctx) => {
+                await ctx.readJson();
+                routeWork = true;
+                return { kind: "json", status: 200, body: { ok: true } };
+            },
+        });
+        const { req, resumed } = bodyReq([], 8 * 1024 * 1024 + 1);
+        const { res, state } = mockRes();
+
+        await handleWithRouter(router, req, res, { services: { collector: fakeCollector } });
+
+        expect(state.statusCode).toBe(413);
+        expect(routeWork).toBe(false);
+        expect(resumed()).toBe(true);
     });
 });

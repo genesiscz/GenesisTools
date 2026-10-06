@@ -3,6 +3,7 @@ import type { RouteContext, RouteResult, RouteServices, SseEmitter } from "@app/
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import { RequestBodyTooLargeError, readBoundedWebBody, requestBodyLimit } from "./body-reader";
 
 // Per-endpoint handler time, keyed by route pattern so `:id` routes aggregate.
 //   PROFILE=route,ttyd,tmux tools dev-dashboard …
@@ -105,9 +106,15 @@ export async function routerToResponse(
         headers[key.toLowerCase()] = value;
     });
 
+    let bodyLimitError: RequestBodyTooLargeError | undefined;
     let rawBodyPromise: Promise<Uint8Array> | undefined;
     const readRawBody = (): Promise<Uint8Array> => {
-        rawBodyPromise ??= req.arrayBuffer().then((buf) => new Uint8Array(buf));
+        rawBodyPromise ??= readBoundedWebBody(req, requestBodyLimit(url.pathname)).catch((error) => {
+            if (error instanceof RequestBodyTooLargeError) {
+                bodyLimitError = error;
+            }
+            throw error;
+        });
         return rawBodyPromise;
     };
     const ctx: RouteContext = {
@@ -126,5 +133,16 @@ export async function routerToResponse(
 
     const label = `${matched.def.method} ${matched.def.pattern}`;
 
-    return toResponse(await prof.measureAsync(label, async () => matched.def.handler(ctx)));
+    try {
+        const result = await prof.measureAsync(label, async () => matched.def.handler(ctx));
+        if (bodyLimitError) {
+            throw bodyLimitError;
+        }
+        return toResponse(result);
+    } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+            return Response.json({ error: error.message, maxBytes: error.maxBytes }, { status: 413 });
+        }
+        throw error;
+    }
 }
