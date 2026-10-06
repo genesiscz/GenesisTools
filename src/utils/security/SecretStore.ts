@@ -20,6 +20,17 @@ const KEY_BYTES = 32;
 const IV_BYTES = 12;
 export const TAG_BYTES = 16;
 
+export type SecretStoreOperation = "vault-read" | "vault-parse" | "encrypt" | "decrypt";
+
+let operationObserver: ((operation: SecretStoreOperation) => void) | undefined;
+
+/** Test/benchmark seam. Production never installs an observer. */
+export function _setSecretStoreOperationObserverForTest(
+    observer: ((operation: SecretStoreOperation) => void) | undefined
+): void {
+    operationObserver = observer;
+}
+
 export interface SecretStore {
     get(path: string): Promise<string | undefined>;
     /** Sync read for callers whose signature cannot become async. */
@@ -49,6 +60,7 @@ export function entryKey(master: Buffer, path: string): Buffer {
 }
 
 export function encryptEntry(master: Buffer, path: string, value: string): VaultEntry {
+    operationObserver?.("encrypt");
     const key = entryKey(master, path);
     const iv = randomBytes(IV_BYTES);
     const cipher = createCipheriv("aes-256-gcm", key, iv);
@@ -96,6 +108,7 @@ function describeDecryptFailure(path: string, err: unknown): Error {
 }
 
 export function decryptEntry(master: Buffer, path: string, entry: VaultEntry): string {
+    operationObserver?.("decrypt");
     const tag = Buffer.from(entry.tag, "base64");
 
     // Node's GCM decipher accepts NIST-truncated tags (down to 32 bits) when no
@@ -141,7 +154,10 @@ class FileSecretStore implements SecretStore {
             return emptyVault();
         }
 
-        const parsed: VaultFile = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+        operationObserver?.("vault-read");
+        const raw = readFileSync(path, "utf8");
+        operationObserver?.("vault-parse");
+        const parsed: VaultFile = SafeJSON.parse(raw, { strict: true });
         if (!parsed || typeof parsed !== "object" || !parsed.entries) {
             throw new Error(`Vault at ${path} is unreadable. Restore it from a backup or re-import an export.`);
         }
