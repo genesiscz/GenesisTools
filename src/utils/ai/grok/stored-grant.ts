@@ -19,6 +19,7 @@ export interface StoredGrantStore {
 export interface StoredGrokGrantDeps {
     loadStore(allowWrite: boolean): Promise<StoredGrantStore>;
     resolveSecret: typeof resolveSecret;
+    preparePersistence(): Promise<void>;
     storeSecret(accountId: string, field: "accessToken" | "refreshToken", value: string): Promise<SecureRef>;
     refresh(refreshToken: string): Promise<GrokTokens>;
 }
@@ -26,6 +27,9 @@ export interface StoredGrokGrantDeps {
 const defaultDeps: StoredGrokGrantDeps = {
     loadStore: (allowWrite) => (allowWrite ? AiConfigStore.load() : AiConfigStore.readOnly()),
     resolveSecret,
+    preparePersistence: async () => {
+        await masterKey();
+    },
     async storeSecret(accountId, field, value) {
         // A legacy plaintext grant must not be spent before vault encryption is available.
         await masterKey();
@@ -107,6 +111,8 @@ export async function resolveStoredGrokGrant(
         if (!refreshToken) {
             throw new GrokAuthExpiredError(undefined, { hint });
         }
+
+        await deps.preparePersistence();
 
         let rotated: GrokTokens;
         try {

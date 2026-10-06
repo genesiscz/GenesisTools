@@ -40,6 +40,7 @@ interface Harness {
     vault: Map<string, string>;
     loads: boolean[];
     refreshes: string[];
+    events: string[];
     locks: number;
 }
 
@@ -47,6 +48,7 @@ function harness(input: {
     accounts: AccountEntry[];
     vault?: Record<string, string>;
     refresh?: (refreshToken: string) => Promise<GrokTokens>;
+    preparePersistence?: () => Promise<void>;
     /** Runs inside the lock, before the resolver looks again: another process's write. */
     beforeLocked?: (accounts: AccountEntry[]) => void;
 }): Harness {
@@ -55,6 +57,7 @@ function harness(input: {
         vault: new Map(Object.entries(input.vault ?? {})),
         loads: [],
         refreshes: [],
+        events: [],
         locks: 0,
         deps: {
             async loadStore(allowWrite) {
@@ -77,12 +80,18 @@ function harness(input: {
 
                 return isSecureRef(value) ? state.vault.get(value.path) : value;
             },
+            async preparePersistence() {
+                state.events.push("prepare");
+                await input.preparePersistence?.();
+            },
             async storeSecret(accountId, field, value) {
+                state.events.push(`store:${field}`);
                 const path = `ai/${accountId}/${field}`;
                 state.vault.set(path, value);
                 return secureRef(path);
             },
             async refresh(refreshToken) {
+                state.events.push("refresh");
                 state.refreshes.push(refreshToken);
 
                 if (input.refresh) {
@@ -128,11 +137,30 @@ describe("resolveStoredGrokGrant", () => {
 
         expect(await resolveStoredGrokGrant("grok", { deps: h.deps })).toBe(ROTATED);
         expect(h.refreshes).toEqual(["refresh-stored"]);
+        expect(h.events).toEqual(["prepare", "refresh", "store:accessToken", "store:refreshToken"]);
         expect(h.locks).toBe(1);
         expect(h.vault.get("ai/acc_grok/accessToken")).toBe(ROTATED);
         expect(h.vault.get("ai/acc_grok/refreshToken")).toBe("refresh-rotated");
         expect(isSecureRef(h.accounts[0].credentials.accessToken)).toBe(true);
         expect(h.accounts[0].credentials.expiresAt).toBeGreaterThan(Date.now());
+    });
+
+    test("persistence is prepared before a plaintext single-use refresh grant is consumed", async () => {
+        const h = harness({
+            accounts: [account({ accessToken: EXPIRED, refreshToken: "refresh-stored" })],
+            preparePersistence: async () => {
+                throw new Error("persistence unavailable");
+            },
+            refresh: async () => {
+                throw new Error("single-use refresh was reached");
+            },
+        });
+
+        await expect(resolveStoredGrokGrant("grok", { deps: h.deps })).rejects.toThrow("persistence unavailable");
+        expect(h.events).toEqual(["prepare"]);
+        expect(h.refreshes).toEqual([]);
+        expect(h.accounts[0].credentials).toEqual({ accessToken: EXPIRED, refreshToken: "refresh-stored" });
+        expect(h.vault.size).toBe(0);
     });
 
     // Guard above the consuming call: the refresh token is single-use, and a report must
