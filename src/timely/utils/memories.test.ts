@@ -114,6 +114,27 @@ describe("fetchMemoriesForDates", () => {
         expect(sent).toEqual(["_memory_session=abc"]);
     });
 
+    test("keeps same-date memories isolated by account and reuses only the matching account cache", async () => {
+        const storage = new Storage("timely-memories-account-cache-test");
+        let calls = 0;
+        stubFetch(async (input) => {
+            calls++;
+            const accountId = Number(new URL(String(input)).pathname.split("/")[1]);
+            return new Response(SafeJSON.stringify([{ id: accountId }]), { status: 200 });
+        });
+
+        const base = { accessToken: "test-token", dates: ["2026-07-20"], storage };
+        const first = await fetchMemoriesForDates({ ...base, accountId: 111 });
+        const second = await fetchMemoriesForDates({ ...base, accountId: 222 });
+        const firstAgain = await fetchMemoriesForDates({ ...base, accountId: 111 });
+
+        expect(first.entries.map((entry) => entry.id)).toEqual([111]);
+        expect(second.entries.map((entry) => entry.id)).toEqual([222]);
+        expect(firstAgain.entries.map((entry) => entry.id)).toEqual([111]);
+        expect(calls).toBe(2);
+        expect(firstAgain.stats.cached).toBe(1);
+    });
+
     test("a 401 with a stored cookie is flagged as a cookie failure", async () => {
         stubFetch(async () => new Response('{"error":"Unauthorized"}', { status: 401 }));
 

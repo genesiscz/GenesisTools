@@ -8,6 +8,7 @@ import type { TimelyEntry } from "@app/timely/types/api";
 import { formatDuration as _formatDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { Storage } from "@genesiscz/utils/storage";
+import { timelyAccountCacheKey } from "./account-cache";
 import { getDatesInMonth } from "./date";
 
 /**
@@ -420,9 +421,10 @@ function extractDetailedContext(entry: ProcessedEntry): ProcessedEntry {
 async function processDay(
     date: string,
     storage: Storage,
+    accountId: number,
     detailMode: boolean = false
 ): Promise<{ rawEntries: ProcessedEntry[]; summary: string }> {
-    const cacheKey = `suggested_entries/suggested_entries-${date}.json`;
+    const cacheKey = timelyAccountCacheKey(accountId, `suggested_entries/suggested_entries-${date}.json`);
 
     try {
         // Use a very long TTL since we're reading already cached files
@@ -567,6 +569,7 @@ function formatDateForDisplay(date: string, year: number, month: number): string
 export async function generateReportMarkdown(
     monthArg: string,
     storage: Storage,
+    accountId: number,
     detailMode: boolean = false
 ): Promise<{ content: string; filePath: string }> {
     const [year, month] = monthArg.split("-").map(Number);
@@ -576,7 +579,7 @@ export async function generateReportMarkdown(
     const allSummaries: { [date: string]: string } = {};
 
     for (const date of dates) {
-        const { rawEntries, summary } = await processDay(date, storage, detailMode);
+        const { rawEntries, summary } = await processDay(date, storage, accountId, detailMode);
         if (summary.trim()) {
             allEntries[date] = rawEntries;
             allSummaries[date] = summary;
@@ -600,7 +603,8 @@ export async function generateReportMarkdown(
     const content = mdLines.join("\n");
 
     // Save to cache with different filename for detailed mode
-    const cacheKey = detailMode ? `entries-${monthArg}-detailed-summary.md` : `entries-${monthArg}-summary.md`;
+    const reportName = detailMode ? `entries-${monthArg}-detailed-summary.md` : `entries-${monthArg}-summary.md`;
+    const cacheKey = timelyAccountCacheKey(accountId, reportName);
     const ttl = "90 days";
     await storage.putRawFile(cacheKey, content, ttl);
 

@@ -1,6 +1,7 @@
 import type { TimelyService } from "@app/timely/api/service";
 import type { TimelyEvent } from "@app/timely/types/api";
 import type { Storage } from "@genesiscz/utils/storage";
+import { timelyAccountCacheKey } from "./account-cache";
 
 const CORPUS_TTL = "1 day";
 const CORPUS_WINDOW_DAYS = 56; // 8 weeks
@@ -27,7 +28,7 @@ export async function loadEventCorpus(
     startDate.setDate(startDate.getDate() - CORPUS_WINDOW_DAYS);
     const start = startDate.toISOString().slice(0, 10);
 
-    const cacheKey = `corpus/events-${start}_${end}.json`;
+    const cacheKey = timelyAccountCacheKey(accountId, `corpus/events-${start}_${end}.json`);
     const events = await storage.getFileOrPut<TimelyEvent[]>(
         cacheKey,
         () => service.getAllEvents(accountId, { since: start, upto: end }),

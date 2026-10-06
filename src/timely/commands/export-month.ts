@@ -2,6 +2,7 @@ import { isTimelyAuthFailure } from "@app/timely/api/errors";
 import type { TimelyService } from "@app/timely/api/service";
 import { fetchTimelyWebJson } from "@app/timely/api/web-fetch";
 import type { TimelyEvent } from "@app/timely/types";
+import { timelyAccountCacheKey } from "@app/timely/utils/account-cache";
 import { readStoredCookie } from "@app/timely/utils/cookie";
 import { formatDuration, getDatesInMonth, getMonthDateRange } from "@app/timely/utils/date";
 import { generateReportMarkdown } from "@app/timely/utils/entry-processor";
@@ -76,7 +77,7 @@ async function exportMonthAction(
     const failedDates: string[] = [];
 
     for (const date of dates) {
-        const cacheKey = `suggested_entries/suggested_entries-${date}.json`;
+        const cacheKey = timelyAccountCacheKey(accountId, `suggested_entries/suggested_entries-${date}.json`);
         const isToday = date === today;
         // Today's date expires in 1 hour, all other dates never expire (3650000 days = ~10000 years)
         const ttl = isToday ? "1 hour" : "3650000 days";
@@ -162,10 +163,10 @@ async function exportMonthAction(
             await exportAsRaw(events, monthArg, accountId, accessToken, service);
             break;
         case "summary":
-            await exportAsReport(monthArg, storage, silent, false);
+            await exportAsReport(monthArg, storage, accountId, silent, false);
             break;
         case "detailed-summary":
-            await exportAsReport(monthArg, storage, silent, true);
+            await exportAsReport(monthArg, storage, accountId, silent, true);
             break;
         default:
             exportAsTable(events, monthArg);
@@ -464,6 +465,7 @@ async function exportAsRaw(
 async function exportAsReport(
     monthArg: string,
     storage: Storage,
+    accountId: number,
     silent: boolean,
     detailMode: boolean = false
 ): Promise<void> {
@@ -472,7 +474,7 @@ async function exportAsReport(
         logger.info(chalk.cyan(`\nGenerating ${modeText}summary for ${monthArg}...\n`));
     }
 
-    const { content, filePath } = await generateReportMarkdown(monthArg, storage, detailMode);
+    const { content, filePath } = await generateReportMarkdown(monthArg, storage, accountId, detailMode);
 
     // Output absolute path (always shown)
     out.println(filePath);

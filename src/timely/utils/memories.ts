@@ -4,6 +4,7 @@ import type { TimelyEntry } from "@app/timely/types";
 import { readStoredCookie } from "@app/timely/utils/cookie";
 import { logger } from "@genesiscz/utils/logger";
 import type { Storage } from "@genesiscz/utils/storage";
+import { timelyAccountCacheKey } from "./account-cache";
 
 const CACHE_TTL = "30 days";
 
@@ -49,7 +50,7 @@ export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Prom
     for (let i = 0; i < sortedDates.length; i++) {
         const date = sortedDates[i];
         const isToday = date === today;
-        const cacheKey = `memories/memories-${date}.json`;
+        const cacheKey = timelyAccountCacheKey(accountId, `memories/memories-${date}.json`);
         const progress = `${i + 1}/${sortedDates.length}`;
 
         try {

@@ -6,6 +6,7 @@ import type {
     TimelyProject,
     TimelyUser,
 } from "@app/timely/types";
+import { timelyAccountCacheKey } from "@app/timely/utils/account-cache";
 import { readStoredCookie } from "@app/timely/utils/cookie";
 import { logger } from "@genesiscz/utils/logger";
 import type { Storage } from "@genesiscz/utils/storage";
@@ -152,7 +153,7 @@ export class TimelyService {
      * Tries multiple endpoints and caches the result
      */
     async getEntry(accountId: number, entryId: number, accessToken: string): Promise<TimelyEntry[] | null> {
-        const cacheKey = `entries/entry-${entryId}.json`;
+        const cacheKey = timelyAccountCacheKey(accountId, `entries/entry-${entryId}.json`);
         const ttl = "7 days"; // Cache entries for 7 days
 
         try {

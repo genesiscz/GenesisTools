@@ -374,6 +374,7 @@ async function runApply(storage: Storage, service: TimelyService, options: Creat
     });
 
     let created = 0;
+    let reused = 0;
     let failed = 0;
     for (const r of results) {
         if (r.error) {
@@ -385,6 +386,13 @@ async function runApply(storage: Storage, service: TimelyService, options: Creat
                     `◯ ${r.day}#${r.eventIdx} [proj ${r.project_id}] DRY ${r.duration} (${r.memoryCount} memories)`
                 )
             );
+        } else if (r.alreadyApplied) {
+            out.println(
+                chalk.green(
+                    `✓ ${r.day}#${r.eventIdx} [proj ${r.project_id}] already applied as event ${r.eventId} (${r.duration}, ${r.memoryCount} memories)`
+                )
+            );
+            reused++;
         } else {
             out.println(
                 chalk.green(
@@ -398,7 +406,9 @@ async function runApply(storage: Storage, service: TimelyService, options: Creat
     if (options.dryRun) {
         logger.info(`Dry-run complete: ${results.length} event(s) would be created.`);
     } else {
-        logger.info(`Created ${created} event(s)${failed > 0 ? `, ${failed} failed` : ""}.`);
+        logger.info(
+            `Created ${created} event(s)${reused > 0 ? `, ${reused} already applied` : ""}${failed > 0 ? `, ${failed} failed` : ""}.`
+        );
         if (failed > 0) {
             process.exit(1);
         }

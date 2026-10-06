@@ -1,9 +1,48 @@
+import { createHash } from "node:crypto";
+import { TimelyHttpError } from "@app/timely/api/errors";
 import type { TimelyService } from "@app/timely/api/service";
 import type { TimelyEvent } from "@app/timely/types/api";
 import type { CreatePlanV1, PlanIssue } from "@app/timely/types/plan";
 import { buildPayloadFromFlat, flattenMemories } from "@app/timely/utils/flatten-memories";
 import { fetchMemoriesForDates } from "@app/timely/utils/memories";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { Storage } from "@genesiscz/utils/storage";
+
+interface CreateEventService {
+    createEvent(
+        accountId: number,
+        input: Parameters<TimelyService["createEvent"]>[1]
+    ): Promise<Pick<TimelyEvent, "id" | "duration">>;
+    getAllEvents?: (
+        accountId: number,
+        params: { since: string; upto: string }
+    ) => Promise<
+        Array<
+            Pick<TimelyEvent, "id" | "day" | "note" | "from" | "to" | "duration"> & {
+                project: Pick<TimelyEvent["project"], "id">;
+            }
+        >
+    >;
+}
+
+interface ApplyReceipt {
+    identity: string;
+    status: "pending" | "created";
+    eventId?: number;
+    duration: string;
+    updatedAt: string;
+}
+
+type ApplyReceiptLedger = Record<string, ApplyReceipt>;
+
+function isDefinitiveCreateRejection(error: unknown): boolean {
+    return (
+        error instanceof TimelyHttpError &&
+        error.status >= 400 &&
+        error.status < 500 &&
+        ![408, 409, 425, 429].includes(error.status)
+    );
+}
 
 export function validatePlan(plan: CreatePlanV1): PlanIssue[] {
     const issues: PlanIssue[] = [];
@@ -120,11 +159,12 @@ export interface ApplyResult {
     duration: string;
     memoryCount: number;
     error?: string;
+    alreadyApplied?: boolean;
 }
 
 export async function applyPlan(args: {
     plan: CreatePlanV1;
-    service: TimelyService;
+    service: CreateEventService;
     storage: Storage;
     accountId: number;
     accessToken: string;
@@ -174,8 +214,118 @@ export async function applyPlan(args: {
                 continue;
             }
 
+            const identity = createHash("sha256")
+                .update(
+                    SafeJSON.stringify({
+                        accountId: args.accountId,
+                        day: planDay.day,
+                        projectId: ev.project_id,
+                        memoryIds: [...ev.memory_ids].sort((a, b) => a - b),
+                        input,
+                    })
+                )
+                .digest("hex");
+            const receiptPath = `accounts/${args.accountId}/apply-receipts.json`;
+            let priorReceipt: ApplyReceipt | undefined;
+
+            await args.storage.atomicUpdate<ApplyReceiptLedger>(receiptPath, (current) => {
+                const ledger = current ?? {};
+                priorReceipt = ledger[identity];
+
+                if (priorReceipt) {
+                    return ledger;
+                }
+
+                return {
+                    ...ledger,
+                    [identity]: {
+                        identity,
+                        status: "pending",
+                        duration,
+                        updatedAt: new Date().toISOString(),
+                    },
+                };
+            });
+
+            if (priorReceipt?.status === "created" && priorReceipt.eventId !== undefined) {
+                results.push({
+                    day: planDay.day,
+                    eventIdx,
+                    eventId: priorReceipt.eventId,
+                    project_id: ev.project_id,
+                    duration: priorReceipt.duration,
+                    memoryCount: ev.memory_ids.length,
+                    alreadyApplied: true,
+                });
+                continue;
+            }
+
+            if (priorReceipt?.status === "pending") {
+                let reconciliationFailure: string | undefined;
+
+                try {
+                    const remoteEvents = args.service.getAllEvents
+                        ? await args.service.getAllEvents(args.accountId, { since: planDay.day, upto: planDay.day })
+                        : [];
+                    const matching = remoteEvents.filter(
+                        (event) =>
+                            event.day === input.day &&
+                            event.project?.id === ev.project_id &&
+                            event.note === input.note &&
+                            event.from === input.from &&
+                            event.to === input.to
+                    );
+
+                    if (matching.length === 1) {
+                        const reconciled = matching[0];
+                        await args.storage.atomicUpdate<ApplyReceiptLedger>(receiptPath, (current) => ({
+                            ...(current ?? {}),
+                            [identity]: {
+                                identity,
+                                status: "created",
+                                eventId: reconciled.id,
+                                duration: reconciled.duration.formatted,
+                                updatedAt: new Date().toISOString(),
+                            },
+                        }));
+                        results.push({
+                            day: planDay.day,
+                            eventIdx,
+                            eventId: reconciled.id,
+                            project_id: ev.project_id,
+                            duration: reconciled.duration.formatted,
+                            memoryCount: ev.memory_ids.length,
+                            alreadyApplied: true,
+                        });
+                        continue;
+                    }
+                } catch (error) {
+                    reconciliationFailure = error instanceof Error ? error.message : String(error);
+                }
+
+                results.push({
+                    day: planDay.day,
+                    eventIdx,
+                    project_id: ev.project_id,
+                    duration,
+                    memoryCount: ev.memory_ids.length,
+                    error: `previous apply may have reached Timely; no unique remote event matched the pending receipt${reconciliationFailure ? ` (${reconciliationFailure})` : ""}`,
+                });
+                continue;
+            }
+
             try {
-                const created: TimelyEvent = await args.service.createEvent(args.accountId, input);
+                const created = await args.service.createEvent(args.accountId, input);
+                await args.storage.atomicUpdate<ApplyReceiptLedger>(receiptPath, (current) => ({
+                    ...(current ?? {}),
+                    [identity]: {
+                        identity,
+                        status: "created",
+                        eventId: created.id,
+                        duration: created.duration.formatted,
+                        updatedAt: new Date().toISOString(),
+                    },
+                }));
                 results.push({
                     day: planDay.day,
                     eventIdx,
@@ -185,6 +335,14 @@ export async function applyPlan(args: {
                     memoryCount: ev.memory_ids.length,
                 });
             } catch (err) {
+                if (isDefinitiveCreateRejection(err)) {
+                    await args.storage.atomicUpdate<ApplyReceiptLedger>(receiptPath, (current) => {
+                        const ledger = { ...(current ?? {}) };
+                        delete ledger[identity];
+                        return ledger;
+                    });
+                }
+
                 results.push({
                     day: planDay.day,
                     eventIdx,
