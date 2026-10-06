@@ -10,8 +10,13 @@ import {
     type KeyPair,
 } from "@dd/contract";
 import { fromBase64, toBase64 } from "@/transport/e2e/box-cipher";
+import { createReconnectingEventSource } from "@/transport/event-source";
 import { createQaStream } from "@/transport/qa-stream";
-import { streamSse as defaultStreamSse, type SseEvent } from "@/transport/sse-parser";
+import {
+    streamSse as defaultStreamSse,
+    type SseEvent,
+    type StreamSseOptions,
+} from "@/transport/sse-parser";
 import { createTerminalTransport } from "@/transport/terminal-ws";
 import type { QaStream, TerminalTransport, Transport } from "@/transport/Transport";
 
@@ -26,6 +31,9 @@ export interface E2eTransportOptions {
     /** expo/fetch by default; tests inject a loopback to the Agent shim. */
     fetchImpl?: typeof fetch;
     probe?: () => Promise<boolean>;
+    /** Encrypted relay stream seam for tests and platform adapters. */
+    streamSseImpl?: (options: StreamSseOptions) => { close(): void };
+    sseRetryMs?: number;
 }
 
 export function createE2eTransport(opts: E2eTransportOptions): Transport {
@@ -97,8 +105,41 @@ export function createE2eTransport(opts: E2eTransportOptions): Transport {
         });
     }) as unknown as typeof fetch;
 
+    const decryptingStreamSse: typeof defaultStreamSse = (sseOptions) =>
+        (opts.streamSseImpl ?? defaultStreamSse)({
+            ...sseOptions,
+            onEvent: (event: SseEvent) => {
+                try {
+                    const env = decodeEnvelope(event.data);
+                    const plain = opts.cipher.open({
+                        ciphertext: fromBase64(env.ct),
+                        nonce: fromBase64(env.n),
+                        senderPublicKey: opts.agentPublicKey,
+                        recipientSecretKey: opts.deviceKeys.secretKey,
+                    });
+
+                    if (plain) {
+                        sseOptions.onEvent({ ...event, data: new TextDecoder().decode(plain) });
+                    }
+                } catch {
+                    // A relay frame that is not a valid encrypted envelope is never exposed to UI.
+                }
+            },
+        });
+
     function client(): DashboardClient {
-        return createDashboardClient({ baseUrl: opts.relayBaseUrl, fetch: encryptingFetch, authHeader: () => undefined });
+        return createDashboardClient({
+            baseUrl: opts.relayBaseUrl,
+            fetch: encryptingFetch,
+            authHeader: () => undefined,
+            eventSourceFactory: (url) =>
+                createReconnectingEventSource({
+                    url,
+                    stream: decryptingStreamSse,
+                    initialRetryMs: opts.sseRetryMs,
+                    maxRetryMs: opts.sseRetryMs,
+                }),
+        });
     }
 
     return {
@@ -118,87 +159,53 @@ export function createE2eTransport(opts: E2eTransportOptions): Transport {
             }),
         client,
         streamQa(): QaStream {
-            // Each relayed SSE `data:` line is an E2eEnvelope. The decrypting streamSse opens each
-            // envelope to the plaintext QaRow JSON and re-emits it as a normal SseEvent, so the
-            // QaStream's own parser/dedupe is unchanged. Mirror of wrapTerminalE2e on send.
-            const decryptingStreamSse: typeof defaultStreamSse = (sseOpts) =>
-                defaultStreamSse({
-                    ...sseOpts,
-                    onEvent: (event: SseEvent) => {
-                        try {
-                            const env = decodeEnvelope(event.data);
-                            const plain = opts.cipher.open({
-                                ciphertext: fromBase64(env.ct),
-                                nonce: fromBase64(env.n),
-                                senderPublicKey: opts.agentPublicKey,
-                                recipientSecretKey: opts.deviceKeys.secretKey,
-                            });
-
-                            if (plain) {
-                                sseOpts.onEvent({ ...event, data: new TextDecoder().decode(plain) });
-                            }
-                        } catch {
-                            // drop a frame that isn't a valid envelope (keep-alive / handshake noise)
-                        }
-                    },
-                });
-
             return createQaStream({
                 baseUrl: opts.relayBaseUrl,
                 authHeader: () => undefined,
                 streamSseImpl: decryptingStreamSse,
             });
         },
-        openTerminal(sessionId: string): TerminalTransport {
-            // ttyd frames are E2E-wrapped at the relay; the renderer sends/receives plaintext via a
-            // decrypting message adapter. partysocket carries ciphertext envelopes; we seal on send
-            // and open on message.
+        openTerminal(sessionId: string, dimensions): TerminalTransport {
+            // Encrypt complete ttyd protocol frames so the relay sees only envelopes while the
+            // agent receives valid init/input/resize bytes after decryption.
             const wsUrl = `${opts.relayBaseUrl.replace(/^http/, "ws")}/ttyd/${sessionId}/ws`;
-            const inner = createTerminalTransport({ wsUrl });
-            return wrapTerminalE2e(inner, opts);
-        },
-    };
-}
-
-/** Wraps a TerminalTransport so send() seals and onMessage() opens E2eEnvelopes. */
-function wrapTerminalE2e(inner: TerminalTransport, opts: E2eTransportOptions): TerminalTransport {
-    return {
-        get status() {
-            return inner.status;
-        },
-        send(data) {
-            const bytes = typeof data === "string" ? new TextEncoder().encode(data) : new Uint8Array(data as ArrayBuffer);
-            const nonce = opts.cipher.randomNonce();
-            const ct = opts.cipher.seal({
-                plaintext: bytes,
-                nonce,
-                recipientPublicKey: opts.agentPublicKey,
-                senderSecretKey: opts.deviceKeys.secretKey,
-            });
-            inner.send(
-                encodeEnvelope({ v: 1, epk: toBase64(opts.deviceKeys.publicKey), n: toBase64(nonce), ct: toBase64(ct) }),
-            );
-        },
-        onMessage(handler) {
-            inner.onMessage((raw) => {
-                try {
-                    const env = decodeEnvelope(typeof raw === "string" ? raw : new TextDecoder().decode(raw));
-                    const plain = opts.cipher.open({
-                        ciphertext: fromBase64(env.ct),
-                        nonce: fromBase64(env.n),
-                        senderPublicKey: opts.agentPublicKey,
-                        recipientSecretKey: opts.deviceKeys.secretKey,
-                    });
-
-                    if (plain) {
-                        handler(new TextDecoder().decode(plain));
-                    }
-                } catch {
-                    // drop a frame that isn't a valid envelope (keep-alive / handshake noise)
-                }
+            return createTerminalTransport({
+                wsUrl,
+                dimensions,
+                wire: {
+                    encode(frame) {
+                        const nonce = opts.cipher.randomNonce();
+                        const ct = opts.cipher.seal({
+                            plaintext: new Uint8Array(frame),
+                            nonce,
+                            recipientPublicKey: opts.agentPublicKey,
+                            senderSecretKey: opts.deviceKeys.secretKey,
+                        });
+                        return encodeEnvelope({
+                            v: 1,
+                            epk: toBase64(opts.deviceKeys.publicKey),
+                            n: toBase64(nonce),
+                            ct: toBase64(ct),
+                        });
+                    },
+                    decode(frame) {
+                        try {
+                            const env = decodeEnvelope(
+                                typeof frame === "string" ? frame : new TextDecoder().decode(frame)
+                            );
+                            const plain = opts.cipher.open({
+                                ciphertext: fromBase64(env.ct),
+                                nonce: fromBase64(env.n),
+                                senderPublicKey: opts.agentPublicKey,
+                                recipientSecretKey: opts.deviceKeys.secretKey,
+                            });
+                            return plain ? (new Uint8Array(plain).buffer as ArrayBuffer) : null;
+                        } catch {
+                            return null;
+                        }
+                    },
+                },
             });
         },
-        onStatus: (handler) => inner.onStatus(handler),
-        close: () => inner.close(),
     };
 }

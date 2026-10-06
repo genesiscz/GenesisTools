@@ -20,8 +20,13 @@ export interface MergeQaArgs {
     persisted: QaRow[];
 }
 
-/** live ++ (persisted minus anything already live), deduped by id, order-stable. */
+/**
+ * Live delivery decides display order and preserves stream-only HTML. Persisted rows are the
+ * authority for mutable fields such as readAt, so a later log refresh reconciles cross-device
+ * changes instead of being masked by the older live copy.
+ */
 export function mergeQaRows({ live, persisted }: MergeQaArgs): QaRow[] {
+    const canonical = new Map(persisted.filter((row) => row.id != null).map((row) => [row.id, row]));
     const seen = new Set<string>();
     const out: QaRow[] = [];
 
@@ -39,11 +44,46 @@ export function mergeQaRows({ live, persisted }: MergeQaArgs): QaRow[] {
                 seen.add(id);
             }
 
-            out.push(row);
+            const persistedRow = id == null ? undefined : canonical.get(id);
+            out.push(
+                persistedRow
+                    ? {
+                          ...row,
+                          ...persistedRow,
+                          answerHtml: persistedRow.answerHtml ?? row.answerHtml,
+                          answerHtmlPreview: persistedRow.answerHtmlPreview ?? row.answerHtmlPreview,
+                          questionHtml: persistedRow.questionHtml ?? row.questionHtml,
+                      }
+                    : row
+            );
         }
     }
 
     return out;
+}
+
+export interface PersistQaReadToggleOptions {
+    persist: () => Promise<unknown>;
+    refetch: () => Promise<unknown>;
+    isCurrent: () => boolean;
+    onAcknowledged: () => void;
+    onRejected: (error: unknown) => void;
+}
+
+/** Keep an optimistic read override only until its own authoritative refresh settles. */
+export async function persistQaReadToggle(options: PersistQaReadToggleOptions): Promise<void> {
+    try {
+        await options.persist();
+        await options.refetch();
+
+        if (options.isCurrent()) {
+            options.onAcknowledged();
+        }
+    } catch (error) {
+        if (options.isCurrent()) {
+            options.onRejected(error);
+        }
+    }
 }
 
 export interface QaFilter {

@@ -67,4 +67,34 @@ describe("LiveHub", () => {
         expect(events.at(-1)).toEqual({ ch: "qa", d: -1 });
         hub._reset();
     });
+
+    test("publish serializes one shared payload for all matching subscribers and none without demand", () => {
+        let serializations = 0;
+        const hub = createLiveHub({
+            serialize(frame) {
+                serializations += 1;
+                return SafeJSON.stringify(frame);
+            },
+        });
+        const frame: LiveFrame = {
+            v: 1,
+            channel: "ports",
+            type: "snapshot",
+            payload: { lsofAvailable: true, ports: [], scannedAt: 1 },
+        };
+
+        hub.publish(frame);
+        expect(serializations).toBe(0);
+
+        const clients = Array.from({ length: 8 }, () => mockEmit());
+        for (const client of clients) {
+            hub.open(client.emit, ["ports"]);
+        }
+
+        // Hello frames are connection-specific; measure only the broadcast below.
+        serializations = 0;
+        hub.publish(frame);
+        expect(serializations).toBe(1);
+        expect(clients.every((client) => client.frames.some((candidate) => candidate.channel === "ports"))).toBe(true);
+    });
 });

@@ -18,7 +18,7 @@ interface QaLiveDotProps {
 export function QaLiveDot({ status, testID = "qa-live-indicator" }: QaLiveDotProps) {
     const c = useThemeColors();
     const connected = status === "open" || status === "live";
-    const color = connected ? c.accent : c.textMuted;
+    const color = connected ? c.accent : status === "down" ? c.danger : c.textMuted;
 
     return (
         <View
@@ -28,8 +28,8 @@ export function QaLiveDot({ status, testID = "qa-live-indicator" }: QaLiveDotPro
             className="flex-row items-center gap-1.5"
         >
             <View className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
-            <Text className="text-[10px] font-bold uppercase tracking-widest" style={{ color, fontFamily: "monospace" }}>
-                {connected ? "live" : "connecting"}
+            <Text className="text-[10px] font-bold" style={{ color, fontFamily: "monospace" }}>
+                {connected ? "Live" : status === "down" ? "Down" : "Connecting"}
             </Text>
         </View>
     );

@@ -21,10 +21,12 @@ export type TerminalStatus = "connecting" | "open" | "reconnecting" | "closed";
 
 /** ttyd WebSocket transport (ADR §4 `openTerminal`). xterm/WebView driver (plan 06) drives this. */
 export interface TerminalTransport {
-    /** Send raw bytes (keystrokes) to ttyd. */
+    /** Send terminal input; the transport applies ttyd's input command framing. */
     send(data: string | ArrayBufferLike): void;
-    /** ttyd output frames. */
+    /** Decoded ttyd output payloads (metadata frames are consumed by the transport). */
     onMessage(handler: (data: string | ArrayBuffer) => void): void;
+    /** Send ttyd's resize command and retain dimensions for the next reconnect init. */
+    resize(columns: number, rows: number): void;
     /** Connection lifecycle for the renderer's status pill. */
     onStatus(handler: (status: TerminalStatus) => void): void;
     /** Close the socket (does NOT kill the server-side tmux/cmux session). */
@@ -49,5 +51,5 @@ export interface Transport {
     /** SSE Q&A stream under the hood (expo/fetch on plain tiers; E2E-wrapped on managed). */
     streamQa(): QaStream;
     /** partysocket-wrapped ttyd WS (+ cookie/token; E2E-wrapped on managed). */
-    openTerminal(sessionId: string): TerminalTransport;
+    openTerminal(sessionId: string, dimensions?: { columns: number; rows: number }): TerminalTransport;
 }

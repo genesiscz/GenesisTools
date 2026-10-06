@@ -14,6 +14,14 @@ const kv = new Map<string, string>();
 const secure = new Map<string, string>();
 let managedPairing: unknown = null;
 
+function transport(tier: string) {
+    return {
+        tier,
+        baseUrl: () => `http://${tier}.example.test`,
+        authHeader: () => undefined,
+    };
+}
+
 mock.module("expo-sqlite/kv-store", () => ({
     default: {
         getItem: async (k: string) => kv.get(k) ?? null,
@@ -40,23 +48,32 @@ mock.module("expo-secure-store", () => ({
 mock.module("@/transport/tiers/managed", () => ({
     createManagedTransport: async (pairing: unknown) => {
         managedPairing = pairing;
-        return { tier: "managed" };
+        return transport("managed");
     },
 }));
-mock.module("@/transport/tiers/lan", () => ({ createLanTransport: async () => ({ tier: "lan" }) }));
-mock.module("@/transport/tiers/tailscale", () => ({ createTailscaleTransport: async () => ({ tier: "tailscale" }) }));
+mock.module("@/transport/tiers/lan", () => ({ createLanTransport: async () => transport("lan") }));
+mock.module("@/transport/tiers/tailscale", () => ({ createTailscaleTransport: async () => transport("tailscale") }));
 mock.module("@/transport/tiers/cloudflared", () => ({
-    createCloudflaredTransport: async () => ({ tier: "cloudflared-self" }),
+    createCloudflaredTransport: async () => transport("cloudflared-self"),
 }));
 
 const { buildTransportFor, getConnection, loadConnections, updateConnection, upsertConnection } = await import(
     "@/features/connections/store"
 );
+const { useConnectionStore } = await import("@/state/connection-store");
 
 beforeEach(() => {
     kv.clear();
     secure.clear();
     managedPairing = null;
+    useConnectionStore.setState({
+        tier: null,
+        transport: null,
+        connections: [],
+        activeId: null,
+        restored: false,
+        sessionGeneration: 0,
+    });
 });
 
 describe("upsertConnection — managed pairings", () => {
@@ -137,5 +154,32 @@ describe("updateConnection — baseUrl rebuild", () => {
         const updated = await updateConnection(id, { host: "ignored.example.com", baseUrl: "https://exact.example.com" });
 
         expect(updated?.baseUrl).toBe("https://exact.example.com");
+    });
+});
+
+describe("connection session ownership", () => {
+    it("advances the session generation whenever a connection is activated", async () => {
+        const first = await upsertConnection({
+            tier: "lan",
+            baseUrl: "http://machine-a.test",
+            host: "machine-a.test",
+            port: 3042,
+            username: "work",
+        });
+        const second = await upsertConnection({
+            tier: "lan",
+            baseUrl: "http://machine-b.test",
+            host: "machine-b.test",
+            port: 3042,
+            username: "work",
+        });
+
+        await useConnectionStore.getState().activateConnection(first);
+        const firstGeneration = useConnectionStore.getState().sessionGeneration;
+        await useConnectionStore.getState().activateConnection(second);
+
+        expect(firstGeneration).toBe(1);
+        expect(useConnectionStore.getState().sessionGeneration).toBe(2);
+        expect(useConnectionStore.getState().activeId).toBe(second);
     });
 });

@@ -32,6 +32,8 @@ interface ConnectionStoreState {
     transport: Transport | null;
     connections: SavedConnection[];
     activeId: string | null;
+    /** Monotonic ownership boundary for cache, subscriptions, and screen-local state. */
+    sessionGeneration: number;
     /** False until boot-time `restore()` has resolved — the root layout shows a splash until then. */
     restored: boolean;
     setLan: (agent: DiscoveredAgent, creds: LanCredentials) => Promise<void>;
@@ -62,6 +64,7 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => ({
     transport: null,
     connections: [],
     activeId: null,
+    sessionGeneration: 0,
     restored: false,
 
     async setLan(agent, creds) {
@@ -143,7 +146,11 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => ({
             try {
                 const transport = await buildTransportFor(active);
                 publishToGate(transport);
-                set({ tier: transport.tier, transport });
+                set((state) => ({
+                    tier: transport.tier,
+                    transport,
+                    sessionGeneration: state.sessionGeneration + 1,
+                }));
             } catch (err) {
                 // Restore failure must never crash the boot path — fall through to /connect.
                 console.warn(`[connection-store] failed to restore connection ${activeId}`, err);
@@ -178,13 +185,15 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => ({
 
         const transport = await buildTransportFor(conn);
         await markActivated(id);
+        const connections = await loadConnections();
         publishToGate(transport);
-        set({
+        set((state) => ({
             tier: transport.tier,
             transport,
             activeId: id,
-            connections: await loadConnections(),
-        });
+            connections,
+            sessionGeneration: state.sessionGeneration + 1,
+        }));
     },
 
     async updateConnection(id, patch) {
@@ -199,7 +208,11 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => ({
             if (conn) {
                 const transport = await buildTransportFor(conn);
                 publishToGate(transport);
-                set({ tier: transport.tier, transport });
+                set((state) => ({
+                    tier: transport.tier,
+                    transport,
+                    sessionGeneration: state.sessionGeneration + 1,
+                }));
             }
         }
     },
@@ -212,7 +225,11 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => ({
 
         // Removing the active connection drops the app back to the connect gate.
         if (get().transport && get().activeId === null) {
-            set({ tier: null, transport: null });
+            set((state) => ({
+                tier: null,
+                transport: null,
+                sessionGeneration: state.sessionGeneration + 1,
+            }));
             useConnection.getState().reset();
         }
     },

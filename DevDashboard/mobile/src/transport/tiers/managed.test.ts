@@ -13,11 +13,12 @@ mock.module("expo-secure-store", () => ({
 }));
 
 const { naclBoxCipher } = await import("@/transport/e2e/box-cipher");
+const { toBase64 } = await import("@/transport/e2e/box-cipher");
 const { createE2eTransport } = await import("@/transport/e2e-transport");
 // The REAL Agent shim — this is the cross-stack proof: a request the phone encrypts is
 // decrypted + handled + re-encrypted by the actual Agent code, then decrypted by the phone.
 const { createE2eShim } = await import("@app/dev-dashboard/server/transport/e2e-shim");
-const { decodeE2eRequest, encodeE2eResponse } = await import("@dd/contract");
+const { decodeE2eRequest, encodeE2eResponse, encodeEnvelope } = await import("@dd/contract");
 
 describe("createE2eTransport (managed tier, real Agent shim loopback)", () => {
     it("encrypts an outbound request and decrypts the agent's response", async () => {
@@ -82,5 +83,53 @@ describe("createE2eTransport (managed tier, real Agent shim loopback)", () => {
             fetchImpl: relayFetch,
         });
         expect(await t.reachable()).toBe(false);
+    });
+
+    it("adapts encrypted relay SSE into the real client QA subscription", async () => {
+        const agent = naclBoxCipher.keyPair();
+        const device = naclBoxCipher.keyPair();
+        let streamOptions: Parameters<NonNullable<Parameters<typeof createE2eTransport>[0]["streamSseImpl"]>>[0] | undefined;
+        let closed = false;
+        const transport = createE2eTransport({
+            relayBaseUrl: "https://relay.vendor.com/agent/abc",
+            cipher: naclBoxCipher,
+            deviceKeys: device,
+            agentPublicKey: agent.publicKey,
+            streamSseImpl: (options) => {
+                streamOptions = options;
+                return {
+                    close() {
+                        closed = true;
+                    },
+                };
+            },
+        });
+        const received: string[] = [];
+        const subscription = transport
+            .client()
+            .qa.subscribe((entry) => received.push((entry as unknown as { id: string }).id));
+        await Promise.resolve();
+
+        const nonce = naclBoxCipher.randomNonce();
+        const plaintext = new TextEncoder().encode('{"type":"qa","id":"encrypted-row"}');
+        const ciphertext = naclBoxCipher.seal({
+            plaintext,
+            nonce,
+            recipientPublicKey: device.publicKey,
+            senderSecretKey: agent.secretKey,
+        });
+        const encryptedFrame = encodeEnvelope({
+            v: 1,
+            epk: toBase64(agent.publicKey),
+            n: toBase64(nonce),
+            ct: toBase64(ciphertext),
+        });
+
+        streamOptions?.onEvent({ data: encryptedFrame });
+        streamOptions?.onEvent({ data: '{"type":"qa","id":"plaintext-leak"}' });
+        expect(received).toEqual(["encrypted-row"]);
+
+        subscription.close();
+        expect(closed).toBe(true);
     });
 });

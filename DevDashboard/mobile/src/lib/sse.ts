@@ -7,7 +7,7 @@ export { parseSseFrame };
 /** Minimal EventSource-like over expo/fetch streaming + the SSE frame parser. */
 export function makeExpoEventSource(url: string, authHeader: string | null): EventSourceLike {
     const controller = new AbortController();
-    const es: EventSourceLike = { close: () => controller.abort(), onmessage: null, onerror: null };
+    const es: EventSourceLike = { close: () => controller.abort(), onmessage: null, onopen: null, onerror: null };
 
     (async () => {
         try {

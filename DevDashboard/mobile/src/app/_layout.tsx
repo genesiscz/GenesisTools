@@ -2,12 +2,13 @@ import "@/global.css";
 
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
-import { useEffect } from "react";
+import { type ReactNode, useEffect, useMemo } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ClientProvider } from "@/api/client-provider";
-import { queryClient, wireAppStateFocus } from "@/lib/query";
+import { wireAppStateFocus } from "@/lib/query";
+import { createConnectionQueryClient } from "@/lib/query-client";
 import { useConnection } from "@/state/connection";
 import { useConnectionStore } from "@/state/connection-store";
 import { ErrorBoundary } from "@/ui/ErrorBoundary";
@@ -26,39 +27,55 @@ export default function RootLayout() {
 
     const baseUrl = useConnection((s) => s.baseUrl);
     const restored = useConnectionStore((s) => s.restored);
+    const sessionGeneration = useConnectionStore((s) => s.sessionGeneration);
 
     return (
         <GestureHandlerRootView style={{ flex: 1 }}>
             <SafeAreaProvider>
-                <QueryClientProvider client={queryClient}>
-                    <ClientProvider>
-                        <ErrorBoundary>
-                            {restored ? (
-                                // Mount the navigator only AFTER restore resolves, so the
-                                // `Stack.Protected` guard sees the final baseUrl on its FIRST render
-                                // and picks (tabs) vs connect as the initial route. expo-router does
-                                // not auto-navigate when a guard flips later — gating the whole Stack
-                                // on `restored` is what makes a paired relaunch land in the app
-                                // instead of flashing /connect.
-                                <Stack screenOptions={{ headerShown: false }}>
-                                    <Stack.Protected guard={baseUrl !== null}>
-                                        <Stack.Screen name="(tabs)" />
-                                        <Stack.Screen name="(more)" />
-                                    </Stack.Protected>
-                                    {/* connect/pair stay ALWAYS available (not gated): the
+                <ConnectionSession key={sessionGeneration}>
+                    <ErrorBoundary>
+                        {restored ? (
+                            // Mount the navigator only AFTER restore resolves, so the
+                            // `Stack.Protected` guard sees the final baseUrl on its FIRST render
+                            // and picks (tabs) vs connect as the initial route. expo-router does
+                            // not auto-navigate when a guard flips later — gating the whole Stack
+                            // on `restored` is what makes a paired relaunch land in the app
+                            // instead of flashing /connect.
+                            <Stack screenOptions={{ headerShown: false }}>
+                                <Stack.Protected guard={baseUrl !== null}>
+                                    <Stack.Screen name="(tabs)" />
+                                    <Stack.Screen name="(more)" />
+                                </Stack.Protected>
+                                {/* connect/pair stay ALWAYS available (not gated): the
                                         Connections config screen routes to /connect to add a tunnel
                                         while already connected. When baseUrl is null the (tabs) group
                                         is gated out, so the router anchors here at first mount. */}
-                                    <Stack.Screen name="connect" />
-                                    <Stack.Screen name="pair" />
-                                </Stack>
-                            ) : (
-                                <ScreenLoader />
-                            )}
-                        </ErrorBoundary>
-                    </ClientProvider>
-                </QueryClientProvider>
+                                <Stack.Screen name="connect" />
+                                <Stack.Screen name="pair" />
+                            </Stack>
+                        ) : (
+                            <ScreenLoader />
+                        )}
+                    </ErrorBoundary>
+                </ConnectionSession>
             </SafeAreaProvider>
         </GestureHandlerRootView>
+    );
+}
+
+function ConnectionSession({ children }: { children: ReactNode }) {
+    const queryClient = useMemo(() => createConnectionQueryClient(), []);
+
+    useEffect(
+        () => () => {
+            queryClient.clear();
+        },
+        [queryClient]
+    );
+
+    return (
+        <QueryClientProvider client={queryClient}>
+            <ClientProvider>{children}</ClientProvider>
+        </QueryClientProvider>
     );
 }

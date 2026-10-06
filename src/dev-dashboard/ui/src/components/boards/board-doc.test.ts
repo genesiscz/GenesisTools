@@ -10,6 +10,7 @@ import {
     translatePath,
     upsertCard,
 } from "./board-doc";
+import { createStrokeLifecycle } from "./stroke-lifecycle";
 
 function card(partial: Partial<CardDto> & { id: number }): CardDto {
     return {
@@ -94,6 +95,121 @@ describe("board-doc upserts", () => {
             width: 2,
         });
         expect(next.strokes.map((s) => s.id)).toEqual([42]);
+    });
+});
+
+describe("stroke lifecycle", () => {
+    function stroke(id: number) {
+        return {
+            id,
+            boardId: 1,
+            createdBy: "test",
+            cardId: null,
+            path: [[0, 0]],
+            color: "#fff",
+            width: 2,
+        };
+    }
+
+    test("undo before create acknowledgement deletes the real id without flashing it", async () => {
+        let resolveCreate: ((value: ReturnType<typeof stroke>) => void) | undefined;
+        const create = new Promise<ReturnType<typeof stroke>>((resolve) => {
+            resolveCreate = resolve;
+        });
+        const local: number[] = [-1];
+        const deleted: number[] = [];
+        const lifecycle = createStrokeLifecycle({
+            tempId: -1,
+            create: () => create,
+            removeLocal: (id) => {
+                const index = local.indexOf(id);
+                if (index !== -1) {
+                    local.splice(index, 1);
+                }
+            },
+            commitLocal: (tempId, server) => {
+                const index = local.indexOf(tempId);
+                if (index !== -1) {
+                    local.splice(index, 1, server.id);
+                } else {
+                    local.push(server.id);
+                }
+            },
+            addLocal: (server) => local.push(server.id),
+            deleteRemote: async (id) => {
+                deleted.push(id);
+            },
+            onCreateError: () => {},
+        });
+
+        const undo = lifecycle.undo();
+        expect(local).toEqual([]);
+        resolveCreate?.(stroke(41));
+        await undo;
+
+        expect(local).toEqual([]);
+        expect(deleted).toEqual([41]);
+    });
+
+    test("normal acknowledgement swaps the temp id and later undo deletes that id", async () => {
+        const local = [-1];
+        const deleted: number[] = [];
+        const lifecycle = createStrokeLifecycle({
+            tempId: -1,
+            create: async () => stroke(41),
+            removeLocal: (id) => {
+                const index = local.indexOf(id);
+                if (index !== -1) {
+                    local.splice(index, 1);
+                }
+            },
+            commitLocal: (tempId, server) => {
+                local.splice(local.indexOf(tempId), 1, server.id);
+            },
+            addLocal: (server) => local.push(server.id),
+            deleteRemote: async (id) => {
+                deleted.push(id);
+            },
+            onCreateError: () => {},
+        });
+
+        await Promise.resolve();
+        expect(local).toEqual([41]);
+        await lifecycle.undo();
+        expect(local).toEqual([]);
+        expect(deleted).toEqual([41]);
+    });
+
+    test("rejected creation removes the optimistic stroke without deleting a temporary id", async () => {
+        const local = [-1];
+        const deleted: number[] = [];
+        let capturedError: unknown;
+        const failure = new Error("offline");
+        const lifecycle = createStrokeLifecycle({
+            tempId: -1,
+            create: async () => {
+                throw failure;
+            },
+            removeLocal: (id) => {
+                const index = local.indexOf(id);
+                if (index !== -1) {
+                    local.splice(index, 1);
+                }
+            },
+            commitLocal: () => {},
+            addLocal: () => {},
+            deleteRemote: async (id) => {
+                deleted.push(id);
+            },
+            onCreateError: (error) => {
+                capturedError = error;
+            },
+        });
+
+        await lifecycle.undo();
+        expect(local).toEqual([]);
+        expect(deleted).toEqual([]);
+        expect(capturedError).toBe(failure);
     });
 });
 

@@ -14,6 +14,7 @@ import {
     upsertStroke,
 } from "./board-doc";
 import { boardsApi } from "./boards-api";
+import { createStrokeLifecycle } from "./stroke-lifecycle";
 import type { BoardHistory } from "./useBoardHistory";
 
 /** Optimistic board operations: every op updates the react-query cache FIRST (the canvas
@@ -200,39 +201,22 @@ export function useBoardOps(slug: string, history: BoardHistory) {
             const optimistic = { ...stroke, id: tempId, cardId: stroke.cardId ?? null } as unknown as StrokeDto;
             setDoc((d) => upsertStroke(d, optimistic));
 
-            // The history entry tracks the live id across undo/redo cycles (re-adds mint new ids).
-            const ref = { id: tempId };
-
-            void boardsApi.addStrokes(slug, [stroke]).then(
-                (res) => {
-                    const server = res.strokes[0];
-
-                    if (server) {
-                        ref.id = server.id;
-                        setDoc((d) => swapStroke(d, tempId, server));
-                    }
-                },
-                (err) => {
+            const lifecycle = createStrokeLifecycle({
+                tempId,
+                create: async () => (await boardsApi.addStrokes(slug, [stroke])).strokes[0],
+                removeLocal: (id) => setDoc((d) => removeStroke(d, id)),
+                commitLocal: (pendingId, server) => setDoc((d) => swapStroke(d, pendingId, server)),
+                addLocal: (server) => setDoc((d) => upsertStroke(d, server)),
+                deleteRemote: (id) => boardsApi.deleteStroke(id),
+                onCreateError: (err) => {
                     console.error("[boards] add stroke failed — removing optimistic stroke", err);
-                    setDoc((d) => removeStroke(d, tempId));
-                }
-            );
+                },
+            });
 
             history.push({
                 label: "draw ink",
-                undo: async () => {
-                    setDoc((d) => removeStroke(d, ref.id));
-                    await boardsApi.deleteStroke(ref.id);
-                },
-                redo: async () => {
-                    const res = await boardsApi.addStrokes(slug, [stroke]);
-                    const server = res.strokes[0];
-
-                    if (server) {
-                        ref.id = server.id;
-                        setDoc((d) => upsertStroke(d, server));
-                    }
-                },
+                undo: lifecycle.undo,
+                redo: lifecycle.redo,
             });
         },
         [history, setDoc, slug]

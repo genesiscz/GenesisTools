@@ -1,7 +1,8 @@
-import { createDashboardClient, type DashboardClient, type EventSourceLike } from "@dd/contract";
+import { createDashboardClient, type DashboardClient } from "@dd/contract";
 import { fetch as expoFetch } from "expo/fetch";
 import { createQaStream } from "@/transport/qa-stream";
-import { streamSse, type SseHandle } from "@/transport/sse-parser";
+import { createReconnectingEventSource } from "@/transport/event-source";
+import { streamSse, type StreamSseOptions } from "@/transport/sse-parser";
 import { createTerminalTransport, type TerminalTransportOptions } from "@/transport/terminal-ws";
 import type { QaStream, TerminalTransport, Transport, TransportTier } from "@/transport/Transport";
 
@@ -14,6 +15,9 @@ export interface PlainTransportOptions {
     probe: () => Promise<boolean>;
     /** Test seam for the WS transport. */
     terminalFactory?: (opts: TerminalTransportOptions) => TerminalTransport;
+    /** Test seam for SSE recovery. */
+    streamSseImpl?: (options: StreamSseOptions) => { close(): void };
+    sseRetryMs?: number;
 }
 
 /** http(s)://host -> ws(s)://host/ttyd/<id>/ws (mirrors the web ttyd path). */
@@ -34,32 +38,15 @@ export function createPlainTransport(opts: PlainTransportOptions): Transport {
             // SSE adapter so `c.qa.subscribe(...)` works on RN too (web/mobile call-site parity,
             // ADR §3). The contract passes the FULL URL here, so we stream it directly (no path
             // re-append). The clean path for the QA screen is `transport.streamQa()` (plan 07).
-            eventSourceFactory: (url: string): EventSourceLike => {
-                let onmessage: ((ev: { data: string }) => void) | null = null;
-                let onerror: ((ev: unknown) => void) | null = null;
+            eventSourceFactory: (url) => {
                 const auth = opts.authHeader();
-                const handle: SseHandle = streamSse({
+                return createReconnectingEventSource({
                     url,
                     headers: auth ? { Authorization: auth } : undefined,
-                    onEvent: (event) => onmessage?.({ data: event.data }),
-                    onError: (err) => onerror?.(err),
+                    stream: opts.streamSseImpl ?? streamSse,
+                    initialRetryMs: opts.sseRetryMs,
+                    maxRetryMs: opts.sseRetryMs,
                 });
-
-                return {
-                    close: () => handle.close(),
-                    get onmessage() {
-                        return onmessage;
-                    },
-                    set onmessage(handler) {
-                        onmessage = handler;
-                    },
-                    get onerror() {
-                        return onerror;
-                    },
-                    set onerror(handler) {
-                        onerror = handler;
-                    },
-                };
             },
         });
     }
@@ -73,8 +60,8 @@ export function createPlainTransport(opts: PlainTransportOptions): Transport {
         streamQa(): QaStream {
             return createQaStream({ baseUrl: opts.baseUrl, authHeader: opts.authHeader });
         },
-        openTerminal(sessionId: string): TerminalTransport {
-            return makeTerminal({ wsUrl: ttydWsUrl(opts.baseUrl, sessionId), protocols: ["tty"] });
+        openTerminal(sessionId: string, dimensions): TerminalTransport {
+            return makeTerminal({ wsUrl: ttydWsUrl(opts.baseUrl, sessionId), protocols: ["tty"], dimensions });
         },
     };
 }

@@ -4,9 +4,10 @@ import { describe, expect, it, mock } from "bun:test";
 // `react-native` Flow entry bun can't parse. Stub it so the pure `SseFramer` (the unit
 // under test) is reachable without a native runtime; the effectful `streamSse` wrapper is
 // validated by tsc + on-device, not here.
-mock.module("expo/fetch", () => ({ fetch: async () => new Response("") }));
+let response = new Response("");
+mock.module("expo/fetch", () => ({ fetch: async () => response }));
 
-const { SseFramer } = await import("@/transport/sse-parser");
+const { SseFramer, streamSse } = await import("@/transport/sse-parser");
 
 describe("SseFramer", () => {
     it("emits one event per data: line after a blank line", () => {
@@ -45,5 +46,40 @@ describe("SseFramer", () => {
         const f = new SseFramer((ev) => events.push(ev));
         f.push("event: qa\nid: 7\ndata: x\n\n");
         expect(events[0]).toEqual({ event: "qa", id: "7", data: "x" });
+    });
+});
+
+describe("streamSse", () => {
+    it("reports accepted streams as open and signals EOF after the final event", async () => {
+        response = new Response("data: hello\n\n", { status: 200 });
+        const events: string[] = [];
+        let opened = false;
+        let resolveEof: (() => void) | undefined;
+        const eof = new Promise<void>((resolve) => {
+            resolveEof = resolve;
+        });
+
+        streamSse({
+            url: "http://agent/api/qa/stream",
+            onEvent: (event) => events.push(event.data),
+            onOpen: () => {
+                opened = true;
+            },
+            onEof: () => resolveEof?.(),
+        });
+        await eof;
+
+        expect(opened).toBe(true);
+        expect(events).toEqual(["hello"]);
+    });
+
+    it("reports an HTTP failure through the error channel", async () => {
+        response = new Response("unavailable", { status: 503 });
+        const error = await new Promise<unknown>((resolve) => {
+            streamSse({ url: "http://agent/api/qa/stream", onEvent: () => {}, onError: resolve });
+        });
+
+        expect(error).toBeInstanceOf(Error);
+        expect(String(error)).toContain("503");
     });
 });

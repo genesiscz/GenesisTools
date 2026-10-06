@@ -10,9 +10,8 @@ import type { DashboardClient, QaRow } from "@dd/contract";
  *
  * Why not the transport's `streamQa()` directly: we consume only `useDashboardClient()` (D32) so the
  * mock↔real swap stays invisible. `client.qa.subscribe` is that single seam. The contract's
- * subscribe wires ONLY `onmessage` (the never-shipped Task-0 `onopen`/`onError` channels would give
- * a true connecting/live/down machine) — so liveness here is "a row arrived" optimism, flipped on
- * the first emit. Flagged in the notes.
+ * subscribe forwards open/error from the active EventSource adapter, so status reflects the stream
+ * itself and reconnects can trigger an authoritative log resync.
  */
 
 /**
@@ -21,18 +20,18 @@ import type { DashboardClient, QaRow } from "@dd/contract";
  * - `"open"` — the subscription is established (the agent is connected) but no row has streamed.
  * - `"live"` — at least one row has streamed.
  *
- * The header dot treats both `"open"` and `"live"` as connected, so an idle-but-connected agent no
- * longer shows "connecting" forever. The contract's `subscribe` seam wires only `onmessage` (no
- * `onopen`), so we treat the moment the subscription is created as the best-available connected
- * signal and report `"open"` synchronously.
+ * The header dot treats both `"open"` and `"live"` as connected. `"down"` means the stream ended or
+ * errored and its bounded reconnect adapter is recovering or exhausted.
  */
-export type QaLiveStatus = "connecting" | "open" | "live";
+export type QaLiveStatus = "connecting" | "open" | "live" | "down";
 
 export interface QaSubscriptionCallbacks {
     /** Fired once per NEW entry id (deduped across the controller's lifetime). */
     onRow: (entry: QaRow) => void;
     /** Fired when liveness changes ("connecting" → "open" on subscribe → "live" after the first row). */
     onStatus?: (status: QaLiveStatus) => void;
+    /** Fired after a disconnected stream opens again so persisted rows can be reconciled. */
+    onReconnect?: () => void;
 }
 
 export interface QaSubscriptionHandle {
@@ -52,39 +51,56 @@ export function openQaSubscription(
     const seen = new Set<string>();
     let closed = false;
     let live = false;
+    let opened = false;
 
     callbacks.onStatus?.("connecting");
 
-    const sub = client.qa.subscribe((entry) => {
-        if (closed) {
-            return;
+    const sub = client.qa.subscribe(
+        (entry) => {
+            if (closed) {
+                return;
+            }
+
+            const row = entry as QaRow;
+            const id = row.id;
+
+            if (id != null && seen.has(id)) {
+                return;
+            }
+
+            if (id != null) {
+                seen.add(id);
+            }
+
+            if (!live) {
+                live = true;
+                callbacks.onStatus?.("live");
+            }
+
+            callbacks.onRow(row);
+        },
+        {
+            onOpen: () => {
+                if (closed) {
+                    return;
+                }
+
+                live = false;
+                callbacks.onStatus?.("open");
+
+                if (opened) {
+                    callbacks.onReconnect?.();
+                }
+
+                opened = true;
+            },
+            onError: () => {
+                if (!closed) {
+                    callbacks.onStatus?.("down");
+                }
+            },
         }
-
-        const row = entry as QaRow;
-        const id = row.id;
-
-        if (id != null && seen.has(id)) {
-            return;
-        }
-
-        if (id != null) {
-            seen.add(id);
-        }
-
-        if (!live) {
-            live = true;
-            callbacks.onStatus?.("live");
-        }
-
-        callbacks.onRow(row);
-    });
-
-    // No `onopen` channel exists on the seam, so the subscription being created IS the connected
-    // signal. Report it synchronously so the indicator reflects the real connection rather than
-    // waiting for a row that an idle agent may never send.
-    if (!closed) {
-        callbacks.onStatus?.("open");
-    }
+    );
 
     return {
         close() {

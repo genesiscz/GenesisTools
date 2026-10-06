@@ -1,5 +1,5 @@
 import NetInfo from "@react-native-community/netinfo";
-import { focusManager, onlineManager, QueryClient } from "@tanstack/react-query";
+import { focusManager, onlineManager } from "@tanstack/react-query";
 import { AppState, type AppStateStatus } from "react-native";
 
 onlineManager.setEventListener((setOnline) =>
@@ -13,7 +13,3 @@ export function wireAppStateFocus(): () => void {
 
     return () => sub.remove();
 }
-
-export const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: 2, staleTime: 5_000 } },
-});

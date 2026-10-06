@@ -12,18 +12,27 @@ import { openQaSubscription, type QaLiveStatus } from "@/features/qa/subscriptio
 
 interface FakeSubscribeControl {
     emit: (entry: QaRow) => void;
+    open: () => void;
+    error: () => void;
     closed: () => boolean;
     client: DashboardClient;
 }
 
 function fakeClient(): FakeSubscribeControl {
     let handler: ((e: EnrichedQaEntry) => void) | null = null;
+    let onOpen: (() => void) | undefined;
+    let onError: ((error: unknown) => void) | undefined;
     let isClosed = false;
 
     const client = {
         qa: {
-            subscribe: (onEntry: (e: EnrichedQaEntry) => void): QaSubscription => {
+            subscribe: (
+                onEntry: (e: EnrichedQaEntry) => void,
+                callbacks: { onOpen?: () => void; onError?: (error: unknown) => void } = {}
+            ): QaSubscription => {
                 handler = onEntry;
+                onOpen = callbacks.onOpen;
+                onError = callbacks.onError;
                 return {
                     close() {
                         isClosed = true;
@@ -36,6 +45,8 @@ function fakeClient(): FakeSubscribeControl {
     return {
         client,
         closed: () => isClosed,
+        open: () => onOpen?.(),
+        error: () => onError?.(new Error("down")),
         emit: (entry) => handler?.(entry as unknown as EnrichedQaEntry),
     };
 }
@@ -70,11 +81,31 @@ describe("openQaSubscription", () => {
         const ctrl = fakeClient();
         const statuses: QaLiveStatus[] = [];
         openQaSubscription(ctrl.client, { onRow: () => {}, onStatus: (s) => statuses.push(s) });
-        // "open" is reported synchronously once the subscription is created (no `onopen` seam), so an
-        // idle-but-connected agent reads connected without waiting for a row.
+        expect(statuses).toEqual(["connecting"]);
+        ctrl.open();
         expect(statuses).toEqual(["connecting", "open"]);
         ctrl.emit(row("1"));
         expect(statuses).toEqual(["connecting", "open", "live"]);
+    });
+
+    it("reports disconnect and resyncs after a real reconnect", () => {
+        const ctrl = fakeClient();
+        const statuses: QaLiveStatus[] = [];
+        let resyncs = 0;
+        openQaSubscription(ctrl.client, {
+            onRow: () => {},
+            onStatus: (status) => statuses.push(status),
+            onReconnect: () => {
+                resyncs += 1;
+            },
+        });
+
+        ctrl.open();
+        ctrl.error();
+        ctrl.open();
+
+        expect(statuses).toEqual(["connecting", "open", "down", "open"]);
+        expect(resyncs).toBe(1);
     });
 
     it("close() tears down the underlying subscription and is idempotent", () => {

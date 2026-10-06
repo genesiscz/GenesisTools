@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { QaRow } from "@dd/contract";
-import { filterQa, mergeQaRows, projectsOf, tagsOf } from "@/features/qa/live-feed";
+import { filterQa, mergeQaRows, persistQaReadToggle, projectsOf, tagsOf } from "@/features/qa/live-feed";
 
 /**
  * Pure QA feed logic (no React, no I/O). `filterQa` is multi-select: each facet (projects / tags)
@@ -24,6 +24,24 @@ describe("live-feed", () => {
 
         it("returns an empty array for empty inputs", () => {
             expect(mergeQaRows({ live: [], persisted: [] })).toEqual([]);
+        });
+
+        it("reconciles mutable persisted fields while preserving live-only HTML", () => {
+            const live = {
+                ...mk("2", "beta", "action"),
+                readAt: null,
+                answerHtml: "<p>rendered live</p>",
+            };
+            const persisted = {
+                ...mk("2", "beta", "action"),
+                readAt: 42,
+            };
+
+            expect(mergeQaRows({ live: [live], persisted: [persisted] })[0]).toMatchObject({
+                id: "2",
+                readAt: 42,
+                answerHtml: "<p>rendered live</p>",
+            });
         });
     });
 
@@ -61,6 +79,55 @@ describe("live-feed", () => {
                 "2",
                 "3",
             ]);
+        });
+    });
+
+    describe("persistQaReadToggle", () => {
+        it("clears the current optimistic override only after the authoritative refetch", async () => {
+            const calls: string[] = [];
+
+            await persistQaReadToggle({
+                persist: async () => calls.push("persist"),
+                refetch: async () => calls.push("refetch"),
+                isCurrent: () => true,
+                onAcknowledged: () => calls.push("acknowledged"),
+                onRejected: () => calls.push("rejected"),
+            });
+
+            expect(calls).toEqual(["persist", "refetch", "acknowledged"]);
+        });
+
+        it("rolls back a rejected current toggle", async () => {
+            const failure = new Error("offline");
+            let rejected: unknown;
+
+            await persistQaReadToggle({
+                persist: async () => {
+                    throw failure;
+                },
+                refetch: async () => undefined,
+                isCurrent: () => true,
+                onAcknowledged: () => {},
+                onRejected: (error) => {
+                    rejected = error;
+                },
+            });
+
+            expect(rejected).toBe(failure);
+        });
+
+        it("does not let an older response clear or roll back a newer intent", async () => {
+            const callbacks: string[] = [];
+
+            await persistQaReadToggle({
+                persist: async () => undefined,
+                refetch: async () => undefined,
+                isCurrent: () => false,
+                onAcknowledged: () => callbacks.push("acknowledged"),
+                onRejected: () => callbacks.push("rejected"),
+            });
+
+            expect(callbacks).toEqual([]);
         });
     });
 

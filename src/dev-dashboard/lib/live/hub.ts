@@ -20,10 +20,11 @@ export interface LiveHub {
     _reset(): void;
 }
 
-export function createLiveHub(): LiveHub {
+export function createLiveHub(options: { serialize?: (frame: LiveFrame) => string } = {}): LiveHub {
     const conns = new Map<string, Conn>();
     const demand = new Map<string, number>();
     const demandListeners = new Set<(c: LiveChannel, d: 1 | -1) => void>();
+    const serialize = options.serialize ?? ((frame: LiveFrame) => SafeJSON.stringify(frame));
 
     function bump(ch: LiveChannel, delta: 1 | -1): void {
         const n = (demand.get(ch) ?? 0) + delta;
@@ -57,7 +58,7 @@ export function createLiveHub(): LiveHub {
     }
 
     function send(conn: Conn, frame: LiveFrame): void {
-        conn.emit.data(SafeJSON.stringify(frame));
+        conn.emit.data(serialize(frame));
     }
 
     return {
@@ -99,13 +100,16 @@ export function createLiveHub(): LiveHub {
         },
 
         publish(frame) {
+            let payload: string | undefined;
+
             for (const conn of conns.values()) {
                 if (frame.channel === "system") {
                     continue;
                 }
 
                 if (conn.channels.has(frame.channel as LiveChannel)) {
-                    send(conn, frame);
+                    payload ??= serialize(frame);
+                    conn.emit.data(payload);
                 }
             }
         },

@@ -39,6 +39,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 export interface EventSourceLike {
     close(): void;
     onmessage: ((ev: { data: string }) => void) | null;
+    onopen: ((ev: unknown) => void) | null;
     onerror: ((ev: unknown) => void) | null;
 }
 
@@ -162,20 +163,27 @@ export function createDashboardClient(opts: DashboardClientOptions) {
             log: (q?: Parameters<typeof paths.qaLog>[0]) => get<QaLogRes>(paths.qaLog(q)),
             read: (ids: string[], unread = false) =>
                 post<{ ok: boolean; updated: number }>(paths.qaRead(), { ids, unread }),
-            subscribe: (onEntry: (entry: EnrichedQaEntry) => void): QaSubscription => {
+            subscribe: (
+                onEntry: (entry: EnrichedQaEntry) => void,
+                callbacks: { onOpen?: () => void; onError?: (error: unknown) => void } = {}
+            ): QaSubscription => {
                 if (!opts.eventSourceFactory) {
                     throw new Error("eventSourceFactory required to subscribe to the QA stream");
                 }
 
                 const source = opts.eventSourceFactory(`${baseUrl}${QA_STREAM_PATH}`);
+                source.onopen = callbacks.onOpen ?? null;
+                source.onerror = callbacks.onError ?? null;
                 source.onmessage = (ev) => {
                     try {
                         const frame = SafeJSON.parse(ev.data, { strict: true }) as {
                             type?: string;
                         } & EnrichedQaEntry;
 
-                        // Multiplexed /api/qa/stream: only qa frames; ignore handoff.
-                        if (frame.type === "handoff") {
+                        // The stream also carries pending forms, handoffs, and may gain more frame
+                        // kinds. Only a tagged QA frame belongs in this callback. Untagged rows stay
+                        // supported for older agents that emitted the QA entry directly.
+                        if (frame.type !== undefined && frame.type !== "qa") {
                             return;
                         }
 

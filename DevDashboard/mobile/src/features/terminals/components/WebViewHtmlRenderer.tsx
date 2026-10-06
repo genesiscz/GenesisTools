@@ -110,7 +110,7 @@ export const WebViewHtmlRenderer = forwardRef<TerminalRenderer, TerminalDriverPr
         }, []);
 
         const openSocket = useCallback(
-            (sessionId: string) => {
+            (sessionId: string, columns = 80, rows = 24) => {
                 wsRef.current?.close();
                 readyRef.current = false;
 
@@ -120,7 +120,7 @@ export const WebViewHtmlRenderer = forwardRef<TerminalRenderer, TerminalDriverPr
                 }
 
                 setStatus("connecting");
-                const ws = transport.openTerminal(sessionId);
+                const ws = transport.openTerminal(sessionId, { columns, rows });
                 wsRef.current = ws;
 
                 // Both callbacks check they still own the current socket. Switching sessions closes
@@ -191,7 +191,8 @@ export const WebViewHtmlRenderer = forwardRef<TerminalRenderer, TerminalDriverPr
                 fit() {
                     run(injectFit());
                 },
-                resize() {
+                resize(cols, rows) {
+                    wsRef.current?.resize(cols, rows);
                     run(injectFit());
                 },
                 focus() {
@@ -211,7 +212,7 @@ export const WebViewHtmlRenderer = forwardRef<TerminalRenderer, TerminalDriverPr
                 if (msg.t === "ready") {
                     readyRef.current = true;
                     if (active) {
-                        openSocket(active.id);
+                        openSocket(active.id, msg.cols, msg.rows);
                     }
 
                     return;
@@ -220,6 +221,11 @@ export const WebViewHtmlRenderer = forwardRef<TerminalRenderer, TerminalDriverPr
                 if (msg.t === "data" && msg.payload) {
                     // Page → ttyd: user keystrokes (base64) decoded back to bytes for the WS.
                     wsRef.current?.send(base64ToBytes(msg.payload).buffer as ArrayBuffer);
+                    return;
+                }
+
+                if (msg.t === "resize" && msg.cols && msg.rows) {
+                    wsRef.current?.resize(msg.cols, msg.rows);
                     return;
                 }
 

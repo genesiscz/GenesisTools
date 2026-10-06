@@ -1,13 +1,11 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useIsMockClient } from "@/api/client-provider";
 import { QaFeed } from "@/features/qa/components/QaFeed";
 import { QaFilterBar } from "@/features/qa/components/QaFilterBar";
 import { QaLiveDot } from "@/features/qa/components/QaLiveDot";
 import { useMarkRead, useQaLog, useQaStream } from "@/features/qa/hooks";
-import { filterQa, mergeQaRows, projectsOf, tagsOf } from "@/features/qa/live-feed";
-import type { QaLiveStatus } from "@/features/qa/subscription";
+import { filterQa, mergeQaRows, persistQaReadToggle, projectsOf, tagsOf } from "@/features/qa/live-feed";
 import { Loading } from "@/ui/Loading";
 import { MockBadge } from "@/ui/MockBadge";
 import { useThemeColors } from "@/theme/colors";
@@ -25,31 +23,17 @@ export default function QaScreen() {
     const c = useThemeColors();
     const insets = useSafeAreaInsets();
 
-    const isMock = useIsMockClient();
     const logQuery = useQaLog();
     const { live, status } = useQaStream({ onResume: () => void logQuery.refetch() });
     const markRead = useMarkRead();
-
-    // The stream seam has no `onopen`, so a connected-but-idle agent could sit on "connecting"
-    // forever if we only trusted the first streamed row. Treat a successful log load over the active
-    // (non-mock) transport as connected too, so the indicator reflects the real connection.
-    const effectiveStatus = useMemo<QaLiveStatus>(() => {
-        if (status === "open" || status === "live") {
-            return status;
-        }
-
-        if (logQuery.isSuccess && !isMock) {
-            return "open";
-        }
-
-        return status;
-    }, [status, logQuery.isSuccess, isMock]);
 
     const [selectedProjects, setSelectedProjects] = useState<Set<string>>(() => new Set());
     const [selectedTags, setSelectedTags] = useState<Set<string>>(() => new Set());
     const [text, setText] = useState("");
     const [locallyRead, setLocallyRead] = useState<Set<string>>(() => new Set());
     const [locallyUnread, setLocallyUnread] = useState<Set<string>>(() => new Set());
+    const [readError, setReadError] = useState<string | null>(null);
+    const readGeneration = useRef(new Map<string, number>());
 
     const merged = useMemo(
         () => mergeQaRows({ live, persisted: logQuery.data ?? [] }),
@@ -101,6 +85,9 @@ export default function QaScreen() {
                 return;
             }
 
+            const generation = (readGeneration.current.get(id) ?? 0) + 1;
+            readGeneration.current.set(id, generation);
+            setReadError(null);
             setLocallyRead((prev) => {
                 const next = new Set(prev);
                 if (nextUnread) {
@@ -121,9 +108,39 @@ export default function QaScreen() {
 
                 return next;
             });
-            markRead.mutate({ ids: [id], unread: nextUnread });
+            void persistQaReadToggle({
+                persist: () => markRead.mutateAsync({ ids: [id], unread: nextUnread }),
+                refetch: () => logQuery.refetch(),
+                isCurrent: () => readGeneration.current.get(id) === generation,
+                onRejected: (error) => {
+                    setLocallyRead((prev) => {
+                        const next = new Set(prev);
+                        next.delete(id);
+                        return next;
+                    });
+                    setLocallyUnread((prev) => {
+                        const next = new Set(prev);
+                        next.delete(id);
+                        return next;
+                    });
+                    setReadError(error instanceof Error ? error.message : "Could not update read state.");
+                },
+                onAcknowledged: () => {
+                    readGeneration.current.delete(id);
+                    setLocallyRead((prev) => {
+                        const next = new Set(prev);
+                        next.delete(id);
+                        return next;
+                    });
+                    setLocallyUnread((prev) => {
+                        const next = new Set(prev);
+                        next.delete(id);
+                        return next;
+                    });
+                },
+            });
         },
-        [markRead],
+        [logQuery, markRead],
     );
 
     if (logQuery.isLoading && merged.length === 0) {
@@ -153,15 +170,21 @@ export default function QaScreen() {
                 <View className="flex-row items-center justify-between">
                     <Text
                         accessibilityRole="header"
-                        className="text-2xl font-bold tracking-widest"
+                        className="text-2xl font-bold"
                         style={{ color: c.accent, fontFamily: "monospace" }}
                     >
-                        Q&amp;A STREAM_
+                        Q&amp;A stream
                     </Text>
-                    <QaLiveDot status={effectiveStatus} />
+                    <QaLiveDot status={status} />
                 </View>
 
                 <MockBadge />
+
+                {readError ? (
+                    <Text testID="qa-read-error" className="text-xs" style={{ color: c.danger }}>
+                        {readError}
+                    </Text>
+                ) : null}
 
                 <QaFilterBar
                     projects={projects}

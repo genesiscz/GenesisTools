@@ -13,6 +13,7 @@ import {
     tmuxSessionsQuery,
     ttydListQuery,
 } from "@/features/terminals/queries";
+import { createConnectionQueryClient } from "@/lib/query-client";
 
 /**
  * Exercises the Terminals data layer the way the Pulse reference test does: against the comprehensive
@@ -111,5 +112,36 @@ describe("terminals queryOptions factories", () => {
         const res = await (q.queryFn as () => Promise<{ sessions: unknown[] }>)();
 
         expect(Array.isArray(res.sessions)).toBe(true);
+    });
+});
+
+describe("connection-owned query cache", () => {
+    it("cannot let a delayed machine A result populate machine B and still reuses B's cache", async () => {
+        let resolveMachineA: ((value: string) => void) | undefined;
+        const delayedMachineA = new Promise<string>((resolve) => {
+            resolveMachineA = resolve;
+        });
+        const machineA = createConnectionQueryClient();
+        const machineB = createConnectionQueryClient();
+        const key = ["tmux", "sessions"] as const;
+        const machineARequest = machineA.fetchQuery({ queryKey: key, queryFn: () => delayedMachineA });
+        const machineBResult = await machineB.fetchQuery({ queryKey: key, queryFn: async () => "machine-b" });
+
+        resolveMachineA?.("machine-a");
+        await machineARequest;
+
+        expect(machineBResult).toBe("machine-b");
+        expect(machineB.getQueryData<string>(key)).toBe("machine-b");
+
+        let redundantFetches = 0;
+        const cached = await machineB.fetchQuery({
+            queryKey: key,
+            queryFn: async () => {
+                redundantFetches += 1;
+                return "unexpected";
+            },
+        });
+        expect(cached).toBe("machine-b");
+        expect(redundantFetches).toBe(0);
     });
 });

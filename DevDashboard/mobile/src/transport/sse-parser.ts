@@ -83,6 +83,7 @@ export interface StreamSseOptions {
     headers?: Record<string, string>;
     onEvent: (event: SseEvent) => void;
     onOpen?: () => void;
+    onEof?: () => void;
     onError?: (err: unknown) => void;
 }
 
@@ -116,6 +117,9 @@ export function streamSse(opts: StreamSseOptions): SseHandle {
                 const { value, done } = await reader.read();
 
                 if (done) {
+                    if (!controller.signal.aborted) {
+                        opts.onEof?.();
+                    }
                     break;
                 }
 

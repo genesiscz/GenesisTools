@@ -97,9 +97,9 @@ describe("createDashboardClient", () => {
         expect(calls[3]?.body).toContain('"name":"x"');
     });
 
-    it("qa.subscribe uses the injected EventSource factory and parses entries", () => {
+    it("qa.subscribe forwards only QA entries from the multiplexed stream", () => {
         const urls: string[] = [];
-        const source: EventSourceLike = { close: () => {}, onmessage: null, onerror: null };
+        const source: EventSourceLike = { close: () => {}, onmessage: null, onopen: null, onerror: null };
         const factory = (url: string): EventSourceLike => {
             urls.push(url);
 
@@ -109,17 +109,28 @@ describe("createDashboardClient", () => {
         const client = createDashboardClient({ baseUrl: "http://h", fetch: fetchImpl, eventSourceFactory: factory });
 
         const received: string[] = [];
-        const sub = client.qa.subscribe((entry) => received.push((entry as unknown as { id: string }).id));
+        const statuses: string[] = [];
+        const sub = client.qa.subscribe((entry) => received.push((entry as unknown as { id: string }).id), {
+            onOpen: () => statuses.push("open"),
+            onError: () => statuses.push("error"),
+        });
 
         expect(urls[0]).toContain("/api/qa/stream");
-        source.onmessage?.({ data: '{"id":"e1"}' });
-        expect(received).toEqual(["e1"]);
+        source.onopen?.({});
+        source.onmessage?.({ data: '{"type":"qa","id":"tagged"}' });
+        source.onmessage?.({ data: '{"type":"pending","id":"form"}' });
+        source.onmessage?.({ data: '{"type":"handoff","id":"handoff"}' });
+        source.onmessage?.({ data: '{"type":"future-frame","id":"future"}' });
+        source.onmessage?.({ data: '{"id":"legacy"}' });
+        source.onerror?.(new Error("down"));
+        expect(received).toEqual(["tagged", "legacy"]);
+        expect(statuses).toEqual(["open", "error"]);
         sub.close();
     });
 
     it("buildLog.subscribe builds the tail URL with the logFile and parses classified entries", () => {
         const urls: string[] = [];
-        const source: EventSourceLike = { close: () => {}, onmessage: null, onerror: null };
+        const source: EventSourceLike = { close: () => {}, onmessage: null, onopen: null, onerror: null };
         const factory = (url: string): EventSourceLike => {
             urls.push(url);
 

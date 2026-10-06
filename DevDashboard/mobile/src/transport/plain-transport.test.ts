@@ -60,4 +60,46 @@ describe("createPlainTransport", () => {
         const term = t.openTerminal("abc-123") as unknown as { wsUrl: string };
         expect(term.wsUrl).toBe("wss://mac.example.com/ttyd/abc-123/ws");
     });
+
+    it("reconnects QA after EOF, reports status, and stops retries after close", async () => {
+        const attempts: Parameters<NonNullable<Parameters<typeof createPlainTransport>[0]["streamSseImpl"]>>[0][] = [];
+        let closes = 0;
+        const t = createPlainTransport({
+            tier: "lan",
+            baseUrl: "http://192.168.1.5:3042",
+            authHeader: () => undefined,
+            probe: async () => true,
+            streamSseImpl: (options) => {
+                attempts.push(options);
+                return {
+                    close() {
+                        closes += 1;
+                    },
+                };
+            },
+            sseRetryMs: 0,
+        });
+        const statuses: string[] = [];
+        const rows: string[] = [];
+        const subscription = t.client().qa.subscribe((entry) => rows.push((entry as unknown as { id: string }).id), {
+            onOpen: () => statuses.push("open"),
+            onError: () => statuses.push("down"),
+        });
+        await Promise.resolve();
+        attempts[0]?.onOpen?.();
+        attempts[0]?.onEof?.();
+        await Bun.sleep(1);
+        attempts[1]?.onOpen?.();
+        attempts[1]?.onEvent({ data: '{"type":"qa","id":"recovered"}' });
+
+        expect(statuses).toEqual(["open", "down", "open"]);
+        expect(rows).toEqual(["recovered"]);
+        expect(attempts).toHaveLength(2);
+
+        subscription.close();
+        attempts[1]?.onEof?.();
+        await Bun.sleep(1);
+        expect(attempts).toHaveLength(2);
+        expect(closes).toBeGreaterThanOrEqual(2);
+    });
 });

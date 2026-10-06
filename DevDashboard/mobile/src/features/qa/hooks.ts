@@ -79,7 +79,11 @@ export function useQaStream(options: { onResume?: () => void } = {}): UseQaStrea
         function open(): void {
             handleRef.current?.close();
             setStatus("connecting");
-            handleRef.current = openQaSubscription(client, { onRow: pushLive, onStatus: setStatus });
+            handleRef.current = openQaSubscription(client, {
+                onRow: pushLive,
+                onStatus: setStatus,
+                onReconnect: () => onResumeRef.current?.(),
+            });
         }
 
         function close(): void {
