@@ -24,6 +24,7 @@ function mkRegion(overrides: Partial<WalkRegion> = {}): WalkRegion {
         decision: null,
         storedContent: "old",
         currentContent: "new",
+        preImage: [],
         ...overrides,
     };
 }
@@ -118,6 +119,7 @@ describe("processAutoRemoves", () => {
                     hunkIndex: 2,
                     klass: "unchanged",
                     decision: "auto-capture",
+                    currentContent: "const remove = 2;",
                 }),
             ],
             stateDir,

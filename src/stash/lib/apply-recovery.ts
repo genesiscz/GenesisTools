@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, readFile, readlink, rename, symlink, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { createTwoFilesPatch } from "diff";
 import { runGitIn } from "./patch";
 
 export type RecoveryFile = { kind: "missing" } | { kind: "file" | "symlink"; data: string; mode: number };
@@ -149,4 +150,29 @@ export async function restoreApplySnapshot(args: {
             });
         }
     }
+}
+
+export async function applicationRestorePatch(args: { root: string; before: ApplyRecoverySnapshot }): Promise<string> {
+    const after = await captureApplySnapshot({ root: args.root, files: Object.keys(args.before.files) });
+    const patches: string[] = [];
+    for (const [file, before] of Object.entries(args.before.files)) {
+        const current = after.files[file];
+        if (before.kind === "symlink" || current.kind === "symlink") {
+            continue;
+        }
+        const oldText = before.kind === "file" ? Buffer.from(before.data, "base64").toString("utf8") : "";
+        const newText = current.kind === "file" ? Buffer.from(current.data, "base64").toString("utf8") : "";
+        if (oldText.includes("\0") || newText.includes("\0")) {
+            continue;
+        }
+        patches.push(
+            createTwoFilesPatch(
+                before.kind === "missing" ? "/dev/null" : `a/${file}`,
+                current.kind === "missing" ? "/dev/null" : `b/${file}`,
+                oldText,
+                newText
+            )
+        );
+    }
+    return patches.join("\n");
 }

@@ -21,7 +21,13 @@ describe("applyDecisionToCode", () => {
                 "\n"
             )
         );
-        await applyDecisionToCode({ filePath: f, regionName: "x", hunkIndex: 1, decision: "auto-remove" });
+        await applyDecisionToCode({
+            preImage: [],
+            filePath: f,
+            regionName: "x",
+            hunkIndex: 1,
+            decision: "auto-remove",
+        });
         expect(await readFile(f, "utf8")).toBe("before\nafter");
     });
 
@@ -37,8 +43,42 @@ describe("applyDecisionToCode", () => {
                 "after",
             ].join("\n")
         );
-        await applyDecisionToCode({ filePath: f, regionName: "x", hunkIndex: 1, decision: "update" });
+        await applyDecisionToCode({ preImage: [], filePath: f, regionName: "x", hunkIndex: 1, decision: "update" });
         expect(await readFile(f, "utf8")).toBe("before\nafter");
+    });
+
+    test("restores a pre-image only while the recorded region still matches", async () => {
+        const filePath = join(dir, "restore.ts");
+        const current = "// #region @stash:x\nedited();\n// #endregion @stash:x\n";
+        await writeFile(filePath, current);
+        await expect(
+            applyDecisionToCode({
+                filePath,
+                regionName: "x",
+                hunkIndex: 1,
+                decision: "discard",
+                preImage: ["baseline();"],
+                expectedPostImage: "before-edit();",
+            })
+        ).rejects.toThrow("changed after the decision");
+        expect(await readFile(filePath, "utf8")).toBe(current);
+        await applyDecisionToCode({
+            filePath,
+            regionName: "x",
+            hunkIndex: 1,
+            decision: "update",
+            preImage: ["baseline();"],
+            expectedPostImage: "edited();",
+        });
+        expect(await readFile(filePath, "utf8")).toBe("baseline();\n");
+        await expect(
+            applyDecisionToCode({
+                filePath,
+                regionName: "x",
+                hunkIndex: 1,
+                decision: "discard",
+            })
+        ).rejects.toThrow("Missing stash pre-image");
     });
 
     test("skip is a no-op on the file", async () => {
@@ -51,7 +91,7 @@ describe("applyDecisionToCode", () => {
             "after",
         ].join("\n");
         await writeFile(f, before);
-        await applyDecisionToCode({ filePath: f, regionName: "x", hunkIndex: 1, decision: "skip" });
+        await applyDecisionToCode({ preImage: [], filePath: f, regionName: "x", hunkIndex: 1, decision: "skip" });
         expect(await readFile(f, "utf8")).toBe(before);
     });
 
@@ -76,7 +116,13 @@ describe("applyDecisionToCode", () => {
             ].join("\n")
         );
         // Back-to-front: remove hunk 2 first.
-        await applyDecisionToCode({ filePath: f, regionName: "x", hunkIndex: 2, decision: "auto-remove" });
+        await applyDecisionToCode({
+            preImage: [],
+            filePath: f,
+            regionName: "x",
+            hunkIndex: 2,
+            decision: "auto-remove",
+        });
         const afterFirst = await readFile(f, "utf8");
         expect(afterFirst).toBe(
             [
@@ -89,7 +135,13 @@ describe("applyDecisionToCode", () => {
             ].join("\n")
         );
         // Then remove what's now the only remaining marker (hunkIndex 1).
-        await applyDecisionToCode({ filePath: f, regionName: "x", hunkIndex: 1, decision: "auto-remove" });
+        await applyDecisionToCode({
+            preImage: [],
+            filePath: f,
+            regionName: "x",
+            hunkIndex: 1,
+            decision: "auto-remove",
+        });
         expect(await readFile(f, "utf8")).toBe(
             ["// region A before", "// between regions", "// region B after"].join("\n")
         );
@@ -102,6 +154,7 @@ describe("applyDecisionToCode", () => {
         // PR #222 t28: caller (unapply) uses the return value to keep the application 'active'
         // rather than falsely marking it 'unapplied' when markers are gone.
         const outcome = await applyDecisionToCode({
+            preImage: [],
             filePath: f,
             regionName: "x",
             hunkIndex: 5,
@@ -118,6 +171,7 @@ describe("applyDecisionToCode", () => {
             ["before", `// #region @stash:x {"v":1}`, "c", "// #endregion @stash:x", "after"].join("\n")
         );
         const outcome = await applyDecisionToCode({
+            preImage: [],
             filePath: f,
             regionName: "x",
             hunkIndex: 1,
@@ -131,6 +185,7 @@ describe("applyDecisionToCode", () => {
         const before = "untouched\n";
         await writeFile(f, before);
         const outcome = await applyDecisionToCode({
+            preImage: [],
             filePath: f,
             regionName: "x",
             hunkIndex: 1,
@@ -152,7 +207,7 @@ describe("applyDecisionToCode", () => {
                 "after",
             ].join("\n")
         );
-        await applyDecisionToCode({ filePath: f, regionName: "x", hunkIndex: 1, decision: "discard" });
+        await applyDecisionToCode({ preImage: [], filePath: f, regionName: "x", hunkIndex: 1, decision: "discard" });
         expect(await readFile(f, "utf8")).toBe("before\nafter");
     });
 });

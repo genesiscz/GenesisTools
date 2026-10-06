@@ -20,6 +20,9 @@ export interface WalkRegion {
     decision: Decision;
     storedContent: string | null;
     currentContent: string | null;
+    preImage?: string[];
+    oldNoNewline?: boolean;
+    deletedFile?: boolean;
 }
 
 export interface WalkSnapshot {

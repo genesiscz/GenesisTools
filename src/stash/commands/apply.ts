@@ -4,7 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
-import { captureApplySnapshot } from "../lib/apply-recovery";
+import { applicationRestorePatch, captureApplySnapshot } from "../lib/apply-recovery";
 import { ApplySession } from "../lib/apply-session";
 import { newStashId, shortId } from "../lib/ids";
 import { commentSyntaxForFile } from "../lib/languages";
@@ -140,11 +140,16 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
                 return;
             }
 
+            const before = session.snapshot().before;
+            if (!before) {
+                throw new Error("Cannot safely resume a legacy apply without its original file snapshots");
+            }
+            const restorePatch = await applicationRestorePatch({ root: project.rootPath, before });
             const affectedFiles = await listFilesInPatch({ repoDir: project.rootPath, patch });
             await decorateAppliedRegions({
                 projectRoot: project.rootPath,
                 files: affectedFiles,
-                patch,
+                patch: restorePatch,
                 stashName: opts.name,
                 stashId: stash.id,
                 version: version.version,
@@ -160,7 +165,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
                 [newStashId(), stash.id, version.id, project.rootPath, project.origin, project.sha, now]
             );
 
-            await session.complete();
+            await session.archiveApplication(restorePatch);
             ui.ok(`applied "${opts.name}" v${version.version} (after conflict resolution)`);
             ui.info(`  ${affectedFiles.length} files affected`);
 
@@ -267,10 +272,15 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
             return;
         }
 
+        const before = session.snapshot().before;
+        if (!before) {
+            throw new Error("Apply recovery snapshot missing");
+        }
+        const restorePatch = await applicationRestorePatch({ root: project.rootPath, before });
         await decorateAppliedRegions({
             projectRoot: project.rootPath,
             files: affectedFiles,
-            patch,
+            patch: restorePatch,
             stashName: opts.name,
             stashId: stash.id,
             version: version.version,
@@ -286,7 +296,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
             [newStashId(), stash.id, version.id, project.rootPath, project.origin, project.sha, now]
         );
 
-        await session.complete();
+        await session.archiveApplication(restorePatch);
 
         // Drop the fetched baseline ref — it was only needed to seed 3-way merge blobs into objects/.
         // Failure is harmless: git's GC will reap unreachable objects eventually.
@@ -344,10 +354,8 @@ async function decorateAppliedRegions(args: {
             if (!hunk) {
                 continue;
             }
-            // PR #222 t3: pure-deletion hunks (no `+` lines, newLines === 0) have nothing to wrap.
-            // Emitting a marker pair here would produce an empty `// #region … // #endregion …`
-            // sandwich with no body, which `parseMarkers` would then "find" with a zero-line span.
-            if (hunk.newLines === 0 || hunk.addedCount === 0) {
+            // Deleted files have no post-image to wrap; unapply restores their saved pre-image.
+            if (hunk.newLines === 0) {
                 continue;
             }
             const meta: Record<string, unknown> = { id: shortId(args.stashId), v: args.version };

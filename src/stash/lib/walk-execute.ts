@@ -5,11 +5,13 @@ import { suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { ApplicationRow, StashRow, VersionRow } from "../types";
+import { ApplySession } from "./apply-session";
 import { classifyRegion } from "./classify";
 import { applyDecisionToCode } from "./decisions";
 import { renderDiff } from "./diff-render";
 import { newStashId } from "./ids";
 import { parseMarkers } from "./markers";
+import { patchHunks } from "./patch-regions";
 import type { DetectedProject } from "./projects";
 import { splitHunksAtMarkers } from "./region-split";
 import { extractRegionContentByHunk } from "./regions";
@@ -244,7 +246,18 @@ export async function bootstrapUnapplyWalk(args: {
     }
     const repo = new StoreRepo(args.storage.storeRepoDir());
     const storedPatch = (await repo.readFileAt(version.patch_ref, "PATCH.diff")) ?? "";
-    const regionMap = collectRegionsFromPatch(storedPatch);
+    const applicationPatch = await ApplySession.applicationPatch({
+        stashId: args.stash.id,
+        projectHash: args.projectHash,
+        versionId: version.id,
+        stateDir: args.storage.stateDir(),
+    });
+    const counts = new Map<string, number>();
+    const regionMap = patchHunks(applicationPatch ?? storedPatch).map((hunk) => {
+        const hunkIndex = (counts.get(hunk.filePath) ?? 0) + 1;
+        counts.set(hunk.filePath, hunkIndex);
+        return { ...hunk, hunkIndex, name: null, content: hunk.postImage.join("\n") };
+    });
 
     const walkRegions: WalkRegion[] = [];
     for (const r of regionMap) {
@@ -253,17 +266,23 @@ export async function bootstrapUnapplyWalk(args: {
         const currentContent = fileContent
             ? await extractRegionContentByHunk(join(args.project.rootPath, r.filePath), args.stash.name, r.hunkIndex)
             : null;
-        const klass = classifyRegion({ storedContent: r.content, currentContent, present }).klass;
+        const klass =
+            "deletedFile" in r && r.deletedFile && fileContent === null
+                ? "unchanged"
+                : classifyRegion({ storedContent: r.content, currentContent, present }).klass;
         walkRegions.push({
             id: newStashId(),
             filePath: r.filePath,
             hunkIndex: r.hunkIndex,
             name: r.name,
             klass,
-            // unchanged regions get auto-capture: stripped without interactive prompting
+            // unchanged regions get auto-capture: restored without interactive prompting
             decision: klass === "unchanged" ? "auto-capture" : null,
             storedContent: r.content,
             currentContent,
+            preImage: r.preImage,
+            oldNoNewline: r.oldNoNewline,
+            deletedFile: r.deletedFile,
         });
     }
 
@@ -302,6 +321,10 @@ export async function processAutoRemoves(args: { walk: Walk; projectRoot: string
                     regionName: r.name ?? args.walk.snapshot().stashName,
                     hunkIndex: r.hunkIndex,
                     decision: "auto-remove",
+                    preImage: r.preImage,
+                    expectedPostImage: r.currentContent ?? undefined,
+                    oldNoNewline: r.oldNoNewline,
+                    deletedFile: r.deletedFile,
                 });
             }
         }
@@ -434,6 +457,10 @@ export async function executeUnapplyDecisions(args: {
                 regionName: r.name ?? args.walk.snapshot().stashName,
                 hunkIndex: r.hunkIndex,
                 decision: walkDecisionToCode(r.decision),
+                preImage: r.preImage,
+                expectedPostImage: r.currentContent ?? undefined,
+                oldNoNewline: r.oldNoNewline,
+                deletedFile: r.deletedFile,
             });
             if (outcome === "marker-missing") {
                 stats.failedToFind++;
@@ -538,7 +565,7 @@ export async function capturedUpdatesAsNewVersion(args: {
 
     const patchParts: string[] = [];
     for (const r of args.capturedRegions) {
-        const before = r.storedContent ?? "";
+        const before = r.preImage?.join("\n") ?? r.storedContent ?? "";
         const after = r.currentContent ?? "";
         patchParts.push(buildUnifiedDiff({ path: r.filePath, before, after }));
     }
@@ -547,7 +574,7 @@ export async function capturedUpdatesAsNewVersion(args: {
     const baselineRef = `refs/baselines/${args.stash.id}/v${newV}`;
     const baselineFiles: Record<string, string> = {};
     for (const r of args.capturedRegions) {
-        baselineFiles[r.filePath] = r.storedContent ?? "";
+        baselineFiles[r.filePath] = r.preImage?.join("\n") ?? r.storedContent ?? "";
     }
     await repo.writePatchCommit({
         ref: baselineRef,
@@ -645,7 +672,10 @@ export async function bootstrapUpdateWalk(args: {
         const currentContent = fileContent
             ? await extractRegionContentByHunk(join(args.project.rootPath, r.filePath), args.stash.name, r.hunkIndex)
             : null;
-        const klass = classifyRegion({ storedContent: r.content, currentContent, present }).klass;
+        const klass =
+            "deletedFile" in r && r.deletedFile && fileContent === null
+                ? "unchanged"
+                : classifyRegion({ storedContent: r.content, currentContent, present }).klass;
         walkRegions.push({
             id: newStashId(),
             filePath: r.filePath,
@@ -741,7 +771,7 @@ export async function executeUpdateDecisions(args: {
         const baselineFiles: Record<string, string> = {};
 
         for (const r of captureRegions) {
-            baselineFiles[r.filePath] = r.storedContent ?? "";
+            baselineFiles[r.filePath] = r.preImage?.join("\n") ?? r.storedContent ?? "";
         }
 
         await repo.writePatchCommit({

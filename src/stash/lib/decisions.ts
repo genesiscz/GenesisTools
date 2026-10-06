@@ -25,8 +25,20 @@ export async function applyDecisionToCode(args: {
      */
     hunkIndex: number;
     decision: Exclude<Decision, null>;
+    preImage?: string[];
+    expectedPostImage?: string;
+    oldNoNewline?: boolean;
+    deletedFile?: boolean;
 }): Promise<DecisionOutcome> {
     if (args.decision === "skip") {
+        return "applied";
+    }
+    if (!args.preImage) {
+        throw new Error("Missing stash pre-image; preserve the session for recovery instead of deleting baseline code");
+    }
+    if (args.deletedFile) {
+        const restored = args.preImage.join("\n") + (args.oldNoNewline ? "" : "\n");
+        await writeFile(args.filePath, restored, { flag: "wx" });
         return "applied";
     }
     const content = await readFile(args.filePath, "utf8");
@@ -43,6 +55,13 @@ export async function applyDecisionToCode(args: {
     const lines = content.split("\n");
     const before = lines.slice(0, m.startLine - 1);
     const after = lines.slice(m.endLine);
-    await writeFile(args.filePath, [...before, ...after].join("\n"));
+    const currentRegion = lines.slice(m.contentStartLine - 1, m.contentEndLine).join("\n");
+    if (args.expectedPostImage !== undefined && currentRegion !== args.expectedPostImage) {
+        throw new Error(`Stash region changed after the decision was recorded: ${args.filePath}`);
+    }
+    if (args.oldNoNewline && after.length === 1 && after[0] === "") {
+        after.pop();
+    }
+    await writeFile(args.filePath, [...before, ...args.preImage, ...after].join("\n"));
     return "applied";
 }

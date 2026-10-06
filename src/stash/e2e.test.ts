@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyCommand } from "./commands/apply";
@@ -63,6 +63,43 @@ describe.serial("stash e2e", () => {
         const after = await readFile(join(projectB, "main.ts"), "utf8");
         expect(after).not.toContain("#region @stash:logging");
         expect(after).not.toContain("log('start')");
+        expect(after).toBe("export function main() { return 1; }\n");
+    });
+
+    test("append and separated mixed deletion hunks restore every baseline byte", async () => {
+        const baseline = Array.from({ length: 20 }, (_, index) => `line${index}();`).join("\n") + "\n";
+        for (const repo of [projectA, projectB]) {
+            await writeFile(join(repo, "main.ts"), baseline);
+            await runGitIn(repo, ["add", "main.ts"]);
+            await runGitIn(repo, ["commit", "-m", "long baseline"]);
+        }
+        const targetBaseline = `targetOnly();\n${baseline}`;
+        await writeFile(join(projectB, "main.ts"), targetBaseline);
+        await runGitIn(projectB, ["add", "main.ts"]);
+        await runGitIn(projectB, ["commit", "-m", "target prefix"]);
+        const changed = baseline.replace("line1();\n", "").replace("line17();", "replacement();") + "appended();\n";
+        process.chdir(projectA);
+        await writeFile(join(projectA, "main.ts"), changed);
+        await saveCommand({ name: "mixed", mode: "all", tags: [], description: undefined });
+        process.chdir(projectB);
+        await applyCommand({ name: "mixed", verboseMarkers: false });
+        const applied = await readFile(join(projectB, "main.ts"), "utf8");
+        await writeFile(join(projectB, "main.ts"), applied.replace("line10();", "outsideEdit();"));
+        await unapplyCommand({ name: "mixed", action: "start", decision: "discard-all-dangerous" });
+        expect(await readFile(join(projectB, "main.ts"), "utf8")).toBe(
+            targetBaseline.replace("line10();", "outsideEdit();")
+        );
+    });
+
+    test("a deleted file is restored from its complete pre-image", async () => {
+        process.chdir(projectA);
+        await unlink(join(projectA, "main.ts"));
+        await saveCommand({ name: "deleted-file", mode: "all", tags: [], description: undefined });
+        process.chdir(projectB);
+        await applyCommand({ name: "deleted-file", verboseMarkers: false });
+        expect(existsSync(join(projectB, "main.ts"))).toBe(false);
+        await unapplyCommand({ name: "deleted-file", action: "start", decision: "discard-all-dangerous" });
+        expect(await readFile(join(projectB, "main.ts"), "utf8")).toBe("export function main() { return 1; }\n");
     });
 
     test("new-file save --mode staged → apply → unapply removes the file (no empty husk)", async () => {

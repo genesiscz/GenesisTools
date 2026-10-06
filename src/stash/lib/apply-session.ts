@@ -17,6 +17,7 @@ export interface ApplySessionSnapshot {
     startedAt: string;
     before?: ApplyRecoverySnapshot;
     after?: ApplyRecoverySnapshot;
+    restorePatch?: string;
 }
 
 export interface StartArgs {
@@ -117,6 +118,36 @@ export class ApplySession {
     async persist(): Promise<void> {
         const file = this.stateFile();
         await writeFile(file, SafeJSON.stringify(this.snap, undefined, 2));
+    }
+
+    async archiveApplication(restorePatch: string): Promise<void> {
+        this.snap.restorePatch = restorePatch;
+        await writeFile(
+            join(this.stateDir, `${this.snap.projectHash}--applied--${this.snap.stashId}.json`),
+            SafeJSON.stringify(this.snap)
+        );
+        await this.complete();
+    }
+
+    static async applicationPatch(args: {
+        stashId: string;
+        projectHash: string;
+        versionId: string;
+        stateDir: string;
+    }): Promise<string | null> {
+        try {
+            const raw = await readFile(
+                join(args.stateDir, `${args.projectHash}--applied--${args.stashId}.json`),
+                "utf8"
+            );
+            const snap = SafeJSON.parse(raw) as ApplySessionSnapshot;
+            return snap.versionId === args.versionId ? (snap.restorePatch ?? null) : null;
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+                throw error;
+            }
+            return null;
+        }
     }
 
     async complete(): Promise<void> {
