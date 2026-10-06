@@ -1,10 +1,26 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { convertFileToMonoMp3, convertToWhisperWav, toFloat32Audio } from "./converter";
 
 describe("audio converter", () => {
+    test("refuses cancelled or invalid requests before starting a converter", async () => {
+        await expect(
+            convertFileToMonoMp3("/missing-fixture.wav", "/unused-fixture.mp3", {
+                signal: AbortSignal.abort(new Error("cancelled before conversion")),
+            })
+        ).rejects.toThrow("cancelled before conversion");
+        await expect(
+            convertFileToMonoMp3("/missing-fixture.wav", "/unused-fixture.mp3", {
+                range: { startSeconds: 4, endSeconds: 3 },
+            })
+        ).rejects.toThrow("interval");
+        await expect(
+            convertFileToMonoMp3("/missing-fixture.wav", "/unused-fixture.mp3", { timeoutMs: -1 })
+        ).rejects.toThrow("timeout");
+    });
+
     test("parses a generated WAV buffer correctly", async () => {
         // Generate a synthetic 16kHz mono 16-bit WAV (1 second of silence)
         const sampleRate = 16000;
@@ -123,11 +139,34 @@ describe("audio converter", () => {
             wav.writeUInt16LE(16, 34);
             wav.write("data", 36);
             wav.writeUInt32LE(dataSize, 40);
+            for (let i = sampleRate * 10; i < sampleRate * 11; i++) {
+                wav.writeInt16LE(
+                    Math.round(Math.sin((2 * Math.PI * 440 * i) / sampleRate) * 20000),
+                    headerSize + i * 2
+                );
+            }
             writeFileSync(input, wav);
 
             const start = Date.now();
             await convertFileToMonoMp3(input, output);
             expect(Date.now() - start).toBeLessThan(15000);
+            const clipped = join(dir, "clipped.mp3");
+            await convertFileToMonoMp3(input, clipped, {
+                range: { startSeconds: 10, endSeconds: 11 },
+                timeoutMs: 5000,
+            });
+            const samples = await toFloat32Audio(clipped);
+            expect(samples.length / 16000).toBeGreaterThanOrEqual(0.95);
+            // MP3 decoding includes boundary padding; the local decoder returns 1.08 s for this one-second clip.
+            expect(samples.length / 16000).toBeLessThanOrEqual(1.1);
+            const rms = Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
+            expect(rms).toBeGreaterThan(0.3);
+            const controller = new AbortController();
+            const cancelled = join(dir, "cancelled.mp3");
+            const request = convertFileToMonoMp3(input, cancelled, { signal: controller.signal });
+            controller.abort(new Error("cancelled real conversion"));
+            await expect(request).rejects.toThrow("cancelled real conversion");
+            expect(existsSync(cancelled)).toBe(false);
             rmSync(dir, { recursive: true, force: true });
         }
     );

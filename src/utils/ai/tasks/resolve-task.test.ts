@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -9,6 +9,7 @@ import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "../config/
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../providers/plugin-types";
 import { _resetBuiltInPluginsForTest } from "../providers/plugins";
 import { _resetPluginsForTest, registerPlugin } from "../providers/registry";
+import { listTaskAccountChoices } from "./choices";
 import { NoProviderForTaskError, resolveForTask } from "./resolve-task";
 
 /**
@@ -85,6 +86,47 @@ afterEach(() => {
 });
 
 describe("resolveForTask availability chain", () => {
+    test("account choices honor provider/account switches and capabilities without binding or rewriting config", async () => {
+        registerPlugin(fakePlugin("deepgram", { bindThrows: true }));
+        registerPlugin(fakePlugin("xai", { bindThrows: true }));
+        registerPlugin(fakePlugin("groq", { bindThrows: true }));
+        registerPlugin({ ...fakePlugin("openai", { bindThrows: true }), capabilities: new Set(["chat"]) });
+        writeConfig([
+            { ...account("acc_work", "deepgram"), credentials: { apiKey: "fixture-private-value" } },
+            account("acc_disabled_provider", "xai"),
+            account("acc_disabled_account", "groq", false),
+            account("acc_chat_only", "openai"),
+        ]);
+        const file = join(home, ".genesis-tools", "ai", "config.json");
+        const config: AiConfigData = SafeJSON.parse(readFileSync(file, "utf8"));
+        config.disabledProviders = ["xai"];
+        writeFileSync(file, SafeJSON.stringify(config));
+        const before = readFileSync(file, "utf8");
+        const stamp = statSync(file).mtimeMs;
+        const choices = await listTaskAccountChoices("transcribe");
+        expect(choices).toEqual([
+            {
+                id: "acc_work",
+                name: "deepgram-acct",
+                provider: "deepgram",
+                modelRef: "@account/acc_work",
+                defaultModel: "nova-3",
+                local: false,
+            },
+        ]);
+        expect(SafeJSON.stringify(choices)).not.toContain("fixture-private-value");
+        expect(readFileSync(file, "utf8")).toBe(before);
+        expect(statSync(file).mtimeMs).toBe(stamp);
+    });
+
+    test("an account-only ElevenLabs selection uses its speech transcription model", async () => {
+        registerPlugin(fakePlugin("elevenlabs", { transcription: true }));
+        writeConfig([account("acc_el", "elevenlabs")]);
+        const resolved = await resolveForTask({ task: "transcribe", model: "@account/acc_el", needs: "transcription" });
+        expect(resolved.plugin.id).toBe("elevenlabs");
+        expect(resolved.model.id).toBe("scribe_v1");
+    });
+
     test("degrades past a provider that cannot bind, in fallback order", async () => {
         registerPlugin(fakePlugin("deepgram", { bindThrows: true }));
         registerPlugin(fakePlugin("groq", { transcription: true }));

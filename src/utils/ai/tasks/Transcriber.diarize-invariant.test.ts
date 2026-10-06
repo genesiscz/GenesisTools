@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
-import type { AITranscriptionProvider, TranscriptionResult } from "@genesiscz/utils/ai/types";
+import type { AITranscriptionProvider, TranscribeOptions, TranscriptionResult } from "@genesiscz/utils/ai/types";
 
 // The designed-out invariant: local diarization is ALWAYS handed the full
 // original audio buffer, never a per-chunk slice — so speaker labels share
@@ -26,7 +26,7 @@ const { Transcriber } = await import("@genesiscz/utils/ai/tasks/Transcriber");
 type TranscriberCtor = new (
     provider: AITranscriptionProvider
 ) => {
-    transcribe(audio: Buffer, options?: { diarize?: boolean; clean?: boolean }): Promise<TranscriptionResult>;
+    transcribe(audio: Buffer | string, options?: TranscribeOptions): Promise<TranscriptionResult>;
 };
 
 const fakeProvider: AITranscriptionProvider = {
@@ -46,5 +46,44 @@ describe("designed-out: diarization runs on the un-split source", () => {
         const t = new (Transcriber as unknown as TranscriberCtor)(fakeProvider);
         await t.transcribe(big, { diarize: true, clean: false });
         expect(seenLengths).toEqual([big.length]);
+    });
+});
+
+describe("transcription cancellation phases", () => {
+    it("rejects before opening a file or invoking a provider", async () => {
+        let calls = 0;
+        const t = new (Transcriber as unknown as TranscriberCtor)({
+            ...fakeProvider,
+            transcribe: async () => {
+                calls++;
+                throw new Error("unexpected provider");
+            },
+        });
+        await expect(
+            t.transcribe("/missing-fixture-audio.wav", {
+                signal: AbortSignal.abort(new Error("cancelled before file read")),
+            })
+        ).rejects.toThrow("cancelled before file read");
+        expect(calls).toBe(0);
+    });
+
+    it("does not start local diarization after an ignored cancellation", async () => {
+        const controller = new AbortController();
+        const before = seenLengths.length;
+        let calls = 0;
+        const t = new (Transcriber as unknown as TranscriberCtor)({
+            ...fakeProvider,
+            transcribe: async (_audio, options) => {
+                calls++;
+                expect(options?.signal).toBe(controller.signal);
+                controller.abort(new Error("cancelled during request"));
+                return { text: "late", segments: [{ text: "late", start: 0, end: 1 }] };
+            },
+        });
+        await expect(t.transcribe(Buffer.from("audio"), { diarize: true, signal: controller.signal })).rejects.toThrow(
+            "cancelled during request"
+        );
+        expect(calls).toBe(1);
+        expect(seenLengths.length).toBe(before);
     });
 });

@@ -23,8 +23,11 @@ let wantsWindow = arguments.isEmpty || firstArgument == "--window" || firstArgum
 // The launcher passes its caller's environment through untouched.
 if wantsWindow || firstArgument.hasPrefix("-") || firstArgument.contains("://") {
     let hubLink = firstArgument.hasPrefix("genesis-tools://hub")
-    let windowFace = wantsWindow || firstArgument == "--hub" || firstArgument == "--review" || hubLink
+    let windowFace = wantsWindow || firstArgument == "--hub" || firstArgument == "--review" || firstArgument == "--recast" || hubLink
     ChildEnvironment.install(loginShell: windowFace, refresh: arguments.first == "--hub" || hubLink)
+    if windowFace {
+        MainActor.assumeIsolated { _ = AppDocumentController.routed }
+    }
     // A face that is (or runs under) this bundle's responsible process tells its `tools` children to
     // skip the launcher; one started from a plain terminal clears the markers (App/FaceMarker.swift).
     FaceMarker.install()
@@ -92,6 +95,10 @@ if firstArgument == "--hub" {
 // window (see Review/ReviewWindow.swift).
 if firstArgument == "--review" {
     runReview(Array(arguments.dropFirst()))
+}
+
+if firstArgument == "--recast" {
+    runRecast(Array(arguments.dropFirst()))
 }
 
 runLauncher(arguments)

@@ -51,6 +51,8 @@ export interface TranscriptionSegment {
 export type OnSegment = (segment: TranscriptionSegment) => void;
 
 export interface TranscribeOptions {
+    /** Abort supported provider requests and discard late results. Local inference may finish its current call first. */
+    signal?: AbortSignal;
     language?: string;
     format?: "text" | "json" | "srt" | "vtt";
     model?: string;

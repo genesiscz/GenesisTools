@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { TranscriptionModelV3 } from "@ai-sdk/provider";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { AiConfigStore } from "../config/AiConfigStore";
@@ -156,6 +157,64 @@ describe("ai.* dispose the binding they resolve", () => {
         });
 
         await expect(ai.translate("ahoj", { to: "en" })).rejects.toThrow(/no chat/);
+        expect(disposed).toEqual(["openai"]);
+    });
+
+    test("ai.transcribe returns the actual resolved provider and model and disposes after success", async () => {
+        const model: TranscriptionModelV3 = {
+            specificationVersion: "v3",
+            provider: "openai",
+            modelId: "whisper-1",
+            async doGenerate() {
+                return {
+                    text: "fixture speech",
+                    segments: [],
+                    warnings: [],
+                    language: "en",
+                    durationInSeconds: 1,
+                    response: { timestamp: new Date(), modelId: "whisper-1" },
+                };
+            },
+        };
+        registerPlugin(fakePlugin("openai", ["transcribe"], { transcription: () => model }));
+        writeConfig([account("acc_oa", "openai")]);
+        const result = await ai.transcribe(Buffer.from("audio"));
+        expect(result).toMatchObject({ text: "fixture speech", provider: "openai", model: "whisper-1" });
+        expect(disposed).toEqual(["openai"]);
+    });
+
+    test("ai.transcribe does not resolve an account for an already cancelled request", async () => {
+        await expect(
+            ai.transcribe(Buffer.from("audio"), {
+                signal: AbortSignal.abort(new Error("already cancelled")),
+            })
+        ).rejects.toThrow("already cancelled");
+        expect(disposed).toEqual([]);
+    });
+
+    test("ai.transcribe aborts the SDK request and disposes its binding", async () => {
+        const controller = new AbortController();
+        let requests = 0;
+        let observedSignal: AbortSignal | undefined;
+        const model: TranscriptionModelV3 = {
+            specificationVersion: "v3",
+            provider: "openai",
+            modelId: "whisper-1",
+            async doGenerate(options) {
+                requests++;
+                observedSignal = options.abortSignal;
+                controller.abort(new Error("cancelled SDK request"));
+                options.abortSignal?.throwIfAborted();
+                throw new Error("the SDK dropped the signal");
+            },
+        };
+        registerPlugin(fakePlugin("openai", ["transcribe"], { transcription: () => model }));
+        writeConfig([account("acc_oa", "openai")]);
+        await expect(ai.transcribe(Buffer.from("audio"), { signal: controller.signal })).rejects.toThrow(
+            "cancelled SDK request"
+        );
+        expect(requests).toBe(1);
+        expect(observedSignal?.aborted).toBe(true);
         expect(disposed).toEqual(["openai"]);
     });
 

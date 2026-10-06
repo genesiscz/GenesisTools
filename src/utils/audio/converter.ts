@@ -157,14 +157,30 @@ export const MONO_MP3_BITRATE_KBPS = 128;
 export async function convertFileToMonoMp3(
     inputPath: string,
     outputPath: string,
-    options: { timeoutMs?: number } = {}
+    options: { timeoutMs?: number; signal?: AbortSignal; range?: { startSeconds: number; endSeconds: number } } = {}
 ): Promise<string> {
+    options.signal?.throwIfAborted();
+    if (options.timeoutMs !== undefined && (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0)) {
+        throw new Error("Choose a positive audio conversion timeout.");
+    }
+    const range = options.range;
+    if (
+        range &&
+        (!Number.isFinite(range.startSeconds) ||
+            !Number.isFinite(range.endSeconds) ||
+            range.startSeconds < 0 ||
+            range.endSeconds <= range.startSeconds)
+    ) {
+        throw new Error("Choose a positive audio interval within the recording.");
+    }
     const proc = Bun.spawn(
         [
             "ffmpeg",
             "-y",
+            ...(range ? ["-ss", String(range.startSeconds)] : []),
             "-i",
             inputPath,
+            ...(range ? ["-t", String(range.endSeconds - range.startSeconds)] : []),
             "-vn",
             "-map",
             "0:a:0",
@@ -181,30 +197,51 @@ export async function convertFileToMonoMp3(
         { stdout: "pipe", stderr: "pipe" }
     );
 
+    const stop = () => {
+        if (proc.exitCode !== null) {
+            return;
+        }
+        try {
+            proc.kill("SIGKILL");
+        } catch (error) {
+            logger.debug({ error }, "Audio converter already exited while stopping");
+        }
+    };
     let timedOut = false;
     const timer =
         options.timeoutMs === undefined
             ? undefined
             : setTimeout(() => {
                   timedOut = true;
-                  proc.kill("SIGKILL");
+                  stop();
               }, options.timeoutMs);
-
-    const [, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-    await proc.exited;
-    clearTimeout(timer);
-
-    if (timedOut) {
-        cleanup(outputPath);
-        throw new Error(`ffmpeg mp3 transcode did not finish within ${options.timeoutMs} ms`);
+    options.signal?.addEventListener("abort", stop, { once: true });
+    if (options.signal?.aborted) {
+        stop();
     }
-
-    if (proc.exitCode !== 0 || !existsSync(outputPath)) {
+    try {
+        const [, stderr] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+        options.signal?.throwIfAborted();
+        if (timedOut) {
+            throw new Error(`ffmpeg mp3 transcode did not finish within ${options.timeoutMs} ms`);
+        }
+        if (proc.exitCode !== 0 || !existsSync(outputPath)) {
+            throw new Error(`ffmpeg mp3 transcode failed (exit ${proc.exitCode}): ${stderr.slice(-500)}`);
+        }
+        return outputPath;
+    } catch (error) {
+        stop();
+        await proc.exited;
         cleanup(outputPath);
-        throw new Error(`ffmpeg mp3 transcode failed (exit ${proc.exitCode}): ${stderr.slice(-500)}`);
+        throw error;
+    } finally {
+        clearTimeout(timer);
+        options.signal?.removeEventListener("abort", stop);
     }
-
-    return outputPath;
 }
 
 /**

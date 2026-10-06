@@ -63,6 +63,7 @@ export class AIElevenLabsTranscriptionProvider implements AITranscriptionProvide
     }
 
     async transcribe(audio: Buffer, options?: TranscribeOptions): Promise<TranscriptionResult> {
+        options?.signal?.throwIfAborted();
         const form = new FormData();
         form.append("model_id", options?.model ?? this.modelId);
 
@@ -84,7 +85,12 @@ export class AIElevenLabsTranscriptionProvider implements AITranscriptionProvide
         form.append("file", new Blob([new Uint8Array(audio)], { type: contentType }), filename);
 
         logger.debug({ model: this.modelId, bytes: audio.byteLength, filename }, "ElevenLabs STT request");
-        const response = await this.client.fetch("/v1/speech-to-text", { method: "POST", body: form });
+        const response = await this.client.fetch("/v1/speech-to-text", {
+            method: "POST",
+            body: form,
+            signal: options?.signal,
+        });
+        options?.signal?.throwIfAborted();
 
         if (!response.ok) {
             const body = await response
@@ -99,6 +105,7 @@ export class AIElevenLabsTranscriptionProvider implements AITranscriptionProvide
         }
 
         const data = (await response.json()) as ElevenLabsTranscriptionResponse;
+        options?.signal?.throwIfAborted();
 
         return {
             text: data.text,

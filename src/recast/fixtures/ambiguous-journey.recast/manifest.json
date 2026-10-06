@@ -1,0 +1,253 @@
+{
+    "format": "genesis-recast",
+    "version": 2,
+    "id": "recast_ambiguous_fixture",
+    "title": "Invented ambiguous journey",
+    "revision": 0,
+    "sources": [
+        {
+            "id": "source_timetable",
+            "name": "Invented journey.txt",
+            "kind": "text",
+            "mime": "text/plain",
+            "bytes": 150,
+            "assetName": "eccd093eca3253b24022666e1f2cf7b9430c4142a56e8d15292a48724963ef13.txt",
+            "contentHash": "eccd093eca3253b24022666e1f2cf7b9430c4142a56e8d15292a48724963ef13",
+            "importedAt": "2026-10-05T12:00:00Z",
+            "pages": [],
+            "textLength": 148
+        }
+    ],
+    "anchors": [
+        {
+            "id": "anchor_date",
+            "sourceId": "source_timetable",
+            "sourceHash": "eccd093eca3253b24022666e1f2cf7b9430c4142a56e8d15292a48724963ef13",
+            "label": "2026-10-06",
+            "region": {
+                "kind": "text",
+                "start": 33,
+                "end": 43,
+                "quote": "2026-10-06",
+                "prefix": "OURNEY — INVENTED\nDate: ",
+                "suffix": "\nDeparture: 08:?0 (08:10"
+            }
+        },
+        {
+            "id": "anchor_departure",
+            "sourceId": "source_timetable",
+            "sourceHash": "eccd093eca3253b24022666e1f2cf7b9430c4142a56e8d15292a48724963ef13",
+            "label": "08:?0 (08:10 or 08:40)",
+            "region": {
+                "kind": "text",
+                "start": 55,
+                "end": 77,
+                "quote": "08:?0 (08:10 or 08:40)",
+                "prefix": ": 2026-10-06\nDeparture: ",
+                "suffix": "\nArrival: 09:20\nTransfer"
+            }
+        },
+        {
+            "id": "anchor_arrival",
+            "sourceId": "source_timetable",
+            "sourceHash": "eccd093eca3253b24022666e1f2cf7b9430c4142a56e8d15292a48724963ef13",
+            "label": "09:20",
+            "region": {
+                "kind": "text",
+                "start": 87,
+                "end": 92,
+                "quote": "09:20",
+                "prefix": "8:10 or 08:40)\nArrival: ",
+                "suffix": "\nTransfer: allow twenty "
+            }
+        },
+        {
+            "id": "anchor_transfer",
+            "sourceId": "source_timetable",
+            "sourceHash": "eccd093eca3253b24022666e1f2cf7b9430c4142a56e8d15292a48724963ef13",
+            "label": "allow twenty minutes",
+            "region": {
+                "kind": "text",
+                "start": 103,
+                "end": 123,
+                "quote": "allow twenty minutes",
+                "prefix": "rrival: 09:20\nTransfer: ",
+                "suffix": "\nTime zone: not supplied"
+            }
+        }
+    ],
+    "readings": [
+        {
+            "id": "reading_date",
+            "anchorId": "anchor_date",
+            "text": "2026-10-06",
+            "alternatives": [],
+            "method": "manual",
+            "engine": "Invented ambiguity fixture; no OCR accuracy claim",
+            "createdAt": "2026-10-05T12:00:00Z"
+        },
+        {
+            "id": "reading_departure",
+            "anchorId": "anchor_departure",
+            "text": "08:?0 (08:10 or 08:40)",
+            "alternatives": [
+                "08:10",
+                "08:40"
+            ],
+            "method": "manual",
+            "engine": "Invented ambiguity fixture; no OCR accuracy claim",
+            "createdAt": "2026-10-05T12:00:00Z"
+        },
+        {
+            "id": "reading_arrival",
+            "anchorId": "anchor_arrival",
+            "text": "09:20",
+            "alternatives": [],
+            "method": "manual",
+            "engine": "Invented ambiguity fixture; no OCR accuracy claim",
+            "createdAt": "2026-10-05T12:00:00Z"
+        },
+        {
+            "id": "reading_transfer",
+            "anchorId": "anchor_transfer",
+            "text": "allow twenty minutes",
+            "alternatives": [],
+            "method": "manual",
+            "engine": "Invented ambiguity fixture; no OCR accuracy claim",
+            "createdAt": "2026-10-05T12:00:00Z"
+        }
+    ],
+    "collections": [
+        {
+            "id": "journeys",
+            "kind": "calendar",
+            "label": "Calendar",
+            "fields": [
+                {
+                    "id": "title",
+                    "label": "Title",
+                    "type": "text",
+                    "required": true
+                },
+                {
+                    "id": "start",
+                    "label": "Start",
+                    "type": "datetime",
+                    "required": true
+                },
+                {
+                    "id": "end",
+                    "label": "End",
+                    "type": "datetime",
+                    "required": true
+                },
+                {
+                    "id": "timezone",
+                    "label": "Time zone",
+                    "type": "timezone",
+                    "required": true
+                },
+                {
+                    "id": "location",
+                    "label": "Location",
+                    "type": "text",
+                    "required": false
+                },
+                {
+                    "id": "notes",
+                    "label": "Notes",
+                    "type": "text",
+                    "required": false
+                }
+            ]
+        }
+    ],
+    "records": [
+        {
+            "id": "journey_fixture",
+            "collectionId": "journeys",
+            "state": "draft",
+            "cells": {
+                "title": {
+                    "value": "Example journey",
+                    "state": "proposed",
+                    "origin": "user",
+                    "anchorIds": [],
+                    "readingIds": [],
+                    "alternatives": [],
+                    "note": ""
+                },
+                "start": {
+                    "value": null,
+                    "state": "unknown",
+                    "origin": "inferred",
+                    "anchorIds": [
+                        "anchor_date",
+                        "anchor_departure"
+                    ],
+                    "readingIds": [
+                        "reading_date",
+                        "reading_departure"
+                    ],
+                    "alternatives": [
+                        "2026-10-06T08:10",
+                        "2026-10-06T08:40"
+                    ],
+                    "note": ""
+                },
+                "end": {
+                    "value": "2026-10-06T09:20",
+                    "state": "proposed",
+                    "origin": "inferred",
+                    "anchorIds": [
+                        "anchor_date",
+                        "anchor_arrival"
+                    ],
+                    "readingIds": [
+                        "reading_date",
+                        "reading_arrival"
+                    ],
+                    "alternatives": [],
+                    "note": ""
+                },
+                "timezone": {
+                    "value": null,
+                    "state": "unknown",
+                    "origin": "user",
+                    "anchorIds": [],
+                    "readingIds": [],
+                    "alternatives": [],
+                    "note": ""
+                },
+                "location": {
+                    "value": null,
+                    "state": "unknown",
+                    "origin": "user",
+                    "anchorIds": [],
+                    "readingIds": [],
+                    "alternatives": [],
+                    "note": ""
+                },
+                "notes": {
+                    "value": "allow twenty minutes",
+                    "state": "proposed",
+                    "origin": "source",
+                    "anchorIds": [
+                        "anchor_transfer"
+                    ],
+                    "readingIds": [
+                        "reading_transfer"
+                    ],
+                    "alternatives": [],
+                    "note": ""
+                }
+            },
+            "createdAt": "2026-10-05T12:00:00Z"
+        }
+    ],
+    "corrections": [],
+    "renderings": [],
+    "reconciliations": [],
+    "contradictions": [],
+    "journal": []
+}

@@ -60,8 +60,10 @@ export function composeAuthFetch(options: AuthFetchOptions): typeof fetch {
     const { log } = logger.scoped("ai-core");
 
     const authFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const signal = init?.signal === undefined ? (input instanceof Request ? input.signal : undefined) : init.signal;
         const send = (bearer: string): Promise<Response> => {
-            const headers = new Headers(init?.headers);
+            signal?.throwIfAborted();
+            const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
             headers.set("Authorization", `Bearer ${bearer}`);
             return transport(input, { ...init, headers });
         };
@@ -74,14 +76,26 @@ export function composeAuthFetch(options: AuthFetchOptions): typeof fetch {
         let refreshed = false;
 
         for (let attempt = 0; ; attempt++) {
+            signal?.throwIfAborted();
             const bearer = await getToken();
             let response = await send(bearer);
+
+            if (signal?.aborted) {
+                await discard(response);
+                signal.throwIfAborted();
+            }
 
             if (response.status === 401 && refresh && !refreshed) {
                 refreshed = true;
                 log.debug({ url: String(input) }, "upstream rejected the token; forcing a refresh and retrying once");
                 await discard(response);
+                signal?.throwIfAborted();
                 response = await send(await refresh(bearer));
+            }
+
+            if (signal?.aborted) {
+                await discard(response);
+                signal.throwIfAborted();
             }
 
             if (!isRetryable(response.status) || attempt >= maxRetries) {
@@ -94,7 +108,7 @@ export function composeAuthFetch(options: AuthFetchOptions): typeof fetch {
                 "upstream is rate limited or unavailable; backing off"
             );
             await discard(response);
-            await abortableSleep(delay, init?.signal ?? undefined);
+            await abortableSleep(delay, signal ?? undefined);
         }
     };
 

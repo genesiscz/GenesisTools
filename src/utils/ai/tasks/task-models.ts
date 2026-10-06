@@ -30,6 +30,7 @@ const STATIC_TASK_MODELS: Record<string, Partial<Record<Capability, string>>> = 
     // id here only names the product for logs and cache keys.
     xai: { tts: "xai-tts", transcribe: "xai-stt" },
     deepgram: { transcribe: "nova-3" },
+    elevenlabs: { transcribe: "scribe_v1" },
     assemblyai: { transcribe: "best" },
     gladia: { transcribe: "default" },
     google: { embed: "text-embedding-004" },

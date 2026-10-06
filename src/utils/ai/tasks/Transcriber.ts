@@ -89,6 +89,7 @@ export class Transcriber {
     }
 
     async transcribe(audioOrPath: Buffer | string, options?: TranscribeOptions): Promise<TranscriptionResult> {
+        options?.signal?.throwIfAborted();
         let audio: Buffer;
 
         if (typeof audioOrPath === "string") {
@@ -98,6 +99,8 @@ export class Transcriber {
         } else {
             audio = audioOrPath;
         }
+
+        options?.signal?.throwIfAborted();
 
         if (CLOUD_PROVIDER_TYPES.has(this.provider.type) && audio.length > MAX_CLOUD_BYTES) {
             // Only Deepgram accepts large single uploads AND diarizes natively,
@@ -123,7 +126,7 @@ export class Transcriber {
         const result = await retry(() => this.provider.transcribe(audio, options), {
             maxAttempts: 1,
             getDelay: RETRY_DELAY,
-            shouldRetry: shouldRetryTransient,
+            shouldRetry: (error) => !options?.signal?.aborted && shouldRetryTransient(error),
             onRetry: (attempt, delay) => {
                 logger.warn(
                     { attempt, maxAttempts: 1, nextDelayMs: delay, audioBytes: audio.length },
@@ -132,6 +135,7 @@ export class Transcriber {
             },
         });
 
+        options?.signal?.throwIfAborted();
         const cleaned = this.maybeClean(result, options);
         return this.maybeDiarizeLocal(cleaned, audio, options);
     }
@@ -157,11 +161,14 @@ export class Transcriber {
         audio: Buffer,
         options?: TranscribeOptions
     ): Promise<TranscriptionResult> {
+        options?.signal?.throwIfAborted();
+
         if (!options?.diarize || !r.segments?.length || r.segments.some((s) => s.speaker)) {
             return r;
         }
 
         const turns = await diarizeLocal(audio, { speakers: options.speakers });
+        options.signal?.throwIfAborted();
 
         if (turns.length === 0) {
             return r;
@@ -185,13 +192,16 @@ export class Transcriber {
             }
 
             options?.onProgress?.({ phase: "transcribe", message: "Splitting large audio for cloud upload..." });
+            options?.signal?.throwIfAborted();
             const chunkPaths = await audioProcessor.splitAudioBySize(inputPath, chunkDir, MAX_CLOUD_BYTES);
+            options?.signal?.throwIfAborted();
 
             const allSegments: TranscriptionSegment[] = [];
             const texts: string[] = [];
             let timeOffset = 0;
 
             for (let i = 0; i < chunkPaths.length; i++) {
+                options?.signal?.throwIfAborted();
                 options?.onProgress?.({
                     phase: "transcribe",
                     percent: Math.round((i / chunkPaths.length) * 100),
@@ -199,12 +209,14 @@ export class Transcriber {
                 });
 
                 const chunkBuf = await readFile(chunkPaths[i]);
+                options?.signal?.throwIfAborted();
                 const result = await this.provider.transcribe(Buffer.from(chunkBuf), {
                     ...options,
                     onProgress: undefined,
                     onSegment: undefined,
                 });
 
+                options?.signal?.throwIfAborted();
                 texts.push(result.text);
 
                 if (result.segments) {

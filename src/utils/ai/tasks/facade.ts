@@ -213,14 +213,16 @@ export const ai = {
     async transcribe(
         audio: Buffer | string,
         options?: TaskCommonOptions & TranscribeOptions
-    ): Promise<TranscriptionResult> {
+    ): Promise<TranscriptionResult & { provider: string; model: string }> {
+        options?.signal?.throwIfAborted();
         const transcriber = await Transcriber.create({
             ...(options?.model ? { model: options.model } : {}),
             ...(options?.app ? { app: options.app } : {}),
         });
 
         try {
-            return await transcriber.transcribe(audio, options);
+            const result = await transcriber.transcribe(audio, options);
+            return { ...result, provider: transcriber.providerType, model: transcriber.modelId };
         } finally {
             transcriber.dispose();
         }

@@ -224,3 +224,173 @@ describe("composeAuthFetch — refresh and retry together", () => {
         expect(response.status).toBe(401);
     });
 });
+
+describe("composeAuthFetch — cancellation boundaries", () => {
+    test("a pre-aborted request never resolves a token or refreshes a credential", async () => {
+        const controller = new AbortController();
+        const touched: string[] = [];
+        controller.abort(new Error("cancelled"));
+        const authed = composeAuthFetch({
+            getToken: async () => {
+                touched.push("token");
+                throw new Error("must not resolve a token");
+            },
+            refresh: async () => {
+                touched.push("refresh");
+                throw new Error("must not rotate");
+            },
+            fetch: (async () => {
+                touched.push("transport");
+                throw new Error("must not send");
+            }) as unknown as typeof fetch,
+        });
+
+        await expect(
+            authed(
+                new Request("https://example.invalid", {
+                    signal: controller.signal,
+                })
+            )
+        ).rejects.toThrow("cancelled");
+        expect(touched).toEqual([]);
+    });
+
+    test("cancellation while resolving a token prevents the send", async () => {
+        const controller = new AbortController();
+        const { transport, attempts } = fakeFetch([200]);
+        const authed = composeAuthFetch({
+            getToken: async () => {
+                controller.abort(new Error("token cancelled"));
+                return "token";
+            },
+            fetch: transport,
+        });
+
+        await expect(
+            authed("https://example.invalid", {
+                signal: controller.signal,
+            })
+        ).rejects.toThrow("token cancelled");
+        expect(attempts).toHaveLength(0);
+    });
+
+    test("an aborted 401 response cannot start a refresh", async () => {
+        const controller = new AbortController();
+        let refreshes = 0;
+        const response = new Response("rejected", { status: 401 });
+        const authed = composeAuthFetch({
+            getToken: async () => "stale",
+            refresh: async () => {
+                refreshes++;
+                throw new Error("must not rotate");
+            },
+            fetch: (async () => {
+                controller.abort(new Error("request cancelled"));
+                return response;
+            }) as unknown as typeof fetch,
+        });
+
+        await expect(
+            authed("https://example.invalid", {
+                signal: controller.signal,
+            })
+        ).rejects.toThrow("request cancelled");
+        expect(refreshes).toBe(0);
+        expect(response.bodyUsed).toBe(true);
+    });
+
+    test("cancellation during an already-started refresh prevents a resend", async () => {
+        const controller = new AbortController();
+        const { transport, attempts } = fakeFetch([401, 200]);
+        let refreshes = 0;
+        const authed = composeAuthFetch({
+            getToken: async () => "stale",
+            refresh: async () => {
+                refreshes++;
+                controller.abort(new Error("refresh cancelled"));
+                return "fresh";
+            },
+            fetch: transport,
+        });
+
+        await expect(
+            authed("https://example.invalid", {
+                signal: controller.signal,
+            })
+        ).rejects.toThrow("refresh cancelled");
+        expect(refreshes).toBe(1);
+        expect(attempts).toHaveLength(1);
+    });
+
+    test("uses a Request signal to stop retry backoff", async () => {
+        const controller = new AbortController();
+        let sends = 0;
+        const authed = composeAuthFetch({
+            getToken: async () => "token",
+            fetch: (async () => {
+                sends++;
+
+                return new Response(
+                    new ReadableStream({
+                        cancel() {
+                            controller.abort(new Error("backoff cancelled"));
+                        },
+                    }),
+                    { status: 429 }
+                );
+            }) as unknown as typeof fetch,
+            maxRetries: 3,
+            baseDelayMs: 50_000,
+        });
+
+        await expect(
+            authed(
+                new Request("https://example.invalid", {
+                    signal: controller.signal,
+                })
+            )
+        ).rejects.toThrow("backoff cancelled");
+        expect(sends).toBe(1);
+    });
+
+    test("discards a late refresh response after cancellation", async () => {
+        const controller = new AbortController();
+        let sends = 0;
+        const late = new Response("late", { status: 200 });
+        const authed = composeAuthFetch({
+            getToken: async () => "stale",
+            refresh: async () => "fresh",
+            fetch: (async () => {
+                sends++;
+
+                if (sends === 1) {
+                    return new Response("expired", { status: 401 });
+                }
+
+                controller.abort(new Error("late response"));
+                return late;
+            }) as unknown as typeof fetch,
+        });
+
+        await expect(
+            authed("https://example.invalid", {
+                signal: controller.signal,
+            })
+        ).rejects.toThrow("late response");
+        expect(sends).toBe(2);
+        expect(late.bodyUsed).toBe(true);
+    });
+
+    test("preserves headers on Request inputs when injecting authorization", async () => {
+        const { transport, attempts } = fakeFetch([200]);
+        const authed = composeAuthFetch({ getToken: async () => "token", fetch: transport });
+
+        await authed(
+            new Request("https://example.invalid", {
+                headers: { accept: "application/json" },
+            })
+        );
+
+        expect(attempts).toEqual([{ authorization: "Bearer token", accept: "application/json" }]);
+    });
+});
