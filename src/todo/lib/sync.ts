@@ -14,7 +14,7 @@ export type SyncTarget = "calendar" | "reminders" | "both";
  * swallowed the signature entirely — it kept passing `tsgo` while missing the
  * method this function had started calling.
  */
-export type SyncStore = Pick<TodoStore, "updateWith">;
+export type SyncStore = Pick<TodoStore, "get" | "updateWith" | "withSyncLock">;
 
 /**
  * `id` is the EventKit identifier, and it is REQUIRED on success.
@@ -346,7 +346,7 @@ async function syncTodoToReminders(todo: Todo): Promise<string> {
  * DarwinkitCrashError) are captured per-target instead of throwing, so the caller can
  * decide how to surface them and which targets still succeeded.
  */
-export async function syncTodo(options: {
+async function syncFreshTodo(options: {
     store: SyncStore;
     todo: Todo;
     target: SyncTarget;
@@ -433,4 +433,39 @@ export async function syncTodo(options: {
     }
 
     return result;
+}
+
+export async function syncTodo(options: {
+    store: SyncStore;
+    todo: Todo;
+    target: SyncTarget;
+    calendarName?: string;
+}): Promise<SyncResult> {
+    const failureResult = (error: Error): SyncResult => {
+        const failed: SyncResult = {};
+
+        if (options.target === "calendar" || options.target === "both") {
+            failed.calendar = { ok: false, error };
+        }
+
+        if (options.target === "reminders" || options.target === "both") {
+            failed.reminders = { ok: false, error };
+        }
+
+        return failed;
+    };
+
+    try {
+        return await options.store.withSyncLock(options.todo.id, async () => {
+            const current = await options.store.get(options.todo.id);
+
+            if (!current) {
+                return failureResult(new Error(`Todo disappeared before sync: ${options.todo.id}`));
+            }
+
+            return syncFreshTodo({ ...options, todo: current });
+        });
+    } catch (error) {
+        return failureResult(error instanceof Error ? error : new Error(String(error)));
+    }
 }

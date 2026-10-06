@@ -34,12 +34,14 @@ function makeTodo(overrides?: Partial<Todo>): Todo {
 }
 
 /** Implements `SyncStore` exactly, so a change to that contract fails to compile here. */
-function makeFakeStore(): SyncStore {
+function makeFakeStore(todo = makeTodo()): SyncStore {
     return {
+        get: async (id) => ({ ...todo, id }),
         updateWith: async (id, derive) => {
-            const current = makeTodo({ id });
+            const current = { ...todo, id };
             return { ...current, ...derive(current), id: current.id };
         },
+        withSyncLock: async (_id, fn) => fn(),
     };
 }
 
@@ -82,7 +84,7 @@ describe("syncTodo (structured result)", () => {
         try {
             const todo = makeTodo();
             const result = await syncTodo({
-                store: makeFakeStore(),
+                store: makeFakeStore(todo),
                 todo,
                 target: "reminders",
             });
@@ -114,7 +116,7 @@ describe("syncTodo (structured result)", () => {
         try {
             const todo = makeTodo({ at: "2026-05-01T21:00:00.000Z" });
             const result = await syncTodo({
-                store: makeFakeStore(),
+                store: makeFakeStore(todo),
                 todo,
                 target: "both",
             });
@@ -141,7 +143,7 @@ describe("syncTodo (structured result)", () => {
             reminders: [{ at: "2026-05-01T20:00:00.000Z", synced: "reminders", syncId: "REM-PREV" }],
         });
 
-        const result = await syncTodo({ store: makeFakeStore(), todo, target: "reminders" });
+        const result = await syncTodo({ store: makeFakeStore(todo), todo, target: "reminders" });
 
         expect(result.reminders?.ok).toBe(true);
 

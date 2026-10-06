@@ -300,6 +300,35 @@ describe("a writer racing the platform call", () => {
         expect(persisted?.reminders[1].syncId).toBeUndefined();
     });
 });
+describe("two syncs racing the same todo", () => {
+    it("creates one event and lets the waiter observe the persisted identifier", async () => {
+        const todo = await store.add({ title: "call slot", at: "2026-09-15T10:00:00.000Z" });
+        let releaseCreate: (() => void) | undefined;
+        let enteredCreate: (() => void) | undefined;
+        const entered = new Promise<void>((resolve) => {
+            enteredCreate = resolve;
+        });
+        const release = new Promise<void>((resolve) => {
+            releaseCreate = resolve;
+        });
+        createEvent.mockImplementation(async () => {
+            enteredCreate?.();
+            await release;
+            return "EVT-RACE-1";
+        });
+
+        const first = syncTodo({ store, todo, target: "calendar" });
+        await entered;
+        const second = syncTodo({ store, todo, target: "calendar" });
+        releaseCreate?.();
+        const results = await Promise.all([first, second]);
+
+        expect(createEvent).toHaveBeenCalledTimes(1);
+        expect(results).toContainEqual({ calendar: { ok: true, id: "EVT-RACE-1" } });
+        expect(results).toContainEqual({ calendar: { ok: true, alreadySynced: true, id: "EVT-RACE-1" } });
+        expect((await store.get(todo.id))?.reminders.filter((item) => item.syncId === "EVT-RACE-1")).toHaveLength(1);
+    });
+});
 describe("when the store write fails after the platform call", () => {
     it("reports a failure naming the created id instead of throwing", async () => {
         const todo = await store.add({ title: "call slot", at: "2026-09-15T10:00:00.000Z" });

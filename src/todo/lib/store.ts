@@ -205,6 +205,18 @@ export class TodoStore {
     }
 
     /**
+     * Serialize the native side effect for one todo without holding the JSON store lock.
+     * The callback reloads and persists through the ordinary store methods while this
+     * separate lock prevents another process from creating the same EventKit object.
+     */
+    async withSyncLock<T>(todoId: string, fn: () => Promise<T>): Promise<T> {
+        this.ensureDir();
+        const syncLockPath = join(this.projectDir, `sync-${createHash("sha256").update(todoId).digest("hex")}.lock`);
+
+        return withFileLock(syncLockPath, fn, STORE_LOCK_TIMEOUT_MS);
+    }
+
+    /**
      * Patch a todo from the row as it is AT WRITE TIME, inside the lock.
      *
      * `update` takes a patch built before the lock was taken, which is fine for
