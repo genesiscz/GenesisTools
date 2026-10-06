@@ -700,6 +700,18 @@ func cmdSee(appName _: String) {
     }
 }
 
+private func workflowOwnsFocusedWindow(_ window: ObservedWindow, focused: CFTypeRef) -> Bool {
+    guard CFGetTypeID(focused) == AXUIElementGetTypeID() else { return false }
+    let deadline = Date().addingTimeInterval(min(0.5, workflowRemaining() ?? 0.5))
+    return focusedWindowBelongsToOwner(owner: window.ax, focused: focused) { owner in
+        guard Date() < deadline, CFGetTypeID(owner) == AXUIElementGetTypeID() else { return [] }
+        let element = owner as! AXUIElement
+        let declared = axAttribute(element, "AXSheets") as? [AXUIElement] ?? []
+        let children = axChildren(element)
+        return (declared + children).filter { axStringAttribute($0, "AXRole") == "AXSheet" }
+    }
+}
+
 private func workflowFrontWindow(_ window: ObservedWindow, pid: pid_t, element: AXUIElement? = nil) {
     // Root gate rather than one guard per call site: this function is reached from nine places on
     // the input paths, and patching the two I happened to test would have left the rest stealing
@@ -709,10 +721,16 @@ private func workflowFrontWindow(_ window: ObservedWindow, pid: pid_t, element: 
     // it is what stops a later character from landing in a field that took focus mid-type.
     if !workflowFlag("--no-activate") {
         let currentFrontmost = frontmostPid()
+        let focusedWindow = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedWindow")
         guard currentFrontmost == pid,
-              let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedWindow"),
-              CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, window.ax) else {
-            workflowFailure("wrong frontmost app/window (expected PID \(pid), frontmost PID \(currentFrontmost ?? -1)); use an explicit focus action, then run see again", category: .focusMismatch)
+              let focused = focusedWindow,
+              workflowOwnsFocusedWindow(window, focused: focused) else {
+            let sheets = axChildren(window.ax).filter { axStringAttribute($0, "AXRole") == "AXSheet" }
+            let matched = focusedWindow.map { focused in sheets.contains { CFEqual($0, focused) } } ?? false
+            workflowFailure("wrong frontmost app/window (expected PID \(pid), frontmost PID \(currentFrontmost ?? -1)); "
+                + "owner \(describeFocusHolder(window.ax)), focused \(describeFocusHolder(focusedWindow)), "
+                + "attached child sheets \(sheets.count), focused sheet match \(matched); "
+                + "use an explicit focus action, then run see again", category: .focusMismatch)
         }
     }
     if let element {
@@ -784,7 +802,7 @@ private func workflowFocus(_ window: ObservedWindow, pid: pid_t, element: AXUIEl
         }
         let focusedWindow = axAttribute(AXUIElementCreateApplication(pid), kAXFocusedWindowAttribute as String)
         let alreadyFocused = frontmostPid() == pid && focusedWindow.map {
-            CFGetTypeID($0) == AXUIElementGetTypeID() && CFEqual($0, window.ax)
+            workflowOwnsFocusedWindow(window, focused: $0)
         } == true
         if !alreadyFocused {
             workflowRaise(window)
@@ -807,7 +825,7 @@ private func workflowFocus(_ window: ObservedWindow, pid: pid_t, element: AXUIEl
         while Date() < deadline {
             let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedWindow")
             if frontmostPid() == pid,
-               let focused, CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, window.ax) {
+               let focused, workflowOwnsFocusedWindow(window, focused: focused) {
                 break
             }
             CFRunLoopRunInMode(.defaultMode, 0.02, false)
@@ -1041,7 +1059,7 @@ func cmdAct(appName _: String) {
     let focusedWindow = axAttribute(app, "AXFocusedWindow")
     let focusedInput = axAttribute(app, "AXFocusedUIElement")
     let windowFocused = frontmostPid() == pid
-        && focusedWindow.map { CFGetTypeID($0) == AXUIElementGetTypeID() && CFEqual($0, window.ax) } == true
+        && focusedWindow.map { workflowOwnsFocusedWindow(window, focused: $0) } == true
     let inputFocused = (action == "key" && CFEqual(element, window.ax))
         || focusedInput.map { CFGetTypeID($0) == AXUIElementGetTypeID() && CFEqual($0, element) } == true
     // A panel that can never be key cannot satisfy a frontmost precondition, so asking it to is a
@@ -1316,7 +1334,7 @@ func cmdAct(appName _: String) {
                 if !background && action != "hover" && !nonActivatingPanel {
                     guard frontmostPid() == pid,
                           let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedWindow"),
-                          CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, window.ax) else {
+                          workflowOwnsFocusedWindow(window, focused: focused) else {
                         throw WindowEventError.unavailable("wrong frontmost app/window; focus explicitly and refresh")
                     }
                 }

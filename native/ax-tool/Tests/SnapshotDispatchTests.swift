@@ -457,6 +457,67 @@ extension SnapshotDispatchTests {
     }
 }
 
+final class AttachedSheetFocusTests: XCTestCase {
+    private func owns(_ focused: String, sheets: [String: [String]]) -> Bool {
+        focusedWindowBelongsToOwner(owner: "owner" as NSString, focused: focused as NSString) { current in
+            (sheets[current as! String] ?? []).map { $0 as NSString }
+        }
+    }
+
+    func testDirectWindowAndAttachedNestedSheetsAreAccepted() {
+        let sheets = ["owner": ["save"], "save": ["go-to-folder"]]
+        XCTAssertTrue(owns("owner", sheets: [:]))
+        XCTAssertTrue(owns("save", sheets: sheets))
+        XCTAssertTrue(owns("go-to-folder", sheets: sheets))
+    }
+
+    func testOtherWindowsAndForeignOrDetachedSheetsAreRejected() {
+        let sheets = ["owner": ["save"], "other-window": ["foreign-save"]]
+        XCTAssertFalse(owns("other-window", sheets: sheets))
+        XCTAssertFalse(owns("foreign-save", sheets: sheets))
+        XCTAssertFalse(owns("detached-save", sheets: sheets))
+        XCTAssertFalse(owns("save", sheets: [:]), "An old sheet identity is not sufficient after detachment")
+    }
+
+    func testAttachmentIsReadAgainForEachAdmission() {
+        var attached = true
+        let read: (CFTypeRef) -> [CFTypeRef] = { owner in
+            (owner as! String) == "owner" && attached ? ["save" as NSString] : []
+        }
+        XCTAssertTrue(focusedWindowBelongsToOwner(owner: "owner" as NSString, focused: "save" as NSString, attachedSheets: read))
+        attached = false
+        XCTAssertFalse(focusedWindowBelongsToOwner(owner: "owner" as NSString, focused: "save" as NSString, attachedSheets: read))
+    }
+
+    func testCyclesAndDeepAttachmentsRespectTheTraversalLimit() {
+        var reads = 0
+        XCTAssertFalse(focusedWindowBelongsToOwner(owner: "a" as NSString, focused: "missing" as NSString, attachedSheets: { node in
+            reads += 1
+            return [(node as! String) == "a" ? "b" as NSString : "a" as NSString]
+        }))
+        XCTAssertEqual(reads, 2)
+        reads = 0
+        XCTAssertFalse(focusedWindowBelongsToOwner(owner: NSNumber(value: 0), focused: NSNumber(value: 100), attachedSheets: { node in
+            reads += 1
+            return [NSNumber(value: (node as! NSNumber).intValue + 1)]
+        }, maximumNodes: 4))
+        XCTAssertEqual(reads, 4)
+    }
+
+    func testNestedSheetStillBlocksControlsInTheOuterSheet() {
+        let rows: [[String: Any]] = [
+            ["role": "AXWindow", "depth": 0],
+            ["role": "AXSheet", "depth": 1, "visible": true],
+            ["role": "AXTextField", "depth": 2],
+            ["role": "AXSheet", "depth": 2, "visible": true],
+            ["role": "AXTextField", "depth": 3],
+        ]
+        XCTAssertTrue(owns("inner", sheets: ["owner": ["outer"], "outer": ["inner"]]))
+        XCTAssertThrowsError(try validateModalTarget(rows: rows, target: 2))
+        XCTAssertNoThrow(try validateModalTarget(rows: rows, target: 4))
+    }
+}
+
 extension SnapshotDispatchTests {
     func testAnnotationUsesCapturedIDRegardlessOfEqualFrameOrder() {
         XCTAssertEqual(annotationWindowIndex(candidates: [(7, true), (8, true)], capturedWindowID: 8), 1)
