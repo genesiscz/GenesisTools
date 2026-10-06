@@ -5,6 +5,8 @@
 export const INTERRUPT_DUPLICATE_WINDOW_MS = 500;
 
 export interface InterruptOptions {
+    /** Convert SIGTERM into cancellation too. The parent process must enforce any hard termination deadline. */
+    handleTermination?: boolean;
     /** Runs once, on the first Ctrl-C, before the signal aborts. */
     onInterrupt?: () => void;
     duplicateWindowMs?: number;
@@ -52,12 +54,19 @@ export async function withInterrupt<T>(
         // pid-verified: process.pid is this process; re-raising lets the default SIGINT action end it.
         process.kill(process.pid, "SIGINT");
     };
+    const terminate = () => controller.abort();
     process.on("SIGINT", handler);
+    if (options.handleTermination) {
+        process.on("SIGTERM", terminate);
+    }
     try {
         return await fn(controller.signal);
     } finally {
         // A forwarded copy of the first Ctrl-C may still be on its way. Without a listener it would take
         // the default action and end the process while it prints what it found.
+        if (options.handleTermination) {
+            process.off("SIGTERM", terminate);
+        }
         const remaining = controller.signal.aborted ? window - (now() - firstAt) : 0;
         const release = () => {
             process.off("SIGINT", handler);
