@@ -21,6 +21,11 @@ export interface RecordNotificationArgs {
     metadata: Record<string, unknown>;
 }
 
+export interface ClaimNotificationArgs extends RecordNotificationArgs {
+    userId: number;
+    cooldownHours: number;
+}
+
 export type Notification = Selectable<NotificationsTable>;
 
 const CHANNEL_COLUMN: Record<DeliveryChannel, "delivered_macos_at" | "delivered_web_at" | "delivered_telegram_at"> = {
@@ -61,6 +66,58 @@ export class NotificationsRepository {
             { notificationId: id, userId, reason: args.reason, favorite_id: args.favorite_id },
             "notification recorded"
         );
+        return id;
+    }
+
+    async claimIfOutsideCooldown(args: ClaimNotificationArgs): Promise<number | null> {
+        const ts = nowUtcIso();
+        const cutoffIso = new Date(Date.now() - args.cooldownHours * 3_600_000).toISOString();
+        const raw = this.db.raw();
+        const claim = raw.transaction(() => {
+            const recent = raw
+                .query<{ id: number }, [number, NotificationReason, string]>(
+                    `SELECT id FROM notifications
+                     WHERE favorite_id = ? AND reason = ? AND fired_at >= ?
+                     ORDER BY fired_at DESC LIMIT 1`
+                )
+                .get(args.favorite_id, args.reason, cutoffIso);
+            if (recent) {
+                return null;
+            }
+
+            raw.run(
+                `INSERT INTO notifications (
+                    user_id, favorite_id, master_product_id, product_id, fired_at, reason,
+                    prev_price, curr_price, shop_origin, metadata_json
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    args.userId,
+                    args.favorite_id,
+                    args.master_product_id,
+                    args.product_id,
+                    ts,
+                    args.reason,
+                    args.prev_price,
+                    args.curr_price,
+                    args.shop_origin,
+                    SafeJSON.stringify(args.metadata ?? {}),
+                ]
+            );
+            const row = raw.query<{ id: number }, []>("SELECT last_insert_rowid() AS id").get();
+            if (!row) {
+                throw new Error("notification claim insert did not return an id");
+            }
+
+            return row.id;
+        });
+        const id = claim.immediate();
+        if (id !== null) {
+            log.debug(
+                { notificationId: id, userId: args.userId, reason: args.reason, favorite_id: args.favorite_id },
+                "notification claimed"
+            );
+        }
+
         return id;
     }
 

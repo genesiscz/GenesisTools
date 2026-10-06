@@ -127,6 +127,45 @@ describe("comparePrices", () => {
         expect(out[0].offers).toEqual([]);
         shopsDb.close();
     });
+
+    it("uses two query groups while preserving duplicate and missing input order", async () => {
+        const { shopsDb, ids } = setup();
+        let queryGroups = 0;
+        const out = await comparePrices(
+            { masterIds: [ids.masterA, 9999, ids.masterA] },
+            {
+                shopsDb,
+                compareQueryObserver: () => {
+                    queryGroups++;
+                },
+            }
+        );
+
+        expect(queryGroups).toBe(2);
+        expect(out.map((row) => row.master_id)).toEqual([ids.masterA, 9999, ids.masterA]);
+        expect(out[0]).toEqual(out[2]);
+        expect(out[1]).toEqual({ master_id: 9999, offers: [], history_points: 0 });
+        expect(out[0].offers.map((offer) => offer.shop_origin)).toEqual(["kosik.cz", "rohlik.cz"]);
+        shopsDb.close();
+    });
+
+    it("keeps a 40-item bounded request at two query groups", async () => {
+        const { shopsDb, ids } = setup();
+        let queryGroups = 0;
+        const out = await comparePrices(
+            { masterIds: Array.from({ length: 40 }, () => ids.masterA) },
+            {
+                shopsDb,
+                compareQueryObserver: () => {
+                    queryGroups++;
+                },
+            }
+        );
+
+        expect(out).toHaveLength(40);
+        expect(queryGroups).toBe(2);
+        shopsDb.close();
+    });
 });
 
 describe("getMaster", () => {

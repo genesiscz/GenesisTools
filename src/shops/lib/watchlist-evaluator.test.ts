@@ -34,7 +34,8 @@ interface Seed {
 }
 
 function seed(input: Seed) {
-    const db = new ShopsDatabase(join(mkdtempSync(join(tmpdir(), "shops-eval-")), "test.db"));
+    const dbPath = join(mkdtempSync(join(tmpdir(), "shops-eval-")), "test.db");
+    const db = new ShopsDatabase(dbPath);
     db.raw().exec(`INSERT INTO shops (origin, display_name, currency, cap_live, cap_history, cap_listing, cap_ean, cap_search, bot_protection)
                    VALUES ('rohlik.cz','Rohlík.cz','CZK',1,1,1,1,1,'none')`);
     db.raw().exec(
@@ -58,15 +59,24 @@ function seed(input: Seed) {
     }
     const productId = productRow.id;
     if (input.currentPrice !== null) {
+        const stockSql = input.inStock === null ? "NULL" : String(input.inStock ?? 1);
         db.raw().exec(
             `INSERT INTO prices (product_id, observed_at, current_price, original_price, in_stock, source)
-             VALUES (${productId}, strftime('%Y-%m-%dT%H:%M:%fZ','now'), ${input.currentPrice}, NULL, ${input.inStock ?? 1}, 'hlidac-s3')`
+             VALUES (${productId}, strftime('%Y-%m-%dT%H:%M:%fZ','now'), ${input.currentPrice}, NULL, ${stockSql}, 'hlidac-s3')`
         );
     }
 
     const favRepo = new FavoritesRepository(db);
     const notifRepo = new NotificationsRepository(db);
-    return { db, masterId, productId, favRepo, notifRepo, input };
+    return { db, dbPath, masterId, productId, favRepo, notifRepo, input };
+}
+
+function recordStock(env: Awaited<ReturnType<typeof seed>>, observedAt: string, inStock: number | null): void {
+    env.db.raw().run(
+        `INSERT INTO prices (product_id, observed_at, current_price, original_price, in_stock, source)
+         VALUES (?, ?, ?, NULL, ?, 'fixture')`,
+        [env.productId, observedAt, env.input.currentPrice, inStock]
+    );
 }
 
 async function makeFav(env: Awaited<ReturnType<typeof seed>>, args: Partial<Seed> = {}) {
@@ -131,9 +141,9 @@ describe("WatchlistEvaluator.tick", () => {
         env.db.close();
     });
 
-    it("fires back-in-stock only when notify_back_in_stock=1 and current was 0 in last fire", async () => {
+    it("fires back-in-stock only after the same product transitions from known unavailable to available", async () => {
         const env = seed({ targetPrice: null, referencePrice: 50, currentPrice: 50, inStock: 1 });
-        const favId = await env.favRepo.addFavorite(1, {
+        const favoriteId = await env.favRepo.addFavorite(1, {
             master_product_id: env.masterId,
             restricted_to_shop: null,
             target_price: null,
@@ -144,12 +154,6 @@ describe("WatchlistEvaluator.tick", () => {
             cooldown_hours: 24,
             notify_back_in_stock: true,
         });
-        const olderIso = new Date(Date.now() - 36 * 3_600_000).toISOString();
-        env.db.raw().run(
-            `INSERT INTO notifications (favorite_id, master_product_id, fired_at, reason, shop_origin, metadata_json)
-             VALUES (?, ?, ?, 'back-in-stock', 'rohlik.cz', '{"in_stock":0}')`,
-            [favId, env.masterId, olderIso]
-        );
         const ch = new CapturingChannel();
         const ev = new WatchlistEvaluator({
             db: env.db,
@@ -157,9 +161,112 @@ describe("WatchlistEvaluator.tick", () => {
             notifications: env.notifRepo,
             dispatcher: new NotificationDispatcher({ repo: env.notifRepo, channels: [ch] }),
         });
-        const report = await ev.tick();
-        expect(report.fired).toBe(1);
+
+        expect((await ev.tick()).fired).toBe(0);
+        recordStock(env, "2099-01-01T00:00:00.000Z", 0);
+        expect((await ev.tick()).fired).toBe(0);
+        recordStock(env, "2099-01-02T00:00:00.000Z", 1);
+        expect((await ev.tick()).fired).toBe(1);
         expect(ch.received[0].notification.reason).toBe("back-in-stock");
+        expect(ch.received[0].notification.product_id).toBe(env.productId);
+        expect((await ev.tick()).fired).toBe(0);
+        env.db
+            .raw()
+            .run("UPDATE notifications SET fired_at = ? WHERE reason = 'back-in-stock'", ["2000-01-01T00:00:00.000Z"]);
+        recordStock(env, "2099-01-03T00:00:00.000Z", 0);
+        expect((await ev.tick()).fired).toBe(0);
+        recordStock(env, "2099-01-04T00:00:00.000Z", 1);
+        expect((await ev.tick()).fired).toBe(1);
+        expect(ch.received).toHaveLength(2);
+        const staleAccepted = await env.favRepo.recordStockObservation(favoriteId, {
+            productId: env.productId,
+            shopOrigin: "rohlik.cz",
+            inStock: 0,
+            observedAt: "2099-01-03T12:00:00.000Z",
+        });
+        expect(staleAccepted).toBe(false);
+        const afterStale = (await env.favRepo.listAllWithCurrentState())[0];
+        expect(afterStale.last_stock_state).toBe(1);
+        expect(afterStale.last_stock_observed_at).toBe("2099-01-04T00:00:00.000Z");
+        env.db.close();
+    });
+
+    it("does not infer back-in-stock from first available, currently unavailable, or unknown observations", async () => {
+        for (const [label, stock] of [
+            ["available", 1],
+            ["unavailable", 0],
+            ["unknown", null],
+        ] as const) {
+            const env = seed({ targetPrice: null, referencePrice: 50, currentPrice: 50, inStock: stock });
+            await env.favRepo.addFavorite(1, {
+                master_product_id: env.masterId,
+                restricted_to_shop: null,
+                target_price: null,
+                drop_percent: null,
+                drop_absolute: null,
+                reference_price: 50,
+                label,
+                cooldown_hours: 24,
+                notify_back_in_stock: true,
+            });
+            const ch = new CapturingChannel();
+            const ev = new WatchlistEvaluator({
+                db: env.db,
+                favorites: env.favRepo,
+                notifications: env.notifRepo,
+                dispatcher: new NotificationDispatcher({ repo: env.notifRepo, channels: [ch] }),
+            });
+
+            expect((await ev.tick()).fired).toBe(0);
+            expect(ch.received).toHaveLength(0);
+            env.db.close();
+        }
+    });
+
+    it("suppresses a stale back-in-stock hit when a newer unavailable observation wins the state write", async () => {
+        const env = seed({ targetPrice: null, referencePrice: 50, currentPrice: 50, inStock: 0 });
+        await env.favRepo.addFavorite(1, {
+            master_product_id: env.masterId,
+            restricted_to_shop: null,
+            target_price: null,
+            drop_percent: null,
+            drop_absolute: null,
+            reference_price: 50,
+            label: null,
+            cooldown_hours: 24,
+            notify_back_in_stock: true,
+        });
+        const channel = new CapturingChannel();
+        const evaluator = new WatchlistEvaluator({
+            db: env.db,
+            favorites: env.favRepo,
+            notifications: env.notifRepo,
+            dispatcher: new NotificationDispatcher({ repo: env.notifRepo, channels: [channel] }),
+        });
+        expect((await evaluator.tick()).fired).toBe(0);
+        recordStock(env, "2099-02-01T00:00:00.000Z", 1);
+        const recordObservation = env.favRepo.recordStockObservation.bind(env.favRepo);
+        let injectedNewerObservation = false;
+        env.favRepo.recordStockObservation = async (favoriteId, observation) => {
+            if (!injectedNewerObservation) {
+                injectedNewerObservation = true;
+                recordStock(env, "2099-02-02T00:00:00.000Z", 0);
+                await recordObservation(favoriteId, {
+                    ...observation,
+                    inStock: 0,
+                    observedAt: "2099-02-02T00:00:00.000Z",
+                });
+            }
+
+            return recordObservation(favoriteId, observation);
+        };
+
+        expect((await evaluator.tick()).fired).toBe(0);
+        expect(channel.received).toHaveLength(0);
+        env.favRepo.recordStockObservation = recordObservation;
+        recordStock(env, "2099-02-03T00:00:00.000Z", 1);
+        expect((await evaluator.tick()).fired).toBe(1);
+        expect(channel.received).toHaveLength(1);
         env.db.close();
     });
 
@@ -178,6 +285,35 @@ describe("WatchlistEvaluator.tick", () => {
         expect(r1.fired).toBe(1);
         expect(r2.fired).toBe(0);
         expect(r2.skippedCooldown).toBe(1);
+        env.db.close();
+    });
+
+    it("claims one cooldown notification across simultaneous evaluators and database connections", async () => {
+        const env = seed({ targetPrice: 40, referencePrice: 50, currentPrice: 39.9, cooldownHours: 24 });
+        await makeFav(env);
+        const secondDb = new ShopsDatabase(env.dbPath);
+        const secondFavorites = new FavoritesRepository(secondDb);
+        const secondNotifications = new NotificationsRepository(secondDb);
+        const firstChannel = new CapturingChannel();
+        const secondChannel = new CapturingChannel();
+        const first = new WatchlistEvaluator({
+            db: env.db,
+            favorites: env.favRepo,
+            notifications: env.notifRepo,
+            dispatcher: new NotificationDispatcher({ repo: env.notifRepo, channels: [firstChannel] }),
+        });
+        const second = new WatchlistEvaluator({
+            db: secondDb,
+            favorites: secondFavorites,
+            notifications: secondNotifications,
+            dispatcher: new NotificationDispatcher({ repo: secondNotifications, channels: [secondChannel] }),
+        });
+
+        const reports = await Promise.all([first.tick(), second.tick()]);
+        expect(reports.reduce((sum, report) => sum + report.fired, 0)).toBe(1);
+        expect(firstChannel.received.length + secondChannel.received.length).toBe(1);
+        expect(await env.notifRepo.listAll(1)).toHaveLength(1);
+        secondDb.close();
         env.db.close();
     });
 

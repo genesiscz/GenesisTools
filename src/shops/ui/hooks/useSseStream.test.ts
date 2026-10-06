@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createSseSubscription, type SseFrame, type SseStatus } from "@app/shops/ui/hooks/useSseStream";
+import { handleWatchlistNotificationBatch } from "@app/shops/ui/lib/watchlist-notification-batch";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 class MockEventSource {
@@ -212,5 +213,49 @@ describe("createSseSubscription", () => {
         expect(batches.length).toBe(1);
         expect(batches[0].length).toBe(1);
         expect((batches[0][0].data as { id: number }).id).toBe(99);
+    });
+});
+
+describe("handleWatchlistNotificationBatch", () => {
+    it("invalidates shared queries once while preserving every notification in order", () => {
+        const invalidations: string[][] = [];
+        const titles: string[] = [];
+        const batch = Array.from({ length: 20 }, (_, index) => ({
+            type: "notification-fired",
+            data: {
+                id: index,
+                favorite_id: index,
+                title: `Alert ${index}`,
+                body: "Price changed",
+                detailUrl: `/watchlist/${index}`,
+            },
+        }));
+
+        handleWatchlistNotificationBatch(batch, {
+            invalidate: (queryKey) => invalidations.push(queryKey),
+            notify: (payload) => titles.push(payload.title),
+        });
+
+        expect(invalidations).toEqual([["watchlist"], ["notifications", "unacked"]]);
+        expect(titles).toHaveLength(20);
+        expect(titles[0]).toBe("Alert 0");
+        expect(titles[19]).toBe("Alert 19");
+    });
+
+    it("does not invalidate or notify for unrelated frames", () => {
+        let invalidations = 0;
+        let notifications = 0;
+
+        handleWatchlistNotificationBatch([{ type: "crawl-progress", data: {} }], {
+            invalidate: () => {
+                invalidations++;
+            },
+            notify: () => {
+                notifications++;
+            },
+        });
+
+        expect(invalidations).toBe(0);
+        expect(notifications).toBe(0);
     });
 });

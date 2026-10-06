@@ -97,6 +97,29 @@ describe("NotificationsRepository", () => {
         db.close();
     });
 
+    it("claimIfOutsideCooldown reserves one reason while independent reasons remain eligible", async () => {
+        const { db, repo, masterId, favId } = fixture();
+        const target = {
+            userId: 1,
+            cooldownHours: 24,
+            favorite_id: favId,
+            master_product_id: masterId,
+            product_id: null,
+            reason: "target-price" as const,
+            prev_price: 50,
+            curr_price: 29,
+            shop_origin: "rohlik.cz",
+            metadata: {},
+        };
+
+        expect(await repo.claimIfOutsideCooldown(target)).toBeNumber();
+        expect(await repo.claimIfOutsideCooldown(target)).toBeNull();
+        expect(await repo.claimIfOutsideCooldown({ ...target, reason: "drop-percent" })).toBeNumber();
+        db.raw().run("UPDATE notifications SET fired_at = ?", ["2000-01-01T00:00:00.000Z"]);
+        expect(await repo.claimIfOutsideCooldown(target)).toBeNumber();
+        db.close();
+    });
+
     it("markDelivered sets the typed column for the named channel", async () => {
         const { db, repo, masterId, favId } = fixture();
         const id = await repo.record(1, {

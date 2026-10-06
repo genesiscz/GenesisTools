@@ -87,23 +87,32 @@ export class WatchlistEvaluator {
             }
 
             const hit = this.resolveHit(fav);
-            if (!hit) {
+            let stockObservationAccepted = true;
+            if (
+                fav.best_product_id !== null &&
+                fav.best_shop !== null &&
+                fav.best_observed_at !== null &&
+                (fav.last_stock_product_id !== fav.best_product_id ||
+                    fav.last_stock_shop_origin !== fav.best_shop ||
+                    fav.last_stock_state !== fav.best_in_stock ||
+                    fav.last_stock_observed_at !== fav.best_observed_at)
+            ) {
+                stockObservationAccepted = await this.config.favorites.recordStockObservation(fav.id, {
+                    productId: fav.best_product_id,
+                    shopOrigin: fav.best_shop,
+                    inStock: fav.best_in_stock,
+                    observedAt: fav.best_observed_at,
+                });
+            }
+
+            if (!hit || (hit.reason === "back-in-stock" && !stockObservationAccepted)) {
                 skippedNoHit++;
                 continue;
             }
 
-            const recent = await this.config.notifications.findRecentByFavoriteAndReason(
-                fav.id,
-                hit.reason,
-                fav.cooldown_hours
-            );
-            if (recent) {
-                skippedCooldown++;
-                log.debug({ favorite_id: fav.id, reason: hit.reason, recentId: recent.id }, "cooldown active");
-                continue;
-            }
-
-            const notificationId = await this.config.notifications.record(fav.user_id, {
+            const notificationId = await this.config.notifications.claimIfOutsideCooldown({
+                userId: fav.user_id,
+                cooldownHours: fav.cooldown_hours,
                 favorite_id: fav.id,
                 master_product_id: fav.master_product_id,
                 product_id: hit.productId,
@@ -113,6 +122,11 @@ export class WatchlistEvaluator {
                 shop_origin: hit.shop,
                 metadata: {},
             });
+            if (notificationId === null) {
+                skippedCooldown++;
+                log.debug({ favorite_id: fav.id, reason: hit.reason }, "cooldown active");
+                continue;
+            }
 
             const payload = await this.buildPayload({
                 favoriteId: fav.id,
@@ -157,8 +171,21 @@ export class WatchlistEvaluator {
             return { reason: "drop-absolute", prev: ref, curr: cur, shop: fav.best_shop, productId: null };
         }
 
-        if (fav.notify_back_in_stock === 1) {
-            return { reason: "back-in-stock", prev: ref, curr: cur, shop: fav.best_shop, productId: null };
+        if (
+            fav.notify_back_in_stock === 1 &&
+            fav.best_product_id !== null &&
+            fav.best_in_stock === 1 &&
+            fav.last_stock_state === 0 &&
+            fav.last_stock_product_id === fav.best_product_id &&
+            fav.last_stock_shop_origin === fav.best_shop
+        ) {
+            return {
+                reason: "back-in-stock",
+                prev: ref,
+                curr: cur,
+                shop: fav.best_shop,
+                productId: fav.best_product_id,
+            };
         }
 
         return null;

@@ -158,6 +158,10 @@ export interface FavoritesTable {
     cooldown_hours: Generated<number>;
     active: Generated<number>;
     created_at: string;
+    last_stock_product_id: Generated<number | null>;
+    last_stock_shop_origin: Generated<string | null>;
+    last_stock_state: Generated<number | null>;
+    last_stock_observed_at: Generated<string | null>;
 }
 
 export interface NotificationsTable {

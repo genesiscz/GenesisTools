@@ -33,8 +33,10 @@ export interface EditFavoriteArgs {
 export type Favorite = Selectable<FavoritesTable>;
 
 export interface FavoriteWithState extends Favorite {
+    best_product_id: number | null;
     best_price: number | null;
     best_shop: string | null;
+    best_in_stock: number | null;
     best_observed_at: string | null;
     delta_percent: number | null;
     delta_absolute: number | null;
@@ -178,6 +180,36 @@ export class FavoritesRepository {
         return this.queryWithCurrentState(null);
     }
 
+    async recordStockObservation(
+        favoriteId: number,
+        observation: {
+            productId: number;
+            shopOrigin: string;
+            inStock: number | null;
+            observedAt: string;
+        }
+    ): Promise<boolean> {
+        const result = await this.db
+            .kysely()
+            .updateTable("favorites")
+            .set({
+                last_stock_product_id: observation.productId,
+                last_stock_shop_origin: observation.shopOrigin,
+                last_stock_state: observation.inStock,
+                last_stock_observed_at: observation.observedAt,
+            })
+            .where("id", "=", favoriteId)
+            .where((eb) =>
+                eb.or([
+                    eb("last_stock_observed_at", "is", null),
+                    eb("last_stock_observed_at", "<", observation.observedAt),
+                ])
+            )
+            .executeTakeFirst();
+
+        return result.numUpdatedRows > 0n;
+    }
+
     private async queryWithCurrentState(userId: number | null): Promise<FavoriteWithState[]> {
         let q = this.db
             .kysely()
@@ -218,8 +250,14 @@ export class FavoritesRepository {
                 "f.cooldown_hours",
                 "f.active",
                 "f.created_at",
+                "f.last_stock_product_id",
+                "f.last_stock_shop_origin",
+                "f.last_stock_state",
+                "f.last_stock_observed_at",
+                "co.product_id as best_product_id",
                 "co.current_price as best_price",
                 "co.shop_origin as best_shop",
+                "co.in_stock as best_in_stock",
                 "co.price_observed_at as best_observed_at",
             ])
             .where("f.active", "=", 1)

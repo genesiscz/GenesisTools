@@ -8,6 +8,7 @@ const log = logger.child({ component: "shops:product-api" });
 
 export interface ProductApiContext {
     shopsDb?: ShopsDatabase;
+    compareQueryObserver?: () => void;
 }
 
 export interface GetProductInput {
@@ -219,27 +220,51 @@ export async function comparePrices(
     ctx?: ProductApiContext
 ): Promise<Array<{ master_id: number; offers: ProductDTO[]; history_points: number }>> {
     const shopsDb = db(ctx);
-    const out: Array<{ master_id: number; offers: ProductDTO[]; history_points: number }> = [];
-    for (const masterId of input.masterIds) {
+    const uniqueIds = [...new Set(input.masterIds)];
+    const offersByMaster = new Map<number, ProductDTO[]>();
+    const historyByMaster = new Map<number, number>();
+    const batchSize = 400;
+
+    for (let offset = 0; offset < uniqueIds.length; offset += batchSize) {
+        const ids = uniqueIds.slice(offset, offset + batchSize);
+        ctx?.compareQueryObserver?.();
         const offers = await selectProductWithOffer(shopsDb)
-            .where("p.master_product_id", "=", masterId)
+            .where("p.master_product_id", "in", ids)
+            .orderBy("p.master_product_id")
             .orderBy("p.shop_origin")
             .execute();
-        const totalRow = await shopsDb
+        for (const offer of offers) {
+            if (offer.master_product_id === null) {
+                continue;
+            }
+
+            const group = offersByMaster.get(offer.master_product_id) ?? [];
+            group.push(rowToDto(offer));
+            offersByMaster.set(offer.master_product_id, group);
+        }
+
+        ctx?.compareQueryObserver?.();
+        const counts = await shopsDb
             .kysely()
             .selectFrom("prices as p")
             .innerJoin("products as pr", "pr.id", "p.product_id")
+            .select(["pr.master_product_id as master_id"])
             .select((eb) => eb.fn.countAll<number>().as("n"))
-            .where("pr.master_product_id", "=", masterId)
-            .executeTakeFirst();
-        out.push({
-            master_id: masterId,
-            offers: offers.map(rowToDto),
-            history_points: totalRow?.n ?? 0,
-        });
+            .where("pr.master_product_id", "in", ids)
+            .groupBy("pr.master_product_id")
+            .execute();
+        for (const row of counts) {
+            if (row.master_id !== null) {
+                historyByMaster.set(row.master_id, Number(row.n));
+            }
+        }
     }
 
-    return out;
+    return input.masterIds.map((masterId) => ({
+        master_id: masterId,
+        offers: [...(offersByMaster.get(masterId) ?? [])],
+        history_points: historyByMaster.get(masterId) ?? 0,
+    }));
 }
 
 export async function getMaster(

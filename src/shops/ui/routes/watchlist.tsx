@@ -7,6 +7,7 @@ import { RegularsPanel } from "@app/shops/ui/components/RegularsPanel";
 import { WatchlistTable } from "@app/shops/ui/components/WatchlistTable";
 import { useSseStream } from "@app/shops/ui/hooks/useSseStream";
 import { RequireAuth, requireAuthBeforeLoad } from "@app/shops/ui/lib/useAuthMe";
+import { handleWatchlistNotificationBatch } from "@app/shops/ui/lib/watchlist-notification-batch";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Card, CardContent, CardHeader, CardTitle } from "@genesiscz/utils/ui/components/card";
 import { Input } from "@genesiscz/utils/ui/components/input";
@@ -23,14 +24,6 @@ export const Route = createFileRoute("/watchlist")({
     ),
     beforeLoad: requireAuthBeforeLoad,
 });
-
-interface NotificationFiredPayload {
-    id: number;
-    favorite_id: number;
-    title: string;
-    body: string;
-    detailUrl: string;
-}
 
 const SSE_EVENTS = ["notification-fired"] as const;
 
@@ -76,17 +69,15 @@ function WatchlistPage() {
         url: "/api/events",
         events: SSE_EVENTS,
         onBatch: (batch) => {
-            for (const frame of batch) {
-                if (frame.type === "notification-fired") {
-                    const payload = frame.data as NotificationFiredPayload;
-                    queryClient.invalidateQueries({ queryKey: ["watchlist"] });
-                    queryClient.invalidateQueries({ queryKey: ["notifications", "unacked"] });
+            handleWatchlistNotificationBatch(batch, {
+                invalidate: (queryKey) => queryClient.invalidateQueries({ queryKey }),
+                notify: (payload) => {
                     toast.success(payload.title, {
                         description: payload.body,
                         action: { label: "Open", onClick: () => router.navigate({ to: payload.detailUrl }) },
                     });
-                }
-            }
+                },
+            });
         },
     });
 
