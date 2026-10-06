@@ -365,6 +365,7 @@ export function registerStaleBranches(parent: Command): Command {
         .action(async (json: string) => {
             const report = await loadReport(json);
             const api = await reportApi(report);
+            const project = await getProject(api, api.project);
             const comments = readLedger();
             const labelLedger = readLabelLedger().filter((e) => e.project === api.project);
             const rows: string[] = [];
@@ -378,7 +379,7 @@ export function registerStaleBranches(parent: Command): Command {
                     const live = await fetchMr(api, mr.iid);
 
                     if (!mr.review.postedNoteUrl) {
-                        const fromLedger = ledgerFor(comments, api.project, mr.iid)
+                        const fromLedger = ledgerFor(comments, { host: api.host, projectId: project.id, iid: mr.iid })
                             .filter((e) => e.message.trim() === body)
                             .sort((a, b) => b.ts.localeCompare(a.ts))[0];
                         const fromLive = live.notes
@@ -454,6 +455,7 @@ export function registerStaleBranches(parent: Command): Command {
             const report = await loadReport(json);
             const ledger = readLedger();
             const api = await reportApi(report);
+            const project = await getProject(api, api.project);
             const targets = report.mrs.filter(
                 (mr) =>
                     mr.needsReview &&
@@ -489,7 +491,7 @@ export function registerStaleBranches(parent: Command): Command {
                     ? mr.review.sentBody?.trim()
                     : [
                           draftComment,
-                          ...ledgerFor(ledger, api.project, mr.iid)
+                          ...ledgerFor(ledger, { host: api.host, projectId: project.id, iid: mr.iid })
                               .filter((e) => e.comment_id === noteId)
                               .map((e) => e.message.trim()),
                       ]

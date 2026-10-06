@@ -10,7 +10,7 @@
  */
 
 import type { TargetOptions } from "@app/gitlab/commands/shared";
-import { resolveProjectApi } from "@app/gitlab/lib/client";
+import { getProject, normalizeHost, resolveProjectApi } from "@app/gitlab/lib/client";
 import {
     appendLedger,
     isDuplicate,
@@ -32,6 +32,8 @@ export async function runBatchComment(iidsArg: string, opts: BatchCommentOptions
     const comment = opts.comment;
     const dryRun = Boolean(opts.dryRun);
     const api = await resolveProjectApi({ host: opts.host, project: opts.project });
+    const project = await getProject(api, api.project);
+    const identity = { host: normalizeHost(api.host), projectId: project.id };
 
     out.println(`Project: ${api.project} on ${api.host}`);
     out.println(`MRs: ${iids.map((i) => `!${i}`).join(", ")}`);
@@ -44,7 +46,7 @@ export async function runBatchComment(iidsArg: string, opts: BatchCommentOptions
     const results: PostResult[] = [];
 
     for (const iid of iids) {
-        if (isDuplicate(ledger, { project: api.project, iid, message: comment })) {
+        if (isDuplicate(ledger, { ...identity, iid, message: comment })) {
             out.println(`⏭️  !${iid} — SKIPPED (duplicate: same message already posted)`);
             results.push({ iid, ok: true, status: 0, skipped: true });
             continue;
@@ -60,6 +62,7 @@ export async function runBatchComment(iidsArg: string, opts: BatchCommentOptions
         if (r.ok) {
             out.println(`✅ !${r.iid} — ok (${r.status}, note #${r.commentId})`);
             appendLedger({
+                ...identity,
                 project: api.project,
                 pr: iid,
                 comment_id: r.commentId ?? 0,

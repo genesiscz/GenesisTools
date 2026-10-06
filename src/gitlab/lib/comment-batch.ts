@@ -1,6 +1,13 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { type ProjectApi, projectBase, restGet, restGetPaginated, restWrite } from "@app/gitlab/lib/client";
+import {
+    normalizeHost,
+    type ProjectApi,
+    projectBase,
+    restGet,
+    restGetPaginated,
+    restWrite,
+} from "@app/gitlab/lib/client";
 import { storage } from "@app/gitlab/lib/config";
 import { defaults } from "@app/gitlab/lib/defaults";
 import { HttpError } from "@app/gitlab/lib/http";
@@ -8,6 +15,10 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
 export interface LedgerEntry {
+    /** Normalized GitLab installation. Missing only on unresolved legacy rows. */
+    host?: string;
+    /** Canonical numeric project id. Missing only on unresolved legacy rows. */
+    projectId?: number;
     /** Project path or id the note went to. */
     project: string;
     pr: string;
@@ -56,7 +67,7 @@ export function readLedger(path: string = ledgerPath()): LedgerEntry[] {
         }
 
         entry = withLegacyProject(entry);
-        const key = `${entry.project}:${entry.pr}:${entry.message}:${entry.comment_id}`;
+        const key = `${entry.host ?? "legacy"}:${entry.projectId ?? entry.project}:${entry.pr}:${entry.message}:${entry.comment_id}`;
         if (!seen.has(key)) {
             seen.add(key);
             entries.push(entry);
@@ -77,13 +88,28 @@ export function withLegacyProject<T extends { project?: string }>(
     return entry.project || !legacyProject ? entry : { ...entry, project: legacyProject };
 }
 
-/** Ledger entries of one MR of one project. */
-export function ledgerFor(ledger: LedgerEntry[], project: string, iid: string | number): LedgerEntry[] {
-    return ledger.filter((e) => e.project === project && e.pr === String(iid));
+export interface CommentIdentity {
+    host: string;
+    projectId: number;
+    iid: string | number;
 }
 
-export function isDuplicate(ledger: LedgerEntry[], ref: { project: string; iid: string; message: string }): boolean {
-    return ledgerFor(ledger, ref.project, ref.iid).some((e) => e.message === ref.message);
+/** Ledger entries of one MR on one GitLab installation and canonical project. */
+export function ledgerFor(ledger: LedgerEntry[], identity: CommentIdentity): LedgerEntry[] {
+    const host = normalizeHost(identity.host);
+
+    return ledger.filter(
+        (entry) =>
+            entry.host !== undefined &&
+            entry.projectId !== undefined &&
+            normalizeHost(entry.host) === host &&
+            entry.projectId === identity.projectId &&
+            entry.pr === String(identity.iid)
+    );
+}
+
+export function isDuplicate(ledger: LedgerEntry[], ref: CommentIdentity & { message: string }): boolean {
+    return ledgerFor(ledger, ref).some((entry) => entry.message === ref.message);
 }
 
 export function appendLedger(entry: LedgerEntry, path: string = ledgerPath()): void {
