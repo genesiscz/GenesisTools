@@ -135,6 +135,77 @@ describe("fetchMemoriesForDates", () => {
         expect(firstAgain.stats.cached).toBe(1);
     });
 
+    test("bounds cold-date reads at three and preserves sorted result order", async () => {
+        let calls = 0;
+        let inFlight = 0;
+        let maxInFlight = 0;
+        stubFetch(async (input) => {
+            calls++;
+            inFlight++;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            await Bun.sleep(5);
+            inFlight--;
+            const date = new URL(String(input)).searchParams.get("date");
+            return new Response(SafeJSON.stringify([{ id: Number(date?.replaceAll("-", "")) }]), { status: 200 });
+        });
+        const dates = ["2026-07-28", "2026-07-21", "2026-07-25", "2026-07-23", "2026-07-22"];
+
+        const result = await fetchMemoriesForDates({
+            accountId: 333,
+            accessToken: "test-token",
+            dates,
+            storage: new Storage("timely-memories-pool-test"),
+            force: true,
+        });
+
+        expect(calls).toBe(dates.length);
+        expect(maxInFlight).toBe(3);
+        expect([...result.byDate.keys()]).toEqual([...dates].sort());
+    });
+
+    test("aborts the pool on a later auth failure without scheduling more dates", async () => {
+        let calls = 0;
+        let authResponses = 0;
+        stubFetch(async (_input, init) => {
+            calls++;
+
+            if (calls === 1) {
+                return new Response("[]", { status: 200 });
+            }
+
+            if (calls === 2) {
+                authResponses++;
+                return new Response('{"error":"Unauthorized"}', { status: 401 });
+            }
+
+            return new Promise<Response>((resolve, reject) => {
+                const timer = setTimeout(() => resolve(new Response("[]", { status: 200 })), 50);
+                init?.signal?.addEventListener(
+                    "abort",
+                    () => {
+                        clearTimeout(timer);
+                        reject(init.signal?.reason);
+                    },
+                    { once: true }
+                );
+            });
+        });
+        const dates = Array.from({ length: 10 }, (_, index) => `2026-07-${String(index + 1).padStart(2, "0")}`);
+
+        await expect(
+            fetchMemoriesForDates({
+                accountId: 444,
+                accessToken: "test-token",
+                dates,
+                storage: new Storage("timely-memories-auth-cancel-test"),
+                force: true,
+            })
+        ).rejects.toThrow(TimelyHttpError);
+
+        expect(calls).toBe(4);
+        expect(authResponses).toBe(1);
+    });
+
     test("a 401 with a stored cookie is flagged as a cookie failure", async () => {
         stubFetch(async () => new Response('{"error":"Unauthorized"}', { status: 401 }));
 

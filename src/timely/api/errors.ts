@@ -16,13 +16,19 @@ export class TimelyHttpError extends Error {
     readonly scope: TimelyRequestScope;
     /** Whether a stored browser cookie was sent, which decides the remedy for a memories 401. */
     readonly usedCookie: boolean;
+    /** Server-requested delay after a 429, when Timely supplied a valid Retry-After header. */
+    readonly retryAfterMs?: number;
 
-    constructor(message: string, options: { status: number; scope: TimelyRequestScope; usedCookie?: boolean }) {
+    constructor(
+        message: string,
+        options: { status: number; scope: TimelyRequestScope; usedCookie?: boolean; retryAfterMs?: number }
+    ) {
         super(message);
         this.name = "TimelyHttpError";
         this.status = options.status;
         this.scope = options.scope;
         this.usedCookie = options.usedCookie ?? false;
+        this.retryAfterMs = options.retryAfterMs;
     }
 }
 
