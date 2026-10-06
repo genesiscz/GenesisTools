@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, watch } from "node:fs";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, posix, relative, resolve, sep } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { canonicalDir, isInsideDir } from "@genesiscz/utils/fs/canonical";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -408,9 +408,7 @@ export function fetchShimScript(files: Record<string, string>, entryRel = ""): s
 
     if (entryDir) {
         for (const [key, value] of Object.entries(files)) {
-            if (key.startsWith(entryDir)) {
-                aliased[key.slice(entryDir.length)] = value;
-            }
+            aliased[posix.relative(entryDir, key)] = value;
         }
     }
 
@@ -421,19 +419,19 @@ export function fetchShimScript(files: Record<string, string>, entryRel = ""): s
 (() => {
     if (location.protocol !== "file:") { return; }
     const FILES = ${json};
+    const embedded = new Map(Object.entries(FILES).map(([key, value]) => [
+        new URL(key.split("/").map(encodeURIComponent).join("/"), location.href).href, value
+    ]));
     const orig = window.fetch ? window.fetch.bind(window) : null;
     window.fetch = (input, init) => {
         const raw = typeof input === "string" ? input : input instanceof URL ? input.href : (input && input.url) || "";
-        const noQuery = raw.split(/[?#]/)[0];
-        const segments = [];
-        for (const part of noQuery.split("/")) {
-            if (part === "" || part === ".") { continue; }
-            if (part === "..") { segments.pop(); continue; }
-            segments.push(part);
-        }
-        const key = decodeURIComponent(segments.join("/"));
-        if (Object.prototype.hasOwnProperty.call(FILES, key)) {
-            return Promise.resolve(new Response(FILES[key], { status: 200 }));
+        let resolved;
+        try { resolved = new URL(raw, location.href); }
+        catch (error) { return orig ? orig(input, init) : Promise.reject(error); }
+        resolved.search = "";
+        resolved.hash = "";
+        if (resolved.protocol === "file:" && embedded.has(resolved.href)) {
+            return Promise.resolve(new Response(embedded.get(resolved.href), { status: 200 }));
         }
         return orig ? orig(input, init) : Promise.reject(new TypeError("fetch unavailable on file://"));
     };

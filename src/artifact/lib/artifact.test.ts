@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { runInNewContext } from "node:vm";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -981,6 +982,49 @@ describe("build helpers", () => {
         // Both the dir-relative and the page-relative key must resolve.
         expect(shim).toContain(`"sub/data.json"`);
         expect(shim).toContain(`"data.json"`);
+    });
+
+    test("fetch shim resolves URL and Request inputs and preserves external fetches", async () => {
+        const nativeCalls: unknown[] = [];
+        const nativeFetch = async (input: unknown) => {
+            nativeCalls.push(input);
+            return new Response("native");
+        };
+        const window = { fetch: nativeFetch };
+        const shim = fetchShimScript({ "sub/data file.json": "sibling", "root.json": "parent" }, "sub/report.html");
+        const source = shim.slice(shim.indexOf(">") + 1, shim.lastIndexOf("</script>"));
+        runInNewContext(source, {
+            window,
+            location: new URL("file:///export/sub/report.html"),
+            URL,
+            Request,
+            Response,
+        });
+        for (const input of [
+            "./data%20file.json?query=yes#hash",
+            new URL("file:///export/sub/data%20file.json"),
+            new Request("file:///export/sub/data%20file.json?query=yes"),
+        ]) {
+            expect(await (await window.fetch(input)).text()).toBe("sibling");
+        }
+        expect(await (await window.fetch("../root.json")).text()).toBe("parent");
+        expect(nativeCalls).toEqual([]);
+        for (const input of [
+            "https://example.com/data%20file.json",
+            "file:///outside/data%20file.json",
+            "missing.json",
+        ]) {
+            expect(await (await window.fetch(input)).text()).toBe("native");
+        }
+        expect(nativeCalls).toHaveLength(3);
+        const httpWindow = { fetch: nativeFetch };
+        runInNewContext(source, {
+            window: httpWindow,
+            location: new URL("https://example.com/report.html"),
+            URL,
+            Response,
+        });
+        expect(httpWindow.fetch).toBe(nativeFetch);
     });
 
     test("fetch shim escapes </script> and injectShim lands after <head>", () => {
