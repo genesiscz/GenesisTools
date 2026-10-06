@@ -25,6 +25,7 @@ export const MAX_ROW_CHOICES = 40;
 export const MAX_WINDOWS = 3;
 /** How many times a chosen row may be replaced by one of its own subcommands. */
 export const MAX_DESCENT = 2;
+export const SUGGEST_CONCURRENCY = 2;
 /** Families kept when the family question itself is not admitted. */
 const FAMILY_FALLBACK = 3;
 const MIN_BOOLEAN_PROBABILITY = 0.8;
@@ -141,39 +142,71 @@ export async function suggestCatalogue(options: {
     signal?: AbortSignal;
     limit?: number;
     pool?: number;
+    concurrency?: number;
 }): Promise<RouteSuggestion[]> {
     const rows = shortlistRows(options.utterance, flattenCatalogue(options.catalogue)).slice(0, options.pool ?? 60);
     const rank = new Map(rows.map((row, index) => [row.path, index]));
-    const scored: RouteSuggestion[] = [];
-    for (const batch of suggestBatches(rows, 20)) {
-        log.debug({ batchSize: batch.length }, "Scoring a suggestion batch with Jev");
-        const evaluation = await prof.measureAsync("choose", () =>
-            options.evaluate({
-                input: {
-                    state: { utterance: options.utterance, names: batch.map((row) => row.path) },
-                    questions: Object.fromEntries(
-                        batch.map((row) => [
-                            row.id,
-                            {
-                                type: "score",
-                                // The question id is a dot path with no meaning to the model, so the
-                                // command path and its summary go in the instructions. Without them
-                                // every row scored the same and the ranking fell back to the tie
-                                // break, which put `github review` tenth for "unresolved threads".
-                                instructions: `The command is "tools ${row.path}": ${row.oneLine.slice(0, 160)}. How well does it match the utterance?`,
-                                criteria: ["poor match", "possible match", "strong match"],
-                            },
-                        ])
-                    ),
-                },
-                signal: options.signal,
-            })
-        );
-        for (const row of batch) {
-            const answer = evaluation.answers[row.id];
-            scored.push({ path: row.path, score: answer?.type === "score" ? answer.score : 0 });
+    const batches = suggestBatches(rows, 20);
+    const scoredByBatch: RouteSuggestion[][] = new Array(batches.length);
+    const controller = new AbortController();
+    const onAbort = (): void => controller.abort(options.signal?.reason);
+    options.signal?.throwIfAborted();
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    let nextBatch = 0;
+    let firstError: unknown;
+    const worker = async (): Promise<void> => {
+        while (!controller.signal.aborted) {
+            const batchIndex = nextBatch++;
+            const batch = batches[batchIndex];
+            if (!batch) {
+                return;
+            }
+
+            try {
+                log.debug({ batchSize: batch.length }, "Scoring a suggestion batch with Jev");
+                const evaluation = await prof.measureAsync("choose", () =>
+                    options.evaluate({
+                        input: {
+                            state: { utterance: options.utterance, names: batch.map((row) => row.path) },
+                            questions: Object.fromEntries(
+                                batch.map((row) => [
+                                    row.id,
+                                    {
+                                        type: "score",
+                                        instructions: `The command is "tools ${row.path}": ${row.oneLine.slice(0, 160)}. How well does it match the utterance?`,
+                                        criteria: ["poor match", "possible match", "strong match"],
+                                    },
+                                ])
+                            ),
+                        },
+                        signal: controller.signal,
+                    })
+                );
+                scoredByBatch[batchIndex] = batch.map((row) => {
+                    const answer = evaluation.answers[row.id];
+                    return { path: row.path, score: answer?.type === "score" ? answer.score : 0 };
+                });
+            } catch (error) {
+                firstError ??= error;
+                controller.abort(error);
+                return;
+            }
         }
+    };
+
+    try {
+        const width = Math.max(1, Math.min(options.concurrency ?? SUGGEST_CONCURRENCY, batches.length));
+        await Promise.allSettled(Array.from({ length: width }, () => worker()));
+    } finally {
+        options.signal?.removeEventListener("abort", onAbort);
     }
+
+    if (firstError !== undefined) {
+        throw firstError;
+    }
+
+    controller.signal.throwIfAborted();
+    const scored = scoredByBatch.flat();
 
     // Jev's score question has three levels, so ties are the normal case. Breaking them on the
     // lexical rank rather than alphabetically is what keeps `github review` off the bottom of a

@@ -511,3 +511,85 @@ test("suggest ranks a 20-name batch", async () => {
     expect(result[0]?.path).toBe("tool0 run");
     expect(result).toHaveLength(10);
 });
+
+test("suggest evaluates independent batches with bounded concurrency and stable ranking", async () => {
+    const tools = Array.from({ length: 60 }, (_, index) => ({
+        name: `batch${index}`,
+        oneLine: `Batch ${index}`,
+        commands: [command(`batch${index} run`)],
+    }));
+    let calls = 0;
+    let active = 0;
+    let maxActive = 0;
+    const evaluate: Evaluator = async (call) => {
+        calls++;
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await Bun.sleep(30);
+        active--;
+        const ids = Object.keys(evaluationSchema.parse(call.input).questions);
+        return evaluation(
+            Object.fromEntries(ids.map((id) => [id, { type: "score" as const, score: id.includes("batch0") ? 2 : 1 }]))
+        );
+    };
+
+    const result = await suggestCatalogue({
+        utterance: "run batch0",
+        catalogue: { commit: "test", tools },
+        evaluate,
+        concurrency: 2,
+    });
+    expect(calls).toBe(3);
+    expect(maxActive).toBe(2);
+    expect(active).toBe(0);
+    expect(result[0]?.path).toBe("batch0 run");
+});
+
+test("suggest aborts sibling batches and awaits their settlement after an evaluator failure", async () => {
+    const tools = Array.from({ length: 60 }, (_, index) => ({
+        name: `failure${index}`,
+        oneLine: `Failure ${index}`,
+        commands: [command(`failure${index} run`)],
+    }));
+    let calls = 0;
+    let active = 0;
+    let siblingAborts = 0;
+    const evaluate: Evaluator = async (call) => {
+        const callIndex = calls++;
+        active++;
+        try {
+            if (callIndex === 0) {
+                await Bun.sleep(0);
+                throw new Error("authentication failed");
+            }
+
+            await new Promise<void>((_resolve, reject) => {
+                const fail = () => {
+                    siblingAborts++;
+                    reject(call.signal?.reason ?? new Error("aborted"));
+                };
+                if (call.signal?.aborted) {
+                    fail();
+                    return;
+                }
+
+                call.signal?.addEventListener("abort", fail, { once: true });
+            });
+            return evaluation({});
+        } finally {
+            active--;
+        }
+    };
+
+    await expect(
+        suggestCatalogue({
+            utterance: "run failure0",
+            catalogue: { commit: "test", tools },
+            evaluate,
+            concurrency: 2,
+        })
+    ).rejects.toThrow("authentication failed");
+    expect(calls).toBe(2);
+    expect(siblingAborts).toBe(1);
+    expect(active).toBe(0);
+});
