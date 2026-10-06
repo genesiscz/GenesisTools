@@ -1,14 +1,6 @@
 import { escapeHtml } from "@genesiscz/utils/string";
 import hljs from "highlight.js";
-
-import { marked as markedRaw } from "marked";
-
-// tsgo resolves `marked` as a function overload, missing .use() and .parse()
-// Cast to the full API shape that marked v17 exports at runtime
-const marked = markedRaw as unknown as {
-    parse: (src: string, options?: { async?: false }) => string;
-    use: (ext: { renderer: Record<string, unknown> }) => void;
-};
+import { Marked, type Tokens } from "marked";
 
 import { useMemo } from "react";
 
@@ -16,21 +8,32 @@ function highlightCode(code: string, lang?: string): string {
     if (lang && hljs.getLanguage(lang)) {
         try {
             return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
-        } catch {
-            // Highlight failed, fall through to auto
+        } catch (error) {
+            console.debug("MarkdownRenderer: syntax highlighting failed", { error, lang, codeLength: code.length });
         }
     }
 
+    return escapeHtml(code);
+}
+
+const marked = new Marked({ gfm: true });
+
+function escapeAttribute(value: string): string {
+    return escapeHtml(value).replace(/"/g, "&quot;");
+}
+
+const SAFE_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
+
+function isSafeHref(href: string): boolean {
     try {
-        return hljs.highlightAuto(code).value;
+        return SAFE_PROTOCOLS.has(new URL(href, "https://relative.invalid/").protocol);
     } catch {
-        return escapeHtml(code);
+        return false;
     }
 }
 
-// Use marked's renderer override API (works across all marked versions)
 const renderer = {
-    code({ text, lang }: { text: string; lang?: string }): string {
+    code({ text, lang }: Tokens.Code): string {
         const highlighted = highlightCode(text, lang || undefined);
         const dot = (color: string) =>
             `<div style="width:12px;height:12px;border-radius:50%;background:${color};flex-shrink:0"></div>`;
@@ -46,8 +49,34 @@ const renderer = {
         return `<div class="md-code-block">${dotsBar}<pre class="hljs"><code>${highlighted}</code></pre></div>`;
     },
 
-    codespan({ text }: { text: string }): string {
+    codespan({ text }: Tokens.Codespan): string {
         return `<code class="md-inline-code">${escapeHtml(text)}</code>`;
+    },
+
+    html({ text }: Tokens.HTML | Tokens.Tag): string {
+        return escapeHtml(text);
+    },
+
+    link(token: Tokens.Link): string {
+        const label = marked.parseInline(token.text, { async: false });
+
+        if (!isSafeHref(token.href)) {
+            return label;
+        }
+
+        const external = !token.href.startsWith("#");
+        const target = external ? ' target="_blank" rel="noopener noreferrer"' : "";
+        const title = token.title ? ` title="${escapeAttribute(token.title)}"` : "";
+        return `<a href="${escapeAttribute(token.href)}"${title}${target}>${label}</a>`;
+    },
+
+    image(token: Tokens.Image): string {
+        if (!isSafeHref(token.href)) {
+            return escapeHtml(token.text);
+        }
+
+        const title = token.title ? ` title="${escapeAttribute(token.title)}"` : "";
+        return `<img src="${escapeAttribute(token.href)}" alt="${escapeAttribute(token.text)}"${title}>`;
     },
 };
 
@@ -75,6 +104,6 @@ interface MarkdownRendererProps {
 export function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
     const html = useMemo(() => renderMarkdownToHtml(content), [content]);
 
-    // biome-ignore lint/security/noDangerouslySetInnerHtml: rendering our own markdown, not user-supplied HTML
+    // biome-ignore lint/security/noDangerouslySetInnerHtml: renderer escapes raw HTML and filters link/image protocols above
     return <div className={`md-prose ${className ?? ""}`} dangerouslySetInnerHTML={{ __html: html }} />;
 }

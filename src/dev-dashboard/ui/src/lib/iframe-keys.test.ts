@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { scrollIframeTerminal, scrollIframeTerminalByPage } from "@/lib/iframe-keys";
+import { pasteTextToIframe, scrollIframeTerminal, scrollIframeTerminalByPage } from "@/lib/iframe-keys";
 
 describe("iframe-keys scroll", () => {
     test("scrollIframeTerminal prefers __ddTtydScroll in iframe realm", () => {
@@ -20,10 +20,13 @@ describe("iframe-keys scroll", () => {
 
     test("scrollIframeTerminal falls back to postMessage before injection is ready", () => {
         let posted: unknown = null;
+        let targetOrigin: string | undefined;
         const iframe = {
+            src: "https://dashboard.test/ttyd/synthetic/",
             contentWindow: {
-                postMessage: (data: unknown) => {
+                postMessage: (data: unknown, target: string) => {
                     posted = data;
+                    targetOrigin = target;
                 },
             },
             contentDocument: null,
@@ -31,6 +34,7 @@ describe("iframe-keys scroll", () => {
 
         expect(scrollIframeTerminal(iframe, 5)).toBe(true);
         expect(posted).toEqual({ type: "dd-ttyd-scroll", lines: 5 });
+        expect(targetOrigin).toBe("https://dashboard.test");
     });
 
     test("scrollIframeTerminalByPage prefers __ddTtydScrollPage in iframe realm", () => {
@@ -51,10 +55,13 @@ describe("iframe-keys scroll", () => {
 
     test("scrollIframeTerminalByPage falls back to postMessage before injection is ready", () => {
         let posted: unknown = null;
+        let targetOrigin: string | undefined;
         const iframe = {
+            src: "https://dashboard.test/ttyd/synthetic/",
             contentWindow: {
-                postMessage: (data: unknown) => {
+                postMessage: (data: unknown, target: string) => {
                     posted = data;
+                    targetOrigin = target;
                 },
             },
             contentDocument: null,
@@ -62,5 +69,25 @@ describe("iframe-keys scroll", () => {
 
         expect(scrollIframeTerminalByPage(iframe, 1)).toBe(true);
         expect(posted).toEqual({ type: "dd-ttyd-scroll-page", direction: 1 });
+        expect(targetOrigin).toBe("https://dashboard.test");
+    });
+
+    test("paste fallback targets only the terminal iframe origin", () => {
+        let posted: unknown = null;
+        let targetOrigin: string | undefined;
+        const iframe = {
+            src: "https://dashboard.test/ttyd/synthetic/",
+            contentWindow: {
+                postMessage: (data: unknown, target: string) => {
+                    posted = data;
+                    targetOrigin = target;
+                },
+            },
+            contentDocument: null,
+        } as unknown as HTMLIFrameElement;
+
+        expect(pasteTextToIframe(iframe, "normal input")).toBe(true);
+        expect(posted).toEqual({ type: "dd-ttyd-paste", text: "normal input" });
+        expect(targetOrigin).toBe("https://dashboard.test");
     });
 });

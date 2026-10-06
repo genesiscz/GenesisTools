@@ -86,7 +86,7 @@ export function ToolCallCard({
 
             {/* Collapsible body -- uses CSS animation from styles.css */}
             <div className="collapsible-body">
-                {hasContent && (
+                {hasContent && isOpen && (
                     <div
                         className={cn(
                             "px-4 pb-4 pt-3 space-y-2 border-t",

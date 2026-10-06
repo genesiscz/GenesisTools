@@ -213,6 +213,10 @@ const TTYD_MOBILE_SHELL_SCRIPT = `<script id="dd-ttyd-mobile-shell-js">
     }
 
     window.addEventListener("message", function (event) {
+        if (event.origin !== window.location.origin || event.source !== window.parent) {
+            return;
+        }
+
         var data = event.data;
         if (!data || (data.type !== "dd-ttyd-scroll" && data.type !== "dd-ttyd-scroll-page" && data.type !== "dd-ttyd-paste")) {
             return;

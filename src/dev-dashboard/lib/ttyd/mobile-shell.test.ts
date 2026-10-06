@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { runInNewContext } from "node:vm";
 import { injectTtydMobileShell, shouldInjectTtydMobileShell } from "@app/dev-dashboard/lib/ttyd/mobile-shell";
 
 describe("ttyd mobile-shell", () => {
@@ -30,5 +31,52 @@ describe("ttyd mobile-shell", () => {
         expect(patched).toContain("direction < 0 ? 0 : 1");
         expect(patched).toContain("scrollLines");
         expect(patched).toContain("touch-action: none");
+    });
+
+    test("message receiver accepts only the exact same-origin parent", () => {
+        const html = injectTtydMobileShell("<html><head></head><body></body></html>");
+        const script = html.match(/<script id="dd-ttyd-mobile-shell-js">([\s\S]*?)<\/script>/)?.[1];
+        expect(script).toBeString();
+
+        let listener: ((event: { data: unknown; origin: string; source: unknown }) => void) | undefined;
+        const pasted: string[] = [];
+        const parent = {};
+        const window = {
+            parent,
+            location: { origin: "https://dashboard.test" },
+            term: { paste: (text: string) => pasted.push(text) },
+            addEventListener: (type: string, handler: typeof listener) => {
+                if (type === "message") {
+                    listener = handler;
+                }
+            },
+            setTimeout: () => 0,
+        };
+        const document = { querySelector: () => null, addEventListener: () => undefined };
+        runInNewContext(script!, { window, document, Math, Number });
+        expect(listener).toBeFunction();
+
+        listener!({
+            data: { type: "dd-ttyd-paste", text: "foreign" },
+            origin: "https://attacker.test",
+            source: parent,
+        });
+        listener!({
+            data: { type: "dd-ttyd-paste", text: "sibling" },
+            origin: "https://dashboard.test",
+            source: {},
+        });
+        listener!({
+            data: { type: "dd-ttyd-paste", text: "normal" },
+            origin: "https://dashboard.test",
+            source: parent,
+        });
+        listener!({
+            data: { type: "dd-ttyd-paste", text: 42 },
+            origin: "https://dashboard.test",
+            source: parent,
+        });
+
+        expect(pasted).toEqual(["normal"]);
     });
 });

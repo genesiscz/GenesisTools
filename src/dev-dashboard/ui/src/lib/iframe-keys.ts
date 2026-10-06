@@ -71,8 +71,12 @@ export function sendKeyToIframe(iframe: HTMLIFrameElement | null, key: IframeKey
     return dispatchKey(textarea, key);
 }
 
-function scrollViaPostMessage(contentWindow: TtydIframeWindow, amount: number): void {
-    contentWindow.postMessage({ type: "dd-ttyd-scroll", lines: amount }, "*");
+function iframeTargetOrigin(iframe: HTMLIFrameElement): string {
+    return new URL(iframe.src).origin;
+}
+
+function scrollViaPostMessage(iframe: HTMLIFrameElement, contentWindow: TtydIframeWindow, amount: number): void {
+    contentWindow.postMessage({ type: "dd-ttyd-scroll", lines: amount }, iframeTargetOrigin(iframe));
 }
 
 /**
@@ -94,7 +98,7 @@ export function scrollIframeTerminal(iframe: HTMLIFrameElement | null, amount: n
             return contentWindow.__ddTtydScroll(amount);
         }
 
-        scrollViaPostMessage(contentWindow, amount);
+        scrollViaPostMessage(iframe, contentWindow, amount);
         return true;
     } catch {
         return false;
@@ -123,11 +127,7 @@ export function pasteTextToIframe(iframe: HTMLIFrameElement | null, text: string
             return contentWindow.__ddTtydPaste(text);
         }
 
-        // The ttyd frame is served same-origin under the dashboard's reverse
-        // proxy. A scoped targetOrigin broke the cloudflared-proxied mobile path
-        // (LAN hostname), so post with "*" — the front proxy already auth-gates
-        // every /ttyd/ request, so an untrusted embedder can't load this frame.
-        contentWindow.postMessage({ type: "dd-ttyd-paste", text }, "*");
+        contentWindow.postMessage({ type: "dd-ttyd-paste", text }, iframeTargetOrigin(iframe));
         return true;
     } catch (error) {
         console.debug("pasteTextToIframe: paste injection failed", { error, textLength: text.length });
@@ -135,8 +135,8 @@ export function pasteTextToIframe(iframe: HTMLIFrameElement | null, text: string
     }
 }
 
-function scrollPageViaPostMessage(contentWindow: TtydIframeWindow, direction: -1 | 1): void {
-    contentWindow.postMessage({ type: "dd-ttyd-scroll-page", direction }, "*");
+function scrollPageViaPostMessage(iframe: HTMLIFrameElement, contentWindow: TtydIframeWindow, direction: -1 | 1): void {
+    contentWindow.postMessage({ type: "dd-ttyd-scroll-page", direction }, iframeTargetOrigin(iframe));
 }
 
 /** Scroll roughly one visible screen of scrollback up or down. */
@@ -156,7 +156,7 @@ export function scrollIframeTerminalByPage(iframe: HTMLIFrameElement | null, dir
             return contentWindow.__ddTtydScrollPage(direction);
         }
 
-        scrollPageViaPostMessage(contentWindow, direction);
+        scrollPageViaPostMessage(iframe, contentWindow, direction);
         return true;
     } catch {
         return false;
