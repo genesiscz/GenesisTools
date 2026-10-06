@@ -1,0 +1,1 @@
+CREATE INDEX `idx_activity_logs_user_timestamp` ON `activity_logs` (`user_id`,`timestamp`);

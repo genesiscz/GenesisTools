@@ -24,7 +24,7 @@ export type TimerAction =
     | { type: "pause"; nowMs: number }
     | { type: "reset" }
     | { type: "lap"; nowMs: number }
-    | { type: "advance_pomodoro_phase" }
+    | { type: "advance_pomodoro_phase"; nowMs: number }
     | { type: "set_pomodoro_settings"; settings: PomodoroSettings }
     | {
           type: "update_metadata";
@@ -34,7 +34,12 @@ export type TimerAction =
 export interface TransitionResult {
     next: Timer;
     /** Fire a "phase_completed" event for SSE/celebration */
-    phaseTransition?: { fromPhase: PomodoroPhase; toPhase: PomodoroPhase; sessionCount: number };
+    phaseTransition?: {
+        fromPhase: PomodoroPhase;
+        toPhase: PomodoroPhase;
+        sessionCount: number;
+        durationMs: number;
+    };
     /** Fire a "countdown_complete" event */
     countdownComplete?: boolean;
 }
@@ -139,7 +144,12 @@ export function applyAction(current: Timer, action: TimerAction): TransitionResu
                     isRunning: 0,
                     startTime: null,
                 },
-                phaseTransition: { fromPhase: phase, toPhase, sessionCount: newSessionCount },
+                phaseTransition: {
+                    fromPhase: phase,
+                    toPhase,
+                    sessionCount: newSessionCount,
+                    durationMs: phase === "work" ? computeLiveElapsed(current, action.nowMs) : 0,
+                },
             };
         }
 

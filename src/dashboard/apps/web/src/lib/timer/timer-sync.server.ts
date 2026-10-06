@@ -11,8 +11,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq, gte, lt } from "drizzle-orm";
 import { type ActivityLog, activityLogs, db, type NewTimer, type Timer, timers } from "@/drizzle";
 import { requireUserId } from "@/lib/auth/requireUser";
+import { activityLogValues, type FocusSessionBlock, focusSessionsFromPomodoroRows } from "./timer-activity";
 import { emitTimerEvent } from "./timer-events.server";
 import { applyAction } from "./timer-state-machine";
+
+export type { FocusSessionBlock } from "./timer-activity";
 
 // ============================================
 // Conflict Error
@@ -111,10 +114,7 @@ function mutate({ id, userId, expectedVersion, transform }: MutateOptions): Time
                         userId,
                         eventType: EVENT_TO_ACTIVITY[ev.type],
                         timestamp: nowIso,
-                        elapsedAtEvent: updated.elapsedTime ?? 0,
-                        previousValue: current.elapsedTime ?? 0,
-                        newValue: updated.elapsedTime ?? 0,
-                        metadata: (ev.payload as Record<string, unknown> | undefined) ?? {},
+                        ...activityLogValues({ current, updated, event: ev }),
                     }))
                 )
                 .run();
@@ -324,7 +324,7 @@ export const advancePomodoroPhase = createServerFn({ method: "POST" })
             userId,
             expectedVersion: data.expectedVersion,
             transform: (current) => {
-                const r = applyAction(current, { type: "advance_pomodoro_phase" });
+                const r = applyAction(current, { type: "advance_pomodoro_phase", nowMs: Date.now() });
                 return {
                     next: r.next,
                     events: r.phaseTransition ? [{ type: "phase_changed", payload: r.phaseTransition }] : [],
@@ -535,12 +535,6 @@ export const aggregateFocusStats = createServerFn({ method: "GET" }).handler(asy
     return { timeFocusedTodayMs, sessionsToday };
 });
 
-export interface FocusSessionBlock {
-    timerId: string;
-    startIso: string;
-    endIso: string;
-}
-
 export const aggregateFocusSessions = createServerFn({ method: "GET" }).handler(
     async (): Promise<FocusSessionBlock[]> => {
         const userId = await requireUserId();
@@ -564,30 +558,6 @@ export const aggregateFocusSessions = createServerFn({ method: "GET" }).handler(
             )
             .all();
 
-        const sessions: FocusSessionBlock[] = [];
-
-        for (const row of rows) {
-            const meta = row.metadata as { fromPhase?: string } | null;
-
-            if (meta?.fromPhase !== "work") {
-                continue;
-            }
-
-            const endMs = new Date(row.timestamp).getTime();
-            const workDurationMs = row.elapsedAtEvent - (row.previousValue ?? 0);
-
-            if (workDurationMs <= 0) {
-                continue;
-            }
-
-            const startMs = endMs - workDurationMs;
-            sessions.push({
-                timerId: row.timerId,
-                startIso: new Date(startMs).toISOString(),
-                endIso: row.timestamp,
-            });
-        }
-
-        return sessions;
+        return focusSessionsFromPomodoroRows(rows);
     }
 );

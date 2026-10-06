@@ -81,6 +81,7 @@ export const activityLogs = sqliteTable(
     },
     (table) => ({
         userIdIdx: index("idx_activity_logs_user_id").on(table.userId),
+        userTimestampIdx: index("idx_activity_logs_user_timestamp").on(table.userId, table.timestamp),
         timerIdIdx: index("idx_activity_logs_timer_id").on(table.timerId),
     })
 );

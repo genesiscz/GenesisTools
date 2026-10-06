@@ -57,6 +57,13 @@
       "when": 1780362395506,
       "tag": "0007_dashboard_enhancements",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1791320083196,
+      "tag": "0008_groovy_big_bertha",
+      "breakpoints": true
     }
   ]
 }

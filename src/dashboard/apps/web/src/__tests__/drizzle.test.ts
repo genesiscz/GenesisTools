@@ -4,9 +4,10 @@
  * Tests for type-safe database operations with Drizzle
  */
 
-import { desc, eq } from "drizzle-orm";
-import { afterAll, describe, expect, test } from "vitest";
-import { activityLogs, db, timers } from "@/drizzle";
+import { desc, eq, inArray } from "drizzle-orm";
+import { afterAll, describe, expect, test, vi } from "vitest";
+import { activityLogs, db, readingItems, timers } from "@/drizzle";
+import { updateReadingItemForUser } from "@/lib/reading/reading.server";
 
 describe("Drizzle ORM - Timers", () => {
     const testUserId = `test-user-${Date.now()}`;
@@ -289,5 +290,58 @@ describe("Drizzle ORM - Activity Logs", () => {
 
         expect(results.length).toBeGreaterThan(0);
         expect(results[0].userId).toBe(testUserId);
+    });
+});
+
+describe("reading item owner boundary", () => {
+    const ownerId = `reading-owner-${Date.now()}`;
+    const otherId = `reading-other-${Date.now()}`;
+    const ownItemId = crypto.randomUUID();
+    const foreignItemId = crypto.randomUUID();
+
+    afterAll(() => {
+        db.delete(readingItems)
+            .where(inArray(readingItems.id, [ownItemId, foreignItemId]))
+            .run();
+    });
+
+    test("returns only an owner-scoped update and emits success only for that row", () => {
+        const now = new Date().toISOString();
+        db.insert(readingItems)
+            .values([
+                { id: ownItemId, userId: ownerId, title: "Own title", createdAt: now, updatedAt: now },
+                { id: foreignItemId, userId: otherId, title: "Private title", createdAt: now, updatedAt: now },
+            ])
+            .run();
+        const onUpdated = vi.fn();
+
+        const updated = updateReadingItemForUser({
+            userId: ownerId,
+            data: { id: ownItemId, patch: { title: "Updated title" } },
+            onUpdated,
+        });
+        expect(updated.title).toBe("Updated title");
+        expect(updated.userId).toBe(ownerId);
+        expect(onUpdated).toHaveBeenCalledTimes(1);
+
+        expect(() =>
+            updateReadingItemForUser({
+                userId: ownerId,
+                data: { id: foreignItemId, patch: {} },
+                onUpdated,
+            })
+        ).toThrow(`item ${foreignItemId} not found after update`);
+        expect(() =>
+            updateReadingItemForUser({
+                userId: ownerId,
+                data: { id: "missing-item", patch: {} },
+                onUpdated,
+            })
+        ).toThrow("item missing-item not found after update");
+        expect(onUpdated).toHaveBeenCalledTimes(1);
+
+        const foreign = db.select().from(readingItems).where(eq(readingItems.id, foreignItemId)).get();
+        expect(foreign?.title).toBe("Private title");
+        expect(foreign?.userId).toBe(otherId);
     });
 });

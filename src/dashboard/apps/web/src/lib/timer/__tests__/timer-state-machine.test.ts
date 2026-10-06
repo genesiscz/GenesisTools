@@ -1,6 +1,7 @@
 import { DEFAULT_POMODORO_SETTINGS } from "@dashboard/shared";
 import { describe, expect, it } from "vitest";
 import type { Timer } from "@/drizzle";
+import { activityLogValues, focusSessionsFromPomodoroRows } from "../timer-activity";
 import { applyAction, computeLiveElapsed, computePomodoroTarget } from "../timer-state-machine";
 
 const T0_MS = new Date("2026-05-15T10:00:00Z").getTime();
@@ -139,7 +140,7 @@ describe("applyAction — advance_pomodoro_phase", () => {
             pomodoroPhase: "work",
             pomodoroSessionCount: 0,
         });
-        const r = applyAction(pomo, { type: "advance_pomodoro_phase" });
+        const r = applyAction(pomo, { type: "advance_pomodoro_phase", nowMs: T0_MS });
         expect(r.next.pomodoroSessionCount).toBe(1);
         expect(r.next.pomodoroPhase).toBe("short_break");
         expect(r.phaseTransition?.toPhase).toBe("short_break");
@@ -151,7 +152,7 @@ describe("applyAction — advance_pomodoro_phase", () => {
             pomodoroPhase: "work",
             pomodoroSessionCount: 3,
         });
-        const r = applyAction(pomo, { type: "advance_pomodoro_phase" });
+        const r = applyAction(pomo, { type: "advance_pomodoro_phase", nowMs: T0_MS });
         expect(r.next.pomodoroSessionCount).toBe(4);
         expect(r.next.pomodoroPhase).toBe("long_break");
         expect(r.phaseTransition?.toPhase).toBe("long_break");
@@ -163,7 +164,7 @@ describe("applyAction — advance_pomodoro_phase", () => {
             pomodoroPhase: "short_break",
             pomodoroSessionCount: 1,
         });
-        const r = applyAction(pomo, { type: "advance_pomodoro_phase" });
+        const r = applyAction(pomo, { type: "advance_pomodoro_phase", nowMs: T0_MS });
         expect(r.next.pomodoroPhase).toBe("work");
         expect(r.next.pomodoroSessionCount).toBe(1); // breaks don't increment
     });
@@ -174,14 +175,67 @@ describe("applyAction — advance_pomodoro_phase", () => {
             pomodoroPhase: "work",
             elapsedTime: 25 * 60 * 1000,
         });
-        const r = applyAction(pomo, { type: "advance_pomodoro_phase" });
+        const r = applyAction(pomo, { type: "advance_pomodoro_phase", nowMs: T0_MS });
         expect(r.next.elapsedTime).toBe(0);
     });
 
     it("is a no-op for non-pomodoro timers", () => {
         const sw = makeTimer({ timerType: "stopwatch" });
-        const r = applyAction(sw, { type: "advance_pomodoro_phase" });
+        const r = applyAction(sw, { type: "advance_pomodoro_phase", nowMs: T0_MS });
         expect(r.next).toBe(sw);
+    });
+});
+
+describe("completed Pomodoro activity", () => {
+    it("persists and aggregates the completed running work duration before the reset", () => {
+        const current = makeTimer({
+            timerType: "pomodoro",
+            pomodoroPhase: "work",
+            isRunning: 1,
+            startTime: new Date(T0_MS).toISOString(),
+            elapsedTime: 20 * 60 * 1000,
+        });
+        const transition = applyAction(current, {
+            type: "advance_pomodoro_phase",
+            nowMs: T0_MS + 5 * 60 * 1000,
+        });
+        const values = activityLogValues({
+            current,
+            updated: transition.next,
+            event: { type: "phase_changed", payload: transition.phaseTransition },
+        });
+        const timestamp = "2026-05-15T10:25:00.000Z";
+        const sessions = focusSessionsFromPomodoroRows([{ timerId: current.id, timestamp, ...values }]);
+
+        expect(transition.next.elapsedTime).toBe(0);
+        expect(transition.phaseTransition?.durationMs).toBe(25 * 60 * 1000);
+        expect(sessions).toEqual([
+            {
+                timerId: current.id,
+                startIso: "2026-05-15T10:00:00.000Z",
+                endIso: timestamp,
+            },
+        ]);
+    });
+
+    it("does not create a focus block for a completed break", () => {
+        const current = makeTimer({
+            timerType: "pomodoro",
+            pomodoroPhase: "short_break",
+            elapsedTime: 5 * 60 * 1000,
+        });
+        const transition = applyAction(current, { type: "advance_pomodoro_phase", nowMs: T0_MS });
+        const values = activityLogValues({
+            current,
+            updated: transition.next,
+            event: { type: "phase_changed", payload: transition.phaseTransition },
+        });
+
+        expect(
+            focusSessionsFromPomodoroRows([
+                { timerId: current.id, timestamp: new Date(T0_MS).toISOString(), ...values },
+            ])
+        ).toEqual([]);
     });
 });
 
