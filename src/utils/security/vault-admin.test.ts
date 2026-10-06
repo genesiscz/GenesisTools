@@ -59,6 +59,42 @@ describe("rotateMasterKey", () => {
         expect(await store.get("ai/acc_y/refreshToken")).toBe("value-of-y");
     });
 
+    test("a write queued behind rotation uses the final master-key generation", async () => {
+        const store = await secrets();
+        await store.set("ai/acc_x/apiKey", "value-of-x");
+        let markKeyWriteStarted: (() => void) | undefined;
+        let releaseKeyWrite: (() => void) | undefined;
+        const keyWriteStarted = new Promise<void>((resolve) => {
+            markKeyWriteStarted = resolve;
+        });
+        const keyWriteRelease = new Promise<void>((resolve) => {
+            releaseKeyWrite = resolve;
+        });
+        _setMasterKeyProvidersForTest([
+            {
+                id: "keychain" as const,
+                available: async () => true,
+                get: async () => stored,
+                set: async (key: Buffer) => {
+                    markKeyWriteStarted?.();
+                    await keyWriteRelease;
+                    stored = key;
+                },
+            },
+        ]);
+
+        const rotation = rotateMasterKey();
+        await keyWriteStarted;
+        const queuedWrite = store.set("ai/acc_y/refreshToken", "value-of-y");
+        releaseKeyWrite?.();
+        await rotation;
+        await queuedWrite;
+
+        expect(await store.get("ai/acc_x/apiKey")).toBe("value-of-x");
+        expect(await store.get("ai/acc_y/refreshToken")).toBe("value-of-y");
+        expect((await rotateMasterKey()).rotated).toBe(2);
+    });
+
     test("rotating an empty vault is a no-op that still swaps the key", async () => {
         await secrets();
         const oldKey = stored;

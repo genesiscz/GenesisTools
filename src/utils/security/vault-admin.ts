@@ -6,7 +6,14 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { MASTER_KEY_BYTES } from "./keyring/types";
-import { invalidateMasterKeyCache, masterKey, masterKeySource, writeMasterKey } from "./MasterKey";
+import {
+    invalidateMasterKeyCache,
+    masterKey,
+    masterKeyForId,
+    masterKeyId,
+    masterKeySource,
+    writeMasterKey,
+} from "./MasterKey";
 import { decryptEntry, encryptEntry, rotationBackupPath, TAG_BYTES, vaultAdmin } from "./SecretStore";
 import type { VaultFile } from "./vault-format";
 
@@ -70,10 +77,9 @@ export async function rotateMasterKey(): Promise<{ rotated: number }> {
         );
     }
 
-    const current = await masterKey();
-
     return vaultAdmin.withLock(async () => {
         const vault = vaultAdmin.read();
+        const current = await masterKeyForId(vault.keyId);
         const paths = Object.keys(vault.entries);
         const plaintext = new Map<string, string>();
 
@@ -82,7 +88,7 @@ export async function rotateMasterKey(): Promise<{ rotated: number }> {
         }
 
         const next = randomBytes(MASTER_KEY_BYTES);
-        const rotated: VaultFile = { ...vault, entries: {} };
+        const rotated: VaultFile = { ...vault, keyId: masterKeyId(next), entries: {} };
         for (const [path, value] of plaintext) {
             rotated.entries[path] = encryptEntry(next, path, value);
         }
@@ -215,10 +221,10 @@ export async function importVault(blob: string, passphrase: string): Promise<{ i
         throw new Error("Wrong passphrase, or the export is corrupt.");
     }
 
-    const master = await masterKey();
-
     return vaultAdmin.withLock(async () => {
         const vault = vaultAdmin.read();
+        const master = await masterKeyForId(vault.keyId);
+        vault.keyId ??= masterKeyId(master);
         for (const [path, value] of Object.entries(payload.secrets)) {
             vault.entries[path] = encryptEntry(master, path, value);
         }

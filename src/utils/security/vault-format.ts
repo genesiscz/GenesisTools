@@ -16,6 +16,8 @@ export interface VaultEntry {
 export interface VaultFile {
     version: number;
     kdf: "hkdf-sha256";
+    /** Fingerprint of the master key that encrypts every entry. */
+    keyId?: string;
     entries: Record<string, VaultEntry>;
 }
 

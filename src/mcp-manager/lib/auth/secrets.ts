@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { secrets } from "@genesiscz/utils/security";
-import { withRefreshLock } from "./lock.ts";
+import { secretSnapshot, secrets } from "@genesiscz/utils/security";
+import { withRefreshLock, withServerCredentialsLock } from "./lock.ts";
 import { GATEWAY_CLIENT_TOKEN_PATH, secretPath } from "./paths.ts";
 
 export async function readSecret(path: string): Promise<string | undefined> {
@@ -68,11 +68,43 @@ export interface ServerTokens {
     clientSecret?: string;
 }
 
+export interface ServerTokenSnapshot {
+    accessToken?: string;
+    refreshToken?: string;
+    expiresAt?: number;
+    hasRefresh: boolean;
+    clientId?: string;
+    clientSecret?: string;
+}
+
+export async function readServerTokenSnapshot(
+    server: string,
+    options: { includeRefreshToken?: boolean; includeClient?: boolean } = {}
+): Promise<ServerTokenSnapshot> {
+    const snapshot = secretSnapshot();
+    const expiresRaw = await snapshot.get(secretPath(server, "token-expires-at"));
+    const expiresNumber = expiresRaw === undefined ? undefined : Number(expiresRaw);
+
+    return {
+        accessToken: await snapshot.get(secretPath(server, "access-token")),
+        expiresAt: expiresNumber !== undefined && Number.isFinite(expiresNumber) ? expiresNumber : undefined,
+        hasRefresh: snapshot.has(secretPath(server, "refresh-token")),
+        refreshToken: options.includeRefreshToken ? await snapshot.get(secretPath(server, "refresh-token")) : undefined,
+        clientId: options.includeClient ? await snapshot.get(secretPath(server, "client-id")) : undefined,
+        clientSecret: options.includeClient ? await snapshot.get(secretPath(server, "client-secret")) : undefined,
+    };
+}
+
 /**
  * Patch write: an omitted field is left alone. Correct for a refresh, which only ever
  * learns a new access token (and sometimes a rotated refresh token).
  */
 export async function writeServerTokens(server: string, tokens: ServerTokens): Promise<void> {
+    await withServerCredentialsLock(server, () => writeServerTokensUnlocked(server, tokens));
+}
+
+/** Caller must hold the server credential lifecycle lock. */
+export async function writeServerTokensUnlocked(server: string, tokens: ServerTokens): Promise<void> {
     await writeSecret(secretPath(server, "access-token"), tokens.accessToken);
 
     if (tokens.refreshToken) {
@@ -101,6 +133,10 @@ export async function writeServerTokens(server: string, tokens: ServerTokens): P
  * week's client_id — a combination the server can only answer with invalid_client.
  */
 export async function replaceServerTokens(server: string, tokens: ServerTokens): Promise<void> {
+    await withServerCredentialsLock(server, () => replaceServerTokensUnlocked(server, tokens));
+}
+
+async function replaceServerTokensUnlocked(server: string, tokens: ServerTokens): Promise<void> {
     await writeSecret(secretPath(server, "access-token"), tokens.accessToken);
 
     const optional: Array<[string, string | undefined]> = [
@@ -121,6 +157,10 @@ export async function replaceServerTokens(server: string, tokens: ServerTokens):
 }
 
 export async function deleteServerTokens(server: string): Promise<void> {
+    await withServerCredentialsLock(server, () => deleteServerTokensUnlocked(server));
+}
+
+async function deleteServerTokensUnlocked(server: string): Promise<void> {
     for (const field of [
         "access-token",
         "refresh-token",

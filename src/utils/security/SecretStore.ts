@@ -6,7 +6,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
-import { masterKey, masterKeyGeneration, masterKeySync } from "./MasterKey";
+import { masterKeyForId, masterKeyForIdSync, masterKeyGeneration, masterKeyId } from "./MasterKey";
 import { isSecretPath, isSecureRef, type MaybeSecret, type SecureRef, secureRef } from "./SecureRef";
 import { emptyVault, VAULT_HKDF_SALT, VAULT_VERSION, type VaultEntry, type VaultFile } from "./vault-format";
 
@@ -24,6 +24,11 @@ export interface SecretStore {
     deleteIf(path: string, expected: string): Promise<boolean>;
     list(prefix?: string): Promise<string[]>;
     has(path: string): Promise<boolean>;
+}
+
+export interface SecretStoreSnapshot {
+    get(path: string): Promise<string | undefined>;
+    has(path: string): boolean;
 }
 
 /**
@@ -141,6 +146,10 @@ class FileSecretStore implements SecretStore {
             );
         }
 
+        if (parsed.keyId !== undefined && typeof parsed.keyId !== "string") {
+            throw new Error(`Vault at ${path} has an invalid master-key generation marker.`);
+        }
+
         return parsed;
     }
 
@@ -155,13 +164,14 @@ class FileSecretStore implements SecretStore {
     }
 
     async get(path: string): Promise<string | undefined> {
-        const entry = this.read().entries[path];
+        const vault = this.read();
+        const entry = vault.entries[path];
         if (!entry) {
             return undefined;
         }
 
         try {
-            return decryptEntry(await masterKey(), path, entry);
+            return decryptEntry(await masterKeyForId(vault.keyId), path, entry);
         } catch (err) {
             throw describeDecryptFailure(path, err);
         }
@@ -169,6 +179,28 @@ class FileSecretStore implements SecretStore {
 
     getSync(path: string): string | undefined {
         return this.snapshotReader()(path);
+    }
+
+    snapshot(): SecretStoreSnapshot {
+        const vault = this.read();
+        let key: Promise<Buffer> | undefined;
+
+        return {
+            get: async (path) => {
+                const entry = vault.entries[path];
+                if (!entry) {
+                    return undefined;
+                }
+
+                key ??= masterKeyForId(vault.keyId);
+                try {
+                    return decryptEntry(await key, path, entry);
+                } catch (err) {
+                    throw describeDecryptFailure(path, err);
+                }
+            },
+            has: (path) => vault.entries[path] !== undefined,
+        };
     }
 
     /**
@@ -186,7 +218,7 @@ class FileSecretStore implements SecretStore {
                 return undefined;
             }
 
-            const key = masterKeySync();
+            const key = masterKeyForIdSync(snapshot.keyId);
             if (!key) {
                 projectionMissedKey = true;
                 missingKey++;
@@ -220,18 +252,23 @@ class FileSecretStore implements SecretStore {
      */
     async set(path: string, value: string): Promise<SecureRef> {
         const ref = secureRef(path);
-        const master = await masterKey();
-        const entry = encryptEntry(master, path, value);
 
         const written = await this.storage.withFileLock({
             file: this.vaultPath(),
             fn: async () => {
                 const vault = this.read();
-                if (this.holdsValue(master, path, vault.entries[path], value)) {
+                const master = await masterKeyForId(vault.keyId);
+                const missingKeyId = vault.keyId === undefined;
+                vault.keyId ??= masterKeyId(master);
+                const unchanged = this.holdsValue(master, path, vault.entries[path], value);
+
+                if (unchanged && !missingKeyId) {
                     return false;
                 }
 
-                vault.entries[path] = entry;
+                if (!unchanged) {
+                    vault.entries[path] = encryptEntry(master, path, value);
+                }
                 this.write(vault);
                 return true;
             },
@@ -346,6 +383,10 @@ function fileStore(): FileSecretStore {
 
 export async function secrets(): Promise<SecretStore> {
     return fileStore();
+}
+
+export function secretSnapshot(): SecretStoreSnapshot {
+    return fileStore().snapshot();
 }
 
 export function _resetSecretsForTest(): void {

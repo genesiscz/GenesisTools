@@ -8,12 +8,20 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { _resetSecretsForTest } from "@genesiscz/utils/security";
 import { _resetMasterKeyProviders, _setMasterKeyProvidersForTest } from "@genesiscz/utils/security/MasterKey";
+import { vaultAdmin } from "@genesiscz/utils/security/SecretStore";
 import { ACCESS_SKEW_MS } from "./constants.ts";
-import { _resetMcpFetchForTest, _setMcpFetchForTest } from "./fetch.ts";
+import {
+    _resetMcpFetchForTest,
+    _setMcpFetchForTest,
+    MAX_AUTH_RESPONSE_BYTES,
+    mcpFetch,
+    readJsonRecord,
+} from "./fetch.ts";
 import { secretPath } from "./paths.ts";
-import { readSecret, replaceServerTokens, writeServerTokens } from "./secrets.ts";
+import { deleteServerTokens, readSecret, replaceServerTokens, writeServerTokens } from "./secrets.ts";
 import { readAuthStatus } from "./status.ts";
 import { accessTokenForRequest, DiagnosticRefreshError, peekAccessToken } from "./tokens.ts";
+import { _resetLookupForTest, _setLookupForTest } from "./url-policy.ts";
 
 const KEY = randomBytes(32);
 
@@ -40,6 +48,7 @@ beforeEach(() => {
     _resetSecretsForTest();
     tokenPosts = 0;
     lastTokenBody = "";
+    _setLookupForTest(async () => [{ address: "93.184.216.34" }]);
     _setMcpFetchForTest(async (input, init) => {
         const url = String(input);
 
@@ -63,6 +72,7 @@ afterEach(() => {
     _resetMasterKeyProviders();
     _resetSecretsForTest();
     _resetMcpFetchForTest();
+    _resetLookupForTest();
 });
 
 describe("peekAccessToken", () => {
@@ -74,6 +84,24 @@ describe("peekAccessToken", () => {
             hasRefresh: false,
         });
         expect(tokenPosts).toBe(0);
+    });
+
+    test("checks refresh-token presence without decrypting its plaintext", async () => {
+        await writeServerTokens("rohlik", {
+            accessToken: "live",
+            refreshToken: "r1",
+            expiresAt: Date.now() + 600_000,
+        });
+        const vault = vaultAdmin.read();
+        vault.entries[secretPath("rohlik", "refresh-token")].tag = Buffer.alloc(16).toString("base64");
+        vaultAdmin.write(vault);
+
+        expect(await peekAccessToken("rohlik")).toEqual({
+            accessToken: "live",
+            expiresAt: expect.any(Number),
+            expired: false,
+            hasRefresh: true,
+        });
     });
 });
 
@@ -101,6 +129,10 @@ describe("accessTokenForRequest", () => {
             refreshToken: "r1",
             expiresAt: Date.now() - ACCESS_SKEW_MS,
         });
+        _setMcpFetchForTest(async () => {
+            tokenPosts += 1;
+            throw new Error("single-use refresh POST reached");
+        });
 
         await expect(
             accessTokenForRequest("rohlik", {
@@ -110,6 +142,120 @@ describe("accessTokenForRequest", () => {
             })
         ).rejects.toBeInstanceOf(DiagnosticRefreshError);
         expect(tokenPosts).toBe(0);
+    });
+
+    test("a public resource cannot refresh against a private token endpoint", async () => {
+        await writeServerTokens("work", {
+            accessToken: "stale",
+            refreshToken: "synthetic-refresh",
+            expiresAt: Date.now() - ACCESS_SKEW_MS,
+        });
+        _setMcpFetchForTest(async () => {
+            tokenPosts += 1;
+            throw new Error("private credential POST reached");
+        });
+
+        await expect(
+            accessTokenForRequest("work", {
+                tokenEndpoint: "http://127.0.0.1:3042/token",
+                resource: "https://mcp.example/mcp",
+                allowRefresh: true,
+            })
+        ).rejects.toThrow(/private address 127\.0\.0\.1/);
+        expect(tokenPosts).toBe(0);
+    });
+
+    test("logout waits for an in-flight refresh and leaves the credential bundle deleted", async () => {
+        await writeServerTokens("rohlik", {
+            accessToken: "stale",
+            refreshToken: "r1",
+            expiresAt: Date.now() - ACCESS_SKEW_MS,
+            clientId: "client-old",
+        });
+        let markPostStarted: (() => void) | undefined;
+        let releasePost: (() => void) | undefined;
+        const postStarted = new Promise<void>((resolve) => {
+            markPostStarted = resolve;
+        });
+        const postRelease = new Promise<void>((resolve) => {
+            releasePost = resolve;
+        });
+        _setMcpFetchForTest(async () => {
+            tokenPosts += 1;
+            markPostStarted?.();
+            await postRelease;
+
+            return Response.json({
+                access_token: "refreshed-access",
+                refresh_token: "rotated-refresh",
+                expires_in: 3600,
+            });
+        });
+
+        const refresh = accessTokenForRequest("rohlik", {
+            tokenEndpoint: "https://identity.example/token",
+            resource: "https://mcp.example/mcp",
+            allowRefresh: true,
+        });
+        await postStarted;
+        const logout = deleteServerTokens("rohlik");
+        releasePost?.();
+        await refresh;
+        await logout;
+
+        expect(tokenPosts).toBe(1);
+        expect(await readSecret(secretPath("rohlik", "access-token"))).toBeUndefined();
+        expect(await readSecret(secretPath("rohlik", "refresh-token"))).toBeUndefined();
+        expect(await readSecret(secretPath("rohlik", "client-id"))).toBeUndefined();
+    });
+
+    test("a re-login commit after an in-flight refresh keeps only the new bundle", async () => {
+        await writeServerTokens("rohlik", {
+            accessToken: "stale",
+            refreshToken: "r1",
+            expiresAt: Date.now() - ACCESS_SKEW_MS,
+            clientId: "client-old",
+            clientSecret: "secret-old",
+        });
+        let markPostStarted: (() => void) | undefined;
+        let releasePost: (() => void) | undefined;
+        const postStarted = new Promise<void>((resolve) => {
+            markPostStarted = resolve;
+        });
+        const postRelease = new Promise<void>((resolve) => {
+            releasePost = resolve;
+        });
+        _setMcpFetchForTest(async () => {
+            tokenPosts += 1;
+            markPostStarted?.();
+            await postRelease;
+
+            return Response.json({
+                access_token: "refreshed-old-access",
+                refresh_token: "rotated-old-refresh",
+                expires_in: 3600,
+            });
+        });
+
+        const refresh = accessTokenForRequest("rohlik", {
+            tokenEndpoint: "https://identity.example/token",
+            resource: "https://mcp.example/mcp",
+            allowRefresh: true,
+        });
+        await postStarted;
+        const login = replaceServerTokens("rohlik", {
+            accessToken: "login-new-access",
+            refreshToken: "login-new-refresh",
+            clientId: "client-new",
+        });
+        releasePost?.();
+        await refresh;
+        await login;
+
+        expect(await readSecret(secretPath("rohlik", "access-token"))).toBe("login-new-access");
+        expect(await readSecret(secretPath("rohlik", "refresh-token"))).toBe("login-new-refresh");
+        expect(await readSecret(secretPath("rohlik", "client-id"))).toBe("client-new");
+        expect(await readSecret(secretPath("rohlik", "client-secret"))).toBeUndefined();
     });
 
     test("request path refreshes under lock and stores the new access token", async () => {
@@ -235,6 +381,46 @@ describe("refresh failures never persist provider text", () => {
             })
         ).rejects.toThrow(/invalid_scope/);
         expect(((await readAuthStatus("rohlik")) as { lastError?: string }).lastError).toBe("invalid_scope");
+    });
+});
+
+describe("bounded MCP credential responses", () => {
+    test("rejects a declared oversized response before reading it", async () => {
+        const response = new Response("{}", {
+            headers: { "content-length": String(MAX_AUTH_RESPONSE_BYTES + 1) },
+        });
+
+        await expect(readJsonRecord(response)).rejects.toThrow(/exceeds.*MCP auth response limit/);
+        expect(response.bodyUsed).toBe(false);
+    });
+
+    test("rejects a streamed response once the actual bytes exceed the cap", async () => {
+        const chunk = new Uint8Array(64 * 1024);
+        const response = new Response(
+            new ReadableStream<Uint8Array>({
+                start(controller) {
+                    for (let bytes = 0; bytes <= MAX_AUTH_RESPONSE_BYTES; bytes += chunk.byteLength) {
+                        controller.enqueue(chunk);
+                    }
+                    controller.close();
+                },
+            })
+        );
+
+        await expect(readJsonRecord(response)).rejects.toThrow(/exceeds.*MCP auth response limit/);
+    });
+
+    test("attaches a default deadline signal to credential fetches", async () => {
+        let capturedSignal: AbortSignal | null | undefined;
+        _setMcpFetchForTest(async (_input, init) => {
+            capturedSignal = init?.signal;
+            return Response.json({ ok: true });
+        });
+
+        await mcpFetch("https://identity.example/token", { method: "POST" });
+
+        expect(capturedSignal).toBeInstanceOf(AbortSignal);
+        expect(capturedSignal?.aborted).toBe(false);
     });
 });
 

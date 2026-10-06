@@ -22,6 +22,7 @@ export {
     resolveSecret,
     resolveSecretSync,
     type SecretStore,
+    secretSnapshot,
     secrets,
 } from "./SecretStore";
 export { isSecretPath, isSecureRef, type MaybeSecret, type SecureRef, secureRef } from "./SecureRef";

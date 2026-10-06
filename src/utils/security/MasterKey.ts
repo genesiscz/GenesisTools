@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isInteractive } from "@genesiscz/utils/cli";
@@ -137,6 +137,42 @@ let generation = 0;
 
 export function masterKeyGeneration(): number {
     return generation;
+}
+
+export function masterKeyId(key: Buffer): string {
+    return createHash("sha256").update(key).digest("base64url");
+}
+
+export async function masterKeyForId(expectedId: string | undefined): Promise<Buffer> {
+    const key = await masterKey();
+    if (expectedId === undefined || masterKeyId(key) === expectedId) {
+        return key;
+    }
+
+    invalidateMasterKeyCache();
+    const refreshed = await masterKey();
+    if (masterKeyId(refreshed) !== expectedId) {
+        throw new Error(
+            "The vault master key does not match the vault generation; refusing to use stale key material."
+        );
+    }
+
+    return refreshed;
+}
+
+export function masterKeyForIdSync(expectedId: string | undefined): Buffer | undefined {
+    const key = masterKeySync();
+    if (!key || expectedId === undefined || masterKeyId(key) === expectedId) {
+        return key;
+    }
+
+    invalidateMasterKeyCache();
+    const refreshed = masterKeySync();
+    if (!refreshed || masterKeyId(refreshed) !== expectedId) {
+        return undefined;
+    }
+
+    return refreshed;
 }
 
 export function invalidateMasterKeyCache(): void {

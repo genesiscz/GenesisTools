@@ -5,15 +5,9 @@ import { mcpFetch, readJsonRecord } from "./fetch.ts";
 import { withRefreshLock } from "./lock.ts";
 import { secretPath } from "./paths.ts";
 import { safeTokenErrorCode } from "./redact.ts";
-import {
-    deleteSecret,
-    readAccessToken,
-    readExpiresAt,
-    readRefreshToken,
-    readSecret,
-    writeServerTokens,
-} from "./secrets.ts";
+import { deleteSecret, readServerTokenSnapshot, writeServerTokensUnlocked } from "./secrets.ts";
 import { writeAuthStatus } from "./status.ts";
+import { assertDiscoveryTarget } from "./url-policy.ts";
 
 export class DiagnosticRefreshError extends Error {
     constructor() {
@@ -35,15 +29,13 @@ export async function peekAccessToken(server: string): Promise<{
     expired: boolean;
     hasRefresh: boolean;
 }> {
-    const accessToken = await readAccessToken(server);
-    const expiresAt = await readExpiresAt(server);
-    const hasRefresh = Boolean(await readRefreshToken(server));
+    const snapshot = await readServerTokenSnapshot(server);
 
     return {
-        accessToken,
-        expiresAt,
-        expired: isAccessExpired(expiresAt),
-        hasRefresh,
+        accessToken: snapshot.accessToken,
+        expiresAt: snapshot.expiresAt,
+        expired: isAccessExpired(snapshot.expiresAt),
+        hasRefresh: snapshot.hasRefresh,
     };
 }
 
@@ -66,20 +58,20 @@ export async function accessTokenForRequest(
     }
 
     return withRefreshLock(server, async () => {
-        const again = await peekAccessToken(server);
+        const current = await readServerTokenSnapshot(server, { includeRefreshToken: true, includeClient: true });
 
-        if (again.accessToken && !again.expired) {
-            return again.accessToken;
+        if (current.accessToken && !isAccessExpired(current.expiresAt)) {
+            return current.accessToken;
         }
 
-        const refreshToken = await readRefreshToken(server);
+        const refreshToken = current.refreshToken;
 
         if (!refreshToken) {
             throw new Error(`No refresh token for ${server}. Run ${toolCommand("mcp-manager auth login", server)}`);
         }
 
-        const clientId = await readSecret(secretPath(server, "client-id"));
-        const clientSecret = await readSecret(secretPath(server, "client-secret"));
+        const clientId = current.clientId;
+        const clientSecret = current.clientSecret;
         const body = new URLSearchParams({
             grant_type: "refresh_token",
             refresh_token: refreshToken,
@@ -94,7 +86,8 @@ export async function accessTokenForRequest(
             body.set("client_secret", clientSecret);
         }
 
-        const response = await mcpFetch(opts.tokenEndpoint, {
+        const safeTokenEndpoint = (await assertDiscoveryTarget(opts.tokenEndpoint, opts.resource)).toString();
+        const response = await mcpFetch(safeTokenEndpoint, {
             method: "POST",
             headers: {
                 Accept: "application/json",
@@ -127,7 +120,7 @@ export async function accessTokenForRequest(
                 resource: opts.resource,
                 updatedAt: Date.now(),
                 lastError: err,
-                expiresAt: again.expiresAt,
+                expiresAt: current.expiresAt,
             });
             throw new Error(
                 `Refresh failed for ${server} (${err}). Run ${toolCommand("mcp-manager auth login", server)}`
@@ -138,7 +131,7 @@ export async function accessTokenForRequest(
         const expiresAt = Date.now() + expiresIn * 1000;
         const nextRefresh = typeof json?.refresh_token === "string" ? json.refresh_token : refreshToken;
 
-        await writeServerTokens(server, {
+        await writeServerTokensUnlocked(server, {
             accessToken,
             refreshToken: nextRefresh,
             expiresAt,
