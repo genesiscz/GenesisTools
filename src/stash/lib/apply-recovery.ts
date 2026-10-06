@@ -176,3 +176,49 @@ export async function applicationRestorePatch(args: { root: string; before: Appl
     }
     return patches.join("\n");
 }
+
+/** Rewrite only the opened regular inode, after validating its root, parents and leaf identity. */
+export async function rewriteConfinedText(args: {
+    root: string;
+    file: string;
+    transform: (content: string) => string | Promise<string>;
+    skipNonRegular?: boolean;
+}): Promise<void> {
+    const absolute = await confinedPath(args.root, args.file);
+    const stat = await lstat(absolute);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+        if (args.skipNonRegular) {
+            return;
+        }
+        throw new Error(`Stash text rewrite requires a regular file: ${args.file}`);
+    }
+    const handle = await open(absolute, constants.O_RDWR | constants.O_NOFOLLOW);
+    try {
+        const opened = await handle.stat();
+        if (!opened.isFile() || opened.dev !== stat.dev || opened.ino !== stat.ino) {
+            throw new Error(`Stash file changed before opening: ${args.file}`);
+        }
+        const content = await handle.readFile("utf8");
+        const replacement = await args.transform(content);
+        await confinedPath(args.root, args.file);
+        const current = await lstat(absolute);
+        if (!current.isFile() || current.dev !== opened.dev || current.ino !== opened.ino) {
+            throw new Error(`Stash file changed before writing: ${args.file}`);
+        }
+        if (replacement === content) {
+            return;
+        }
+        const bytes = Buffer.from(replacement);
+        let written = 0;
+        while (written < bytes.length) {
+            const result = await handle.write(bytes, written, bytes.length - written, written);
+            if (!result.bytesWritten) {
+                throw new Error(`Stash rewrite made no progress: ${args.file}`);
+            }
+            written += result.bytesWritten;
+        }
+        await handle.truncate(bytes.length);
+    } finally {
+        await handle.close();
+    }
+}

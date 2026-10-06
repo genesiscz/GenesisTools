@@ -1,10 +1,11 @@
 import type { Database } from "bun:sqlite";
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { ApplicationRow, StashRow, VersionRow } from "../types";
+import { rewriteConfinedText } from "./apply-recovery";
 import { ApplySession } from "./apply-session";
 import { classifyRegion } from "./classify";
 import { applyDecisionToCode } from "./decisions";
@@ -318,6 +319,7 @@ export async function processAutoRemoves(args: { walk: Walk; projectRoot: string
             if (r.decision === "auto-capture") {
                 await applyDecisionToCode({
                     filePath: join(args.projectRoot, r.filePath),
+                    projectRoot: args.projectRoot,
                     regionName: r.name ?? args.walk.snapshot().stashName,
                     hunkIndex: r.hunkIndex,
                     decision: "auto-remove",
@@ -454,6 +456,7 @@ export async function executeUnapplyDecisions(args: {
             }
             const outcome = await applyDecisionToCode({
                 filePath: join(args.projectRoot, r.filePath),
+                projectRoot: args.projectRoot,
                 regionName: r.name ?? args.walk.snapshot().stashName,
                 hunkIndex: r.hunkIndex,
                 decision: walkDecisionToCode(r.decision),
@@ -728,27 +731,26 @@ export async function executeUpdateDecisions(args: {
 
     // 1. Restore: rewrite code between markers to stored content (D-22 hunkIndex indexing preserved).
     for (const r of restoreRegions) {
-        const abs = join(args.projectRoot, r.filePath);
-        const content = await readFile(abs, "utf8").catch(() => null);
-
-        if (!content) {
-            log.warn({ rel: r.filePath }, "restore: file missing; skipping");
-            continue;
-        }
-
-        const byName = parseMarkers(content).filter((m) => m.name === args.stash.name);
-        const marker = byName[r.hunkIndex - 1];
-
-        if (!marker) {
-            log.warn({ rel: r.filePath, hunkIndex: r.hunkIndex }, "restore: marker not found; skipping");
-            continue;
-        }
-
-        const lines = content.split("\n");
-        const before = lines.slice(0, marker.contentStartLine - 1);
-        const restored = (r.storedContent ?? "").split("\n");
-        const after = lines.slice(marker.contentEndLine);
-        await writeFile(abs, [...before, ...restored, ...after].join("\n"));
+        await rewriteConfinedText({
+            root: args.projectRoot,
+            file: r.filePath,
+            transform: (content) => {
+                const byName = parseMarkers(content).filter((marker) => marker.name === args.stash.name);
+                const marker = byName[r.hunkIndex - 1];
+                if (!marker) {
+                    throw new Error(`Stash restore marker is missing: ${r.filePath}`);
+                }
+                const lines = content.split("\n");
+                const current = lines.slice(marker.contentStartLine - 1, marker.contentEndLine).join("\n");
+                if (r.currentContent !== null && current !== r.currentContent) {
+                    throw new Error(`Stash region changed after the restore decision: ${r.filePath}`);
+                }
+                const before = lines.slice(0, marker.contentStartLine - 1);
+                const restored = (r.storedContent ?? "").split("\n");
+                const after = lines.slice(marker.contentEndLine);
+                return [...before, ...restored, ...after].join("\n");
+            },
+        });
     }
 
     // 2. Capture: build v_next patch, persist to store, advance applications.version_id.

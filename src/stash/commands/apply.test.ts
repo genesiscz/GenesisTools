@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runGitIn } from "../lib/patch";
@@ -41,6 +41,22 @@ afterEach(async () => {
 });
 
 describe.serial("apply integration", () => {
+    test("applies symlinks without decorating their external targets", async () => {
+        const outside = join(work, "outside.ts");
+        await writeFile(outside, "external sentinel();\n");
+        process.chdir(projectA);
+        await symlink("../outside.ts", join(projectA, "link.ts"));
+        await writeFile(join(projectA, "a.ts"), "fn();\noverlay();\n");
+        await runGitIn(projectA, ["add", "link.ts", "a.ts"]);
+        await saveCommand({ name: "links", mode: "staged", tags: [], description: undefined });
+        process.chdir(projectB);
+        await applyCommand({ name: "links", verboseMarkers: false });
+        expect((await lstat(join(projectB, "link.ts"))).isSymbolicLink()).toBe(true);
+        expect(await readlink(join(projectB, "link.ts"))).toBe("../outside.ts");
+        expect(await readFile(outside, "utf8")).toBe("external sentinel();\n");
+        expect(await readFile(join(projectB, "a.ts"), "utf8")).toContain("#region @stash:links");
+    });
+
     test("save in A, apply to B, decorates with markers", async () => {
         process.chdir(projectA);
         await writeFile(join(projectA, "a.ts"), "fn();\ninserted();\n");

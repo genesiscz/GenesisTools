@@ -1,5 +1,7 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
+import { dirname, relative } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { confinedPath, rewriteConfinedText } from "./apply-recovery";
 import { parseMarkers } from "./markers";
 import type { Decision } from "./unapply-session";
 
@@ -16,6 +18,7 @@ export type DecisionOutcome = "applied" | "marker-missing";
 
 export async function applyDecisionToCode(args: {
     filePath: string;
+    projectRoot?: string;
     regionName: string;
     /**
      * 1-based index within the markers of `regionName` in this file. `apply` wraps every hunk with
@@ -36,32 +39,48 @@ export async function applyDecisionToCode(args: {
     if (!args.preImage) {
         throw new Error("Missing stash pre-image; preserve the session for recovery instead of deleting baseline code");
     }
+    const preImage = args.preImage;
+    const root = args.projectRoot ?? dirname(args.filePath);
+    const file = relative(root, args.filePath);
     if (args.deletedFile) {
-        const restored = args.preImage.join("\n") + (args.oldNoNewline ? "" : "\n");
-        await writeFile(args.filePath, restored, { flag: "wx" });
+        const absolute = await confinedPath(root, file);
+        const restored = preImage.join("\n") + (args.oldNoNewline ? "" : "\n");
+        await writeFile(absolute, restored, { flag: "wx" });
         return "applied";
     }
-    const content = await readFile(args.filePath, "utf8");
-    const markers = parseMarkers(content);
-    const byName = markers.filter((x) => x.name === args.regionName);
-    const m = byName[args.hunkIndex - 1];
-    if (!m) {
-        log.warn(
-            { filePath: args.filePath, regionName: args.regionName, hunkIndex: args.hunkIndex, found: byName.length },
-            "no marker at requested hunkIndex; file may have been edited externally"
-        );
-        return "marker-missing";
-    }
-    const lines = content.split("\n");
-    const before = lines.slice(0, m.startLine - 1);
-    const after = lines.slice(m.endLine);
-    const currentRegion = lines.slice(m.contentStartLine - 1, m.contentEndLine).join("\n");
-    if (args.expectedPostImage !== undefined && currentRegion !== args.expectedPostImage) {
-        throw new Error(`Stash region changed after the decision was recorded: ${args.filePath}`);
-    }
-    if (args.oldNoNewline && after.length === 1 && after[0] === "") {
-        after.pop();
-    }
-    await writeFile(args.filePath, [...before, ...args.preImage, ...after].join("\n"));
-    return "applied";
+    let outcome: DecisionOutcome = "applied";
+    await rewriteConfinedText({
+        root,
+        file,
+        transform: (content) => {
+            const markers = parseMarkers(content);
+            const byName = markers.filter((x) => x.name === args.regionName);
+            const m = byName[args.hunkIndex - 1];
+            if (!m) {
+                log.warn(
+                    {
+                        filePath: args.filePath,
+                        regionName: args.regionName,
+                        hunkIndex: args.hunkIndex,
+                        found: byName.length,
+                    },
+                    "no marker at requested hunkIndex; file may have been edited externally"
+                );
+                outcome = "marker-missing";
+                return content;
+            }
+            const lines = content.split("\n");
+            const before = lines.slice(0, m.startLine - 1);
+            const after = lines.slice(m.endLine);
+            const currentRegion = lines.slice(m.contentStartLine - 1, m.contentEndLine).join("\n");
+            if (args.expectedPostImage !== undefined && currentRegion !== args.expectedPostImage) {
+                throw new Error(`Stash region changed after the decision was recorded: ${args.filePath}`);
+            }
+            if (args.oldNoNewline && after.length === 1 && after[0] === "") {
+                after.pop();
+            }
+            return [...before, ...preImage, ...after].join("\n");
+        },
+    });
+    return outcome;
 }

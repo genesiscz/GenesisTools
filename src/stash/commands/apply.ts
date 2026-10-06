@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
-import { applicationRestorePatch, captureApplySnapshot } from "../lib/apply-recovery";
+import { applicationRestorePatch, captureApplySnapshot, rewriteConfinedText } from "../lib/apply-recovery";
 import { ApplySession } from "../lib/apply-session";
 import { newStashId, shortId } from "../lib/ids";
 import { commentSyntaxForFile } from "../lib/languages";
@@ -340,40 +340,40 @@ async function decorateAppliedRegions(args: {
 }): Promise<void> {
     const hunks = parseDiffHunks(args.patch);
     for (const [filePath, fileHunks] of Object.entries(hunks)) {
-        const abs = join(args.projectRoot, filePath);
         const syntax = commentSyntaxForFile(filePath);
-        let content: string;
-        try {
-            content = await readFile(abs, "utf8");
-        } catch {
-            continue;
-        }
-        const lines = content.split("\n");
-        for (let h = fileHunks.length - 1; h >= 0; h--) {
-            const hunk = fileHunks[h];
-            if (!hunk) {
-                continue;
-            }
-            // Deleted files have no post-image to wrap; unapply restores their saved pre-image.
-            if (hunk.newLines === 0) {
-                continue;
-            }
-            const meta: Record<string, unknown> = { id: shortId(args.stashId), v: args.version };
-            if (args.verbose) {
-                meta.hunk = h + 1;
-                if (args.sourceRepo) {
-                    meta.src = `${args.sourceRepo.split("/").pop()}@${args.sourceSha?.slice(0, 7) ?? "?"}`;
+        await rewriteConfinedText({
+            root: args.projectRoot,
+            file: filePath,
+            skipNonRegular: true,
+            transform: (content) => {
+                const lines = content.split("\n");
+                for (let h = fileHunks.length - 1; h >= 0; h--) {
+                    const hunk = fileHunks[h];
+                    if (!hunk) {
+                        continue;
+                    }
+                    // Deleted files have no post-image to wrap; unapply restores their saved pre-image.
+                    if (hunk.newLines === 0) {
+                        continue;
+                    }
+                    const meta: Record<string, unknown> = { id: shortId(args.stashId), v: args.version };
+                    if (args.verbose) {
+                        meta.hunk = h + 1;
+                        if (args.sourceRepo) {
+                            meta.src = `${args.sourceRepo.split("/").pop()}@${args.sourceSha?.slice(0, 7) ?? "?"}`;
+                        }
+                        meta.applied = new Date().toISOString();
+                    }
+                    const openLine = emitOpenMarker({ name: args.stashName, meta, syntax });
+                    const closeLine = emitCloseMarker({ name: args.stashName, syntax });
+                    const closeIdx = hunk.newStart + hunk.newLines - 1;
+                    const openIdx = hunk.newStart - 1;
+                    lines.splice(closeIdx, 0, closeLine);
+                    lines.splice(openIdx, 0, openLine);
                 }
-                meta.applied = new Date().toISOString();
-            }
-            const openLine = emitOpenMarker({ name: args.stashName, meta, syntax });
-            const closeLine = emitCloseMarker({ name: args.stashName, syntax });
-            const closeIdx = hunk.newStart + hunk.newLines - 1;
-            const openIdx = hunk.newStart - 1;
-            lines.splice(closeIdx, 0, closeLine);
-            lines.splice(openIdx, 0, openLine);
-        }
-        await writeFile(abs, lines.join("\n"));
+                return lines.join("\n");
+            },
+        });
     }
 }
 

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { rewriteConfinedText } from "./apply-recovery";
 import { applyDecisionToCode } from "./decisions";
 
 let dir: string;
@@ -79,6 +80,50 @@ describe("applyDecisionToCode", () => {
                 decision: "discard",
             })
         ).rejects.toThrow("Missing stash pre-image");
+    });
+
+    test("refuses a replaced symlink before rewriting its external target", async () => {
+        const target = join(dir, "external.ts");
+        const link = join(dir, "link.ts");
+        const original = "// #region @stash:x\nexternal();\n// #endregion @stash:x\n";
+        await writeFile(target, original);
+        await symlink(target, link);
+        await expect(
+            applyDecisionToCode({
+                filePath: link,
+                regionName: "x",
+                hunkIndex: 1,
+                decision: "discard",
+                preImage: [],
+            })
+        ).rejects.toThrow();
+        expect(await readFile(target, "utf8")).toBe(original);
+    });
+
+    test("confined rewrite refuses a symlink parent and a leaf swapped during transformation", async () => {
+        const project = join(dir, "project");
+        const outside = join(dir, "outside");
+        await mkdir(project);
+        await mkdir(outside);
+        await writeFile(join(outside, "a.ts"), "external();\n");
+        await symlink(outside, join(project, "parent"));
+        await expect(
+            rewriteConfinedText({ root: project, file: "parent/a.ts", transform: () => "bad" })
+        ).rejects.toThrow("unsafe parent");
+        await writeFile(join(project, "a.ts"), "original();\n");
+        await expect(
+            rewriteConfinedText({
+                root: project,
+                file: "a.ts",
+                transform: async () => {
+                    await rename(join(project, "a.ts"), join(project, "original.ts"));
+                    await symlink(join(outside, "a.ts"), join(project, "a.ts"));
+                    return "bad";
+                },
+            })
+        ).rejects.toThrow("changed before writing");
+        expect(await readFile(join(outside, "a.ts"), "utf8")).toBe("external();\n");
+        expect(await readFile(join(project, "original.ts"), "utf8")).toBe("original();\n");
     });
 
     test("skip is a no-op on the file", async () => {
