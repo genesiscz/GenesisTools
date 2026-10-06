@@ -380,7 +380,11 @@ const child = defaultSpawnLogged([process.execPath, '-e', 'setInterval(() => {},
 console.log('OWNED:' + child.pid);
 `
         );
-        const cli = spawn(process.execPath, [script], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+        const cli = spawn(process.execPath, [script], {
+            cwd: process.cwd(),
+            env: process.env,
+            stdio: ["ignore", "pipe", "pipe"],
+        });
         let output = "";
         let errors = "";
         cli.stdout.on("data", (chunk) => {
