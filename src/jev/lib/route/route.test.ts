@@ -16,7 +16,7 @@ import {
     type RouteFlag,
     type ToolCatalogue,
 } from "./catalogue";
-import { applyBindings, flagToken, positionalSlots, utteranceSpans } from "./flags";
+import { applyBindings, bindArgv, flagToken, positionalSlots, utteranceSpans } from "./flags";
 import { splitPlanUtterance, zshRouteWidget } from "./plan";
 import { extractArgHints, fillArgv, routeUtterance, shortlistRows, suggestBatches, suggestCatalogue } from "./router";
 import { type RouteExecutor, runRoutedDecision, toolArgs } from "./run";
@@ -411,6 +411,32 @@ test("an admitted abstain reports why, not accepted", async () => {
 test("toolArgs drops the printed tools head", () => {
     expect(toolArgs(["tools", "github", "review", "409"])).toEqual(["github", "review", "409"]);
     expect(toolArgs(["github", "review"])).toEqual(["github", "review"]);
+});
+
+test("numeric fallback retains declaration order beside model-bound positionals", async () => {
+    const row = flattenCatalogue({
+        commit: "test",
+        tools: [
+            { name: "fixture", oneLine: "fixture", commands: [command("fixture copy", { argHint: "<id> [dest]" })] },
+        ],
+    })[0];
+    for (const selectId of [false, true]) {
+        const result = await bindArgv({
+            utterance: "copy 409 to out.ts",
+            row,
+            evaluate: scripted({
+                booleans: { pos_0_id: selectId ? 1 : 0, pos_1_dest: 1 },
+                choices: selectId ? { slot_0_id: "409", slot_1_dest: "out.ts" } : { slot_0_dest: "out.ts" },
+            }),
+        });
+        expect(result.unbound).toEqual([]);
+        const recorded: string[][] = [];
+        const execute = async (argv: string[]) => {
+            recorded.push(argv);
+        };
+        await execute(applyBindings(["fixture", "copy"], result.bindings));
+        expect(recorded).toEqual([["fixture", "copy", "409", "out.ts"]]);
+    }
 });
 
 test("applyBindings puts positionals before flags", () => {

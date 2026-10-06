@@ -354,7 +354,11 @@ export async function bindArgv(options: {
         { path: options.row.path, bound: bindings.length, unbound, requests },
         "Jev binding finished for the chosen row"
     );
-    return { bindings, unbound, requests };
+    const positionalByName = new Map(
+        bindings.filter((binding) => binding.kind === "positional").map((binding) => [binding.name, binding])
+    );
+    const ordered = slots.flatMap((slot) => positionalByName.get(slot.name) ?? []);
+    return { bindings: [...ordered, ...bindings.filter((binding) => binding.kind === "flag")], unbound, requests };
 }
 
 /**
