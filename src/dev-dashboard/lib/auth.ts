@@ -84,6 +84,61 @@ export function verifyBasicAuthHeader(header: string | null, auth: CompleteDashb
 // import.
 export const LOCAL_ORIGIN_HEADER = "x-dd-local-origin";
 
+const SAFE_HTTP_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+type HeaderValue = string | readonly string[] | null | undefined;
+
+function firstHeaderValue(value: HeaderValue): string | undefined {
+    return typeof value === "string" ? value : value?.[0];
+}
+
+export function allowsBrowserProvenance({
+    method,
+    requestUrl,
+    origin,
+    fetchSite,
+    host,
+    forwardedProto,
+    force = false,
+}: {
+    method: string;
+    requestUrl: string;
+    origin: HeaderValue;
+    fetchSite: HeaderValue;
+    host: HeaderValue;
+    forwardedProto: HeaderValue;
+    force?: boolean;
+}): boolean {
+    if (!force && SAFE_HTTP_METHODS.has(method.toUpperCase())) {
+        return true;
+    }
+
+    const originValue = firstHeaderValue(origin);
+    const fetchSiteValue = firstHeaderValue(fetchSite);
+    const hostValue = firstHeaderValue(host);
+    const forwardedProtoValue = firstHeaderValue(forwardedProto);
+
+    if (fetchSiteValue?.toLowerCase() === "cross-site") {
+        return false;
+    }
+
+    if (originValue === undefined || originValue === "") {
+        return true;
+    }
+
+    if (originValue === "null") {
+        return false;
+    }
+
+    try {
+        const request = new URL(requestUrl);
+        const protocol = forwardedProtoValue?.split(",")[0]?.trim() || request.protocol.replace(/:$/, "");
+        const destination = new URL(`${protocol}://${hostValue || request.host}`).origin;
+        return new URL(originValue).origin === destination;
+    } catch {
+        return false;
+    }
+}
+
 // Browser-initiated WebSocket handshakes cannot carry an Authorization header,
 // so the ttyd terminal + HMR sockets (which bypass the Vite auth middleware via
 // the front-proxy) are gated by a signed session cookie instead. The cookie is
@@ -93,14 +148,35 @@ export const LOCAL_ORIGIN_HEADER = "x-dd-local-origin";
 
 const SESSION_COOKIE_NAME = "dd_session";
 const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const SESSION_SIGNATURE_LENGTH = 64;
+const MAX_SESSION_PAYLOAD_LENGTH = 256;
 
 interface SessionPayload {
     v: 1;
     iat: number;
 }
 
+interface SessionSecretCache {
+    passwordHash: string;
+    passwordSalt: string;
+    secret: Buffer;
+}
+
+let sessionSecretCache: SessionSecretCache | undefined;
+
 function deriveSessionSecret(auth: CompleteDashboardAuthConfig): Buffer {
-    return scryptSync(`${auth.passwordHash}:${auth.passwordSalt}`, "dd-session-v1", PASSWORD_KEY_LENGTH);
+    if (
+        sessionSecretCache?.passwordHash === auth.passwordHash &&
+        sessionSecretCache.passwordSalt === auth.passwordSalt
+    ) {
+        return sessionSecretCache.secret;
+    }
+
+    sessionSecretCache?.secret.fill(0);
+    const secret = scryptSync(`${auth.passwordHash}:${auth.passwordSalt}`, "dd-session-v1", PASSWORD_KEY_LENGTH);
+    sessionSecretCache = { passwordHash: auth.passwordHash, passwordSalt: auth.passwordSalt, secret };
+
+    return secret;
 }
 
 function signSessionPayload(encodedPayload: string, secret: Buffer): string {
@@ -173,12 +249,20 @@ export function verifySessionToken(
 
     const encoded = token.slice(0, dot);
     const signature = token.slice(dot + 1);
-    const expected = signSessionPayload(encoded, deriveSessionSecret(auth));
 
-    // Length-check the hex first: Buffer.from(_, "hex") silently drops trailing
-    // non-hex, so without this a signature with appended garbage would still
-    // decode equal. Both sides are fixed-length HMAC hex, so this is constant.
-    if (signature.length !== expected.length || !secureHexEqual(signature, expected)) {
+    // Reject impossible shapes before the synchronous KDF. Buffer.from(_, "hex")
+    // silently drops trailing non-hex, so both exact length and alphabet matter.
+    if (
+        encoded.length === 0 ||
+        encoded.length > MAX_SESSION_PAYLOAD_LENGTH ||
+        signature.length !== SESSION_SIGNATURE_LENGTH ||
+        !/^[0-9a-f]+$/.test(signature)
+    ) {
+        return false;
+    }
+
+    const expected = signSessionPayload(encoded, deriveSessionSecret(auth));
+    if (!secureHexEqual(signature, expected)) {
         return false;
     }
 

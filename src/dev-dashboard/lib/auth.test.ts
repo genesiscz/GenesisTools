@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import * as crypto from "node:crypto";
 import {
     buildSessionCookie,
     createBasicAuthCredentials,
@@ -55,6 +56,33 @@ describe("dashboard session cookie", () => {
         expect(verifySessionToken(`dd_session=${Buffer.from('{"v":1}').toString("base64url")}.deadbeef`, auth)).toBe(
             false
         );
+    });
+
+    test("derives one session key per auth generation and rejects impossible signatures before crypto", () => {
+        const uniqueAuth = {
+            ...auth,
+            passwordHash: crypto.randomBytes(32).toString("hex"),
+            passwordSalt: crypto.randomBytes(16).toString("hex"),
+        };
+        const scrypt = spyOn(crypto, "scryptSync");
+
+        try {
+            for (let index = 0; index < 5; index++) {
+                expect(verifySessionToken("dd_session=a.b", uniqueAuth)).toBe(false);
+            }
+            expect(scrypt).toHaveBeenCalledTimes(0);
+
+            const token = issueSessionToken(uniqueAuth);
+            expect(verifySessionToken(`dd_session=${token}`, uniqueAuth)).toBe(true);
+            expect(verifySessionToken(`dd_session=${token}`, uniqueAuth)).toBe(true);
+            expect(scrypt).toHaveBeenCalledTimes(1);
+
+            const rotated = { ...uniqueAuth, passwordHash: crypto.randomBytes(32).toString("hex") };
+            expect(verifySessionToken(`dd_session=${token}`, rotated)).toBe(false);
+            expect(scrypt).toHaveBeenCalledTimes(2);
+        } finally {
+            scrypt.mockRestore();
+        }
     });
 
     test("rejects an expired token", () => {

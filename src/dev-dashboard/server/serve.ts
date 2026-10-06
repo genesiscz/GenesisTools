@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
 import { getDashboardAuthCached } from "@app/dev-dashboard/config";
-import { LOCAL_ORIGIN_HEADER } from "@app/dev-dashboard/lib/auth";
+import { allowsBrowserProvenance, LOCAL_ORIGIN_HEADER } from "@app/dev-dashboard/lib/auth";
 import type { KeyPair } from "@app/dev-dashboard/lib/e2e/box";
 import { fromBase64, loadOrCreateAgentKeys, naclBoxCipher } from "@app/dev-dashboard/lib/e2e/box";
 import { isLoopbackOnlyOrigin } from "@app/dev-dashboard/lib/front-proxy";
@@ -133,6 +133,19 @@ export async function serveAgent(opts: ServeAgentOptions): Promise<void> {
                 headers[LOCAL_ORIGIN_HEADER] = "1";
             }
 
+            if (
+                !allowsBrowserProvenance({
+                    method: req.method,
+                    requestUrl: req.url,
+                    origin: headers.origin,
+                    fetchSite: headers["sec-fetch-site"],
+                    host: headers.host,
+                    forwardedProto: headers["x-forwarded-proto"],
+                })
+            ) {
+                return new Response("Foreign browser origin refused.", { status: 403 });
+            }
+
             // E2E pairing + rpc BYPASS Basic auth: pairing is TOFU-public (public keys only),
             // and the rpc allowlist+box MAC is itself the auth. Gate the rpc handler on `e2e`.
             const isE2eBypass = url.pathname === E2E_RPC_PATH || url.pathname === E2E_PAIR_PATH;
@@ -145,6 +158,7 @@ export async function serveAgent(opts: ServeAgentOptions): Promise<void> {
                 const auth = decideApiAuth({
                     method: req.method,
                     pathname: url.pathname,
+                    requestUrl: req.url,
                     headers,
                     provision: await getDashboardAuthCached(),
                     secure: headers["x-forwarded-proto"] === "https",

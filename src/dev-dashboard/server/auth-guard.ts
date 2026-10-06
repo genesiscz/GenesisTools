@@ -1,5 +1,6 @@
 import type { DashboardAuthProvision } from "@app/dev-dashboard/config";
 import {
+    allowsBrowserProvenance,
     buildSessionCookie,
     type CompleteDashboardAuthConfig,
     isCompleteAuthConfig,
@@ -15,6 +16,7 @@ export interface AuthInput {
     pathname: string;
     headers: Record<string, string>;
     provision: DashboardAuthProvision;
+    requestUrl?: string;
     /** true when the request arrived over the HTTPS tunnel (sets Secure on the cookie). */
     secure?: boolean;
 }
@@ -28,6 +30,19 @@ export interface AuthResult {
 /** Pure mirror of requireDashboardAuth's decision matrix (vite-middleware.ts:115). */
 export function decideApiAuth(input: AuthInput): AuthResult {
     const { method, pathname, headers, provision } = input;
+
+    if (
+        !allowsBrowserProvenance({
+            method,
+            requestUrl: input.requestUrl ?? `http://${headers.host ?? "localhost"}${pathname}`,
+            origin: headers.origin,
+            fetchSite: headers["sec-fetch-site"],
+            host: headers.host,
+            forwardedProto: headers["x-forwarded-proto"],
+        })
+    ) {
+        return { decision: "deny" };
+    }
 
     if (isPublicShareRequest(method, pathname)) {
         return { decision: "allow" };

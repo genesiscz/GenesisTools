@@ -16,6 +16,48 @@ describe("decideApiAuth", () => {
         expect(d.decision).toBe("allow");
     });
 
+    it("rejects foreign browser mutations before the loopback grant", () => {
+        const d = decideApiAuth({
+            method: "POST",
+            pathname: "/api/ttyd/spawn",
+            requestUrl: "http://localhost:3042/api/ttyd/spawn",
+            headers: {
+                host: "localhost:3042",
+                origin: "https://attacker.test",
+                "sec-fetch-site": "cross-site",
+                "x-dd-local-origin": "1",
+            },
+            provision,
+        });
+        expect(d.decision).toBe("deny");
+    });
+
+    it("keeps same-origin browser and absent-Origin native mutations working", () => {
+        expect(
+            decideApiAuth({
+                method: "POST",
+                pathname: "/api/ttyd/spawn",
+                requestUrl: "http://localhost:3042/api/ttyd/spawn",
+                headers: {
+                    host: "localhost:3042",
+                    origin: "http://localhost:3042",
+                    "sec-fetch-site": "same-origin",
+                    "x-dd-local-origin": "1",
+                },
+                provision,
+            }).decision
+        ).toBe("allow");
+        expect(
+            decideApiAuth({
+                method: "POST",
+                pathname: "/api/ttyd/spawn",
+                requestUrl: "http://localhost:3042/api/ttyd/spawn",
+                headers: { host: "localhost:3042", "x-dd-local-origin": "1" },
+                provision,
+            }).decision
+        ).toBe("allow");
+    });
+
     it("allows a /share/<slug> GET without auth", () => {
         const d = decideApiAuth({ method: "GET", pathname: "/share/tok", headers: {}, provision });
         expect(d.decision).toBe("allow");

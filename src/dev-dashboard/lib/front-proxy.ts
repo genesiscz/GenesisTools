@@ -1,5 +1,6 @@
 import { type DashboardAuthProvision, getDashboardAuthCached } from "@app/dev-dashboard/config";
 import {
+    allowsBrowserProvenance,
     type CompleteDashboardAuthConfig,
     isCompleteAuthConfig,
     LOCAL_ORIGIN_HEADER,
@@ -445,6 +446,20 @@ export function decideProxyAuth(args: {
 }): AuthDecision {
     const { req, isLocal, provision } = args;
 
+    if (
+        !allowsBrowserProvenance({
+            method: req.method,
+            requestUrl: req.url,
+            origin: req.headers.get("origin"),
+            fetchSite: req.headers.get("sec-fetch-site"),
+            host: req.headers.get("host"),
+            forwardedProto: req.headers.get("x-forwarded-proto"),
+            force: true,
+        })
+    ) {
+        return "deny";
+    }
+
     if (isLocal) {
         return "allow";
     }
@@ -517,6 +532,22 @@ export function startFrontProxy(opts: {
             const isUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
             const clientAddress = srv.requestIP(req)?.address;
             const isLocal = isLoopbackOnlyOrigin(req, clientAddress);
+            const browserSensitive = ttyd !== null || isUpgrade || !["GET", "HEAD", "OPTIONS"].includes(req.method);
+
+            if (
+                browserSensitive &&
+                !allowsBrowserProvenance({
+                    method: req.method,
+                    requestUrl: req.url,
+                    origin: req.headers.get("origin"),
+                    fetchSite: req.headers.get("sec-fetch-site"),
+                    host: req.headers.get("host"),
+                    forwardedProto: req.headers.get("x-forwarded-proto"),
+                    force: ttyd !== null || isUpgrade,
+                })
+            ) {
+                return new Response("Foreign browser origin refused.", { status: 403 });
+            }
 
             // Plain Vite-forwarded HTTP stays gated by the Vite middleware
             // downstream; only the two paths that skip it (ttyd assets + any WS

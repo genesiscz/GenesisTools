@@ -73,6 +73,33 @@ describe("decideProxyAuth — the ttyd/WS gate matrix", () => {
         expect(decideProxyAuth({ req: reqWith({}), isLocal: true, provision })).toBe("allow");
     });
 
+    test("a foreign or opaque browser origin cannot use the loopback grant", () => {
+        for (const origin of ["https://attacker.test", "http://localhost:9999", "null"]) {
+            const req = reqWith({ host: "localhost:3042", origin, "sec-fetch-site": "cross-site" });
+            expect(decideProxyAuth({ req, isLocal: true, provision })).toBe("deny");
+        }
+    });
+
+    test("same-origin browser and absent-Origin native loopback clients still work", () => {
+        const browser = reqWith({
+            host: "localhost:3042",
+            origin: "http://localhost:3042",
+            "sec-fetch-site": "same-origin",
+        });
+        expect(decideProxyAuth({ req: browser, isLocal: true, provision })).toBe("allow");
+        expect(decideProxyAuth({ req: reqWith({ host: "localhost:3042" }), isLocal: true, provision })).toBe("allow");
+    });
+
+    test("valid credentials do not override a foreign browser origin", () => {
+        const req = reqWith({
+            host: "dev-dashboard.test",
+            origin: "https://attacker.test",
+            "sec-fetch-site": "cross-site",
+            authorization: makeBasicAuthHeader({ username: "martin", password }),
+        });
+        expect(decideProxyAuth({ req, isLocal: false, provision })).toBe("deny");
+    });
+
     test("remote (LAN/tunnel) with no credentials is denied", () => {
         expect(decideProxyAuth({ req: reqWith({}), isLocal: false, provision })).toBe("deny");
     });
