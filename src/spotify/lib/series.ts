@@ -16,13 +16,21 @@ export function bucketKeys(plays: Play[], tz: string, bucket: Bucket): string[] 
 /** Every bucket between the first and last play, including the empty ones. */
 export function denseBuckets(plays: Play[], tz: string, bucket: Bucket): string[] {
     const keys = bucketKeys(plays, tz, bucket);
-    if (keys.length < 2 || bucket === "week") {
+    if (keys.length < 2) {
         return keys;
     }
 
     const out: string[] = [];
     const first = keys[0]!;
     const last = keys[keys.length - 1]!;
+
+    if (bucket === "week") {
+        for (let t = Date.parse(`${first}T00:00:00Z`); t <= Date.parse(`${last}T00:00:00Z`); t += 7 * 86400000) {
+            out.push(new Date(t).toISOString().slice(0, 10));
+        }
+
+        return out;
+    }
 
     if (bucket === "year") {
         for (let y = Number(first); y <= Number(last); y++) {

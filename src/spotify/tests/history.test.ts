@@ -3,7 +3,10 @@
  * offset cache, and the composite keys everything groups by.
  */
 import { describe, expect, test } from "bun:test";
+import type { Ctx } from "@app/spotify/lib/context";
 import { albumKey, localTime, songKey, songKeyOf } from "@app/spotify/lib/history";
+import { timelineReport } from "@app/spotify/lib/reports/time";
+import { denseBuckets } from "@app/spotify/lib/series";
 
 const play = (name: string, artist: string, album = "") => ({
     ts: 0,
@@ -80,5 +83,58 @@ describe("composite keys", () => {
     // until this was exported. That is what made "never played" jump from 74 to 149.
     test("songKeyOf agrees with songKey for the same title and artist", () => {
         expect(songKeyOf("Midnight Lanes", "Nocturne Drive")).toBe(songKey(play("Midnight Lanes", "Nocturne Drive")));
+    });
+});
+
+describe("weekly timelines", () => {
+    const timelinePlay = (timestamp: string) => ({
+        ...play("Signal Fires", "North Avenue"),
+        ts: Date.parse(timestamp),
+        ms: 45_000,
+        uri: `track:${timestamp}`,
+    });
+
+    test("fills silent weeks and keeps their report values at zero", () => {
+        const plays = [timelinePlay("2026-01-05T12:00:00Z"), timelinePlay("2026-01-19T12:00:00Z")];
+        const ctx: Ctx = {
+            profile: { name: "work", label: "Work", timezone: "Europe/Prague", addedAt: "2026-01-01" },
+            tz: "Europe/Prague",
+            all: plays,
+            plays,
+            genres: {
+                forPlay: () => [],
+                forArtist: () => [],
+                byUri: new Map(),
+                byArtist: new Map(),
+                vocabulary: new Set(),
+                empty: true,
+            },
+            window: "all time",
+            top: 10,
+            json: true,
+        };
+
+        expect(timelineReport({ bucket: "week" }, ctx).points).toEqual([
+            { bucket: "2026-01-05", value: 1, plays: 1, ms: 45_000 },
+            { bucket: "2026-01-12", value: 0, plays: 0, ms: 0 },
+            { bucket: "2026-01-19", value: 1, plays: 1, ms: 45_000 },
+        ]);
+    });
+
+    test("steps weekly labels across year and DST boundaries", () => {
+        expect(
+            denseBuckets(
+                [timelinePlay("2025-12-29T12:00:00Z"), timelinePlay("2026-01-12T12:00:00Z")],
+                "Europe/Prague",
+                "week"
+            )
+        ).toEqual(["2025-12-29", "2026-01-05", "2026-01-12"]);
+        expect(
+            denseBuckets(
+                [timelinePlay("2025-03-24T12:00:00Z"), timelinePlay("2025-04-07T12:00:00Z")],
+                "Europe/Prague",
+                "week"
+            )
+        ).toEqual(["2025-03-24", "2025-03-31", "2025-04-07"]);
     });
 });
