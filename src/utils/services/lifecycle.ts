@@ -1,8 +1,7 @@
 import { commandWords, execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
-import { captureSync } from "@genesiscz/utils/process/ps";
+import { batchPsInfo, captureSync, type PsRow } from "@genesiscz/utils/process/ps";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
-import { classifyPid } from "@genesiscz/utils/process-identity";
 import { portIsOpen } from "./ensure";
 import { LAUNCHD_PREFIX, parseLaunchctlList, type ServiceRow } from "./inventory";
 
@@ -54,13 +53,7 @@ export async function stopService(
         return { ok: false, message: `${row.name} is a launchd job (${row.label}); stopping it would only respawn it` };
     }
 
-    const ours: number[] = [];
-
-    for (const pid of row.pids) {
-        if (signalIfUnchanged(row, pid, "SIGTERM")) {
-            ours.push(pid);
-        }
-    }
+    const ours = signalWave(row, row.pids, "SIGTERM");
 
     logger.debug({ id: row.id, pids: ours, of: row.pids }, "services: stopping");
 
@@ -70,9 +63,7 @@ export async function stopService(
     );
 
     if (!stopped) {
-        for (const pid of ours.filter(isProcessAlive)) {
-            signalIfUnchanged(row, pid, "SIGKILL");
-        }
+        signalWave(row, ours.filter(isProcessAlive), "SIGKILL");
 
         // Verified, not assumed: a restart must not start a second server while the first still answers.
         const killed = await until(
@@ -93,27 +84,38 @@ export async function stopService(
     return { ok: true, message: `stopped ${row.name}${stopped ? "" : " (killed after 10 s)"}` };
 }
 
-/** Signals `pid` only while it runs the command line the inventory read for it; true when the signal went out. */
-function signalIfUnchanged(row: ServiceRow, pid: number, name: "SIGTERM" | "SIGKILL"): boolean {
-    const expected = row.commands[pid];
-    const identity = expected ? classifyPid(pid, expected) : null;
+export function verifiedServicePids(row: ServiceRow, pids: number[], snapshot: Map<number, PsRow>): number[] {
+    return pids.filter((pid) => {
+        const expected = row.commands[pid];
+        const current = snapshot.get(pid);
+        return expected !== undefined && current?.command === expected;
+    });
+}
 
-    if (identity?.status !== "live") {
-        logger.debug(
-            { id: row.id, pid, signal: name, status: identity?.status ?? "no inventory command" },
-            "services: not signalled, the pid is gone or no longer the service"
-        );
-        return false;
+function signalWave(row: ServiceRow, pids: number[], name: "SIGTERM" | "SIGKILL"): number[] {
+    const snapshot = batchPsInfo(pids);
+    const verified = new Set(verifiedServicePids(row, pids, snapshot));
+    const signalled: number[] = [];
+
+    for (const pid of pids) {
+        if (!verified.has(pid)) {
+            logger.debug(
+                { id: row.id, pid, signal: name, status: snapshot.has(pid) ? "changed command" : "gone or unreadable" },
+                "services: not signalled, the pid is gone or no longer the service"
+            );
+            continue;
+        }
+
+        try {
+            // pid-verified: this wave's fresh batchPsInfo snapshot matched the inventory command exactly.
+            process.kill(pid, name);
+            signalled.push(pid);
+        } catch (error) {
+            logger.debug({ error, pid, signal: name }, "services: the process was already gone");
+        }
     }
 
-    try {
-        // pid-verified: classifyPid just matched this pid's live command line to the one the inventory read.
-        process.kill(pid, name);
-        return true;
-    } catch (error) {
-        logger.debug({ error, pid, signal: name }, "services: the process was already gone");
-        return false;
-    }
+    return signalled;
 }
 
 /**

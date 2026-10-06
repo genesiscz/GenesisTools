@@ -16,7 +16,7 @@ import {
     type ServiceRow,
     verifiedRegistryPorts,
 } from "./inventory";
-import { stopService } from "./lifecycle";
+import { stopService, verifiedServicePids } from "./lifecycle";
 import { parseNetstatClientPorts, parseNetstatListeners } from "./netstat";
 import { sourceRoots, staleFiles } from "./stale";
 
@@ -344,6 +344,30 @@ describe("stopService", () => {
         launch: null,
         command,
         relaunch: null,
+    });
+
+    test("one identity snapshot selects every unchanged pid and refuses changed or missing rows", () => {
+        const row = {
+            ...detached(10, "service --one"),
+            pids: [10, 11, 12],
+            commands: { 10: "service --one", 11: "service --two", 12: "service --three" },
+        };
+        const psRow = (pid: number, command: string) => ({
+            pid,
+            ppid: 1,
+            user: "fixture",
+            stat: "S",
+            cpu: 0,
+            rss: 1,
+            startTime: new Date(0),
+            command,
+        });
+        const snapshot = new Map([
+            [10, psRow(10, "service --one")],
+            [11, psRow(11, "different")],
+        ]);
+
+        expect(verifiedServicePids(row, row.pids, snapshot)).toEqual([10]);
     });
 
     test("a pid that still runs the inventory's command is stopped", async () => {
