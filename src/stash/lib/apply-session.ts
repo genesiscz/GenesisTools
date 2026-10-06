@@ -2,6 +2,7 @@ import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { type ApplyRecoverySnapshot, captureApplySnapshot, restoreApplySnapshot } from "./apply-recovery";
 
 const { log } = logger.scoped("stash:apply-session");
 
@@ -14,6 +15,8 @@ export interface ApplySessionSnapshot {
     projectHash: string;
     conflictedFiles: string[];
     startedAt: string;
+    before?: ApplyRecoverySnapshot;
+    after?: ApplyRecoverySnapshot;
 }
 
 export interface StartArgs {
@@ -25,6 +28,7 @@ export interface StartArgs {
     projectHash: string;
     conflictedFiles: string[];
     stateDir: string;
+    before?: ApplyRecoverySnapshot;
 }
 
 export class ApplySession {
@@ -44,6 +48,7 @@ export class ApplySession {
             projectHash: args.projectHash,
             conflictedFiles: args.conflictedFiles,
             startedAt: new Date().toISOString(),
+            before: args.before,
         };
         const session = new ApplySession(snap, args.stateDir);
         await session.persist();
@@ -89,6 +94,24 @@ export class ApplySession {
             }
         }
         return stillConflicted;
+    }
+
+    async captureResult(conflictedFiles: string[]): Promise<void> {
+        this.snap.conflictedFiles = conflictedFiles;
+        if (this.snap.before) {
+            this.snap.after = await captureApplySnapshot({
+                root: this.snap.projectPath,
+                files: Object.keys(this.snap.before.files),
+            });
+        }
+        await this.persist();
+    }
+
+    async restore(): Promise<void> {
+        if (!this.snap.before || !this.snap.after) {
+            throw new Error("This apply session has no complete recovery snapshot; preserve it for manual recovery");
+        }
+        await restoreApplySnapshot({ root: this.snap.projectPath, before: this.snap.before, after: this.snap.after });
     }
 
     async persist(): Promise<void> {

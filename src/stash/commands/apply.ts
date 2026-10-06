@@ -4,6 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
+import { captureApplySnapshot } from "../lib/apply-recovery";
 import { ApplySession } from "../lib/apply-session";
 import { newStashId, shortId } from "../lib/ids";
 import { commentSyntaxForFile } from "../lib/languages";
@@ -63,30 +64,42 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
 
                 return;
             }
-            const snap = session.snapshot();
-            for (const file of snap.conflictedFiles) {
-                // Use `checkout HEAD -- <file>` (not bare `checkout -- <file>`) because after a 3-way
-                // conflict the file is "unmerged" in the index, which makes the index-based form fail.
-                // Specifying HEAD reads from the HEAD tree, clearing the unmerged index entries too.
-                await runGitIn(project.rootPath, ["checkout", "HEAD", "--", file]).catch((err) => {
-                    log.warn({ err, file }, "checkout restore failed — file may need manual cleanup");
-                });
+            try {
+                await session.restore();
+                await session.abort();
+            } catch (error) {
+                log.warn({ error }, "apply recovery failed; preserving session");
+                ui.err(error instanceof Error ? error.message : String(error));
+                process.exitCode = 1;
+                return;
             }
-            await session.abort();
             ui.ok("aborted");
 
             return;
         }
 
-        const version = opts.version
-            ? db
-                  .query<VersionRow, [string, number]>("SELECT * FROM versions WHERE stash_id = ? AND version = ?")
-                  .get(stash.id, opts.version)
-            : db
-                  .query<VersionRow, [string]>(
-                      "SELECT * FROM versions WHERE stash_id = ? ORDER BY version DESC LIMIT 1"
-                  )
-                  .get(stash.id);
+        const pending = await ApplySession.load({ stashId: stash.id, projectHash, stateDir: storage.stateDir() });
+        if (action === "start" && pending) {
+            ui.err("an apply session is already pending; resume or abort it first");
+            process.exitCode = 1;
+            return;
+        }
+        const version =
+            action === "resume" && pending
+                ? db
+                      .query<VersionRow, [string]>("SELECT * FROM versions WHERE id = ?")
+                      .get(pending.snapshot().versionId)
+                : opts.version
+                  ? db
+                        .query<VersionRow, [string, number]>(
+                            "SELECT * FROM versions WHERE stash_id = ? AND version = ?"
+                        )
+                        .get(stash.id, opts.version)
+                  : db
+                        .query<VersionRow, [string]>(
+                            "SELECT * FROM versions WHERE stash_id = ? ORDER BY version DESC LIMIT 1"
+                        )
+                        .get(stash.id);
         if (!version) {
             ui.err(`no version found for "${opts.name}"${opts.version ? ` @v${opts.version}` : ""}`);
 
@@ -175,6 +188,17 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
 
         // List affected files BEFORE applying so we can scan them for conflict markers in the catch block.
         const affectedFiles = await listFilesInPatch({ repoDir: project.rootPath, patch });
+        const session = await ApplySession.start({
+            stashId: stash.id,
+            stashName: opts.name,
+            versionId: version.id,
+            version: version.version,
+            projectPath: project.rootPath,
+            projectHash,
+            conflictedFiles: [],
+            stateDir: storage.stateDir(),
+            before: await captureApplySnapshot({ root: project.rootPath, files: affectedFiles }),
+        });
 
         try {
             await applyPatch({ repoDir: project.rootPath, patch, threeWay: true });
@@ -209,18 +233,8 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
                 }
             }
 
+            await session.captureResult(conflictedFiles);
             if (conflictedFiles.length > 0) {
-                await ApplySession.start({
-                    stashId: stash.id,
-                    stashName: opts.name,
-                    versionId: version.id,
-                    version: version.version,
-                    projectPath: project.rootPath,
-                    projectHash,
-                    conflictedFiles,
-                    stateDir: storage.stateDir(),
-                });
-
                 ui.err(`apply conflict: ${conflictedFiles.length} file(s) need manual resolution`);
                 for (const f of conflictedFiles) {
                     ui.warn(`  conflict: ${f}`);
@@ -271,6 +285,8 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
          VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
             [newStashId(), stash.id, version.id, project.rootPath, project.origin, project.sha, now]
         );
+
+        await session.complete();
 
         // Drop the fetched baseline ref — it was only needed to seed 3-way merge blobs into objects/.
         // Failure is harmless: git's GC will reap unreachable objects eventually.

@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runGitIn } from "../lib/patch";
@@ -196,6 +196,45 @@ describe.serial("apply conflict state machine", () => {
         // No application row should exist
         const appRow = getApplicationsRow("conflict-stash", projectB);
         expect(appRow).toBeNull();
+    });
+
+    test("abort restores clean siblings and preserves the complete original index", async () => {
+        for (const repo of [projectA, projectB]) {
+            await writeFile(join(repo, "b.ts"), "baseline();\n");
+            await runGitIn(repo, ["add", "b.ts"]);
+            await runGitIn(repo, ["commit", "-m", "second baseline"]);
+        }
+        process.chdir(projectA);
+        await writeFile(join(projectA, "a.ts"), "fn();\noverlay();\n");
+        await writeFile(join(projectA, "b.ts"), "baseline();\noverlay();\n");
+        await saveCommand({ name: "multi-conflict", mode: "all", tags: [], description: undefined });
+        await writeFile(join(projectB, "a.ts"), "fn();\nlocal();\n");
+        await runGitIn(projectB, ["add", "a.ts"]);
+        await runGitIn(projectB, ["commit", "-m", "diverge"]);
+        await writeFile(join(projectB, "unrelated.ts"), "staged();\n");
+        await runGitIn(projectB, ["add", "unrelated.ts"]);
+        const indexBefore = await readFile(join(projectB, ".git/index"));
+        process.chdir(projectB);
+        await applyCommand({ name: "multi-conflict", verboseMarkers: false });
+        expect(await readFile(join(projectB, "a.ts"), "utf8")).toContain("<<<<<<<");
+        expect(await readFile(join(projectB, "b.ts"), "utf8")).toContain("overlay();");
+        await writeFile(join(projectB, "b.ts"), "newer edit();\n");
+        await applyCommand({ name: "multi-conflict", verboseMarkers: false, action: "abort" });
+        expect(process.exitCode).toBe(1);
+        expect(await readFile(join(projectB, "b.ts"), "utf8")).toBe("newer edit();\n");
+        expect(stateFileExists(projectB, getStashId("multi-conflict"))).toBe(true);
+        await writeFile(join(projectB, "b.ts"), "baseline();\noverlay();\n");
+        await writeFile(join(projectB, ".git/index.lock"), "another writer");
+        await applyCommand({ name: "multi-conflict", verboseMarkers: false, action: "abort" });
+        expect(await readFile(join(projectB, ".git/index.lock"), "utf8")).toBe("another writer");
+        expect(stateFileExists(projectB, getStashId("multi-conflict"))).toBe(true);
+        expect(await readFile(join(projectB, "b.ts"), "utf8")).toContain("overlay();");
+        await unlink(join(projectB, ".git/index.lock"));
+        await applyCommand({ name: "multi-conflict", verboseMarkers: false, action: "abort" });
+        expect(await readFile(join(projectB, "b.ts"), "utf8")).toBe("baseline();\n");
+        expect(await readFile(join(projectB, "a.ts"), "utf8")).toBe("fn();\nlocal();\n");
+        expect(await readFile(join(projectB, ".git/index"))).toEqual(indexBefore);
+        expect(stateFileExists(projectB, getStashId("multi-conflict"))).toBe(false);
     });
 
     test("resume with remaining conflicts exits non-zero without inserting row", async () => {
