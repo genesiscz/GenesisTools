@@ -2,11 +2,13 @@ import type { FetchCommentsOpts, FetchedComment } from "@app/youtube/lib/comment
 import type { YoutubeConfig } from "@app/youtube/lib/config";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import type { Pipeline } from "@app/youtube/lib/pipeline";
+import type { ResolveProviderChoiceOpts } from "@app/youtube/lib/provider-choice";
 import type { QaService } from "@app/youtube/lib/qa";
 import type { SummaryService } from "@app/youtube/lib/summarize";
 import type { TranscriptService } from "@app/youtube/lib/transcripts";
 import type { VideoId } from "@app/youtube/lib/video.types";
 import type { DumpedVideoMetadata, ListChannelVideosOpts, ListedVideo } from "@app/youtube/lib/yt-dlp.types";
+import type { ProviderChoice } from "@genesiscz/utils/ask/types";
 
 export interface YoutubeOptions {
     baseDir?: string;
@@ -19,6 +21,7 @@ export interface YoutubeDeps {
     listChannelVideos: (opts: ListChannelVideosOpts) => Promise<ListedVideo[]>;
     dumpVideoMetadata: (idOrUrl: string, opts?: { signal?: AbortSignal }) => Promise<DumpedVideoMetadata>;
     fetchComments: (videoId: VideoId, opts?: FetchCommentsOpts) => Promise<FetchedComment[]>;
+    resolveProviderChoice: (opts?: ResolveProviderChoiceOpts) => Promise<ProviderChoice>;
 }
 
 export interface YoutubeServices {

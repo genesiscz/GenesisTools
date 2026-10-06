@@ -579,6 +579,25 @@ export class YoutubeDatabase extends BaseDatabase {
             `);
         });
 
+        this.runMigration("add-job-credit-hold-owner", () => {
+            const columns = this.db.query<{ name: string }, []>("PRAGMA table_info(jobs)").all();
+            if (!columns.some((column) => column.name === "credit_hold_id")) {
+                this.db.exec("ALTER TABLE jobs ADD COLUMN credit_hold_id INTEGER REFERENCES credit_holds(id)");
+            }
+
+            this.db.exec(`
+                UPDATE jobs
+                SET credit_hold_id = CAST(json_extract(params, '$.holdId') AS INTEGER)
+                WHERE credit_hold_id IS NULL
+                  AND json_type(params, '$.holdId') IN ('integer', 'real')
+                  AND EXISTS (
+                      SELECT 1 FROM credit_holds h
+                      WHERE h.id = CAST(json_extract(jobs.params, '$.holdId') AS INTEGER)
+                  );
+                CREATE INDEX IF NOT EXISTS idx_jobs_credit_hold ON jobs(credit_hold_id);
+            `);
+        });
+
         // Audit trail (Phase 1 foundations). Deliberately NO foreign keys:
         // audit rows must survive user/video/job deletion — they are the
         // history, not live state.
@@ -1467,16 +1486,22 @@ export class YoutubeDatabase extends BaseDatabase {
         );
     }
 
-    listQaChunks(videoId: VideoId, embedderModel?: string): QaChunk[] {
-        const rows = embedderModel
-            ? this.db
-                  .query<QaChunkRow, [string, string]>(
-                      "SELECT * FROM qa_chunks WHERE video_id = ? AND embedder_model = ? ORDER BY chunk_idx"
-                  )
-                  .all(videoId, embedderModel)
-            : this.db
-                  .query<QaChunkRow, [string]>("SELECT * FROM qa_chunks WHERE video_id = ? ORDER BY chunk_idx")
-                  .all(videoId);
+    listQaChunks(videoId: VideoId, embedderModel?: string, sources?: QaSource[]): QaChunk[] {
+        const where = ["video_id = ?"];
+        const params: string[] = [videoId];
+        if (embedderModel) {
+            where.push("embedder_model = ?");
+            params.push(embedderModel);
+        }
+
+        if (sources?.length) {
+            where.push(`source IN (${sources.map(() => "?").join(",")})`);
+            params.push(...sources);
+        }
+
+        const rows = this.db
+            .query<QaChunkRow, string[]>(`SELECT * FROM qa_chunks WHERE ${where.join(" AND ")} ORDER BY chunk_idx`)
+            .all(...params);
 
         return rows.map(rowToQaChunk);
     }
@@ -1521,6 +1546,26 @@ export class YoutubeDatabase extends BaseDatabase {
         this.db.run(`DELETE FROM qa_chunks WHERE ${where.join(" AND ")}`, params);
     }
 
+    replaceQaChunks(videoId: VideoId, source: QaSource, embedderModel: string, rows: UpsertQaChunkInput[]): void {
+        for (const row of rows) {
+            if (
+                row.videoId !== videoId ||
+                (row.source ?? "transcript") !== source ||
+                row.embedderModel !== embedderModel
+            ) {
+                throw new Error("replaceQaChunks: every row must match the replacement video, source, and model");
+            }
+        }
+
+        const replace = this.db.transaction(() => {
+            this.deleteQaChunks(videoId, source, embedderModel);
+            for (const row of rows) {
+                this.upsertQaChunk(row);
+            }
+        });
+        replace();
+    }
+
     enqueueJob(input: EnqueueJobInput): EnqueueJobResult {
         const fingerprint = buildJobFingerprint({
             targetKind: input.targetKind,
@@ -1547,10 +1592,11 @@ export class YoutubeDatabase extends BaseDatabase {
         const result = this.db
             .query<
                 { id: number },
-                [string, string, string, number | null, number | null, string | null, string, number]
+                [string, string, string, number | null, number | null, string | null, number | null, string, number]
             >(
-                `INSERT INTO jobs (target_kind, target, stages, parent_job_id, user_id, params, fingerprint, priority, status)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending') RETURNING id`
+                `INSERT INTO jobs (
+                    target_kind, target, stages, parent_job_id, user_id, params, credit_hold_id, fingerprint, priority, status
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending') RETURNING id`
             )
             .get(
                 input.targetKind,
@@ -1559,6 +1605,7 @@ export class YoutubeDatabase extends BaseDatabase {
                 input.parentJobId ?? null,
                 input.userId ?? null,
                 input.params ? SafeJSON.stringify(input.params, { strict: true }) : null,
+                creditHoldIdFromParams(input.params),
                 fingerprint,
                 priority
             );
@@ -1804,6 +1851,16 @@ export class YoutubeDatabase extends BaseDatabase {
             `UPDATE jobs SET status = 'cancelled', completed_at = ${SQL_NOW_UTC}, updated_at = ${SQL_NOW_UTC} WHERE id = ?`,
             [id]
         );
+    }
+
+    releaseJobCreditHold(id: number): boolean {
+        const job = this.db
+            .query<{ credit_hold_id: number | null }, [number]>("SELECT credit_hold_id FROM jobs WHERE id = ?")
+            .get(id);
+
+        return job?.credit_hold_id === null || job?.credit_hold_id === undefined
+            ? false
+            : this.releaseHoldIfHeld(job.credit_hold_id);
     }
 
     recordJobActivity(input: RecordJobActivityInput): JobActivity {
@@ -2899,11 +2956,29 @@ export class YoutubeDatabase extends BaseDatabase {
      * Returns the new balance.
      */
     releaseHold(holdId: number): number {
+        const balance = this.releaseHeldHold(holdId, true);
+
+        if (balance === null) {
+            throw new Error(`releaseHold: hold ${holdId} is not held`);
+        }
+
+        return balance;
+    }
+
+    releaseHoldIfHeld(holdId: number): boolean {
+        return this.releaseHeldHold(holdId, false) !== null;
+    }
+
+    private releaseHeldHold(holdId: number, strict: boolean): number | null {
         const release = this.db.transaction(() => {
             const hold = this.getCreditHoldRow(holdId);
 
             if (hold?.status !== "held") {
-                throw new Error(`releaseHold: hold ${holdId} is ${hold?.status ?? "missing"}, expected "held"`);
+                if (strict) {
+                    throw new Error(`releaseHold: hold ${holdId} is ${hold?.status ?? "missing"}, expected "held"`);
+                }
+
+                return null;
             }
 
             this.db.run(`UPDATE credit_holds SET status = 'released', resolved_at = ${SQL_NOW_UTC} WHERE id = ?`, [
@@ -2927,6 +3002,30 @@ export class YoutubeDatabase extends BaseDatabase {
         });
 
         return release();
+    }
+
+    reconcileJobCreditHolds(): { preserved: number; released: number } {
+        const rows = this.db
+            .query<{ id: number; job_status: JobStatus | null }, []>(
+                `SELECT h.id, j.status AS job_status
+                 FROM credit_holds h
+                 LEFT JOIN jobs j
+                   ON j.credit_hold_id = h.id
+                  AND j.status IN ('pending', 'running', 'interrupted')
+                 WHERE h.status = 'held'`
+            )
+            .all();
+        const preservedIds = new Set(rows.filter((row) => row.job_status !== null).map((row) => row.id));
+        const heldIds = new Set(rows.map((row) => row.id));
+        let released = 0;
+
+        for (const holdId of heldIds) {
+            if (!preservedIds.has(holdId) && this.releaseHoldIfHeld(holdId)) {
+                released++;
+            }
+        }
+
+        return { preserved: preservedIds.size, released };
     }
 
     /**
@@ -4032,6 +4131,7 @@ interface JobRow {
     params: string | null;
     fingerprint: string | null;
     priority: number | null;
+    credit_hold_id: number | null;
 }
 
 function rowToJob(row: JobRow): PipelineJob {
@@ -4056,6 +4156,12 @@ function rowToJob(row: JobRow): PipelineJob {
         params: row.params ? (SafeJSON.parse(row.params) as Record<string, unknown>) : null,
         fingerprint: row.fingerprint ?? null,
     };
+}
+
+function creditHoldIdFromParams(params: Record<string, unknown> | null | undefined): number | null {
+    const value = params?.holdId;
+
+    return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
 function parseJobStages(raw: string): JobStage[] {

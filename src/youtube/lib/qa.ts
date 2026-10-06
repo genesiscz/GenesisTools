@@ -17,6 +17,8 @@ import type {
     IndexResult,
     QaChunk,
     QaServiceDeps,
+    QaServiceEmbedder,
+    QaSource,
     TranscriptChunkSource,
 } from "@app/youtube/lib/qa.types";
 import { identifyProviderChoice, recordYoutubeUsage } from "@app/youtube/lib/usage";
@@ -28,6 +30,8 @@ import { logger } from "@genesiscz/utils/logger";
 const TARGET_TOKENS_PER_CHUNK = 1500;
 const TARGET_CHARS = TARGET_TOKENS_PER_CHUNK * 4;
 const TOP_K_DEFAULT = 8;
+export const MAX_EMBED_BATCH_CHUNKS = 32;
+export const MAX_EMBED_BATCH_CHARS = 48_000;
 /** Embedding bucket `index()` writes to and `ask()` retrieves from when no model is pinned. */
 export const DEFAULT_MODEL_ID = "default";
 /** Both-scope retrieval favors the transcript — it is the authority; comments add sentiment. */
@@ -76,6 +80,72 @@ const DEFAULT_QA_DEPS: QaServiceDeps = {
     callLLM,
 };
 
+export interface EmbeddingIdentity {
+    provider?: string;
+    model?: string;
+    bucket: string;
+}
+
+export function embeddingBucket(opts: { provider?: string; model?: string }): string {
+    const provider = opts.provider?.trim() || undefined;
+    const model = opts.model?.trim() || undefined;
+    if (!provider && !model) {
+        return DEFAULT_MODEL_ID;
+    }
+
+    return `embedding:v1:${encodeURIComponent(provider ?? "default")}/${encodeURIComponent(model ?? "default")}`;
+}
+
+export interface RankedChunk {
+    chunk: QaChunk;
+    score: number;
+    order: number;
+}
+
+export function insertTopKStable(top: RankedChunk[], entry: RankedChunk, limit: number): void {
+    const index = top.findIndex(
+        (candidate) =>
+            entry.score > candidate.score || (entry.score === candidate.score && entry.order < candidate.order)
+    );
+    if (index === -1) {
+        top.push(entry);
+    } else {
+        top.splice(index, 0, entry);
+    }
+
+    if (top.length > limit) {
+        top.pop();
+    }
+}
+
+export async function embedTextsInBatches(
+    embedder: QaServiceEmbedder,
+    texts: string[],
+    signal?: AbortSignal
+): Promise<Awaited<ReturnType<QaServiceEmbedder["embedBatch"]>>> {
+    const results: Awaited<ReturnType<QaServiceEmbedder["embedBatch"]>> = [];
+    for (let start = 0; start < texts.length; ) {
+        let end = start;
+        let chars = 0;
+        while (end < texts.length && end - start < MAX_EMBED_BATCH_CHUNKS) {
+            const nextChars = texts[end]!.length;
+            if (end > start && chars + nextChars > MAX_EMBED_BATCH_CHARS) {
+                break;
+            }
+
+            chars += nextChars;
+            end++;
+        }
+
+        signal?.throwIfAborted();
+        results.push(...(await embedder.embedBatch(texts.slice(start, end))));
+        signal?.throwIfAborted();
+        start = end;
+    }
+
+    return results;
+}
+
 export class QaService {
     constructor(
         private readonly db: YoutubeDatabase,
@@ -83,13 +153,21 @@ export class QaService {
         private readonly deps: QaServiceDeps = DEFAULT_QA_DEPS
     ) {}
 
+    async resolveEmbeddingIdentity(overrides: { provider?: string; model?: string } = {}): Promise<EmbeddingIdentity> {
+        const configured = parseProviderSpec(resolveAiSpecForTask(await this.config.getAll(), "embed"));
+        const provider = overrides.provider ?? configured.provider;
+        const model = overrides.model ?? configured.model;
+
+        return { provider, model, bucket: embeddingBucket({ provider, model }) };
+    }
+
     async index(opts: IndexOpts): Promise<IndexResult> {
         const sources = opts.sources ?? ["transcript"];
-        const embedProvider = parseProviderSpec(resolveAiSpecForTask(await this.config.getAll(), "embed")).provider;
-        const modelId = opts.model ?? DEFAULT_MODEL_ID;
+        const embedding = await this.resolveEmbeddingIdentity({ provider: opts.provider, model: opts.model });
+        const modelId = embedding.bucket;
         const embedder = await this.deps.createEmbedder({
-            provider: opts.provider ?? embedProvider,
-            model: opts.model,
+            provider: embedding.provider,
+            model: embedding.model,
         });
 
         try {
@@ -97,8 +175,8 @@ export class QaService {
             const recordEmbedUsage = () =>
                 recordYoutubeUsage({
                     action: "qa:embed",
-                    provider: opts.provider ?? embedProvider ?? "default",
-                    model: modelId,
+                    provider: embedding.provider ?? "default",
+                    model: embedding.model ?? "default",
                     scope: opts.videoId,
                     videoId: opts.videoId,
                 });
@@ -113,7 +191,11 @@ export class QaService {
                 if (opts.forceReindex || !this.db.hasQaChunks(opts.videoId, modelId, "transcript")) {
                     opts.signal?.throwIfAborted();
                     const chunks = chunkTranscript(transcript);
-                    const vectors = await embedder.embedBatch(chunks.map((chunk) => chunk.text));
+                    const vectors = await embedTextsInBatches(
+                        embedder,
+                        chunks.map((chunk) => chunk.text),
+                        opts.signal
+                    );
                     opts.signal?.throwIfAborted();
                     // Validate every embedding BEFORE touching the stored index so a
                     // missing vector can't leave a half-replaced set behind.
@@ -127,22 +209,22 @@ export class QaService {
                         return { chunk, vector };
                     });
                     await recordEmbedUsage();
-                    // Atomic-ish replace: drop this source's prior index, then insert
-                    // the fresh set. Shorter re-chunks no longer leave stale rows.
-                    this.db.deleteQaChunks(opts.videoId, "transcript", modelId);
-
-                    for (let i = 0; i < rows.length; i++) {
-                        this.db.upsertQaChunk({
+                    opts.signal?.throwIfAborted();
+                    this.db.replaceQaChunks(
+                        opts.videoId,
+                        "transcript",
+                        modelId,
+                        rows.map((row, i) => ({
                             videoId: opts.videoId,
                             chunkIdx: i,
-                            text: rows[i].chunk.text,
-                            startSec: rows[i].chunk.startSec,
-                            endSec: rows[i].chunk.endSec,
-                            embedding: rows[i].vector.vector,
+                            text: row.chunk.text,
+                            startSec: row.chunk.startSec,
+                            endSec: row.chunk.endSec,
+                            embedding: row.vector.vector,
                             embedderModel: modelId,
                             source: "transcript",
-                        });
-                    }
+                        }))
+                    );
 
                     indexed += rows.length;
                 }
@@ -153,7 +235,13 @@ export class QaService {
                     opts.signal?.throwIfAborted();
                     const comments = this.db.getComments(opts.videoId);
                     const chunks = chunkComments(comments);
-                    const vectors = chunks.length ? await embedder.embedBatch(chunks.map((chunk) => chunk.text)) : [];
+                    const vectors = chunks.length
+                        ? await embedTextsInBatches(
+                              embedder,
+                              chunks.map((chunk) => chunk.text),
+                              opts.signal
+                          )
+                        : [];
                     opts.signal?.throwIfAborted();
                     const rows = chunks.map((chunk, i) => {
                         const vector = vectors[i];
@@ -169,21 +257,21 @@ export class QaService {
                         await recordEmbedUsage();
                     }
 
-                    // Replace unconditionally — an empty result now clears prior
-                    // comment chunks instead of leaving them orphaned.
-                    this.db.deleteQaChunks(opts.videoId, "comments", modelId);
-
-                    for (let i = 0; i < rows.length; i++) {
-                        this.db.upsertQaChunk({
+                    opts.signal?.throwIfAborted();
+                    this.db.replaceQaChunks(
+                        opts.videoId,
+                        "comments",
+                        modelId,
+                        rows.map((row, i) => ({
                             videoId: opts.videoId,
                             chunkIdx: COMMENT_CHUNK_IDX_BASE + i,
-                            text: rows[i].chunk.text,
-                            embedding: rows[i].vector.vector,
+                            text: row.chunk.text,
+                            embedding: row.vector.vector,
                             embedderModel: modelId,
                             source: "comments",
-                            sourceRef: rows[i].chunk.rootCommentIds.join(","),
-                        });
-                    }
+                            sourceRef: row.chunk.rootCommentIds.join(","),
+                        }))
+                    );
 
                     indexed += rows.length;
                 }
@@ -200,14 +288,10 @@ export class QaService {
             throw new Error("ask: at least one videoId required");
         }
 
-        const provider = await this.config.get("provider");
-        // Provider resolution is asymmetric: index() uses resolveAiSpecForTask(),
-        // while ask() reads config.provider.embed directly.
-        //
-        // `model` must be forwarded: retrieval filters chunks by `opts.model`, so
-        // omitting it here embedded the query with the default model and then scored
-        // it against vectors another model wrote — comparing two different spaces.
-        const embedder = await this.deps.createEmbedder({ provider: provider.embed, model: opts.model });
+        opts.signal?.throwIfAborted();
+
+        const embedding = await this.resolveEmbeddingIdentity({ model: opts.model });
+        const embedder = await this.deps.createEmbedder({ provider: embedding.provider, model: embedding.model });
 
         try {
             const sources = opts.sources ?? ["transcript"];
@@ -226,33 +310,41 @@ export class QaService {
                 }
             }
             const topK = opts.topK ?? TOP_K_DEFAULT;
+            opts.signal?.throwIfAborted();
             const questionEmbedding = await embedder.embed(opts.question);
+            opts.signal?.throwIfAborted();
             const qVec = questionEmbedding.vector;
-            const scored = opts.videoIds
-                // Scope retrieval to the embedder model ask() embeds the question
-                // with — same-dimension vectors from a different embedding model
-                // would otherwise silently mix incompatible spaces. The selected
-                // bucket must match the model bucket used by index().
-                .flatMap((videoId) => this.db.listQaChunks(videoId, opts.model ?? DEFAULT_MODEL_ID))
-                .filter((chunk) => sources.includes(chunk.source))
-                .filter((chunk) => chunk.embedding && chunk.embedding.length === qVec.length)
-                .map((chunk) => ({ chunk, score: cosine(qVec, chunk.embedding!) }));
+            const topBySource = new Map<QaSource, RankedChunk[]>(sources.map((source) => [source, []]));
+            let order = 0;
+            for (const videoId of opts.videoIds) {
+                for (const chunk of this.db.listQaChunks(videoId, embedding.bucket, sources)) {
+                    const currentOrder = order++;
+                    if (!chunk.embedding || chunk.embedding.length !== qVec.length) {
+                        continue;
+                    }
+
+                    insertTopKStable(
+                        topBySource.get(chunk.source)!,
+                        {
+                            chunk,
+                            score: cosine(qVec, chunk.embedding),
+                            order: currentOrder,
+                        },
+                        topK
+                    );
+                }
+            }
             // Top-K per selected source, merged; in Both scope transcript hits
             // get a boost (the transcript is the authority, comments add
             // sentiment), then the merged pool is cut back to topK.
             const ranked = sources
-                .flatMap((source) =>
-                    scored
-                        .filter((entry) => entry.chunk.source === source)
-                        .sort((a, b) => b.score - a.score)
-                        .slice(0, topK)
-                )
+                .flatMap((source) => topBySource.get(source) ?? [])
                 .map((entry) =>
                     bothScope && entry.chunk.source === "transcript"
                         ? { ...entry, score: entry.score * BOTH_SCOPE_TRANSCRIPT_BOOST }
                         : entry
                 )
-                .sort((a, b) => b.score - a.score)
+                .sort((a, b) => b.score - a.score || a.order - b.order)
                 .slice(0, topK);
 
             const context = ranked
@@ -305,7 +397,9 @@ export class QaService {
                 providerChoice: opts.providerChoice,
                 streaming: opts.streaming,
                 streamTarget: opts.streamTarget,
+                abortSignal: opts.signal,
             });
+            opts.signal?.throwIfAborted();
             const completedAt = new Date();
             const ids = identifyProviderChoice(opts.providerChoice);
             await recordYoutubeUsage({

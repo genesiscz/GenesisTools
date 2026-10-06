@@ -1,4 +1,4 @@
-import { DEFAULT_MODEL_ID, MAX_LAZY_INDEX_PER_ASK } from "@app/youtube/lib/qa";
+import { MAX_LAZY_INDEX_PER_ASK } from "@app/youtube/lib/qa";
 import type { AskCitation, AskHistoryTurn, QaSource } from "@app/youtube/lib/qa.types";
 import { formatClock, videoUrl } from "@app/youtube/lib/transcript-export";
 import type { VideoId } from "@app/youtube/lib/video.types";
@@ -67,7 +67,9 @@ const DEFAULT_SOURCES: QaSource[] = ["transcript"];
  */
 export async function answerOverVideos(opts: AnswerOverVideosOpts): Promise<AnswerOverVideosResult> {
     const { yt } = opts;
+    opts.signal?.throwIfAborted();
     const sources = opts.sources ?? DEFAULT_SOURCES;
+    const embedding = await yt.qa.resolveEmbeddingIdentity();
     // Eligibility follows the REQUESTED sources, not the transcript alone. A
     // comments-only ask is legitimate — `routes/videos.ts` demands a transcript only
     // when `sources.includes("transcript")` — so partitioning on `getTranscript`
@@ -96,7 +98,7 @@ export async function answerOverVideos(opts: AnswerOverVideosOpts): Promise<Answ
     // chunks (or chunks from another embedder) counted as indexed and was then searched
     // with no usable context. Mirrors the per-source check inside `QaService.index()`.
     const needsIndex = usable.filter((videoId) =>
-        sources.some((source) => !yt.db.hasQaChunks(videoId, DEFAULT_MODEL_ID, source))
+        sources.some((source) => !yt.db.hasQaChunks(videoId, embedding.bucket, source))
     );
     // Default to a BUDGET, not "everything". A channel scope can reach thousands
     // of stored transcripts, and defaulting to all of them made a single
@@ -144,6 +146,7 @@ export async function answerOverVideos(opts: AnswerOverVideosOpts): Promise<Answ
         phase: "answer",
         message: `asking ${opts.providerChoice.provider.name}/${opts.providerChoice.model.id} over ${searchedVideoIds.length} video(s)`,
     });
+    opts.signal?.throwIfAborted();
     const result = await yt.qa.ask({
         videoIds: searchedVideoIds,
         question: opts.question,
@@ -156,7 +159,9 @@ export async function answerOverVideos(opts: AnswerOverVideosOpts): Promise<Answ
         presetInstructions: opts.presetInstructions,
         crossVideo,
         history: opts.history,
+        signal: opts.signal,
     });
+    opts.signal?.throwIfAborted();
     logger.info(
         {
             videos: searchedVideoIds.length,

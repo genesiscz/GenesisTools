@@ -45,6 +45,7 @@ export interface AskOpts {
     };
     /** Earlier turns of an ask session, oldest first, so follow-ups can refer back. */
     history?: AskHistoryTurn[];
+    signal?: AbortSignal;
 }
 
 export interface AskHistoryTurn {

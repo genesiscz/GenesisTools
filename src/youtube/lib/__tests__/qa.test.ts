@@ -4,7 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { YoutubeConfig } from "@app/youtube/lib/config";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
-import { chunkTranscript, cosine, QaService } from "@app/youtube/lib/qa";
+import {
+    chunkTranscript,
+    cosine,
+    embeddingBucket,
+    embedTextsInBatches,
+    insertTopKStable,
+    MAX_EMBED_BATCH_CHARS,
+    MAX_EMBED_BATCH_CHUNKS,
+    QaService,
+    type RankedChunk,
+} from "@app/youtube/lib/qa";
 import type { QaServiceDeps } from "@app/youtube/lib/qa.types";
 
 const createEmbedderCalls: unknown[] = [];
@@ -38,21 +48,22 @@ describe("QaService", () => {
 
             await expect(service.index({ videoId: "abc123def45", model: "nomic" })).resolves.toEqual({
                 indexed: 1,
-                modelId: "nomic",
+                modelId: embeddingBucket({ provider: "ollama", model: "nomic" }),
             });
             expect(createEmbedderCalls).toEqual([{ provider: "ollama", model: "nomic" }]);
             expect(embedBatchCalls).toEqual([["alpha beta"]]);
-            expect(db.listQaChunks("abc123def45", "nomic")).toMatchObject([
+            const bucket = embeddingBucket({ provider: "ollama", model: "nomic" });
+            expect(db.listQaChunks("abc123def45", bucket)).toMatchObject([
                 {
                     videoId: "abc123def45",
                     chunkIdx: 0,
                     text: "alpha beta",
                     startSec: 0,
                     endSec: 20,
-                    embedderModel: "nomic",
+                    embedderModel: bucket,
                 },
             ]);
-            expect(db.listQaChunks("abc123def45", "nomic")[0].embedding).toEqual(new Float32Array([1, 0]));
+            expect(db.listQaChunks("abc123def45", bucket)[0].embedding).toEqual(new Float32Array([1, 0]));
             expect(disposeCalls).toHaveLength(1);
         } finally {
             db.close();
@@ -82,6 +93,144 @@ describe("QaService", () => {
 
             expect(matching.citations).not.toHaveLength(0);
             expect(defaultBucket.citations).toHaveLength(0);
+        } finally {
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("uses the same mapping-only embedding provider and model for indexing and asking", async () => {
+        const { db, config, dir } = await makeFixture();
+
+        try {
+            await config.update({
+                provider: { embed: "legacy-provider" },
+                ai: [{ provider: "mapped-provider", model: "mapped-model", for: ["embed"] }],
+            });
+            const service = new QaService(db, config, makeDeps());
+            const providerChoice = { provider: { type: "test" }, model: { id: "model" } } as never;
+            const bucket = embeddingBucket({ provider: "mapped-provider", model: "mapped-model" });
+
+            await service.index({ videoId: "abc123def45" });
+            await service.ask({ videoIds: ["abc123def45"], question: "What matters?", providerChoice });
+
+            expect(createEmbedderCalls).toEqual([
+                { provider: "mapped-provider", model: "mapped-model" },
+                { provider: "mapped-provider", model: "mapped-model" },
+            ]);
+            expect(db.hasQaChunks("abc123def45", bucket, "transcript")).toBe(true);
+        } finally {
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("rejects an aborted ask before inference and forwards live cancellation to the LLM", async () => {
+        const { db, config, dir } = await makeFixture();
+        const providerChoice = { provider: { type: "test" }, model: { id: "model" } } as never;
+
+        try {
+            db.upsertQaChunk({
+                videoId: "abc123def45",
+                chunkIdx: 0,
+                text: "relevant chunk",
+                embedding: new Float32Array([1, 0]),
+                embedderModel: "default",
+            });
+            const alreadyAborted = new AbortController();
+            alreadyAborted.abort(new Error("cancelled before ask"));
+            const service = new QaService(db, config, makeDeps());
+
+            await expect(
+                service.ask({
+                    videoIds: ["abc123def45"],
+                    question: "What matters?",
+                    providerChoice,
+                    signal: alreadyAborted.signal,
+                })
+            ).rejects.toThrow("cancelled before ask");
+            expect(llmCalls).toHaveLength(0);
+
+            const duringCall = new AbortController();
+            const cancellingDeps = makeDeps();
+            cancellingDeps.callLLM = async (opts) => {
+                llmCalls.push(opts);
+                duringCall.abort(new Error("cancelled during ask"));
+                return { content: "late answer" };
+            };
+            const cancellingService = new QaService(db, config, cancellingDeps);
+            await expect(
+                cancellingService.ask({
+                    videoIds: ["abc123def45"],
+                    question: "What matters?",
+                    providerChoice,
+                    signal: duringCall.signal,
+                })
+            ).rejects.toThrow("cancelled during ask");
+            expect(llmCalls[0]).toMatchObject({ abortSignal: duringCall.signal });
+        } finally {
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("publishes a replacement atomically and leaves the old index intact on cancellation or invalid rows", async () => {
+        const { db, config, dir } = await makeFixture();
+
+        try {
+            db.upsertQaChunk({
+                videoId: "abc123def45",
+                chunkIdx: 0,
+                text: "old complete index",
+                embedding: new Float32Array([1, 0]),
+                embedderModel: "default",
+            });
+            expect(() =>
+                db.replaceQaChunks("abc123def45", "transcript", "default", [
+                    {
+                        videoId: "abc123def45",
+                        chunkIdx: 0,
+                        text: "wrong bucket",
+                        embedding: new Float32Array([0, 1]),
+                        embedderModel: "other",
+                    },
+                ])
+            ).toThrow("every row must match");
+            expect(db.listQaChunks("abc123def45", "default")[0]?.text).toBe("old complete index");
+
+            const controller = new AbortController();
+            const deps = makeDeps();
+            deps.createEmbedder = async () => ({
+                embed: async () => ({ vector: new Float32Array([1, 0]), dimensions: 2 }),
+                embedBatch: async () => {
+                    controller.abort(new Error("cancel before publish"));
+                    return [{ vector: new Float32Array([0, 1]), dimensions: 2 }];
+                },
+                dispose: () => {},
+            });
+            const service = new QaService(db, config, deps);
+            await expect(
+                service.index({ videoId: "abc123def45", forceReindex: true, signal: controller.signal })
+            ).rejects.toThrow("cancel before publish");
+            expect(db.listQaChunks("abc123def45", "default")[0]?.text).toBe("old complete index");
+
+            db.upsertQaChunk({
+                videoId: "abc123def45",
+                chunkIdx: 1,
+                text: "stale second row",
+                embedding: new Float32Array([0, 1]),
+                embedderModel: "default",
+            });
+            db.replaceQaChunks("abc123def45", "transcript", "default", [
+                {
+                    videoId: "abc123def45",
+                    chunkIdx: 0,
+                    text: "new shorter index",
+                    embedding: new Float32Array([1, 1]),
+                    embedderModel: "default",
+                },
+            ]);
+            expect(db.listQaChunks("abc123def45", "default").map((row) => row.text)).toEqual(["new shorter index"]);
         } finally {
             db.close();
             await rm(dir, { recursive: true, force: true });
@@ -248,6 +397,70 @@ describe("cosine", () => {
     it("scores identical and orthogonal vectors", () => {
         expect(cosine(new Float32Array([1, 0]), new Float32Array([1, 0]))).toBe(1);
         expect(cosine(new Float32Array([1, 0]), new Float32Array([0, 1]))).toBe(0);
+    });
+});
+
+describe("bounded QA ranking", () => {
+    it("matches stable full-sort winners while retaining only K entries", () => {
+        const entries: RankedChunk[] = Array.from({ length: 10_000 }, (_, order) => ({
+            chunk: {
+                id: order,
+                videoId: "abc123def45",
+                chunkIdx: order,
+                text: `chunk ${order}`,
+                startSec: null,
+                endSec: null,
+                embedding: null,
+                embeddingDims: null,
+                embedderModel: "default",
+                createdAt: "2026-01-01T00:00:00.000Z",
+                source: "transcript",
+                sourceRef: null,
+            },
+            score: order % 17,
+            order,
+        }));
+        const expected = [...entries]
+            .sort((a, b) => b.score - a.score || a.order - b.order)
+            .slice(0, 8)
+            .map((entry) => entry.chunk.chunkIdx);
+        const top: RankedChunk[] = [];
+        let maxRetained = 0;
+        for (const entry of entries) {
+            insertTopKStable(top, entry, 8);
+            maxRetained = Math.max(maxRetained, top.length);
+        }
+
+        expect(top.map((entry) => entry.chunk.chunkIdx)).toEqual(expected);
+        expect(maxRetained).toBe(8);
+    });
+});
+
+describe("bounded embedding batches", () => {
+    it("caps provider payloads while preserving vector order", async () => {
+        const calls: string[][] = [];
+        const texts = Array.from({ length: 100 }, (_, index) => `${index}:`.padEnd(6_000, "x"));
+        const vectors = await embedTextsInBatches(
+            {
+                embed: async () => ({ vector: new Float32Array(), dimensions: 0 }),
+                embedBatch: async (batch) => {
+                    calls.push(batch);
+                    return batch.map((text) => ({
+                        vector: new Float32Array([Number(text.slice(0, text.indexOf(":")))]),
+                        dimensions: 1,
+                    }));
+                },
+                dispose: () => {},
+            },
+            texts
+        );
+
+        expect(Math.max(...calls.map((batch) => batch.length))).toBeLessThanOrEqual(MAX_EMBED_BATCH_CHUNKS);
+        expect(
+            Math.max(...calls.map((batch) => batch.reduce((sum, text) => sum + text.length, 0)))
+        ).toBeLessThanOrEqual(MAX_EMBED_BATCH_CHARS);
+        expect(vectors.map((result) => result.vector[0])).toEqual(Array.from({ length: 100 }, (_, index) => index));
+        expect(calls.length).toBeGreaterThan(1);
     });
 });
 

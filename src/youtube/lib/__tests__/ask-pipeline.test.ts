@@ -64,6 +64,24 @@ function seedChunk(videoId: VideoId, opts: { model?: string; source?: "transcrip
 }
 
 describe("answerOverVideos index gating", () => {
+    it("rejects an already-aborted cached ask before calling the answer service", async () => {
+        const videoId = seedVideo("vidAbort001", "Cancelled");
+        seedChunk(videoId);
+        const controller = new AbortController();
+        controller.abort(new Error("cancelled"));
+
+        await expect(
+            answerOverVideos({
+                yt,
+                videoIds: [videoId],
+                question: "what?",
+                providerChoice,
+                signal: controller.signal,
+            })
+        ).rejects.toThrow("cancelled");
+        expect(asked).toHaveLength(0);
+    });
+
     it("skips indexing when the requested source already has chunks in the default model bucket", async () => {
         const videoId = seedVideo("vidIndexed01", "Indexed");
         seedChunk(videoId);

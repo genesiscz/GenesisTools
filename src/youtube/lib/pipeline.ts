@@ -141,12 +141,14 @@ export class Pipeline {
     }
 
     cancelJob(id: number): void {
-        this.db.cancelJob(id);
         const controller = this.jobAborts.get(id);
 
         if (controller) {
             controller.abort(new Error(`job ${id} cancelled`));
         }
+
+        this.db.cancelJob(id);
+        this.db.releaseJobCreditHold(id);
 
         this.emit({ type: "job:cancelled", jobId: id });
     }
@@ -445,7 +447,7 @@ export class Pipeline {
 
             if (holdId !== null) {
                 try {
-                    this.db.releaseHold(holdId);
+                    this.db.releaseHoldIfHeld(holdId);
                 } catch (releaseError) {
                     logger.warn({ err: releaseError, jobId: job.id, holdId }, "youtube pipeline: release hold failed");
                 }

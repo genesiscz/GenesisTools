@@ -36,6 +36,7 @@ const DEFAULT_YOUTUBE_DEPS: YoutubeDeps = {
     listChannelVideos,
     dumpVideoMetadata,
     fetchComments,
+    resolveProviderChoice,
 };
 
 const DEFAULT_MAX_COMMENTS = 100;
@@ -526,7 +527,7 @@ export class Youtube {
                 const videoId = ctx.job.target as VideoId;
 
                 try {
-                    const providerChoice = await resolveProviderChoice({
+                    const providerChoice = await this.deps.resolveProviderChoice({
                         provider: typeof params.provider === "string" ? params.provider : undefined,
                         model: typeof params.model === "string" ? params.model : undefined,
                         fallbackSpec: resolveAiSpecForTask(await this.config.getAll(), "summary"),
@@ -674,7 +675,7 @@ export class Youtube {
 
                 try {
                     ctx.onProgress(0.05, "Indexing transcript");
-                    const providerChoice = await resolveProviderChoice({
+                    const providerChoice = await this.deps.resolveProviderChoice({
                         provider: typeof params.provider === "string" ? params.provider : undefined,
                         model: typeof params.model === "string" ? params.model : undefined,
                         fallbackSpec: resolveAiSpecForTask(await this.config.getAll(), "qa"),
@@ -694,7 +695,10 @@ export class Youtube {
                         presetInstructions,
                         sources,
                         lang,
+                        signal: ctx.signal,
                     });
+
+                    ctx.signal.throwIfAborted();
 
                     if (ctx.job.userId !== null) {
                         this.db.insertQaHistory({
@@ -711,12 +715,13 @@ export class Youtube {
                         });
                     }
 
+                    ctx.signal.throwIfAborted();
                     if (holdId !== null) {
                         this.db.commitHold(holdId);
                     }
                 } catch (error) {
                     if (holdId !== null) {
-                        this.db.releaseHold(holdId);
+                        this.db.releaseHoldIfHeld(holdId);
                     }
 
                     throw error;
@@ -739,7 +744,7 @@ export class Youtube {
                 }
 
                 const params = report.params ?? {};
-                const providerChoice = await resolveProviderChoice({
+                const providerChoice = await this.deps.resolveProviderChoice({
                     provider: typeof params.provider === "string" ? params.provider : undefined,
                     model: typeof params.model === "string" ? params.model : undefined,
                 });

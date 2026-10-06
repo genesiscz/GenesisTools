@@ -123,16 +123,28 @@ describe("Pipeline", () => {
             },
         });
         const pipeline = new Pipeline(db, config, { pollMs: 1, handlers });
+        const user = db.createUser({ email: "cancel@example.com", passwordHash: "hash", apiToken: "ytu_cancel" });
+        db.grantCredits(user.id, 20, "register-grant");
+        const hold = db.reserveCredits({ userId: user.id, amount: 10, reason: "ask" });
 
         try {
             await pipeline.start();
-            const job = pipeline.enqueue({ targetKind: "video", target: "live-cancel", stages: ["metadata"] }).job!;
+            const job = pipeline.enqueue({
+                targetKind: "video",
+                target: "live-cancel",
+                stages: ["metadata"],
+                userId: user.id,
+                params: { holdId: hold.holdId },
+            }).job!;
             await waitFor(() => observedSignal !== null);
             pipeline.cancelJob(job.id);
             await waitFor(() => abortObserved);
 
             expect(abortObserved).toBe(true);
             expect(observedSignal!.aborted).toBe(true);
+            expect(db.getCreditHold(hold.holdId)?.status).toBe("released");
+            expect(db.releaseHoldIfHeld(hold.holdId)).toBe(false);
+            expect(db.getUserById(user.id)?.credits).toBe(20);
         } finally {
             await pipeline.stop();
             db.close();

@@ -168,6 +168,85 @@ describe("Youtube", () => {
         }
     });
 
+    it("cancels a production QA stage without history or a committed credit hold", async () => {
+        const { yt, db, config, dir } = await makeFixture({
+            resolveProviderChoice: async () =>
+                ({ provider: { name: "fixture" }, model: { id: "fixture-model" } }) as never,
+        });
+        db.upsertChannel({ handle: "@fixture" });
+        db.upsertVideo({ id: "vidCancel01", channelHandle: "@fixture", title: "Cancelled answer" });
+        db.saveTranscript({
+            videoId: "vidCancel01",
+            lang: "en",
+            source: "captions",
+            text: "fixture transcript",
+            segments: [{ text: "fixture transcript", start: 0, end: 2 }],
+        });
+        db.upsertQaChunk({
+            videoId: "vidCancel01",
+            chunkIdx: 0,
+            text: "fixture transcript",
+            embedding: new Float32Array([1, 0]),
+            embedderModel: "default",
+        });
+        const user = db.createUser({ email: "qa-cancel@example.com", passwordHash: "hash", apiToken: "ytu_qacancel" });
+        db.grantCredits(user.id, 20, "register-grant");
+        const hold = db.reserveCredits({ userId: user.id, amount: 10, reason: "ask" });
+        let entered!: () => void;
+        const enteredAsk = new Promise<void>((resolve) => {
+            entered = resolve;
+        });
+        let release!: () => void;
+        const answerGate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let receivedSignal: AbortSignal | undefined;
+        yt.qa.ask = async (opts) => {
+            receivedSignal = opts.signal;
+            entered();
+            await answerGate;
+            return { answer: "late answer", citations: [] };
+        };
+        await config.update({ workers: { pollMs: 0, idleTeardownMs: 60_000 } });
+
+        try {
+            await yt.pipeline.start();
+            const job = yt.pipeline.enqueue({
+                targetKind: "video",
+                target: "vidCancel01",
+                stages: ["qa"],
+                userId: user.id,
+                params: {
+                    question: "What happened?",
+                    provider: "local-hf",
+                    model: "fixture-model",
+                    holdId: hold.holdId,
+                    creditCost: 10,
+                },
+            }).job!;
+            await enteredAsk;
+            yt.pipeline.cancelJob(job.id);
+            release();
+            await waitFor(() => yt.pipeline.getJob(job.id)?.status === "cancelled");
+
+            expect(receivedSignal?.aborted).toBe(true);
+            expect(db.listQaHistory(user.id)).toHaveLength(0);
+            expect(db.getCreditHold(hold.holdId)?.status).toBe("released");
+            expect(db.getUserById(user.id)?.credits).toBe(20);
+            const releases = db
+                .getDb()
+                .query<{ count: number }, [number]>(
+                    "SELECT COUNT(*) AS count FROM credit_ledger WHERE user_id = ? AND reason LIKE 'hold-release:%'"
+                )
+                .get(user.id);
+            expect(releases?.count).toBe(1);
+        } finally {
+            release();
+            await yt.dispose();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
     it("dispose closes the database when the pipeline was never started", async () => {
         const { yt, db, dir } = await makeFixture();
 

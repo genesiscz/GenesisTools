@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { YoutubeDatabase } from "@app/youtube/lib/db";
 import { InsufficientCreditsError } from "@app/youtube/lib/users.types";
 
@@ -157,5 +160,68 @@ describe("releaseStaleHolds", () => {
 
     it("is a no-op when nothing is held", () => {
         expect(db.releaseStaleHolds()).toBe(0);
+    });
+});
+
+describe("reconcileJobCreditHolds", () => {
+    it("preserves a pending job reservation across reopen and releases only orphaned or terminal holds", () => {
+        const dbPath = join(mkdtempSync(join(tmpdir(), "youtube-hold-recovery-")), "youtube.db");
+        let reopened = new YoutubeDatabase(dbPath);
+        const user = reopened.createUser({ email: "queue@example.com", passwordHash: "hash", apiToken: "ytu_queue" });
+        reopened.grantCredits(user.id, 100, "register-grant");
+        const pending = reopened.reserveCredits({ userId: user.id, amount: 10, reason: "ask" });
+        const pendingJob = reopened.enqueueJob({
+            targetKind: "video",
+            target: "vidPending1",
+            stages: ["qa"],
+            userId: user.id,
+            params: { holdId: pending.holdId, question: "What?" },
+        }).job;
+        const owner = reopened
+            .getDb()
+            .query<{ credit_hold_id: number | null }, [number]>("SELECT credit_hold_id FROM jobs WHERE id = ?")
+            .get(pendingJob.id);
+        expect(owner?.credit_hold_id).toBe(pending.holdId);
+        const interrupted = reopened.reserveCredits({ userId: user.id, amount: 10, reason: "ask" });
+        const interruptedJob = reopened.enqueueJob({
+            targetKind: "video",
+            target: "vidRunning01",
+            stages: ["qa"],
+            userId: user.id,
+            params: { holdId: interrupted.holdId, question: "What?" },
+        }).job;
+        reopened.getDb().run("UPDATE jobs SET status = 'running' WHERE id = ?", [interruptedJob.id]);
+        reopened.close();
+
+        reopened = new YoutubeDatabase(dbPath);
+        expect(reopened.reconcileJobCreditHolds()).toEqual({ preserved: 2, released: 0 });
+        expect(reopened.getCreditHold(pending.holdId)?.status).toBe("held");
+        expect(reopened.getCreditHold(interrupted.holdId)?.status).toBe("held");
+        expect(reopened.markInterruptedJobsForRequeue()).toBe(1);
+        reopened.commitHold(pending.holdId);
+        reopened.commitHold(interrupted.holdId);
+        expect(reopened.getCreditHold(pending.holdId)?.status).toBe("committed");
+
+        const orphan = reopened.reserveCredits({ userId: user.id, amount: 5, reason: "ask" });
+        const terminal = reopened.reserveCredits({ userId: user.id, amount: 5, reason: "ask" });
+        const terminalJob = reopened.enqueueJob({
+            targetKind: "video",
+            target: "vidFailed001",
+            stages: ["qa"],
+            userId: user.id,
+            params: { holdId: terminal.holdId, question: "What?" },
+        }).job;
+        reopened.getDb().run("UPDATE jobs SET status = 'failed' WHERE id = ?", [terminalJob.id]);
+
+        expect(reopened.reconcileJobCreditHolds()).toEqual({ preserved: 0, released: 2 });
+        expect(reopened.getCreditHold(orphan.holdId)?.status).toBe("released");
+        expect(reopened.getCreditHold(terminal.holdId)?.status).toBe("released");
+        expect(reopened.reconcileJobCreditHolds()).toEqual({ preserved: 0, released: 0 });
+        const balance = reopened
+            .getDb()
+            .query<{ credits: number }, [number]>("SELECT credits FROM users WHERE id = ?")
+            .get(user.id);
+        expect(balance?.credits).toBe(80);
+        reopened.close();
     });
 });
