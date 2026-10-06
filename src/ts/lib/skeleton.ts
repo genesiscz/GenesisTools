@@ -523,8 +523,6 @@ export function parseSource(filePath: string, text: string): ts.SourceFile {
     return ts.createSourceFile(filePath, text, ts.ScriptTarget.Latest, true);
 }
 
-const LINE_COMMENT = /\/\/[^\n]*/g;
-const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//g;
 /**
  * Stands in for the declaration's own name. It must be one character, must not be a control
  * character, and must not be an identifier character, so that it tokenises on its own and
@@ -542,19 +540,56 @@ const NAME_PLACEHOLDER = "·";
  * identifier, so two genuinely different functions do not collapse into one.
  */
 export function normalizeDeclaration(text: string, name: string): string {
-    const withoutComments = text.replace(BLOCK_COMMENT, " ").replace(LINE_COMMENT, " ");
-    // A name of `<anonymous>` or `*` is not an identifier, so it would build a broken pattern.
-    // `$` is legal in a name and special in a pattern, and `\b` treats it as a non-word character:
-    // `$el` was never blanked, and `foo` was blanked inside `$foo`. The name is escaped and bounded
-    // by "not an identifier character" on both sides instead.
-    const blanked = /^[A-Za-z_$][\w$]*$/.test(name)
-        ? withoutComments.replace(
-              new RegExp(`(?<![\\w$])${name.replace(/\$/g, "\\$")}(?![\\w$])`, "g"),
-              NAME_PLACEHOLDER
-          )
-        : withoutComments;
+    const fileName = "declaration.ts";
+    let source = parseSource(fileName, text);
+    let offset = 0;
+    const options: ts.CompilerOptions = { noLib: true, noResolve: true };
+    const host: ts.CompilerHost = {
+        getSourceFile: (file) => (file === fileName ? source : undefined),
+        getDefaultLibFileName: () => "",
+        writeFile: () => undefined,
+        getCurrentDirectory: () => "",
+        getDirectories: () => [],
+        fileExists: (file) => file === fileName,
+        readFile: (file) => (file === fileName ? source.text : undefined),
+        getCanonicalFileName: (file) => file,
+        useCaseSensitiveFileNames: () => true,
+        getNewLine: () => "\n",
+    };
+    let program = ts.createProgram([fileName], options, host);
 
-    return blanked.replace(/\s+/g, " ").trim();
+    if (program.getSyntacticDiagnostics(source).length) {
+        const prefix = "class __Declaration__ {\n";
+        const wrapped = parseSource(fileName, `${prefix}${text}\n}`);
+        source = wrapped;
+        program = ts.createProgram([fileName], options, host);
+        offset = prefix.length;
+    }
+
+    const checker = program.getTypeChecker();
+    const tokens: ts.Node[] = [];
+    const collect = (node: ts.Node): void => {
+        const children = node.getChildren(source);
+        if (children.length) {
+            for (const child of children) {
+                collect(child);
+            }
+        } else if (node.getStart(source) >= offset && node.end <= offset + text.length && node.getWidth(source) > 0) {
+            tokens.push(node);
+        }
+    };
+    collect(source);
+    const declared = tokens.find((node) => ts.isIdentifier(node) && node.text === name);
+    const symbol = declared ? checker.getSymbolAtLocation(declared) : undefined;
+    return tokens
+        .map((node) => {
+            if (symbol && ts.isIdentifier(node) && checker.getSymbolAtLocation(node) === symbol) {
+                return NAME_PLACEHOLDER;
+            }
+
+            return node.getText(source);
+        })
+        .join(" ");
 }
 
 export function hashDeclaration(text: string, name: string): string {

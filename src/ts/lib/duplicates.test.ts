@@ -45,6 +45,33 @@ describe("normalizeDeclaration", () => {
         expect(hashDeclaration(left, "a")).not.toBe(hashDeclaration(right, "b"));
     });
 
+    it("preserves comment-looking literal values in hashes and recommendations", () => {
+        const values = [
+            ['"https://one.invalid/"', '"https://two.invalid/"'],
+            ['"/* one */"', '"/* two */"'],
+            [String.raw`/https:\/\/one/`, String.raw`/https:\/\/two/`],
+            ["`https://one/${1}`", "`https://two/${1}`"],
+            ['"alpha"', '"beta"'],
+            ['"a  b"', '"a b"'],
+        ];
+        for (const [leftValue, rightValue] of values) {
+            const left = `function alpha() {\n    return ${leftValue};\n}`;
+            const right = `function beta() {\n    return ${rightValue};\n}`;
+            expect(hashDeclaration(left, "alpha")).not.toBe(hashDeclaration(right, "beta"));
+            const report = findDuplicates([entry("one.ts", left), entry("two.ts", right)], { recommend: true });
+            expect(report.groups.filter((group) => group.reason === "identical")).toEqual([]);
+        }
+    });
+
+    it("does not blank unrelated property or shadowed identifiers with the declaration name", () => {
+        expect(hashDeclaration("function alpha() { return object.alpha; }", "alpha")).not.toBe(
+            hashDeclaration("function beta() { return object.beta; }", "beta")
+        );
+        expect(hashDeclaration("function alpha() { return ((alpha) => alpha)(1); }", "alpha")).not.toBe(
+            hashDeclaration("function beta() { return ((beta) => beta)(1); }", "beta")
+        );
+    });
+
     it("drops comments, so a re-worded doc block is not a difference", () => {
         expect(normalizeDeclaration("// one\nconst a = 1;", "a")).toBe(
             normalizeDeclaration("/* two */\nconst a = 1;", "a")
