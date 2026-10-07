@@ -169,8 +169,14 @@ class FileSecretStore implements SecretStore {
         return this.snapshotReader()(path);
     }
 
+    /**
+     * One vault read for many secrets. With no master key every secret reads as undefined; the
+     * caller caches that projection until `masterKeyGeneration()` moves, and the reader warns once
+     * for the whole projection rather than once per secret.
+     */
     snapshotReader(): (path: string) => string | undefined {
         let snapshot: VaultFile | undefined;
+        let missingKey = 0;
         return (path) => {
             snapshot ??= this.read();
             const entry = snapshot.entries[path];
@@ -180,7 +186,16 @@ class FileSecretStore implements SecretStore {
 
             const key = masterKeySync();
             if (!key) {
-                logger.warn({ path }, "vault secret needs the master key but no rung could supply it synchronously");
+                missingKey++;
+                if (missingKey === 1) {
+                    logger.warn(
+                        { path },
+                        "vault secrets need the master key but no rung could supply it synchronously"
+                    );
+                } else {
+                    logger.debug({ path, count: missingKey }, "vault secret skipped, the master key is missing");
+                }
+
                 return undefined;
             }
 
