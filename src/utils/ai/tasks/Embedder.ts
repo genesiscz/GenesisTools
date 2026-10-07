@@ -103,8 +103,22 @@ export class Embedder {
         return typeof this.provider.embedBatch === "function";
     }
 
+    /**
+     * The model this embedder was created for is the default of every call; an explicit per-call
+     * model still wins. Without it a provider falls back to its own default model, so vectors
+     * would be stored under one model's name while another model produced them.
+     */
+    private withModel(options?: EmbedOptions): EmbedOptions | undefined {
+        if (!this.modelId || options?.model) {
+            return options;
+        }
+
+        return { ...options, model: this.modelId };
+    }
+
     async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult> {
-        return retry(() => this.provider.embed(text, options), {
+        const resolved = this.withModel(options);
+        return retry(() => this.provider.embed(text, resolved), {
             maxAttempts: 3,
             getDelay: RETRY_DELAY,
             shouldRetry: shouldRetryEmbedding,
@@ -120,8 +134,9 @@ export class Embedder {
             return [];
         }
 
+        const resolved = this.withModel(options);
         if (this.provider.embedBatch) {
-            return retry(() => this.provider.embedBatch!(texts, options), {
+            return retry(() => this.provider.embedBatch!(texts, resolved), {
                 maxAttempts: 3,
                 getDelay: RETRY_DELAY,
                 shouldRetry: shouldRetryEmbedding,
@@ -132,7 +147,7 @@ export class Embedder {
         const results: EmbeddingResult[] = [];
 
         for (const t of texts) {
-            const result = await retry(() => this.provider.embed(t, options), {
+            const result = await retry(() => this.provider.embed(t, resolved), {
                 maxAttempts: 3,
                 getDelay: RETRY_DELAY,
                 shouldRetry: shouldRetryEmbedding,

@@ -136,6 +136,32 @@ describe("Embedder batch logic (through Embedder class)", () => {
         emb.dispose();
     });
 
+    test("the model the embedder was created for reaches every provider call, and a per-call model wins", async () => {
+        const seen: Array<string | undefined> = [];
+        const provider: AIEmbeddingProvider = {
+            ...createBatchMockProvider(4),
+            async embed(_text, options) {
+                seen.push(options?.model);
+                return { vector: new Float32Array(4), dimensions: 4 };
+            },
+            async embedBatch(texts, options) {
+                seen.push(options?.model);
+                return texts.map(() => ({ vector: new Float32Array(4), dimensions: 4 }));
+            },
+        };
+        const emb = new (Embedder as unknown as new (p: AIEmbeddingProvider, model?: string) => Embedder)(
+            provider,
+            "custom-model"
+        );
+
+        await emb.embed("a");
+        await emb.embedBatch(["b"]);
+        await emb.embed("c", { model: "explicit" });
+
+        expect(seen).toEqual(["custom-model", "custom-model", "explicit"]);
+        emb.dispose();
+    });
+
     test("supportsBatch reflects provider capability", () => {
         const batch = createEmbedderFromProvider(createBatchMockProvider(768));
         const seq = createEmbedderFromProvider(createSequentialMockProvider(384));
