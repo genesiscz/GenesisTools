@@ -7,8 +7,10 @@
  * `--give` (I review someone else's MR): hunks with line numbers, threads, my drafts, the open MRs
  * this one affects and the gates, as JSON (default), markdown (`--md`), a compact ref view (`--llm`,
  * drill down with `--expand f1,t2`), only a summary on stderr (`--format summary`), or a review
- * proposal skeleton (`--proposal-skeleton`). Read-only on GitLab; git is fetched only by
- * `--impact-source git`. Writes `<tmp>/gitlab-pr-<project>-<host+project hash>-<iid>.{json,md}` unless
+ * proposal skeleton (`--proposal-skeleton`). Read-only on GitLab. Git fetches only into the object
+ * store: `refs/merge-requests/<iid>/head` when a thread's commit is missing from the checkout (both
+ * modes; `--receive --no-anchors` skips it), and every open MR branch with `--impact-source git`.
+ * No local branch, HEAD or working tree changes. Writes `<tmp>/gitlab-pr-<project>-<host+project hash>-<iid>.{json,md}` unless
  * `--out` names the report.
  * The `gt:review-proposal` skill says how to fill the proposal and push it with `tools hub proposal push`.
  *
@@ -263,12 +265,22 @@ async function runReview(iid: string, opts: Options, cmd: Command): Promise<void
         return;
     }
 
+    // `--format` with no value asks, as it does in give mode, instead of falling back to the configured format.
+    const receiveFormat =
+        opts.format === true
+            ? await pickEnum({ values: FETCH_FORMATS, value: true, flag: "--format", mode: "--receive" })
+            : null;
+
+    if (opts.format === true && !receiveFormat) {
+        return;
+    }
+
     const receive: FetchReviewOptions = {
         host: opts.host,
         project: opts.project,
         cwd: opts.cwd,
         out: opts.out,
-        format: typeof opts.format === "string" ? opts.format : opts.json ? "json" : undefined,
+        format: typeof opts.format === "string" ? opts.format : opts.json ? "json" : (receiveFormat ?? undefined),
         md: opts.md,
         contextLines: opts.contextLines,
         anchors: opts.anchors,
@@ -294,7 +306,13 @@ async function withStoredRefs(api: ProjectApi, key: FactsKey, facts: PrReviewFac
     return withIds;
 }
 
-async function pickEnum<T extends string>(values: readonly T[], value: string | true, flag: string): Promise<T | null> {
+async function pickEnum<T extends string>(options: {
+    values: readonly T[];
+    value: string | true;
+    flag: string;
+    mode: "--give" | "--receive";
+}): Promise<T | null> {
+    const { values, value, flag } = options;
     const match = values.find((candidate) => candidate === value);
 
     if (match) {
@@ -309,7 +327,7 @@ async function pickEnum<T extends string>(values: readonly T[], value: string | 
 
     out.log.error(
         suggestEnumFlag(toolCommand("gitlab pr"), flag, values, {
-            subcommand: ["<iid>", "review", "--give"],
+            subcommand: ["<iid>", "review", options.mode],
             given: typeof value === "string" ? value : undefined,
         })
     );
@@ -335,7 +353,7 @@ async function pickFormat(opts: Options, door: ReviewDoor): Promise<Format | nul
         return door.format;
     }
 
-    return pickEnum(FORMATS, value ?? true, "--format");
+    return pickEnum({ values: FORMATS, value: value ?? true, flag: "--format", mode: "--give" });
 }
 
 /** The checkout at `cwd`, or null outside a git repository. */
@@ -428,7 +446,12 @@ async function runPrReview(mrIid: string, opts: Options, door: ReviewDoor): Prom
     const impactSource =
         opts.impactSource === undefined
             ? (await loadConfig()).review.impactSource
-            : await pickEnum(IMPACT_SOURCES, opts.impactSource, "--impact-source");
+            : await pickEnum({
+                  values: IMPACT_SOURCES,
+                  value: opts.impactSource,
+                  flag: "--impact-source",
+                  mode: "--give",
+              });
 
     if (!format || !impactSource) {
         process.exitCode = 1;
