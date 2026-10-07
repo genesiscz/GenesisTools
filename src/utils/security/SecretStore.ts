@@ -6,7 +6,13 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
-import { masterKeyForId, masterKeyForIdSync, masterKeyForVaultWrite, masterKeyGeneration } from "./MasterKey";
+import {
+    masterKeyForId,
+    masterKeyForIdSync,
+    masterKeyForVaultWrite,
+    masterKeyGeneration,
+    masterKeySync,
+} from "./MasterKey";
 import { isSecretPath, isSecureRef, type MaybeSecret, type SecureRef, secureRef } from "./SecureRef";
 import { emptyVault, VAULT_HKDF_SALT, VAULT_VERSION, type VaultEntry, type VaultFile } from "./vault-format";
 
@@ -308,13 +314,12 @@ class FileSecretStore implements SecretStore {
     }
 
     async deleteIf(path: string, expected: string): Promise<boolean> {
-        const master = await masterKey();
         return this.storage.withFileLock({
             file: this.vaultPath(),
             fn: async () => {
                 const vault = this.read();
                 const entry = vault.entries[path];
-                if (!entry || decryptEntry(master, path, entry) !== expected) {
+                if (!entry || decryptEntry(await masterKeyForId(vault.keyId), path, entry) !== expected) {
                     return false;
                 }
 
