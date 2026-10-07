@@ -20,6 +20,18 @@ enum DiffScope: Hashable {
     /// `base` is not in the repo (a PR's recorded base commit that was never fetched).
     case range(base: String, head: String, label: String, fallbackBase: String? = nil)
 
+    /// The commit the new side of the diff is pinned to: a commit, or a range whose head is not a
+    /// name that moves (`HEAD`, a branch). nil for the working-tree scopes.
+    var pinnedHead: String? {
+        switch self {
+        case .commit(let sha, _): return sha
+        case .range(_, let head, _, _):
+            let isCommitID = head.count >= 7 && head.allSatisfy(\.isHexDigit)
+            return isCommitID ? head : nil
+        default: return nil
+        }
+    }
+
     var title: String {
         switch self {
         case .lastTurns(let count): return count == 1 ? "Last Turn" : "Last \(count) Turns"

@@ -378,6 +378,53 @@ final class PRThreadsTests: XCTestCase {
         XCTAssertTrue(doc.rendered(for: files, liveThreads: []).isEmpty)
     }
 
+    /// One live thread with the commit its lines belong to.
+    private func thread(_ id: String, line: Int, outdated: Bool, commit: String?) throws -> PRThread {
+        let sha = commit.map { "\"commitSha\":\"\($0)\"," } ?? ""
+        let json = """
+        {"id":"\(id)","path":"src/cart.ts","side":"additions","line":\(line),\(sha)"outdated":\(outdated),"resolved":false,"resolvable":true,
+         "comments":[{"id":"N\(id)","author":{"name":"Alice","username":"alice"},"bodyMarkdown":"Point","createdAt":"2026-09-20T10:00:00Z","isDraft":false}]}
+        """
+        return try JSONDecoder().decode(PRThread.self, from: Data(json.utf8))
+    }
+
+    func testOnADiffPinnedToACommitOnlyThatCommitsThreadsSitOnLines() throws {
+        let onShown = try thread("A", line: 5, outdated: true, commit: "aaa1111")
+        let moved = try thread("B", line: 40, outdated: false, commit: "bbb2222")
+        // The working-tree scopes keep the old rule.
+        XCTAssertFalse(PRThreadRendering.belongs(onShown, shownHead: nil, prHead: "bbb2222"))
+        XCTAssertTrue(PRThreadRendering.belongs(moved, shownHead: nil, prHead: "bbb2222"))
+        // A proposal's range at aaa1111 after a push to bbb2222: the thread made on aaa1111 is
+        // "outdated" for the PR but its lines are the ones on screen; the moved one's are not.
+        XCTAssertTrue(PRThreadRendering.belongs(onShown, shownHead: "aaa1111ffff", prHead: "bbb2222"))
+        XCTAssertFalse(PRThreadRendering.belongs(moved, shownHead: "aaa1111ffff", prHead: "bbb2222"))
+        // The diff shows the PR's head: every current thread belongs.
+        XCTAssertTrue(PRThreadRendering.belongs(moved, shownHead: "bbb2222", prHead: "bbb2222"))
+        let rendered = PRThreadRendering.rendered([onShown, moved], files: files, shownHead: "aaa1111", prHead: "bbb2222")
+        XCTAssertEqual(rendered.map(\.id), ["live:A"])
+        XCTAssertEqual(rendered.first?.endLine, 5)
+        XCTAssertEqual(DiffScope.range(base: "base000", head: "aaa1111", label: "!7").pinnedHead, "aaa1111")
+        XCTAssertNil(DiffScope.range(base: "origin/main", head: "HEAD", label: "x").pinnedHead)
+        XCTAssertNil(DiffScope.uncommitted.pinnedHead)
+    }
+
+    func testAPushAfterTheProposalKeepsItsCardOnTheProposalsOwnLine() throws {
+        let doc = try proposal(["headSha": "aaa1111", "threads": [[
+            "threadId": "B", "path": "src/cart.ts", "line": 5, "body": "Original point", "author": "alice",
+            "meta": ["verdict": "valid", "proof": "fixture proof"]
+        ]]])
+        // GitLab moved the thread to the new head's line 40 after a push.
+        let live = [try thread("B", line: 40, outdated: false, commit: "bbb2222")]
+        let rows = doc.rendered(for: files, liveThreads: live, shownHead: "aaa1111", prHead: "bbb2222")
+        XCTAssertEqual(rows.map(\.endLine), [5], "the line the proposal read on this very diff")
+        let kept = PRThreadRendering.refresh(rows, with: live, files: files, shownHead: "aaa1111", prHead: "bbb2222", proposalOnShownHead: true)
+        XCTAssertEqual(kept.map(\.endLine), [5])
+        XCTAssertEqual(kept.first?.live?.notes.first?.id, "NB", "the card keeps the live notes and its Reply")
+        // On another commit the proposal's line means nothing: no card.
+        XCTAssertTrue(doc.rendered(for: files, liveThreads: live, shownHead: "ccc3333", prHead: "bbb2222").isEmpty)
+        XCTAssertTrue(PRThreadRendering.refresh(rows, with: live, files: files, shownHead: "ccc3333", prHead: "bbb2222").isEmpty)
+    }
+
     // MARK: proposal → target
 
     private func proposal(_ object: [String: Any]) throws -> ProposalDocument {

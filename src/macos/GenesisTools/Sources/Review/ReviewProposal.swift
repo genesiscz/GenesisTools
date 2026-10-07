@@ -216,16 +216,24 @@ final class ProposalDocument {
         !headSha.isEmpty && headSha == displayedHead && identity == pr
     }
 
-    func rendered(for files: [DiffFile], liveThreads: [PRThread]? = nil) -> [RenderedComment] {
-        renderedThreads(for: files, liveThreads: liveThreads) + renderedDrafts(for: files)
+    /// `shownHead` / `prHead` as in `PRThreadRendering.belongs`.
+    func rendered(for files: [DiffFile], liveThreads: [PRThread]? = nil, shownHead: String? = nil, prHead: String? = nil) -> [RenderedComment] {
+        renderedThreads(for: files, liveThreads: liveThreads, shownHead: shownHead, prHead: prHead) + renderedDrafts(for: files)
     }
 
     /// Existing PR threads, read-only: blue avatar, open / resolved, the agent's verdict below.
-    private func renderedThreads(for files: [DiffFile], liveThreads: [PRThread]?) -> [RenderedComment] {
+    /// A live thread whose lines belong to another head (a push after the proposal) keeps the
+    /// proposal's own line while the diff shows the commit the proposal was read on; on any other
+    /// diff it has no line to sit on.
+    private func renderedThreads(for files: [DiffFile], liveThreads: [PRThread]?, shownHead: String?, prHead: String?) -> [RenderedComment] {
         let live = Dictionary((liveThreads ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let onOwnHead = shownHead.map { PRThreadRendering.sameCommit(headSha, $0) } ?? false
         return threads.compactMap { thread in
-            let current = live[thread.id]
-            if liveThreads != nil && (current == nil || current?.outdated == true) { return nil }
+            let found = live[thread.id]
+            if liveThreads != nil && found == nil { return nil }
+            let placed = found.map { PRThreadRendering.belongs($0, shownHead: shownHead, prHead: prHead) } ?? true
+            if !placed && !onOwnHead { return nil }
+            let current = placed ? found : nil
             let path = current?.path ?? thread.path
             let line = current?.line ?? thread.line
             guard line > 0, let file = files.first(where: { $0.path == path || (current?.oldPath != nil && $0.oldPath == current?.oldPath) }) else { return nil }
@@ -243,7 +251,7 @@ final class ProposalDocument {
                 body: thread.body,
                 author: "@\(thread.author)",
                 when: notes,
-                state: thread.resolved ? "resolved" : "open",
+                state: (found?.resolved ?? thread.resolved) ? "resolved" : "open",
                 remote: true,
                 kind: "thread",
                 severity: nil,

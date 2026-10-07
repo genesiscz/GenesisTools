@@ -8,6 +8,7 @@ import type { CommandRunner } from "@genesiscz/utils/git/origins";
 import type { RepoFacts } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage";
+import { draftDatesFor, stampDraftDates } from "./draft-dates";
 import { findBranchPr, findPrByRef } from "./find";
 import { githubBackend, githubThread } from "./github";
 import { gitlabBackend, gitlabPosition, gitlabThreads } from "./gitlab";
@@ -430,7 +431,7 @@ describe("GitLab position mapping", () => {
             ],
             me: { username: "bob", name: "Bob Example" },
             pr: glPr,
-            draftedAt: "2026-01-03T00:00:00Z",
+            draftedAt: () => "2026-01-03T00:00:00Z",
         });
 
         expect(threads.map((thread) => thread.id)).toEqual(["d-current", "d-old", "draft-51"]);
@@ -1133,5 +1134,40 @@ describe("the review window's argv", () => {
                 answer: fixture.answers[name] ?? { code: "no-pr", error: "not a git checkout" },
             });
         }
+    });
+});
+
+// ─── draft dates ──────────────────────────────────────────────────────────────
+
+describe("GitLab draft dates", () => {
+    const mr = "https://gitlab.example.com/acme/web/-/merge_requests/7";
+    const first = new Date("2026-01-03T10:00:00Z");
+    const later = new Date("2026-01-03T11:30:00Z");
+
+    test("a draft keeps the time it was first seen; a new one gets now; a gone one is dropped", () => {
+        const seen = stampDraftDates({ dates: {}, mr, draftIds: ["50", "51"], now: first });
+        expect(seen.changed).toBe(true);
+
+        const again = stampDraftDates({ dates: seen.dates, mr, draftIds: ["50", "51"], now: later });
+        expect(again.changed).toBe(false);
+        expect(again.byId.get("50")).toBe(first.toISOString());
+
+        const next = stampDraftDates({ dates: again.dates, mr, draftIds: ["51", "52"], now: later });
+        expect(next.changed).toBe(true);
+        expect(next.dates[mr]).toEqual({ "51": first.toISOString(), "52": later.toISOString() });
+
+        const empty = stampDraftDates({ dates: { ...next.dates, other: { "9": "x" } }, mr, draftIds: [], now: later });
+        expect(empty.dates).toEqual({ other: { "9": "x" } });
+    });
+
+    test("the dates survive between reads through the file, and a broken file dates drafts now", async () => {
+        const file = join(mkdtempSync(join(tmpdir(), "draft-dates-")), "dates.json");
+        await draftDatesFor({ mr, draftIds: ["50"], now: first, file });
+        const read = await draftDatesFor({ mr, draftIds: ["50"], now: later, file });
+        expect(read.get("50")).toBe(first.toISOString());
+
+        writeFileSync(file, "{ not json");
+        const broken = await draftDatesFor({ mr, draftIds: ["50"], now: later, file });
+        expect(broken.get("50")).toBe(later.toISOString());
     });
 });

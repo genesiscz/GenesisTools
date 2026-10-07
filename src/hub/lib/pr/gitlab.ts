@@ -14,6 +14,7 @@ import {
     writeTopLevelDraft,
 } from "@app/gitlab/lib/review-drafts";
 import { logger } from "@genesiscz/utils/logger";
+import { draftDatesFor } from "./draft-dates";
 import {
     type DraftAddInput,
     type FoundPr,
@@ -138,8 +139,8 @@ export function gitlabThreads({
     drafts: RawDraft[];
     me: RawUser;
     pr: FoundPr;
-    /** GitLab does not date draft notes; they carry the time they were read. */
-    draftedAt: string;
+    /** GitLab does not date draft notes; the time each was first seen (`draft-dates.ts`). */
+    draftedAt: (draftId: string) => string;
 }): PrThread[] {
     const threads: PrThread[] = [];
     const byId = new Map<string, PrThread>();
@@ -179,7 +180,7 @@ export function gitlabThreads({
             id: String(draft.id),
             author: author(me, pr.author),
             bodyMarkdown: draft.note ?? "",
-            createdAt: draftedAt,
+            createdAt: draftedAt(String(draft.id)),
             isDraft: true,
         };
         const parent = draft.discussion_id ? byId.get(draft.discussion_id) : undefined;
@@ -266,7 +267,18 @@ export function gitlabBackend({ pr, api }: { pr: FoundPr; api: ProjectApi }): Pr
                 restGetPaginated<RawDraft>(api, `${mrPath}/draft_notes`),
                 restGet<RawUser>(api, "/user"),
             ]);
-            const threads = gitlabThreads({ discussions, drafts, me, pr, draftedAt: new Date().toISOString() });
+            const now = new Date().toISOString();
+            const dates = await draftDatesFor({
+                mr: pr.webUrl || mrPath,
+                draftIds: drafts.map((draft) => String(draft.id)),
+            });
+            const threads = gitlabThreads({
+                discussions,
+                drafts,
+                me,
+                pr,
+                draftedAt: (draftId) => dates.get(draftId) ?? now,
+            });
             log.debug(
                 { iid, discussions: discussions.length, drafts: drafts.length, threads: threads.length },
                 "gitlab: review threads"

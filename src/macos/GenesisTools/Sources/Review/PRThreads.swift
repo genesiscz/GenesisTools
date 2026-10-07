@@ -198,6 +198,8 @@ struct PRThread: Decodable, Identifiable, Equatable {
     let side: DiffSide
     let line: Int
     let startLine: Int?
+    /// The commit whose line numbers `line` and `startLine` are; nil from a `tools` that does not send it.
+    var commitSha: String? = nil
     let outdated: Bool
     let resolved: Bool
     let resolvable: Bool
@@ -268,12 +270,28 @@ enum PRThreadRendering {
         "live:\(id)"
     }
 
+    /// Whether a thread's line numbers belong to the diff on screen. Without `shownHead` (the
+    /// working-tree scopes) that is every thread that is not outdated. A diff pinned to a commit (a
+    /// proposal's range) takes the threads made on that commit, outdated or not, and the current ones
+    /// only when the PR's head is that commit: GitLab moves a thread whose line did not change to the
+    /// newest head, so its line numbers belong to that head and not to an older diff.
+    static func belongs(_ thread: PRThread, shownHead: String?, prHead: String?) -> Bool {
+        guard let shownHead, !shownHead.isEmpty else { return !thread.outdated }
+        if let sha = thread.commitSha, sameCommit(sha, shownHead) { return true }
+        return !thread.outdated && prHead.map { sameCommit($0, shownHead) } == true
+    }
+
+    /// Either side may be an abbreviated id.
+    static func sameCommit(_ a: String, _ b: String) -> Bool {
+        !a.isEmpty && !b.isEmpty && (a.hasPrefix(b) || b.hasPrefix(a))
+    }
+
     /// Live threads as diff cards (`kind: "thread"` with `live`: the notes, Reply, Resolve, and Edit /
-    /// Delete on my drafts). Outdated threads point at lines of an older head, so they stay in the
+    /// Delete on my drafts). A thread whose lines belong to another head (`belongs`) stays in the
     /// threads list only. `skip` holds the thread ids the proposal already shows with the agent's read.
-    static func rendered(_ threads: [PRThread], files: [DiffFile], skip: Set<String> = [], forge: ForgeWeb? = nil, now: Date = Date()) -> [RenderedComment] {
+    static func rendered(_ threads: [PRThread], files: [DiffFile], skip: Set<String> = [], shownHead: String? = nil, prHead: String? = nil, forge: ForgeWeb? = nil, now: Date = Date()) -> [RenderedComment] {
         threads.compactMap { thread in
-            guard !thread.outdated, !skip.contains(thread.id), let first = thread.comments.first,
+            guard belongs(thread, shownHead: shownHead, prHead: prHead), !skip.contains(thread.id), let first = thread.comments.first,
                   let file = files.first(where: { $0.path == thread.path || (thread.oldPath != nil && $0.oldPath == thread.oldPath) })
             else { return nil }
             let count = thread.comments.count > 1 ? " · \(thread.comments.count) comments" : ""
@@ -320,13 +338,26 @@ enum PRThreadRendering {
 
     /// The proposal's copy of a thread was read when the agent pushed; the live thread wins its
     /// state, and the card gets the live notes and buttons beside the agent's read.
-    static func refresh(_ proposalComments: [RenderedComment], with threads: [PRThread], files: [DiffFile], forge: ForgeWeb? = nil, now: Date = Date()) -> [RenderedComment] {
-        let anchors = Dictionary(rendered(threads, files: files, forge: forge, now: now).map {
+    ///
+    /// `proposalOnShownHead`: the diff shows the commit the proposal was read on. A live thread that
+    /// moved on to a newer head (a push after the proposal) then keeps the proposal's own line, which
+    /// was read on this very diff, instead of leaving the diff: the card does not vanish under the
+    /// reader, and the reply typed in it stays in view.
+    static func refresh(_ proposalComments: [RenderedComment], with threads: [PRThread], files: [DiffFile], shownHead: String? = nil, prHead: String? = nil, proposalOnShownHead: Bool = false, forge: ForgeWeb? = nil, now: Date = Date()) -> [RenderedComment] {
+        let anchors = Dictionary(rendered(threads, files: files, shownHead: shownHead, prHead: prHead, forge: forge, now: now).map {
             (String($0.id.dropFirst(5)), $0)
         }, uniquingKeysWith: { first, _ in first })
+        let byID = Dictionary(threads.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return proposalComments.compactMap { comment in
             guard comment.id.hasPrefix("thread:") else { return comment }
-            guard let anchor = anchors[String(comment.id.dropFirst(7))] else { return nil }
+            let id = String(comment.id.dropFirst(7))
+            guard let anchor = anchors[id] else {
+                guard proposalOnShownHead, let thread = byID[id], files.contains(where: { $0.id == comment.fileId }) else { return nil }
+                var copy = comment
+                copy.state = thread.isMyDraft ? "draft" : thread.resolved ? "resolved" : "open"
+                copy.live = live(thread, forge: forge, now: now)
+                return copy
+            }
             var copy = comment
             copy.fileId = anchor.fileId
             copy.side = anchor.side

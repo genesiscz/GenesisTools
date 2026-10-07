@@ -861,10 +861,18 @@ final class ReviewModel: ObservableObject {
         let primary = primaryRoot
         let prFiles = primary.shown ? primary.files : []
         let live = pr?.payload?.threads ?? []
-        let proposalBase = proposal?.rendered(for: prFiles, liveThreads: pr?.payload?.threads) ?? []
-        let proposalComments = pr?.payload == nil ? proposalBase : PRThreadRendering.refresh(proposalBase, with: live, files: prFiles, forge: pr?.payload?.pr.forge)
+        let shownHead = scope.pinnedHead ?? remoteHead?.sha
+        let prHead = pr?.payload?.pr.headSha
+        let proposalBase = proposal?.rendered(for: prFiles, liveThreads: pr?.payload?.threads, shownHead: shownHead, prHead: prHead) ?? []
+        let proposalOnShownHead = shownHead.flatMap { head in proposal.map { PRThreadRendering.sameCommit($0.headSha, head) } } ?? false
+        let proposalComments = pr?.payload == nil ? proposalBase : PRThreadRendering.refresh(
+            proposalBase, with: live, files: prFiles, shownHead: shownHead, prHead: prHead,
+            proposalOnShownHead: proposalOnShownHead, forge: pr?.payload?.pr.forge
+        )
         let shown = Set(proposalComments.filter { $0.id.hasPrefix("thread:") }.map { String($0.id.dropFirst(7)) })
-        let liveComments = showsLiveThreadsInline ? PRThreadRendering.rendered(live, files: prFiles, skip: shown, forge: pr?.payload?.pr.forge) : []
+        let liveComments = showsLiveThreadsInline
+            ? PRThreadRendering.rendered(live, files: prFiles, skip: shown, shownHead: shownHead, prHead: prHead, forge: pr?.payload?.pr.forge)
+            : []
         if !live.isEmpty {
             HubPerf.log("review.prThreads \(live.count) live, \(liveComments.count) on this diff (\(files.count) files, scope \(scope.title))")
         }
