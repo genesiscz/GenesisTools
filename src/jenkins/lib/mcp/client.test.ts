@@ -8,6 +8,7 @@ import {
     certificateErrorMessage,
     createClient,
     isCertificateError,
+    JenkinsCertificateError,
     loadTrustedPems,
     TLS_ACCEPT_FLAG,
     tlsAccepted,
@@ -77,7 +78,7 @@ describe("certificate errors", () => {
         const error = await client.get("/api/json").catch((e: unknown) => e);
 
         expect(calls).toBe(1);
-        expect(error).toBeInstanceOf(Error);
+        expect(error).toBeInstanceOf(JenkinsCertificateError);
         expect((error as Error).message).toBe(
             certificateErrorMessage("https://invalid", new Error("unable to verify the first certificate"))
         );

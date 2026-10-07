@@ -64,4 +64,6 @@ export interface JenkinsBuild {
     duration: number;
     timestamp: number;
     estimatedDuration?: number;
+    /** Only when the tree asks for it: why the build started (an upstream build, a user, a timer). */
+    actions?: Array<{ causes?: Array<{ upstreamProject?: string; upstreamBuild?: number }> } | null>;
 }

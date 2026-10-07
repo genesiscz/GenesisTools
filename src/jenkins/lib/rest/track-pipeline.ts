@@ -1,11 +1,13 @@
 import { logger, out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
+import { JenkinsCertificateError } from "../mcp/client";
 import { MonitorNotifier } from "../mcp/notify";
 import type { JenkinsBackend } from "./client";
 import { getDownstreamJobs, getJobNameFromPath, isMasterBuild, type JobContext } from "./jobs";
 import type { BuildResult, JenkinsBuild, PipelineResult } from "./types";
 
-const BUILD_TREE = "number,result,building,duration,timestamp,estimatedDuration";
+const BUILD_TREE =
+    "number,result,building,duration,timestamp,estimatedDuration,actions[causes[upstreamProject,upstreamBuild]]";
 const DISCOVERY_DELAYS = [5000, 10000, 20000];
 const MAX_DISCOVERY_ATTEMPTS = 10;
 const POLL_DELAYS = [5000, 10000, 20000, 40000, 60000];
@@ -27,9 +29,40 @@ export async function fetchBuildInfo(
     try {
         return await backend.apiOrNull<JenkinsBuild>(`${jobPath}/${ref}/api/json?tree=${BUILD_TREE}`);
     } catch (error) {
+        // A failed certificate check fails every later request too: stop instead of polling for 30 minutes.
+        if (error instanceof JenkinsCertificateError) {
+            throw error;
+        }
+
         out.error(pc.yellow(`# Warning: could not fetch build info for ${jobPath} #${ref}: ${error}`));
         return null;
     }
+}
+
+/** `job/Acme/job/web` as Jenkins names it in an upstream cause: `Acme/web`. */
+export function jobFullName(jobPath: string): string {
+    const segments = jobPath.split("/").filter(Boolean);
+    const names: string[] = [];
+
+    for (let i = 0; i < segments.length; i++) {
+        if (segments[i] === "job" && segments[i + 1] !== undefined) {
+            names.push(segments[i + 1] as string);
+            i++;
+        }
+    }
+
+    return names.join("/");
+}
+
+/** True when Jenkins records `masterBuild` of `masterJobPath` as what started `build`. */
+export function startedBy(build: JenkinsBuild, masterJobPath: string, masterBuild: JenkinsBuild): boolean {
+    const master = jobFullName(masterJobPath);
+
+    return (build.actions ?? []).some((action) =>
+        (action?.causes ?? []).some(
+            (cause) => cause.upstreamProject === master && cause.upstreamBuild === masterBuild.number
+        )
+    );
 }
 
 export async function notifyDone(message: string): Promise<void> {
@@ -69,10 +102,15 @@ export function findTriggeredBuilds(
     return triggers;
 }
 
-/** The downstream build that started within five minutes of the master, among the job's last six builds. */
+/**
+ * The downstream build that started within five minutes of the master AND names it as its upstream
+ * cause, among the job's last six builds. A build that only ran nearby is left out: it would pass
+ * the pipeline on a downstream build the master never triggered.
+ */
 async function discoverByTimestamp(
     backend: JenkinsBackend,
     masterBuild: JenkinsBuild,
+    masterJobPath: string,
     downstreamJobPath: string
 ): Promise<JenkinsBuild | null> {
     const latest = await fetchBuildInfo(backend, downstreamJobPath, "lastBuild");
@@ -81,14 +119,18 @@ async function discoverByTimestamp(
         return null;
     }
 
-    if (Math.abs(latest.timestamp - masterBuild.timestamp) < TIMESTAMP_WINDOW_MS) {
+    const matches = (build: JenkinsBuild): boolean =>
+        Math.abs(build.timestamp - masterBuild.timestamp) < TIMESTAMP_WINDOW_MS &&
+        startedBy(build, masterJobPath, masterBuild);
+
+    if (matches(latest)) {
         return latest;
     }
 
     for (let offset = 1; offset <= 5 && latest.number - offset >= 1; offset++) {
         const previous = await fetchBuildInfo(backend, downstreamJobPath, latest.number - offset);
 
-        if (previous && Math.abs(previous.timestamp - masterBuild.timestamp) < TIMESTAMP_WINDOW_MS) {
+        if (previous && matches(previous)) {
             return previous;
         }
     }
@@ -133,7 +175,7 @@ async function waitForDownstreamBuilds(
                 continue;
             }
 
-            const build = await discoverByTimestamp(backend, masterBuild, downstreamPath);
+            const build = await discoverByTimestamp(backend, masterBuild, jobPath, downstreamPath);
 
             if (build) {
                 discovered.set(downstreamPath, build);

@@ -1,12 +1,21 @@
-import { parseJenkinsInput } from "../lib/mcp/url";
+import { refOnInstance } from "../lib/rest/client";
 
-/** A job path or URL plus an optional build argument; the argument wins over a number in the URL. */
-export function resolveJobAndBuild(
-    jobOrUrl: string,
-    buildArg: string | undefined,
-    defaultBuild = "lastBuild"
-): { jobPath: string; buildNumber: string } {
-    const ref = parseJenkinsInput(jobOrUrl);
+/**
+ * A job path or URL plus an optional build argument; the argument wins over a number in the URL. A URL
+ * must be on the Jenkins at `baseUrl`, and its context path is dropped (see `refOnInstance`).
+ */
+export function resolveJobAndBuild({
+    jobOrUrl,
+    buildArg,
+    baseUrl,
+    defaultBuild = "lastBuild",
+}: {
+    jobOrUrl: string;
+    buildArg: string | undefined;
+    baseUrl: string;
+    defaultBuild?: string;
+}): { jobPath: string; buildNumber: string } {
+    const ref = refOnInstance(baseUrl, jobOrUrl);
 
     return { jobPath: ref.jobPath, buildNumber: buildArg || ref.buildNumber || defaultBuild };
 }

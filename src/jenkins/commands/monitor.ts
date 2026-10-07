@@ -23,8 +23,12 @@ export function registerMonitor(jenkins: Command): void {
         .option("--quiet", "Suppress output (exit code only)")
         .option("--detail", "Every event as JSONL")
         .action(async (jobOrUrl: string, build: string | undefined, opts: MonitorOptions) => {
-            const { jobPath, buildNumber } = resolveJobAndBuild(jobOrUrl, build);
             const backend = await getJenkinsBackend();
+            const { jobPath, buildNumber } = resolveJobAndBuild({
+                jobOrUrl,
+                buildArg: build,
+                baseUrl: backend.baseUrl,
+            });
             const { resolveBuildNumber } = await import("../lib/mcp/log");
             const pinned = await resolveBuildNumber(backend.client, jobPath, buildNumber);
 

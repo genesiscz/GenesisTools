@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import axios from "axios";
+import { JenkinsCertificateError } from "../mcp/client";
 import { diagnoseExecutors, diagnoseQueue, groupAgents, queueReasons } from "./capacity";
 import type { JenkinsBackend } from "./client";
 import {
@@ -10,7 +11,7 @@ import {
     type JobContext,
     subJobsFolder,
 } from "./jobs";
-import { findTriggeredBuilds, trackPipeline } from "./track-pipeline";
+import { findTriggeredBuilds, jobFullName, trackPipeline } from "./track-pipeline";
 import { analyzeUrl, parseBuildUrl } from "./url-analyzer";
 import { findNode, formatSummary, lastMatch, summarize } from "./wfapi";
 
@@ -196,6 +197,60 @@ describe("trackPipeline", () => {
             "app-build #3 pipeline complete - android-app SUCCESS, ios-app NOT FOUND",
             "app-build #3 pipeline complete - android-app NOT FOUND, ios-app NOT FOUND",
         ]);
+    });
+
+    it("accepts a timestamp match only when the build names the master as its upstream cause", async () => {
+        const cause = { causes: [{ upstreamProject: jobFullName(APP), upstreamBuild: 3 }] };
+        const builds: Record<string, object> = {
+            [`${APP}/3`]: { number: 3, result: "SUCCESS", building: false },
+            // Ran next to the master, but nothing says the master started it.
+            [`${ANDROID}/lastBuild`]: { number: 41, result: "SUCCESS", building: false, actions: [] },
+            [`${IOS}/lastBuild`]: { number: 51, result: "SUCCESS", building: false, actions: [cause] },
+            [`${IOS}/51`]: { number: 51, result: "SUCCESS", building: false, actions: [cause] },
+        };
+        const get = async <T>(path: string): Promise<T | null> => {
+            const found = builds[path.split("/api/json")[0] ?? ""];
+
+            return found ? ({ duration: 1, timestamp: 0, ...found } as T) : null;
+        };
+        const backend: JenkinsBackend = {
+            baseUrl: BASE,
+            client: axios.create(),
+            fullUrl: (p) => `${BASE}/${p}`,
+            api: async <T>(p: string) => (await get<T>(p)) as T,
+            apiOrNull: get,
+            apiTextOrNull: async () => "",
+            post: async () => ({ status: 500 }),
+        };
+        const result = await trackPipeline(backend, APP, 3, { ...CTX, sleep: async () => {}, notify: async () => {} });
+
+        expect(jobFullName(APP)).toBe("Acme/web/FE/app-build");
+        expect(result.downstream.map((d) => `${d.jobName} #${d.buildNumber}`)).toEqual(["ios-app #51"]);
+        expect(result.missing).toEqual(["android-app"]);
+        expect(result.allPassed).toBe(false);
+    });
+
+    it("stops at once on a failed certificate check instead of polling", async () => {
+        let calls = 0;
+        const backend: JenkinsBackend = {
+            baseUrl: BASE,
+            client: axios.create(),
+            fullUrl: (p) => `${BASE}/${p}`,
+            api: async () => {
+                throw new Error("unused");
+            },
+            apiOrNull: async () => {
+                calls++;
+                throw new JenkinsCertificateError("TLS verification of the test host failed");
+            },
+            apiTextOrNull: async () => "",
+            post: async () => ({ status: 500 }),
+        };
+
+        await expect(
+            trackPipeline(backend, APP, 3, { ...CTX, sleep: async () => {}, notify: async () => {} })
+        ).rejects.toBeInstanceOf(JenkinsCertificateError);
+        expect(calls).toBe(1);
     });
 });
 

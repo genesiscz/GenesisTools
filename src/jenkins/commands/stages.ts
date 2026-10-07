@@ -11,9 +11,14 @@ export function registerStages(jenkins: Command): void {
         .argument("[build]", "Build number (default: the build in the URL, else lastBuild)")
         .option("--expand", "Show parallel branches inside each stage")
         .action(async (jobOrUrl: string, build: string | undefined, opts: { expand?: boolean }) => {
-            const { jobPath, buildNumber } = resolveJobAndBuild(jobOrUrl, build);
+            const backend = await getJenkinsBackend();
+            const { jobPath, buildNumber } = resolveJobAndBuild({
+                jobOrUrl,
+                buildArg: build,
+                baseUrl: backend.baseUrl,
+            });
             const { resolveBuildNumber } = await import("../lib/mcp/log");
-            const pinned = await resolveBuildNumber((await getJenkinsBackend()).client, jobPath, buildNumber);
+            const pinned = await resolveBuildNumber(backend.client, jobPath, buildNumber);
             const { runCli } = await import("../lib/mcp/cli");
             await runCli(["stages", jobPath, "--build", pinned, ...(opts.expand ? ["--expand"] : [])]);
         });

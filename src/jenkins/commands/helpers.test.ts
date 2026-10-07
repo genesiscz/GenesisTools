@@ -1,5 +1,26 @@
 import { describe, expect, test } from "bun:test";
-import { parseBuildRange, positiveInt } from "./helpers";
+import { parseBuildRange, positiveInt, resolveJobAndBuild } from "./helpers";
+
+describe("resolveJobAndBuild", () => {
+    const base = "https://ci.example.invalid/jenkins";
+
+    test("drops the context path of a URL, so it is not prefixed a second time", () => {
+        expect(resolveJobAndBuild({ jobOrUrl: `${base}/job/app/42/`, buildArg: undefined, baseUrl: base })).toEqual({
+            jobPath: "job/app",
+            buildNumber: "42",
+        });
+        expect(resolveJobAndBuild({ jobOrUrl: "job/app", buildArg: "7", baseUrl: base })).toEqual({
+            jobPath: "job/app",
+            buildNumber: "7",
+        });
+    });
+
+    test("refuses a URL on another Jenkins", () => {
+        expect(() =>
+            resolveJobAndBuild({ jobOrUrl: "https://other.invalid/job/app/1/", buildArg: undefined, baseUrl: base })
+        ).toThrow("not on the configured Jenkins");
+    });
+});
 
 describe("positiveInt", () => {
     test("reads a whole number of 1 or more and nothing else", () => {

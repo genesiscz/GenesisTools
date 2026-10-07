@@ -78,6 +78,14 @@ export function applyTlsAcceptFlag(argv: string[]): string[] {
 
 const CERTIFICATE_ERROR = /CERT|SELF_SIGNED|UNABLE_TO_(GET|VERIFY)|LEAF_SIGNATURE|certificate/i;
 
+/** A failed TLS verification of the Jenkins host: retrying cannot help, so callers stop on it. */
+export class JenkinsCertificateError extends Error {
+    constructor(message: string, options?: { cause?: unknown }) {
+        super(message, options);
+        this.name = "JenkinsCertificateError";
+    }
+}
+
 export function isCertificateError(e: unknown): boolean {
     const err = e as { code?: unknown; message?: unknown } | null;
 
@@ -139,7 +147,7 @@ export function createClient(auth: JenkinsAuth): AxiosInstance {
         }
 
         if (!error.response && !tlsAccepted() && isCertificateError(error)) {
-            throw new Error(certificateErrorMessage(auth.url, error), { cause: error });
+            throw new JenkinsCertificateError(certificateErrorMessage(auth.url, error), { cause: error });
         }
 
         cfg._retry = (cfg._retry ?? 0) + 1;
