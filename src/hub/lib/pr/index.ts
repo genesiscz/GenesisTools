@@ -80,12 +80,23 @@ function cacheKey(pr: Pick<FoundPr, "provider" | "host" | "project" | "number">,
     return `pr-threads/${fingerprint}.json`;
 }
 
+/**
+ * The PR URL as a cache key: the URL a user typed and the one the host returns must give the same
+ * key, or a write never invalidates the explicit read. Host case, `www.`, case in the path and a
+ * tab suffix after the number (`/files`, `/diffs`) are dropped. The URL is kept rather than the
+ * parsed project because a GitLab relative root (`/gitlab/group/app`) parses differently from
+ * the project the API returns.
+ */
+function explicitCacheUrl(raw: string): string {
+    const url = new URL(raw);
+    const host = url.host.toLowerCase().replace(/^www\./, "");
+    const path = url.pathname.replace(/(\/(?:pull|-\/merge_requests)\/\d+)(?:\/.*)?$/, "$1").replace(/\/$/, "");
+    return `${url.protocol}//${host}${path}`.toLowerCase();
+}
+
 function explicitCacheKey(pr: Pick<FoundPr, "url">, identity: string): string {
-    const url = new URL(pr.url);
-    url.hash = "";
-    url.search = "";
     const fingerprint = createHash("sha256")
-        .update(`${url.href.replace(/\/$/, "")}\0${identity}`)
+        .update(`${explicitCacheUrl(pr.url)}\0${identity}`)
         .digest("hex");
     return `pr-threads/explicit-${fingerprint}.json`;
 }

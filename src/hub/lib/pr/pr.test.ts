@@ -1039,6 +1039,17 @@ describe("prThreads cache", () => {
             headSha = "branch-moved";
             expect((await readPrThreads({ ...options, pr: undefined })).pr.headSha).toBe(headSha);
             expect([resolutions, threads]).toEqual([7, 6]);
+
+            // A URL typed with another host case and a tab suffix shares the key the write drops.
+            const host = new URL(base.url).host;
+            const typed = {
+                ...options,
+                pr: `${base.url.replace(host, host.toUpperCase())}/${base.provider === "github" ? "files" : "diffs"}`,
+            };
+            await readPrThreads(typed);
+            expect((await readPrThreads(typed)).cached).toBe(true);
+            await forgetThreads({ pr: base, storage, cacheIdentity: viewer });
+            expect((await readPrThreads(typed)).cached).toBe(false);
         }
     });
 
