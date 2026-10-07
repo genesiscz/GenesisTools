@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import {
     CdpLaunchError,
@@ -421,7 +422,7 @@ console.log('OWNED:' + child.pid);
             expect(exit).toBe(0);
             const pid = Number(output.match(/OWNED:(\d+)/)?.[1]);
             expect(pid).toBeGreaterThan(0);
-            expect(() => process.kill(pid, 0)).not.toThrow();
+            expect(isProcessAlive(pid)).toBe(true);
         } finally {
             clearTimeout(timer);
             cli.kill("SIGKILL");
