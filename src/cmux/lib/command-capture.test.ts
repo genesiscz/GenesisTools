@@ -347,9 +347,9 @@ describe("a shell alias that execs `tools cc run` is a cc run launcher", () => {
     });
 
     test("drops a fuzzy cc-run --resume query and pins the concrete id after --", () => {
-        const result = deriveReplayCommand({ original: "cr work --resume 292767", sessionId });
+        const result = deriveReplayCommand({ original: "cr work --resume 234567", sessionId });
         expect(result.command).toBe(`cr work -- --resume ${sessionId}`);
-        expect(result.drift).toEqual([`resume target "292767" replaced with the session that was active here`]);
+        expect(result.drift).toEqual([`resume target "234567" replaced with the session that was active here`]);
     });
 
     test("keeps every other flag", () => {
@@ -364,7 +364,7 @@ describe("a shell alias that execs `tools cc run` is a cc run launcher", () => {
 
     test("the pinned id survives into the profile and back out", () => {
         expect(resumeTargetFromCommand(`cr work -- --resume ${sessionId}`)).toBe(sessionId);
-        expect(resumeTargetFromCommand("cr work --resume 292767")).toBeUndefined();
+        expect(resumeTargetFromCommand("cr work --resume 234567")).toBeUndefined();
     });
 
     test("an alias is not a launcher once the override is cleared and none is discovered", () => {
@@ -407,7 +407,7 @@ describe("claudeSessionFromArgv", () => {
     test("a fresh session, a bare picker or a fuzzy query has no id", () => {
         expect(claudeSessionFromArgv("/Users/x/.bun/bin/claude --dangerously-skip-permissions")).toBeUndefined();
         expect(claudeSessionFromArgv("claude --resume")).toBeUndefined();
-        expect(claudeSessionFromArgv("claude --resume 292767")).toBeUndefined();
+        expect(claudeSessionFromArgv("claude --resume 234567")).toBeUndefined();
     });
 
     test("only a claude process counts", () => {

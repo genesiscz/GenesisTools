@@ -10,7 +10,7 @@ import {
 } from "@app/azure-devops/lib/mentions";
 import type { Comment } from "@app/azure-devops/types";
 
-const USER = "Nováková Tereza (XX)";
+const USER = "Nováková Tereza (Contractor)";
 
 function mention(name: string): string {
     return `<a href="#" data-vss-mention="version:2.0,00000000-1111-2222-3333-444444444444">@${name}</a>`;
@@ -19,7 +19,7 @@ function mention(name: string): string {
 function comment(overrides: Partial<Comment> & { text: string }): Comment {
     return {
         id: 1,
-        author: "Dvořák Pavel",
+        author: "Smith John",
         date: "2026-09-10T09:00:00Z",
         ...overrides,
     };
@@ -31,7 +31,7 @@ describe("wiqlMentionTerm", () => {
     });
 
     test("drops the bracketed suffix rather than searching for it", () => {
-        expect(wiqlMentionTerm("Example Alice (QT)")).toBe("Example");
+        expect(wiqlMentionTerm("Example Alice (Vendor)")).toBe("Example");
     });
 
     test("survives a name with no suffix and no second word", () => {
@@ -76,7 +76,7 @@ describe("stripCommentHtml", () => {
     test("returns the text a person reads", () => {
         const text = stripCommentHtml(`<div>${mention(USER)}&nbsp;please&nbsp;look</div>`);
 
-        expect(text).toBe("@Nováková Tereza (XX) please look");
+        expect(text).toBe("@Nováková Tereza (Contractor) please look");
     });
 
     test("puts a space where a table cell ended, so two cells do not glue into one word", () => {
@@ -146,7 +146,7 @@ describe("commentNamesUser", () => {
     });
 
     test("does not match a comment that mentions somebody else", () => {
-        expect(commentNamesUser(`<div>${mention("Dvořák Pavel")} please look</div>`, USER)).toBe(false);
+        expect(commentNamesUser(`<div>${mention("Smith John")} please look</div>`, USER)).toBe(false);
     });
 
     test("does not match on the given name alone", () => {
@@ -200,9 +200,9 @@ describe("mentionsInComments", () => {
             {
                 workItemId: 810001,
                 commentId: 11,
-                author: "Dvořák Pavel",
+                author: "Smith John",
                 date: "2026-09-10T09:00:00Z",
-                text: "@Nováková Tereza (XX) look",
+                text: "@Nováková Tereza (Contractor) look",
             },
         ]);
     });

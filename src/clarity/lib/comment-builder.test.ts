@@ -3,7 +3,7 @@ import { buildPeriodComment, buildWeekComment } from "@app/clarity/lib/comment-b
 
 const ENTRIES = [
     { workItemId: 111111, timeTypeDescription: "Development", comment: "první úkol", date: "2026-08-24" },
-    { workItemId: 222222, timeTypeDescription: "Ceremonie", comment: "SU", date: "2026-08-24" },
+    { workItemId: 222222, timeTypeDescription: "Meetings", comment: "SU", date: "2026-08-24" },
     { workItemId: 111111, timeTypeDescription: "Development", comment: "druhý den", date: "2026-08-30" },
     { workItemId: 333333, timeTypeDescription: "Development", comment: "mimo období", date: "2026-08-31" },
     { workItemId: 444444, timeTypeDescription: "Development", comment: "před obdobím", date: "2026-08-23" },
@@ -13,7 +13,7 @@ describe("buildWeekComment", () => {
     test("groups entries under a Czech day heading, one line per entry", () => {
         const text = buildWeekComment([ENTRIES[0], ENTRIES[1]]);
 
-        expect(text).toBe("Po, 24.8.:\n - #111111 - Development - první úkol\n - #222222 - Ceremonie - SU");
+        expect(text).toBe("Po, 24.8.:\n - #111111 - Development - první úkol\n - #222222 - Meetings - SU");
     });
 
     test("returns an empty string when there is nothing to say", () => {
@@ -35,7 +35,7 @@ describe("buildPeriodComment", () => {
             [
                 "Po, 24.8.:",
                 " - #111111 - Development - první úkol",
-                " - #222222 - Ceremonie - SU",
+                " - #222222 - Meetings - SU",
                 "Ne, 30.8.:",
                 " - #111111 - Development - druhý den",
             ].join("\n")

@@ -16,7 +16,7 @@ describe("searchPrefixes", () => {
     });
 
     test("any other text is searched as typed, trimmed", () => {
-        expect(searchPrefixes("  Incidenty_Opex ")).toEqual(["Incidenty_Opex"]);
+        expect(searchPrefixes("  Incidents_Opex ")).toEqual(["Incidents_Opex"]);
     });
 });
 

@@ -445,7 +445,7 @@ export interface TimeType {
 /** Time log entry from GET response */
 export interface TimeLogEntry {
     timeLogId: string; // "9a016275-6d8f-4e6f-9f8f-052f34e5b177"
-    comment: string; // "analýza, fixing"
+    comment: string; // "analysis, fixing"
     week: string; // "2026-W06" (ISO week)
     timeTypeDescription: string; // "Development"
     minutes: number; // 120 (NOT hours!)
@@ -466,7 +466,7 @@ export interface TimeLogUser {
 export interface CreateTimeLogRequest {
     minutes: number; // 120 = 2 hours
     timeTypeDescription: string; // "Development" (display name, not UUID!)
-    comment: string; // "analýza, fixing"
+    comment: string; // "analysis, fixing"
     date: string; // "2026-02-04"
     workItemId: number; // 12345
     projectId: string; // "00000000-0000-0000-0000-000000000000"

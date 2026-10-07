@@ -6,9 +6,9 @@ export interface ParsedCommit {
     commit: DetailedCommitInfo;
     /** Conventional commit type (feat, fix, chore, etc.) */
     type: string | null;
-    /** Scope string from parentheses, e.g., "login, COL-123" */
+    /** Scope string from parentheses, e.g., "login, ABC-123" */
     scope: string | null;
-    /** Extracted ticket identifiers, e.g., ["COL-123"] */
+    /** Extracted ticket identifiers, e.g., ["ABC-123"] */
     tickets: string[];
     /** The message body after "type(scope): " */
     body: string;

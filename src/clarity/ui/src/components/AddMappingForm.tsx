@@ -116,7 +116,7 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                         <div className="flex gap-2">
                             <Input
                                 type="text"
-                                placeholder="Timesheet ID (e.g. 8524081)"
+                                placeholder="Timesheet ID (e.g. 7100081)"
                                 value={manualTimesheetId}
                                 onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                                     setManualTimesheetId(e.target.value)

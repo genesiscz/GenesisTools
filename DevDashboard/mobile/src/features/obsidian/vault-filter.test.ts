@@ -50,30 +50,30 @@ describe("filterVaultEntries", () => {
     it("shows the note named by a folder/file path and hides its siblings", () => {
         const nested: VaultEntry[] = [
             {
-                name: "col-187136-pr-7455-billing-snapshots",
-                relativePath: "col-187136-pr-7455-billing-snapshots",
+                name: "abc-123456-pr-1234-billing-snapshots",
+                relativePath: "abc-123456-pr-1234-billing-snapshots",
                 isDirectory: true,
                 children: [
                     {
-                        name: "ADO-187136-title-description.md",
-                        relativePath: "col-187136-pr-7455-billing-snapshots/ADO-187136-title-description.md",
+                        name: "ADO-123456-title-description.md",
+                        relativePath: "abc-123456-pr-1234-billing-snapshots/ADO-123456-title-description.md",
                         isDirectory: false,
                     },
                     {
                         name: "other.md",
-                        relativePath: "col-187136-pr-7455-billing-snapshots/other.md",
+                        relativePath: "abc-123456-pr-1234-billing-snapshots/other.md",
                         isDirectory: false,
                     },
                 ],
             },
         ];
 
-        const fullPath = "col-187136-pr-7455-billing-snapshots/ADO-187136-title-description.md";
+        const fullPath = "abc-123456-pr-1234-billing-snapshots/ADO-123456-title-description.md";
         const out = filterVaultEntries(nested, fullPath);
-        const partial = filterVaultEntries(nested, "billing-snapshots/ADO-187136");
+        const partial = filterVaultEntries(nested, "billing-snapshots/ADO-123456");
 
         expect(out).toHaveLength(1);
-        expect(out[0]?.children?.map((entry) => entry.name)).toEqual(["ADO-187136-title-description.md"]);
-        expect(partial[0]?.children?.map((entry) => entry.name)).toEqual(["ADO-187136-title-description.md"]);
+        expect(out[0]?.children?.map((entry) => entry.name)).toEqual(["ADO-123456-title-description.md"]);
+        expect(partial[0]?.children?.map((entry) => entry.name)).toEqual(["ADO-123456-title-description.md"]);
     });
 });

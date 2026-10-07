@@ -119,7 +119,7 @@ rows in a single call. This collection is only worth using for writing.
 
 Add a task row to a timesheet.
 
-**Body:** `{ "taskId": 8902005 }`
+**Body:** `{ "taskId": 7000005 }`
 
 `taskId` is the only field the caller supplies. The server fills `assignmentId`, `resourceId`,
 `role`, `investmentId` and `phaseId` from the resource's assignment.

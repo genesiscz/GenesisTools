@@ -14,12 +14,12 @@ const ADO_DESCRIPTION_HTML =
 
 function item(overrides: Partial<WorkItemFull> = {}): WorkItemFull {
     return {
-        id: 281785,
+        id: 123456,
         rev: 1,
         title: "Service signup error",
         state: "Active",
         changed: "2026-09-01T10:00:00Z",
-        url: "https://dev.azure.com/example/proj/_workitems/edit/281785",
+        url: "https://dev.azure.com/example/proj/_workitems/edit/123456",
         comments: [],
         description: ADO_DESCRIPTION_HTML,
         ...overrides,
@@ -65,9 +65,9 @@ describe("formatWorkItemMarkdown", () => {
         const url =
             "https://dev.azure.com/example/proj/_apis/wit/attachments/46e8a5cc-7c33-4aab-92ba-d91fe3446a5a?fileName=image.png";
         const text = `**Steps**\nopen the card\n![image.png](${url}) \n\n![second](${url} "title")`;
-        const [image] = extractInlineImageUrls(text, 281785);
+        const [image] = extractInlineImageUrls(text, 123456);
         expect(image?.attachmentId).toBe("46e8a5cc-7c33-4aab-92ba-d91fe3446a5a");
-        expect(extractInlineImageUrls(text, 281785)).toHaveLength(1);
+        expect(extractInlineImageUrls(text, 123456)).toHaveLength(1);
 
         const md = formatWorkItemMarkdown(
             item({
@@ -76,8 +76,8 @@ describe("formatWorkItemMarkdown", () => {
             new Map([[url, image?.localFileName ?? ""]])
         );
 
-        expect(md).toContain("**Steps**\nopen the card\n![image.png](281785-46e8a5cc-image.png)");
-        expect(md).toContain('![second](281785-46e8a5cc-image.png "title")');
+        expect(md).toContain("**Steps**\nopen the card\n![image.png](123456-46e8a5cc-image.png)");
+        expect(md).toContain('![second](123456-46e8a5cc-image.png "title")');
         expect(md).not.toContain("\\*\\*");
     });
 
@@ -87,13 +87,13 @@ describe("formatWorkItemMarkdown", () => {
         const spaced = `${base.replace("46e8a5cc", "57f9b6dd")}?fileName=screen%20shot.png`;
         const bare = `${base.replace("46e8a5cc", "68a0c7ee")}?fileName=shot(2).png`;
         const text = `![a](<${angled}>)\n![b](${spaced})\n![c](${bare})\n\n\`\`\`\n${angled}\n\`\`\``;
-        const images = extractInlineImageUrls(text, 281785);
+        const images = extractInlineImageUrls(text, 123456);
 
         expect(images.map((image) => image.originalUrl)).toEqual([angled, spaced, bare]);
         expect(images.map((image) => image.localFileName)).toEqual([
-            "281785-46e8a5cc-screen(1).png",
-            "281785-57f9b6dd-screen shot.png",
-            "281785-68a0c7ee-shot(2).png",
+            "123456-46e8a5cc-screen(1).png",
+            "123456-57f9b6dd-screen shot.png",
+            "123456-68a0c7ee-shot(2).png",
         ]);
 
         const md = formatWorkItemMarkdown(
@@ -104,7 +104,7 @@ describe("formatWorkItemMarkdown", () => {
         );
 
         expect(md).toContain(
-            "![a](<281785-46e8a5cc-screen(1).png>)\n![b](<281785-57f9b6dd-screen shot.png>)\n![c](<281785-68a0c7ee-shot(2).png>)"
+            "![a](<123456-46e8a5cc-screen(1).png>)\n![b](<123456-57f9b6dd-screen shot.png>)\n![c](<123456-68a0c7ee-shot(2).png>)"
         );
         // The same URL quoted in a code example is not an image destination.
         expect(md).toContain(`\`\`\`\n${angled}\n\`\`\``);
@@ -157,8 +157,8 @@ describe("rewriteImageSources", () => {
         const url = "https://dev.azure.com/example/proj/_apis/wit/attachments/46e8a5cc?fileName=a.png";
         const tag = `<img alt="${url}" src="${url}">`;
 
-        expect(rewriteImageSources(tag, new Map([[url, "281785-46e8a5cc-$&.png"]]))).toBe(
-            `<img alt="${url}" src="281785-46e8a5cc-$&.png">`
+        expect(rewriteImageSources(tag, new Map([[url, "123456-46e8a5cc-$&.png"]]))).toBe(
+            `<img alt="${url}" src="123456-46e8a5cc-$&.png">`
         );
     });
 });

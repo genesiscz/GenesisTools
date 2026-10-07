@@ -36,7 +36,7 @@ tools git configure-authors --remove "old-name"
 tools git configure-workitem-patterns --suggest --repo /path/to/repo
 
 # Add a custom pattern
-tools git configure-workitem-patterns --add 'col-(\d+)'
+tools git configure-workitem-patterns --add 'ABC-(\d+)'
 ```
 
 ---
@@ -283,4 +283,4 @@ Example with branch attribution:
 
 `branchAttribution.excludeTrunks` is optional; defaults to `develop`, `main`, and `master`. Names matching these (including `origin/<name>`) are skipped during branch resolution unless no other branch exists — then the trunk is shown as `[trunk: <name>]`.
 
-Workitem pattern tightening (e.g. `col-(\d{5,6})` instead of `col-(\d+)`) is per-user via `configure-workitem-patterns` or direct config edit; code defaults remain loose for other projects.
+Workitem pattern tightening (e.g. `ABC-(\d{5,6})` instead of `[A-Z]{2,10}-(\d+)`) is per-user via `configure-workitem-patterns` or direct config edit; code defaults remain loose for other projects.

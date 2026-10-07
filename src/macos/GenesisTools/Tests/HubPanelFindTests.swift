@@ -8,7 +8,7 @@ import XCTest
 final class HubPanelFindTests: XCTestCase {
     private let rows = [
         PanelFindRow(id: "a", fields: [PanelFindField("title", "Fix the Cache"), PanelFindField("detail", "cache hit, cache miss")]),
-        PanelFindRow(id: "b", fields: [PanelFindField("title", "Odhlašování z ČEZ")]),
+        PanelFindRow(id: "b", fields: [PanelFindField("title", "Odhlašování z ČAJE")]),
         PanelFindRow(id: "c", fields: [PanelFindField("title", "nothing here")], container: "section-1"),
     ]
 
@@ -16,13 +16,13 @@ final class HubPanelFindTests: XCTestCase {
 
     func testIgnoresCaseAndAccentsByDefault() {
         XCTAssertEqual(PanelFind.ranges(of: "cache", in: "Cache CACHE cache", caseSensitive: false).count, 3)
-        XCTAssertEqual(PanelFind.ranges(of: "odhlasovani", in: "Odhlašování z ČEZ", caseSensitive: false).count, 1)
-        XCTAssertEqual(PanelFind.ranges(of: "cez", in: "Odhlašování z ČEZ", caseSensitive: false).count, 1)
+        XCTAssertEqual(PanelFind.ranges(of: "odhlasovani", in: "Odhlašování z ČAJE", caseSensitive: false).count, 1)
+        XCTAssertEqual(PanelFind.ranges(of: "caje", in: "Odhlašování z ČAJE", caseSensitive: false).count, 1)
     }
 
     func testMatchCaseIsExact() {
         XCTAssertEqual(PanelFind.ranges(of: "cache", in: "Cache CACHE cache", caseSensitive: true).count, 1)
-        XCTAssertEqual(PanelFind.ranges(of: "cez", in: "Odhlašování z ČEZ", caseSensitive: true).count, 0)
+        XCTAssertEqual(PanelFind.ranges(of: "caje", in: "Odhlašování z ČAJE", caseSensitive: true).count, 0)
     }
 
     func testBlankQueryFindsNothing() {

@@ -17,11 +17,11 @@ function task(taskId: number, taskName: string): ClarityTask {
 
 // Mirrors the real shapes: a leading id, a D_ prefixed id, and names carrying no id at all.
 const TASKS: ClarityTask[] = [
-    task(700001, "430001_Ceremonie - SU, planning_Sample_EXT"),
+    task(700001, "430001_Meetings - SU, planning_Sample_EXT"),
     task(700002, "D_410001_Sample epic_Sample_EXT"),
     task(700003, "D_420001_Sample programme_Sample_EXT"),
-    task(700004, "Incidenty_Opex_Sample_EXT"),
-    task(700005, "Rozvoj_domény_Sample_EXT"),
+    task(700004, "Incidents_Opex_Sample_EXT"),
+    task(700005, "Platform_roadmap_Sample_EXT"),
 ];
 
 describe("clarityTasksByAdoId", () => {
@@ -41,7 +41,7 @@ describe("clarityTasksByAdoId", () => {
 describe("recommendClarityTask", () => {
     test("recommends the task whose id appears on the work item itself", () => {
         const result = recommendClarityTask({
-            chain: [{ id: 430001, title: "Ceremonie", type: "Task" }],
+            chain: [{ id: 430001, title: "Meetings", type: "Task" }],
             tasks: TASKS,
         });
 
@@ -109,8 +109,8 @@ describe("clarityTasksByAdoId edge cases", () => {
 
     test("recommends neither task when two of them name the same work item", () => {
         const byId = clarityTasksByAdoId([
-            task(700010, "D_410001_Technologický dluh_Sample_EXT"),
-            task(700011, "D_410001_Technologický dluh duplicate_Sample_EXT"),
+            task(700010, "D_410001_Technical debt_Sample_EXT"),
+            task(700011, "D_410001_Technical debt duplicate_Sample_EXT"),
         ]);
 
         expect(byId.has(410001)).toBe(false);

@@ -103,9 +103,9 @@ describe("listClarityTasks", () => {
 
 describe("findTaskByName", () => {
     const CATALOGUE = [
-        { taskName: "Incidenty_Opex_Sample_EXT" },
-        { taskName: "Incidenty_Capex_Sample_EXT" },
-        { taskName: "Rozvoj_domény_Sample_EXT" },
+        { taskName: "Incidents_Opex_Sample_EXT" },
+        { taskName: "Incidents_Capex_Sample_EXT" },
+        { taskName: "Platform_roadmap_Sample_EXT" },
     ].map((t, i) => ({
         ...t,
         taskId: 700100 + i,
@@ -117,17 +117,17 @@ describe("findTaskByName", () => {
     }));
 
     test("takes an exact name even when it is also a substring of another task", () => {
-        const exact = { ...CATALOGUE[0], taskName: "Incidenty_Opex", taskId: 700200 };
+        const exact = { ...CATALOGUE[0], taskName: "Incidents_Opex", taskId: 700200 };
 
-        expect(findTaskByName([...CATALOGUE, exact], "Incidenty_Opex").task?.taskId).toBe(700200);
+        expect(findTaskByName([...CATALOGUE, exact], "Incidents_Opex").task?.taskId).toBe(700200);
     });
 
     test("accepts a case-insensitive substring that matches exactly one task", () => {
-        expect(findTaskByName(CATALOGUE, "rozvoj").task?.taskId).toBe(700102);
+        expect(findTaskByName(CATALOGUE, "roadmap").task?.taskId).toBe(700102);
     });
 
     test("reports every candidate rather than picking one when a substring is ambiguous", () => {
-        const result = findTaskByName(CATALOGUE, "Incidenty");
+        const result = findTaskByName(CATALOGUE, "Incidents");
 
         expect(result.task).toBeUndefined();
         expect(result.ambiguous?.map((t) => t.taskId)).toEqual([700100, 700101]);

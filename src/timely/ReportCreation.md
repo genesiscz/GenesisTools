@@ -40,9 +40,9 @@ The `entries-<year-month>.md` file contains:
 
 **Key patterns to identify:**
 
--   Task IDs like `218568`, `170260`, `235086`, etc.
--   Task names like "MA – 1KLIK, chybné nastavení přeplatku k vyplacení"
--   Generic activities like "Incidenty OPEX", "Ostatní provoz - správa aplikací", "Provozní Scrum ceremonie"
+-   Task IDs like `123456`, `234567`, `345678`, etc.
+-   Task names like "APP – CHECKOUT, chybná validace adresy v objednávce"
+-   Generic activities like "Incidents", "Application maintenance", "Scrum meetings"
 -   File paths and application names that indicate what was worked on
 
 ### Step 3: Create the Table Structure
@@ -86,21 +86,21 @@ For each task entry, you need to:
 **Original format:**
 
 ```
-218568 - MA – 1KLIK, chybné nastavení přeplatku k vyplacení - SD32963 - EXT CAPEX (00042139)
+123456 - APP – CHECKOUT, chybná validace adresy v objednávce - SD12345 - EXT CAPEX (00012345)
 ```
 
 **Shortened format:**
 
 ```
-218568 - 1KLIK
+123456 - CHECKOUT
 ```
 
 **Rules:**
 
 -   Keep the task ID number
--   Keep a short identifier (like "1KLIK", "BRQ011", "React 19 Upgrade")
+-   Keep a short identifier (like "CHECKOUT", "REQ011", "React 19 Upgrade")
 -   Remove long descriptions, SD numbers, project codes, and hour values
--   For generic tasks, use short names: "Incidenty OPEX", "Ostatní provoz - správa aplikací", "Provozní Scrum ceremonie"
+-   For generic tasks, use short names: "Incidents", "Application maintenance", "Scrum meetings"
 
 #### 5.2 Create Czech Descriptions
 
@@ -108,11 +108,11 @@ For each task entry, you need to:
 
 **Examples of good descriptions:**
 
--   "Práce na interaktivním vyúčtování, komponenty pro zobrazení přeplatku a nastavení způsobu vrácení"
--   "Práce na změně záloh, success label, finální zobrazení změny záloh"
--   "Práce na vrácení přeplatku, formulář pro nastavení způsobu platby, validace bankovního účtu"
--   "Analýza úkolu, práce na změně způsobu platby, změna záloh"
--   "React 19 Upgrade - Práce na nastavení záloh, TypeScript migrace, import manager"
+-   "Práce na pokladně objednávky, komponenty pro souhrn košíku a výběr doručení"
+-   "Práce na úpravě profilu, success label, finální zobrazení změn"
+-   "Práce na formuláři adresy, validace PSČ, napojení na API"
+-   "Analýza úkolu, práce na změně notifikací, úprava e-mailů"
+-   "React 19 Upgrade - Práce na formulářích, TypeScript migrace, import manager"
 
 **What to include:**
 
@@ -145,17 +145,17 @@ For each task entry, you need to:
 **Example:**
 
 ```
-- 218568 - 1KLIK - Práce na interaktivním vyúčtování, komponenty pro zobrazení přeplatku a nastavení způsobu vrácení
+- 123456 - CHECKOUT - Práce na pokladně objednávky, komponenty pro souhrn košíku a výběr doručení
 ```
 
 **Multiple tasks on same day:**
 
 ```
 **PO:**<br>
-- 218568 - 1KLIK - Práce na interaktivním vyúčtování<br>
-- Incidenty OPEX - Řešení incidentů, analýza chyb<br>
-- Ostatní provoz - správa aplikací<br>
-- Provozní Scrum ceremonie
+- 123456 - CHECKOUT - Práce na pokladně objednávky<br>
+- Incidents - Řešení incidentů, analýza chyb<br>
+- Application maintenance<br>
+- Scrum meetings
 ```
 
 ### Step 6: Handle Special Cases
@@ -254,16 +254,16 @@ bunx md-to-pdf entries-2025-09-table.md
 
 Based on common patterns:
 
--   `218568 - 1KLIK` - MA – 1KLIK, chybné nastavení přeplatku k vyplacení
--   `170260 - BRQ011` - BRQ011 - Zobrazení informace o trvalé záloze
--   `235086` - Změna záloh send vs success
--   `233732 - React 19 Upgrade` - Upgrade projektů na React 19
--   `242244` - U reklamace typu stížnost chybí externí reference
--   `222023 - KK v3.0` - 2. etapa knihovna komponent v3.0
--   `147105 - BRQ002` - BRQ002 – Úprava v zobrazení doporučení na dlaždici OM
--   `Incidenty OPEX` - Generic incident handling
--   `Ostatní provoz - správa aplikací` - General application maintenance
--   `Provozní Scrum ceremonie` - Operational Scrum ceremonies
+-   `123456 - CHECKOUT` - APP – CHECKOUT, chybná validace adresy v objednávce
+-   `234567 - REQ011` - REQ011 - Zobrazení stavu objednávky
+-   `345678` - Změna profilu send vs success
+-   `456789 - React 19 Upgrade` - Upgrade projektů na React 19
+-   `567890` - U reklamace chybí externí reference
+-   `678901 - UI v3.0` - 2. etapa knihovna komponent v3.0
+-   `789012 - REQ002` - REQ002 – Úprava zobrazení doporučení na dashboardu
+-   `Incidents` - Generic incident handling
+-   `Application maintenance` - General application maintenance
+-   `Scrum meetings` - Operational Scrum ceremonies
 
 ## Troubleshooting
 

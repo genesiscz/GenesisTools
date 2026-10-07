@@ -120,7 +120,7 @@ async function addMappingApi(data: Record<string, unknown>) {
     return res.json();
 }
 
-/** Project rules ("an Incident goes to Incidenty_Opex") are the operator's judgement, so no badge. */
+/** Project rules ("an Incident goes to Incidents_Opex") are the operator's judgement, so no badge. */
 function RecommendationBadge({ row, clarityTaskName }: { row?: SerialisedAssignmentRow; clarityTaskName: string }) {
     if (!row?.recommendation) {
         return null;

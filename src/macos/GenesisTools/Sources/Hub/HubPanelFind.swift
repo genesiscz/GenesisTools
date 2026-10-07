@@ -71,7 +71,7 @@ struct PanelFindMatch: Sendable, Hashable {
 }
 
 enum PanelFind {
-    /// Off: ignores case and accents ("cez" finds "ČEZ"). On: exact.
+    /// Off: ignores case and accents ("cafe" finds "Café"). On: exact.
     nonisolated static func options(caseSensitive: Bool) -> String.CompareOptions {
         caseSensitive ? [] : [.caseInsensitive, .diacriticInsensitive]
     }
@@ -656,7 +656,7 @@ struct PanelFindBar: View {
                         .background(RoundedRectangle(cornerRadius: 4).fill(find.caseSensitive ? PanelFindHighlight.currentBackground : Color.white.opacity(0.06)))
                 }
                 .buttonStyle(.genHoverPlain())
-                .instantTooltip(find.caseSensitive ? "Matching case and accents exactly. Click to ignore them" : "Ignoring case and accents (\"cez\" finds \"ČEZ\"). Click to match them exactly")
+                .instantTooltip(find.caseSensitive ? "Matching case and accents exactly. Click to ignore them" : "Ignoring case and accents (\"cafe\" finds \"Café\"). Click to match them exactly")
                 .accessibilityLabel(Text("Match case"))
                 .accessibilityValue(Text(find.caseSensitive ? "on" : "off"))
                 IconButton(systemName: "xmark", tooltip: "Close the find (Esc)", size: 10) { find.close() }

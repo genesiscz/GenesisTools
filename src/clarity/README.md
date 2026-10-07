@@ -79,7 +79,7 @@ Two different things that both used to be called `tasks`:
   it yet, instead of storing the bare id as the title.
 
 A recommendation may come only from an ADO id found in the Clarity task name, matched against the
-work item or one of its ancestors. Project rules such as "an Incident goes to Incidenty_Opex" are
+work item or one of its ancestors. Project rules such as "an Incident goes to Incidents_Opex" are
 the operator's judgement and deliberately live outside this tool.
 
 **The ancestor walk behind that match is unbounded, and must stay unbounded.** It used to stop

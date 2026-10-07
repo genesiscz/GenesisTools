@@ -11,9 +11,9 @@ import { SafeJSON } from "@genesiscz/utils/json";
 const TASKS: ClarityTask[] = (
     [
         ["D_410001_Sample epic_Sample_EXT", 700002],
-        ["430001_Ceremonie_Sample_EXT", 700003],
-        ["Incidenty_Opex_Sample_EXT", 700004],
-        ["Rozvoj_domény_Sample_EXT", 700005],
+        ["430001_Meetings_Sample_EXT", 700003],
+        ["Incidents_Opex_Sample_EXT", 700004],
+        ["Platform_roadmap_Sample_EXT", 700005],
     ] as Array<[string, number]>
 ).map(([taskName, taskId]) => ({
     taskId,
@@ -35,7 +35,7 @@ const CHAINS = new Map<number, WorkItemNode[]>([
             { id: 410001, title: "Sample epic", type: "Epic" },
         ],
     ],
-    [510002, [{ id: 430001, title: "Ceremonie", type: "Task" }]],
+    [510002, [{ id: 430001, title: "Meetings", type: "Task" }]],
     [510003, [{ id: 510003, title: "Unmatched work", type: "Bug" }]],
 ]);
 

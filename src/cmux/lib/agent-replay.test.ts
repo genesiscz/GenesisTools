@@ -403,7 +403,7 @@ test("raw journal launchers can infer matching sessions without trusting conflic
 });
 
 describe("dedupeResumeTargets", () => {
-    // 2026-09-08: `cr work --resume 292767` and `cr work --resume log` both
+    // 2026-09-08: `cr work --resume 234567` and `cr work --resume log` both
     // fuzzy-matched f2f57edd, so one session was resumed twice and claude
     // forked it.
     const id = "f2f57edd-be32-4dae-be97-3fc3923afca9";
@@ -416,13 +416,13 @@ describe("dedupeResumeTargets", () => {
 
     test("the pane whose title names the session keeps the resume; the other loses its command", () => {
         const profile = profileWith([
-            terminal("✳ col-294936-pr-7210-logouts", { command: `claude --resume ${id}`, command_source: "inferred" }),
-            terminal("◑ col-292767-neco-se-nepovedlo-repro", {
+            terminal("✳ abc-123456-pr-1234-logouts", { command: `claude --resume ${id}`, command_source: "inferred" }),
+            terminal("◑ abc-234567-something-failed-repro", {
                 command: `claude --resume ${id}`,
                 command_source: "inferred",
             }),
         ]);
-        const session = claudeSession({ sessionId: id, title: "col-292767-neco-se-nepovedlo-repro" });
+        const session = claudeSession({ sessionId: id, title: "abc-234567-something-failed-repro" });
 
         const [loser, winner] = terminals(dedupeResumeTargets(profile, catalog([session])));
 
@@ -432,7 +432,7 @@ describe("dedupeResumeTargets", () => {
         expect(loser.command_source).toBeUndefined();
         expect(loser.command_original).toBe(`claude --resume ${id}`);
         expect(loser.drift).toEqual([
-            `duplicate resume of claude ${id} dropped: pane "◑ col-292767-neco-se-nepovedlo-repro" keeps it, this pane gets no command`,
+            `duplicate resume of claude ${id} dropped: pane "◑ abc-234567-something-failed-repro" keeps it, this pane gets no command`,
         ]);
     });
 

@@ -34,7 +34,7 @@ export interface MentionSearchResult {
 /**
  * The term to put in `[System.History] CONTAINS`. It comes off the RAW display name, not a
  * normalized one: the index holds the name as written, so stripping diacritics here would stop
- * `Nováková` matching. The parenthetical suffix some organisations append (`(QK)`) is dropped, and
+ * `Nováková` matching. The parenthetical suffix some organisations append (`(Contractor)`) is dropped, and
  * the first word is selective enough while staying a single token the index can match.
  */
 export function wiqlMentionTerm(userName: string): string {
@@ -108,8 +108,8 @@ function escapeRegExp(value: string): string {
 /**
  * Comment text is normalized as TEXT: lowercased, de-accented, whitespace collapsed. It must NOT go
  * through `normalizeUserName`, which also deletes anything in brackets. That is right for a display
- * name (`Surname Firstname (QK)`) and wrong for prose: a mention written inside a parenthesis, as in
- * `(@Surname Firstname (QK) add anything you have)`, was deleted whole and the real mention was
+ * name (`Surname Firstname (Contractor)`) and wrong for prose: a mention written inside a parenthesis, as in
+ * `(@Surname Firstname (Contractor) add anything you have)`, was deleted whole and the real mention was
  * missed. One live work item was lost to exactly that.
  */
 function normalizeCommentText(text: string): string {
@@ -118,7 +118,7 @@ function normalizeCommentText(text: string): string {
 
 /**
  * Whether a comment names the user. An Azure DevOps mention renders as the full display name behind
- * an anchor (`@Surname Firstname (XX)`), so a contains match on the normalized name catches it, and
+ * an anchor (`@Surname Firstname (Contractor)`), so a contains match on the normalized name catches it, and
  * the adjacency branch below catches a comment that writes the same words the other way round.
  */
 export function commentNamesUser(text: string, userName: string): boolean {

@@ -452,7 +452,7 @@ az rest --method get \
 # {
 #   "comments": [
 #     {
-#       "id": 8296099,
+#       "id": 1234567,
 #       "text": "<div>Comment HTML content</div>",
 #       "createdBy": { "displayName": "User Name" },
 #       "createdDate": "2020-05-25T10:19:27.64Z",

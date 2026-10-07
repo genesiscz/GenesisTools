@@ -24,8 +24,8 @@ function task(taskId: number, taskName: string): ClarityTask {
 
 const TASKS: ClarityTask[] = [
     task(700002, "D_410001_Sample epic_Sample_EXT"),
-    task(700004, "Incidenty_Opex_Sample_EXT"),
-    task(700005, "Rozvoj_domény_Sample_EXT"),
+    task(700004, "Incidents_Opex_Sample_EXT"),
+    task(700005, "Platform_roadmap_Sample_EXT"),
 ];
 
 const CHAINS = new Map<number, WorkItemNode[]>([
@@ -59,7 +59,7 @@ describe("buildAssignmentRows", () => {
                 [100001, 240],
                 [100002, 90],
             ]),
-            mappings: [mapping(100001, 700005, "Rozvoj_domény_Sample_EXT")],
+            mappings: [mapping(100001, 700005, "Platform_roadmap_Sample_EXT")],
             chains: CHAINS,
             tasks: TASKS,
         });
@@ -108,7 +108,7 @@ describe("buildAssignmentRows", () => {
     test("flags an assigned row whose stored task differs from the recommendation", () => {
         const { assigned } = buildAssignmentRows({
             minutesByWorkItem: new Map([[100001, 240]]),
-            mappings: [mapping(100001, 700005, "Rozvoj_domény_Sample_EXT")],
+            mappings: [mapping(100001, 700005, "Platform_roadmap_Sample_EXT")],
             chains: CHAINS,
             tasks: TASKS,
         });
@@ -145,7 +145,7 @@ describe("applyAssignments", () => {
 
     test("replaces the existing mapping instead of adding a duplicate", () => {
         const next = applyAssignments({
-            mappings: [mapping(100001, 700005, "Rozvoj_domény_Sample_EXT")],
+            mappings: [mapping(100001, 700005, "Platform_roadmap_Sample_EXT")],
             pairs: [{ workItemId: 100001, task: TASKS[0], title: "Tech debt task", type: "Task" }],
         });
 
@@ -155,7 +155,7 @@ describe("applyAssignments", () => {
 
     test("keeps the stored title and type when the pair arrives without one", () => {
         const next = applyAssignments({
-            mappings: [mapping(100001, 700005, "Rozvoj_domény_Sample_EXT")],
+            mappings: [mapping(100001, 700005, "Platform_roadmap_Sample_EXT")],
             pairs: [{ workItemId: 100001, task: TASKS[0] }],
         });
 
@@ -170,7 +170,7 @@ describe("applyAssignments", () => {
 
     test("leaves mappings for other work items untouched", () => {
         const next = applyAssignments({
-            mappings: [mapping(999999, 700004, "Incidenty_Opex_Sample_EXT")],
+            mappings: [mapping(999999, 700004, "Incidents_Opex_Sample_EXT")],
             pairs: [{ workItemId: 100001, task: TASKS[0], title: "Tech debt task", type: "Task" }],
         });
 
@@ -206,7 +206,7 @@ describe("recommendedPairsFor", () => {
     test("skips a work item that is already mapped, even when the tree disputes the mapping", () => {
         const rows = buildAssignmentRows({
             minutesByWorkItem: new Map([[100001, 600]]),
-            mappings: [mapping(100001, 700004, "Incidenty_Opex_Sample_EXT")],
+            mappings: [mapping(100001, 700004, "Incidents_Opex_Sample_EXT")],
             chains: CHAINS,
             tasks: TASKS,
         });
@@ -261,7 +261,7 @@ describe("removeAssignments matches the work item, not the Clarity task", () => 
     // `--unlink 700004` is a plausible slip: 700004 is a Clarity task id, and every mapping that
     // bills it would go at once if the filter matched either id.
     test("removes nothing when the id names a Clarity task rather than a work item", () => {
-        const mappings = [mapping(100001, 700004, "Incidenty_Opex_Sample_EXT")];
+        const mappings = [mapping(100001, 700004, "Incidents_Opex_Sample_EXT")];
 
         const result = removeAssignments({ mappings, workItemIds: [700004] });
 

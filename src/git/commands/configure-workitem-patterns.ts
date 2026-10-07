@@ -204,7 +204,7 @@ async function handleInteractive(storage: Storage): Promise<void> {
             case "add": {
                 const regex = await p.text({
                     message: "Enter regex pattern (must have a capture group for the ID):",
-                    placeholder: "col-(\\d+)",
+                    placeholder: "ABC-(\\d+)",
                     validate: (value = "") => {
                         const result = validatePattern(value);
 

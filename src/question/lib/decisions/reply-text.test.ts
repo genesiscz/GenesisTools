@@ -66,7 +66,7 @@ describe("parseDecisionBlocks with context, rationale and recommended", () => {
         "## ✅ DONE: why it failed",
         "",
         "- [95%] The worktree had no `.npmrc`, so bun used `~/.npmrc` (`.gitignore:6`).",
-        "- [90%] `bunfig.toml:3` pins the CEZ bundle.",
+        "- [90%] `bunfig.toml:3` pins the ACME bundle.",
         "",
         "❓ DECISION 1: Prevent this drift?",
         "- **a)** No change. Use `acme-tools worktree init`. (My recommendation, because it costs nothing.)",

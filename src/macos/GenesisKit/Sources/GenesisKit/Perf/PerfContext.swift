@@ -4,7 +4,7 @@
 //  What the app was showing and doing when a stall or a dropped frame happened. A `main-stall
 //  recovered after 742ms` line alone named no screen and no cause: on 2026-10-01 the hub logged 163 of
 //  them in one afternoon, and their samples showed only SwiftUI measuring text. Every stall and
-//  frame-drop line now ends with the host's current area ("agents › col-309257 › transcript,changes")
+//  frame-drop line now ends with the host's current area ("agents › abc-123456 › transcript,changes")
 //  and the last spans and marks before it, newest first, with how long ago each one ended.
 //
 

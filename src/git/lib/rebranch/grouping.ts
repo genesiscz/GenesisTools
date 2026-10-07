@@ -4,7 +4,7 @@ import type { CommitGroup, ParsedCommit } from "./types";
 /** Conventional commit regex: type(scope)!: message */
 const CONVENTIONAL_RE = /^(\w+)(\(([^)]+)\))?(!)?:\s*(.+)$/;
 
-/** Ticket pattern: matches PROJ-123, COL-456, etc. */
+/** Ticket pattern: matches PROJ-123, ABC-456, etc. */
 const TICKET_RE = /[A-Z]{2,10}-\d+/g;
 
 /**

@@ -42,7 +42,7 @@ Options (interactive):
 Workflow (interactive):
   1. Detects your current branch and its fork point
   2. Parses commits using conventional commit format
-  3. Groups commits by scope/ticket (e.g., COL-123)
+  3. Groups commits by scope/ticket (e.g., ABC-123)
   4. Lets you refine groups with searchable multiselect
   5. Names each group → becomes the new branch name
   6. Cherry-picks commits onto new branches from fork point

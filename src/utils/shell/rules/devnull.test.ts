@@ -349,7 +349,7 @@ describe("corpus fixtures that must fire", () => {
             'cat node_modules/.genesis-test-stamp 2>/dev/null | head -2; echo "---"; ls -d node_modules >/dev/null && echo "node_modules present"',
             [`${READ}:context`],
         ],
-        ["rg -l 'col-init' /repo --hidden -g '!node_modules' 2>/dev/null | head -8", [`${READ}:context`]],
+        ["rg -l 'abc-init' /repo --hidden -g '!node_modules' 2>/dev/null | head -8", [`${READ}:context`]],
         [
             'find . -path ./node_modules -prune -o -name "*.test.ts*" -print 2>/dev/null | xargs grep -l "fetchPendingSnapshot" 2>/dev/null',
             [`${READ}:context`],

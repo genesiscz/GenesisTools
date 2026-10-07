@@ -3,8 +3,8 @@ import { resolveRequestedUser } from "@app/azure-devops/lib/current-user";
 import type { IdentityRef } from "@app/azure-devops/types";
 
 const ROSTER: IdentityRef[] = [
-    { displayName: "Nováková Tereza (XX)", uniqueName: "tereza.novakova@example.invalid" },
-    { displayName: "Dvořák Pavel (YY)", uniqueName: "pavel.dvorak@example.invalid" },
+    { displayName: "Nováková Tereza (Contractor)", uniqueName: "tereza.novakova@example.invalid" },
+    { displayName: "Smith John (Vendor)", uniqueName: "john.smith@example.invalid" },
 ];
 
 const roster = async (): Promise<IdentityRef[]> => ROSTER;
@@ -15,22 +15,22 @@ describe("resolveRequestedUser with an explicit --user", () => {
         // and reads as "nobody ever named this person".
         const resolved = await resolveRequestedUser({ user: "Novakova Tereza", teamMembers: roster });
 
-        expect(resolved).toEqual({ name: "Nováková Tereza (XX)", verified: true });
+        expect(resolved).toEqual({ name: "Nováková Tereza (Contractor)", verified: true });
     });
 
     test("answers with the roster spelling for a name written the other way round", async () => {
         const resolved = await resolveRequestedUser({ user: "Tereza Nováková", teamMembers: roster });
 
-        expect(resolved).toEqual({ name: "Nováková Tereza (XX)", verified: true });
+        expect(resolved).toEqual({ name: "Nováková Tereza (Contractor)", verified: true });
     });
 
     test("resolves an email to the display name every history record carries", async () => {
         const resolved = await resolveRequestedUser({
-            user: "pavel.dvorak@example.invalid",
+            user: "john.smith@example.invalid",
             teamMembers: roster,
         });
 
-        expect(resolved).toEqual({ name: "Dvořák Pavel (YY)", verified: true });
+        expect(resolved).toEqual({ name: "Smith John (Vendor)", verified: true });
     });
 
     test("passes a name the roster does not know through untouched", async () => {
@@ -46,9 +46,9 @@ describe("resolveRequestedUser with an explicit --user", () => {
             throw new Error("getaddrinfo ENOTFOUND");
         };
 
-        const resolved = await resolveRequestedUser({ user: "Nováková Tereza (XX)", teamMembers: failing });
+        const resolved = await resolveRequestedUser({ user: "Nováková Tereza (Contractor)", teamMembers: failing });
 
-        expect(resolved).toEqual({ name: "Nováková Tereza (XX)", verified: false });
+        expect(resolved).toEqual({ name: "Nováková Tereza (Contractor)", verified: false });
     });
 
     test("never shells out to the Azure CLI for an explicit name", async () => {
@@ -60,7 +60,7 @@ describe("resolveRequestedUser with an explicit --user", () => {
             return ROSTER;
         };
 
-        await resolveRequestedUser({ user: "Dvořák Pavel (YY)", teamMembers: counting });
+        await resolveRequestedUser({ user: "Smith John (Vendor)", teamMembers: counting });
 
         expect(asked).toBe(1);
     });
@@ -72,7 +72,7 @@ describe("resolveRequestedUser with @me", () => {
     test("resolves the signed-in account to the display name every history record carries", async () => {
         const resolved = await resolveRequestedUser({ user: "@me", teamMembers: roster, accountName: account });
 
-        expect(resolved).toEqual({ name: "Nováková Tereza (XX)", verified: true });
+        expect(resolved).toEqual({ name: "Nováková Tereza (Contractor)", verified: true });
     });
 
     test("refuses rather than searching for the account name when the roster cannot be reached", async () => {

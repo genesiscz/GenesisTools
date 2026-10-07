@@ -27,7 +27,7 @@ describe("looksLikeWiql", () => {
 
     test("accepts an ordinary saved query name", () => {
         expect(looksLikeWiql("Sample19 - ALL Bugs - Open & Closed")).toBe(false);
-        expect(looksLikeWiql("Incidenty_Opex")).toBe(false);
+        expect(looksLikeWiql("Incidents_Opex")).toBe(false);
         expect(looksLikeWiql("My team's open work")).toBe(false);
     });
 

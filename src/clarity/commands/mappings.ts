@@ -62,9 +62,9 @@ export function registerMappingsCommand(parent: Command): void {
                 `  ${toolCommand("clarity mappings")} --date 2026-08 --unassigned  work items still missing a mapping`,
                 `  ${toolCommand("clarity mappings")} --date 2026-08 --assigned    mappings, with drift against the tree`,
                 `  ${toolCommand("clarity mappings")} --date 2026-08 --apply-recommended`,
-                `  ${toolCommand("clarity mappings")} --date 2026-08 --assign 302920:8898018`,
-                `  ${toolCommand("clarity mappings")} --work-item 302920 --clarity-task "Incidenty_Opex"`,
-                `  ${toolCommand("clarity mappings")} --unlink 298326 --yes`,
+                `  ${toolCommand("clarity mappings")} --date 2026-08 --assign 123456:7000001`,
+                `  ${toolCommand("clarity mappings")} --work-item 123456 --clarity-task "Incidents_Opex"`,
+                `  ${toolCommand("clarity mappings")} --unlink 234567 --yes`,
                 "",
             ].join("\n")
         )

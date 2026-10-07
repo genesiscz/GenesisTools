@@ -195,7 +195,7 @@ export type WikiRecursionLevel = "none" | "oneLevel" | "oneLevelPlusNestedEmptyF
 
 export interface WikiPageApi {
     id?: number;
-    /** Page path as the wiki UI shows it, e.g. `/Projects/302910 | Feature name`. */
+    /** Page path as the wiki UI shows it, e.g. `/Projects/123456 | Feature name`. */
     path: string;
     order?: number;
     /** File of the page in the backing git repository, with the wiki's name encoding. */
@@ -221,7 +221,7 @@ export interface WikiPageDetailApi {
 
 export interface WikiSearchResult {
     fileName: string;
-    /** Git path of the page file, e.g. `/Projects/302910-%7C-Feature-name.md`. */
+    /** Git path of the page file, e.g. `/Projects/123456-%7C-Feature-name.md`. */
     path: string;
     contentId?: string;
     project?: { id?: string; name?: string };

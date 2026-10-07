@@ -329,7 +329,7 @@ describe("findFocusTargets", () => {
     });
 
     test("a /rename title matches the OSC tab even with an activity prefix", () => {
-        const title = "col-294936-295714-pr-7210-logouts-newest-invesgitations-redirect-loop";
+        const title = "abc-123456-234567-pr-1234-logouts-newest-invesgitations-redirect-loop";
         const targets = findFocusTargets(
             snapshot([
                 pane({
@@ -348,7 +348,7 @@ describe("findFocusTargets", () => {
                         },
                         {
                             id: "surface:38",
-                            title: "✳ col-294936-295714-pr-7210-logouts-newest-invesgitations",
+                            title: "✳ abc-123456-234567-pr-1234-logouts-newest-invesgitations",
                             type: "terminal",
                             index: 1,
                             selected: true,
@@ -514,12 +514,12 @@ describe("aliasesForSession", () => {
             aliasesForSession("c53c4440", [
                 {
                     sessionId: "c53c4440-ffd5-41ad-af8e-07bbbbf4a55f",
-                    customTitle: "col-294936-295714-pr-7210-logouts-newest-invesgitations-redirect-loop",
+                    customTitle: "abc-123456-234567-pr-1234-logouts-newest-invesgitations-redirect-loop",
                     summary: null,
                     firstPrompt: "file:///tmp/other.html",
                 },
             ])
-        ).toEqual(["col-294936-295714-pr-7210-logouts-newest-invesgitations-redirect-loop"]);
+        ).toEqual(["abc-123456-234567-pr-1234-logouts-newest-invesgitations-redirect-loop"]);
     });
 
     test("untitled session aliases a file stem from the first prompt", () => {
@@ -640,7 +640,7 @@ describe("excludeSurfaceId (caller's own tab, not its whole pane)", () => {
         active: true,
         surfaceCount: 2,
         surfaces: [
-            surface({ id: "surface:57", title: restoredTitle(SESSION_A, "col-logouts-redirect-loop") }),
+            surface({ id: "surface:57", title: restoredTitle(SESSION_A, "abc-logouts-redirect-loop") }),
             surface({ id: "surface:193", title: "martin account usage verification", selected: true }),
         ],
     });

@@ -486,7 +486,7 @@ export function correctNativeResumeBindings(profile: Profile, catalog: ReplayCat
 /**
  * One session, one pane. A second `--resume <id>` of a running Claude session
  * is refused or forked by claude itself, so it is always wrong. Two panes
- * claimed one id on 2026-09-08 because `--resume 292767` and `--resume log`
+ * claimed one id on 2026-09-08 because `--resume 234567` and `--resume log`
  * both fuzzy-matched the same session. The pane whose tab title names the
  * session keeps the command; every other claimant gets no command and a drift
  * line naming the winner.

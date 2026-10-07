@@ -31,13 +31,12 @@ export interface SuggestedPattern {
 }
 
 const DEFAULT_PATTERNS: WorkitemPattern[] = [
-    { regex: "col-(\\d+)", source: "commit-message", captureGroup: 1, description: "col-XXXXX" },
+    { regex: "\\b[A-Z]{2,10}-(\\d+)\\b", source: "commit-message", captureGroup: 1, description: "PREFIX-123" },
     { regex: "#(\\d{5,6})", source: "commit-message", captureGroup: 1, description: "#XXXXX" },
-    { regex: "COL-(\\d+)-", source: "branch-name", captureGroup: 1, description: "COL-XXXXX branch" },
+    { regex: "\\b[A-Z]{2,10}-(\\d+)\\b", source: "branch-name", captureGroup: 1, description: "PREFIX-123 branch" },
 ];
 
 const SUGGEST_TEMPLATES: WorkitemPattern[] = [
-    { regex: "col-(\\d+)", source: "commit-message", captureGroup: 1, description: "col-XXXXX (commit message)" },
     { regex: "#(\\d{5,6})", source: "commit-message", captureGroup: 1, description: "#XXXXX (commit message)" },
     {
         regex: "(\\w+)-(\\d+)",
@@ -57,7 +56,6 @@ const SUGGEST_TEMPLATES: WorkitemPattern[] = [
         captureGroup: 1,
         description: "fix(...ID) conventional commit",
     },
-    { regex: "COL-(\\d+)-", source: "branch-name", captureGroup: 1, description: "COL-XXXXX branch pattern" },
     {
         regex: "(\\w+)-(\\d+)-",
         source: "branch-name",

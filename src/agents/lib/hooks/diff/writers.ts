@@ -11,7 +11,7 @@ import type { NamedChange } from "./named";
  *
  * fable-replace is the writer today. A sweep's paths sit in a heredoc spec (`@@ $V/a.md`) or behind
  * variables, which the named-path pass refuses by design, so a sweep that edited a vault note left no
- * diff at all (col-309257 session, 2026-10-01). But every run appends one line to its journal with the
+ * diff at all (observed 2026-10-01). But every run appends one line to its journal with the
  * backup folder, and that folder's manifest names each file and the copy taken BEFORE the write. Those
  * copies are exact before-states, so the change is diffed and logged like a named path.
  *

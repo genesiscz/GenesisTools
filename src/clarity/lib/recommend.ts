@@ -7,9 +7,9 @@ export interface ClarityRecommendation {
 }
 
 /**
- * Index Clarity tasks by the ADO id embedded in their name. `D_271735_Technologický dluh 2026`
- * bills ADO 271735, `262042_Ceremonie` bills 262042. Names without an id (Incidenty_Opex,
- * Rozvoj_domény_MČ) cannot be recommended and are left out.
+ * Index Clarity tasks by the ADO id embedded in their name. `D_567890_Technical debt 2026`
+ * bills ADO 567890, `678901_Meetings` bills 678901. Names without an id (Incidents_Opex,
+ * Platform_roadmap_Sample) cannot be recommended and are left out.
  */
 export function clarityTasksByAdoId(tasks: ClarityTask[]): Map<number, ClarityTask> {
     const byId = new Map<number, ClarityTask>();

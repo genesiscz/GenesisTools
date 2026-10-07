@@ -441,7 +441,7 @@ describe("gh PR list and view", () => {
     });
 
     it("reads the search box: author, numbers and free text", () => {
-        expect(parsePrQuery("author:qkleblmat")).toEqual({ author: "qkleblmat", numbers: [], text: "" });
+        expect(parsePrQuery("author:jdoe")).toEqual({ author: "jdoe", numbers: [], text: "" });
         expect(parsePrQuery("!7412")).toEqual({ author: null, numbers: [7412], text: "" });
         expect(parsePrQuery("@me fix")).toEqual({ author: "@me", numbers: [], text: "fix" });
         expect(parsePrQuery("author:@Me")).toEqual({ author: "@me", numbers: [], text: "" });

@@ -302,7 +302,7 @@ describe("parseSessionTail with tool results", () => {
 describe("parseCmuxSurfaceTtys", () => {
     test("reads surface refs and ttys from `cmux top --all`", () => {
         const out = [
-            '   2.9%  3.4 GB  31  surface surface:3 [terminal] "col-burn-auth" [selected] tty=ttys000',
+            '   2.9%  3.4 GB  31  surface surface:3 [terminal] "abc-burn-auth" [selected] tty=ttys000',
             '   1.5%  1.6 GB  20  surface surface:193 [terminal] "claude-bad-session" tty=ttys020',
             "   0.0%  4.8 MB   1  process 21277 zsh",
         ].join("\n");
