@@ -18,10 +18,11 @@ import { pickMode } from "@app/gitlab/commands/pr-review";
 import { progress, type TargetOptions, withProject } from "@app/gitlab/commands/shared";
 import { resolveProjectApi } from "@app/gitlab/lib/client";
 import { loadConfig } from "@app/gitlab/lib/config";
-import { parseJudgementsFile } from "@app/gitlab/lib/judgements";
+import { parseJudgementsFile, reportPathFor } from "@app/gitlab/lib/judgements";
 import { checkJudgements, skeletonJson, skeletonText } from "@app/gitlab/lib/judgements-check";
 import {
     alreadyPosted,
+    blockingErrors,
     describeStep,
     ledgerPath,
     loadLedger,
@@ -30,6 +31,7 @@ import {
     readBack,
     saveLedger,
     stepHash,
+    unverifiedSteps,
 } from "@app/gitlab/lib/judgements-post";
 import {
     proposalFromJudgements,
@@ -284,10 +286,6 @@ async function renderContext(
     };
 }
 
-function reportPathFor(file: string): string {
-    return file.replace(/(-judgements)?\.md$/, "-report.md");
-}
-
 async function runRender(iid: string, opts: RenderOptions): Promise<void> {
     const { api, mode, file } = await target(iid, opts);
 
@@ -316,6 +314,11 @@ async function runRender(iid: string, opts: RenderOptions): Promise<void> {
     }
 
     const reportPath = resolve(opts.out ?? reportPathFor(file));
+
+    if (reportPath === resolve(file)) {
+        throw new Error(`The report would overwrite the judgements file ${file}; name another path with --out.`);
+    }
+
     writeFileSync(reportPath, renderFull(judgements, ctx));
     progress(`ℹ  full layout → ${reportPath}`);
 
@@ -331,7 +334,7 @@ async function runRender(iid: string, opts: RenderOptions): Promise<void> {
     out.println(reportPath);
 }
 
-async function runStep(
+export async function runStep(
     api: Awaited<ReturnType<typeof resolveProjectApi>>,
     iid: string,
     step: PostStep,
@@ -382,13 +385,23 @@ async function runStep(
 
             const removed = await deleteDraft(api, iid, step.draftId);
 
-            return removed.ok
-                ? created
-                : {
-                      ...created,
-                      ok: false,
-                      error: `the new draft ${created.draftId} exists, but deleting draft ${step.draftId} failed: ${removed.error}`,
-                  };
+            if (removed.ok) {
+                return created;
+            }
+
+            // Undo the create, so a re-run starts from the old draft alone instead of adding a second copy.
+            const undone =
+                created.draftId === undefined
+                    ? { ok: false, error: "GitLab returned no id for it" }
+                    : await deleteDraft(api, iid, created.draftId);
+
+            return {
+                ...created,
+                ok: false,
+                error: undone.ok
+                    ? `deleting draft ${step.draftId} failed (${removed.error}); the new draft ${created.draftId} was removed again, so nothing changed`
+                    : `the new draft ${created.draftId} exists, but deleting draft ${step.draftId} failed (${removed.error}) and removing the new one failed too (${undone.error}). Delete one of them with ${toolCommand("gitlab pr", iid, "comments", "delete", String(created.draftId ?? "<id>"))} before running again.`,
+            };
         }
     }
 }
@@ -419,7 +432,7 @@ async function runPost(iid: string, opts: PostOptions): Promise<void> {
     ]);
     const selected = new Set([...ids, ...answers].map((id) => id.trim().toUpperCase()).filter(Boolean));
     const check = checkJudgements({ judgements, known: items.known, files, rules: config.review.draftRules });
-    const blocking = check.errors.filter((error) => selected.has(error.id));
+    const blocking = blockingErrors(check.errors, selected);
     const plan = planPost({ judgements, known: items.known, ids, answers, agent: opts.agent });
     const problems = [...blocking.map((e) => ({ id: e.id, message: e.message })), ...plan.errors];
 
@@ -439,10 +452,16 @@ async function runPost(iid: string, opts: PostOptions): Promise<void> {
     const ledgerFile = ledgerPath({ host: api.host, project: api.project, iid: Number(iid) });
     const ledger = loadLedger(ledgerFile);
     const todo = plan.steps.filter((step) => !alreadyPosted(ledger, step));
+    const recheck = unverifiedSteps(ledger, plan.steps);
 
     for (const step of plan.steps) {
         const landed = alreadyPosted(ledger, step);
-        out.println(`${describeStep(step)}${landed ? `  (already posted ${landed.at}, skipped)` : ""}`);
+        const note = !landed
+            ? ""
+            : landed.verified === false
+              ? `  (posted ${landed.at}, not read back yet: read back again, not posted again)`
+              : `  (already posted ${landed.at}, skipped)`;
+        out.println(`${describeStep(step)}${note}`);
     }
 
     for (const skip of plan.skipped) {
@@ -459,6 +478,14 @@ async function runPost(iid: string, opts: PostOptions): Promise<void> {
 
     const drafts = await fetchDrafts(api, iid);
     const draftIds = new Map<string, number>();
+
+    for (const step of recheck) {
+        const draftId = ledger[step.id]?.draftId;
+
+        if (draftId !== undefined) {
+            draftIds.set(step.id, draftId);
+        }
+    }
 
     for (const step of todo) {
         const result = await runStep(api, iid, step, { drafts, files });
@@ -481,25 +508,38 @@ async function runPost(iid: string, opts: PostOptions): Promise<void> {
             bodyHash: stepHash(step),
             at: new Date().toISOString(),
             draftId: result.draftId,
+            verified: false,
         };
         saveLedger(ledgerFile, ledger);
     }
 
     const after = await fetchDrafts(api, iid);
-    const mismatches = todo.flatMap((step) => {
+    const checked = [...recheck, ...todo];
+    const mismatches: string[] = [];
+
+    for (const step of checked) {
         const problem = readBack(step, after, draftIds);
 
-        return problem ? [`${step.id}: ${problem}`] : [];
-    });
+        if (problem) {
+            mismatches.push(`${step.id}: ${problem}`);
+            continue;
+        }
+
+        ledger[step.id] = { ...ledger[step.id], verified: true };
+    }
+
+    saveLedger(ledgerFile, ledger);
 
     if (mismatches.length > 0) {
-        out.println(`\n⛔ read back:\n${mismatches.map((line) => `  ${line}`).join("\n")}`);
+        out.println(
+            `\n⛔ read back:\n${mismatches.map((line) => `  ${line}`).join("\n")}\nThese steps stay unverified: a re-run reads them back again and does not post them twice.`
+        );
         process.exitCode = 1;
 
         return;
     }
 
     out.println(
-        `\n✅ ${todo.length} step(s) posted as drafts and read back on !${iid}. Publish with \`${toolCommand("gitlab pr", iid, "comments", "publish")}\` when the user asks.`
+        `\n✅ ${checked.length} step(s) posted as drafts and read back on !${iid}. Publish with \`${toolCommand("gitlab pr", iid, "comments", "publish")}\` when the user asks.`
     );
 }

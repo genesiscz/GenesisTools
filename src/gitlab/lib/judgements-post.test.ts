@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runStep } from "@app/gitlab/commands/review-judgements";
 import { parseJudgements } from "./judgements";
 import type { KnownItem } from "./judgements-check";
 import {
     alreadyPosted,
+    blockingErrors,
     describeStep,
     ledgerPath,
     loadLedger,
@@ -13,6 +15,7 @@ import {
     readBack,
     saveLedger,
     stepHash,
+    unverifiedSteps,
 } from "./judgements-post";
 
 const KNOWN: KnownItem[] = [
@@ -177,6 +180,81 @@ describe("comments post plan", () => {
 
         expect(alreadyPosted(ledger, reply)).not.toBeNull();
         expect(alreadyPosted(ledger, { ...reply, body: "Fixed, differently." })).toBeNull();
+    });
+
+    test("the ledger key is the whole effect: a reply that now resolves, or a comment on a new line, is new", () => {
+        const [reply, , , comment] = plan(["T01", "D01", "D02", "N01"]).steps;
+
+        if (reply.kind !== "reply" || comment.kind !== "comment") {
+            throw new Error("expected a reply and a comment step");
+        }
+
+        expect(stepHash({ ...reply, resolve: !reply.resolve })).not.toBe(stepHash(reply));
+        expect(stepHash({ ...comment, anchor: { ...comment.anchor, line: 5 } })).not.toBe(stepHash(comment));
+        expect(stepHash({ ...comment, where: "elsewhere" })).toBe(stepHash(comment));
+    });
+
+    test("a step that landed but was not read back is read back again, not posted again", () => {
+        const [reply, reword] = plan(["T01", "D01"]).steps;
+        const ledger = {
+            T01: { kind: reply.kind, bodyHash: stepHash(reply), at: "2026-10-07T05:00:00Z", verified: false },
+            D01: { kind: reword.kind, bodyHash: stepHash(reword), at: "2026-10-07T05:00:00Z", verified: true },
+        };
+
+        expect(alreadyPosted(ledger, reply)).not.toBeNull();
+        expect(unverifiedSteps(ledger, [reply, reword]).map((step) => step.id)).toEqual(["T01"]);
+    });
+
+    test("a file-level error blocks every post, an item's error only that item", () => {
+        const errors = [
+            { id: "file", message: "a fence swallowed N01" },
+            { id: "T01", message: "no badge" },
+            { id: "D01", message: "empty text" },
+        ];
+
+        expect(blockingErrors(errors, new Set(["T01"])).map((e) => e.id)).toEqual(["file", "T01"]);
+        expect(blockingErrors(errors.slice(2), new Set(["T01"]))).toEqual([]);
+    });
+
+    test("a move whose old draft cannot be deleted removes the new one again, so a re-run does not duplicate it", async () => {
+        const calls: string[] = [];
+        const server = Bun.serve({
+            port: 0,
+            fetch(request) {
+                const path = new URL(request.url).pathname;
+                calls.push(`${request.method} ${path.slice(path.indexOf("/draft_notes"))}`);
+
+                if (request.method === "POST") {
+                    return Response.json({ id: 77, note: "Moved." });
+                }
+
+                return path.endsWith("/900")
+                    ? new Response("forbidden", { status: 403 })
+                    : new Response(null, { status: 204 });
+            },
+        });
+
+        try {
+            const result = await runStep(
+                { host: `http://localhost:${server.port}`, token: "t", project: "group/app" },
+                "42",
+                {
+                    id: "D01",
+                    kind: "move",
+                    draftId: 900,
+                    anchor: { path: "", line: 0, side: "new", text: null, top: true },
+                    body: "Moved.",
+                    where: "top-level",
+                },
+                { drafts: [], files: [] }
+            );
+
+            expect(result.ok).toBe(false);
+            expect(result.error).toContain("the new draft 77 was removed again, so nothing changed");
+            expect(calls).toEqual(["POST /draft_notes", "DELETE /draft_notes/900", "DELETE /draft_notes/77"]);
+        } finally {
+            server.stop(true);
+        }
     });
 
     test("read back checks the effect GitLab shows, not the call's answer", () => {

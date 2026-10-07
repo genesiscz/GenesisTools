@@ -228,17 +228,21 @@ export function describeStep(step: PostStep): string {
 
 export interface LedgerEntry {
     kind: PostStep["kind"];
+    /** The step's whole effect (kind, target, anchor, resolve, text), so changing any of them is a new step. */
     bodyHash: string;
     at: string;
     draftId?: number;
+    /** False until the read-back saw the effect on GitLab; a re-run reads such a step back again, never posts it twice. */
+    verified?: boolean;
 }
 
 export type Ledger = Record<string, LedgerEntry>;
 
 export function stepHash(step: PostStep): string {
-    const material = "body" in step ? step.body : String("draftId" in step ? step.draftId : "");
+    // The id names the step and `where` is derived from the anchor; everything else is the effect.
+    const effect = SafeJSON.stringify({ ...step, id: undefined, where: undefined });
 
-    return createHash("sha1").update(`${step.kind}\0${material}`).digest("hex").slice(0, 16);
+    return createHash("sha1").update(effect).digest("hex").slice(0, 16);
 }
 
 export function ledgerPath(mr: { host: string; project: string; iid: number }, dir = storage.getBaseDir()): string {
@@ -266,11 +270,25 @@ export function saveLedger(path: string, ledger: Ledger): void {
     atomicWriteFileSync(path, SafeJSON.stringify(ledger, null, 2));
 }
 
-/** The step already landed with the same text: a re-run skips it. */
+/** The step already landed with the same effect: a re-run does not post it again. */
 export function alreadyPosted(ledger: Ledger, step: PostStep): LedgerEntry | null {
     const entry = ledger[step.id];
 
     return entry && entry.kind === step.kind && entry.bodyHash === stepHash(step) ? entry : null;
+}
+
+/** Steps that landed but whose read-back has not passed yet: read back again, not posted again. */
+export function unverifiedSteps(ledger: Ledger, steps: PostStep[]): PostStep[] {
+    return steps.filter((step) => alreadyPosted(ledger, step)?.verified === false);
+}
+
+/**
+ * The check errors that stop `comments post`: the selected items' own, and every file-level one. A
+ * fence that swallowed a later item's heading is a file-level error, and it would post that text inside
+ * a selected reply.
+ */
+export function blockingErrors<T extends { id: string }>(errors: T[], selected: Set<string>): T[] {
+    return errors.filter((error) => error.id === "file" || selected.has(error.id));
 }
 
 // ─── read back ─────────────────────────────────────────────────────────────────
