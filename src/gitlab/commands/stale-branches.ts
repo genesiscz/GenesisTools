@@ -34,6 +34,8 @@ import {
     fetchDraftNotes,
     getNote,
     ledgerFor,
+    ledgerIdentity,
+    legacyLedgerFor,
     postComment,
     postDraftNote,
     publishDraftNote,
@@ -266,7 +268,14 @@ async function deliverSideText(
     const url = `${mr.webUrl}#note_${result.commentId ?? noteId}`;
     mr.sideComments = [...(mr.sideComments ?? []), { key, body: text, postedNoteUrl: url, postedAt: now }];
     if (!existing) {
-        appendLedger({ project: api.project, pr: iid, comment_id: result.commentId ?? 0, message: text, ts: now });
+        appendLedger({
+            ...(await ledgerIdentity(api)),
+            project: api.project,
+            pr: iid,
+            comment_id: result.commentId ?? 0,
+            message: text,
+            ts: now,
+        });
     }
 
     return { mode, ok: true, result: `${mode === "append" ? "appended" : "created"}: ${url}` };
@@ -365,7 +374,7 @@ export function registerStaleBranches(parent: Command): Command {
         .action(async (json: string) => {
             const report = await loadReport(json);
             const api = await reportApi(report);
-            const project = await getProject(api, api.project);
+            const identity = await ledgerIdentity(api);
             const comments = readLedger();
             const labelLedger = readLabelLedger().filter((e) => e.project === api.project);
             const rows: string[] = [];
@@ -379,7 +388,7 @@ export function registerStaleBranches(parent: Command): Command {
                     const live = await fetchMr(api, mr.iid);
 
                     if (!mr.review.postedNoteUrl) {
-                        const fromLedger = ledgerFor(comments, { host: api.host, projectId: project.id, iid: mr.iid })
+                        const fromLedger = ledgerFor(comments, { ...identity, iid: mr.iid })
                             .filter((e) => e.message.trim() === body)
                             .sort((a, b) => b.ts.localeCompare(a.ts))[0];
                         const fromLive = live.notes
@@ -455,7 +464,7 @@ export function registerStaleBranches(parent: Command): Command {
             const report = await loadReport(json);
             const ledger = readLedger();
             const api = await reportApi(report);
-            const project = await getProject(api, api.project);
+            const identity = await ledgerIdentity(api);
             const targets = report.mrs.filter(
                 (mr) =>
                     mr.needsReview &&
@@ -491,7 +500,12 @@ export function registerStaleBranches(parent: Command): Command {
                     ? mr.review.sentBody?.trim()
                     : [
                           draftComment,
-                          ...ledgerFor(ledger, { host: api.host, projectId: project.id, iid: mr.iid })
+                          // A receipt from before entries carried host and project id is still
+                          // this note's: the note id pins it to one installation.
+                          ...[
+                              ...ledgerFor(ledger, { ...identity, iid: mr.iid }),
+                              ...legacyLedgerFor(ledger, { project: api.project, iid: mr.iid }),
+                          ]
                               .filter((e) => e.comment_id === noteId)
                               .map((e) => e.message.trim()),
                       ]
@@ -532,6 +546,7 @@ export function registerStaleBranches(parent: Command): Command {
                     mr.review.sentBody = draftComment;
                 } else {
                     appendLedger({
+                        ...identity,
                         project: api.project,
                         pr: String(mr.iid),
                         comment_id: noteId,
@@ -1107,6 +1122,7 @@ export function registerStaleBranches(parent: Command): Command {
                 }
 
                 appendLedger({
+                    ...(await ledgerIdentity(api)),
                     project: api.project,
                     pr: String(mr.iid),
                     comment_id: result.commentId ?? 0,
@@ -1165,6 +1181,7 @@ export function registerStaleBranches(parent: Command): Command {
                         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ??
                     null;
                 appendLedger({
+                    ...(await ledgerIdentity(api)),
                     project: api.project,
                     pr: String(mr.iid),
                     comment_id: note?.id ?? 0,
@@ -1206,6 +1223,7 @@ export function registerStaleBranches(parent: Command): Command {
                 side.postedAt = new Date().toISOString();
                 side.draftNoteId = undefined;
                 appendLedger({
+                    ...(await ledgerIdentity(api)),
                     project: api.project,
                     pr: String(mr.iid),
                     comment_id: note?.id ?? 0,

@@ -565,7 +565,18 @@ describe("ledger reads", () => {
         expect(readLabelLedger(labelLedgerPath(root))).toEqual([]);
         expect(existsSync(root)).toBe(false);
 
-        appendLedger({ project: "acme/web-app", pr: "7", message: "m", comment_id: 1, ts: "t" }, comments);
+        appendLedger(
+            {
+                host: "forge.example",
+                projectId: 101,
+                project: "acme/web-app",
+                pr: "7",
+                message: "m",
+                comment_id: 1,
+                ts: "t",
+            },
+            comments
+        );
         expect(readLedger(comments).map((entry) => entry.pr)).toEqual(["7"]);
     });
 });

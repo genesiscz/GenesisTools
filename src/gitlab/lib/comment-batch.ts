@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
+    getProject,
     normalizeHost,
     type ProjectApi,
     projectBase,
@@ -112,7 +113,48 @@ export function isDuplicate(ledger: LedgerEntry[], ref: CommentIdentity & { mess
     return ledgerFor(ledger, ref).some((entry) => entry.message === ref.message);
 }
 
-export function appendLedger(entry: LedgerEntry, path: string = ledgerPath()): void {
+/**
+ * Hostless rows of one project path and MR, written before receipts carried `host` and
+ * `projectId`. `ledgerFor` never returns them, because a path alone cannot tell two
+ * installations apart. Use this only for a lookup that ALSO pins the GitLab note id
+ * (`comment_id`), which is what makes an old receipt safe to read back.
+ */
+export function legacyLedgerFor(ledger: LedgerEntry[], ref: { project: string; iid: string | number }): LedgerEntry[] {
+    return ledger.filter(
+        (entry) =>
+            entry.host === undefined &&
+            entry.projectId === undefined &&
+            entry.project === ref.project &&
+            entry.pr === String(ref.iid)
+    );
+}
+
+export type LedgerIdentity = Omit<CommentIdentity, "iid">;
+
+/** Every new receipt carries the identity `ledgerFor` matches on, or a later lookup cannot find it. */
+export type RecordedLedgerEntry = LedgerEntry & LedgerIdentity;
+
+const ledgerIdentities = new Map<string, Promise<LedgerIdentity>>();
+
+/** The normalized host and canonical project id of `api`, resolved once per host and project. */
+export function ledgerIdentity(api: ProjectApi): Promise<LedgerIdentity> {
+    const host = normalizeHost(api.host);
+    const key = `${host}\n${api.project}`;
+    let identity = ledgerIdentities.get(key);
+
+    if (!identity) {
+        identity = getProject(api, api.project).then((project) => ({ host, projectId: project.id }));
+        identity.catch((error) => {
+            logger.debug({ error, host, project: api.project }, "gitlab: ledger identity lookup failed, not cached");
+            ledgerIdentities.delete(key);
+        });
+        ledgerIdentities.set(key, identity);
+    }
+
+    return identity;
+}
+
+export function appendLedger(entry: RecordedLedgerEntry, path: string = ledgerPath()): void {
     mkdirSync(dirname(path), { recursive: true });
     appendFileSync(path, `${SafeJSON.stringify(entry)}\n`);
 }

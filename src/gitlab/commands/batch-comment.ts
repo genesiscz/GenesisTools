@@ -10,10 +10,11 @@
  */
 
 import type { TargetOptions } from "@app/gitlab/commands/shared";
-import { getProject, normalizeHost, resolveProjectApi } from "@app/gitlab/lib/client";
+import { resolveProjectApi } from "@app/gitlab/lib/client";
 import {
     appendLedger,
     isDuplicate,
+    ledgerIdentity,
     ledgerPath,
     type PostResult,
     postComment,
@@ -32,8 +33,7 @@ export async function runBatchComment(iidsArg: string, opts: BatchCommentOptions
     const comment = opts.comment;
     const dryRun = Boolean(opts.dryRun);
     const api = await resolveProjectApi({ host: opts.host, project: opts.project });
-    const project = await getProject(api, api.project);
-    const identity = { host: normalizeHost(api.host), projectId: project.id };
+    const identity = await ledgerIdentity(api);
 
     out.println(`Project: ${api.project} on ${api.host}`);
     out.println(`MRs: ${iids.map((i) => `!${i}`).join(", ")}`);
