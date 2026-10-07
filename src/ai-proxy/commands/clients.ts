@@ -127,19 +127,32 @@ export async function clientsAdd(input: {
     // Fail CLOSED when the vault is unreachable: a billed bearer credential must
     // never land in config.json as a literal, and a transient keychain error
     // silently downgrading storage is worse than asking the caller to retry.
+    // Only a vault step failing means "vault unavailable"; a name another writer took meanwhile,
+    // or a config that fails validation on write, is reported as itself.
+    const progress: { stage: "vault" | "config" } = { stage: "vault" };
     try {
         const store = await secrets();
         await getAiProxyConfigStore().mutate(async (current) => {
+            progress.stage = "config";
             const latest = [...(current.clients ?? []), client];
             const conflicts = validateClients(latest);
             if (conflicts.length > 0) {
                 throw new Error(conflicts.join("; "));
             }
             // The name is reserved by the config lock before its vault key is touched.
+            progress.stage = "vault";
             client.key = await store.set(clientKeyPath(input.name), key);
+            progress.stage = "config";
             current.clients = latest;
         });
     } catch (err) {
+        if (progress.stage === "config") {
+            logger.error({ err, client: input.name }, "ai-proxy: refusing to add the client");
+            out.log.error(`The client was NOT added: ${err instanceof Error ? err.message : String(err)}`);
+            process.exitCode = 1;
+            return;
+        }
+
         logger.error({ err, client: input.name }, "ai-proxy: vault unavailable — refusing to add the client");
         out.log.error(
             "Vault unavailable — the client key was NOT stored. Make the master key reachable " +
