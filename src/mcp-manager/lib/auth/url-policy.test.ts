@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { fetchPinnedPublicUrl, pinnedRequest } from "@genesiscz/utils/net/pinned-fetch";
+import { fetchPinnedPublicUrl, pinnedRequest, untilAborted } from "@genesiscz/utils/net/pinned-fetch";
 import { discoverAuthorizationServer } from "./discovery.ts";
 import { _resetMcpFetchForTest, _setMcpFetchForTest } from "./fetch.ts";
 import {
@@ -389,5 +389,31 @@ describe("bounded endpoint validation", () => {
         await expect(
             assertDiscoveryTarget("https://stalled.example/token", PUBLIC_MCP, { timeoutMs: 20 })
         ).rejects.toThrow();
+    });
+});
+
+describe("untilAborted", () => {
+    test("a lookup that rejects after an already-aborted signal is still observed", async () => {
+        const unhandled: unknown[] = [];
+        const onUnhandled = (reason: unknown) => {
+            unhandled.push(reason);
+        };
+        process.on("unhandledRejection", onUnhandled);
+        try {
+            let rejectLookup: (error: Error) => void = () => {};
+            const lookup = new Promise<string[]>((_, reject) => {
+                rejectLookup = reject;
+            });
+
+            await expect(untilAborted(lookup, AbortSignal.abort(new Error("caller gave up")))).rejects.toThrow(
+                "caller gave up"
+            );
+            rejectLookup(new Error("late DNS failure"));
+            await Bun.sleep(10);
+
+            expect(unhandled).toEqual([]);
+        } finally {
+            process.off("unhandledRejection", onUnhandled);
+        }
     });
 });

@@ -93,6 +93,9 @@ export function untilAborted<T>(promise: Promise<T>, signal?: AbortSignal): Prom
     }
 
     if (signal.aborted) {
+        // The caller already gets the abort; the lookup's own outcome is no longer wanted, but its
+        // rejection must still be observed, or it surfaces later as an unhandled rejection.
+        promise.catch(() => undefined);
         return Promise.reject(signal.reason);
     }
 
