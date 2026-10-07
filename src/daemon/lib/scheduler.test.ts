@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -361,14 +361,14 @@ describe("a task that keeps failing", () => {
     const HOUR = 3_600_000;
 
     /** Runs the task once per entry of `outcomes`, `gapMs` apart, on ONE task state, and returns the banners. */
-    async function bannersFor(outcomes: number[], gapMs: number): Promise<string[]> {
+    async function bannersFor(outcomes: number[], gapMs: number, retries = 0): Promise<string[]> {
         const messages: string[] = [];
         const start = new Date("2026-10-05T10:00:00Z");
         const state: TaskState = { nextRunAt: start, attemptCount: 0, running: false };
         const taskStates = new Map<string, TaskState>([["flaky", state]]);
         const activeRuns = new Set<string>();
         const tasks: DaemonTask[] = [
-            { name: "flaky", command: "true", every: "every 15 minutes", retries: 0, enabled: true, notify: "failure" },
+            { name: "flaky", command: "true", every: "every 15 minutes", retries, enabled: true, notify: "failure" },
         ];
 
         for (const [index, exitCode] of outcomes.entries()) {
@@ -395,6 +395,20 @@ describe("a task that keeps failing", () => {
 
     test("three failures in a row put up one banner", async () => {
         expect(await bannersFor([1, 1, 1], 15 * 60_000)).toEqual(["Failed after 1 attempt, retries exhausted"]);
+    });
+
+    test("a run that exhausts its retries counts once in the streak", async () => {
+        // The retry backoff is a real sleep; the streak logic does not depend on its length.
+        const sleep = spyOn(Bun, "sleep").mockResolvedValue(undefined);
+        try {
+            expect(await bannersFor([1, 1, 1], 15 * 60_000, 2)).toEqual(["Failed after 3 attempts, retries exhausted"]);
+            expect(await bannersFor([1, 1, 1], 4 * HOUR, 2)).toEqual([
+                "Failed after 3 attempts, retries exhausted",
+                "Still failing: 3 runs in a row, retries exhausted",
+            ]);
+        } finally {
+            sleep.mockRestore();
+        }
     });
 
     test("a success ends the streak, so the next failure is a new banner", async () => {

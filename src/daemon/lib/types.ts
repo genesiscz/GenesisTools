@@ -54,7 +54,11 @@ export interface TaskState {
     nextRunAt: Date;
     attemptCount: number;
     running: boolean;
-    /** Runs that failed one after another, and when the last banner for the streak went up. */
+    /**
+     * Runs that failed one after another, and when the last banner for the streak went up. It lives
+     * in memory only: a daemon restart, or a task removed and added back, starts a new streak, so a
+     * task that is still failing then puts up one more first banner.
+     */
     failureStreak?: { count: number; notifiedAt: number };
 }
 
