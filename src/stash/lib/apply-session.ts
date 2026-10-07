@@ -1,4 +1,5 @@
-import { chmod, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -11,8 +12,21 @@ const { log } = logger.scoped("stash:apply-session");
  * same protection as a private file: 0600 in a 0700 directory, whatever the umask says.
  */
 async function writePrivate(file: string, content: string): Promise<void> {
-    await writeFile(file, content, { mode: 0o600 });
-    await chmod(file, 0o600);
+    // A finished private temp file renamed over the record: a crash mid-write never truncates the
+    // only saved pre-image, and the record is 0600 from its first byte.
+    const temporary = `${file}.${randomUUID()}.tmp`;
+    try {
+        await writeFile(temporary, content, { mode: 0o600, flag: "wx" });
+        await chmod(temporary, 0o600);
+        await rename(temporary, file);
+    } catch (error) {
+        await unlink(temporary).catch((cleanupError: NodeJS.ErrnoException) => {
+            if (cleanupError.code !== "ENOENT") {
+                log.debug({ err: cleanupError, temporary }, "could not remove a failed session temp file");
+            }
+        });
+        throw error;
+    }
 }
 
 async function ensurePrivateDir(dir: string): Promise<void> {

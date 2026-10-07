@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { lstat, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyCommand } from "./commands/apply";
@@ -182,6 +182,32 @@ describe.serial("stash e2e", () => {
         await unlink(join(projectB, "alias.ts"));
         await unapplyCommand({ name: "linker", action: "continue", decision: undefined });
         expect(applicationState()).toBe("unapplied");
+    });
+
+    test("a resumed apply whose decoration fails can be aborted and is not resumed twice", async () => {
+        process.chdir(projectA);
+        await writeFile(join(projectA, "main.ts"), "export function main() { return 2; }\n");
+        await saveCommand({ name: "resume-fail", mode: "all", tags: [], description: undefined });
+
+        process.chdir(projectB);
+        await writeFile(join(projectB, "main.ts"), "export function main() { return 9; }\n");
+        await runGitIn(projectB, ["commit", "-am", "diverge"]);
+        await applyCommand({ name: "resume-fail", verboseMarkers: false });
+        expect(process.exitCode).toBe(1);
+        process.exitCode = 0;
+
+        // Resolve the conflict, then make the file unwritable so decoration throws mid-resume.
+        await writeFile(join(projectB, "main.ts"), "export function main() { return 2; }\n");
+        await chmod(join(projectB, "main.ts"), 0o444);
+        await expect(applyCommand({ name: "resume-fail", verboseMarkers: false, action: "resume" })).rejects.toThrow();
+
+        await applyCommand({ name: "resume-fail", verboseMarkers: false, action: "resume" });
+        expect(process.exitCode).toBe(1);
+        process.exitCode = 0;
+
+        await applyCommand({ name: "resume-fail", verboseMarkers: false, action: "abort" });
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(await readFile(join(projectB, "main.ts"), "utf8")).toBe("export function main() { return 9; }\n");
     });
 
     test("a patch git rejects outright leaves no session behind, so a retry is not blocked", async () => {

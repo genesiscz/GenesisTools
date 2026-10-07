@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { captureApplySnapshot, confinedPath, restoreApplySnapshot } from "./apply-recovery";
+import { applicationRestorePatch, captureApplySnapshot, confinedPath, restoreApplySnapshot } from "./apply-recovery";
 import { ApplySession } from "./apply-session";
 import { runGitIn } from "./patch";
 
@@ -189,5 +189,30 @@ describe("apply recovery files", () => {
         await session.restore();
         expect(await readFile(join(projectDir, "a.ts"), "utf8")).toBe("original\n");
         expect(session.snapshot().outcome).toBe("applied");
+    });
+});
+
+describe("applicationRestorePatch unsupported changes", () => {
+    test("a mode-only change and a new empty file are reported, not silently dropped", async () => {
+        await runGitIn(projectDir, ["init", "-q"]);
+        await writeFile(join(projectDir, "run.sh"), "echo hi\n");
+        await chmod(join(projectDir, "run.sh"), 0o644);
+        const before = await captureApplySnapshot({ root: projectDir, files: ["run.sh", "empty.txt"] });
+        await chmod(join(projectDir, "run.sh"), 0o755);
+        await writeFile(join(projectDir, "empty.txt"), "");
+
+        const { patch, unsupportedFiles } = await applicationRestorePatch({ root: projectDir, before });
+
+        expect(unsupportedFiles.sort()).toEqual(["empty.txt", "run.sh"]);
+        expect(patch).not.toContain("@@");
+    });
+
+    test("session files are replaced atomically and stay 0600", async () => {
+        const session = await ApplySession.start({ ...BASE_ARGS, stateDir });
+        await session.captureResult([], "conflict");
+        const file = join(stateDir, `${BASE_ARGS.projectHash}--apply--${BASE_ARGS.stashId}.json`);
+
+        expect((await stat(file)).mode & 0o777).toBe(0o600);
+        expect((await readdir(stateDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
     });
 });

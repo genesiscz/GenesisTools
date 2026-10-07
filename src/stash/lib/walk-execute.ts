@@ -433,7 +433,7 @@ export async function executeUnapplyDecisions(args: {
         newVersion: null,
         failedToFind: 0,
         failedFiles: [],
-        unsupportedFiles: await pendingUnsupportedFiles(args),
+        unsupportedFiles: [],
     };
     const createdFiles = await deriveCreatedFilesFromBaseline({
         db: args.db,
@@ -490,6 +490,8 @@ export async function executeUnapplyDecisions(args: {
         });
     }
     await unlinkEmptyCreatedFiles({ projectRoot: args.projectRoot, createdFiles });
+    // Last, so a created file the cleanup above already removed is not reported.
+    stats.unsupportedFiles = await pendingUnsupportedFiles(args);
     return stats;
 }
 
@@ -601,7 +603,15 @@ export async function capturedUpdatesAsNewVersion(args: {
     for (const r of args.capturedRegions) {
         const before = r.preImage?.join("\n") ?? r.storedContent ?? "";
         const after = r.currentContent ?? "";
-        patchParts.push(buildUnifiedDiff({ path: r.filePath, before, after }));
+        patchParts.push(
+            buildUnifiedDiff({
+                path: r.filePath,
+                before,
+                after,
+                oldNoNewline: r.oldNoNewline,
+                deletedFile: r.deletedFile,
+            })
+        );
     }
     const patch = patchParts.join("");
     const patchRef = `refs/stashes/${args.stash.id}/v${newV}`;
@@ -811,6 +821,7 @@ export async function executeUpdateDecisions(args: {
                     before: r.preImage?.join("\n") ?? r.storedContent ?? "",
                     after: r.currentContent ?? "",
                     oldNoNewline: r.oldNoNewline,
+                    deletedFile: r.deletedFile,
                 })
             )
             .join("");

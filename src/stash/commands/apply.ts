@@ -15,7 +15,7 @@ import { newStashId, shortId } from "../lib/ids";
 import { commentSyntaxForFile } from "../lib/languages";
 import { emitCloseMarker, emitOpenMarker } from "../lib/markers";
 import { applyPatch, listFilesInPatch, listPatchPaths, runGitIn } from "../lib/patch";
-import { detectProject } from "../lib/projects";
+import { type DetectedProject, detectProject } from "../lib/projects";
 import { openStashDb } from "../lib/stash-db";
 import { StashStorage } from "../lib/storage";
 import { StoreRepo } from "../lib/store-repo";
@@ -158,35 +158,11 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
                 return;
             }
 
-            const before = session.snapshot().before;
-            if (!before) {
+            if (!session.snapshot().before) {
                 throw new Error("Cannot safely resume a legacy apply without its original file snapshots");
             }
-            const { patch: restorePatch, unsupportedFiles } = await applicationRestorePatch({
-                root: project.rootPath,
-                before,
-            });
             const affectedFiles = await listFilesInPatch({ repoDir: project.rootPath, patch });
-            await decorateAppliedRegions({
-                projectRoot: project.rootPath,
-                files: affectedFiles,
-                patch: restorePatch,
-                stashName: opts.name,
-                stashId: stash.id,
-                version: version.version,
-                verbose: opts.verboseMarkers,
-                sourceRepo: version.source_repo_path,
-                sourceSha: version.source_sha,
-            });
-
-            const now = new Date().toISOString();
-            db.run(
-                `INSERT INTO applications (id, stash_id, version_id, project_path, project_origin, project_sha_at_apply, applied_at, state)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
-                [newStashId(), stash.id, version.id, project.rootPath, project.origin, project.sha, now]
-            );
-
-            await session.archiveApplication({ restorePatch, unsupportedFiles });
+            await finalizeApplication({ session, db, project, stash, version, opts, affectedFiles });
             ui.ok(`applied "${opts.name}" v${version.version} (after conflict resolution)`);
             ui.info(`  ${affectedFiles.length} files affected`);
 
@@ -304,43 +280,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
             return;
         }
 
-        // Record the applied state at once: if decoration or the applications row throws below,
-        // --abort can still restore the files and the index instead of refusing an incomplete session.
-        await session.captureResult([], "applied");
-
-        const before = session.snapshot().before;
-        if (!before) {
-            throw new Error("Apply recovery snapshot missing");
-        }
-        const { patch: restorePatch, unsupportedFiles } = await applicationRestorePatch({
-            root: project.rootPath,
-            before,
-        });
-        try {
-            await decorateAppliedRegions({
-                projectRoot: project.rootPath,
-                files: affectedFiles,
-                patch: restorePatch,
-                stashName: opts.name,
-                stashId: stash.id,
-                version: version.version,
-                verbose: opts.verboseMarkers,
-                sourceRepo: version.source_repo_path,
-                sourceSha: version.source_sha,
-            });
-        } finally {
-            // Markers changed the files; the recovery "after" state must match what is on disk.
-            await session.captureResult([], "applied");
-        }
-
-        const now = new Date().toISOString();
-        db.run(
-            `INSERT INTO applications (id, stash_id, version_id, project_path, project_origin, project_sha_at_apply, applied_at, state)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
-            [newStashId(), stash.id, version.id, project.rootPath, project.origin, project.sha, now]
-        );
-
-        await session.archiveApplication({ restorePatch, unsupportedFiles });
+        await finalizeApplication({ session, db, project, stash, version, opts, affectedFiles });
 
         // Drop the fetched baseline ref — it was only needed to seed 3-way merge blobs into objects/.
         // Failure is harmless: git's GC will reap unreachable objects eventually.
@@ -355,6 +295,59 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
     } finally {
         db.close();
     }
+}
+
+/**
+ * Decorate, record and archive an apply whose patch is on disk (fresh, or resumed after the user
+ * resolved conflicts). The applied state is checkpointed first and again after decoration, so if
+ * decoration, the applications row or the archive throws, the session matches the disk: --abort
+ * restores it, and --resume refuses to decorate a second time.
+ */
+async function finalizeApplication(args: {
+    session: ApplySession;
+    db: Database;
+    project: DetectedProject;
+    stash: StashRow;
+    version: VersionRow;
+    opts: ApplyOptions;
+    affectedFiles: string[];
+}): Promise<void> {
+    const { session, project, stash, version, opts } = args;
+    await session.captureResult([], "applied");
+
+    const before = session.snapshot().before;
+    if (!before) {
+        throw new Error("Apply recovery snapshot missing");
+    }
+    const { patch: restorePatch, unsupportedFiles } = await applicationRestorePatch({
+        root: project.rootPath,
+        before,
+    });
+    try {
+        await decorateAppliedRegions({
+            projectRoot: project.rootPath,
+            files: args.affectedFiles,
+            patch: restorePatch,
+            stashName: opts.name,
+            stashId: stash.id,
+            version: version.version,
+            verbose: opts.verboseMarkers,
+            sourceRepo: version.source_repo_path,
+            sourceSha: version.source_sha,
+        });
+    } finally {
+        // Markers changed the files; the recovery "after" state must match what is on disk.
+        await session.captureResult([], "applied");
+    }
+
+    const now = new Date().toISOString();
+    args.db.run(
+        `INSERT INTO applications (id, stash_id, version_id, project_path, project_origin, project_sha_at_apply, applied_at, state)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
+        [newStashId(), stash.id, version.id, project.rootPath, project.origin, project.sha, now]
+    );
+
+    await session.archiveApplication({ restorePatch, unsupportedFiles });
 }
 
 async function fetchBaselineBlobs(args: { projectRoot: string; storeDir: string; baselineRef: string }): Promise<void> {

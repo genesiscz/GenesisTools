@@ -206,6 +206,14 @@ export async function applicationRestorePatch(args: {
             unsupportedFiles.push(file);
             continue;
         }
+        // No text hunk can express a mode change or an empty file appearing or going away.
+        const modeChanged = before.kind === "file" && current.kind === "file" && before.mode !== current.mode;
+        if (modeChanged || oldText === newText) {
+            unsupportedFiles.push(file);
+            if (oldText === newText) {
+                continue;
+            }
+        }
         patches.push(
             createTwoFilesPatch(
                 before.kind === "missing" ? "/dev/null" : `a/${file}`,
