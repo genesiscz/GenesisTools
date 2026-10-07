@@ -72,6 +72,13 @@ describe("normalizeDeclaration", () => {
         );
     });
 
+    it("blanks the identifier that declares the name, not an earlier one spelled the same", () => {
+        // The decorator argument comes first and does not resolve to the method.
+        expect(normalizeDeclaration("@memo(alpha) alpha() { return this.alpha(); }", "alpha")).toBe(
+            "@ memo ( alpha ) · ( ) { return this . · ( ) ; }"
+        );
+    });
+
     it("drops comments, so a re-worded doc block is not a difference", () => {
         expect(normalizeDeclaration("// one\nconst a = 1;", "a")).toBe(
             normalizeDeclaration("/* two */\nconst a = 1;", "a")

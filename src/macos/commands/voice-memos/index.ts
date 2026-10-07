@@ -423,7 +423,10 @@ export interface TranscribeOneDeps {
     extractTranscript: (filePath: string) => EmbeddedTranscriptionResult | null;
     createTranscriber: (opts: { provider?: string; model?: string }) => Promise<MemoTranscriber>;
     deliver: typeof deliverMemoTranscript;
+    spinner?: () => MemoSpinner;
 }
+
+export type MemoSpinner = Pick<ReturnType<typeof p.spinner>, "start" | "stop" | "message">;
 
 const DEFAULT_TRANSCRIBE_ONE_DEPS: TranscribeOneDeps = {
     resolveMemo,
@@ -580,7 +583,7 @@ export async function transcribeOne(
 
     // AI transcription (retry once on corrupt cache)
     p.log.info(`Transcribing "${memo.title}" with AI...`);
-    const s = p.spinner();
+    const s = (deps.spinner ?? p.spinner)();
     s.start("Loading model...");
 
     const isTTY = !!process.stdout.isTTY;
@@ -634,20 +637,29 @@ export async function transcribeOne(
         };
     }
 
-    let transcriber = await deps.createTranscriber({
-        provider: opts.provider,
-        model: opts.model,
-    });
-
+    // Every failure below stops the spinner before it propagates: `--all` catches the
+    // error and moves on to the next memo, which would otherwise start a second spinner
+    // on top of this one.
+    let transcriber: MemoTranscriber | undefined;
     let result: AITranscriptionResult;
 
     try {
-        result = await transcriber.transcribe(memo.path, transcribeOpts);
-    } catch (err) {
-        transcriber.dispose();
-        const msg = err instanceof Error ? err.message : String(err);
+        transcriber = await deps.createTranscriber({
+            provider: opts.provider,
+            model: opts.model,
+        });
 
-        if (msg.includes("cache is corrupted")) {
+        try {
+            result = await transcriber.transcribe(memo.path, transcribeOpts);
+        } catch (err) {
+            transcriber.dispose();
+            transcriber = undefined;
+            const msg = err instanceof Error ? err.message : String(err);
+
+            if (!msg.includes("cache is corrupted")) {
+                throw err;
+            }
+
             s.stop("Model cache corrupted");
             p.log.warning("Re-downloading model...");
             s.start("Downloading model...");
@@ -665,11 +677,14 @@ export async function transcribeOne(
             };
 
             result = await transcriber.transcribe(memo.path, retryOpts);
-        } else {
-            throw err;
         }
+    } catch (err) {
+        transcriber?.dispose();
+        s.stop("Transcription failed");
+        throw err;
     }
 
+    const activeTranscriber = transcriber;
     s.stop("Transcription complete");
 
     try {
@@ -683,7 +698,7 @@ export async function transcribeOne(
             p.log.success(`Written to ${delivery.outputPath}`);
         }
     } finally {
-        transcriber.dispose();
+        activeTranscriber.dispose();
     }
 }
 

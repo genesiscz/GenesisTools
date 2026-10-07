@@ -543,30 +543,15 @@ export function normalizeDeclaration(text: string, name: string): string {
     const fileName = "declaration.ts";
     let source = parseSource(fileName, text);
     let offset = 0;
-    const options: ts.CompilerOptions = { noLib: true, noResolve: true };
-    const host: ts.CompilerHost = {
-        getSourceFile: (file) => (file === fileName ? source : undefined),
-        getDefaultLibFileName: () => "",
-        writeFile: () => undefined,
-        getCurrentDirectory: () => "",
-        getDirectories: () => [],
-        fileExists: (file) => file === fileName,
-        readFile: (file) => (file === fileName ? source.text : undefined),
-        getCanonicalFileName: (file) => file,
-        useCaseSensitiveFileNames: () => true,
-        getNewLine: () => "\n",
-    };
-    let program = ts.createProgram([fileName], options, host);
 
-    if (program.getSyntacticDiagnostics(source).length) {
+    // A class member (`alpha() {}`, `x = 1;`) does not parse on its own; inside a class it does.
+    if (hasParseErrors(source)) {
         const prefix = "class __Declaration__ {\n";
-        const wrapped = parseSource(fileName, `${prefix}${text}\n}`);
-        source = wrapped;
-        program = ts.createProgram([fileName], options, host);
+        source = parseSource(fileName, `${prefix}${text}\n}`);
         offset = prefix.length;
     }
 
-    const checker = program.getTypeChecker();
+    const checker = declarationProgram(source).getTypeChecker();
     const tokens: ts.Node[] = [];
     const collect = (node: ts.Node): void => {
         const children = node.getChildren(source);
@@ -579,7 +564,15 @@ export function normalizeDeclaration(text: string, name: string): string {
         }
     };
     collect(source);
-    const declared = tokens.find((node) => ts.isIdentifier(node) && node.text === name);
+    const named = tokens.filter((node): node is ts.Identifier => ts.isIdentifier(node) && node.text === name);
+    // The identifier that DECLARES the name, not merely the first one spelled like it: in
+    // `@alpha class alpha {}` the decorator comes first and resolves to another binding.
+    const declared =
+        named.find((node) =>
+            checker
+                .getSymbolAtLocation(node)
+                ?.declarations?.some((declaration) => ts.getNameOfDeclaration(declaration) === node)
+        ) ?? named[0];
     const symbol = declared ? checker.getSymbolAtLocation(declared) : undefined;
     return tokens
         .map((node) => {
@@ -592,13 +585,55 @@ export function normalizeDeclaration(text: string, name: string): string {
         .join(" ");
 }
 
+/**
+ * `parseDiagnostics` is not in the compiler's public typings, but reading it saves building a
+ * whole Program just to ask whether the text parsed. Should it ever disappear, ask a Program.
+ */
+function hasParseErrors(source: ts.SourceFile): boolean {
+    const diagnostics: unknown = Reflect.get(source, "parseDiagnostics");
+
+    if (Array.isArray(diagnostics)) {
+        return diagnostics.length > 0;
+    }
+
+    return declarationProgram(source).getSyntacticDiagnostics(source).length > 0;
+}
+
+/** A one-file Program over an already parsed declaration: no lib, no module resolution. */
+function declarationProgram(source: ts.SourceFile): ts.Program {
+    const fileName = source.fileName;
+    const host: ts.CompilerHost = {
+        getSourceFile: (file) => (file === fileName ? source : undefined),
+        getDefaultLibFileName: () => "",
+        writeFile: () => undefined,
+        getCurrentDirectory: () => "",
+        getDirectories: () => [],
+        fileExists: (file) => file === fileName,
+        readFile: (file) => (file === fileName ? source.text : undefined),
+        getCanonicalFileName: (file) => file,
+        useCaseSensitiveFileNames: () => true,
+        getNewLine: () => "\n",
+    };
+
+    return ts.createProgram([fileName], { noLib: true, noResolve: true }, host);
+}
+
 export function hashDeclaration(text: string, name: string): string {
-    return createHash("sha1").update(normalizeDeclaration(text, name)).digest("hex").slice(0, 12);
+    return hashNormalized(normalizeDeclaration(text, name));
+}
+
+/** The fingerprint of an already normalised declaration, so a caller that also tokenises normalises once. */
+export function hashNormalized(normalized: string): string {
+    return createHash("sha1").update(normalized).digest("hex").slice(0, 12);
 }
 
 /** The normalised declaration split into comparable pieces: identifiers, literals, operators. */
 export function tokenizeDeclaration(text: string, name: string): string[] {
-    return normalizeDeclaration(text, name).match(/[A-Za-z_$][\w$]*|\d+|[^\sA-Za-z0-9_$]/g) ?? [];
+    return tokenizeNormalized(normalizeDeclaration(text, name));
+}
+
+export function tokenizeNormalized(normalized: string): string[] {
+    return normalized.match(/[A-Za-z_$][\w$]*|\d+|[^\sA-Za-z0-9_$]/g) ?? [];
 }
 
 export interface EnrichOptions {

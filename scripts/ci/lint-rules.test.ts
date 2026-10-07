@@ -299,6 +299,17 @@ describe("lint-changed wrapper dispatch", () => {
             writeFileSync(trace, "");
             const crashed = run(["bash", "scripts/ci/lint-changed.sh", current], { FAKE_BUN_EXIT: "7" });
             expect(crashed.status).toBe(7);
+
+            // A config-only change touches no source file, yet it can break any of them.
+            writeFileSync(join(dir, "biome.json"), '{ "linter": { "enabled": true } }\n');
+            expect(run(["git", "add", "biome.json"]).status).toBe(0);
+            expect(run(["git", "commit", "-qm", "config"]).status).toBe(0);
+            writeFileSync(trace, "");
+            const configOnly = run(["bash", "scripts/ci/lint-changed.sh", current]);
+            expect(configOnly.status).toBe(0);
+            expect(readFileSync(trace, "utf8")).toBe(
+                `bun run lint:biome\nbun scripts/ci/lint-rules.ts --changed ${current}\n`
+            );
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }

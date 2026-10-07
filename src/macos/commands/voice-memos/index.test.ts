@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
     deliverMemoTranscript,
     embeddedTranscriptResult,
+    type MemoSpinner,
     type TranscriptDeliveryDeps,
     transcribeAll,
     transcribeOne,
@@ -106,6 +107,110 @@ describe("voice memo transcript delivery", () => {
 
         expect(delivered).toEqual([aiResult.text]);
         expect(disposed).toBe(1);
+    });
+});
+
+/** Records spinner calls so a test can see whether one is still running. */
+function recordingSpinner(events: string[]): () => MemoSpinner {
+    return () => ({
+        start: (msg?: string) => {
+            events.push(`start:${msg ?? ""}`);
+        },
+        stop: (msg?: string) => {
+            events.push(`stop:${msg ?? ""}`);
+        },
+        message: () => {},
+    });
+}
+
+function spinnerStillRunning(events: string[]): boolean {
+    return events.at(-1)?.startsWith("start:") ?? false;
+}
+
+describe("voice memo AI transcription failures", () => {
+    it("stops the spinner and disposes the transcriber when transcription throws", async () => {
+        const events: string[] = [];
+        let disposed = 0;
+
+        await expect(
+            transcribeOne(
+                { id: 4, format: "text" },
+                {
+                    resolveMemo: () => memo(4, false),
+                    extractTranscript: () => null,
+                    createTranscriber: async () => ({
+                        transcribe: async () => {
+                            throw new Error("fixture model failure");
+                        },
+                        dispose: () => {
+                            disposed++;
+                        },
+                    }),
+                    deliver: async (args) => ({ formatted: args.result.text, outputPath: null }),
+                    spinner: recordingSpinner(events),
+                }
+            )
+        ).rejects.toThrow("fixture model failure");
+
+        expect(spinnerStillRunning(events)).toBe(false);
+        expect(events.at(-1)).toBe("stop:Transcription failed");
+        expect(disposed).toBe(1);
+    });
+
+    it("stops the spinner when creating the transcriber throws", async () => {
+        const events: string[] = [];
+
+        await expect(
+            transcribeOne(
+                { id: 5, format: "text" },
+                {
+                    resolveMemo: () => memo(5, false),
+                    extractTranscript: () => null,
+                    createTranscriber: async () => {
+                        throw new Error("fixture create failure");
+                    },
+                    deliver: async (args) => ({ formatted: args.result.text, outputPath: null }),
+                    spinner: recordingSpinner(events),
+                }
+            )
+        ).rejects.toThrow("fixture create failure");
+
+        expect(spinnerStillRunning(events)).toBe(false);
+    });
+
+    it("stops the spinner and disposes both transcribers when the corrupted-cache retry fails", async () => {
+        const events: string[] = [];
+        let creates = 0;
+        let disposed = 0;
+
+        await expect(
+            transcribeOne(
+                { id: 6, format: "text" },
+                {
+                    resolveMemo: () => memo(6, false),
+                    extractTranscript: () => null,
+                    createTranscriber: async () => {
+                        creates++;
+                        const attempt = creates;
+
+                        return {
+                            transcribe: async () => {
+                                throw new Error(attempt === 1 ? "model cache is corrupted" : "fixture retry failure");
+                            },
+                            dispose: () => {
+                                disposed++;
+                            },
+                        };
+                    },
+                    deliver: async (args) => ({ formatted: args.result.text, outputPath: null }),
+                    spinner: recordingSpinner(events),
+                }
+            )
+        ).rejects.toThrow("fixture retry failure");
+
+        expect(creates).toBe(2);
+        expect(disposed).toBe(2);
+        expect(spinnerStillRunning(events)).toBe(false);
     });
 });
 

@@ -29,7 +29,7 @@ if [ -z "$BASE" ]; then
 fi
 
 if ! diff_output=$(git diff --name-only --diff-filter=ACMR "$BASE" HEAD -- \
-    '*.ts' '*.tsx' '*.mts' '*.cts' '*.js' '*.jsx' '*.mjs' '*.cjs' 2>&1); then
+    '*.ts' '*.tsx' '*.mts' '*.cts' '*.js' '*.jsx' '*.mjs' '*.cjs' 'biome.json' 'biome.jsonc' 2>&1); then
     echo "lint-changed: cannot diff against ${BASE}, scanning everything"
     echo "  git said: ${diff_output}"
     run_full
@@ -38,17 +38,25 @@ fi
 
 # Filter to files that still exist. A rename reports its old path too, and
 # biome errors on a path it cannot read.
+# A changed Biome config can turn an untouched file into a violation, so it
+# rescans every file rather than only the changed ones.
 files=()
+biome_config_changed=false
 while IFS= read -r file; do
     # An `if` rather than an `a && b && c` chain, for legibility only. I expected
     # `set -e` to abort here on a missing file and tested it: bash exits 0 either
     # way, so both forms are safe.
-    if [ -n "$file" ] && [ -f "$file" ]; then
+    if [ "$file" = "biome.json" ] || [ "$file" = "biome.jsonc" ]; then
+        biome_config_changed=true
+    elif [ -n "$file" ] && [ -f "$file" ]; then
         files+=("$file")
     fi
 done <<<"$diff_output"
 
-if [ ${#files[@]} -eq 0 ]; then
+if [ "$biome_config_changed" = true ]; then
+    echo "lint-changed: Biome config changed against ${BASE}, running Biome on everything"
+    bun run lint:biome
+elif [ ${#files[@]} -eq 0 ]; then
     echo "lint-changed: no changed Biome files against ${BASE}"
 else
     echo "lint-changed: ${#files[@]} changed Biome file(s) against ${BASE}"

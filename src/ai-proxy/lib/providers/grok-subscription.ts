@@ -77,8 +77,11 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             const { token, authPath, storedGrant } = await resolveGrokSubToken(account.grok.accountName, {
                 noRefresh: options?.probe,
             });
+            // The resolver only reads; the client's own expiry and 401 paths would still
+            // spend the grant during a diagnosis unless it carries probe mode too.
             const client = new GrokSubscriptionClient({
                 token,
+                probe: options?.probe,
                 ...(authPath === undefined ? {} : { authPath }),
                 ...(storedGrant === undefined ? {} : { storedGrant }),
                 baseUrl: account.baseUrl ?? GROK_CLI_CHAT_PROXY_BASE_URL,
@@ -88,7 +91,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         }
 
         const authPath = resolveGrokAuthPath(account);
-        const fromFile = await GrokSubscriptionClient.fromAuthFile(authPath);
+        const fromFile = await GrokSubscriptionClient.fromAuthFile(authPath, { probe: options?.probe });
 
         if (!fromFile) {
             throw new Error(`No Grok auth entry found at ${authPath}`);
@@ -97,6 +100,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         const client = new GrokSubscriptionClient({
             token: fromFile.getToken(),
             authPath,
+            probe: options?.probe,
             baseUrl: account.baseUrl ?? GROK_CLI_CHAT_PROXY_BASE_URL,
         });
 

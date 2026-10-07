@@ -1,4 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { GrokSubscriptionProvider } from "@app/ai-proxy/lib/providers/grok-subscription";
 import { resetWhamItemStore } from "@app/ai-proxy/lib/providers/wham-item-store";
 import { TOOL_ROUTING_TAG } from "@app/ai-proxy/lib/translators/formats/anthropic/tool-routing-tag";
@@ -474,5 +477,100 @@ describe("GrokSubscriptionProvider.responses item_reference chaining", () => {
         await send(provider, [{ type: "item_reference", id: "fc_1" }]);
 
         expect(sent[1].input).toEqual([call]);
+    });
+});
+/**
+ * `accounts test` builds the provider with `probe: true` and then reads usage. The
+ * auth file read in `create()` is harmless; the danger is the CLIENT it builds, whose
+ * expiry path would spend the single-use OIDC grant and rewrite the Grok CLI's file.
+ * The spy sits on the token endpoint itself and throws, and the negative control
+ * proves the normal path still reaches it.
+ */
+describe("GrokSubscriptionProvider.create probe mode", () => {
+    const issuer = "https://auth.example.test";
+    const originalFetch = globalThis.fetch;
+
+    function expiredJwt(): string {
+        const exp = Math.floor(Date.now() / 1000) - 3_600;
+        const payload = Buffer.from(SafeJSON.stringify({ exp }), "utf-8").toString("base64url").replace(/=+$/, "");
+
+        return `e30.${payload}.sig`;
+    }
+
+    function writeExpiredAuth(): string {
+        const authPath = join(mkdtempSync(join(tmpdir(), "grok-provider-probe-")), "auth.json");
+        const entries = {
+            [`${issuer}::11111111-2222-3333-4444-555555555555`]: {
+                key: expiredJwt(),
+                refresh_token: "refresh-one",
+                expires_at: "2020-01-01T00:00:00.000Z",
+                oidc_issuer: issuer,
+                oidc_client_id: "client-abc",
+                auth_mode: "oidc",
+            },
+        };
+        writeFileSync(authPath, SafeJSON.stringify(entries, { strict: true }, 2), { mode: 0o600 });
+
+        return authPath;
+    }
+
+    function stubFetchRefusingGrant(grantCalls: string[]): void {
+        globalThis.fetch = (async (input: string | URL | Request) => {
+            const url = typeof input === "string" ? input : input.toString();
+
+            if (url.endsWith("/.well-known/openid-configuration")) {
+                return new Response("no", { status: 404 });
+            }
+
+            if (url.endsWith("/oauth2/token")) {
+                grantCalls.push(url);
+                throw new Error("the OIDC grant must not be spent on this path");
+            }
+
+            return new Response(SafeJSON.stringify({}), { status: 200 });
+        }) as typeof fetch;
+    }
+
+    function accountFor(authPath: string): AiProxyAccountConfig {
+        return {
+            name: "test-grok",
+            provider: "grok-subscription",
+            providerSlug: "grok",
+            enabled: true,
+            baseUrl: "https://cli-chat-proxy.example.test/v1",
+            grok: { authPath },
+        };
+    }
+
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+    });
+
+    it("an auth-file account built for a probe refuses to refresh and leaves the file untouched", async () => {
+        const authPath = writeExpiredAuth();
+        const before = readFileSync(authPath, "utf-8");
+        const grantCalls: string[] = [];
+        stubFetchRefusingGrant(grantCalls);
+
+        const provider = await GrokSubscriptionProvider.create({
+            account: accountFor(authPath),
+            options: { probe: true },
+        });
+
+        await expect(provider.getUsage()).rejects.toThrow(/Refusing to refresh the Grok token/);
+        expect(grantCalls).toEqual([]);
+        expect(readFileSync(authPath, "utf-8")).toBe(before);
+    });
+
+    /** Negative control: without probe, the same expired token still reaches the grant. */
+    it("an auth-file account built without probe still reaches the OIDC grant", async () => {
+        const authPath = writeExpiredAuth();
+        const grantCalls: string[] = [];
+        stubFetchRefusingGrant(grantCalls);
+
+        const provider = await GrokSubscriptionProvider.create({ account: accountFor(authPath) });
+
+        await expect(provider.getUsage()).rejects.toThrow();
+        expect(grantCalls.length).toBeGreaterThan(0);
     });
 });

@@ -9,6 +9,7 @@ import {
     taskSourceWeekOrder,
     weeksTouchingMonth,
 } from "@app/clarity/lib/timesheet-weeks";
+import type { LookupField, TimesheetRecord, TimesheetResponse } from "@genesiscz/utils/clarity";
 
 // Clarity carousel periods share a boundary date: one ends 2026-08-24 and the next starts
 // 2026-08-24, while the timesheet itself reports 2026-08-24..2026-08-30. The finish date is
@@ -174,9 +175,70 @@ describe("weeksTouchingMonth", () => {
     });
 });
 
+function lookup(id: string): LookupField {
+    return { displayValue: id, _type: "lookup", id };
+}
+
+function timesheetRecord(timesheetId: number): TimesheetRecord {
+    return {
+        _internalId: timesheetId,
+        resourceId: 700001,
+        isActive: true,
+        actualsTotal: 0,
+        timePeriodStart: "2026-08-17T00:00:00",
+        timePeriodFinish: "2026-08-23T00:00:00",
+        timePeriodId: 400001,
+        timePeriodOffset: 0,
+        version: 1,
+        status: lookup("0"),
+        resourceName: "Test Resource",
+        uniqueName: "test.resource",
+        lastUpdatedDate: "2026-08-17T00:00:00",
+        lastUpdatedBy: "test.resource",
+        numberOfEntries: 0,
+        hasNotes: false,
+        numberOfNotes: 0,
+        hasAssignments: false,
+        timePeriodIsOpen: true,
+        employmentType: lookup("employee"),
+        resourceType: lookup("labor"),
+        _authorization: { view: true, edit: true, approve: false, adjust: false, delete: false, return: false },
+        timeentries: { _self: "", _results: [] },
+        timesheetNotes: { _self: "" },
+        timeEntries: { _self: "" },
+        definedTeamId: null,
+        isBeingAdjusted: false,
+        approvedBy: null,
+        vendor: null,
+        submittedBy: null,
+        failedrules: null,
+        daysOverdue: null,
+        postedTime: null,
+        adjustedTimesheetId: null,
+        isAdjustment: false,
+        resourceObsFilter: null,
+        prmodBY: lookup("test.resource"),
+        resourceManager: "",
+        resourceManagerName: lookup(""),
+        attestationMessage: "",
+        timePeriod: lookup("400001"),
+    };
+}
+
+function timesheetResponse(records: TimesheetRecord[]): TimesheetResponse {
+    return {
+        calendar: { _self: "", _results: [] },
+        timesheets: { _self: "", _results: records },
+        resource: { _self: "", _results: [] },
+        resourcecalendar: { _self: "", _results: [] },
+        _self: "",
+        _metadata: { virtualResource: "" },
+    };
+}
+
 describe("getTimesheetRecord", () => {
     test("reuses a discovery record without another full read", async () => {
-        const record = { _internalId: 555001 } as never;
+        const record = timesheetRecord(555001);
         const records = new Map([[555001, record]]);
         let reads = 0;
 
@@ -184,7 +246,7 @@ describe("getTimesheetRecord", () => {
             api: {
                 getTimesheet: async () => {
                     reads++;
-                    return { timesheets: { _results: [] } } as never;
+                    return timesheetResponse([]);
                 },
             },
             records,
@@ -196,13 +258,13 @@ describe("getTimesheetRecord", () => {
     });
 
     test("fetches a missing record once and makes it reusable", async () => {
-        const record = { _internalId: 555002 } as never;
-        const records = new Map();
+        const record = timesheetRecord(555002);
+        const records = new Map<number, TimesheetRecord>();
         let reads = 0;
         const api = {
             getTimesheet: async () => {
                 reads++;
-                return { timesheets: { _results: [record] } } as never;
+                return timesheetResponse([record]);
             },
         };
 

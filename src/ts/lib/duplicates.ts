@@ -1,4 +1,10 @@
-import { hashDeclaration, type SkeletonSymbol, tokenizeDeclaration } from "./skeleton";
+import {
+    hashNormalized,
+    normalizeDeclaration,
+    type SkeletonSymbol,
+    tokenizeDeclaration,
+    tokenizeNormalized,
+} from "./skeleton";
 
 export interface FileSymbols {
     /** Repo-relative, because it is what every report prints. */
@@ -422,7 +428,9 @@ export function findDuplicates(entries: FileSymbols[], options: DuplicateOptions
             }
 
             const declaration = lines.slice(symbol.startLine - 1, symbol.endLine).join("\n");
-            const shingles = shinglesOf(tokenizeDeclaration(declaration, symbol.name));
+            // Normalising builds a type checker, so the hash and the shingles share one pass.
+            const normalized = normalizeDeclaration(declaration, symbol.name);
+            const shingles = shinglesOf(tokenizeNormalized(normalized));
 
             candidates.push({
                 member: {
@@ -435,7 +443,7 @@ export function findDuplicates(entries: FileSymbols[], options: DuplicateOptions
                     exported: symbol.exported,
                     local: symbol.local === true,
                     signature: symbol.signature,
-                    hash: symbol.hash ?? hashDeclaration(declaration, symbol.name),
+                    hash: symbol.hash ?? hashNormalized(normalized),
                 },
                 shingles,
                 signature: signatureOf(shingles),
