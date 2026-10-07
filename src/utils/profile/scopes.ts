@@ -19,6 +19,8 @@ export const PROFILER_SCOPE_NAMES = [
     "hub-server",
     // One `tools ai usage poll-daemon` tick by phase: account poll, notifications, warmups, session rows.
     "ai-usage",
+    "widget",
+    "video",
     // `tools hub pr *` phases; with spawn, forge-http and cache below, the hub's PR calls end to end.
     "hub-pr",
     // Every child process an Executor runs (git, gh, glab), with its exit code.
