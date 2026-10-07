@@ -11,6 +11,7 @@ import {
     type ApiDiff,
     branchRef,
     collectPrReviewFacts,
+    excludedTestsNote,
     fetchRefs,
     findAddedImports,
     findWorktree,
@@ -265,7 +266,9 @@ describe("gates", () => {
 
         expect(unit).toMatchObject({ command: "bun test src/app.test.ts", tests: ["src/app.test.ts"], note: null });
         expect(unit?.files).not.toContain("src/lib/new-name.ts");
-        expect(lib).toMatchObject({ tests: [], note: NO_TESTS_NOTE });
+        // The MR's only lib test is a .spec.tsx, which this gate's exclude leaves out: the note says so.
+        expect(lib).toMatchObject({ tests: [], note: excludedTestsNote("src/lib/**/*.spec.tsx", 1) });
+        expect(selectGates(gates, files, () => false)[1]).toMatchObject({ tests: [], note: NO_TESTS_NOTE });
     });
 
     test("review.runner is list by default and refuses an unknown value", () => {

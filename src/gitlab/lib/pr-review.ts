@@ -92,6 +92,11 @@ export interface PrReviewGate {
 export const NO_TESTS_NOTE =
     "No test file sits next to a changed file. Pick the test paths by hand, or state that none apply.";
 
+/** The note of a `{tests}` gate whose `exclude` removed every test file of the MR. */
+export function excludedTestsNote(exclude: string, count: number): string {
+    return `This gate's exclude (\`${exclude}\`) leaves out the ${count} test file(s) of this MR; another gate may run them. Nothing to run here.`;
+}
+
 export interface PrReviewFacts {
     provider: "gitlab";
     /** `https://gitlab.example.com` */
@@ -422,6 +427,7 @@ export function selectGates(
 
         const usesTests = gate.command.includes("{tests}");
         const tests = usesTests ? allTests.filter((path) => kept(path) && (!when || when.match(path))) : [];
+        const excludedTests = usesTests && gate.exclude ? allTests.filter((path) => !kept(path)).length : 0;
 
         selected.push({
             label: gate.label,
@@ -430,7 +436,12 @@ export function selectGates(
                 .replaceAll("{tests}", tests.map(shellQuote).join(" ")),
             files: matching,
             tests,
-            note: usesTests && tests.length === 0 ? NO_TESTS_NOTE : null,
+            note:
+                usesTests && tests.length === 0
+                    ? excludedTests > 0 && gate.exclude
+                        ? excludedTestsNote(gate.exclude, excludedTests)
+                        : NO_TESTS_NOTE
+                    : null,
         });
     }
 
