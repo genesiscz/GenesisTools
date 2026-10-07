@@ -2,7 +2,7 @@
 
 ![Status](https://img.shields.io/badge/Status-Active-success?style=flat-square)
 
-> **GitLab CLI for any instance. One MR: `gitlab pr <iid> review|comments|labels`. Many MRs: `gitlab pr stale|touching`. People and projects: `gitlab user …`, `gitlab project …`.**
+> **GitLab CLI for any instance. One MR: `gitlab pr <iid> review|comments|labels`. Many MRs: `gitlab pr stale|touching`. People and projects: `gitlab activity user …`, `gitlab activity project …`.**
 
 Talks to the GitLab REST and GraphQL APIs directly. Nothing about the instance is built in: the host, the token and the project are resolved from flags, the environment, `glab` and the git checkout you stand in.
 

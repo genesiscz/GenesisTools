@@ -102,6 +102,7 @@ import {
     renderFollowupTable,
 } from "@app/gitlab/lib/stale-phases";
 import { type AdoWorkItem, extractWorkItemIds, resolveAdo } from "@app/gitlab/lib/work-items";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { type Command, Option } from "commander";
@@ -1047,7 +1048,7 @@ export function registerStaleBranches(parent: Command): Command {
                 const mr = findReviewedMr(report, iid);
                 if (mr.review.draftNoteId && !opts.force) {
                     throw new Error(
-                        `!${mr.iid} already has draft note ${mr.review.draftNoteId}; publish it with \`stale-branches publish ${json} --iid ${mr.iid}\`, or pass --force to post a second copy.`
+                        `!${mr.iid} already has draft note ${mr.review.draftNoteId}; publish it with \`${toolCommand("gitlab pr stale publish", json, "--iid", String(mr.iid))}\`, or pass --force to post a second copy.`
                     );
                 }
 
@@ -1340,7 +1341,7 @@ export function registerStaleBranches(parent: Command): Command {
             out.println(renderFollowupTable(rows));
             const candidates = rows.filter((r) => r.candidate);
             progress(
-                `${rows.length} notified; ${candidates.length} close candidate(s) after ${opts.afterDays} silent day(s)${candidates.length ? `: ${candidates.map((r) => `!${r.iid}`).join(", ")}` : ""}. Close each with \`stale-branches close <json> --iid <n>\` after its own approval.`
+                `${rows.length} notified; ${candidates.length} close candidate(s) after ${opts.afterDays} silent day(s)${candidates.length ? `: ${candidates.map((r) => `!${r.iid}`).join(", ")}` : ""}. Close each with \`${toolCommand("gitlab pr stale close", "<json>", "--iid", "<n>")}\` after its own approval.`
             );
         });
 
@@ -1631,7 +1632,7 @@ async function postDraftBatch(options: {
     progress(
         options.dryRun
             ? `Dry run: ${rows.length} draft note(s) would be created, nothing sent.`
-            : `${rows.length - failed} draft note(s) created, ${failed} failed. They are visible only to you until published: \`stale-branches publish <json> --iid <n>\` or the GitLab review UI.`
+            : `${rows.length - failed} draft note(s) created, ${failed} failed. They are visible only to you until published: \`${toolCommand("gitlab pr stale publish", "<json>", "--iid", "<n>")}\` or the GitLab review UI.`
     );
     if (failed) {
         process.exitCode = 1;

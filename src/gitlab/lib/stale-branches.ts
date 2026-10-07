@@ -58,25 +58,25 @@ export interface ReviewFields {
     adoCommentsSummary: string | null;
     /** Ready to paste into the MR, in the team's language and voice. */
     draftComment: string | null;
-    /** Label changes for `stale-branches apply-labels`; empty when nothing should change. */
+    /** Label changes for `pr stale apply-labels`; empty when nothing should change. */
     labels: LabelAction[];
     /** Read-only commands the reviewing agent ran beyond this JSON, one per entry. */
     evidence: string[];
-    /** Set by `stale-branches post --draft`: a GitLab draft note, visible only to its author until published. */
+    /** Set by `pr stale post --draft`: a GitLab draft note, visible only to its author until published. */
     draftNoteId?: number;
     draftedAt?: string;
     /** The exact text sent as the draft note, so `sync-note` can tell what was appended since. */
     sentBody?: string;
-    /** Set by `stale-branches post` or `publish` after this one draft was approved. */
+    /** Set by `pr stale post` or `publish` after this one draft was approved. */
     postedNoteUrl?: string;
     postedAt?: string;
-    /** Set by `stale-branches apply-labels` after the labels were changed on GitLab. */
+    /** Set by `pr stale apply-labels` after the labels were changed on GitLab. */
     labelsBefore?: string[];
     labelsAfter?: string[];
     labelsAppliedAt?: string;
-    /** Set by `stale-branches close` in the follow-up phase, after closing this one MR was approved. */
+    /** Set by `pr stale close` in the follow-up phase, after closing this one MR was approved. */
     closedAt?: string;
-    /** Set by `stale-branches close --delete-branch` after the source branch was deleted on origin. */
+    /** Set by `pr stale close --delete-branch` after the source branch was deleted on origin. */
     sourceBranchDeletedAt?: string;
 }
 
@@ -247,7 +247,7 @@ export function staleInstructions(config: GitLabToolConfig): string {
         "`closedBug` is set when the work item (the parent for a Task) is a Closed Bug: `fix` says where the MR content is by the content check (`released`, `unreleased` = on the test environment only, `partial`, `nowhere`, `unknown`), with the closing date and person, and `comment` is the text the `closed-bug` command appends to our comment (recomputed with the exhaustive check at send time). `unreleased` is a release-flow defect (the bug was closed after a test and the MR never merged), not a staleness verdict. When `closedBug` is set, keep the code line of the review consistent with `closedBug.fix`, and do not repeat `closedBug.comment` in `draftComment`: it goes out in the same note.",
         "adoCommentsSummary: what the work item comments say, in plain English, newest first. Null when there are no comments.",
         config.stale.draftCommentGuide ?? DEFAULT_DRAFT_COMMENT_GUIDE,
-        "labels: array of {type: add | remove, label: <existing project label>} to apply with `stale-branches apply-labels`; [] when the labels should stay. Use only labels already present on other MRs of this report.",
+        `labels: array of {type: add | remove, label: <existing project label>} to apply with \`${toolCommand("gitlab pr stale apply-labels")}\`; [] when the labels should stay. Use only labels already present on other MRs of this report.`,
         "evidence: array of the read-only commands you ran beyond this JSON (for example `git show origin/main:<path>`), one string each; [] when you used only this file.",
         ...(config.stale.instructionsExtra ? [config.stale.instructionsExtra] : []),
         `Then run: ${toolCommand("gitlab pr stale render")} <this file> --out <note.md>`,
