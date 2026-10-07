@@ -863,7 +863,7 @@ describe("review render", () => {
 
           ## Thread 3 — \`src/gone.ts\`:7 _(deleted line — comment on removed code)_
 
-          - **File**: [src/gone.ts:7](<cwd>/src/gone.ts#L7)
+          - **File**: \`src/gone.ts:7\` (not in <cwd>)
           - **Anchored at**: \`3333333333\` _(per-thread head_sha; **NOT** necessarily MR HEAD)_
           - **Base sha**: \`b0b0b0b0b0\`
           - **Local state**: file not in cwd

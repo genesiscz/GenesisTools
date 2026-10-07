@@ -6,6 +6,7 @@ import { fileLink } from "@app/gitlab/lib/file-link";
 import { gitRawResult, gitResult, gitShowFile } from "@app/gitlab/lib/git";
 import { errorMessage, HttpError } from "@app/gitlab/lib/http";
 import { fenceLanguage } from "@app/gitlab/lib/markdown";
+import { findWorktree } from "@app/gitlab/lib/pr-review";
 import { parseNameStatusZ } from "@genesiscz/utils/git/porcelain";
 import { type Block, type BlockInput, json2md } from "@genesiscz/utils/json2md";
 import { logger } from "@genesiscz/utils/logger";
@@ -137,6 +138,8 @@ export interface TipViews {
     renames: Map<string, string>;
     /** The checkout is on the MR: HEAD is the tip or descends from it, so a different file there is local work. */
     checkoutFollowsTip: boolean;
+    /** Where local files are read and linked: the worktree with the MR branch when the given checkout is not on the MR. */
+    checkout?: string;
     /** Paths whose tip version could not be read (a timeout, a 5xx, no access): unknown, not deleted. */
     unavailable?: Set<string>;
     /** Discussion id → where its anchor line is at the tip (`path:line`), for a file gone at the tip. */
@@ -344,7 +347,8 @@ function tipThreadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts, t
     const tipLines = tip.views.get(tipPath) ?? null;
     const tipLine = divergence?.tipLine ?? divergence?.nearLine ?? line;
     const reviewerLines = opts.anchorViews?.get(`${pos?.head_sha}:${file}`) ?? null;
-    const localPath = resolve(opts.cwd, tipPath);
+    const checkout = tip.checkout ?? opts.cwd;
+    const localPath = resolve(checkout, tipPath);
     const localLines = readLocalFile(localPath);
     // A checkout on another branch holds another version, not local work on this MR.
     const localDiffers =
@@ -359,7 +363,7 @@ function tipThreadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts, t
         { h2: `${ref} — \`${file}\`:${line} · ${label}` },
         {
             ul: [
-                `**File**: ${fileLink(localPath, tipLine || null, { root: opts.cwd })}`,
+                `**File**: ${localLines === null ? `\`${tipPath}:${tipLine}\` (not in ${checkout})` : fileLink(localPath, tipLine || null, { root: checkout })}`,
                 `**Discussion**: \`${d.id ?? "?"}\``,
                 `**Divergence**: ${label}`,
                 `**Reviewer's sha**: \`${shortSha(pos?.head_sha)}\` · **MR tip**: \`${shortSha(tip.sha)}\``,
@@ -423,7 +427,7 @@ function threadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts): Blo
         },
         {
             ul: [
-                `**File**: ${fileLink(localPath, line || null, { root: opts.cwd })}`,
+                `**File**: ${existsSync(localPath) ? fileLink(localPath, line || null, { root: opts.cwd }) : `\`${file}:${line}\` (not in ${opts.cwd})`}`,
                 `**Anchored at**: \`${shortSha(pos?.head_sha)}\` _(per-thread head_sha; **NOT** necessarily MR HEAD)_`,
                 `**Base sha**: \`${shortSha(pos?.base_sha)}\``,
                 `**Local state**: ${window ? `file is ${window.total} lines locally` : "file not in cwd"}`,
@@ -577,6 +581,9 @@ export function reviewBlocks(discussions: Discussion[], opts: RenderMarkdownOpts
                 `**Files touched**: ${stats.files}`,
                 `**Distinct head_shas**: ${stats.headShas}  _(each comment may be anchored to a different commit — fetch / read at its own \`head_sha\`)_`,
                 `**Local cwd**: \`${opts.cwd}\``,
+                ...(opts.tip?.checkout && opts.tip.checkout !== opts.cwd
+                    ? [`**MR worktree** (files are read and linked here): \`${opts.tip.checkout}\``]
+                    : []),
             ],
         },
         { hr: true },
@@ -646,7 +653,10 @@ export async function fetchTipViews(options: {
     fetchRemote: boolean;
     onWarn: (msg: string) => void;
 }): Promise<TipViews> {
-    const mr = await restGet<{ sha: string }>(options.api, `${projectBase(options.api)}/merge_requests/${options.iid}`);
+    const mr = await restGet<{ sha: string; source_branch: string }>(
+        options.api,
+        `${projectBase(options.api)}/merge_requests/${options.iid}`
+    );
     const threads = options.threads ?? unresolvedThreads(options.discussions);
     const headShas = new Set(
         threads.map((t) => t.notes?.[0]?.position?.head_sha).filter((sha): sha is string => Boolean(sha))
@@ -734,13 +744,17 @@ export async function fetchTipViews(options: {
         })
     );
 
-    const head = gitResult(options.cwd, ["rev-parse", "HEAD"]);
-    const checkoutFollowsTip =
-        head.exitCode === 0 &&
-        (head.stdout === mr.sha ||
-            gitResult(options.cwd, ["merge-base", "--is-ancestor", mr.sha, "HEAD"]).exitCode === 0);
+    const follows = (dir: string): boolean => {
+        const head = gitResult(dir, ["rev-parse", "HEAD"]);
 
-    return { sha: mr.sha, views, renames, checkoutFollowsTip, unavailable };
+        return (
+            head.exitCode === 0 &&
+            (head.stdout === mr.sha || gitResult(dir, ["merge-base", "--is-ancestor", mr.sha, "HEAD"]).exitCode === 0)
+        );
+    };
+    const checkout = follows(options.cwd) ? options.cwd : (findWorktree(options.cwd, mr.source_branch) ?? options.cwd);
+
+    return { sha: mr.sha, views, renames, checkoutFollowsTip: follows(checkout), checkout, unavailable };
 }
 
 export interface AnchorFetchStats {
