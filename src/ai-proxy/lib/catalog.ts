@@ -38,10 +38,14 @@ function fileGeneration(file: string): string {
         const stat = statSync(file);
         return [file, stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(":");
     } catch (error) {
-        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-            throw error;
+        const code = error instanceof Error && "code" in error ? String(error.code) : "unknown";
+        if (code === "ENOENT") {
+            return `${file}:missing`;
         }
-        return `${file}:missing`;
+        // An unreadable auth file must not fail the whole catalog: the account's own catalog
+        // call reaches the same file and falls back to its static models.
+        logger.debug({ file, error }, "ai-proxy: catalog key could not stat a file");
+        return `${file}:error:${code}`;
     }
 }
 
@@ -88,7 +92,9 @@ async function cachedCatalog(account: AiProxyAccountConfig, options?: CatalogOpt
                 return models;
             })
             .finally(() => {
-                catalogRequests.delete(key);
+                if (catalogRequests.get(key) === request) {
+                    catalogRequests.delete(key);
+                }
             });
         catalogRequests.set(key, request);
     }

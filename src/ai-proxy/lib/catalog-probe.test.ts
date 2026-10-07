@@ -124,6 +124,19 @@ describe("buildProxyModelCatalog under probe", () => {
         expect(whamLiveCalls).toBe(13);
     });
 
+    it("an auth path that cannot be read still lists the account's models", async () => {
+        const { buildProxyModelCatalog } = await import("./catalog");
+        // A path under a regular file: stat fails with ENOTDIR, not ENOENT.
+        const blocked = {
+            ...codex,
+            openaiSub: { accountName: "personal", codexAuthPath: `${import.meta.path}/auth.json` },
+        };
+
+        const models = await buildProxyModelCatalog([blocked], { probe: true });
+
+        expect(models.length).toBeGreaterThan(0);
+    });
+
     it("never refreshes a token to decorate a listing, for either subscription provider", async () => {
         const { buildProxyModelCatalog } = await import("./catalog");
 
