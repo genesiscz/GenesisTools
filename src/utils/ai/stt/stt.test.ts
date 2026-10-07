@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { createVoiceSession } from "@genesiscz/utils/ai/voice/session";
 import { createFixtureStt } from "./fixture";
 import { openLiveStt, parseSttProvider } from "./resolve";
 import { type LiveTranscriptEvent, STT_PROVIDER_IDS } from "./types";
@@ -102,4 +103,27 @@ test("wake rate limiter coalesces partials to one evaluation per interval and le
     expect(limiter.admit("x", false)).toBeNull();
     now = 800;
     expect(limiter.admit("y", false)).toBe("y");
+});
+
+test("general voice session preserves fixture finals without opening a microphone or Eve", async () => {
+    const seen: string[] = [];
+    const voice = await createVoiceSession({
+        provider: "fixture",
+        input: "none",
+        events: sample,
+        onEvent: (event) => seen.push(event.kind),
+    });
+    expect(await voice.done).toBe("click export");
+    expect(seen).toContain("partial");
+    expect(seen).toContain("final");
+    expect(seen.at(-1)).toBe("state");
+    voice.stop();
+});
+
+test("general voice session refuses cancellation before opening a provider", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+        createVoiceSession({ provider: "fixture", input: "none", signal: controller.signal, onEvent: () => {} })
+    ).rejects.toThrow();
 });
