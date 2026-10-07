@@ -49,7 +49,7 @@ const DISCOVERY_DNS_TIMEOUT_MS = 15_000;
 export async function assertDiscoveryTarget(
     target: string,
     origin: string,
-    timeoutMs: number = DISCOVERY_DNS_TIMEOUT_MS
+    { timeoutMs = DISCOVERY_DNS_TIMEOUT_MS }: { timeoutMs?: number } = {}
 ): Promise<URL> {
     return untilAborted(assertNoOutboundEscalation(target, origin), AbortSignal.timeout(timeoutMs));
 }
