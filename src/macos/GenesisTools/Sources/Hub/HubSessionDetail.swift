@@ -143,7 +143,7 @@ struct HubSessionDetailHost: View {
             searchID += 1
             searchDocument = nil
             searchNote = nil
-            spend = HubSpend.cached(session.sessionId)
+            spend = HubSpend.cached(session)
             branch = Self.branch(of: session)
             loadState = .loading
             await load(offset: nil, limit: Self.firstPage)
