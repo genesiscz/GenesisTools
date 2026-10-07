@@ -679,6 +679,47 @@ describe("runStdioHttpRelay", () => {
         expect(output).toContain('"id":4,"error":{"code":-32000,"message":"gateway relay backlog full"}');
     });
 
+    test("a blocked stdout does not hold up the shutdown abort", async () => {
+        let slowSignal: AbortSignal | undefined;
+        let writes = 0;
+        const stdin = (async function* () {
+            yield Buffer.from('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n', "utf8");
+            yield Buffer.from(
+                '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{}}\n' +
+                    '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{}}\n',
+                "utf8"
+            );
+        })();
+
+        await runStdioHttpRelay({
+            url: "http://fixture.invalid/mcp",
+            headers: {},
+            stdin,
+            stdout: {
+                write() {
+                    writes += 1;
+                    return writes === 1 ? undefined : new Promise(() => {});
+                },
+            },
+            maxInFlight: 1,
+            requestTimeoutMs: 1000,
+            shutdownTimeoutMs: 20,
+            fetchImpl: async (_input, init) => {
+                const body = SafeJSON.parse(String(init?.body), { strict: true }) as { id?: number };
+                if (body.id === 1) {
+                    return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+
+                slowSignal = init?.signal ?? undefined;
+                return new Promise<Response>(() => {});
+            },
+        });
+
+        expect(slowSignal?.reason).toBe("shutdown");
+    });
+
     test("a failing stdin aborts the requests it already started", async () => {
         let slowSignal: AbortSignal | undefined;
         let started: () => void = () => {};

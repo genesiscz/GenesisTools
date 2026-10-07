@@ -476,17 +476,20 @@ export async function runStdioHttpRelay(opts: {
     async function abortOutstanding(error: unknown, reason: string): Promise<void> {
         shuttingDown = true;
         queuedNotifications.splice(0);
-        for (const queued of queuedRequests.splice(0)) {
-            await writeOutput(encodeStdioMessage(jsonRpcErrorLine(queued.meta.id, "gateway shutting down")));
-        }
+        const queued = queuedRequests.splice(0);
         const remaining = [...inFlight];
+        // Abort first: the error lines below go through stdout, which may itself be blocked, so
+        // they share the one bounded wait with the aborted requests instead of gating the abort.
         for (const controller of allControllers) {
             controller.abort("shutdown");
         }
         logger.warn({ error, url: opts.url }, reason);
+        const notices = queued.map((entry) =>
+            writeOutput(encodeStdioMessage(jsonRpcErrorLine(entry.meta.id, "gateway shutting down")))
+        );
         try {
             await withTimeout(
-                Promise.all(remaining),
+                Promise.all([...remaining, ...notices]),
                 Math.min(shutdownTimeoutMs, 250),
                 new Error("stdio relay abort drain timed out")
             );
