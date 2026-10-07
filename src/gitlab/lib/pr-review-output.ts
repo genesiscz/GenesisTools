@@ -92,7 +92,7 @@ export function numberedHunks(file: DiffFile): string {
 
 function fileBlocks(facts: PrReviewFacts, file: DiffFile, index: number): BlockInput {
     const heading = {
-        h3: `${pad(index + 1)} \`${file.path}\` · ${file.status} · +${file.additions} −${file.deletions}`,
+        h3: `${file.ref ?? pad(index + 1)} \`${file.path}\` · ${file.status} · +${file.additions} −${file.deletions}`,
     };
     const renamed = file.status === "renamed" ? `Renamed from \`${file.oldPath}\`.` : [];
 
@@ -126,12 +126,19 @@ function threadRows(facts: PrReviewFacts): BlockInput {
     return {
         table: {
             rows: facts.discussions.map((d) => ({
+                id: d.ref ?? "",
                 author: `@${d.author}`,
                 anchor: anchor(facts, d.path, d.line),
                 resolved: d.resolved ? "yes" : "no",
                 note: flat(d.body),
             })),
-            columns: [{ key: "author" }, { key: "anchor" }, { key: "resolved" }, { key: "note", header: "first note" }],
+            columns: [
+                ...(facts.discussions.some((d) => d.ref) ? [{ key: "id" }] : []),
+                { key: "author" },
+                { key: "anchor" },
+                { key: "resolved" },
+                { key: "note", header: "first note" },
+            ],
         },
     };
 }
@@ -346,7 +353,7 @@ export function draftBlocks(facts: PrReviewFacts): BlockInput {
                   : "top-level";
 
             return [
-                { h3: `D${pad(i + 1)} · draft ${draft.id} · ${where}` },
+                { h3: `${draft.ref ?? `D${pad(i + 1)}`} · draft ${draft.id} · ${where}` },
                 {
                     ul: [
                         `Target: ${draftTarget(draft)}`,
@@ -423,7 +430,7 @@ export function prReviewBlocks(facts: PrReviewFacts, extras: ReportExtras = {}):
         "Mark every file before you write the report. A file counts as read when you read its hunks, or when a script proved the change mechanical (name the script in the report).",
         {
             tasks: facts.files.map((file, i) => ({
-                text: `${pad(i + 1)} · ${file.status} · +${file.additions} −${file.deletions}${file.status === "deleted" ? "" : ` · ${anchor(facts, file.path, firstChangedLine(file))}`} · \`${file.path}\``,
+                text: `${file.ref ?? pad(i + 1)} · ${file.status} · +${file.additions} −${file.deletions}${file.status === "deleted" ? "" : ` · ${anchor(facts, file.path, firstChangedLine(file))}`} · \`${file.path}\``,
                 checked: false,
             })),
         },
@@ -459,7 +466,7 @@ function gateLine(gate: PrReviewGate, index: number): string {
     return `  g${index + 1}  ${gate.label}: ${gate.note ?? gate.command}`;
 }
 
-/** Compact first-level view with refs (f1 files, t1 threads, d1 drafts, m1 affected MRs) for `--expand`. */
+/** Compact first-level view with ids (F01 files, T01 threads, Y01 my threads, D01 drafts, M01 affected MRs) for `--expand`. */
 export function formatPrReviewLLM(facts: PrReviewFacts, command: string): string {
     const { additions, deletions, unresolved } = totals(facts);
     const lines = [
@@ -474,14 +481,14 @@ export function formatPrReviewLLM(facts: PrReviewFacts, command: string): string
 
     lines.push("", "Files:");
     facts.files.forEach((file, i) => {
-        lines.push(`  f${i + 1}  ${file.status}  +${file.additions} −${file.deletions}  ${file.path}`);
+        lines.push(`  ${file.ref ?? `f${i + 1}`}  ${file.status}  +${file.additions} −${file.deletions}  ${file.path}`);
     });
 
     if (facts.discussions.length > 0) {
         lines.push("", "Threads:");
         facts.discussions.forEach((d, i) => {
             lines.push(
-                `  t${i + 1}  ${d.resolved ? "RESOLVED" : "UNRESOLVED"}  ${lineRef(d.path, d.line)}  @${d.author}  ${d.noteCount}n  ${flat(d.body, 60)}`
+                `  ${d.ref ?? `t${i + 1}`}  ${d.resolved ? "RESOLVED" : "UNRESOLVED"}  ${lineRef(d.path, d.line)}  @${d.author}  ${d.noteCount}n  ${flat(d.body, 60)}`
             );
         });
     }
@@ -489,7 +496,7 @@ export function formatPrReviewLLM(facts: PrReviewFacts, command: string): string
     if (facts.drafts.length > 0) {
         lines.push("", "My drafts:");
         facts.drafts.forEach((draft, i) => {
-            lines.push(`  d${i + 1}  ${lineRef(draft.path, draft.line)}  ${flat(draft.note, 60)}`);
+            lines.push(`  ${draft.ref ?? `d${i + 1}`}  ${lineRef(draft.path, draft.line)}  ${flat(draft.note, 60)}`);
         });
     }
 
@@ -497,7 +504,7 @@ export function formatPrReviewLLM(facts: PrReviewFacts, command: string): string
         lines.push("", "Affected MRs:");
         facts.impact.forEach((entry, i) => {
             lines.push(
-                `  m${i + 1}  !${entry.iid}  ${entry.imports.length} imports, ${entry.sharedFiles.length} shared  @${entry.author}  ${flat(entry.title, 50)}`
+                `  ${entry.ref ?? `m${i + 1}`}  !${entry.iid}  ${entry.imports.length} imports, ${entry.sharedFiles.length} shared  @${entry.author}  ${flat(entry.title, 50)}`
             );
         });
     }
@@ -506,7 +513,8 @@ export function formatPrReviewLLM(facts: PrReviewFacts, command: string): string
         lines.push("", "Gates:", ...facts.gates.map(gateLine));
     }
 
-    lines.push("", `Expand: ${command} --expand f1,t1`, `Markdown: ${command} --md`);
+    const sample = [facts.files[0]?.ref ?? "f1", facts.discussions[0]?.ref ?? "t1"].join(",");
+    lines.push("", `Expand: ${command} --expand ${sample}`, `Markdown: ${command} --md`);
 
     return `${lines.join("\n")}\n`;
 }
@@ -533,11 +541,34 @@ function excerptAround(facts: PrReviewFacts, path: string | null, line: number |
 }
 
 /** One ref in full. Unknown refs come back as an error line, never a throw, so a batch still prints the rest. */
-function expandOne(facts: PrReviewFacts, ref: string): string {
-    const match = /^([ftdm])(\d+)$/.exec(ref.trim());
-    const index = match ? Number(match[2]) - 1 : -1;
+/** The kind and the position of an id: a stored ref (`T03`) first, the older positional form (`t3`) after. */
+function locate(facts: PrReviewFacts, ref: string): { kind: "f" | "t" | "d" | "m"; index: number } | null {
+    const wanted = ref.trim().toUpperCase();
+    const lists = [
+        ["f", facts.files],
+        ["t", facts.discussions],
+        ["d", facts.drafts],
+        ["m", facts.impact ?? []],
+    ] as const;
 
-    switch (match?.[1]) {
+    for (const [kind, list] of lists) {
+        const index = list.findIndex((item) => item.ref?.toUpperCase() === wanted);
+
+        if (index !== -1) {
+            return { kind, index };
+        }
+    }
+
+    const match = /^([ftdm])(\d+)$/.exec(ref.trim());
+
+    return match ? { kind: match[1] as "f" | "t" | "d" | "m", index: Number(match[2]) - 1 } : null;
+}
+
+function expandOne(facts: PrReviewFacts, ref: string): string {
+    const located = locate(facts, ref);
+    const index = located?.index ?? -1;
+
+    switch (located?.kind) {
         case "f": {
             const file = facts.files[index];
 
@@ -604,7 +635,7 @@ function expandOne(facts: PrReviewFacts, ref: string): string {
         }
     }
 
-    return `=== ${ref}: no such ref (use f1…f${facts.files.length}, t1…t${facts.discussions.length}, d1…d${facts.drafts.length}, m1…m${facts.impact?.length ?? 0}) ===\n`;
+    return `=== ${ref}: no such id (the --llm view lists every id) ===\n`;
 }
 
 export function expandRefs(facts: PrReviewFacts, refs: string[]): string {

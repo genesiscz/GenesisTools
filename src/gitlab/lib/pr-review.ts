@@ -44,6 +44,8 @@ export interface DiffHunk {
 }
 
 export interface DiffFile {
+    /** `F12`, from the MR's id map. */
+    ref?: string;
     path: string;
     oldPath: string;
     status: FileStatus;
@@ -63,6 +65,8 @@ export interface AddedImport {
 }
 
 export interface ImpactEntry {
+    /** `M02`, from the MR's id map. */
+    ref?: string;
     iid: number;
     author: string;
     title: string;
@@ -97,6 +101,8 @@ export interface PrReviewFacts {
     iid: number;
     title: string;
     author: string;
+    /** The token's owner: threads they started are `Y`, everyone else's `T`. */
+    me?: string;
     webUrl: string;
     sourceBranch: string;
     targetBranch: string;

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { factsBaseName, factsPathOf } from "@app/gitlab/commands/pr-review";
 import type { ProjectApi } from "@app/gitlab/lib/client";
 import { mergeConfig, NEUTRAL_CONFIG } from "@app/gitlab/lib/config";
+import { applyRefs, emptyIdMap } from "@app/gitlab/lib/ids";
 import {
     type ApiDiff,
     branchRef,
@@ -638,7 +639,19 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
         expect(llm).toContain("  t1  UNRESOLVED  src/lib/util.ts:2  @bob  1n  Why | this?");
         expect(llm).toContain("  m1  !51  1 imports, 0 shared");
         expect(expandRefs(facts, ["t1", "x9"])).toContain("Discussion id: disc1");
-        expect(expandRefs(facts, ["x9"])).toContain("no such ref");
+        expect(expandRefs(facts, ["x9"])).toContain("no such id");
+    });
+
+    test("with stored ids the views use them, my own threads are Y, and --expand takes an id", () => {
+        const withIds = applyRefs({ ...facts, me: "bob" }, emptyIdMap());
+        const llm = formatPrReviewLLM(withIds, "tools gitlab pr 42 review --give");
+
+        expect(llm).toContain("  F01  modified  +2 −1  src/lib/util.ts");
+        expect(llm).toContain("  Y01  UNRESOLVED  src/lib/util.ts:2  @bob");
+        expect(llm).toContain("  T01  RESOLVED");
+        expect(llm).toContain("  M01  !51");
+        expect(expandRefs(withIds, ["Y01"])).toContain("Discussion id: disc1");
+        expect(renderPrReviewMarkdown(withIds)).toContain("### F01 `src/lib/util.ts`");
     });
 
     test("the proposal skeleton plus one draft passes parseProposal", () => {

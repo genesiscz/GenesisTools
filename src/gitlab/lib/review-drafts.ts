@@ -4,6 +4,8 @@ import { HttpError } from "@app/gitlab/lib/http";
 import { type DiffFile, fetchMrDiffs } from "@app/gitlab/lib/pr-review";
 
 export interface DiscussionSummary {
+    /** `T03` (started by someone else) or `Y02` (started by me), from the MR's id map. */
+    ref?: string;
     id: string;
     author: string;
     path: string | null;
@@ -14,6 +16,8 @@ export interface DiscussionSummary {
 }
 
 export interface DraftSummary {
+    /** `D04`, from the MR's id map. */
+    ref?: string;
     id: number;
     discussionId: string | null;
     path: string | null;

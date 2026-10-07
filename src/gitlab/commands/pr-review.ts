@@ -28,9 +28,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type FetchReviewOptions, runFetchReview } from "@app/gitlab/commands/fetch-review";
 import { progress, type TargetOptions, withProject } from "@app/gitlab/commands/shared";
-import { currentUser, resolveProjectApi } from "@app/gitlab/lib/client";
+import { currentUser, type ProjectApi, resolveProjectApi } from "@app/gitlab/lib/client";
 import { FETCH_FORMATS, loadConfig } from "@app/gitlab/lib/config";
 import { gitResult } from "@app/gitlab/lib/git";
+import { applyRefs, idMapPath, loadIdMap, saveIdMap } from "@app/gitlab/lib/ids";
 import { fetchMr } from "@app/gitlab/lib/merge-requests";
 import {
     checkoutOf,
@@ -269,6 +270,17 @@ async function runReview(iid: string, opts: Options, cmd: Command): Promise<void
     await runFetchReview(iid, receive);
 }
 
+/** The facts with their ids from this MR's stored map (new items get new ids, the map is saved). */
+async function withStoredRefs(api: ProjectApi, key: FactsKey, facts: PrReviewFacts): Promise<PrReviewFacts> {
+    const me = await currentUser(api);
+    const path = idMapPath(key);
+    const map = loadIdMap(path);
+    const withIds = applyRefs({ ...facts, me: me.username }, map);
+    saveIdMap(path, map);
+
+    return withIds;
+}
+
 async function pickEnum<T extends string>(values: readonly T[], value: string | true, flag: string): Promise<T | null> {
     const match = values.find((candidate) => candidate === value);
 
@@ -433,20 +445,24 @@ async function runPrReview(mrIid: string, opts: Options, door: ReviewDoor): Prom
     const config = cached ? null : await loadConfig();
     const facts =
         cached ??
-        (await collectPrReviewFacts({
+        (await withStoredRefs(
             api,
-            iid,
-            repoPath,
-            worktree: pinned ? resolve(pinned) : null,
-            contextLines,
-            impact: !draftsOnly && opts.impact !== false,
-            impactLimit,
-            impactSource,
-            gates: config?.review.gates ?? [],
-            gateRunner: config?.review.runner ?? "list",
-            worktreeHint: config?.review.worktreeHint ?? null,
-            onProgress: (message) => progress(`ℹ  ${message}`),
-        }));
+            key,
+            await collectPrReviewFacts({
+                api,
+                iid,
+                repoPath,
+                worktree: pinned ? resolve(pinned) : null,
+                contextLines,
+                impact: !draftsOnly && opts.impact !== false,
+                impactLimit,
+                impactSource,
+                gates: config?.review.gates ?? [],
+                gateRunner: config?.review.runner ?? "list",
+                worktreeHint: config?.review.worktreeHint ?? null,
+                onProgress: (message) => progress(`ℹ  ${message}`),
+            })
+        ));
 
     const extras: ReportExtras = {};
 
