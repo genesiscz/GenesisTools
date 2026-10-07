@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
+import { logger } from "@genesiscz/utils/logger";
 
 const requireModule = createRequire(import.meta.url);
 let loadedLockfile: typeof import("proper-lockfile") | null = null;
@@ -27,6 +28,11 @@ function arbitrationPath(targetPath: string): string {
 
 function isLocked(error: unknown): boolean {
     return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ELOCKED";
+}
+
+/** Arbitration is advisory once fn has finished: a lost or compromised arbiter must not mask fn's outcome. */
+function logReleaseFailure(targetPath: string, error: unknown): void {
+    logger.warn({ err: error, path: targetPath }, "[path-arbitration] releasing the claim arbiter failed");
 }
 
 /**
@@ -60,11 +66,24 @@ export async function tryWithPathArbitration<T>(
     try {
         return { acquired: true, value: await fn() };
     } finally {
-        await release();
+        try {
+            await release();
+        } catch (error) {
+            logReleaseFailure(targetPath, error);
+        }
     }
 }
 
-/** Synchronous twin for legacy pidfile writers; a busy arbiter fails fast. */
+/** True for the ELOCKED error a busy arbiter throws. */
+export function isArbitrationBusy(error: unknown): boolean {
+    return isLocked(error);
+}
+
+/**
+ * Synchronous twin for legacy pidfile writers: one attempt, so a busy arbiter throws ELOCKED.
+ * It never sleeps, because a sync wait would freeze the caller's event loop; an async caller
+ * that must ride out contention retries around it (see `writePidFileWhenFree`).
+ */
 export function withPathArbitrationSync<T>(targetPath: string, fn: () => T): T {
     mkdirSync(dirname(targetPath), { recursive: true });
     const release = lockfile().lockSync(arbitrationPath(targetPath), {
@@ -77,6 +96,10 @@ export function withPathArbitrationSync<T>(targetPath: string, fn: () => T): T {
     try {
         return fn();
     } finally {
-        release();
+        try {
+            release();
+        } catch (error) {
+            logReleaseFailure(targetPath, error);
+        }
     }
 }

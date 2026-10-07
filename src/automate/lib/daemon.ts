@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { createLogger } from "@genesiscz/utils/logger";
-import { clearPidFile, readLivePid, writePidFile } from "@genesiscz/utils/process/pidfile";
+import { clearPidFile, readLivePid, writePidFileWhenFree } from "@genesiscz/utils/process/pidfile";
 import { closeDb, getDb } from "./db";
 import { runSchedulerLoop } from "./scheduler";
 
@@ -29,7 +29,7 @@ export async function startDaemon(): Promise<void> {
     const log = createLogger({ logToFile: false });
 
     try {
-        writePidFile(PID_FILE, { exclusive: true });
+        await writePidFileWhenFree(PID_FILE, { exclusive: true });
     } catch (err) {
         if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EEXIST") {
             const existing = getDaemonPid();
@@ -42,7 +42,7 @@ export async function startDaemon(): Promise<void> {
             // Nothing live owns it — the pid is gone, or was recycled onto an
             // unrelated program (see the incidents in the pidfile module).
             clearPidFile(PID_FILE, { force: true });
-            writePidFile(PID_FILE, { exclusive: true });
+            await writePidFileWhenFree(PID_FILE, { exclusive: true });
         } else {
             throw err;
         }

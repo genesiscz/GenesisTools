@@ -6,7 +6,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
-import { masterKeyForId, masterKeyForIdSync, masterKeyGeneration, masterKeyId } from "./MasterKey";
+import { masterKeyForId, masterKeyForIdSync, masterKeyForVaultWrite, masterKeyGeneration } from "./MasterKey";
 import { isSecretPath, isSecureRef, type MaybeSecret, type SecureRef, secureRef } from "./SecureRef";
 import { emptyVault, VAULT_HKDF_SALT, VAULT_VERSION, type VaultEntry, type VaultFile } from "./vault-format";
 
@@ -257,12 +257,11 @@ class FileSecretStore implements SecretStore {
             file: this.vaultPath(),
             fn: async () => {
                 const vault = this.read();
-                const master = await masterKeyForId(vault.keyId);
-                const missingKeyId = vault.keyId === undefined;
-                vault.keyId ??= masterKeyId(master);
+                const recordedKeyId = vault.keyId;
+                const master = await masterKeyForVaultWrite(vault);
                 const unchanged = this.holdsValue(master, path, vault.entries[path], value);
 
-                if (unchanged && !missingKeyId) {
+                if (unchanged && vault.keyId === recordedKeyId) {
                     return false;
                 }
 

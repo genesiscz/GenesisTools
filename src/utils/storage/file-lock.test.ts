@@ -1,6 +1,6 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ string literals — production plugins do not apply to test code
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
@@ -168,6 +168,19 @@ describe("file-lock: stale/orphaned lock handling", () => {
 
         releaseOwner();
         expect((await owner).acquired).toBe(true);
+    });
+
+    it("a release that cannot read the lock never replaces fn's result", async () => {
+        const lockPath = join(dir, "target.lock");
+
+        const result = await withFileLock(lockPath, async () => {
+            // Unreadable at release time (EISDIR); the old release threw from `finally`.
+            rmSync(lockPath, { force: true });
+            mkdirSync(lockPath);
+            return "committed";
+        });
+
+        expect(result).toBe("committed");
     });
 
     it("a steal that grabs a FRESH lock restores it and loses (TOCTOU guard)", async () => {

@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
+import { tryWithPathArbitration, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import {
     attemptStaleTakeover,
     classifyPidRecord,
@@ -14,6 +14,7 @@ import {
     readPidRecord,
     readSignalablePid,
     writePidFile,
+    writePidFileWhenFree,
 } from "./pidfile";
 
 /** A pid the kernel will never have handed out — the "owner is gone" case. */
@@ -208,6 +209,44 @@ describe("pidfile", () => {
 
         releaseOwner();
         expect((await owner).acquired).toBe(true);
+    });
+
+    test("a failed arbiter release does not replace the callback's result", async () => {
+        // A directory replaced by a file makes proper-lockfile's rmdir fail, so release() rejects.
+        const breakArbiter = () => {
+            const arbiter = `${path}.claim-arbitration.lock`;
+            rmSync(arbiter, { recursive: true, force: true });
+            writeFileSync(arbiter, "");
+        };
+
+        expect(
+            await tryWithPathArbitration(path, async () => {
+                breakArbiter();
+                return "claimed";
+            })
+        ).toEqual({ acquired: true, value: "claimed" });
+
+        rmSync(`${path}.claim-arbitration.lock`, { force: true });
+        expect(
+            withPathArbitrationSync(path, () => {
+                breakArbiter();
+                return "claimed";
+            })
+        ).toBe("claimed");
+    });
+
+    test("writePidFileWhenFree waits out brief arbiter contention, and a stuck arbiter still fails within its bound", async () => {
+        const arbiter = `${path}.claim-arbitration.lock`;
+        mkdirSync(arbiter);
+        setTimeout(() => rmSync(arbiter, { recursive: true, force: true }), 150);
+
+        expect((await writePidFileWhenFree(path)).pid).toBe(process.pid);
+
+        mkdirSync(arbiter);
+        const started = Date.now();
+        await expect(writePidFileWhenFree(path, { waitMs: 150 })).rejects.toThrow(/already being held/);
+        expect(Date.now() - started).toBeLessThan(1_000);
+        expect(() => writePidFile(path)).toThrow(/already being held/);
     });
 
     test("exclusive write refuses to clobber an existing claim", () => {

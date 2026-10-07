@@ -9,7 +9,7 @@ import { MASTER_KEY_BYTES } from "./keyring/types";
 import {
     invalidateMasterKeyCache,
     masterKey,
-    masterKeyForId,
+    masterKeyForVaultWrite,
     masterKeyId,
     masterKeySource,
     writeMasterKey,
@@ -79,7 +79,7 @@ export async function rotateMasterKey(): Promise<{ rotated: number }> {
 
     return vaultAdmin.withLock(async () => {
         const vault = vaultAdmin.read();
-        const current = await masterKeyForId(vault.keyId);
+        const current = await masterKeyForVaultWrite(vault);
         const paths = Object.keys(vault.entries);
         const plaintext = new Map<string, string>();
 
@@ -223,8 +223,7 @@ export async function importVault(blob: string, passphrase: string): Promise<{ i
 
     return vaultAdmin.withLock(async () => {
         const vault = vaultAdmin.read();
-        const master = await masterKeyForId(vault.keyId);
-        vault.keyId ??= masterKeyId(master);
+        const master = await masterKeyForVaultWrite(vault);
         for (const [path, value] of Object.entries(payload.secrets)) {
             vault.entries[path] = encryptEntry(master, path, value);
         }

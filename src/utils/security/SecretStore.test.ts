@@ -10,6 +10,7 @@ import {
     _setMasterKeyProvidersForTest,
     masterKey,
     masterKeyGeneration,
+    masterKeyId,
     masterKeySource,
     masterKeySync,
 } from "./MasterKey";
@@ -142,6 +143,40 @@ describe("SecretStore", () => {
         expect(ref).toEqual({ type: "secure", path: "ai/acc_x/apiKey" });
         expect(await store.get("ai/acc_x/apiKey")).toBe("xai-secret-value");
         expect(await resolveSecret(ref)).toBe("xai-secret-value");
+    });
+
+    test("an emptied vault adopts a replacement key, while a populated one still refuses it", async () => {
+        const store = await secrets();
+        await store.set("ai/acc_x/apiKey", "xai-secret-value");
+        await store.set("ai/acc_y/apiKey", "kept-under-the-old-key");
+        const other = randomBytes(32);
+        const replacement = [
+            {
+                id: "keychain" as const,
+                available: async () => true,
+                get: async () => other,
+                getSync: () => other,
+                set: async () => {
+                    throw new Error("test must never write a key");
+                },
+            },
+        ];
+
+        // Populated vault: a different key would strand ciphertext, so the mismatch refusal stays.
+        _setMasterKeyProvidersForTest(replacement);
+        await expect(store.set("ai/acc_z/apiKey", "value")).rejects.toThrow(/does not match the vault generation/);
+
+        // Empty the vault (keyId stays behind), then lose the key: the next write adopts the replacement.
+        _setMasterKeyProvidersForTest(fakeKeyring());
+        await store.delete("ai/acc_x/apiKey");
+        await store.delete("ai/acc_y/apiKey");
+        _setMasterKeyProvidersForTest(replacement);
+
+        await store.set("ai/acc_z/apiKey", "value");
+
+        const vault: VaultFile = SafeJSON.parse(readFileSync(vaultPath(), "utf8"), { strict: true });
+        expect(vault.keyId).toBe(masterKeyId(other));
+        expect(await store.get("ai/acc_z/apiKey")).toBe("value");
     });
 
     test("set() with the value already stored does not rewrite the vault", async () => {

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
-import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
+import { type ArbitrationResult, tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
 import {
     buildPidRecord,
     classifyPidRecord,
@@ -228,20 +228,44 @@ export async function tryAcquireLock(lockPath: string): Promise<boolean> {
 }
 
 /**
+ * Delete the lock when it still names this process. Best-effort: it runs in
+ * `withFileLock`'s `finally`, so a throw here would replace fn's own outcome.
+ */
+function unlinkIfOwned(lockPath: string): void {
+    try {
+        if (!existsSync(lockPath)) {
+            return;
+        }
+
+        if (parsePidRecord(readFileSync(lockPath, "utf-8"))?.pid === process.pid) {
+            unlinkSync(lockPath);
+        }
+    } catch (error) {
+        if (!isEnoent(error)) {
+            logger.error({ err: error, lockPath }, "Failed to release lock");
+        }
+    }
+}
+
+/**
  * Release a lock file by deleting it.
+ *
+ * Arbitration keeps the unlink from racing a stale takeover. When the arbiter
+ * stays busy past the deadline, the ownership-checked unlink still runs: no
+ * stealer takes a lock whose holder is this live process, and leaving it would
+ * block every other acquirer until this process exits.
  */
 async function releaseLock(lockPath: string): Promise<void> {
     const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
     while (Date.now() <= deadline) {
-        const arbitration = await tryWithPathArbitration(lockPath, async () => {
-            if (!existsSync(lockPath)) {
-                return;
-            }
+        let arbitration: ArbitrationResult<void>;
+        try {
+            arbitration = await tryWithPathArbitration(lockPath, async () => unlinkIfOwned(lockPath));
+        } catch (error) {
+            logger.warn({ err: error, lockPath }, "Lock release arbitration failed; unlinking without it");
+            break;
+        }
 
-            if (parsePidRecord(readFileSync(lockPath, "utf-8"))?.pid === process.pid) {
-                unlinkSync(lockPath);
-            }
-        });
         if (arbitration.acquired) {
             return;
         }
@@ -249,7 +273,8 @@ async function releaseLock(lockPath: string): Promise<void> {
         await sleep(POLL_INTERVAL_MS);
     }
 
-    logger.error(`Failed to release lock at ${lockPath}: claim arbitration remained busy`);
+    logger.warn(`Lock release at ${lockPath}: claim arbitration unavailable, using the ownership-checked unlink`);
+    unlinkIfOwned(lockPath);
 }
 
 /**

@@ -3,7 +3,11 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { tryWithPathArbitration, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
+import {
+    isArbitrationBusy,
+    tryWithPathArbitration,
+    withPathArbitrationSync,
+} from "@genesiscz/utils/process/path-arbitration";
 import {
     classifyPid,
     type PidIdentity,
@@ -207,6 +211,31 @@ export function writePidFile(path: string, opts: { pid?: number; exclusive?: boo
         writeFileSync(path, serializePidRecord(record), opts.exclusive ? { flag: "wx" } : {});
         return record;
     });
+}
+
+/**
+ * `writePidFile` for an async caller that must not fail on brief arbiter contention: an ELOCKED
+ * answer is retried every 25 ms until `waitMs` (default 2 s) runs out, then thrown. EEXIST and
+ * every other error pass through at once.
+ */
+export async function writePidFileWhenFree(
+    path: string,
+    opts: { pid?: number; exclusive?: boolean; waitMs?: number } = {}
+): Promise<PidRecord> {
+    const deadline = Date.now() + (opts.waitMs ?? 2_000);
+    for (;;) {
+        try {
+            return writePidFile(path, opts);
+        } catch (error) {
+            const remaining = deadline - Date.now();
+            if (!isArbitrationBusy(error) || remaining <= 0) {
+                throw error;
+            }
+
+            logger.debug({ path, remaining }, "pidfile arbiter busy; retrying");
+            await Bun.sleep(Math.min(25, remaining));
+        }
+    }
 }
 
 /**

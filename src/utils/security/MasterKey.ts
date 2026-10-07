@@ -9,6 +9,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { envKeyProvider, fileKeyProvider, masterKeyFilePath, securityStorage } from "./keyring/headless";
 import { osKeyring } from "./keyring/os-keyring";
 import { MASTER_KEY_BYTES, type MasterKeyProvider, type MasterKeySource } from "./keyring/types";
+import type { VaultFile } from "./vault-format";
 
 export class MasterKeyUnavailableError extends Error {
     constructor() {
@@ -143,7 +144,10 @@ export function masterKeyId(key: Buffer): string {
     return createHash("sha256").update(key).digest("base64url");
 }
 
-export async function masterKeyForId(expectedId: string | undefined): Promise<Buffer> {
+export async function masterKeyForId(
+    expectedId: string | undefined,
+    opts: { adoptOnMismatch?: boolean } = {}
+): Promise<Buffer> {
     const key = await masterKey();
     if (expectedId === undefined || masterKeyId(key) === expectedId) {
         return key;
@@ -152,12 +156,35 @@ export async function masterKeyForId(expectedId: string | undefined): Promise<Bu
     invalidateMasterKeyCache();
     const refreshed = await masterKey();
     if (masterKeyId(refreshed) !== expectedId) {
+        if (opts.adoptOnMismatch) {
+            logger.warn(
+                { previous: expectedId, adopted: masterKeyId(refreshed) },
+                "vault holds no entries; adopting the current master key in place of the recorded one"
+            );
+            return refreshed;
+        }
+
         throw new Error(
             "The vault master key does not match the vault generation; refusing to use stale key material."
         );
     }
 
     return refreshed;
+}
+
+/**
+ * The key a vault WRITE encrypts with, under the vault lock, with `vault.keyId`
+ * bound to it. An empty vault has no ciphertext a different key could strand,
+ * so after a lost key or an empty-vault rotation it adopts the store's current
+ * key instead of blocking every later write. A vault with entries keeps the
+ * strict mismatch refusal.
+ */
+export async function masterKeyForVaultWrite(vault: VaultFile): Promise<Buffer> {
+    const empty = Object.keys(vault.entries).length === 0;
+    const key = await masterKeyForId(vault.keyId, { adoptOnMismatch: empty });
+    vault.keyId = masterKeyId(key);
+
+    return key;
 }
 
 export function masterKeyForIdSync(expectedId: string | undefined): Buffer | undefined {
