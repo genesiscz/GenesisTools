@@ -199,10 +199,10 @@ export function buildNextTurnArgs(
     surfaces: WorkerSurfaces,
     promptArguments: string[]
 ): string[] {
-    const retryInitialStart = meta.turns === 1 && !meta.lastTurn?.ended;
-    return retryInitialStart
-        ? buildRunArgs({ ...meta, readOnly, surfaces }, promptArguments)
-        : buildSteerArgs({ ...meta, surfaces }, readOnly, promptArguments);
+    const sessionStarted = meta.sessionStarted ?? !(meta.turns === 1 && !meta.lastTurn?.ended);
+    return sessionStarted
+        ? buildSteerArgs({ ...meta, surfaces }, readOnly, promptArguments)
+        : buildRunArgs({ ...meta, readOnly, surfaces }, promptArguments);
 }
 
 export function resolveGrokBinary(): string {
@@ -394,6 +394,7 @@ async function runTurn(
         const updated = store.updateMeta(meta.name, {
             lastTurn: { turn, ended: summary.ended, exitCode, at: new Date().toISOString() },
             activeTurn: undefined,
+            ...(summary.ended ? { sessionStarted: true } : {}),
         });
         log.info(
             {
@@ -467,6 +468,7 @@ export async function runSession(options: RunSessionOptions): Promise<TurnResult
         auth: options.auth,
         surfaces: options.surfaces ?? DEFAULT_SURFACES,
         turns: 0,
+        sessionStarted: false,
         createdAt: new Date().toISOString(),
         // Pinned once: every later steer must land in the same swarm, even if
         // the steering command is issued from a different session.

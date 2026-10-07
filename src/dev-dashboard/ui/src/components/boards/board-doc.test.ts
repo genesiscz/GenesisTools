@@ -180,6 +180,39 @@ describe("stroke lifecycle", () => {
         expect(deleted).toEqual([41]);
     });
 
+    test("undo after a redo deletes the stroke the redo created, not the original", async () => {
+        const local = [-1];
+        const deleted: number[] = [];
+        const ids = [41, 42];
+        const lifecycle = createStrokeLifecycle({
+            tempId: -1,
+            create: async () => stroke(ids.shift() ?? 0),
+            removeLocal: (id) => {
+                const index = local.indexOf(id);
+                if (index !== -1) {
+                    local.splice(index, 1);
+                }
+            },
+            commitLocal: (tempId, server) => {
+                local.splice(local.indexOf(tempId), 1, server.id);
+            },
+            addLocal: (server) => local.push(server.id),
+            deleteRemote: async (id) => {
+                deleted.push(id);
+            },
+            onCreateError: () => {},
+        });
+
+        await Promise.resolve();
+        await lifecycle.undo();
+        await lifecycle.redo();
+        expect(local).toEqual([42]);
+        await lifecycle.undo();
+
+        expect(local).toEqual([]);
+        expect(deleted).toEqual([41, 42]);
+    });
+
     test("rejected creation removes the optimistic stroke without deleting a temporary id", async () => {
         const local = [-1];
         const deleted: number[] = [];

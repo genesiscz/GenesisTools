@@ -574,9 +574,13 @@ export function splitPipeline(statement: Span): Span[] {
 const EXECUTABLE_SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
 const MAX_EXECUTABLE_BODY_DEPTH = 4;
 
+// Backticks inside a `#` comment or a quoted-delimiter heredoc body are data, so they are
+// skipped. An unquoted heredoc (`cat <<EOF`) still runs its backticks, and so does any body
+// a shell reads (`bash <<'EOF'`), so those stay in the scan.
 function backtickBodies(source: string, base: number): ExecutableBody[] {
     const bodies: ExecutableBody[] = [];
     let quote: "'" | '"' | null = null;
+    let literalHeredoc: PendingHeredoc | null = null;
     let i = 0;
 
     while (i < source.length) {
@@ -584,6 +588,28 @@ function backtickBodies(source: string, base: number): ExecutableBody[] {
         if (ch === "\\") {
             i += 2;
             continue;
+        }
+        if (ch === "\n" && quote === null && literalHeredoc) {
+            i = consumeHeredocBody(source, i + 1, literalHeredoc).end;
+            literalHeredoc = null;
+            continue;
+        }
+        if (ch === "#" && quote === null && (i === 0 || /[\s;&|]/.test(source[i - 1]))) {
+            const eol = source.indexOf("\n", i);
+            i = eol === -1 ? source.length : eol;
+            continue;
+        }
+        if (ch === "<" && quote === null && source[i + 1] === "<" && source[i + 2] !== "<") {
+            const op = HEREDOC_OP.exec(source.slice(i));
+            if (op) {
+                const lineStart = source.lastIndexOf("\n", i - 1) + 1;
+                if (op[2] !== "" && !SHELL_FED.test(source.slice(lineStart, i))) {
+                    literalHeredoc = { delim: op[3], stripTabs: op[1] === "-", shellFed: false };
+                }
+
+                i += op[0].length;
+                continue;
+            }
         }
         if (ch === "'" && quote !== '"') {
             quote = quote === "'" ? null : "'";

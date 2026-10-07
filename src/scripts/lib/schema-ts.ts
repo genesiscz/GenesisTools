@@ -214,33 +214,35 @@ function inspectArguments(
     }
 
     const nextSeen = new Set([...seen, schema]);
+    const properties = schema.properties ?? {};
+    const required = schema.required ?? [];
+    const localHasArguments =
+        Object.keys(properties).length > 0 || Boolean(schema.additionalProperties) || required.length > 0;
+    // JSON Schema applies sibling keywords together with $ref and the compositions, so every part counts.
+    const parts = [{ hasArguments: localHasArguments, allOptional: required.length === 0 }];
     if (schema.$ref) {
         const target = resolveRef(schema.$ref, root);
-        return target
-            ? inspectArguments(target, root, depth + 1, nextSeen)
-            : { hasArguments: true, allOptional: false };
+        parts.push(
+            target ? inspectArguments(target, root, depth + 1, nextSeen) : { hasArguments: true, allOptional: false }
+        );
     }
 
-    if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
-        const parts = schema.allOf.map((part) => inspectArguments(part, root, depth + 1, nextSeen));
-        return {
-            hasArguments: parts.some((part) => part.hasArguments),
-            allOptional: parts.every((part) => part.allOptional),
-        };
+    if (Array.isArray(schema.allOf)) {
+        for (const part of schema.allOf) {
+            parts.push(inspectArguments(part, root, depth + 1, nextSeen));
+        }
     }
 
     const union = schema.anyOf ?? schema.oneOf;
     if (Array.isArray(union) && union.length > 0) {
-        const parts = union.map((part) => inspectArguments(part, root, depth + 1, nextSeen));
-        return {
-            hasArguments: true,
-            allOptional: parts.every((part) => part.allOptional),
-        };
+        const alternatives = union.map((part) => inspectArguments(part, root, depth + 1, nextSeen));
+        parts.push({ hasArguments: true, allOptional: alternatives.every((part) => part.allOptional) });
     }
 
-    const properties = schema.properties ?? {};
-    const hasArguments = Object.keys(properties).length > 0 || Boolean(schema.additionalProperties);
-    return { hasArguments, allOptional: !hasArguments || (schema.required ?? []).length === 0 };
+    return {
+        hasArguments: parts.some((part) => part.hasArguments),
+        allOptional: parts.every((part) => part.allOptional),
+    };
 }
 
 /** True when the schema has no properties, i.e. the tool takes no arguments. */

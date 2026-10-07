@@ -29,6 +29,11 @@ export interface GrokSessionMeta {
     /** The agents-bus swarm of the session that started this worker, if any. */
     rendezvousSession?: string;
     lastTurn?: GrokTurnRecord;
+    /**
+     * True once a turn ended, which proves grok created the session. New sessions start at false,
+     * so every failed initial launch retries creation; absent (older sessions) falls back to turn 1.
+     */
+    sessionStarted?: boolean;
     activeTurn?: { turn: number; ownerPid: number; childPid?: number; startedAt: string };
 }
 

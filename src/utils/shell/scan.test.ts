@@ -43,6 +43,20 @@ describe("scanShell", () => {
         expect(statements).toContainEqual({ text: "git status", start: command.indexOf("git status") });
         expect(statements).toContainEqual({ text: "git diff --stat", start: command.indexOf("git diff --stat") });
     });
+
+    it("leaves backticks in a comment or a quoted-delimiter heredoc as data", () => {
+        const texts = (command: string) =>
+            scanShell(command)
+                .units.flat()
+                .map((unit) => unit.text.trim());
+
+        expect(texts("echo ok # `git restore fixture.ts`")).not.toContain("git restore fixture.ts");
+        expect(texts("cat <<'EOF'\nrun `git restore fixture.ts` to reset\nEOF\necho done")).not.toContain(
+            "git restore fixture.ts"
+        );
+        expect(texts("cat <<EOF\n`git restore fixture.ts`\nEOF")).toContain("git restore fixture.ts");
+        expect(texts("bash <<'EOF'\necho `git restore fixture.ts`\nEOF")).toContain("git restore fixture.ts");
+    });
 });
 
 describe("the helpers the rules match with", () => {

@@ -194,6 +194,27 @@ describe("interrupted initial launch", () => {
         expect(resumed).toContain("--resume");
         expect(resumed).not.toContain("--session-id");
     });
+
+    test("keeps retrying creation after two failed launches, then resumes once a turn ended", () => {
+        const failed = (turn: number) => ({
+            name: "reviewer",
+            sessionId: "s-1",
+            cwd: "/repo",
+            workerHome: "/tmp/worker",
+            readOnly: true,
+            turns: turn,
+            sessionStarted: false,
+            createdAt: new Date(0).toISOString(),
+            lastTurn: { turn, ended: false, exitCode: 1, at: new Date(0).toISOString() },
+        });
+        const surfaces = { skills: true, rules: true };
+
+        expect(buildNextTurnArgs(failed(1), true, surfaces, ["-p", "retry"])).toContain("--session-id");
+        expect(buildNextTurnArgs(failed(2), true, surfaces, ["-p", "retry"])).toContain("--session-id");
+        expect(buildNextTurnArgs({ ...failed(3), sessionStarted: true }, true, surfaces, ["-p", "go"])).toContain(
+            "--resume"
+        );
+    });
 });
 
 /**

@@ -102,4 +102,24 @@ describe("isEmptySchema / allOptional", () => {
             })
         ).toBe(false);
     });
+
+    it("keeps sibling properties and required beside a composition", () => {
+        const mixed = {
+            type: "object",
+            properties: { name: { type: "string" } },
+            required: ["name"],
+            allOf: [{}],
+        };
+
+        expect(isEmptySchema(mixed)).toBe(false);
+        expect(allOptional(mixed)).toBe(false);
+        expect(
+            allOptional({
+                properties: { name: { type: "string" } },
+                required: ["name"],
+                $ref: "#/$defs/Extra",
+                $defs: { Extra: { type: "object", properties: { note: { type: "string" } } } },
+            })
+        ).toBe(false);
+    });
 });

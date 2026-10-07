@@ -52,9 +52,9 @@ export function createStrokeLifecycle(options: StrokeLifecycleOptions): StrokeLi
                 options.removeLocal(serverStroke.id);
             }
 
-            const created = await initialCreate;
-            if (created) {
-                await options.deleteRemote(created.id);
+            await initialCreate;
+            if (serverStroke) {
+                await options.deleteRemote(serverStroke.id);
             }
         },
         redo: async () => {
