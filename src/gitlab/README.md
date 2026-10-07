@@ -267,7 +267,7 @@ Fixed in the next push.
 | `review.runner` | `list` | `list`: the gate commands one after another. `parallel`: each gate as a background `tools task` session, then every exit code |
 | `review.impactSource` | `api` | Default of `--impact-source`: `api` or `git` |
 | `review.worktreeHint` | `null` | Replaces the "create a worktree" advice when no worktree has the MR branch; `{branch}` and `{iid}` are filled in |
-| `review.draftRules` | none | What `review check` enforces in text that goes to the MR: `bannedWords` (`[{ word, instead }]`), `forbidDashes`, `ownThreadForbidden` (phrases that address nobody in a thread you started) |
+| `review.draftRules` | none | What `review check` enforces in text that goes to the MR: `bannedWords` (`[{ word, instead }]`), `forbidDashes`, `ownThreadForbidden` (optional, empty by default: phrases that address nobody in a thread you started; a hit only warns, it never blocks) |
 
 Ledgers of writes live next to the config: `comment-batch.jsonl`, `label-batch.jsonl`, `review-ledger/` (what `comments post` landed) and `review-ids/` (the id map of each MR).
 

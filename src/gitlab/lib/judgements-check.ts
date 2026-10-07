@@ -450,9 +450,10 @@ export function checkJudgements(input: CheckInput): CheckResult {
                 });
             }
 
+            // A warning, not an error: a phrase list cannot tell a quote or a name from addressing nobody.
             for (const phrase of input.rules.ownThreadForbidden) {
                 if (wordPattern(phrase).test(text)) {
-                    errors.push({
+                    warnings.push({
                         id: item.id,
                         line: item.line,
                         message: `${field}: "${phrase}" addresses nobody in your own thread; name the MR author or state it flat`,

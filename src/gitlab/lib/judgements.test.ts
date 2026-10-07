@@ -185,14 +185,14 @@ describe("judgements", () => {
             "[90%] Opus: Máš pravdu, je to potřeba.",
             "```",
         ].join("\n");
-        const messages = check(answer).errors.map((e) => e.message);
+        const result = check(answer);
+        const ownThread =
+            'Proposed answer: "máš pravdu" addresses nobody in your own thread; name the MR author or state it flat';
 
-        expect(messages).toContain(
-            'Proposed answer: leave out "[NN%] Opus:"; the render and the post add it from the badge'
-        );
-        expect(messages).toContain(
-            'Proposed answer: "máš pravdu" addresses nobody in your own thread; name the MR author or state it flat'
-        );
+        expect(result.errors.map((e) => e.message)).toEqual([
+            'Proposed answer: leave out "[NN%] Opus:"; the render and the post add it from the badge',
+        ]);
+        expect(result.warnings.map((w) => w.message)).toContain(ownThread);
     });
 
     test("a reply in my own thread sends the Proposed answer", () => {
@@ -271,7 +271,7 @@ describe("a judgements file edited by hand", () => {
 
     const repaired: Array<[string, (text: string) => string]> = [
         ["Windows line ends", (t) => t.replace(/\n/g, "\r\n")],
-        ["a byte-order mark", (t) => `﻿${t}`],
+        ["a byte-order mark", (t) => `�${t}`],
         ["item headings at level 2", (t) => t.replace("# T01", "## T01").replace("# N01", "### N01")],
         ["a lower-case, unpadded id", (t) => t.replace("# T01 ", "# t1 ")],
         [
