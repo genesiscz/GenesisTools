@@ -88,6 +88,39 @@ struct RepoCommit: Identifiable, Hashable {
     var when: String
 }
 
+/// One checkout of the repository (`git worktree list`): the main one and every linked worktree.
+struct RepoWorktree: Hashable {
+    var path: String
+    /// nil for a detached HEAD.
+    var branch: String?
+    var head: String
+
+    /// "feat/x · checkout-folder", or the short head when detached.
+    var title: String {
+        "\(branch ?? "detached \(head.prefix(7))")  ·  \(URL(fileURLWithPath: path).lastPathComponent)"
+    }
+
+    /// `git worktree list --porcelain`: blocks of `worktree`, `HEAD`, `branch refs/heads/…` or `detached`.
+    static func parse(_ porcelain: String) -> [RepoWorktree] {
+        porcelain.components(separatedBy: "\n\n").compactMap { block in
+            var path: String?
+            var head = ""
+            var branch: String?
+            var bare = false
+            for line in block.split(separator: "\n").map(String.init) {
+                if line.hasPrefix("worktree ") { path = String(line.dropFirst("worktree ".count)) }
+                if line.hasPrefix("HEAD ") { head = String(line.dropFirst("HEAD ".count)) }
+                if line.hasPrefix("branch ") {
+                    branch = String(line.dropFirst("branch ".count)).replacingOccurrences(of: "refs/heads/", with: "")
+                }
+                if line == "bare" { bare = true }
+            }
+            guard let path, !bare else { return nil }
+            return RepoWorktree(path: path, branch: branch, head: head)
+        }
+    }
+}
+
 /// Where a reviewed repository lives: its root and Git directories, and which file events matter.
 struct ReviewRepositoryLayout: Equatable {
     let root: URL
@@ -393,6 +426,21 @@ struct GitWorkingTreeSource {
         }
 
         return "HEAD"
+    }
+
+    /// Every checkout of this repository, the main one first.
+    func worktrees() -> [RepoWorktree] {
+        RepoWorktree.parse((try? git(["worktree", "list", "--porcelain"])) ?? "")
+    }
+
+    /// Branches a diff can be compared against, the most recently committed first: local and remote.
+    func baseCandidates(limit: Int = 30) -> [String] {
+        let raw = (try? git(["for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "--count=\(limit + 5)", "refs/heads", "refs/remotes"])) ?? ""
+        // `refs/remotes/origin/HEAD` prints as "origin": a pointer, not a branch.
+        let remotes = Set(((try? git(["remote"])) ?? "").split(separator: "\n").map(String.init))
+        return Array(raw.split(separator: "\n").map(String.init)
+            .filter { !remotes.contains($0) && !$0.hasSuffix("/HEAD") }
+            .prefix(limit))
     }
 
     /// Commits on this branch that the base does not have (newest first), or the last `limit` commits.

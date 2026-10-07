@@ -87,6 +87,46 @@ final class ReviewVersionsTests: XCTestCase {
         XCTAssertEqual(missing.baseBranch(), "main", "a target that is not here falls back to the guess")
     }
 
+    func testTheWorktreeChoiceListsEveryCheckoutAndReadsTheAgentsBranch() throws {
+        try write("a.txt", "1\n")
+        _ = try commit("base")
+        try git("branch", "agent-base")
+        let tree = repo.deletingLastPathComponent().appendingPathComponent("\(repo.lastPathComponent)-agent")
+        defer { try? FileManager.default.removeItem(at: tree) }
+        try git("worktree", "add", "-q", "-b", "agent/task", tree.path)
+        try "1\nagent\n".write(to: tree.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+
+        let trees = GitWorkingTreeSource(repo: repo).worktrees()
+        XCTAssertEqual(trees.map(\.branch), ["main", "agent/task"])
+        XCTAssertEqual(URL(fileURLWithPath: trees[1].path).resolvingSymlinksInPath(), tree.resolvingSymlinksInPath())
+
+        // The agent's checkout against a picked base: its own edit, nothing of the main checkout.
+        let snapshot = try GitWorkingTreeSource(repo: tree, preferredBase: "agent-base").load(scope: .branch)
+        XCTAssertEqual(snapshot.branch, "agent/task")
+        XCTAssertEqual(snapshot.files.map(\.path), ["a.txt"])
+        XCTAssertEqual(GitWorkingTreeSource(repo: tree, preferredBase: "agent-base").baseBranch(), "agent-base")
+        XCTAssertTrue(GitWorkingTreeSource(repo: repo).baseCandidates().contains("agent-base"))
+    }
+
+    func testWorktreePorcelainSkipsTheBareEntryAndNamesADetachedHead() {
+        let porcelain = """
+        worktree /repos/app.git
+        bare
+
+        worktree /repos/app
+        HEAD 1111111111111111111111111111111111111111
+        branch refs/heads/main
+
+        worktree /repos/app-review
+        HEAD 2222222222222222222222222222222222222222
+        detached
+        """
+        let trees = RepoWorktree.parse(porcelain)
+        XCTAssertEqual(trees.map(\.path), ["/repos/app", "/repos/app-review"])
+        XCTAssertEqual(trees[1].branch, nil)
+        XCTAssertEqual(trees[1].title, "detached 2222222  ·  app-review")
+    }
+
     func testTheSameBaseIsAPlainDiffOfTheTwoHeads() throws {
         let (from, _) = try rebasedPR(upstreamTouchesLine2: false)
         let replayed = try GitWorkingTreeSource(repo: repo).compareTree(from: from, to: CompareEnd(base: from.base, head: from.head), targetRef: nil)

@@ -54,7 +54,7 @@ final class HubMenuButtonTests: XCTestCase {
         var items = MenuButtonPresenter.menu(ScopeMenu.items(model: model)).items
         XCTAssertEqual(items.map(\.title), [
             DiffScope.lastTurns(1).title, "Last Turns…", "", DiffScope.uncommitted.title, DiffScope.unstaged.title,
-            DiffScope.staged.title, "", "Committed", DiffScope.branch.title,
+            DiffScope.staged.title, "", "Committed", DiffScope.branch.title, "", "Worktree: tools", "Base: automatic",
         ])
         XCTAssertEqual(items.first?.title, DiffScope.lastTurns(1).title)
         XCTAssertEqual(items.first?.isEnabled, false, "no session: no turns to show")
@@ -66,5 +66,29 @@ final class HubMenuButtonTests: XCTestCase {
         items = MenuButtonPresenter.menu(ScopeMenu.items(model: withSession)).items
         XCTAssertEqual(items.first?.isEnabled, true)
         XCTAssertEqual(items.filter { $0.state == .on }.map(\.title), [DiffScope.staged.title])
+    }
+
+    func testTheWorktreeAndBaseChoicesSwitchTheCheckoutAndTheBase() {
+        let model = ReviewModel(repo: URL(fileURLWithPath: "/work/tools"), options: DiffViewOptions(), renderer: NullRenderer())
+        model.worktrees = [
+            RepoWorktree(path: "/work/tools", branch: "main", head: "1111111"),
+            RepoWorktree(path: "/work/tools-agent", branch: "agent/task", head: "2222222"),
+        ]
+        model.baseCandidates = ["main", "origin/main", "origin/feature/next"]
+        var items = MenuButtonPresenter.menu(ScopeMenu.items(model: model)).items
+        let trees = items.first { $0.title == "Worktree: main" }?.submenu
+        XCTAssertEqual(trees?.items.map(\.title), ["main  ·  tools", "agent/task  ·  tools-agent"])
+        XCTAssertEqual(trees?.items.first?.state, .on)
+
+        trees?.performActionForItem(at: 1)
+        XCTAssertEqual(model.repo.path, "/work/tools-agent")
+        XCTAssertEqual(model.roots.first?.folder, "/work/tools-agent", "the diff reads the agent's checkout")
+
+        items = MenuButtonPresenter.menu(ScopeMenu.items(model: model)).items
+        let bases = items.first { $0.title.hasPrefix("Base:") }?.submenu
+        XCTAssertEqual(bases?.items.map(\.title), ["Automatic", "", "main", "origin/main", "origin/feature/next"])
+        bases?.performActionForItem(at: 4)
+        XCTAssertEqual(model.chosenBase, "origin/feature/next")
+        XCTAssertNotNil(MenuButtonPresenter.menu(ScopeMenu.items(model: model)).items.first { $0.title == "Base: origin/feature/next" })
     }
 }

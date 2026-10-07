@@ -30,6 +30,10 @@ struct ReviewSessionState: Codable, Equatable {
     var threadsClosed: Bool?
     /// The push banner's head the reader dismissed, so it stays dismissed.
     var dismissedNewsHead: String?
+    /// The checkout picked in the Worktree choice, when it is not the one the window opened on.
+    var worktree: String?
+    /// The base picked in the Base choice; nil is automatic.
+    var chosenBase: String?
     var page: PageState?
 
     struct PageState: Codable, Equatable {
@@ -215,6 +219,8 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
         if let treeMode = state.treeMode { model.treeMode = treeMode }
         if let collapsed = state.collapsed { model.collapsed = Set(collapsed) }
         if let dismissed = state.dismissedNewsHead { model.dismissedNewsHead = dismissed }
+        if let base = state.chosenBase { model.chosenBase = base }
+        if let tree = state.worktree, FileManager.default.fileExists(atPath: tree) { model.switchWorktree(to: tree) }
         if let tab = state.contextTab { defaults.set(tab, forKey: DefaultsKey.contextTab) }
         if let folded = state.contextCollapsed { defaults.set(folded, forKey: ReviewContextPanel.collapsedKey) }
         if let open = state.threadsOpen { defaults.set(open, forKey: DefaultsKey.threadsOpen) }
@@ -231,6 +237,8 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
         state.treeMode = model.treeMode
         state.collapsed = model.collapsed.sorted()
         state.dismissedNewsHead = model.dismissedNewsHead
+        state.worktree = model.repo.path
+        state.chosenBase = model.chosenBase
         state.contextTab = defaults.string(forKey: DefaultsKey.contextTab)
         state.contextCollapsed = defaults.object(forKey: ReviewContextPanel.collapsedKey) as? Bool
         state.threadsOpen = defaults.object(forKey: DefaultsKey.threadsOpen) as? Bool
@@ -249,6 +257,8 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
             model.$treeMode.map { _ in () }.eraseToAnyPublisher(),
             model.$collapsed.map { _ in () }.eraseToAnyPublisher(),
             model.$dismissedNewsHead.map { _ in () }.eraseToAnyPublisher(),
+            model.$chosenBase.map { _ in () }.eraseToAnyPublisher(),
+            model.$worktrees.map { _ in () }.eraseToAnyPublisher(),
         ]
         Publishers.MergeMany(changes).dropFirst(changes.count).sink { [weak self] in self?.scheduleSave() }.store(in: &subscriptions)
         defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: HubDefaults.store, queue: .main) { [weak self] _ in

@@ -234,6 +234,12 @@ final class ReviewModel: ObservableObject {
         didSet { if scope != oldValue { displayedHead = nil } }
     }
     @Published var commits: [RepoCommit] = []
+    /// The checkouts of this repository, for the Worktree choice (filled by each load of the primary root).
+    @Published var worktrees: [RepoWorktree] = []
+    /// Branches the Base choice offers, newest first.
+    @Published var baseCandidates: [String] = []
+    /// The base picked in the menu; nil follows the PR's target, else the repository's default branch.
+    @Published var chosenBase: String?
     /// An agent's review proposal shown on this diff (drafts + meta), when opened with --proposal.
     @Published var proposal: ProposalDocument?
     /// The PR/MR this diff belongs to, with its live review threads; nil for a plain working-tree diff.
@@ -628,7 +634,7 @@ final class ReviewModel: ObservableObject {
         let session = session
         let primary = repo
         let commitRange = remoteHead?.commitRange
-        let preferredBase = targetRef
+        let preferredBase = chosenBase ?? targetRef
         let onlyPrimary: Bool
         switch scope {
         case .commit, .range, .compare: onlyPrimary = true
@@ -661,11 +667,20 @@ final class ReviewModel: ObservableObject {
                 results[job.folder] = result
                 lock.unlock()
             }
-            let commits = loadsPrimary ? GitWorkingTreeSource(repo: primary, preferredBase: preferredBase).commits(range: commitRange) : nil
+            let primarySource = GitWorkingTreeSource(repo: primary, preferredBase: preferredBase)
+            let commits = loadsPrimary ? primarySource.commits(range: commitRange) : nil
+            let checkouts = loadsPrimary ? primarySource.worktrees() : nil
+            let candidates = loadsPrimary ? primarySource.baseCandidates() : nil
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 if let commits {
                     self.commits = commits
+                }
+                if let checkouts, primary.path == self.repo.path {
+                    self.worktrees = checkouts
+                }
+                if let candidates {
+                    self.baseCandidates = candidates
                 }
                 self.loadInFlight = false
                 // Answers for another scope are dropped (the scope menu changed during the load), and so
@@ -878,7 +893,7 @@ final class ReviewModel: ObservableObject {
     /// The threads name the PR's head; when the diff shows another one, ask the host what came.
     func checkForPush() {
         // A Branch diff loaded before the PR was known compared against the guessed base (`origin/HEAD`).
-        if case .branch = scope, let ref = targetRef, base != ref, branchBaseTried != ref {
+        if case .branch = scope, chosenBase == nil, let ref = targetRef, base != ref, branchBaseTried != ref {
             branchBaseTried = ref
             reload()
         }
@@ -957,9 +972,47 @@ final class ReviewModel: ObservableObject {
         }
     }
 
+    /// Compare against another base (nil: automatic). The Branch scope and the Committed list follow it.
+    func setBase(_ ref: String?) {
+        guard ref != chosenBase else { return }
+        HubPerf.log("review.base \(ref ?? "automatic")")
+        chosenBase = ref
+        restartLoad()
+    }
+
+    /// Read another checkout of the same repository: an agent's worktree instead of the main one. The
+    /// scope stays; a commit is found in every checkout, since they share one object store.
+    func switchWorktree(to path: String) {
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        guard url.path != repo.path else { return }
+        HubPerf.log("review.worktree \(repo.path) -> \(url.path)")
+        let shown = roots.first?.shown ?? true
+        repo = url
+        comments = ReviewCommentStore(repo: url)
+        var first = ReviewRoot(folder: url.path, repo: url, shown: shown)
+        first.prefix = roots.first?.prefix ?? ""
+        if roots.isEmpty {
+            roots = [first]
+        } else {
+            roots[0] = first
+        }
+        displayedHead = nil
+        base = nil
+        branch = ""
+        commits = []
+        guard started else { return }
+        watchRoots()
+        restartLoad()
+    }
+
     func setScope(_ next: DiffScope) {
         guard next != scope else { return }
         scope = next
+        restartLoad()
+    }
+
+    /// A new question for the same window (scope, base, checkout): nothing of the old answer stays.
+    private func restartLoad() {
         defer { updateNews() }
         files = []
         for index in roots.indices {
@@ -2353,7 +2406,33 @@ struct ScopeMenu: View {
             .divider,
             .submenu("Committed", committed),
             scopeItem(.branch, model: model),
-        ] + prItem + versions
+        ] + prItem + versions + [.divider, worktreeMenu(model: model), baseMenu(model: model)]
+    }
+
+    /// Which checkout the diff reads: an agent's worktree, or the main checkout.
+    @MainActor
+    private static func worktreeMenu(model: ReviewModel) -> MenuButtonItem {
+        let current = model.worktrees.first { $0.path == model.repo.path }
+        let items: [MenuButtonItem] = model.worktrees.count < 2
+            ? [.note("This repository has one checkout")]
+            : model.worktrees.map { tree in
+                .action(tree.title, checked: tree.path == model.repo.path, enabled: model.remoteHead == nil || tree.path == model.repo.path) {
+                    model.switchWorktree(to: tree.path)
+                }
+            }
+        return .submenu("Worktree: \(current?.branch ?? model.repo.lastPathComponent)", items)
+    }
+
+    /// What Branch and Committed compare against.
+    @MainActor
+    private static func baseMenu(model: ReviewModel) -> MenuButtonItem {
+        let automatic: MenuButtonItem = .action("Automatic\(model.chosenBase == nil ? model.base.map { " (\($0))" } ?? "" : "")", checked: model.chosenBase == nil) {
+            model.setBase(nil)
+        }
+        let refs: [MenuButtonItem] = model.baseCandidates.map { ref in
+            .action(ref, checked: model.chosenBase == ref) { model.setBase(ref) }
+        }
+        return .submenu("Base: \(model.chosenBase ?? model.base ?? "automatic")", [automatic, .divider] + (refs.isEmpty ? [.note("No branches found")] : refs))
     }
 
     private var label: String {
