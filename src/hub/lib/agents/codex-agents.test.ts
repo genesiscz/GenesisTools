@@ -117,6 +117,22 @@ describe("codexAgentHeadOf", () => {
         });
     });
 
+    test("reads the native header shape: source.subagent.thread_spawn with no thread_source field", () => {
+        const native = line({
+            timestamp: "2026-10-05T10:00:00.000Z",
+            type: "session_meta",
+            payload: {
+                id: CHILD_A,
+                session_id: ROOT,
+                cwd: "/work/app",
+                source: { subagent: { thread_spawn: { parent_thread_id: ROOT, depth: 1, agent_nickname: "Ada" } } },
+            },
+        });
+        const file = rollout(temp(), CHILD_A, native, 60_000);
+
+        expect(codexAgentHeadOf(file.filePath)).toMatchObject({ parentId: ROOT, depth: 1, nickname: "Ada" });
+    });
+
     test("a rollout that is not a sub-agent has no head", () => {
         const file = rollout(
             temp(),

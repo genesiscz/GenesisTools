@@ -117,7 +117,11 @@ export function codexAgentHeadOf(path: string): CodexAgentHead | null {
 
     const parentId = field(head, "parent_thread_id");
 
-    if (!parentId || !head.includes('"thread_source":"subagent"')) {
+    // Native rollouts mark a sub-agent with `source.subagent` (the shape the shared Codex reader
+    // checks); some also carry `thread_source`. Either one counts.
+    const isSubagent = /"subagent":\{/.test(head) || head.includes('"thread_source":"subagent"');
+
+    if (!parentId || !isSubagent) {
         return null;
     }
 
