@@ -88,6 +88,28 @@ describe("codex driver", () => {
         expect(seen).toHaveLength(2);
     });
 
+    test("a record without usage does not silence later token_count lines", () => {
+        const usage = { input_tokens: 120, cached_input_tokens: 100, output_tokens: 30, reasoning_output_tokens: 12 };
+        const bare = SafeJSON.stringify({
+            type: "token_usage_record",
+            timestamp: "2026-08-27T09:00:09.000Z",
+            payload: { response_id: "fixture-bare" },
+        });
+        const rows = [turnContext("gpt-5"), bare, tokenCount("2026-08-27T09:00:10.000Z", usage, usage)];
+        expect(collectEvents(codexDriver, rows)).toHaveLength(1);
+    });
+
+    test("a record without a usable timestamp does not suppress its corrected copy", () => {
+        const parser = codexDriver.createParser({ file: "/fixture/rollout.jsonl", state: undefined });
+        const seen: DriverUsageEvent[] = [];
+        parser.parseLine(turnContext("gpt-5"), (event) => seen.push(event));
+        const broken = SafeJSON.parse(currentUsage("fixture-late"), { strict: true }) as Record<string, unknown>;
+        broken.timestamp = "not a time";
+        parser.parseLine(SafeJSON.stringify(broken), (event) => seen.push(event));
+        parser.parseLine(currentUsage("fixture-late"), (event) => seen.push(event));
+        expect(seen.map((event) => event.timestamp)).toContain("2026-08-27T09:00:10.000Z");
+    });
+
     test("a rollout with per-response records counts each call once although its token_count lands later", () => {
         // Observed 2026-10-05 in 83 of 89 real rollouts: every call is written twice, as a
         // `token_usage_record` and, 0 ms to minutes later (median 154 ms), as a `token_count` with the

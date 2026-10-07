@@ -164,9 +164,6 @@ export function createCodexUsageParser(options: CreateParserOptions): DriverLine
             if (totals) {
                 state.totals = totals;
             }
-            if (current) {
-                state.sawCurrent = true;
-            }
             // A rollout that writes per-response records writes a `token_count` for the same call
             // 0 ms to minutes later (median 154 ms, 83 of 89 rollouts measured 2026-10-05), so the
             // timestamps never agree and the mirror check below cannot pair them: the doubled
@@ -177,6 +174,11 @@ export function createCodexUsageParser(options: CreateParserOptions): DriverLine
             }
             if (!usage) {
                 return;
+            }
+            // Only a record that carries usage proves the file writes records; a bare one must not
+            // silence the token_count lines that do carry it.
+            if (current) {
+                state.sawCurrent = true;
             }
             const inputTotal = num(usage.input_tokens);
             const cached = Math.min(num(usage.cached_input_tokens), inputTotal);
@@ -203,7 +205,9 @@ export function createCodexUsageParser(options: CreateParserOptions): DriverLine
             // IDs with equal usage in the same dialect still represent separate calls.
             const mirrored = state.lastUsage?.signature === counts && state.lastUsage.dialect !== dialect;
             state.lastUsage = { signature: counts, dialect };
-            if (responseId) {
+            // A record without a usable timestamp is dropped downstream; remembering its id here
+            // would suppress the corrected record that follows with the same id.
+            if (responseId && !Number.isNaN(Date.parse(timestamp))) {
                 state.recentResponses = [...(state.recentResponses ?? []), responseId].slice(-256);
             }
             if (duplicate || mirrored) {
