@@ -288,7 +288,22 @@ function isFileEntry(entry: unknown): entry is FileCacheEntry {
         typeof row.size === "number" &&
         typeof row.mtimeMs === "number" &&
         typeof row.offset === "number" &&
-        Array.isArray(row.events)
+        Array.isArray(row.events) &&
+        row.events.every(isEventRow)
+    );
+}
+
+function isEventRow(event: unknown): boolean {
+    if (typeof event !== "object" || event === null) {
+        return false;
+    }
+
+    const row = event as Record<string, unknown>;
+    return (
+        typeof row.id === "string" &&
+        typeof row.day === "string" &&
+        typeof row.cost === "number" &&
+        typeof row.tokens === "number"
     );
 }
 
@@ -319,7 +334,13 @@ function loadCache(storage: Storage): MonitorCache {
                         );
                     }
 
-                    cache.agents[id] = { ...agent, files: Object.fromEntries(files) };
+                    // A dropped row's transcript may sit in a directory the fast pass already
+                    // knows, so only a full sweep is sure to parse it again.
+                    cache.agents[id] = {
+                        ...agent,
+                        files: Object.fromEntries(files),
+                        ...(dropped > 0 ? { sweepAt: 0 } : {}),
+                    };
                 }
             }
 

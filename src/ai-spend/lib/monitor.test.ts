@@ -276,6 +276,25 @@ describe("monitor report", () => {
         expect(reused.today.cost).toBeCloseTo(3.48, 5);
     });
 
+    test("a row whose events are malformed is dropped and re-parsed by a forced sweep, inside the sweep TTL", () => {
+        const storage = new Storage("ai-spend");
+        const cacheFile = join(storage.getCacheDir(), "monitor-cache.json");
+
+        buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
+        const written = SafeJSON.parse(readFileSync(cacheFile, "utf8"), { strict: true }) as {
+            agents: Record<string, { files: Record<string, Record<string, unknown>> }>;
+        };
+
+        for (const entry of Object.values(written.agents.claude?.files ?? {})) {
+            entry.events = [null];
+        }
+
+        writeFileSync(cacheFile, SafeJSON.stringify(written, { strict: true }));
+        const healed = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 60 * 60 * 1000 });
+        expect(healed.parsedFiles).toBe(3);
+        expect(healed.today.cost).toBeCloseTo(3.48, 5);
+    });
+
     test("fast path within sweep TTL catches appends, new siblings, and new project dirs", () => {
         const storage = new Storage("ai-spend");
         const iso = new Date().toISOString();
