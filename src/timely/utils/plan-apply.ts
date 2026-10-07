@@ -1,13 +1,18 @@
 import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { TimelyHttpError } from "@app/timely/api/errors";
 import type { TimelyService } from "@app/timely/api/service";
 import type { TimelyEvent } from "@app/timely/types/api";
 import type { CreatePlanV1, PlanIssue } from "@app/timely/types/plan";
-import { timelyAccountCacheKey } from "@app/timely/utils/account-cache";
+
 import { buildPayloadFromFlat, flattenMemories } from "@app/timely/utils/flatten-memories";
 import { fetchMemoriesForDates } from "@app/timely/utils/memories";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { Storage } from "@genesiscz/utils/storage";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 interface CreateEventService {
     createEvent(
@@ -35,6 +40,31 @@ interface ApplyReceipt {
 }
 
 type ApplyReceiptLedger = Record<string, ApplyReceipt>;
+
+/**
+ * Receipts are the only record that a create may already have reached Timely, so they live as
+ * durable tool state beside the cache, not in it: `tools timely cache clear` must never turn a
+ * pending receipt into a blind second POST.
+ */
+export function applyReceiptPath(accountId: number): string {
+    return toolDataDir("timely", "apply-receipts", `${accountId}.json`);
+}
+
+async function updateReceiptLedger(
+    path: string,
+    updater: (current: ApplyReceiptLedger | null) => ApplyReceiptLedger
+): Promise<ApplyReceiptLedger> {
+    mkdirSync(dirname(path), { recursive: true });
+
+    return withFileLock(`${path}.lock`, async () => {
+        const current = existsSync(path)
+            ? (SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as ApplyReceiptLedger)
+            : null;
+        const next = updater(current);
+        atomicWriteFileSync(path, SafeJSON.stringify(next, undefined, 2));
+        return next;
+    });
+}
 
 function isDefinitiveCreateRejection(error: unknown): boolean {
     return (
@@ -226,10 +256,10 @@ export async function applyPlan(args: {
                     })
                 )
                 .digest("hex");
-            const receiptPath = timelyAccountCacheKey(args.accountId, "apply-receipts.json");
+            const receiptPath = applyReceiptPath(args.accountId);
             let priorReceipt: ApplyReceipt | undefined;
 
-            await args.storage.atomicUpdate<ApplyReceiptLedger>(receiptPath, (current) => {
+            await updateReceiptLedger(receiptPath, (current) => {
                 const ledger = current ?? {};
                 priorReceipt = ledger[identity];
 
@@ -282,7 +312,7 @@ export async function applyPlan(args: {
 
                     if (matching.length === 1) {
                         const reconciled = matching[0];
-                        await args.storage.atomicUpdate<ApplyReceiptLedger>(receiptPath, (current) => ({
+                        await updateReceiptLedger(receiptPath, (current) => ({
                             ...(current ?? {}),
                             [identity]: {
                                 identity,
@@ -320,7 +350,7 @@ export async function applyPlan(args: {
 
             try {
                 const created = await args.service.createEvent(args.accountId, input);
-                await args.storage.atomicUpdate<ApplyReceiptLedger>(receiptPath, (current) => ({
+                await updateReceiptLedger(receiptPath, (current) => ({
                     ...(current ?? {}),
                     [identity]: {
                         identity,
@@ -340,7 +370,7 @@ export async function applyPlan(args: {
                 });
             } catch (err) {
                 if (isDefinitiveCreateRejection(err)) {
-                    await args.storage.atomicUpdate<ApplyReceiptLedger>(receiptPath, (current) => {
+                    await updateReceiptLedger(receiptPath, (current) => {
                         const ledger = { ...(current ?? {}) };
                         delete ledger[identity];
                         return ledger;

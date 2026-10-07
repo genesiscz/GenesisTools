@@ -207,6 +207,43 @@ describe("applyPlan receipts", () => {
         expect(createCalls).toBe(1);
     });
 
+    test("a pending receipt survives a cache clear, so the retry reconciles instead of posting again", async () => {
+        stubMemories([memory(1)]);
+        const storage = new Storage("timely-apply-receipt-cache-clear-test");
+        let createCalls = 0;
+        const remoteEvent = {
+            id: 952,
+            day: "2026-07-20",
+            project: { id: 10 },
+            note: "Event 1",
+            from: "2026-07-20T09:00:00.000Z",
+            to: "2026-07-20T09:10:00.000Z",
+            duration: duration(),
+        };
+        const service = {
+            createEvent: async () => {
+                createCalls++;
+                throw new Error("connection closed after upload");
+            },
+            getAllEvents: async () => [remoteEvent],
+        };
+        const options = {
+            plan: plan([1]),
+            service,
+            storage,
+            accountId: 557,
+            accessToken: "test-token",
+            dryRun: false,
+        };
+
+        await applyPlan(options);
+        await storage.clearCache();
+        const retry = await applyPlan(options);
+
+        expect(retry[0]).toMatchObject({ eventId: 952, alreadyApplied: true });
+        expect(createCalls).toBe(1);
+    });
+
     test("does not adopt a remote event with the same bounds but a different billed duration", async () => {
         stubMemories([memory(1)]);
         const storage = new Storage("timely-apply-receipt-duration-test");
