@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import {
     _resetAiProxyRefScannerForTest,
     backfillProxyAccountRefs,
@@ -8,10 +11,14 @@ import {
     resolveProxyAccountEntry,
     scanAiProxyAccountRefs,
 } from "@app/ai-proxy/lib/account-refs";
-import { getDefaultConfig } from "@app/ai-proxy/lib/config-store";
+import { getAiProxyConfigStore, getDefaultConfig, resetAiProxyConfigStore } from "@app/ai-proxy/lib/config-store";
+import { resetAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { AiProxyAccountConfig, AiProxyConfig } from "@app/ai-proxy/lib/types";
-import type { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
-import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import { type AccountEntry, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 const grokEntry: AccountEntry = {
     id: "acc_grok_work",
@@ -116,6 +123,46 @@ describe("account-refs", () => {
                 throw new Error("no config");
             })
         ).toEqual([]);
+    });
+
+    it("persists the absorbed refs through the real proxy config store", async () => {
+        const previous = env.get("GENESIS_TOOLS_HOME");
+        const home = mkdtempSync(join(tmpdir(), "ai-proxy-refs-"));
+        env.testing.set("GENESIS_TOOLS_HOME", home);
+        resetAiProxyStorage();
+        resetAiProxyConfigStore();
+        AiConfigStore.invalidate();
+        try {
+            const aiConfig = toolDataDir("ai", "config.json");
+            mkdirSync(dirname(aiConfig), { recursive: true });
+            writeFileSync(
+                aiConfig,
+                SafeJSON.stringify({ version: CONFIG_VERSION, accounts: [grokEntry], defaults: {} })
+            );
+            const store = getAiProxyConfigStore();
+            await store.mutate((config) => {
+                config.accounts = [grokAccount];
+            });
+
+            const result = await ensureProxyAccountRefs({
+                load: () => store.load(),
+                save: (config) => store.save(config),
+            });
+
+            expect(result.accounts[0]?.account).toBe("@account/acc_grok_work");
+            expect((await store.loadFresh()).accounts[0]?.account).toBe("@account/acc_grok_work");
+        } finally {
+            if (previous === undefined) {
+                env.testing.unset("GENESIS_TOOLS_HOME");
+            } else {
+                env.testing.set("GENESIS_TOOLS_HOME", previous);
+            }
+
+            resetAiProxyStorage();
+            resetAiProxyConfigStore();
+            AiConfigStore.invalidate();
+            rmSync(home, { recursive: true, force: true });
+        }
     });
 
     it("keeps serving on the legacy links when the AI config is unreadable", async () => {

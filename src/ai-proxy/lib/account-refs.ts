@@ -155,11 +155,13 @@ export async function ensureProxyAccountRefs(io: {
             return config;
         }
 
-        const next = { ...config, accounts };
-        await io.save(next);
+        // The loaded object is the store's tracked snapshot: saving that same object merges the
+        // edit under the config lock, while a copy would be refused as an untracked replacement.
+        config.accounts = accounts;
+        await io.save(config);
         logger.info({ drifts }, "ai-proxy: absorbed name-based account links into @account refs");
 
-        return next;
+        return config;
     } catch (err) {
         logger.warn({ err }, "ai-proxy: could not absorb account refs — keeping the name-based links");
         return config;
