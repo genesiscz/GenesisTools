@@ -122,6 +122,30 @@ final class ReviewDiffTests: XCTestCase {
         XCTAssertEqual(reloaded.comments.map(\.body), ["edited"])
     }
 
+    @MainActor
+    func testASavedChangeIsNeverReplayedOverAnotherStoresNewerEdit() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("comments-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = ReviewCommentStore(repo: directory, directory: directory)
+        let second = ReviewCommentStore(repo: directory, directory: directory)
+        let file = DiffFile(id: "a", path: "a", status: .modified, additions: 1, deletions: 0,
+                            oldContents: "", newContents: "first\nsecond\n")
+        let a = try XCTUnwrap(first.add(CommentInput(editingID: nil, fileID: "a", side: .additions,
+                                                     startLine: 1, endLine: 1, body: "A"), files: [file]))
+        await first.flush()
+        // Queued back to back, before any completion runs: first's body, second's newer body, then
+        // a state-only change in first. The last write must not bring first's old body back.
+        first.edit(id: a.id, body: "from first")
+        second.edit(id: a.id, body: "from second")
+        let identity = PRIdentity(provider: "github", host: "github.com", project: "example/app", number: 7)
+        first.mark(a.id, .draft, remoteID: "fixture-draft",
+                   owner: PRDraftOwnership(pr: identity, headSha: "head", draftID: "fixture-draft"))
+        await first.flush()
+        let reloaded = ReviewCommentStore(repo: directory, directory: directory)
+        XCTAssertEqual(reloaded.comments.first?.body, "from second")
+        XCTAssertEqual(reloaded.comments.first?.state, .draft)
+    }
+
     func testRemoteDraftOwnershipIncludesHostProjectNumberAndProvider() throws {
         let identity = PRIdentity(provider: "github", host: "github.com", project: "example/app", number: 7)
         let owner = PRDraftOwnership(pr: identity, headSha: "reviewed-head", draftID: "draft-1")

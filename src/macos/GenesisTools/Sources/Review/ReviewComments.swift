@@ -293,14 +293,38 @@ final class ReviewCommentStore {
         }
     }
 
-    /// A change written to disk in the background. Each write also carries the patches of every
-    /// change still pending before it, so a later edit never reaches disk without the addition
-    /// it depends on. A failed change stays here, marked, until a later write carries it.
+    /// A change written to disk in the background. A failed change stays pending, marked, until a
+    /// later write carries it.
     private struct Pending {
         let id: UUID
         let patches: [Patch]
         var failed = false
     }
+
+    /// The changes of one store that are not on disk yet, read by the writer queue when a write
+    /// RUNS: a write takes every unwritten change in order and drops them once they are saved. A
+    /// later edit therefore never reaches disk without the addition it depends on, and a change
+    /// that is already saved is never replayed over another store's newer edit.
+    private final class Unwritten: @unchecked Sendable {
+        private let lock = NSLock()
+        private var changes: [Pending] = []
+
+        func append(_ change: Pending) {
+            lock.lock(); defer { lock.unlock() }
+            changes.append(change)
+        }
+
+        func snapshot() -> [Pending] {
+            lock.lock(); defer { lock.unlock() }
+            return changes
+        }
+
+        func remove(_ ids: Set<UUID>) {
+            lock.lock(); defer { lock.unlock() }
+            changes.removeAll { ids.contains($0.id) }
+        }
+    }
+    private let unwritten = Unwritten()
     static let writer = DispatchQueue(label: "review.comments.writer", qos: .utility)
     private static let registryLock = NSLock()
     private static let registry = NSHashTable<ReviewCommentStore>.weakObjects()
@@ -343,17 +367,20 @@ final class ReviewCommentStore {
         } + projection.filter { new[$0.id] == nil }.map { Patch(before: $0, after: nil) }
         guard !patches.isEmpty else { return }
         let change = Pending(id: UUID(), patches: patches)
-        let written = pending.flatMap(\.patches) + patches
-        let covered = Set(pending.map(\.id) + [change.id])
         pending.append(change)
+        unwritten.append(change)
         projection = comments
         let target = file
+        let queue = unwritten
         Self.writer.async {
+            let batch = queue.snapshot()
+            let covered = Set(batch.map(\.id))
             let result = Result { () throws -> [ReviewComment] in
                 try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
                 return try FileLock.withLock(target) {
                     var rows = try Self.read(target)
-                    written.forEach { $0.apply(to: &rows) }
+                    guard !batch.isEmpty else { return rows }
+                    batch.flatMap(\.patches).forEach { $0.apply(to: &rows) }
                     let encoder = JSONEncoder()
                     encoder.dateEncodingStrategy = .iso8601
                     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -361,6 +388,7 @@ final class ReviewCommentStore {
                     return rows
                 }
             }
+            if case .success = result { queue.remove(covered) }
             DispatchQueue.main.async {
                 switch result {
                 case .success(let rows):
@@ -377,7 +405,7 @@ final class ReviewCommentStore {
                         NotificationCenter.default.post(name: Self.changed, object: store)
                     }
                 case .failure(let error):
-                    if let index = self.pending.firstIndex(where: { $0.id == change.id }) {
+                    for index in self.pending.indices where covered.contains(self.pending[index].id) {
                         self.pending[index].failed = true
                     }
                     self.saveError = "Comment changes could not be saved yet; they are retried with the next change: \(error.localizedDescription)"
