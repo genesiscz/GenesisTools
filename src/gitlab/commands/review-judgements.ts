@@ -406,6 +406,15 @@ export async function runStep(
                 return created;
             }
 
+            // A reused draft was there before this run: it is not ours to undo.
+            if (created.action !== "created") {
+                return {
+                    ...created,
+                    ok: false,
+                    error: `deleting draft ${step.draftId} failed (${removed.error}); the new text was already pending as draft ${created.draftId}, which stays`,
+                };
+            }
+
             // Undo the create, so a re-run starts from the old draft alone instead of adding a second copy.
             const undone =
                 created.draftId === undefined

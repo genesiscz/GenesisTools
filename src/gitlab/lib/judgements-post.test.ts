@@ -237,6 +237,34 @@ describe("comments post plan", () => {
         expect(pendingDraftFor({ drafts, anchor, body: "Here.", except: 5 })).toBeUndefined();
     });
 
+    test("reuse needs the exact text and the anchor's side; a context line matches either side by its own number", () => {
+        const code = "Use:\n\n```ts\nif (a) {\n    run();\n}\n```";
+        const anchor = { path: "src/a.ts", line: 4, side: "new" as const, text: null, top: false };
+        const at = (side: "new" | "old" | "both", note: string, oldLine: number | null = null) => ({
+            id: 7,
+            discussionId: null,
+            path: "src/a.ts",
+            line: 4,
+            side,
+            oldLine,
+            note,
+        });
+
+        expect(
+            pendingDraftFor({ drafts: [at("new", code.replace("    run", "run"))], anchor, body: code })
+        ).toBeUndefined();
+        expect(pendingDraftFor({ drafts: [at("new", code.replaceAll("\n", "\r\n"))], anchor, body: code })?.id).toBe(7);
+        expect(pendingDraftFor({ drafts: [at("old", code)], anchor, body: code })).toBeUndefined();
+        expect(pendingDraftFor({ drafts: [at("both", code, 3)], anchor, body: code })?.id).toBe(7);
+        expect(
+            pendingDraftFor({ drafts: [at("both", code, 3)], anchor: { ...anchor, side: "old", line: 3 }, body: code })
+                ?.id
+        ).toBe(7);
+        expect(
+            pendingDraftFor({ drafts: [at("both", code, 3)], anchor: { ...anchor, side: "old" }, body: code })
+        ).toBeUndefined();
+    });
+
     test("an error of no item blocks every post, an item's error only that item", () => {
         const errors = [
             { id: "file", message: "a fence swallowed N01" },
@@ -290,6 +318,44 @@ describe("comments post plan", () => {
             expect(result.ok).toBe(false);
             expect(result.error).toContain("the new draft 77 was removed again, so nothing changed");
             expect(calls).toEqual(["POST /draft_notes", "DELETE /draft_notes/900", "DELETE /draft_notes/77"]);
+        } finally {
+            server.stop(true);
+        }
+    });
+
+    test("a move that reused a pending draft never deletes that draft when the old one cannot go", async () => {
+        const calls: string[] = [];
+        const server = Bun.serve({
+            port: 0,
+            fetch(request) {
+                const path = new URL(request.url).pathname;
+                calls.push(`${request.method} ${path.slice(path.indexOf("/draft_notes"))}`);
+
+                return new Response("forbidden", { status: 403 });
+            },
+        });
+
+        try {
+            const result = await runStep(
+                { host: `http://localhost:${server.port}`, token: "t", project: "group/app" },
+                "42",
+                {
+                    id: "D01",
+                    kind: "move",
+                    draftId: 900,
+                    anchor: { path: "", line: 0, side: "new", text: null, top: true },
+                    body: "Moved.",
+                    where: "top-level",
+                },
+                {
+                    drafts: [{ id: 55, discussionId: null, path: null, line: null, side: null, note: "Moved." }],
+                    files: [],
+                }
+            );
+
+            expect(result.ok).toBe(false);
+            expect(result.error).toContain("already pending as draft 55, which stays");
+            expect(calls).toEqual(["DELETE /draft_notes/900"]);
         } finally {
             server.stop(true);
         }

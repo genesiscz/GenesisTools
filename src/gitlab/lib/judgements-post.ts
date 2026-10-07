@@ -288,15 +288,39 @@ export function pendingDraftFor(input: {
     body: string;
     except?: number;
 }): DraftSummary | undefined {
+    // Exact text: reusing a draft skips the write, so a different indent in a code sample must not pass.
     return input.drafts.find(
         (draft) =>
             draft.id !== input.except &&
             draft.discussionId === null &&
-            same(draft.note, input.body) &&
-            (input.anchor.top
-                ? draft.path === null
-                : draft.path === input.anchor.path && draft.line === input.anchor.line)
+            exactText(draft.note) === exactText(input.body) &&
+            draftSitsAt(draft, input.anchor)
     );
+}
+
+/** Only the transport differences: CRLF and the text's outer whitespace. */
+function exactText(text: string): string {
+    return text.replace(/\r\n/g, "\n").trim();
+}
+
+/**
+ * The draft sits on the anchor's line, on the anchor's side. A context line has a number on each side,
+ * so it matches a `new` anchor by its new number and an `old` anchor by its old number.
+ */
+export function draftSitsAt(draft: DraftSummary, anchor: ParsedAnchor): boolean {
+    if (anchor.top) {
+        return draft.path === null;
+    }
+
+    if (draft.path !== anchor.path) {
+        return false;
+    }
+
+    if (anchor.side === "new") {
+        return (draft.side === "new" || draft.side === "both") && draft.line === anchor.line;
+    }
+
+    return draft.side === "old" ? draft.line === anchor.line : draft.side === "both" && draft.oldLine === anchor.line;
 }
 
 /** Steps that landed but whose read-back has not passed yet: read back again, not posted again. */
@@ -350,7 +374,7 @@ export function readBack(step: PostStep, drafts: DraftSummary[], draftIds: Map<s
                 return `the old draft ${step.draftId} is still pending`;
             }
 
-            return step.anchor.top || (created.path === step.anchor.path && created.line === step.anchor.line)
+            return draftSitsAt(created, step.anchor)
                 ? null
                 : `the draft sits at ${created.path}:${created.line}, not ${anchorWhere(step.anchor)}`;
         }

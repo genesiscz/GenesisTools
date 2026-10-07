@@ -22,8 +22,13 @@ export interface DraftSummary {
     discussionId: string | null;
     path: string | null;
     line: number | null;
-    /** `old` when GitLab stored only `old_line`: the draft sits on a removed line. */
-    side: "new" | "old" | null;
+    /**
+     * `old` when GitLab stored only `old_line` (a removed line), `new` only `new_line` (an added line),
+     * `both` for a context line, which has a number on each side.
+     */
+    side: "new" | "old" | "both" | null;
+    /** The old-side number of a context or removed line; `line` is the new-side one when there is one. */
+    oldLine?: number | null;
     note: string;
 }
 
@@ -110,9 +115,19 @@ export async function fetchDrafts(api: ProjectApi, iid: string): Promise<DraftSu
 
     return raw.map((draft) => {
         const { path, line } = anchorOf(draft.position);
-        const side = draft.position?.new_line != null ? "new" : draft.position?.old_line != null ? "old" : null;
+        const hasNew = draft.position?.new_line != null;
+        const hasOld = draft.position?.old_line != null;
+        const side = hasNew && hasOld ? "both" : hasNew ? "new" : hasOld ? "old" : null;
 
-        return { id: draft.id, discussionId: draft.discussion_id ?? null, path, line, side, note: draft.note ?? "" };
+        return {
+            id: draft.id,
+            discussionId: draft.discussion_id ?? null,
+            path,
+            line,
+            side,
+            ...(hasOld ? { oldLine: draft.position?.old_line } : {}),
+            note: draft.note ?? "",
+        };
     });
 }
 
