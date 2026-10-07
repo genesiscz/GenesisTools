@@ -251,6 +251,71 @@ describe.serial("stash e2e", () => {
         expect(process.exitCode ?? 0).toBe(0);
     });
 
+    test("unapply recreates a deleted executable with its mode", async () => {
+        await chmod(join(projectB, "main.ts"), 0o755);
+        await runGitIn(projectB, ["update-index", "--chmod=+x", "main.ts"]);
+        await runGitIn(projectB, ["commit", "-qm", "executable target"]);
+        process.chdir(projectA);
+        await unlink(join(projectA, "main.ts"));
+        await saveCommand({ name: "deleted-exec", mode: "all", tags: [], description: undefined });
+
+        process.chdir(projectB);
+        await applyCommand({ name: "deleted-exec", verboseMarkers: false });
+        expect(existsSync(join(projectB, "main.ts"))).toBe(false);
+        await unapplyCommand({ name: "deleted-exec", action: "start", decision: "discard-all-dangerous" });
+
+        expect(await readFile(join(projectB, "main.ts"), "utf8")).toBe("export function main() { return 1; }\n");
+        expect((await lstat(join(projectB, "main.ts"))).mode & 0o777).toBe(0o755);
+    });
+
+    test("an empty file the target already had survives unapply", async () => {
+        for (const repo of [projectA, projectB]) {
+            await writeFile(join(repo, "empty.txt"), "");
+            await runGitIn(repo, ["add", "empty.txt"]);
+            await runGitIn(repo, ["commit", "-qm", "empty file"]);
+        }
+        process.chdir(projectA);
+        await writeFile(join(projectA, "empty.txt"), "filled by the stash\n");
+        await saveCommand({ name: "fills-empty", mode: "all", tags: [], description: undefined });
+
+        process.chdir(projectB);
+        await applyCommand({ name: "fills-empty", verboseMarkers: false });
+        await unapplyCommand({ name: "fills-empty", action: "start", decision: "discard-all-dangerous" });
+
+        expect(existsSync(join(projectB, "empty.txt"))).toBe(true);
+        expect(await readFile(join(projectB, "empty.txt"), "utf8")).toBe("");
+    });
+
+    test("continue after a partial unapply does not replay the text regions it already restored", async () => {
+        process.chdir(projectA);
+        await writeFile(join(projectA, "main.ts"), "export function main() { return 2; }\n");
+        await symlink("main.ts", join(projectA, "alias.ts"));
+        await runGitIn(projectA, ["add", "-A"]);
+        await saveCommand({ name: "mixed-link", mode: "staged", tags: [], description: undefined });
+
+        process.chdir(projectB);
+        await applyCommand({ name: "mixed-link", verboseMarkers: false });
+        const applied = await readFile(join(projectB, "main.ts"), "utf8");
+        await writeFile(join(projectB, "main.ts"), applied.replace("return 2;", "return 3;"));
+        await unapplyCommand({ name: "mixed-link", action: "start", decision: "discard-all-dangerous" });
+        expect(await readFile(join(projectB, "main.ts"), "utf8")).toBe("export function main() { return 1; }\n");
+
+        await unlink(join(projectB, "alias.ts"));
+        await unapplyCommand({ name: "mixed-link", action: "continue", decision: undefined });
+
+        const { Database } = await import("bun:sqlite");
+        const { openStashDb } = await import("./lib/stash-db");
+        const { StashStorage } = await import("./lib/storage");
+        const db = openStashDb(new Database(new StashStorage().dbPath()));
+        const state = db
+            .query<{ state: string }, []>(
+                "SELECT state FROM applications WHERE stash_id = (SELECT id FROM stashes WHERE name = 'mixed-link')"
+            )
+            .get()?.state;
+        db.close();
+        expect(state).toBe("unapplied");
+    });
+
     test("a patch git rejects outright leaves no session behind, so a retry is not blocked", async () => {
         process.chdir(projectA);
         await writeFile(join(projectA, "main.ts"), "export function main() { return 2; }\n");

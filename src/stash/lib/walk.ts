@@ -23,6 +23,10 @@ export interface WalkRegion {
     preImage?: string[];
     oldNoNewline?: boolean;
     deletedFile?: boolean;
+    /** The target file's mode before the apply, to recreate a deleted file exactly. */
+    fileMode?: number;
+    /** Set once this region's decision ran, so a retried execute never replays it. */
+    executed?: boolean;
 }
 
 export interface WalkSnapshot {

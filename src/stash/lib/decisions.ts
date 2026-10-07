@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { chmod, writeFile } from "node:fs/promises";
 import { dirname, relative } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { confinedPath, rewriteConfinedText } from "./apply-recovery";
@@ -32,6 +32,8 @@ export async function applyDecisionToCode(args: {
     expectedPostImage?: string;
     oldNoNewline?: boolean;
     deletedFile?: boolean;
+    /** Mode of the file before the apply; a recreated deleted file gets it back exactly. */
+    fileMode?: number;
 }): Promise<DecisionOutcome> {
     if (args.decision === "skip") {
         return "applied";
@@ -45,7 +47,14 @@ export async function applyDecisionToCode(args: {
     if (args.deletedFile) {
         const absolute = await confinedPath(root, file);
         const restored = preImage.join("\n") + (args.oldNoNewline ? "" : "\n");
-        await writeFile(absolute, restored, { flag: "wx" });
+        if (args.fileMode === undefined) {
+            await writeFile(absolute, restored, { flag: "wx" });
+            return "applied";
+        }
+
+        // The create mode passes through the umask; chmod sets the saved mode exactly.
+        await writeFile(absolute, restored, { flag: "wx", mode: 0o600 });
+        await chmod(absolute, args.fileMode);
         return "applied";
     }
     let outcome: DecisionOutcome = "applied";

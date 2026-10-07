@@ -5,7 +5,7 @@ import { suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { ApplicationRow, StashRow, VersionRow } from "../types";
-import { changedFromSnapshot, rewriteConfinedText } from "./apply-recovery";
+import { type ApplyRecoverySnapshot, changedFromSnapshot, rewriteConfinedText } from "./apply-recovery";
 import { ApplySession } from "./apply-session";
 import { classifyRegion } from "./classify";
 import { applyDecisionToCode } from "./decisions";
@@ -195,6 +195,12 @@ export function extractFilePathsFromPatch(patch: string): string[] {
     return [...paths];
 }
 
+/** The mode a file had before the apply, from the archived snapshot; undefined when unknown. */
+function savedFileMode(before: ApplyRecoverySnapshot | null, file: string): number | undefined {
+    const state = before?.files[file];
+    return state?.kind === "file" ? state.mode : undefined;
+}
+
 /** One region per hunk, numbered per file in patch order, keeping the pre-image unapply restores. */
 function hunkRegions(patch: string) {
     const counts = new Map<string, number>();
@@ -266,6 +272,13 @@ export async function bootstrapUnapplyWalk(args: {
         stateDir: args.storage.stateDir(),
     });
     const regionMap = hunkRegions(application?.restorePatch ?? storedPatch);
+    const archivedBefore = application
+        ? await ApplySession.archivedBefore({
+              stashId: args.stash.id,
+              projectHash: args.projectHash,
+              stateDir: args.storage.stateDir(),
+          })
+        : null;
 
     const walkRegions: WalkRegion[] = [];
     for (const r of regionMap) {
@@ -291,6 +304,7 @@ export async function bootstrapUnapplyWalk(args: {
             preImage: r.preImage,
             oldNoNewline: r.oldNoNewline,
             deletedFile: r.deletedFile,
+            fileMode: r.deletedFile ? savedFileMode(archivedBefore, r.filePath) : undefined,
         });
     }
 
@@ -334,6 +348,7 @@ export async function processAutoRemoves(args: { walk: Walk; projectRoot: string
                     expectedPostImage: r.currentContent ?? undefined,
                     oldNoNewline: r.oldNoNewline,
                     deletedFile: r.deletedFile,
+                    fileMode: r.fileMode,
                 });
             }
         }
@@ -435,12 +450,23 @@ export async function executeUnapplyDecisions(args: {
         failedFiles: [],
         unsupportedFiles: [],
     };
-    const createdFiles = await deriveCreatedFilesFromBaseline({
-        db: args.db,
-        storage: args.storage,
+    const archivedBefore = await ApplySession.archivedBefore({
         stashId: args.stash.id,
-        projectPath: args.walk.snapshot().projectPath,
+        projectHash: args.walk.snapshot().projectHash,
+        stateDir: args.storage.stateDir(),
     });
+    // Files this apply created in THIS target are the ones missing from its own pre-apply
+    // snapshot; the source baseline only approximates that, so it is the legacy fallback.
+    const createdFiles = archivedBefore
+        ? Object.entries(archivedBefore.files)
+              .filter(([, state]) => state.kind === "missing")
+              .map(([file]) => file)
+        : await deriveCreatedFilesFromBaseline({
+              db: args.db,
+              storage: args.storage,
+              stashId: args.stash.id,
+              projectPath: args.walk.snapshot().projectPath,
+          });
     // Snapshot "capture"-bound regions before mutating disk.
     const capturedRegions: WalkRegion[] = args.walk.regions().filter((r) => r.decision === "capture");
     for (const r of args.walk.regions()) {
@@ -459,7 +485,8 @@ export async function executeUnapplyDecisions(args: {
     // spurious "no marker" warn — only process restore/capture here.
     for (const regions of groupRegionsByFileDescending(args.walk.regions())) {
         for (const r of regions) {
-            if (r.decision !== "restore" && r.decision !== "capture") {
+            // A retry after a partial unapply (--continue) must not replay what already ran.
+            if ((r.decision !== "restore" && r.decision !== "capture") || r.executed) {
                 continue;
             }
             const outcome = await applyDecisionToCode({
@@ -472,22 +499,29 @@ export async function executeUnapplyDecisions(args: {
                 expectedPostImage: r.currentContent ?? undefined,
                 oldNoNewline: r.oldNoNewline,
                 deletedFile: r.deletedFile,
+                fileMode: r.fileMode,
             });
             if (outcome === "marker-missing") {
                 stats.failedToFind++;
                 if (!stats.failedFiles.includes(r.filePath)) {
                     stats.failedFiles.push(r.filePath);
                 }
+            } else {
+                r.executed = true;
             }
         }
     }
-    if (capturedRegions.length) {
+    const extension = args.walk.snapshot().extension as { capturedVersion?: number };
+    if (capturedRegions.length && extension.capturedVersion === undefined) {
         stats.newVersion = await capturedUpdatesAsNewVersion({
             storage: args.storage,
             db: args.db,
             stash: args.stash,
             capturedRegions,
         });
+        extension.capturedVersion = stats.newVersion;
+    } else if (extension.capturedVersion !== undefined) {
+        stats.newVersion = extension.capturedVersion;
     }
     await unlinkEmptyCreatedFiles({ projectRoot: args.projectRoot, createdFiles });
     // Last, so a created file the cleanup above already removed is not reported.
