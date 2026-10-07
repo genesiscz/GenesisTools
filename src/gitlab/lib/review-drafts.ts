@@ -126,9 +126,18 @@ export async function fetchDrafts(api: ProjectApi, iid: string): Promise<DraftSu
  */
 export async function writeDraftReply(
     api: ProjectApi,
-    reply: { iid: string; discussionId: string; body: string; append?: boolean; knownDrafts?: DraftSummary[] }
+    reply: {
+        iid: string;
+        discussionId: string;
+        body: string;
+        append?: boolean;
+        knownDrafts?: DraftSummary[];
+        /** Resolve the thread when the review is published. */
+        resolve?: boolean;
+    }
 ): Promise<DraftWriteResult> {
     const { iid, discussionId, body } = reply;
+    const resolve = reply.resolve ? { resolve_discussion: true } : {};
     const drafts = reply.knownDrafts ?? (await fetchDrafts(api, iid));
     const existing = drafts.find((draft) => draft.discussionId === discussionId);
 
@@ -138,7 +147,7 @@ export async function writeDraftReply(
             await restWrite<RawDraft>(api, {
                 method: "PUT",
                 path: `${mrPath(api, iid)}/draft_notes/${existing.id}`,
-                body: { note },
+                body: { note, ...resolve },
             });
 
             return { ok: true, action: "updated", draftId: existing.id, discussionId };
@@ -147,7 +156,7 @@ export async function writeDraftReply(
         const created = await restWrite<RawDraft>(api, {
             method: "POST",
             path: `${mrPath(api, iid)}/draft_notes`,
-            body: { note: body, in_reply_to_discussion_id: discussionId },
+            body: { note: body, in_reply_to_discussion_id: discussionId, ...resolve },
         });
 
         return { ok: true, action: "created", draftId: created.id, discussionId: created.discussion_id ?? null };
@@ -360,14 +369,23 @@ export async function writePositionedDraft(
  * or old path. A renamed file keeps its old path in `old_path`, and a context line gets its
  * `old_line`: GitLab stores a wrong pair with 201, then shows "Unable to load the diff".
  */
-export function anchoredPosition(files: DiffFile[], path: string, line: number): LinePosition | string {
+export function anchoredPosition(
+    files: DiffFile[],
+    path: string,
+    line: number,
+    side: "new" | "old" = "new"
+): LinePosition | string {
     const file = files.find((candidate) => candidate.path === path) ?? files.find((f) => f.oldPath === path);
 
     if (!file) {
         return `${path} is not in the MR diff`;
     }
 
-    return diffLinePosition({ file, side: file.status === "deleted" ? "deletions" : "additions", line });
+    return diffLinePosition({
+        file,
+        side: side === "old" || file.status === "deleted" ? "deletions" : "additions",
+        line,
+    });
 }
 
 /**
@@ -376,9 +394,14 @@ export function anchoredPosition(files: DiffFile[], path: string, line: number):
  */
 export async function resolveAnchor(
     api: ProjectApi,
-    anchor: { iid: string; path: string; line: number }
+    anchor: { iid: string; path: string; line: number; side?: "new" | "old" }
 ): Promise<LinePosition | string> {
-    const position = anchoredPosition(await fetchMrDiffs(api, Number(anchor.iid)), anchor.path, anchor.line);
+    const position = anchoredPosition(
+        await fetchMrDiffs(api, Number(anchor.iid)),
+        anchor.path,
+        anchor.line,
+        anchor.side
+    );
 
     return typeof position === "string" ? `${position}, so GitLab cannot anchor a comment there.` : position;
 }
@@ -393,7 +416,7 @@ export async function resolveAnchor(
  */
 export async function writeAnchoredDraft(
     api: ProjectApi,
-    draft: { iid: string; path: string; line: number; body: string }
+    draft: { iid: string; path: string; line: number; body: string; side?: "new" | "old" }
 ): Promise<DraftWriteResult> {
     // A NaN line serializes as `null`, GitLab accepts that, and the draft is created unanchored.
     // Refused before any request, so no stray top-level note is left behind.
@@ -415,6 +438,50 @@ export async function writeAnchoredDraft(
 }
 
 /** A standalone draft with no thread. There is no one-per-discussion limit here. */
+/**
+ * New text for a pending draft, its anchor kept: a PUT with only `note` drops the stored position and
+ * the draft turns top-level, so the stored position goes back with it and is read back.
+ */
+export async function rewordDraft(
+    api: ProjectApi,
+    draft: { iid: string; draftId: number; body: string }
+): Promise<DraftWriteResult> {
+    try {
+        const path = `${mrPath(api, draft.iid)}/draft_notes/${draft.draftId}`;
+        const stored = await restGet<RawDraft>(api, path);
+        const position = stored.position?.new_line || stored.position?.old_line ? stored.position : null;
+        const updated = await restWrite<RawDraft>(api, {
+            method: "PUT",
+            path,
+            body: { note: draft.body, ...(position ? { position: { position_type: "text", ...position } } : {}) },
+        });
+        const drift = position
+            ? anchorDrift(
+                  {
+                      new_path: position.new_path ?? "",
+                      old_path: position.old_path ?? "",
+                      new_line: position.new_line ?? null,
+                      old_line: position.old_line ?? null,
+                  },
+                  updated.position
+              )
+            : null;
+
+        if (drift) {
+            return {
+                ok: false,
+                action: "failed",
+                draftId: draft.draftId,
+                error: `draft ${draft.draftId} was reworded but GitLab ${drift}; check it by hand.`,
+            };
+        }
+
+        return { ok: true, action: "updated", draftId: draft.draftId, discussionId: stored.discussion_id ?? null };
+    } catch (e) {
+        return failure(e);
+    }
+}
+
 export async function writeTopLevelDraft(api: ProjectApi, iid: string, body: string): Promise<DraftWriteResult> {
     try {
         const created = await restWrite<RawDraft>(api, {

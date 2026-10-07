@@ -15,7 +15,7 @@
 import { registerLabels } from "@app/gitlab/commands/batch-label";
 import { registerPrReview } from "@app/gitlab/commands/pr-review";
 import { registerComments } from "@app/gitlab/commands/review-drafts";
-import { registerReviewJudgements } from "@app/gitlab/commands/review-judgements";
+import { registerCommentsPost, registerReviewJudgements } from "@app/gitlab/commands/review-judgements";
 import { registerTouching } from "@app/gitlab/commands/search-by-file";
 import { type TargetOptions, withProject } from "@app/gitlab/commands/shared";
 import { registerStaleBranches } from "@app/gitlab/commands/stale-branches";
@@ -54,7 +54,7 @@ export function registerPr(program: Command): Command {
     ).action(runShow);
 
     registerReviewJudgements(registerPrReview(pr));
-    registerComments(pr);
+    registerCommentsPost(registerComments(pr));
     registerLabels(pr);
     registerStaleBranches(pr);
     registerTouching(pr);

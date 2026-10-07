@@ -29,6 +29,8 @@ export interface KnownItem {
     body: string;
     /** For T and Y: who started the thread. */
     author: string;
+    /** A D item whose draft was published: the draft id its heading still names. */
+    publishedFrom?: string;
 }
 
 export interface SkeletonInput {
@@ -341,7 +343,10 @@ export function checkJudgements(input: CheckInput): CheckResult {
                 continue;
             }
 
-            if (item.pair && !match.pair.value.startsWith(item.pair.value)) {
+            const expected =
+                item.pair?.kind === "draft" && match.publishedFrom ? match.publishedFrom : match.pair.value;
+
+            if (item.pair && !expected.startsWith(item.pair.value)) {
                 errors.push({
                     id: item.id,
                     line: item.line,

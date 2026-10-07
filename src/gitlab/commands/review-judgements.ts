@@ -21,6 +21,17 @@ import { loadConfig } from "@app/gitlab/lib/config";
 import { parseJudgements } from "@app/gitlab/lib/judgements";
 import { checkJudgements, skeletonText } from "@app/gitlab/lib/judgements-check";
 import {
+    alreadyPosted,
+    describeStep,
+    ledgerPath,
+    loadLedger,
+    type PostStep,
+    planPost,
+    readBack,
+    saveLedger,
+    stepHash,
+} from "@app/gitlab/lib/judgements-post";
+import {
     proposalFromJudgements,
     type RenderContext,
     renderDigest,
@@ -29,7 +40,18 @@ import {
 } from "@app/gitlab/lib/judgements-render";
 import { fetchMr } from "@app/gitlab/lib/merge-requests";
 import { fetchMrDiffs } from "@app/gitlab/lib/pr-review";
-import { fetchDiffRefs } from "@app/gitlab/lib/review-drafts";
+import {
+    anchoredPosition,
+    type DraftSummary,
+    type DraftWriteResult,
+    deleteDraft,
+    fetchDiffRefs,
+    fetchDrafts,
+    rewordDraft,
+    writeDraftReply,
+    writePositionedDraft,
+    writeTopLevelDraft,
+} from "@app/gitlab/lib/review-drafts";
 import { judgementsPath, reviewItems } from "@app/gitlab/lib/review-items";
 import { collectThreadContext } from "@app/gitlab/lib/review-render";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -41,6 +63,13 @@ interface JudgementOptions extends TargetOptions {
     receive?: boolean;
     give?: boolean;
     force?: boolean;
+}
+
+interface PostOptions extends JudgementOptions {
+    do?: string;
+    answers?: string;
+    apply?: boolean;
+    agent: string;
 }
 
 interface RenderOptions extends JudgementOptions {
@@ -162,6 +191,19 @@ async function runCheck(iid: string, opts: JudgementOptions): Promise<void> {
     out.println(`✓  ${file} is ready to render and post`);
 }
 
+/** `comments post`: the judgements file's actions as drafts, a dry run until --apply. */
+export function registerCommentsPost(comments: Command): void {
+    withJudgementFile(
+        comments
+            .command("post")
+            .description("Post what the judgements file decided: a dry run until --apply, then read back")
+            .option("--do <ids>", "Run each item's Action, e.g. T01,D03,N01")
+            .option("--answers <ids>", "Post each item's Proposed answer into my own thread (a D item after publish)")
+            .option("--apply", "Post for real")
+            .option("--agent <name>", "Who signs an answer in your own thread: [90%] <name>: …", "Opus")
+    ).action(runPost);
+}
+
 /** Everything a render needs about the MR, read once. */
 async function renderContext(
     iid: string,
@@ -267,4 +309,177 @@ async function runRender(iid: string, opts: RenderOptions): Promise<void> {
     }
 
     out.println(reportPath);
+}
+
+async function runStep(
+    api: Awaited<ReturnType<typeof resolveProjectApi>>,
+    iid: string,
+    step: PostStep,
+    context: { drafts: DraftSummary[]; files: Awaited<ReturnType<typeof fetchMrDiffs>> }
+): Promise<DraftWriteResult> {
+    const create = async (
+        anchor: Extract<PostStep, { kind: "comment" }>["anchor"],
+        body: string
+    ): Promise<DraftWriteResult> => {
+        if (anchor.top) {
+            return writeTopLevelDraft(api, iid, body);
+        }
+
+        const position = anchoredPosition(context.files, anchor.path, anchor.line, anchor.side);
+
+        return typeof position === "string"
+            ? { ok: false, action: "failed", error: position }
+            : writePositionedDraft(api, { iid, body, position });
+    };
+
+    switch (step.kind) {
+        case "reply":
+            return writeDraftReply(api, {
+                iid,
+                discussionId: step.discussionId,
+                body: step.body,
+                resolve: step.resolve,
+                knownDrafts: context.drafts,
+            });
+        case "delete": {
+            const removed = await deleteDraft(api, iid, step.draftId);
+
+            return removed.ok
+                ? { ok: true, action: "updated", draftId: step.draftId }
+                : { ok: false, action: "failed", error: removed.error };
+        }
+        case "reword":
+            return rewordDraft(api, { iid, draftId: step.draftId, body: step.body });
+        case "comment":
+            return create(step.anchor, step.body);
+        case "move": {
+            // The new draft first: a failed create leaves the old one in place, never neither.
+            const created = await create(step.anchor, step.body);
+
+            if (!created.ok) {
+                return created;
+            }
+
+            const removed = await deleteDraft(api, iid, step.draftId);
+
+            return removed.ok
+                ? created
+                : {
+                      ...created,
+                      ok: false,
+                      error: `the new draft ${created.draftId} exists, but deleting draft ${step.draftId} failed: ${removed.error}`,
+                  };
+        }
+    }
+}
+
+async function runPost(iid: string, opts: PostOptions): Promise<void> {
+    const ids = (opts.do ?? "").split(",");
+    const answers = (opts.answers ?? "").split(",");
+
+    if (!opts.do && !opts.answers) {
+        throw new Error(
+            "Name what to post: --do T01,N01 (each item's Action) and/or --answers D05 (answers in my own threads)."
+        );
+    }
+
+    const { api, mode, file } = await target(iid, opts);
+
+    if (!existsSync(file)) {
+        throw new Error(
+            `${file} does not exist; write it with \`${toolCommand("gitlab pr", iid, "review", "skeleton")}\`.`
+        );
+    }
+
+    const judgements = parseJudgements(readFileSync(file, "utf-8"));
+    const [items, files, config] = await Promise.all([
+        reviewItems(api, Number(iid), mode),
+        fetchMrDiffs(api, Number(iid)),
+        loadConfig(),
+    ]);
+    const selected = new Set([...ids, ...answers].map((id) => id.trim().toUpperCase()).filter(Boolean));
+    const check = checkJudgements({ judgements, known: items.known, files, rules: config.review.draftRules });
+    const blocking = check.errors.filter((error) => selected.has(error.id));
+    const plan = planPost({ judgements, known: items.known, ids, answers, agent: opts.agent });
+    const problems = [...blocking.map((e) => ({ id: e.id, message: e.message })), ...plan.errors];
+
+    if (problems.length > 0) {
+        for (const problem of problems) {
+            out.println(`✗  ${problem.id}: ${problem.message}`);
+        }
+
+        out.println(
+            `\nNothing was posted. Fix the file and run \`${toolCommand("gitlab pr", iid, "review", "check", `--${mode}`, "--file", file)}\`.`
+        );
+        process.exitCode = 1;
+
+        return;
+    }
+
+    const ledgerFile = ledgerPath({ host: api.host, project: api.project, iid: Number(iid) });
+    const ledger = loadLedger(ledgerFile);
+    const todo = plan.steps.filter((step) => !alreadyPosted(ledger, step));
+
+    for (const step of plan.steps) {
+        const landed = alreadyPosted(ledger, step);
+        out.println(`${describeStep(step)}${landed ? `  (already posted ${landed.at}, skipped)` : ""}`);
+    }
+
+    for (const skip of plan.skipped) {
+        out.println(`${skip.id.padEnd(4)} skipped       ${skip.reason}`);
+    }
+
+    if (!opts.apply) {
+        const flags = [opts.do ? ["--do", opts.do] : [], opts.answers ? ["--answers", opts.answers] : []].flat();
+        out.println(
+            `\nDry run, nothing posted. Post with: ${toolCommand("gitlab pr", iid, "comments", "post", `--${mode}`, "--file", file, ...flags, "--apply")}`
+        );
+        return;
+    }
+
+    const drafts = await fetchDrafts(api, iid);
+    const draftIds = new Map<string, number>();
+
+    for (const step of todo) {
+        const result = await runStep(api, iid, step, { drafts, files });
+
+        if (!result.ok) {
+            out.println(
+                `\n⛔ ${step.id}: ${result.error}\nStopped; the steps before it were posted. Run the same command again after the fix: posted steps are skipped.`
+            );
+            process.exitCode = 1;
+
+            return;
+        }
+
+        if (result.draftId !== undefined) {
+            draftIds.set(step.id, result.draftId);
+        }
+
+        ledger[step.id] = {
+            kind: step.kind,
+            bodyHash: stepHash(step),
+            at: new Date().toISOString(),
+            draftId: result.draftId,
+        };
+        saveLedger(ledgerFile, ledger);
+    }
+
+    const after = await fetchDrafts(api, iid);
+    const mismatches = todo.flatMap((step) => {
+        const problem = readBack(step, after, draftIds);
+
+        return problem ? [`${step.id}: ${problem}`] : [];
+    });
+
+    if (mismatches.length > 0) {
+        out.println(`\n⛔ read back:\n${mismatches.map((line) => `  ${line}`).join("\n")}`);
+        process.exitCode = 1;
+
+        return;
+    }
+
+    out.println(
+        `\n✅ ${todo.length} step(s) posted as drafts and read back on !${iid}. Publish with \`${toolCommand("gitlab pr", iid, "comments", "publish")}\` when the user asks.`
+    );
 }

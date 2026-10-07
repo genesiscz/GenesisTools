@@ -37,6 +37,7 @@ import {
     writePositionedDraft,
     writeTopLevelDraft,
 } from "@app/gitlab/lib/review-drafts";
+import { expectedDraftIds, recordPublished } from "@app/gitlab/lib/review-items";
 import { rewriteLocalImages, uploadToProject } from "@app/gitlab/lib/uploads";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -481,12 +482,14 @@ async function runPublish(iid: string, opts: PublishOptions): Promise<void> {
     out.println(renderDraftTable(drafts));
 
     if (opts.expect !== undefined) {
-        const expected = new Set(
-            opts.expect
-                .split(",")
-                .map((id) => id.trim())
-                .filter(Boolean)
-        );
+        const { ids: expected, unknown } = expectedDraftIds(api, Number(iid), opts.expect.split(","));
+
+        if (unknown.length > 0) {
+            throw new Error(
+                `--expect names ${unknown.join(", ")}, which this MR's id map does not know; nothing was published.`
+            );
+        }
+
         const pending = new Set(drafts.map((draft) => String(draft.id)));
         const unexpected = [...pending].filter((id) => !expected.has(id));
         const missing = [...expected].filter((id) => !pending.has(id));
@@ -523,4 +526,10 @@ async function runPublish(iid: string, opts: PublishOptions): Promise<void> {
     }
 
     out.println(`\n✅ published ${drafts.length} draft(s) on !${iid}`);
+
+    const record = await recordPublished(api, Number(iid), drafts);
+
+    if (record.unmatched.length > 0) {
+        out.println(`⚠  no thread found yet for ${record.unmatched.join(", ")}; \`--answers\` cannot reach them`);
+    }
 }

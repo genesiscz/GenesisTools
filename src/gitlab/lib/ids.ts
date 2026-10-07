@@ -21,8 +21,14 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 export const ID_KINDS = ["F", "T", "D", "Y", "M"] as const;
 export type IdKind = (typeof ID_KINDS)[number];
 
-/** kind → item key → number. */
-export type IdMap = Record<IdKind, Record<string, number>>;
+/** A draft that `comments publish` turned into a thread: its D id → the thread and the draft it was. */
+export interface PublishedDraft {
+    discussionId: string;
+    draftId: number;
+}
+
+/** kind → item key → number, plus the drafts publishing turned into threads. */
+export type IdMap = Record<IdKind, Record<string, number>> & { published?: Record<string, PublishedDraft> };
 
 export function emptyIdMap(): IdMap {
     return { F: {}, T: {}, D: {}, Y: {}, M: {} };
