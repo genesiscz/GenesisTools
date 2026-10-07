@@ -486,6 +486,75 @@ final class PRThreadsTests: XCTestCase {
                        "the wrap points add no visible text")
     }
 
+    // MARK: references, head files, card clicks
+
+    private let gitlab = ForgeWeb(kind: "gitlab", web: "https://gitlab.example.com/group/shop")
+    private let github = ForgeWeb(kind: "github", web: "https://github.com/acme/shop")
+
+    func testCommitIdsLinkToTheHostAsCode() {
+        let text = "Jo, `phase2.md` odsud vyhodím, zůstane jen na oracle větvi (44a8c867b4)."
+        XCTAssertEqual(PRRefLinker.linkify(text, forge: gitlab),
+                       "Jo, `phase2.md` odsud vyhodím, zůstane jen na oracle větvi ([`44a8c867b4`](https://gitlab.example.com/group/shop/-/commit/44a8c867b4)).")
+        XCTAssertEqual(PRRefLinker.linkify("see 44a8c867b4ff", forge: github), "see [`44a8c867b4ff`](https://github.com/acme/shop/commit/44a8c867b4ff)")
+        for plain in ["deadbeef cafe", "1234567 rows", "a facade", "abc123", "`44a8c867b4` stays code", "https://x.org/44a8c867b4", "[44a8c867b4](https://x.org)", "path/44a8c867b4/file"] {
+            XCTAssertEqual(PRRefLinker.linkify(plain, forge: gitlab), plain, "\"\(plain)\" is not a bare commit id")
+        }
+        let fenced = "```\n44a8c867b4 !12\n```\nafter 44a8c867b4"
+        XCTAssertEqual(PRRefLinker.linkify(fenced, forge: gitlab),
+                       "```\n44a8c867b4 !12\n```\nafter [`44a8c867b4`](https://gitlab.example.com/group/shop/-/commit/44a8c867b4)",
+                       "a fenced block is code")
+        XCTAssertEqual(PRRefLinker.linkify("44a8c867b4", forge: nil), "44a8c867b4", "no host, no links")
+    }
+
+    func testPRReferencesLinkPerHost() {
+        XCTAssertEqual(PRRefLinker.linkify("move them into !7467.", forge: gitlab),
+                       "move them into [!7467](https://gitlab.example.com/group/shop/-/merge_requests/7467).")
+        XCTAssertEqual(PRRefLinker.linkify("see #12 and !3", forge: gitlab), "see #12 and [!3](https://gitlab.example.com/group/shop/-/merge_requests/3)",
+                       "GitLab's #12 is an issue")
+        XCTAssertEqual(PRRefLinker.linkify("see #12 and !3", forge: github), "see [#12](https://github.com/acme/shop/pull/12) and !3")
+        XCTAssertEqual(PRRefLinker.linkify("in other/tools!8", forge: gitlab),
+                       "in [other/tools!8](https://gitlab.example.com/other/tools/-/merge_requests/8)")
+        XCTAssertEqual(PRRefLinker.linkify("in owner/repo#9", forge: github), "in [owner/repo#9](https://github.com/owner/repo/pull/9)")
+        for plain in ["wow!12", "a#12", "# 12 heading", "`!12`"] {
+            XCTAssertEqual(PRRefLinker.linkify(plain, forge: gitlab), plain)
+        }
+    }
+
+    func testAPRLinkAsksWhereToOpenAndOtherLinksDoNot() throws {
+        let mr = try XCTUnwrap(PRRefMenu.target(XCTUnwrap(URL(string: "https://gitlab.example.com/group/shop/-/merge_requests/7460#note_1"))))
+        XCTAssertEqual(mr, PRRefMenu.Target(url: "https://gitlab.example.com/group/shop/-/merge_requests/7460", number: 7460, gitlab: true))
+        XCTAssertEqual(mr.label, "!7460")
+        XCTAssertEqual(try PRRefMenu.target(XCTUnwrap(URL(string: "https://github.com/acme/shop/pull/12")))?.label, "#12")
+        XCTAssertNil(try PRRefMenu.target(XCTUnwrap(URL(string: "https://github.com/acme/shop/pull/12/files"))), "a PR's tab is a page")
+        XCTAssertNil(try PRRefMenu.target(XCTUnwrap(URL(string: "https://gitlab.example.com/group/shop/-/commit/44a8c867b4"))))
+    }
+
+    func testAThreadsFileIsRemovedOrRenamedAtTheHead() {
+        let renames = PRHeadPresence.renames("R087\tdocs/old.md\tdocs/new.md\nM\tsrc/a.ts\nR100\tx.ts\ty.ts")
+        XCTAssertEqual(renames, ["docs/old.md": "docs/new.md", "x.ts": "y.ts"])
+        let decided = PRHeadPresence.decide(paths: ["src/a.ts", "docs/old.md", "refs/phase2.md"], present: ["src/a.ts"], renames: renames)
+        XCTAssertEqual(decided, ["src/a.ts": .present, "docs/old.md": .renamed(to: "docs/new.md"), "refs/phase2.md": .removed])
+        XCTAssertEqual(PRHeadFiles.key(repo: "/r", head: "h", paths: ["b", "a"]), PRHeadFiles.key(repo: "/r", head: "h", paths: ["a", "b"]),
+                       "one answer per set of files, whatever their order")
+    }
+
+    func testOnlyAPlainSingleClickOnACardJumps() {
+        XCTAssertTrue(PRThreadCardClick.jumps(clickCount: 1, laterClick: false, selectedText: false))
+        XCTAssertFalse(PRThreadCardClick.jumps(clickCount: 2, laterClick: false, selectedText: false), "a double-click selects a word")
+        XCTAssertFalse(PRThreadCardClick.jumps(clickCount: 1, laterClick: true, selectedText: false), "the first click of a double-click")
+        XCTAssertFalse(PRThreadCardClick.jumps(clickCount: 1, laterClick: false, selectedText: true), "a drag that selected text")
+    }
+
+    func testInlineCodeGetsItsFillAndTheLinkedNoteKeepsItsOwnText() throws {
+        let styled = MarkdownContentView.inline("a `code` b", codeBackground: .red)
+        let filled = styled.runs.filter { $0.backgroundColor != nil }.map { String(styled[$0.range].characters) }
+        XCTAssertEqual(filled, ["code"])
+        let note = PRThreadRendering.live(try thread("1", path: "src/a.ts", line: 3), forge: gitlab).notes[0]
+        XCTAssertNil(note.display, "nothing to link: the page renders the body")
+        XCTAssertEqual(PRThreadRendering.display("fixed in 44a8c867b4", forge: gitlab),
+                       "fixed in [`44a8c867b4`](https://gitlab.example.com/group/shop/-/commit/44a8c867b4)")
+    }
+
     func testTheAuthorsPictureReachesTheDiffCard() throws {
         let live = PRThreadRendering.live(try thread("1", path: "src/a.ts", line: 3))
         XCTAssertEqual(live.notes.map(\.avatarUrl), ["https://example.com/a.png"])

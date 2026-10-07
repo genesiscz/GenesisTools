@@ -93,6 +93,9 @@ struct RenderedLiveThread: Encodable, Equatable {
         var url: String?
         /// The author's picture on the host; the card keeps the initial when it does not load.
         var avatarUrl: String? = nil
+        /// `body` with commit ids and PR/MR references as links (`PRRefLinker`): what the card shows.
+        /// `body` stays the note's own text, the one Edit opens. Nil when the two are the same.
+        var display: String? = nil
     }
 
     var notes: [Note]

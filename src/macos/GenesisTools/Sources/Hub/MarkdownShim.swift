@@ -16,6 +16,8 @@ struct MarkdownStyle {
     var codeColor: Color = .white.opacity(0.88)
     var codeBackground: Color = Color.black.opacity(0.35)
     var taskDoneColor: Color = .green
+    /// A fill behind `inline code`, as the host pages draw it; nil (the transcript) keeps only the monospace.
+    var inlineCodeBackground: Color? = nil
     var lineSpacing: CGFloat = 3
     var blockSpacing: CGFloat = 10
     var headingScale: CGFloat = 1
@@ -273,7 +275,7 @@ struct MarkdownContentView: View {
             ForEach(Array(Self.blocks(markdown).enumerated()), id: \.offset) { index, block in
                 switch block {
                 case .text(let text):
-                    Text(found(Self.inline(text), block: index))
+                    Text(found(styledInline(text), block: index))
                         .font(style.monoBody ? .system(size: style.bodySize, design: .monospaced) : .system(size: style.bodySize))
                         .foregroundColor(style.textColor)
                         .lineSpacing(style.lineSpacing)
@@ -281,14 +283,14 @@ struct MarkdownContentView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .panelFindAnchor(anchor(block: index))
                 case .heading(let text, let level):
-                    Text(found(Self.inline(text), block: index))
+                    Text(found(styledInline(text), block: index))
                         .font(.system(size: (20 - CGFloat(level) * 1.5) * style.headingScale, weight: .semibold))
                         .foregroundColor(style.textColor)
                         .panelFindAnchor(anchor(block: index))
                 case .quote(let text):
                     HStack(alignment: .top, spacing: 8) {
                         RoundedRectangle(cornerRadius: 1).fill(style.mutedColor).frame(width: 2)
-                        Text(found(Self.inline(text), block: index))
+                        Text(found(styledInline(text), block: index))
                             .font(.system(size: style.bodySize))
                             .foregroundColor(style.secondaryColor)
                             .lineSpacing(style.lineSpacing)
@@ -311,6 +313,33 @@ struct MarkdownContentView: View {
                 }
             }
         }
+    }
+
+    /// The paragraph's inline markdown, with the code spans filled when the style asks for it.
+    private func styledInline(_ text: String) -> AttributedString {
+        guard let fill = style.inlineCodeBackground else { return Self.inline(text) }
+        return Self.inline(text, codeBackground: fill)
+    }
+
+    nonisolated(unsafe) private static let codeInlineCache: NSCache<NSString, Parsed<AttributedString>> = {
+        let cache = NSCache<NSString, Parsed<AttributedString>>()
+        cache.countLimit = 2000
+        return cache
+    }()
+
+    /// Cached per text and fill: walking the runs on every re-measure is what the inline cache avoids.
+    nonisolated static func inline(_ text: String, codeBackground: Color) -> AttributedString {
+        let key = "\(codeBackground)\u{0}\(text)" as NSString
+        if let hit = codeInlineCache.object(forKey: key) {
+            return hit.value
+        }
+
+        var styled = inline(text)
+        for run in styled.runs where run.inlinePresentationIntent?.contains(.code) == true {
+            styled[run.range].backgroundColor = codeBackground
+        }
+        codeInlineCache.setObject(Parsed(styled), forKey: key)
+        return styled
     }
 
     private func found(_ text: AttributedString, block: Int) -> AttributedString {

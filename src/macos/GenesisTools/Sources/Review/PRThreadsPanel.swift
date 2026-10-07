@@ -363,6 +363,9 @@ struct PRThreadsList: View {
     /// The previous visit to this PR's threads: notes by others written after it are marked new.
     @State private var seenSince: Date?
     @State private var seenFor: String?
+    @State private var clicks = PRCardClicks()
+    /// Whether each thread's file is still there at the PR's head (one `git ls-tree` per head).
+    @ObservedObject private var headFiles = PRHeadFiles.shared
     /// A narrow side panel (the review window's Context panel, 320 pt at its minimum): the toolbar
     /// takes two rows, so nothing runs past the panel's edge.
     var compact = false
@@ -386,6 +389,14 @@ struct PRThreadsList: View {
         return threads
             .filter { showClosed || Self.isOpen($0, placements[$0.id]) }
             .filter { !onlyThisFile || $0.path == selectedPath }
+    }
+
+    /// The PR's head and the threads' files, when the diff shows another commit: then a file may be
+    /// gone or renamed at the head. Nil when the diff is the head (every file there is there).
+    private func headQuery(_ threads: [PRThread]) -> (repo: String, head: String, shown: String, paths: [String])? {
+        guard let head = store.payload?.pr.headSha, !head.isEmpty, let shown = shownHead,
+              !PRThreadRendering.sameCommit(head, shown), !threads.isEmpty else { return nil }
+        return (model.repo.path, head, shown, Array(Set(threads.map(\.path))).sorted())
     }
 
     private var fileOrder: [String: Int] {
@@ -417,6 +428,8 @@ struct PRThreadsList: View {
         let threads = visible(all, placed)
         let groups = PRThreadFileGroup.groups(threads, order: fileOrder)
         let fresh = newNotes(all)
+        let query = headQuery(all)
+        let atHead = query.flatMap { headFiles.status(repo: $0.repo, head: $0.head, paths: $0.paths) } ?? [:]
         VStack(spacing: 0) {
             toolbar(all: all, placed: placed, shown: threads, files: groups.count)
             PanelFindBar(find: find)
@@ -441,7 +454,8 @@ struct PRThreadsList: View {
                                         PRThreadRow(model: model, store: store, thread: thread,
                                                     selected: model.selectedThreads.contains(thread.id),
                                                     placement: placed[thread.id] ?? .onDiff(outdatedOnHost: false),
-                                                    fresh: fresh, compact: compact)
+                                                    fresh: fresh, atHead: atHead[thread.path],
+                                                    headSha: query?.head, compact: compact, clicks: clicks)
                                             .findRow(thread.id, cornerRadius: 8)
                                     }
                                 }
@@ -464,6 +478,26 @@ struct PRThreadsList: View {
             }
         }
         .onChange(of: store.payload?.pr.url, initial: true) { _, _ in markSeen() }
+        .onAppear {
+            let model = model
+            let store = store
+            clicks.onJump = { id in
+                guard let thread = store.payload?.threads.first(where: { $0.id == id }) else { return }
+                let shown = model.scope.pinnedHead ?? model.remoteHead?.sha
+                if PRThreadPlacement.of(thread, shownHead: shown, prHead: store.payload?.pr.headSha).onDiff {
+                    model.reveal(path: thread.path, thread: thread.id)
+                } else {
+                    model.reveal(path: thread.path)
+                }
+            }
+            clicks.start()
+        }
+        .onDisappear { clicks.stop() }
+        // One batched `git ls-tree` per head and set of files, off the main thread (PRHeadFiles).
+        .task(id: query.map { PRHeadFiles.key(repo: $0.repo, head: $0.head, paths: $0.paths) }) {
+            guard let query else { return }
+            headFiles.load(repo: query.repo, head: query.head, shown: query.shown, paths: query.paths)
+        }
     }
 
     /// Reads the previous visit once per PR and records this one.
@@ -592,6 +626,104 @@ struct PRThreadsList: View {
     }
 }
 
+/// When a click on a thread card shows the thread in the diff: one click, no second click within the
+/// double-click time (that selects a word), and no text selected by it.
+enum PRThreadCardClick {
+    static func jumps(clickCount: Int, laterClick: Bool, selectedText: Bool) -> Bool {
+        clickCount <= 1 && !laterClick && !selectedText
+    }
+
+    /// A press and its release this close together are a click; farther apart they were a drag.
+    static func isClick(down: CGPoint, up: CGPoint) -> Bool {
+        hypot(up.x - down.x, up.y - down.y) < 4
+    }
+}
+
+/// A plain click anywhere on a thread card shows that thread in the diff, on mouse-up. Two doors lead
+/// here: the card's tap gesture (its chrome: header, padding, avatar) and, for its text, a mouse monitor
+/// while the list is on screen, because the selectable text is an NSTextView and SwiftUI gestures never
+/// see a click on it. Buttons keep their own action (SwiftUI gives them the tap), a link in the text
+/// keeps its own, a drag that selects text never jumps, and a double-click waits out its second click.
+@MainActor
+final class PRCardClicks {
+    /// Each card's frame in the window's content, top-left origin (SwiftUI's global space).
+    var frames: [String: CGRect] = [:]
+    var onJump: ((String) -> Void)?
+    private var token = 0
+    private var monitor: Any?
+    private var release: Timer?
+
+    func clicked(_ id: String, clickCount: Int, text: NSTextView? = nil) {
+        token += 1
+        let mine = token
+        let wait = min(NSEvent.doubleClickInterval, 0.3)
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+            guard let self else { return }
+            let view = text ?? (NSApp.keyWindow?.firstResponder as? NSTextView)
+            let selected = view.map { $0.selectedRange().length > 0 } ?? false
+            guard PRThreadCardClick.jumps(clickCount: clickCount, laterClick: mine != self.token, selectedText: selected) else {
+                HubPerf.log("review.prThreads card click ignored (clicks \(clickCount), selected \(selected))")
+                return
+            }
+
+            HubPerf.log("review.prThreads card click → \(id)")
+            self.onJump?(id)
+        }
+    }
+
+    func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
+            self?.handle(event)
+            return event
+        }
+    }
+
+    func stop() {
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        monitor = nil
+        release?.invalidate()
+        release = nil
+    }
+
+    private func handle(_ event: NSEvent) {
+        guard event.type == .leftMouseDown, let window = event.window, let content = window.contentView,
+              event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty else { return }
+        let point = event.locationInWindow
+        let flipped = CGPoint(x: point.x, y: content.bounds.height - point.y)
+        guard let id = frames.first(where: { $0.value.contains(flipped) })?.key else { return }
+        // The text view tracks the press in its own loop and takes the mouse-up with it, so no monitor
+        // sees the release: watch the button instead, as `HubLiveResize` does for NSSplitView, and only
+        // while it is held. A press on the card's text leaves that text view the first responder; a
+        // press anywhere else on the card is SwiftUI's, and its tap gesture already answers it.
+        let start = NSEvent.mouseLocation
+        let clickCount = event.clickCount
+        release?.invalidate()
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self, weak window] timer in
+            guard NSEvent.pressedMouseButtons & 1 == 0 else { return }
+            timer.invalidate()
+            MainActor.assumeIsolated {
+                guard let self, let window, let text = window.firstResponder as? NSTextView,
+                      text.bounds.contains(text.convert(point, from: nil)), !Self.isLink(in: text, at: point),
+                      PRThreadCardClick.isClick(down: start, up: NSEvent.mouseLocation) else { return }
+                self.clicked(id, clickCount: clickCount, text: text)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        release = timer
+    }
+
+    /// A click on a link in the text opens the link, not the thread.
+    private static func isLink(in text: NSTextView, at windowPoint: CGPoint) -> Bool {
+        guard let storage = text.textStorage, storage.length > 0 else { return false }
+        let index = text.characterIndexForInsertion(at: text.convert(windowPoint, from: nil))
+        let candidates = [index, index - 1].filter { $0 >= 0 && $0 < storage.length }
+        return candidates.contains { storage.attribute(.link, at: $0, effectiveRange: nil) != nil }
+    }
+}
+
 /// "Open 13" / "All 23" / "This file": a capsule that is filled while on.
 private struct PRFilterChip: View {
     let title: String
@@ -645,13 +777,43 @@ private struct PRThreadRow: View {
     let placement: PRThreadPlacement
     /// Note ids written by others since the previous visit.
     let fresh: Set<String>
+    /// The thread's file at the PR's head, when the diff shows an older commit; nil when unknown.
+    var atHead: PathAtHead?
+    var headSha: String?
     var compact = false
     @State private var replying = false
     @State private var replyText = ""
     @State private var editingID: String?
     @State private var editText = ""
+    @State private var hovering = false
+    /// The list's click router: a plain click anywhere on the card shows the thread in the diff.
+    let clicks: PRCardClicks
 
     private var dimmed: Bool { thread.resolved || placement == .outdated }
+
+    /// A note's markdown at the list's size, `inline code` on a faint fill as the host pages draw it.
+    static let noteStyle: MarkdownStyle = {
+        var style = MarkdownStyle()
+        style.bodySize = 12
+        style.textColor = Color.white.opacity(0.86)
+        style.codeBackground = Color.black.opacity(0.3)
+        style.inlineCodeBackground = Color.white.opacity(0.1)
+        style.lineSpacing = 2
+        style.blockSpacing = 6
+        return style
+    }()
+
+    private var cardFill: Color {
+        if store.changed.contains(thread.id) {
+            return ReviewPalette.renamed.opacity(0.16)
+        }
+
+        return Color.white.opacity((thread.resolved ? 0.02 : 0.035) + (hovering ? 0.03 : 0))
+    }
+
+    private func cardClicked() {
+        clicks.clicked(thread.id, clickCount: NSApp.currentEvent?.clickCount ?? 1)
+    }
 
     private var accent: Color {
         if thread.isMyDraft { return ReviewPalette.modified }
@@ -683,12 +845,27 @@ private struct PRThreadRow: View {
         .padding(.vertical, 9)
         .padding(.leading, 12)
         .padding(.trailing, 10)
-        .background(store.changed.contains(thread.id) ? ReviewPalette.renamed.opacity(0.16) : Color.white.opacity(thread.resolved ? 0.02 : 0.035))
+        .background(cardFill)
         .background(alignment: .leading) {
             Rectangle().fill(accent).frame(width: 2.5)
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected ? ReviewPalette.renamed.opacity(0.7) : ReviewPalette.hairline))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(
+            selected ? ReviewPalette.renamed.opacity(0.7) : hovering ? Color.white.opacity(0.16) : ReviewPalette.hairline
+        ))
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        // Clicks on the card's chrome; a click on its text lands in an NSTextView, which SwiftUI gestures
+        // never see, and reaches `PRCardClicks` through its mouse monitor by this frame.
+        .onTapGesture { cardClicked() }
+        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { clicks.frames[thread.id] = $0 }
+        .onDisappear { clicks.frames[thread.id] = nil }
+        .onHover { inside in
+            // A selection drag that leaves or enters the card does not flicker its hover.
+            guard NSEvent.pressedMouseButtons == 0 || !inside, inside != hovering else { return }
+            hovering = inside
+        }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .accessibilityAction(named: Text("Show in the diff")) { cardClicked() }
         .opacity(dimmed ? 0.72 : 1)
         .padding(.leading, 6)
     }
@@ -772,18 +949,41 @@ private struct PRThreadRow: View {
     @ViewBuilder
     private var placementBadge: some View {
         let short = String((thread.commitSha ?? "").prefix(8))
+        let head = headNote
         switch placement {
         case .onDiff(outdatedOnHost: true):
-            Badge("this commit", color: ReviewPalette.renamed, look: .tag, symbol: "clock.arrow.circlepath",
-                  tooltip: "The host marks it outdated because a later push changed these lines. The diff shows \(short.isEmpty ? "the commit it was written on" : short), the commit it was written on, so here it sits on its line.")
+            Badge(head.map { "this commit · \($0.label)" } ?? "this commit", color: ReviewPalette.renamed, look: .tag, symbol: "clock.arrow.circlepath",
+                  tooltip: "The host marks it outdated because a later push changed these lines. The diff shows \(short.isEmpty ? "the commit it was written on" : short), the commit it was written on, so here it sits on its line."
+                      + (head.map { "\n\n\($0.tooltip)" } ?? ""))
         case .onDiff:
-            EmptyView()
+            headBadge(head)
         case .outdated:
             Badge("Outdated", color: ReviewPalette.dim, look: .tag,
                   tooltip: "A later push changed these lines\(short.isEmpty ? "" : " (written on \(short))"). The diff shows another commit, so the thread has no line in it; its notes stay here.")
+            headBadge(head)
         case .newerHead:
             Badge("newer push", color: ReviewPalette.dim, look: .tag, symbol: "arrow.up.circle",
                   tooltip: "Current on the PR's newest commit, which this diff does not show, so it has no line here.")
+        }
+    }
+
+    /// The file is gone or renamed at the PR's head (`PRHeadFiles`); nil while it is there or unknown.
+    private var headNote: (label: String, tooltip: String)? {
+        let head = String((headSha ?? "").prefix(10))
+        switch atHead {
+        case .removed:
+            return ("removed at head", "\((thread.path as NSString).lastPathComponent) no longer exists at the PR's head \(head).")
+        case .renamed(let to):
+            return ("renamed at head", "At the PR's head \(head) this file is \(to).")
+        case .present, nil:
+            return nil
+        }
+    }
+
+    @ViewBuilder
+    private func headBadge(_ note: (label: String, tooltip: String)?) -> some View {
+        if let note {
+            Badge(note.label, color: ReviewPalette.modified, look: .tag, symbol: "doc.badge.ellipsis", tooltip: note.tooltip)
         }
     }
 
@@ -840,11 +1040,13 @@ private struct PRThreadRow: View {
                         .instantTooltip("Replace the draft's text; it stays a draft")
                     }
                 } else {
-                    MarkdownContentView(markdown: comment.bodyMarkdown)
+                    // Commit ids and PR/MR references as links (PRRefLinker); a PR link asks where to open it.
+                    MarkdownContentView(markdown: PRRefLinker.linkify(comment.bodyMarkdown, forge: store.pr?.forge), style: Self.noteStyle)
                         .findField("comment:\(comment.id)")
-                        .font(.system(size: 12))
-                        .foregroundColor(Color.white.opacity(0.86))
-                        .textSelection(.enabled)
+                        .environment(\.openURL, OpenURLAction { url in
+                            PRRefMenu.open(url, model: model)
+                            return .handled
+                        })
                         // A code block keeps its lines whole and asks for more width than a narrow panel
                         // has: pin the body to the row, from the left, and cut the long lines at the right.
                         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)

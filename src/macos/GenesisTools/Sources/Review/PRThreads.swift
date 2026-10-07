@@ -158,6 +158,8 @@ struct PRInfo: Decodable, Equatable {
     let crossRepository: Bool?
     let headRepo: String?
     var headSha: String? = nil
+    /// The commit the PR's diff starts from (GitLab `diff_refs.base_sha`, GitHub the base ref's sha).
+    var baseSha: String? = nil
 
     var identity: PRIdentity { PRIdentity(provider: provider, host: host, project: project, number: number) }
     /// The PR's project on the host, for user and branch pages; nil for a host that is not GitHub or GitLab.
@@ -315,6 +317,13 @@ enum PRThreadRendering {
     }
 
     /// `forge` makes each author a link to their profile on the host.
+    /// The note's text with its commit ids and PR/MR references linked (`PRRefLinker`); nil when nothing
+    /// changed, so the page renders `body` as it is.
+    static func display(_ body: String, forge: ForgeWeb?) -> String? {
+        let linked = PRRefLinker.linkify(body, forge: forge)
+        return linked == body ? nil : linked
+    }
+
     static func live(_ thread: PRThread, forge: ForgeWeb? = nil, now: Date = Date()) -> RenderedLiveThread {
         RenderedLiveThread(
             notes: thread.comments.map { comment in
@@ -329,7 +338,8 @@ enum PRThreadRendering {
                     edited: comment.editedAt != nil,
                     authorUrl: forge?.user(comment.author.username)?.absoluteString,
                     url: comment.url,
-                    avatarUrl: comment.author.avatarUrl
+                    avatarUrl: comment.author.avatarUrl,
+                    display: display(comment.bodyMarkdown, forge: forge)
                 )
             },
             resolved: thread.resolved,

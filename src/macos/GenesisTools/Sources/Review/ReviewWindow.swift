@@ -1152,7 +1152,8 @@ final class ReviewModel: ObservableObject {
         case .threadAction(let input):
             threadAction(input)
         case .openURL(let url):
-            ExternalOpener.open(url)
+            // A PR/MR link asks where to open it (host, hub, review window); anything else opens in the browser.
+            MainActor.assumeIsolated { PRRefMenu.open(url, model: self) }
         case .focusFile(let id):
             if selectedID != id, files.contains(where: { $0.id == id }) {
                 selectedID = id

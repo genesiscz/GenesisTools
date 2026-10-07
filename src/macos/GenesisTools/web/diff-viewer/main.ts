@@ -105,6 +105,8 @@ interface LiveNote {
     url?: string;
     /** The author's picture on the host; the initial stays when it does not load. */
     avatarUrl?: string;
+    /** `body` with commit ids and PR/MR references as markdown links (Swift `PRRefLinker`); Edit keeps `body`. */
+    display?: string;
 }
 
 interface LiveThread {
@@ -1515,7 +1517,7 @@ function renderNote(threadId: string, note: LiveNote, busy: boolean, reply = fal
             ])
         );
     } else {
-        main.appendChild(foldedBody(note.id, note.body));
+        main.appendChild(foldedBody(note.id, note.display ?? note.body));
     }
 
     row.appendChild(main);
@@ -1840,7 +1842,14 @@ function inline(parent: HTMLElement, text: string): void {
 }
 
 function link(label: string, url: string): HTMLElement {
-    const node = element("a", "color:#8ab4ff;text-decoration:none;cursor:pointer", label);
+    // [`44a8c867b4`](…) (a linked commit id): the label is code, in the link's colour.
+    const code = /^`([^`]+)`$/.exec(label);
+    const node = element("a", "color:#8ab4ff;text-decoration:none;cursor:pointer", code ? "" : label);
+
+    if (code) {
+        node.appendChild(element("code", `${css.code};color:inherit`, code[1]));
+    }
+
     node.title = url;
 
     // The href makes it a link for Tab, Return and VoiceOver; the click below still sends it to Swift.
