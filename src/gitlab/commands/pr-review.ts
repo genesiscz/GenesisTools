@@ -6,8 +6,8 @@
  * `<tmp>/gitlab-pr-<project>-<host+project hash>-<iid>.{json,md}` unless `--out` names the report.
  * The `gt:review-proposal` skill says how to fill the proposal and push it with `tools hub proposal push`.
  *
- * `gitlab give-review` is the same command with older defaults: `--impact-source git`, a summary
- * on stdout, and `<tmp>/gitlab-give-review-<iid>.{md,json}`.
+ * `gitlab give-review` is the same command with older defaults: `--impact-source git`, only the
+ * summary (on stderr, like every progress line), and `<tmp>/gitlab-give-review-<iid>.{md,json}`.
  *
  *   tools gitlab pr review 42 --repo ~/code/app
  *   tools gitlab pr review 42 --llm
@@ -178,7 +178,7 @@ export function registerGiveReview(parent: Command): Command {
         parent
             .command("give-review")
             .description(
-                "Same as `pr review` with older defaults: git impact scan, a summary on stdout, $TMPDIR/gitlab-give-review-<iid>.md"
+                "Same as `pr review` with older defaults: git impact scan, only a summary (stderr), $TMPDIR/gitlab-give-review-<iid>.md"
             ),
         GIVE_REVIEW
     );

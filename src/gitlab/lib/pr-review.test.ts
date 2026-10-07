@@ -8,12 +8,15 @@ import type { ProjectApi } from "@app/gitlab/lib/client";
 import { mergeConfig, NEUTRAL_CONFIG } from "@app/gitlab/lib/config";
 import {
     type ApiDiff,
+    branchRef,
     collectPrReviewFacts,
+    fetchRefs,
     findAddedImports,
     findWorktree,
     impactOf,
     NO_TESTS_NOTE,
     type PrReviewFacts,
+    type PrReviewGate,
     parseApiDiffs,
     parseUnifiedDiff,
     type RawMergeRequest,
@@ -30,6 +33,7 @@ import {
     proposalSkeleton,
     renderDraftsOnlyMarkdown,
     renderPrReviewMarkdown,
+    sessionNames,
 } from "@app/gitlab/lib/pr-review-output";
 import type { DraftSummary } from "@app/gitlab/lib/review-drafts";
 import { collectThreadContext, type Discussion } from "@app/gitlab/lib/review-render";
@@ -496,7 +500,7 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
           Run them in the MR checkout. All must exit 0 before a verdict says the MR is clean.
 
           \`\`\`bash
-          cd <checkout>
+          cd -- '<checkout>' || exit 1
           # types
           bunx tsgo --noEmit
           \`\`\`
@@ -565,8 +569,34 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
             primeDetection(null);
             const md = renderPrReviewMarkdown(parallelFacts());
 
-            expect(md).toContain('cd /work/app\n# Type check\ntsgo --noEmit "$X"');
+            expect(md).toContain('cd -- /work/app || exit 1\n# Type check\ntsgo --noEmit "$X"');
             expect(md).not.toContain("task run");
+        });
+
+        test("a checkout path with a space or a shell character is quoted in both scripts", () => {
+            const odd = { ...parallelFacts(), repoPath: "/work/My Project", worktree: "/work/My Project" };
+
+            primeDetection(null);
+            expect(renderPrReviewMarkdown(odd)).toContain("cd -- '/work/My Project' || exit 1\n");
+            primeDetection("/opt/gt/tools");
+            expect(renderPrReviewMarkdown(odd)).toContain("cd -- '/work/My Project' || exit 1\nP=");
+        });
+
+        test("session names stay unique when a label collides with a suffixed one", () => {
+            const gate = (label: string): PrReviewGate => ({
+                label,
+                command: "true",
+                files: [],
+                tests: [],
+                note: null,
+            });
+
+            expect(sessionNames([gate("unit"), gate("unit"), gate("unit-2"), gate("Unit!")])).toEqual([
+                "unit",
+                "unit-2",
+                "unit-2-2",
+                "unit-3",
+            ]);
         });
     });
 
@@ -761,7 +791,7 @@ describe("pending drafts in full", () => {
 });
 
 describe("the git impact source", () => {
-    test("fetches the open branches and finds an import of a removed module in a local diff", async () => {
+    test("fetches the open MR heads and finds an import of a removed module in a local diff", async () => {
         const root = realpathSync(mkdtempSync(join(tmpdir(), "gt-impact-git-")));
         const origin = join(root, "origin");
         const repo = join(root, "clone");
@@ -780,7 +810,11 @@ describe("the git impact source", () => {
         await write("src/feature.ts", 'import { x } from "./old";\nexport const y = x;\n');
         run(origin, "add", ".");
         run(origin, "commit", "-q", "-m", "other");
+        // GitLab publishes every MR head, a fork's too, as refs/merge-requests/<iid>/head on the target
+        // project. The branch of the same name here holds unrelated code, as a fork's branch name can.
+        run(origin, "update-ref", "refs/merge-requests/51/head", "HEAD");
         run(origin, "checkout", "-q", "main");
+        run(origin, "branch", "-q", "-f", "feature/other", "main");
         spawnSync("git", ["clone", "-q", origin, repo], { env: process.env });
 
         const mr = (iid: number, source: string): RawMergeRequest => ({
@@ -824,7 +858,11 @@ describe("the git impact source", () => {
             expect(facts.impact?.map((entry) => [entry.iid, entry.imports[0]?.specifier])).toEqual([[51, "src/old"]]);
             expect(facts.impactScanned).toBe(1);
             expect(requested).not.toContain("/api/v4/projects/group%2Fapp/merge_requests/51/diffs");
-            expect(run(repo, "rev-parse", "--verify", "origin/feature/other").status).toBe(0);
+            expect(run(repo, "rev-parse", "--verify", "origin/merge-requests/51").status).toBe(0);
+
+            // A fetch past its deadline fails its refs and is not retried one ref at a time.
+            const stalled = fetchRefs(repo, [branchRef("main"), branchRef("feature/other")], 1);
+            expect(stalled).toEqual({ failed: ["main", "feature/other"], timedOut: true });
 
             const noCheckout = await collectPrReviewFacts({ api, iid: 42, repoPath: null, impactSource: "git" });
             expect(noCheckout.impact).toBeNull();

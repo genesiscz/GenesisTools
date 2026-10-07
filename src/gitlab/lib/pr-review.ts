@@ -3,7 +3,8 @@
  * reviewer reads code instead of assembling context. The MR, its diff with new-side (and old-side)
  * line numbers, the threads that already exist, my pending drafts, the other open MRs that break or
  * conflict when this one lands, and the configured gates. Read-only on GitLab. Read-only on git
- * too, except the `git` impact source, which fetches the open branches into `refs/remotes/origin/*`.
+ * too, except the `git` impact source, which fetches the open MR heads and their target branches
+ * into `refs/remotes/origin/*`.
  *
  * `fetch-review` is the other direction (threads someone left on MY MR).
  */
@@ -541,27 +542,96 @@ function localDiff({
 }
 
 const FETCH_CHUNK = 40;
+const FETCH_TIMEOUT_MS = 120_000;
 
-/** `git fetch origin` of these branches into `refs/remotes/origin/*`, in chunks; returns the ones that failed. */
-export function fetchBranches(repoPath: string, branches: string[]): string[] {
-    const refspec = (branch: string): string => `+refs/heads/${branch}:refs/remotes/origin/${branch}`;
+/** A ref on `origin` and the name under `refs/remotes/origin/` it is fetched into. */
+export interface FetchRef {
+    remote: string;
+    local: string;
+}
+
+export function branchRef(branch: string): FetchRef {
+    return { remote: `refs/heads/${branch}`, local: branch };
+}
+
+/**
+ * An MR's head as the target project publishes it. GitLab keeps `refs/merge-requests/<iid>/head`
+ * on the target project for every MR, one from a fork included, so this is the MR's own code even
+ * when its source branch lives in another project or shares its name with a branch here.
+ */
+export function mrHeadRef(iid: number): FetchRef {
+    return { remote: `refs/merge-requests/${iid}/head`, local: `merge-requests/${iid}` };
+}
+
+type FetchOutcome = "ok" | "failed" | "timeout";
+
+function gitFetch(repoPath: string, refspecs: string[], timeoutMs: number): FetchOutcome {
+    try {
+        const result = Bun.spawnSync(["git", "fetch", "origin", "--quiet", ...refspecs], {
+            cwd: repoPath,
+            stdout: "pipe",
+            stderr: "pipe",
+            timeout: timeoutMs,
+        });
+
+        if (result.exitedDueToTimeout) {
+            log.warn({ repoPath, refs: refspecs.length, timeoutMs }, "git fetch timed out");
+            return "timeout";
+        }
+
+        return result.exitCode === 0 ? "ok" : "failed";
+    } catch (error) {
+        log.debug({ error, repoPath }, "git fetch spawn failed");
+        return "failed";
+    }
+}
+
+/**
+ * `git fetch origin` of these refs, in chunks; returns the `local` names that failed. Every fetch
+ * has a deadline, so a stalled remote or credential helper fails its refs instead of hanging the
+ * review, and a chunk that timed out is not retried ref by ref.
+ */
+export function fetchRefs(
+    repoPath: string,
+    refs: FetchRef[],
+    timeoutMs = FETCH_TIMEOUT_MS
+): { failed: string[]; timedOut: boolean } {
+    const refspec = (ref: FetchRef): string => `+${ref.remote}:refs/remotes/origin/${ref.local}`;
     const failed: string[] = [];
+    let timedOut = false;
 
-    for (let i = 0; i < branches.length; i += FETCH_CHUNK) {
-        const chunk = branches.slice(i, i + FETCH_CHUNK);
+    for (let i = 0; i < refs.length; i += FETCH_CHUNK) {
+        const chunk = refs.slice(i, i + FETCH_CHUNK);
+        const outcome = timedOut ? "timeout" : gitFetch(repoPath, chunk.map(refspec), timeoutMs);
 
-        if (gitResult(repoPath, ["fetch", "origin", "--quiet", ...chunk.map(refspec)]).exitCode === 0) {
+        if (outcome === "ok") {
             continue;
         }
 
-        for (const branch of chunk) {
-            if (gitResult(repoPath, ["fetch", "origin", "--quiet", refspec(branch)]).exitCode !== 0) {
-                failed.push(branch);
+        if (outcome === "timeout") {
+            timedOut = true;
+            failed.push(...chunk.map((ref) => ref.local));
+            continue;
+        }
+
+        for (const ref of chunk) {
+            const single = timedOut ? "timeout" : gitFetch(repoPath, [refspec(ref)], timeoutMs);
+
+            if (single === "timeout") {
+                timedOut = true;
+            }
+
+            if (single !== "ok") {
+                failed.push(ref.local);
             }
         }
     }
 
-    return failed;
+    return { failed, timedOut };
+}
+
+function fetchFailureNote(timedOut: boolean, timeoutMs = FETCH_TIMEOUT_MS): string {
+    return timedOut ? ` (a fetch timed out after ${timeoutMs / 1000} s)` : "";
 }
 
 /** The diff an MR branch adds over its target, from the fetched remote refs, without context lines. */
@@ -698,9 +768,14 @@ async function scanOpenMrsGit({
 
     const open = await restGetPaginated<RawMergeRequest>(api, `${projectBase(api)}/merge_requests?state=opened`);
     const others = open.filter((mr) => mr.iid !== self.iid && mr.source_branch !== self.target_branch);
-    const failed = new Set(
-        fetchBranches(repoPath, [...new Set(others.flatMap((mr) => [mr.source_branch, mr.target_branch]))])
-    );
+    const wanted = new Map<string, FetchRef>();
+
+    for (const ref of others.flatMap((mr) => [mrHeadRef(mr.iid), branchRef(mr.target_branch)])) {
+        wanted.set(ref.local, ref);
+    }
+
+    const fetched = fetchRefs(repoPath, [...wanted.values()]);
+    const failed = new Set(fetched.failed);
     const specifiers = removedModules(files);
     const changedPaths = new Set(files.map((file) => file.path));
     const entries: ImpactEntry[] = [];
@@ -708,16 +783,18 @@ async function scanOpenMrsGit({
 
     if (failed.size > 0) {
         warnings.push(
-            `impact: could not fetch ${failed.size} branch(es), their MRs are skipped: ${[...failed].slice(0, 5).join(", ")}`
+            `impact: could not fetch ${failed.size} ref(s)${fetchFailureNote(fetched.timedOut)}, their MRs are skipped: ${[...failed].slice(0, 5).join(", ")}`
         );
     }
 
     for (const other of others) {
-        if (failed.has(other.source_branch) || failed.has(other.target_branch)) {
+        const head = mrHeadRef(other.iid).local;
+
+        if (failed.has(head) || failed.has(other.target_branch)) {
             continue;
         }
 
-        const otherFiles = branchDiff(repoPath, other.target_branch, other.source_branch);
+        const otherFiles = branchDiff(repoPath, other.target_branch, head);
 
         if (!otherFiles) {
             warnings.push(`impact: !${other.iid} git diff failed, skipped`);
@@ -761,10 +838,12 @@ export async function collectPrReviewFacts(options: CollectOptions): Promise<PrR
     const impactSource = options.impactSource ?? "api";
 
     if (repoPath && impactSource === "git" && options.impact !== false) {
-        const failed = fetchBranches(repoPath, [mr.source_branch, mr.target_branch]);
+        const fetched = fetchRefs(repoPath, [mrHeadRef(mr.iid), branchRef(mr.target_branch)]);
 
-        if (failed.length > 0) {
-            warnings.push(`git fetch failed for ${failed.join(", ")}; using the refs already on disk`);
+        if (fetched.failed.length > 0) {
+            warnings.push(
+                `git fetch failed for ${fetched.failed.join(", ")}${fetchFailureNote(fetched.timedOut)}; using the refs already on disk`
+            );
         }
     }
 

@@ -20,6 +20,7 @@ import { type Discussion, type RenderMarkdownOpts, threadSections } from "@app/g
 import { detectGenesisTools } from "@genesiscz/utils/cli/genesis-tools";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type BlockInput, json2md } from "@genesiscz/utils/json2md";
+import { shellWord } from "@genesiscz/utils/shell/quote";
 
 const pad = (n: number): string => String(n).padStart(2, "0");
 
@@ -205,9 +206,13 @@ function impactBlocks(facts: PrReviewFacts): BlockInput {
     ];
 }
 
-/** A `tools task` session name per gate label, unique within the block. */
-function sessionNames(gates: PrReviewGate[]): string[] {
-    const seen = new Map<string, number>();
+/**
+ * A `tools task` session name per gate label, unique within the block. Checked against every name
+ * already given out, suffixed ones included: labels `unit`, `unit`, `unit-2` must not yield two
+ * `unit-2` sessions, which `task run` would share.
+ */
+export function sessionNames(gates: PrReviewGate[]): string[] {
+    const used = new Set<string>();
 
     return gates.map((gate) => {
         const base =
@@ -215,11 +220,21 @@ function sessionNames(gates: PrReviewGate[]): string[] {
                 .toLowerCase()
                 .replace(/[^a-z0-9]+/g, "-")
                 .replace(/^-+|-+$/g, "") || "gate";
-        const count = (seen.get(base) ?? 0) + 1;
-        seen.set(base, count);
+        let name = base;
 
-        return count === 1 ? base : `${base}-${count}`;
+        for (let n = 2; used.has(name); n++) {
+            name = `${base}-${n}`;
+        }
+
+        used.add(name);
+
+        return name;
     });
+}
+
+/** The first line of a gate script: a checkout that cannot be entered stops it before any gate runs elsewhere. */
+function enterCheckout(root: string): string {
+    return `cd -- ${shellWord(root)} || exit 1`;
 }
 
 function doubleQuoted(command: string): string {
@@ -227,7 +242,7 @@ function doubleQuoted(command: string): string {
 }
 
 function listedGates(root: string, gates: PrReviewGate[]): string {
-    return [`cd ${root}`, ...gates.flatMap((gate) => [`# ${gate.label}`, gate.command])].join("\n");
+    return [enterCheckout(root), ...gates.flatMap((gate) => [`# ${gate.label}`, gate.command])].join("\n");
 }
 
 /**
@@ -242,7 +257,7 @@ function parallelRunner(root: string, gates: PrReviewGate[]): string {
     }
 
     const sessions = sessionNames(gates);
-    const lines = [`cd ${root}`, 'P=$(basename "$PWD"); pids=()'];
+    const lines = [enterCheckout(root), 'P=$(basename "$PWD"); pids=()'];
     const cmd = doubleQuoted(bin);
 
     gates.forEach((gate, i) => {
