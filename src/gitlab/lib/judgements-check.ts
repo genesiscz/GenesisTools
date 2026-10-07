@@ -12,7 +12,10 @@ import {
     badgeOf,
     type JudgementItem,
     type Judgements,
+    type JudgementsJson,
+    judgementsToJson,
     parseAnchor,
+    parseJudgements,
     verdictOf,
 } from "@app/gitlab/lib/judgements";
 import type { DiffFile } from "@app/gitlab/lib/pr-review";
@@ -140,6 +143,24 @@ export function skeletonText(input: SkeletonInput): string {
     );
 
     return lines.join("\n");
+}
+
+/** The skeleton in JSON: the same items; each `Action` lists its choices until it is filled. */
+export function skeletonJson(input: SkeletonInput): JudgementsJson {
+    const json = judgementsToJson(parseJudgements(skeletonText(input)), {
+        mr: input.iid,
+        mode: input.mode,
+        head: input.headSha.slice(0, 10),
+    });
+
+    return {
+        ...json,
+        overall: "",
+        items: json.items.map((item) => ({
+            ...item,
+            fields: { ...item.fields, Action: ACTIONS[item.id[0] as keyof typeof ACTIONS].join(" | ") },
+        })),
+    };
 }
 
 // ─── check ─────────────────────────────────────────────────────────────────────
@@ -309,6 +330,14 @@ export function checkJudgements(input: CheckInput): CheckResult {
     const warnings: CheckProblem[] = [];
     const known = new Map(input.known.map((item) => [item.id, item]));
     const seen = new Set<string>();
+
+    for (const warning of input.judgements.warnings) {
+        (warning.severity === "error" ? errors : warnings).push({
+            id: warning.id,
+            line: warning.line,
+            message: warning.message,
+        });
+    }
 
     for (const item of input.judgements.items) {
         if (seen.has(item.id)) {

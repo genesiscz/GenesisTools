@@ -18,8 +18,8 @@ import { pickMode } from "@app/gitlab/commands/pr-review";
 import { progress, type TargetOptions, withProject } from "@app/gitlab/commands/shared";
 import { resolveProjectApi } from "@app/gitlab/lib/client";
 import { loadConfig } from "@app/gitlab/lib/config";
-import { parseJudgements } from "@app/gitlab/lib/judgements";
-import { checkJudgements, skeletonText } from "@app/gitlab/lib/judgements-check";
+import { parseJudgementsFile } from "@app/gitlab/lib/judgements";
+import { checkJudgements, skeletonJson, skeletonText } from "@app/gitlab/lib/judgements-check";
 import {
     alreadyPosted,
     describeStep,
@@ -55,11 +55,14 @@ import {
 import { judgementsPath, reviewItems } from "@app/gitlab/lib/review-items";
 import { collectThreadContext } from "@app/gitlab/lib/review-render";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 interface JudgementOptions extends TargetOptions {
     file?: string;
+    format?: string;
+    print?: boolean;
     receive?: boolean;
     give?: boolean;
     force?: boolean;
@@ -101,6 +104,8 @@ export function registerReviewJudgements(review: Command): void {
             .command("skeleton")
             .description("Write the judgements file: every judgeable item's heading and empty fields")
             .option("--force", "Overwrite an existing file")
+            .option("--format <md|json>", "md (default) or json; a --file ending in .json picks json")
+            .option("--print", "Print the skeleton instead of writing the file")
     ).action(runSkeleton);
 
     withJudgementFile(
@@ -140,14 +145,29 @@ async function target(iid: string, opts: JudgementOptions) {
 }
 
 async function runSkeleton(iid: string, opts: JudgementOptions): Promise<void> {
-    const { api, mode, file } = await target(iid, opts);
+    const format = opts.format ?? (opts.file?.toLowerCase().endsWith(".json") ? "json" : "md");
 
-    if (existsSync(file) && !opts.force) {
+    if (format !== "md" && format !== "json") {
+        throw new Error(`--format must be md or json, got "${format}".`);
+    }
+
+    const { api, mode, file: given } = await target(iid, opts);
+    const file = format === "json" && !opts.file ? given.replace(/\.md$/, ".json") : given;
+
+    if (!opts.print && existsSync(file) && !opts.force) {
         throw new Error(`${file} exists; pass --force to start over, or edit it.`);
     }
 
     const items = await reviewItems(api, Number(iid), mode);
-    writeFileSync(file, skeletonText({ iid: Number(iid), mode, headSha: items.headSha, items: items.known }));
+    const input = { iid: Number(iid), mode, headSha: items.headSha, items: items.known };
+    const body = format === "json" ? `${SafeJSON.stringify(skeletonJson(input), null, 2)}\n` : skeletonText(input);
+
+    if (opts.print) {
+        out.print(body);
+        return;
+    }
+
+    writeFileSync(file, body);
     progress(`ℹ  ${items.known.length} item(s) to judge → ${file}`);
     progress(`ℹ  then: ${toolCommand("gitlab pr", iid, "review", "check", `--${mode}`, "--file", file)}`);
 }
@@ -167,7 +187,7 @@ async function runCheck(iid: string, opts: JudgementOptions): Promise<void> {
         loadConfig(),
     ]);
     const result = checkJudgements({
-        judgements: parseJudgements(readFileSync(file, "utf-8")),
+        judgements: parseJudgementsFile(readFileSync(file, "utf-8"), file),
         known: items.known,
         files,
         rules: config.review.draftRules,
@@ -277,7 +297,7 @@ async function runRender(iid: string, opts: RenderOptions): Promise<void> {
         );
     }
 
-    const judgements = parseJudgements(readFileSync(file, "utf-8"));
+    const judgements = parseJudgementsFile(readFileSync(file, "utf-8"), file);
     const ctx = await renderContext(iid, mode, opts, api);
 
     if (opts.proposal) {
@@ -391,7 +411,7 @@ async function runPost(iid: string, opts: PostOptions): Promise<void> {
         );
     }
 
-    const judgements = parseJudgements(readFileSync(file, "utf-8"));
+    const judgements = parseJudgementsFile(readFileSync(file, "utf-8"), file);
     const [items, files, config] = await Promise.all([
         reviewItems(api, Number(iid), mode),
         fetchMrDiffs(api, Number(iid)),

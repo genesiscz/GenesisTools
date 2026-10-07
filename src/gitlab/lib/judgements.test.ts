@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { parseAnchor, parseJudgements } from "./judgements";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { judgementsToJson, parseAnchor, parseJudgements, parseJudgementsFile } from "./judgements";
 import { type CheckInput, checkJudgements, type KnownItem, skeletonText } from "./judgements-check";
 import { parseUnifiedDiff } from "./pr-review";
 
@@ -205,5 +206,171 @@ describe("judgements", () => {
         });
         expect(parseAnchor("top")).toMatchObject({ top: true });
         expect(typeof parseAnchor("src/a.ts line 44")).toBe("string");
+    });
+});
+
+/** What a judgements file means, for comparing a hand-edited copy with the original. */
+function meaning(text: string, path = "judgements.md") {
+    const parsed = parseJudgementsFile(text, path);
+
+    return {
+        header: Object.fromEntries(parsed.header),
+        items: parsed.items
+            .map((item) => ({
+                id: item.id,
+                pair: item.pair,
+                fields: Object.fromEntries([...item.fields].filter(([, value]) => value !== "")),
+                bullets: Object.fromEntries(item.bullets),
+                fences: Object.fromEntries(item.fences),
+            }))
+            .sort((a, b) => a.id.localeCompare(b.id)),
+    };
+}
+
+describe("a judgements file edited by hand", () => {
+    const original = meaning(GOOD);
+    const errorsOf = (text: string, path?: string) =>
+        checkJudgements({
+            judgements: parseJudgementsFile(text, path),
+            known: KNOWN,
+            files: FILES,
+            rules: RULES,
+        }).errors.map((e) => `${e.id}: ${e.message}`);
+    const warningsOf = (text: string) =>
+        checkJudgements({ judgements: parseJudgements(text), known: KNOWN, files: FILES, rules: RULES }).warnings.map(
+            (w) => `${w.id}: ${w.message}`
+        );
+
+    const repaired: Array<[string, (text: string) => string]> = [
+        ["Windows line ends", (t) => t.replace(/\n/g, "\r\n")],
+        ["a byte-order mark", (t) => `﻿${t}`],
+        ["item headings at level 2", (t) => t.replace("# T01", "## T01").replace("# N01", "### N01")],
+        ["a lower-case, unpadded id", (t) => t.replace("# T01 ", "# t1 ")],
+        [
+            "keys in bold",
+            (t) =>
+                t.replace("- Verdict: Valid", "- **Verdict:** Valid").replace("- Action: reply", "- **Action**: reply"),
+        ],
+        [
+            "star and plus bullets",
+            (t) =>
+                t.replace("- Verdict: Valid", "* Verdict: Valid").replace("- Proposal: Accept", "+ Proposal: Accept"),
+        ],
+        ["a lower-case key", (t) => t.replace("- Verdict: Bug", "- verdict: Bug")],
+        ["the action in backticks and capitals", (t) => t.replace("- Action: reply", "- Action: `Reply`")],
+        [
+            "a longer fence",
+            (t) =>
+                t
+                    .replace("```markdown\nDobrej", "````markdown\nDobrej")
+                    .replace("opravím to.\n```", "opravím to.\n````"),
+        ],
+        [
+            "a tilde fence",
+            (t) =>
+                t.replace("```markdown\nDobrej", "~~~markdown\nDobrej").replace("opravím to.\n```", "opravím to.\n~~~"),
+        ],
+        [
+            "the text indented by three spaces, as the render shows it",
+            (t) => t.replace("\nDobrej catch", "\n   Dobrej catch"),
+        ],
+        ["blank lines and trailing spaces", (t) => t.replace(/\n/g, "  \n").replace("# N01", "\n\n# N01")],
+        [
+            "the items in another order",
+            (t) => {
+                const at = t.indexOf("# N01");
+                const end = t.indexOf("# Checked");
+                return (
+                    t.slice(0, t.indexOf("# T01")) + t.slice(at, end) + t.slice(t.indexOf("# T01"), at) + t.slice(end)
+                );
+            },
+        ],
+        [
+            "an edited title",
+            (t) => t.replace("# T01 The lock stays off ·", "# T01 Lock off while the browser is open ·"),
+        ],
+        [
+            "rationale bullets indented by a tab",
+            (t) => t.replace("  - The guard", "\t- The guard").replace("  - Second", "\t- Second"),
+        ],
+        [
+            "an HTML comment between fields",
+            (t) => t.replace("- Proposal: Accept", "<!-- checked twice -->\n- Proposal: Accept"),
+        ],
+    ];
+
+    for (const [name, mutate] of repaired) {
+        test(`reads the same after: ${name}`, () => {
+            expect(meaning(mutate(GOOD))).toEqual(original);
+            expect(errorsOf(mutate(GOOD))).toEqual([]);
+        });
+    }
+
+    test("a reply left as plain lines, not in a fence, is read and reported", () => {
+        const plain = GOOD.replace("```markdown\nDobrej catch, opravím to.\n```", "Dobrej catch, opravím to.");
+
+        expect(meaning(plain)).toEqual(original);
+        expect(warningsOf(plain)).toContain(
+            'T01: the text under "Proposed draft reply" is not in a fence; it is read as written'
+        );
+    });
+
+    test("an alias key is read under its real name and reported", () => {
+        const aliased = GOOD.replace("- Proposed draft reply:", "- Draft reply:");
+
+        expect(meaning(aliased)).toEqual(original);
+        expect(warningsOf(aliased)).toContain('T01: "Draft reply" read as "Proposed draft reply"');
+    });
+
+    test("an unclosed fence is an error, because everything after it would be posted", () => {
+        const unclosed = GOOD.replace("opravím to.\n```", "opravím to.");
+
+        expect(
+            errorsOf(unclosed).some((e) => e.includes('holds the heading "# N01 Early return skips the cleanup"'))
+        ).toBe(true);
+        expect(errorsOf(GOOD.replace("Tady se vrací dřív, než proběhne úklid.\n```", "Tady se vrací dřív."))).toContain(
+            'N01: the fence under "Proposed draft comment" is never closed, so everything after it would be posted'
+        );
+    });
+
+    test("an id used twice, a changed discussion id and an unfilled action are errors", () => {
+        expect(
+            errorsOf(`${GOOD}\n\n# T01 Again · discussion 0539a97f\n- Verdict: Valid [90%]\n- Action: none`)
+        ).toContain("T01: this id appears twice; merge the two blocks");
+        expect(errorsOf(GOOD.replace("discussion 0539a97f", "discussion 0539a970"))[0]).toContain(
+            "the heading says discussion 0539a970"
+        );
+        expect(errorsOf(GOOD.replace("- Action: reply", "- Action: reply | reply-resolve | none"))).toContain(
+            'T01: Action must be one of reply, reply-resolve, none, got ""'
+        );
+    });
+
+    test("a misspelled key is reported, and the item it leaves without a verdict is not judged", () => {
+        const misspelled = GOOD.replace("- Verdict: Valid", "- Verdikt: Valid");
+
+        expect(warningsOf(misspelled).some((w) => w.startsWith('T01: unknown field "Verdikt"'))).toBe(true);
+        expect(warningsOf(misspelled)).toContain("T01: not judged (no verdict); it will be left out");
+    });
+
+    test("a heading that lost its id leaves the thread without a block, and says so", () => {
+        expect(warningsOf(GOOD.replace("# T01 The lock", "# The lock"))).toContain(
+            "T01: this thread has no block in the file"
+        );
+    });
+
+    test("the JSON form reads the same, and broken JSON is repaired with a warning", () => {
+        const json = SafeJSON.stringify(judgementsToJson(parseJudgements(GOOD)), null, 2);
+
+        expect(meaning(json, "judgements.json")).toEqual(original);
+        expect(errorsOf(json, "judgements.json")).toEqual([]);
+
+        const broken = json.replace(/"\n(\s*)\}/, '",\n$1}');
+        const parsed = parseJudgementsFile(broken, "judgements.json");
+
+        expect(meaning(broken, "judgements.json")).toEqual(original);
+        expect(parsed.warnings.map((w) => w.message)).toContain(
+            "the JSON was broken and was repaired; check the texts read as meant"
+        );
+        expect(errorsOf("not json at all {", "judgements.json")[0]).toContain("the JSON needs an `items` array");
     });
 });
