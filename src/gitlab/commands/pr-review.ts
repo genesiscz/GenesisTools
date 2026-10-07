@@ -225,7 +225,7 @@ export function registerPrReview(pr: Command): Command {
 /** The mode the flags ask for, or by authorship: the token's owner wrote the MR → receive. */
 export async function pickMode(
     iid: string,
-    opts: TargetOptions & { receive?: boolean; give?: boolean; cwd?: string; repo?: string }
+    opts: TargetOptions & { receive?: boolean; give?: boolean; cwd?: string; repo?: string; api?: ProjectApi }
 ): Promise<"receive" | "give"> {
     if (opts.receive && opts.give) {
         throw new Error("Pick one: --receive (threads on my MR) or --give (someone else's MR).");
@@ -239,7 +239,15 @@ export async function pickMode(
         throw new Error(`The MR iid must be a positive integer; got "${iid}".`);
     }
 
-    const api = await resolveProjectApi({ host: opts.host, project: opts.project, cwd: opts.cwd ?? opts.repo });
+    // The project the run itself uses: both modes resolve with a checkout, so origin wins over the
+    // configured default here too. A caller that already resolved its project passes it.
+    const api =
+        opts.api ??
+        (await resolveProjectApi({
+            host: opts.host,
+            project: opts.project,
+            cwd: resolve(opts.cwd ?? opts.repo ?? process.cwd()),
+        }));
     const [mr, me] = await Promise.all([fetchMr(api, Number(iid)), currentUser(api)]);
     const mode = mr.author.username === me.username ? "receive" : "give";
     progress(
