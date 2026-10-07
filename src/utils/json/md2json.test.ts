@@ -43,10 +43,13 @@ describe("md2json", () => {
     });
 
     test("a missing closing fence is reported, whether it runs to the end or swallows a later heading", () => {
+        expect(md2json("# A\n- T:\n```\nopen").warnings[0]).toMatchObject({ unclosedFence: true });
         expect(md2json("# A\n- T:\n```\nopen").warnings[0]?.message).toContain("never closed");
-        expect(md2json("# A\n- T:\n```\ntext\n# B\n- U:\n```\n").warnings[0]?.message).toBe(
-            'the fence opened here holds the heading "# B" (line 5); its closing fence is probably missing'
-        );
+        expect(md2json("# A\n- T:\n```\ntext\n# B\n- U:\n```\n").warnings[0]).toEqual({
+            line: 3,
+            message: 'the fence opened here holds the heading "# B" (line 5); its closing fence is probably missing',
+            fencedHeading: "B",
+        });
     });
 
     test("dedent removes only the common indentation", () => {

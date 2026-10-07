@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { judgementsToJson, parseAnchor, parseJudgements, parseJudgementsFile } from "./judgements";
+import { judgementsToJson, parseAnchor, parseJudgements, parseJudgementsFile, reportPathFor } from "./judgements";
 import { type CheckInput, checkJudgements, type KnownItem, skeletonText } from "./judgements-check";
 import { parseUnifiedDiff } from "./pr-review";
 
@@ -141,6 +141,31 @@ describe("judgements", () => {
         );
     });
 
+    test("a judged item needs its pair, of the right kind, and a draft id matches only in full", () => {
+        expect(check(GOOD.replace(" · discussion 0539a97f", "")).errors[0]?.message).toContain(
+            "the heading lost its `discussion …` pair"
+        );
+        expect(check(GOOD.replace("discussion 0539a97f", "draft 0539")).errors[0]?.message).toContain(
+            "the heading says draft 0539, but T01 is discussion"
+        );
+
+        const draft = [
+            "# D01 Is this still needed · draft 2297 · src/lock.ts:2",
+            "- Verdict on the comment: Wrong [90%]",
+            "- Action: delete",
+        ].join("\n");
+
+        expect(check(draft).errors[0]?.message).toContain("the heading says draft 2297, but D01 is draft 22970");
+        expect(check(draft.replace("draft 2297 ", "draft 22970 ")).errors).toEqual([]);
+    });
+
+    test("the rendered report goes beside the judgements file, never over it", () => {
+        expect(reportPathFor("notes/MR42-judgements.md")).toBe("notes/MR42-report.md");
+        expect(reportPathFor("notes/MR42-judgements.json")).toBe("notes/MR42-report.md");
+        expect(reportPathFor("notes/MR42.JSON")).toBe("notes/MR42-report.md");
+        expect(reportPathFor("notes/MR42")).toBe("notes/MR42-report.md");
+    });
+
     test("the configured house rules hold for text that goes to the MR", () => {
         const text = GOOD.replace("Dobrej catch, opravím to.", "Kontrakt se rozbije — opravím.");
         const messages = check(text).errors.map((e) => e.message);
@@ -182,10 +207,13 @@ describe("judgements", () => {
                 text,
                 "```",
             ].join("\n");
-        const yours: KnownItem = { ...KNOWN[1], id: "Y01", kind: "Y", pair: { kind: "discussion", value: "abc" } };
+        const yours: KnownItem = { ...KNOWN[1], id: "Y01", kind: "Y", pair: { kind: "discussion", value: "abc123" } };
         const input = (text: string): CheckInput => ({
             judgements: parseJudgements(
-                reply(text).replace("# D01", "# Y01").replace("draft 22970", "discussion abc").replace("keep", "reply")
+                reply(text)
+                    .replace("# D01", "# Y01")
+                    .replace("draft 22970", "discussion abc123")
+                    .replace("keep", "reply")
             ),
             known: [yours],
             files: FILES,
@@ -320,6 +348,13 @@ describe("a judgements file edited by hand", () => {
 
         expect(meaning(aliased)).toEqual(original);
         expect(warningsOf(aliased)).toContain('T01: "Draft reply" read as "Proposed draft reply"');
+    });
+
+    test("a heading inside a closed reply fence is the reply's own text: a warning, not an error", () => {
+        const withHeading = GOOD.replace("Dobrej catch, opravím to.", "Dobrej catch.\n\n## Explanation\n\nOpravím to.");
+
+        expect(errorsOf(withHeading)).toEqual([]);
+        expect(warningsOf(withHeading).some((w) => w.includes("its closing fence is probably missing"))).toBe(true);
     });
 
     test("an unclosed fence is an error, because everything after it would be posted", () => {

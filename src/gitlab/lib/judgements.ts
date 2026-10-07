@@ -242,8 +242,13 @@ function itemFromSection(section: MdSection, warnings: JudgementWarning[]): Judg
 /** A judgements file in markdown (the skeleton's form), hand edits tolerated where the meaning stays clear. */
 export function parseJudgements(text: string): Judgements {
     const doc = md2json(text);
+    // An unclosed fence, or a closed one that holds a judgement item's heading, swallowed the items after
+    // it: an error. Any other heading inside a fence (`## Explanation` in a reply) stays a warning.
     const warnings: JudgementWarning[] = doc.warnings.map((w) => ({
-        severity: "warning",
+        severity:
+            w.unclosedFence || (w.fencedHeading !== undefined && ITEM_TITLE.test(w.fencedHeading))
+                ? "error"
+                : "warning",
         id: "file",
         line: w.line,
         message: w.message,
@@ -270,13 +275,6 @@ export function parseJudgements(text: string): Judgements {
 
         sections.set(section.title.trim(), section.body);
     });
-
-    // A fence the reader never closed swallowed the headings after it: say which ones.
-    for (const warning of warnings) {
-        if (/never closed|probably missing/.test(warning.message) && warning.severity === "warning") {
-            warning.severity = "error";
-        }
-    }
 
     return { header, items, sections, warnings, format: "md" };
 }
@@ -495,6 +493,13 @@ export function judgementsToJson(
 }
 
 /** A judgements file in either form: `.json` (or text that starts with `{`) is JSON, anything else markdown. */
+/** Where `review render` writes the full layout: beside the judgements file, never over it. */
+export function reportPathFor(file: string): string {
+    const report = file.replace(/(-judgements)?\.(md|json)$/i, "-report.md");
+
+    return report === file ? `${file}-report.md` : report;
+}
+
 export function parseJudgementsFile(text: string, path = ""): Judgements {
     if (!path.toLowerCase().endsWith(".json") && !text.trimStart().startsWith("{")) {
         return parseJudgements(text);

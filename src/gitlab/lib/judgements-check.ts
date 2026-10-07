@@ -372,10 +372,24 @@ export function checkJudgements(input: CheckInput): CheckResult {
                 continue;
             }
 
-            const expected =
-                item.pair?.kind === "draft" && match.publishedFrom ? match.publishedFrom : match.pair.value;
+            if (!item.pair) {
+                errors.push({
+                    id: item.id,
+                    line: item.line,
+                    message: `the heading lost its \`${match.pair.kind} …\` pair, so nothing proves ${item.id} is the same item on this MR; run \`review skeleton\` again`,
+                });
+                continue;
+            }
 
-            if (item.pair && !expected.startsWith(item.pair.value)) {
+            // A published draft's heading still names the draft it was.
+            const published = item.pair.kind === "draft" && match.publishedFrom !== undefined;
+            const expectedKind = published ? "draft" : match.pair.kind;
+            const expected = published ? (match.publishedFrom ?? "") : match.pair.value;
+            // Discussion ids are shown shortened; a draft id is a number and must match exactly.
+            const same =
+                item.pair.kind === "draft" ? expected === item.pair.value : expected.startsWith(item.pair.value);
+
+            if (item.pair.kind !== expectedKind || !same) {
                 errors.push({
                     id: item.id,
                     line: item.line,

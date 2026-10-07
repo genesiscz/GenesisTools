@@ -59,6 +59,10 @@ export interface MdSection {
 export interface MdWarning {
     line: number;
     message: string;
+    /** Set on the warning about a fence that runs to the end of the document. */
+    unclosedFence?: boolean;
+    /** The title of a heading found inside a closed fence, which may mean that fence lost its closer. */
+    fencedHeading?: string;
 }
 
 export interface MdDocument {
@@ -124,6 +128,7 @@ export function md2json(markdown: string): MdDocument {
                 warnings.push({
                     line: i + 1,
                     message: `the fence opened here is never closed; its text runs to the end`,
+                    unclosedFence: true,
                 });
             }
 
@@ -134,6 +139,7 @@ export function md2json(markdown: string): MdDocument {
                 warnings.push({
                     line: i + 1,
                     message: `the fence opened here holds the heading "${fenced[swallowed].trim()}" (line ${i + 2 + swallowed}); its closing fence is probably missing`,
+                    fencedHeading: HEADING.exec(fenced[swallowed])?.[2] ?? fenced[swallowed].trim(),
                 });
             }
 
