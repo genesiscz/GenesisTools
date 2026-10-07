@@ -479,7 +479,7 @@ final class HubTimelineModel: ObservableObject {
             loadDetail(event)
         }
         if event.timelineKind == .session || event.timelineKind == .sessionStart, let id = event.sessionId, spend[id] == nil {
-            loadSpend(sessionId: id, at: event.date ?? Date())
+            loadSpend(sessionId: id, provider: event.provider ?? HubSession.claudeProvider, at: event.date ?? Date())
         }
     }
 
@@ -556,9 +556,11 @@ final class HubTimelineModel: ObservableObject {
     }
 
     /// The list-price estimate the session pane shows, from `tools ai-spend session` (seconds; off the main thread).
-    private func loadSpend(sessionId: String, at: Date) {
+    /// The provider is part of the spend cache key, so the session detail and the inbox share
+    /// this row's estimate instead of fetching it again.
+    private func loadSpend(sessionId: String, provider: String, at: Date) {
         spend[sessionId] = .some(nil)
-        let row = HubSession(sessionId: sessionId, mtime: at.timeIntervalSince1970 * 1000)
+        let row = HubSession(provider: provider, sessionId: sessionId, mtime: at.timeIntervalSince1970 * 1000)
         if let cached = HubSpend.cached(row) {
             spend[sessionId] = cached
             return
