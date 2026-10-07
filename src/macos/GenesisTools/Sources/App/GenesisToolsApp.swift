@@ -31,6 +31,11 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
     private let showWindowImmediately: Bool
     private var window: NSWindow?
 
+    /// A local `.html` file Launch Services handed to this face, or launched it for (LocalFileHandoff).
+    func application(_ application: NSApplication, open urls: [URL]) {
+        LocalFileHandoff.open(urls)
+    }
+
     init(showWindowImmediately: Bool) {
         self.showWindowImmediately = showWindowImmediately
         super.init()

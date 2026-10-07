@@ -155,7 +155,9 @@ private func keepRouterDocumentFree() {
 private let browserLinkApp = BrowserLinkApp()
 
 private final class BrowserLinkApp: NSObject, NSApplicationDelegate {
-    func application(_ sender: NSApplication, openFile filename: String) -> Bool { true }
+    func application(_ application: NSApplication, open urls: [URL]) {
+        LocalFileHandoff.open(urls)
+    }
 
     func application(_ app: NSApplication, shouldRestoreSecureApplicationState coder: NSCoder) -> Bool { false }
 
@@ -279,9 +281,37 @@ private func finishBrowserLink(message: String, failedURL: String?, toast: Route
     quitBrowserLink()
 }
 
+/// A local file macOS handed to this app. Being the default browser makes macOS give it `.html` (and
+/// `.xhtml`, `.webarchive`…) files too; every face used to drop them, the window faces with a modal
+/// "GenesisTools cannot open files in the HTML text format" (2026-10-07). They go to the browser a
+/// failed route falls back to (`fallbackOpenArguments`), without waiting for it.
+enum LocalFileHandoff {
+    static func arguments(for file: URL) -> [String] {
+        fallbackOpenArguments(file.path)
+    }
+
+    /// The file URLs among `urls` go to the browser; returns how many.
+    @discardableResult
+    static func open(_ urls: [URL]) -> Int {
+        let files = urls.filter(\.isFileURL)
+        for file in files {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            task.arguments = arguments(for: file)
+            do {
+                try task.run()
+                HubPerf.log("app.file handed to the browser: \(file.lastPathComponent)")
+            } catch {
+                FileHandle.standardError.write(Data("app: could not hand \(file.path) to a browser: \(error)\n".utf8))
+            }
+        }
+        return files.count
+    }
+}
+
 /// Where a link goes when routing failed: the browser recorded before GenesisTools took http(s), else
 /// Brave when installed, else Safari. Never a link router, which would hand the link straight back.
-private func fallbackOpenArguments(_ url: String) -> [String] {
+func fallbackOpenArguments(_ url: String) -> [String] {
     let recorded = (try? Data(contentsOf: configDirectory().appendingPathComponent("previous.json"))).flatMap { data in
         (try? JSONSerialization.jsonObject(with: data) as? [String: String])?["appPath"]
     }

@@ -368,6 +368,11 @@ func runHub(_ args: [String]) -> Never {
 private final class HubAppDelegate: NSObject, NSApplicationDelegate {
     weak var window: NSWindow?
 
+    /// A local `.html` file Launch Services handed to this running face (LocalFileHandoff).
+    func application(_ application: NSApplication, open urls: [URL]) {
+        LocalFileHandoff.open(urls)
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }

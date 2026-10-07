@@ -172,6 +172,11 @@ func runReview(_ args: [String]) -> Never {
 private final class ReviewAppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow?
 
+    /// A local `.html` file Launch Services handed to this running face (LocalFileHandoff).
+    func application(_ application: NSApplication, open urls: [URL]) {
+        LocalFileHandoff.open(urls)
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
