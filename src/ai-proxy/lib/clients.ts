@@ -40,9 +40,11 @@ export const VALID_PROVIDER_TYPES: ReadonlySet<AiProxyProviderType> = new Set([
 ]);
 
 /**
- * Drops the vault key a failed `clients add` stored, under the config lock: only when no client of
- * that name is in the config and the vault still holds this run's key. Checked outside the lock, a
- * second writer could add the same name in between, and the rollback would delete its live key.
+ * Drops the vault key a failed `clients add` stored, under the config lock: only when no client
+ * has that name or references that vault path, and the vault still holds this run's key (compared
+ * and deleted under the vault lock, so a vault writer that skips the config lock is safe too).
+ * Checked outside the config lock, a second writer could add the client in between, and the
+ * rollback would delete its live key.
  */
 export async function rollbackClientKey({
     name,
@@ -54,19 +56,18 @@ export async function rollbackClientKey({
     name: string;
     path: string;
     key: string;
-    vault: Pick<SecretStore, "get" | "delete">;
+    vault: Pick<SecretStore, "deleteIf">;
     store: { readLocked<T>(fn: (config: AiProxyConfig) => T | Promise<T>): Promise<T> };
 }): Promise<boolean> {
     return store.readLocked(async (config) => {
-        if (config.clients?.some((client) => client.name === name)) {
+        const owned = config.clients?.some(
+            (client) => client.name === name || (isSecureRef(client.key) && client.key.path === path)
+        );
+        if (owned) {
             return false;
         }
 
-        if ((await vault.get(path)) !== key) {
-            return false;
-        }
-
-        return vault.delete(path);
+        return vault.deleteIf(path, key);
     });
 }
 

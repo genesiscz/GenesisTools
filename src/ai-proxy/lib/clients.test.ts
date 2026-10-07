@@ -265,8 +265,11 @@ describe("rollbackClientKey", () => {
     function fixture(clients: AiProxyClientConfig[], stored: string | undefined) {
         const deleted: string[] = [];
         const vault = {
-            get: async () => stored,
-            delete: async (path: string) => {
+            deleteIf: async (path: string, expected: string) => {
+                if (stored !== expected) {
+                    return false;
+                }
+
                 deleted.push(path);
                 return true;
             },
@@ -290,6 +293,9 @@ describe("rollbackClientKey", () => {
         // A second writer overwrote the vault path with its own key.
         const overwritten = fixture([], "o".repeat(24));
         expect(await rollbackClientKey({ name: "side", path: "p/side", key: mine, ...overwritten })).toBe(false);
-        expect([...taken.deleted, ...overwritten.deleted]).toEqual([]);
+        // A client of another name references the stored path.
+        const referenced = fixture([{ name: "work", key: secureRef("p/side") }], mine);
+        expect(await rollbackClientKey({ name: "side", path: "p/side", key: mine, ...referenced })).toBe(false);
+        expect([...taken.deleted, ...overwritten.deleted, ...referenced.deleted]).toEqual([]);
     });
 });
