@@ -9,7 +9,8 @@ import { diffArrays } from "diff";
  * - `changed nearby`: lines inside the context window changed, the anchor line did not.
  * - `changed elsewhere`: only other parts of the file changed; `tipLine` is where the anchor is now.
  * - `deleted`: the file is not at the tip (a rename is reported by the caller as `renamed`).
- * - `unavailable`: the reviewer's version could not be read (a sha gone after a force push).
+ * - `unavailable`: the reviewer's version could not be read (a sha gone after a force push), or the tip's
+ *   (a timeout or a 5xx from the files API; not evidence that the file was deleted).
  */
 export type DivergenceLabel =
     | "unchanged"

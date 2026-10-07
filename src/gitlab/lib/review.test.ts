@@ -20,6 +20,8 @@ import {
     collectUnresolvedAnchorPairs,
     type Discussion,
     fetchAnchorViews,
+    fetchTipViews,
+    fileLines,
     renderMarkdown,
     unresolvedThreads,
 } from "@app/gitlab/lib/review-render";
@@ -349,6 +351,89 @@ describe("fetchAnchorViews", () => {
             server.stop(true);
         }
     });
+
+    test("keeps leading blank lines, so line 3 is still the file's line 3", async () => {
+        const server = Bun.serve({ port: 0, fetch: () => new Response("\n\nline three\n") });
+
+        try {
+            const { views } = await fetchAnchorViews({
+                pairs: new Set(["a1b2c3d4 src/app.ts"]),
+                api: { host: `http://localhost:${server.port}`, token: "t", project: "group/app" },
+                fetchRemote: true,
+                onWarn: () => {},
+                cwd: mkdtempSync(join(tmpdir(), "gt-anchor-")),
+            });
+
+            expect(views.get("a1b2c3d4:src/app.ts")).toEqual(["", "", "line three"]);
+        } finally {
+            server.stop(true);
+        }
+    });
+});
+
+describe("fileLines", () => {
+    test("drops exactly one terminal newline and keeps every other blank line", () => {
+        expect(fileLines("\n  indented\n\n")).toEqual(["", "  indented", ""]);
+        expect(fileLines("a\r\nb\r\n")).toEqual(["a", "b"]);
+        expect(fileLines("no newline")).toEqual(["no newline"]);
+    });
+});
+
+describe("fetchTipViews", () => {
+    const thread = (path: string): Discussion => ({
+        id: path,
+        notes: [
+            {
+                resolvable: true,
+                resolved: false,
+                position: { head_sha: "a1b2c3d4e5f6a7b8", base_sha: "0f0f0f0f0f", new_path: path, new_line: 1 },
+            },
+        ],
+    });
+
+    test("a 404 means the file is not at the tip; any other failure leaves it unknown and warns", async () => {
+        // cwd is not a git checkout, so every tip view goes through the files API.
+        const server = Bun.serve({
+            port: 0,
+            fetch(request) {
+                const path = new URL(request.url).pathname;
+
+                if (path.endsWith("/merge_requests/42")) {
+                    return Response.json({ sha: "ffffeeeedddd" });
+                }
+
+                if (path.includes(encodeURIComponent("src/gone.ts"))) {
+                    return new Response("not found", { status: 404 });
+                }
+
+                if (path.includes(encodeURIComponent("src/locked.ts"))) {
+                    return new Response("forbidden", { status: 403 });
+                }
+
+                return new Response("\nsecond\n");
+            },
+        });
+        const warnings: string[] = [];
+
+        try {
+            const tip = await fetchTipViews({
+                api: { host: `http://localhost:${server.port}`, token: "t", project: "group/app" },
+                iid: "42",
+                cwd: mkdtempSync(join(tmpdir(), "gt-tip-")),
+                discussions: [thread("src/gone.ts"), thread("src/locked.ts"), thread("src/app.ts")],
+                fetchRemote: false,
+                onWarn: (msg) => warnings.push(msg),
+            });
+
+            expect(tip.views.get("src/gone.ts")).toBeNull();
+            expect(tip.views.has("src/locked.ts")).toBe(false);
+            expect([...(tip.unavailable ?? [])]).toEqual(["src/locked.ts"]);
+            expect(tip.views.get("src/app.ts")).toEqual(["", "second"]);
+            expect(warnings).toEqual([expect.stringContaining("src/locked.ts could not be read")]);
+        } finally {
+            server.stop(true);
+        }
+    });
 });
 
 describe("searchMrsByFiles retries", () => {
@@ -584,6 +669,18 @@ describe("review render", () => {
             expect(
                 renderMarkdown(discussions, opts(null, new Map([["a1b2c3d4e5f6a7b8:src/app.ts", "src/main.ts"]]))).md
             ).toContain("· renamed to src/main.ts");
+        });
+
+        test("a tip that could not be read is unavailable, never deleted", () => {
+            const base = opts(null);
+            const { md } = renderMarkdown(discussions, {
+                ...base,
+                tip: { ...base.tip, unavailable: new Set(["src/app.ts"]) },
+            });
+
+            expect(md).toContain("· unavailable (the MR tip's version could not be read)");
+            expect(md).toContain("src/app.ts could not be read at the tip");
+            expect(md).not.toContain("deleted at the tip");
         });
     });
 

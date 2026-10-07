@@ -3,8 +3,8 @@ import { resolve } from "node:path";
 import { type ProjectApi, projectBase, restGet, restGetPaginated, restGetText } from "@app/gitlab/lib/client";
 import { classifyDivergence, type Divergence } from "@app/gitlab/lib/divergence";
 import { fileLink } from "@app/gitlab/lib/file-link";
-import { gitResult } from "@app/gitlab/lib/git";
-import { errorMessage } from "@app/gitlab/lib/http";
+import { gitResult, gitShowFile } from "@app/gitlab/lib/git";
+import { errorMessage, HttpError } from "@app/gitlab/lib/http";
 import { fenceLanguage } from "@app/gitlab/lib/markdown";
 import { type Block, type BlockInput, json2md } from "@genesiscz/utils/json2md";
 import { logger } from "@genesiscz/utils/logger";
@@ -47,6 +47,14 @@ export function unresolvedThreads(discussions: Discussion[]): Discussion[] {
     });
 }
 
+/**
+ * A file's text as lines: exactly one terminal newline removed, nothing else trimmed, so line N here is
+ * GitLab's line N. Git, the files API and the local checkout all go through this, so one file reads the same.
+ */
+export function fileLines(text: string): string[] {
+    return text.replace(/\r?\n$/, "").split(/\r?\n/);
+}
+
 export function readLocalWindow(
     filePath: string,
     start: number,
@@ -57,7 +65,7 @@ export function readLocalWindow(
             return null;
         }
 
-        const all = readFileSync(filePath, "utf-8").split(/\r?\n/);
+        const all = fileLines(readFileSync(filePath, "utf-8"));
         const sliced = all.slice(Math.max(0, start - 1), Math.min(all.length, end));
 
         return { lines: sliced, total: all.length };
@@ -110,6 +118,8 @@ export interface TipViews {
     renames: Map<string, string>;
     /** The checkout is on the MR: HEAD is the tip or descends from it, so a different file there is local work. */
     checkoutFollowsTip: boolean;
+    /** Paths whose tip version could not be read (a timeout, a 5xx, no access): unknown, not deleted. */
+    unavailable?: Set<string>;
 }
 
 export interface RenderMarkdownOpts {
@@ -235,6 +245,11 @@ export function threadDivergence(d: Discussion, opts: RenderMarkdownOpts): Diver
 
     const path = pos.new_path ?? pos.old_path ?? "";
     const renamedTo = tip.renames.get(`${pos.head_sha}:${path}`);
+
+    if (tip.unavailable?.has(renamedTo ?? path)) {
+        return { label: "unavailable", tipLine: null, text: "unavailable (the MR tip's version could not be read)" };
+    }
+
     const tipLines = tip.views.get(renamedTo ?? path) ?? null;
 
     return classifyDivergence({
@@ -279,7 +294,12 @@ function tipThreadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts, t
         },
     ];
 
-    if (tipLines === null) {
+    if (tipLines === null && tip.unavailable?.has(tipPath)) {
+        blocks.push(
+            { h3: `MR tip \`${shortSha(tip.sha)}\`` },
+            `_(${tipPath} could not be read at the tip; the warning above says why)_`
+        );
+    } else if (tipLines === null) {
         blocks.push(
             { h3: `MR tip \`${shortSha(tip.sha)}\`` },
             `_(${file} is not at the tip${tipPath !== file ? `; it is ${tipPath} now` : ""})_`
@@ -584,13 +604,14 @@ export async function fetchTipViews(options: {
     }
 
     const views = new Map<string, string[] | null>();
+    const unavailable = new Set<string>();
 
     await Promise.all(
         [...paths].map(async (path) => {
-            const shown = gitResult(options.cwd, ["show", `${mr.sha}:${path}`]);
+            const shown = gitShowFile(options.cwd, `${mr.sha}:${path}`);
 
-            if (shown.exitCode === 0) {
-                views.set(path, shown.stdout.split(/\r?\n/));
+            if (shown !== null) {
+                views.set(path, fileLines(shown));
 
                 return;
             }
@@ -606,10 +627,18 @@ export async function fetchTipViews(options: {
                     options.api,
                     `${projectBase(options.api)}/repository/files/${encodeURIComponent(path)}/raw?ref=${mr.sha}`
                 );
-                views.set(path, text.trim().split(/\r?\n/));
+                views.set(path, fileLines(text));
             } catch (error) {
-                logger.debug({ error, path }, "gitlab: tip view not found");
-                views.set(path, null);
+                // Only a 404 says the file is not there; a timeout or a 5xx says nothing about it.
+                if (error instanceof HttpError && error.status === 404) {
+                    logger.debug({ path, sha: mr.sha }, "gitlab: tip view not found");
+                    views.set(path, null);
+
+                    return;
+                }
+
+                options.onWarn(`MR tip version of ${path} could not be read: ${errorMessage(error)}`);
+                unavailable.add(path);
             }
         })
     );
@@ -620,7 +649,7 @@ export async function fetchTipViews(options: {
         (head.stdout === mr.sha ||
             gitResult(options.cwd, ["merge-base", "--is-ancestor", mr.sha, "HEAD"]).exitCode === 0);
 
-    return { sha: mr.sha, views, renames, checkoutFollowsTip };
+    return { sha: mr.sha, views, renames, checkoutFollowsTip, unavailable };
 }
 
 export interface AnchorFetchStats {
@@ -647,10 +676,10 @@ export async function fetchAnchorViews(options: {
         const space = key.indexOf(" ");
         const sha = key.slice(0, space);
         const path = key.slice(space + 1);
-        const shown = gitResult(options.cwd, ["show", `${sha}:${path}`]);
+        const shown = gitShowFile(options.cwd, `${sha}:${path}`);
 
-        if (shown.exitCode === 0) {
-            views.set(`${sha}:${path}`, shown.stdout.split(/\r?\n/));
+        if (shown !== null) {
+            views.set(`${sha}:${path}`, fileLines(shown));
             gitHits++;
         } else {
             remaining.push({ sha, path });
@@ -670,7 +699,7 @@ export async function fetchAnchorViews(options: {
                         options.api,
                         `${projectBase(options.api)}/repository/files/${encodeURIComponent(path)}/raw?ref=${sha}`
                     );
-                    views.set(`${sha}:${path}`, text.trim().split(/\r?\n/));
+                    views.set(`${sha}:${path}`, fileLines(text));
                 } catch (error) {
                     options.onWarn(`Anchor fetch failed for ${path}@${sha.slice(0, 10)}: ${errorMessage(error)}`);
                 }
