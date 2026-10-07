@@ -14,9 +14,11 @@ import {
     _resetMcpFetchForTest,
     _setMcpFetchForTest,
     MAX_AUTH_RESPONSE_BYTES,
+    MCP_CREDENTIAL_TIMEOUT_MS,
     mcpFetch,
     readJsonRecord,
 } from "./fetch.ts";
+import { CREDENTIALS_LOCK_WAIT_MS } from "./lock.ts";
 import { secretPath } from "./paths.ts";
 import { deleteServerTokens, readSecret, replaceServerTokens, writeServerTokens } from "./secrets.ts";
 import { readAuthStatus } from "./status.ts";
@@ -276,6 +278,56 @@ describe("accessTokenForRequest", () => {
         expect((await peekAccessToken("rohlik")).accessToken).toBe("refreshed-access");
     });
 
+    test("the refresh POST connects to the address the policy check approved, not a second lookup", async () => {
+        await writeServerTokens("rohlik", {
+            accessToken: "stale",
+            refreshToken: "r1",
+            expiresAt: Date.now() - ACCESS_SKEW_MS,
+        });
+        let lookups = 0;
+        // A rebinding resolver: public for the check, loopback for any later lookup.
+        _setLookupForTest(async () => {
+            lookups += 1;
+            return [{ address: lookups === 1 ? "93.184.216.34" : "127.0.0.1" }];
+        });
+        let pinned: string | undefined;
+        _setMcpFetchForTest(async (_input, _init, pinnedAddress) => {
+            pinned = pinnedAddress;
+            return Response.json({ access_token: "pinned-access", expires_in: 3600 });
+        });
+
+        const token = await accessTokenForRequest("rohlik", {
+            tokenEndpoint: "https://identity.example/token",
+            resource: "https://mcp.example/mcp",
+            allowRefresh: true,
+        });
+
+        expect(token).toBe("pinned-access");
+        expect(pinned).toBe("93.184.216.34");
+        expect(lookups).toBe(1);
+    });
+
+    test("a private resource talks to its token endpoint without a pin", async () => {
+        await writeServerTokens("rohlik", {
+            accessToken: "stale",
+            refreshToken: "r1",
+            expiresAt: Date.now() - ACCESS_SKEW_MS,
+        });
+        let pinned: string | undefined = "unset";
+        _setMcpFetchForTest(async (_input, _init, pinnedAddress) => {
+            pinned = pinnedAddress;
+            return Response.json({ access_token: "local-access", expires_in: 3600 });
+        });
+
+        await accessTokenForRequest("rohlik", {
+            tokenEndpoint: "http://127.0.0.1:9331/token",
+            resource: "http://127.0.0.1:9331/mcp",
+            allowRefresh: true,
+        });
+
+        expect(pinned).toBeUndefined();
+    });
+
     test("invalid_grant deletes the refresh token so the next call does not POST again", async () => {
         await writeServerTokens("rohlik", {
             accessToken: "stale",
@@ -385,13 +437,24 @@ describe("refresh failures never persist provider text", () => {
 });
 
 describe("bounded MCP credential responses", () => {
-    test("rejects a declared oversized response before reading it", async () => {
-        const response = new Response("{}", {
-            headers: { "content-length": String(MAX_AUTH_RESPONSE_BYTES + 1) },
-        });
+    test("rejects a declared oversized response without reading it, and cancels its body", async () => {
+        let pulled = false;
+        let cancelled = false;
+        const response = new Response(
+            new ReadableStream<Uint8Array>({
+                pull: () => {
+                    pulled = true;
+                },
+                cancel: () => {
+                    cancelled = true;
+                },
+            }),
+            { headers: { "content-length": String(MAX_AUTH_RESPONSE_BYTES + 1) } }
+        );
 
         await expect(readJsonRecord(response)).rejects.toThrow(/exceeds.*MCP auth response limit/);
-        expect(response.bodyUsed).toBe(false);
+        expect(cancelled).toBe(true);
+        expect(pulled).toBe(false);
     });
 
     test("rejects a streamed response once the actual bytes exceed the cap", async () => {
@@ -408,6 +471,20 @@ describe("bounded MCP credential responses", () => {
         );
 
         await expect(readJsonRecord(response)).rejects.toThrow(/exceeds.*MCP auth response limit/);
+    });
+
+    test("keeps the abort signal of a Request input", async () => {
+        let capturedSignal: AbortSignal | null | undefined;
+        _setMcpFetchForTest(async (_input, init) => {
+            capturedSignal = init?.signal;
+            return Response.json({ ok: true });
+        });
+        const controller = new AbortController();
+
+        await mcpFetch(new Request("https://identity.example/token", { signal: controller.signal }));
+        controller.abort();
+
+        expect(capturedSignal?.aborted).toBe(true);
     });
 
     test("attaches a default deadline signal to credential fetches", async () => {
@@ -502,5 +579,13 @@ describe("the refusal log line carries bounded values only", () => {
         expect(seen.length).toBeGreaterThan(0);
         expect(SafeJSON.stringify(seen)).not.toContain("figu_live_LEAKED_IN_DESCRIPTION");
         expect(seen.some((row) => row.code === "HTTP 400" && row.status === 400)).toBe(true);
+    });
+});
+
+describe("credentials lock budget", () => {
+    test("a waiter (logout) outlasts a refresh holding the lock across its credential request", () => {
+        // The refresh holds the lock for one bounded request plus its vault write; an equal
+        // budget expired just as the holder released, and logout then left the tokens stored.
+        expect(MCP_CREDENTIAL_TIMEOUT_MS * 2).toBeLessThan(CREDENTIALS_LOCK_WAIT_MS);
     });
 });

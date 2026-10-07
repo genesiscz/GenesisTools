@@ -21,6 +21,11 @@ export interface DeviceFlowConfig {
     deviceCodeUrl: string;
     tokenUrl: string;
     userAgent?: string;
+    /**
+     * Transport for both requests. A caller whose endpoints were chosen by a remote server passes
+     * one that connects only to the addresses it checked; the default is the global fetch.
+     */
+    fetch?: (url: string, init: RequestInit) => Promise<Response>;
 }
 
 export interface DeviceFlowCallbacks {

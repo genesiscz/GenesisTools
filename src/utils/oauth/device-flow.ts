@@ -29,8 +29,12 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     });
 }
 
-async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
-    const response = await fetch(url, init);
+type DeviceFetch = NonNullable<DeviceFlowConfig["fetch"]>;
+
+const globalFetch: DeviceFetch = (url, init) => fetch(url, init);
+
+async function fetchJson(transport: DeviceFetch, url: string, init: RequestInit): Promise<unknown> {
+    const response = await transport(url, init);
     if (!response.ok) {
         const text = await response.text();
         throw new Error(`${response.status} ${response.statusText}: ${text}`);
@@ -39,8 +43,8 @@ async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
     return response.json();
 }
 
-async function fetchDeviceTokenResponse(url: string, init: RequestInit): Promise<unknown> {
-    const response = await fetch(url, init);
+async function fetchDeviceTokenResponse(transport: DeviceFetch, url: string, init: RequestInit): Promise<unknown> {
+    const response = await transport(url, init);
     const text = await response.text();
 
     let data: unknown;
@@ -73,7 +77,7 @@ async function fetchDeviceTokenResponse(url: string, init: RequestInit): Promise
 }
 
 export async function startDeviceFlow(config: DeviceFlowConfig): Promise<DeviceCodeResponse> {
-    const data = await fetchJson(config.deviceCodeUrl, {
+    const data = await fetchJson(config.fetch ?? globalFetch, config.deviceCodeUrl, {
         method: "POST",
         headers: {
             Accept: "application/json",
@@ -171,7 +175,7 @@ export async function pollDeviceTokenResponse(args: {
         const waitMs = Math.min(Math.ceil(intervalMs * intervalMultiplier), deadline - Date.now());
         await sleep(waitMs, signal);
 
-        const raw = await fetchDeviceTokenResponse(config.tokenUrl, {
+        const raw = await fetchDeviceTokenResponse(config.fetch ?? globalFetch, config.tokenUrl, {
             method: "POST",
             headers: {
                 Accept: "application/json",

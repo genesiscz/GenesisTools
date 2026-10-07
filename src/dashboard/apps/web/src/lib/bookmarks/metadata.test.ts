@@ -131,4 +131,36 @@ describe("fetchPublicUrlMetadata outbound policy", () => {
         expect(result).toMatchObject({ title: "Public page", description: "Normal" });
         expect(request).toHaveBeenCalledTimes(1);
     });
+
+    it("a stalled DNS lookup ends at the caller's deadline and never reaches the connector", async () => {
+        _setOutboundLookupForTest(() => new Promise(() => undefined));
+        const request = vi.fn(async () => new Response("<title>late</title>"));
+
+        await expect(
+            fetchPublicUrlMetadata({ target: "https://stalled.example/page", request, signal: AbortSignal.timeout(20) })
+        ).rejects.toThrow();
+        expect(request).not.toHaveBeenCalled();
+    });
+
+    it("cancels the bodies of redirect and error responses it does not read", async () => {
+        _setOutboundLookupForTest(async () => [{ address: "93.184.216.34" }]);
+        const cancelled: string[] = [];
+        const streamingBody = (label: string) =>
+            new ReadableStream<Uint8Array>({
+                pull: () => undefined,
+                cancel: () => {
+                    cancelled.push(label);
+                },
+            });
+        const request = vi.fn(async ({ url }: { url: URL }) =>
+            url.pathname === "/start"
+                ? new Response(streamingBody("redirect"), { status: 302, headers: { location: "/missing" } })
+                : new Response(streamingBody("error"), { status: 404 })
+        );
+
+        await expect(fetchPublicUrlMetadata({ target: "https://public.example/start", request })).rejects.toThrow(
+            /HTTP 404/
+        );
+        expect(cancelled).toEqual(["redirect", "error"]);
+    });
 });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { fetchPinnedPublicUrl } from "@genesiscz/utils/net/pinned-fetch";
+import { fetchPinnedPublicUrl, pinnedRequest } from "@genesiscz/utils/net/pinned-fetch";
 import { discoverAuthorizationServer } from "./discovery.ts";
 import { _resetMcpFetchForTest, _setMcpFetchForTest } from "./fetch.ts";
 import {
@@ -83,9 +83,30 @@ describe("isPrivateHost", () => {
             "fd00::1",
             "fe80::1",
             "febf::1",
+            "fec0::1",
+            "feff::1",
+            "ff02::1",
+            "100.64.0.0",
+            "100.127.255.255",
+            "100.100.100.200",
+            "192.0.0.8",
+            "198.18.0.1",
+            "198.19.255.255",
+            "224.0.0.1",
+            "240.0.0.1",
+            "255.255.255.255",
+            "64:ff9b::7f00:1",
+            "64:ff9b::a9fe:a9fe",
         ]) {
             expect(isPrivateHost(host)).toBe(true);
         }
+    });
+
+    test("the edges just outside the added ranges stay public", () => {
+        for (const host of ["100.63.255.255", "100.128.0.0", "192.0.1.1", "198.17.255.255", "198.20.0.0"]) {
+            expect(isPrivateHost(host)).toBe(false);
+        }
+        expect(isPrivateHost("64:ff9b::808:808")).toBe(false);
     });
 
     test("public hosts are not private", () => {
@@ -96,7 +117,7 @@ describe("isPrivateHost", () => {
             "172.15.0.1",
             "11.0.0.1",
             "2606:4700::1111",
-            "fec0::1",
+            "2001:4860::8888",
         ]) {
             expect(isPrivateHost(host)).toBe(false);
         }
@@ -277,5 +298,62 @@ describe("DNS resolution is validated, not just the hostname text", () => {
         expect(await response.text()).toBe("ok");
         expect(seen).toEqual(["93.184.216.34"]);
         expect(lookups).toBe(1);
+    });
+
+    test("the pinned connector turns a 204 or 304 reply into a body-less Response instead of throwing", async () => {
+        const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            fetch: (request) => new Response(null, { status: request.url.endsWith("/304") ? 304 : 204 }),
+        });
+        try {
+            for (const status of [204, 304]) {
+                const response = await pinnedRequest({
+                    url: new URL(`http://empty.example:${server.port}/${status}`),
+                    address: "127.0.0.1",
+                });
+
+                expect(response.status).toBe(status);
+                expect(response.body).toBeNull();
+            }
+        } finally {
+            server.stop(true);
+        }
+    });
+
+    test("the pinned connector sends a POST body to the pinned address under the original Host", async () => {
+        const received: Array<{ method: string; host: string | null; body: string }> = [];
+        const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            fetch: async (request) => {
+                received.push({
+                    method: request.method,
+                    host: request.headers.get("host"),
+                    body: await request.text(),
+                });
+                return Response.json({ access_token: "t" });
+            },
+        });
+        try {
+            const response = await pinnedRequest({
+                url: new URL(`http://token.example:${server.port}/token`),
+                address: "127.0.0.1",
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: "grant_type=refresh_token&refresh_token=r1",
+            });
+
+            expect(await response.json()).toEqual({ access_token: "t" });
+            expect(received).toEqual([
+                {
+                    method: "POST",
+                    host: `token.example:${server.port}`,
+                    body: "grant_type=refresh_token&refresh_token=r1",
+                },
+            ]);
+        } finally {
+            server.stop(true);
+        }
     });
 });

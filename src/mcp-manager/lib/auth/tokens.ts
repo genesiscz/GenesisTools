@@ -1,13 +1,12 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { ACCESS_SKEW_MS } from "./constants.ts";
-import { mcpFetch, readJsonRecord } from "./fetch.ts";
+import { mcpFetchChecked, readJsonRecord } from "./fetch.ts";
 import { withRefreshLock } from "./lock.ts";
 import { secretPath } from "./paths.ts";
 import { safeTokenErrorCode } from "./redact.ts";
 import { deleteSecret, readServerTokenSnapshot, writeServerTokensUnlocked } from "./secrets.ts";
 import { writeAuthStatus } from "./status.ts";
-import { assertDiscoveryTarget } from "./url-policy.ts";
 
 export class DiagnosticRefreshError extends Error {
     constructor() {
@@ -86,8 +85,7 @@ export async function accessTokenForRequest(
             body.set("client_secret", clientSecret);
         }
 
-        const safeTokenEndpoint = (await assertDiscoveryTarget(opts.tokenEndpoint, opts.resource)).toString();
-        const response = await mcpFetch(safeTokenEndpoint, {
+        const response = await mcpFetchChecked(opts.tokenEndpoint, opts.resource, {
             method: "POST",
             headers: {
                 Accept: "application/json",

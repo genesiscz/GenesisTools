@@ -6,6 +6,7 @@ import {
     isPrivateHost,
     type OutboundLookup,
     OutboundUrlPolicyError,
+    resolveNoOutboundEscalation,
 } from "@genesiscz/utils/net/outbound-policy";
 
 export { isPrivateHost, OutboundUrlPolicyError };
@@ -39,4 +40,12 @@ export function assertDiscoveryTargetSyntax(target: string, origin: string): URL
 
 export async function assertDiscoveryTarget(target: string, origin: string): Promise<URL> {
     return assertNoOutboundEscalation(target, origin);
+}
+
+/** The checked URL plus the addresses a request to it must be pinned to (null: no pin needed). */
+export async function resolveDiscoveryTarget(
+    target: string,
+    origin: string
+): Promise<{ url: URL; addresses: string[] | null }> {
+    return resolveNoOutboundEscalation(target, origin);
 }

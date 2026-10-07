@@ -1,12 +1,46 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { pinnedRequest, untilAborted } from "@genesiscz/utils/net/pinned-fetch";
+import { resolveDiscoveryTarget } from "./url-policy.ts";
 
-type McpFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+/** `pinnedAddress` set: connect to exactly that address, never to a fresh DNS answer for the host. */
+type McpFetch = (input: RequestInfo | URL, init?: RequestInit, pinnedAddress?: string) => Promise<Response>;
 
 export const MAX_AUTH_RESPONSE_BYTES = 256 * 1024;
 export const MCP_CREDENTIAL_TIMEOUT_MS = 15_000;
 
-let fetchImpl: McpFetch = globalThis.fetch;
+function pinnedBody(body: RequestInit["body"]): string | undefined {
+    if (body === undefined || body === null) {
+        return undefined;
+    }
+
+    if (typeof body === "string") {
+        return body;
+    }
+
+    if (body instanceof URLSearchParams) {
+        return body.toString();
+    }
+
+    throw new Error("A pinned MCP auth request carries a string or form body only");
+}
+
+const defaultFetch: McpFetch = (input, init, pinnedAddress) => {
+    if (!pinnedAddress) {
+        return globalThis.fetch(input, init);
+    }
+
+    return pinnedRequest({
+        url: new URL(input instanceof Request ? input.url : input.toString()),
+        address: pinnedAddress,
+        signal: init?.signal ?? undefined,
+        headers: init?.headers,
+        method: init?.method,
+        body: pinnedBody(init?.body),
+    });
+};
+
+let fetchImpl: McpFetch = defaultFetch;
 
 /**
  * Every credential-bearing request in this module goes through here: the refresh POST
@@ -23,16 +57,39 @@ let fetchImpl: McpFetch = globalThis.fetch;
  * The gateway proxy path already gets this right (server.ts: `redirect: "manual"` plus
  * an explicit same-origin check); this side did not.
  */
-export function mcpFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+/** The caller's signal (init first, as fetch ranks them, then a Request's own) joined with the deadline. */
+function credentialSignal(input: RequestInfo | URL, init?: RequestInit): AbortSignal {
     const deadline = AbortSignal.timeout(MCP_CREDENTIAL_TIMEOUT_MS);
-    const signal = init?.signal ? AbortSignal.any([init.signal, deadline]) : deadline;
+    const callerSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
 
-    return fetchImpl(input, { redirect: "manual", ...init, signal });
+    return callerSignal ? AbortSignal.any([callerSignal, deadline]) : deadline;
+}
+
+export function mcpFetch(input: RequestInfo | URL, init?: RequestInit, pinnedAddress?: string): Promise<Response> {
+    return fetchImpl(input, { redirect: "manual", ...init, signal: credentialSignal(input, init) }, pinnedAddress);
+}
+
+/**
+ * A request to a URL the remote server chose (token, registration and discovery endpoints).
+ * The no-escalation check resolves the host once, and the connection goes to an address from
+ * THAT answer: checking and then calling plain fetch would resolve again, and a rebinding DNS
+ * server could answer the second lookup with a loopback address and receive the credentials.
+ */
+export async function mcpFetchChecked(target: string, origin: string, init?: RequestInit): Promise<Response> {
+    // One deadline covers the DNS check as well as the request.
+    const signal = credentialSignal(target, init);
+    const { url, addresses } = await untilAborted(resolveDiscoveryTarget(target, origin), signal);
+
+    return fetchImpl(url.toString(), { redirect: "manual", ...init, signal }, addresses?.[0]);
 }
 
 async function readBoundedText(response: Response): Promise<string> {
     const declared = Number(response.headers.get("content-length"));
     if (Number.isFinite(declared) && declared > MAX_AUTH_RESPONSE_BYTES) {
+        // Release the connection: an unread, uncancelled body keeps it open.
+        await response.body?.cancel().catch((error: unknown) => {
+            logger.debug({ error }, "cancelling an oversized MCP auth response failed");
+        });
         throw new Error(
             `Response Content-Length ${declared} exceeds the ${MAX_AUTH_RESPONSE_BYTES}-byte MCP auth response limit.`
         );
@@ -93,5 +150,5 @@ export function _setMcpFetchForTest(fn: McpFetch): void {
 }
 
 export function _resetMcpFetchForTest(): void {
-    fetchImpl = globalThis.fetch;
+    fetchImpl = defaultFetch;
 }

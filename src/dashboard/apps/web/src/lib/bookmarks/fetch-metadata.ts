@@ -34,6 +34,11 @@ async function readBoundedHtml(response: Response): Promise<string> {
     return html;
 }
 
+/** Release the socket of a response whose body is not read (redirects, errors). */
+async function discardBody(response: Response): Promise<void> {
+    await response.body?.cancel().catch(() => undefined);
+}
+
 export async function fetchPublicUrlMetadata({
     target,
     signal,
@@ -57,6 +62,7 @@ export async function fetchPublicUrlMetadata({
         });
 
         if (response.status >= 300 && response.status < 400) {
+            await discardBody(response);
             const location = response.headers.get("location");
             if (!location) {
                 throw new Error(`Redirect response from ${currentUrl} has no Location header`);
@@ -71,6 +77,7 @@ export async function fetchPublicUrlMetadata({
         }
 
         if (!response.ok) {
+            await discardBody(response);
             throw new Error(`HTTP ${response.status} fetching ${target}`);
         }
 

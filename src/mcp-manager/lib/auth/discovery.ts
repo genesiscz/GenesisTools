@@ -1,6 +1,6 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { mcpFetch, readJsonRecord } from "./fetch.ts";
+import { mcpFetch, mcpFetchChecked, readJsonRecord } from "./fetch.ts";
 import { assertDiscoveryTarget } from "./url-policy.ts";
 
 export interface ProtectedResourceMetadata {
@@ -47,10 +47,11 @@ const MAX_DISCOVERY_REDIRECTS = 5;
  * request before we could look at it, which is the whole SSRF primitive.
  */
 async function getJson(url: string, origin: string): Promise<unknown | undefined> {
-    let current = (await assertDiscoveryTarget(url, origin)).toString();
+    let current = url;
 
     for (let hop = 0; hop <= MAX_DISCOVERY_REDIRECTS; hop += 1) {
-        const response = await mcpFetch(current, { headers: { Accept: "application/json" } });
+        // Checked and pinned per hop: each Location is chosen by the remote server.
+        const response = await mcpFetchChecked(current, origin, { headers: { Accept: "application/json" } });
 
         if (response.status >= 300 && response.status < 400) {
             const location = response.headers.get("location");
@@ -59,7 +60,7 @@ async function getJson(url: string, origin: string): Promise<unknown | undefined
                 return undefined;
             }
 
-            current = (await assertDiscoveryTarget(new URL(location, current).toString(), origin)).toString();
+            current = new URL(location, current).toString();
             continue;
         }
 

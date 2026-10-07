@@ -77,7 +77,9 @@ function ipv4Octets(host: string): number[] | undefined {
     const leadingZero = hextets.slice(0, 5).every((hextet) => hextet === 0);
     const mapped = leadingZero && hextets[5] === 0xffff;
     const compatible = leadingZero && hextets[5] === 0 && (hextets[6] ?? 0) !== 0;
-    if (!mapped && !compatible) {
+    // NAT64 (64:ff9b::/96) reaches whatever IPv4 address sits in the last 32 bits.
+    const nat64 = hextets[0] === 0x64 && hextets[1] === 0xff9b && hextets.slice(2, 6).every((hextet) => hextet === 0);
+    if (!mapped && !compatible && !nat64) {
         return undefined;
     }
 
@@ -97,7 +99,11 @@ export function isPrivateHost(hostname: string): boolean {
         const allZero = hextets.every((hextet) => hextet === 0);
         const loopback = hextets.slice(0, 7).every((hextet) => hextet === 0) && hextets[7] === 1;
         const first = hextets[0] ?? 0;
-        if (allZero || loopback || (first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80) {
+        const uniqueLocal = (first & 0xfe00) === 0xfc00;
+        const linkLocal = (first & 0xffc0) === 0xfe80;
+        const siteLocal = (first & 0xffc0) === 0xfec0;
+        const multicast = (first & 0xff00) === 0xff00;
+        if (allZero || loopback || uniqueLocal || linkLocal || siteLocal || multicast) {
             return true;
         }
     }
@@ -107,14 +113,20 @@ export function isPrivateHost(hostname: string): boolean {
         return false;
     }
 
-    const [first = 0, second = 0] = octets;
+    const [first = 0, second = 0, third = 0] = octets;
     return (
         first === 0 ||
         first === 127 ||
         first === 10 ||
+        // Carrier-grade NAT: tailnets and some cloud metadata services live here.
+        (first === 100 && second >= 64 && second <= 127) ||
         (first === 169 && second === 254) ||
         (first === 172 && second >= 16 && second <= 31) ||
-        (first === 192 && second === 168)
+        (first === 192 && second === 0 && third === 0) ||
+        (first === 192 && second === 168) ||
+        (first === 198 && (second === 18 || second === 19)) ||
+        // Multicast, reserved and broadcast.
+        first >= 224
     );
 }
 
@@ -181,12 +193,24 @@ export function assertNoOutboundEscalationSyntax(target: string, baseline: strin
 }
 
 export async function assertNoOutboundEscalation(target: string, baseline: string): Promise<URL> {
+    return (await resolveNoOutboundEscalation(target, baseline)).url;
+}
+
+/**
+ * The same check, keeping the approved addresses. `addresses` is null when the baseline is itself
+ * private: nothing is off limits then, so there is nothing to pin. Otherwise the caller must
+ * connect to one of these addresses, because a second lookup may answer differently.
+ */
+export async function resolveNoOutboundEscalation(
+    target: string,
+    baseline: string
+): Promise<{ url: URL; addresses: string[] | null }> {
     const url = assertNoOutboundEscalationSyntax(target, baseline);
-    if (!originIsPrivate(baseline)) {
-        await resolveAndRejectPrivate(url, baseline);
+    if (originIsPrivate(baseline)) {
+        return { url, addresses: null };
     }
 
-    return url;
+    return { url, addresses: await resolveAndRejectPrivate(url, baseline) };
 }
 
 export interface PublicOutboundTarget {

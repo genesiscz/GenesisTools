@@ -12,7 +12,7 @@ import {
 } from "@genesiscz/utils/oauth/device-flow";
 import type { DeviceFlowConfig } from "@genesiscz/utils/oauth/types";
 import { discoverMcp } from "./discovery.ts";
-import { mcpFetch, readJsonRecord } from "./fetch.ts";
+import { mcpFetchChecked, readJsonRecord } from "./fetch.ts";
 import { clientNameFor, policyFor, serverAuth } from "./policy.ts";
 import { type DcrFailureView, describeDcrFailure } from "./presets.ts";
 import { safeTokenErrorCode } from "./redact.ts";
@@ -66,13 +66,12 @@ async function registerClient(
     client_id: string;
     client_secret?: string;
 }> {
-    const safeRegistrationEndpoint = (await assertDiscoveryTarget(registrationEndpoint, hint.mcpUrl)).toString();
     const methods = ["client_secret_post", "none"] as const;
     let lastBody = "";
     let lastStatus = 0;
 
     for (const method of methods) {
-        const response = await mcpFetch(safeRegistrationEndpoint, {
+        const response = await mcpFetchChecked(registrationEndpoint, hint.mcpUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json" },
             body: SafeJSON.stringify({
@@ -129,8 +128,7 @@ async function exchangeCode(opts: {
         body.client_secret = opts.clientSecret;
     }
 
-    const safeTokenEndpoint = (await assertDiscoveryTarget(opts.tokenEndpoint, opts.trustBaseline)).toString();
-    const response = await mcpFetch(safeTokenEndpoint, {
+    const response = await mcpFetchChecked(opts.tokenEndpoint, opts.trustBaseline, {
         method: "POST",
         headers: {
             Accept: "application/json",
@@ -259,6 +257,8 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
                 scope: discovered.prm.scopes_supported?.join(" ") ?? "openid",
                 deviceCodeUrl: as.device_authorization_endpoint,
                 tokenUrl: as.token_endpoint,
+                // Both endpoints come from the authorization server's metadata: pin them too.
+                fetch: (url, init) => mcpFetchChecked(url, mcpUrl, init),
             };
             const started = await startDeviceFlow(deviceConfig);
             await options.onAuthorizationUrl?.(deviceVerificationUrl(started), deviceUserCode(started));
