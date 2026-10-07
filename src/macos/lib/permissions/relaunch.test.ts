@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
     argvFromPs,
+    linkRelayOpenArgs,
     parseFrontmostPid,
     readFaceRecords,
     relaunchPlan,
@@ -127,5 +128,19 @@ describe("readFaceRecords", () => {
         writeFileSync(join(dir, "12.json"), "{not json");
         writeFileSync(join(dir, "13.json"), '{"pid":13,"argv":[1]}');
         expect([...readFaceRecords(dir)]).toEqual([[11, ["--hub", "--session", "a b"]]]);
+    });
+});
+
+describe("the link relay", () => {
+    it("starts in the background with its own flag, and is never reopened as a window", () => {
+        expect(linkRelayOpenArgs("/Apps/Example.app")).toEqual([
+            "open",
+            "-n",
+            "-g",
+            "/Apps/Example.app",
+            "--args",
+            "--link-relay",
+        ]);
+        expect(windowFaceKind(["--link-relay"])).toBeNull();
     });
 });

@@ -274,15 +274,25 @@ export function captureRelaunch(options: {
     return plan;
 }
 
+/** The windowless face that takes link deliveries, started in the background before any window face. */
+export function linkRelayOpenArgs(bundle: string): string[] {
+    return ["open", "-n", "-g", bundle, "--args", "--link-relay"];
+}
+
 /** Starts each recorded face from the installed bundle through Launch Services, as `tools hub` does. */
 export function runRelaunch(plan: RelaunchStep[], step: (message: string) => void): void {
     pruneFaceRecords();
+    const bundle = genesisAppBundlePath();
+    // First, so it is the oldest instance: Launch Services hands links to the oldest one (LinkRelay.swift).
+    const relay = spawnText(linkRelayOpenArgs(bundle));
+
+    if (relay.code !== 0) {
+        logger.warn({ stderr: relay.stderr }, "relaunch: link relay did not start");
+    }
 
     if (plan.length === 0) {
         return;
     }
-
-    const bundle = genesisAppBundlePath();
 
     for (const entry of plan) {
         const openArgs = ["open", "-n", ...(entry.activate ? [] : ["-g"]), bundle, "--args", ...entry.argv];

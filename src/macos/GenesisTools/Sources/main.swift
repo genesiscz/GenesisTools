@@ -32,6 +32,16 @@ if wantsWindow || firstArgument.hasPrefix("-") || firstArgument.contains("://") 
     FaceRecord.write(arguments)
 }
 
+// GenesisTools --link-relay: the windowless face that takes every link Launch Services delivers to a running
+// instance, so no window face is raised by a click (LinkRelay.swift). Each window face starts it first.
+if firstArgument == LinkRelay.argument {
+    LinkRelay.run()
+}
+
+if LinkRelay.shouldEnsure(arguments) {
+    LinkRelay.ensure(arguments)
+}
+
 if wantsWindow {
     // Only an explicit --window is certainly a request for the window. A bare launch may instead be
     // macOS relaunching this bundle to deliver a notification click, which looks identical here.
