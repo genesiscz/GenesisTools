@@ -123,6 +123,8 @@ export interface RenderMarkdownOpts {
     tip?: TipViews;
     /** Discussion id → its review id (`T03`, `Y01`). */
     refs?: Map<string, string>;
+    /** Blocks placed after a thread's notes, inside its section (a judgement of the thread). */
+    afterNotes?: (d: Discussion) => BlockInput;
     /** Extra bullets under "Next steps"; `{iid}` becomes the MR iid. */
     nextSteps?: string[];
 }
@@ -300,6 +302,7 @@ function tipThreadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts, t
     blocks.push(
         { h3: `Discussion (${noteCount} note${noteCount === 1 ? "" : "s"}):` },
         (d.notes ?? []).map(noteBlock),
+        opts.afterNotes?.(d) ?? [],
         { hr: true }
     );
 
@@ -340,6 +343,7 @@ function threadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts): Blo
             : [],
         { h3: `Discussion (${noteCount} note${noteCount === 1 ? "" : "s"}):` },
         (d.notes ?? []).map(noteBlock),
+        opts.afterNotes?.(d) ?? [],
         { hr: true },
     ];
 }
@@ -413,6 +417,7 @@ export function threadSectionsOf(threads: Discussion[], opts: RenderMarkdownOpts
             { ul: [`**Discussion**: \`${d.id ?? "?"}\``] },
             { h3: `Discussion (${noteCount} note${noteCount === 1 ? "" : "s"}):` },
             (d.notes ?? []).map(noteBlock),
+            opts.afterNotes?.(d) ?? [],
             { hr: true },
         ];
     });
