@@ -751,7 +751,13 @@ describe("pending drafts in full", () => {
             fetch(request) {
                 const path = new URL(request.url).pathname;
 
-                return path.endsWith("/discussions") ? Response.json(discussions) : new Response("x\ny\nz\n");
+                if (path.endsWith("/discussions")) {
+                    return Response.json(discussions);
+                }
+
+                return path.endsWith("/merge_requests/7")
+                    ? Response.json({ sha: "d".repeat(40) })
+                    : new Response("x\ny\nz\n");
             },
         });
 
@@ -773,7 +779,9 @@ describe("pending drafts in full", () => {
             );
             expect(md).not.toContain("## Thread 2");
             expect(md).toContain("**@alice**:\n> Because.");
-            expect(md).toContain("Reviewer's frozen view");
+            // The reviewer's file and the tip's are the same here, so only the tip is shown.
+            expect(md).toContain("## Thread 1 — `src/app.ts`:11 · unchanged");
+            expect(md).toContain("### MR tip `dddddddddd`");
             expect(renderDraftsOnlyMarkdown(facts([]), { threads: { discussions: [], opts } })).toContain(
                 "## Unresolved threads in full\n\nNone."
             );

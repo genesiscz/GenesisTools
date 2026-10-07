@@ -463,7 +463,14 @@ async function runPrReview(mrIid: string, opts: Options, door: ReviewDoor): Prom
         });
         extras.threads = {
             discussions: context.discussions,
-            opts: { mrIid: String(iid), project: facts.project, cwd, contextLines, anchorViews: context.anchorViews },
+            opts: {
+                mrIid: String(iid),
+                project: facts.project,
+                cwd,
+                contextLines,
+                anchorViews: context.anchorViews,
+                tip: context.tip,
+            },
         };
     }
 

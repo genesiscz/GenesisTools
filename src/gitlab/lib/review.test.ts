@@ -512,6 +512,42 @@ describe("review render", () => {
         expect([...collectUnresolvedAnchorPairs(discussions)]).toEqual(["a1b2c3d4e5f6a7b8 src/app.ts"]);
     });
 
+    describe("with the MR tip known", () => {
+        const reviewer = ["one", "two", "three"];
+        const opts = (tipLines: string[] | null, renames = new Map<string, string>()) => ({
+            mrIid: "42",
+            project: "acme/web-app",
+            cwd: "/nonexistent-checkout",
+            contextLines: 1,
+            anchorViews: new Map([["a1b2c3d4e5f6a7b8:src/app.ts", reviewer]]),
+            tip: { sha: "ffffeeeedddd", views: new Map([["src/app.ts", tipLines]]), renames },
+        });
+
+        test("an unchanged thread shows the tip only, in the file's language", () => {
+            const { md } = renderMarkdown(discussions, opts([...reviewer]));
+
+            expect(md).toContain("## Thread 1 — `src/app.ts`:2 · unchanged");
+            expect(md).toContain("### MR tip `ffffeeeedd` (lines 1–3):\n\n```ts\n1   one\n2 ▶ two");
+            expect(md).not.toContain("Reviewer's view");
+            expect(md).not.toContain("Local checkout");
+        });
+
+        test("a changed anchor shows the tip and the reviewer's view side by side", () => {
+            const { md } = renderMarkdown(discussions, opts(["one", "two fixed", "three"]));
+
+            expect(md).toContain("· changed at the anchor");
+            expect(md).toContain("### MR tip `ffffeeeedd`");
+            expect(md).toContain("### Reviewer's view at `a1b2c3d4e5` (lines 1–3):");
+        });
+
+        test("a file gone from the tip says so; a rename names the new path", () => {
+            expect(renderMarkdown(discussions, opts(null)).md).toContain("· deleted at the tip");
+            expect(
+                renderMarkdown(discussions, opts(null, new Map([["a1b2c3d4e5f6a7b8:src/app.ts", "src/main.ts"]]))).md
+            ).toContain("· renamed to src/main.ts");
+        });
+    });
+
     test("the report quotes the thread and compares the frozen view with the working tree", () => {
         const { md, threadCount, totalDiscussions } = renderMarkdown(discussions, {
             mrIid: "42",

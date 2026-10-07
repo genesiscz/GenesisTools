@@ -19,6 +19,7 @@ import {
     collectUnresolvedAnchorPairs,
     type Discussion,
     fetchAnchorViews,
+    fetchTipViews,
     renderMarkdown,
     threadStats,
 } from "@app/gitlab/lib/review-render";
@@ -123,6 +124,15 @@ export async function runFetchReview(mrIid: string, opts: FetchReviewOptions): P
     }
 
     if (format === "md" || format === "both") {
+        // The tip first: its git fetch also brings in the reviewers' commits the checkout lacks.
+        const tip = await fetchTipViews({
+            api,
+            iid: mrIid,
+            cwd,
+            discussions,
+            fetchRemote: opts.anchors !== false,
+            onWarn: status.warn,
+        });
         const pairs = collectUnresolvedAnchorPairs(discussions);
         const { views, gitHits, total } = await fetchAnchorViews({
             pairs,
@@ -141,6 +151,7 @@ export async function runFetchReview(mrIid: string, opts: FetchReviewOptions): P
             cwd,
             contextLines,
             anchorViews: views,
+            tip,
             nextSteps: config.review.nextSteps,
         });
         if (opts.mdSidecar !== false) {

@@ -8,6 +8,7 @@
 import { join } from "node:path";
 import { hostnameOf } from "@app/gitlab/lib/client";
 import { fileLink } from "@app/gitlab/lib/file-link";
+import { fenceLanguage } from "@app/gitlab/lib/markdown";
 import {
     type DiffFile,
     firstChangedLine,
@@ -64,45 +65,6 @@ function worktreeLine(facts: PrReviewFacts): string {
     }
 
     return `Worktree: \`${facts.worktree}\` (HEAD is the MR head)`;
-}
-
-const FENCE_LANGUAGE: Record<string, string> = {
-    ts: "ts",
-    mts: "ts",
-    cts: "ts",
-    tsx: "tsx",
-    js: "js",
-    mjs: "js",
-    cjs: "js",
-    jsx: "jsx",
-    json: "json",
-    groovy: "groovy",
-    md: "markdown",
-    patch: "diff",
-    diff: "diff",
-    podspec: "ruby",
-    rb: "ruby",
-    py: "python",
-    go: "go",
-    rs: "rust",
-    java: "java",
-    kt: "kotlin",
-    m: "objectivec",
-    swift: "swift",
-    sh: "bash",
-    yml: "yaml",
-    yaml: "yaml",
-    css: "css",
-    scss: "scss",
-    html: "html",
-    php: "php",
-};
-
-/** Fence language from the file extension, so a terminal or viewer can colour the excerpt. */
-export function fenceLanguage(path: string): string {
-    const extension = path.split(".").pop()?.toLowerCase() ?? "";
-
-    return FENCE_LANGUAGE[extension] ?? "text";
 }
 
 /** The hunks of one file as numbered text: new-side numbers, removed lines unnumbered, `⋯` between hunks. */
@@ -684,3 +646,5 @@ export function proposalSkeleton(facts: PrReviewFacts, agent = "agent"): Record<
         })),
     };
 }
+
+export { fenceLanguage };

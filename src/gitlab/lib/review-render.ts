@@ -1,9 +1,11 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { type ProjectApi, projectBase, restGetPaginated, restGetText } from "@app/gitlab/lib/client";
+import { type ProjectApi, projectBase, restGet, restGetPaginated, restGetText } from "@app/gitlab/lib/client";
+import { classifyDivergence, type Divergence } from "@app/gitlab/lib/divergence";
 import { fileLink } from "@app/gitlab/lib/file-link";
 import { gitResult } from "@app/gitlab/lib/git";
 import { errorMessage } from "@app/gitlab/lib/http";
+import { fenceLanguage } from "@app/gitlab/lib/markdown";
 import { type Block, type BlockInput, json2md } from "@genesiscz/utils/json2md";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -99,6 +101,15 @@ function escapeMd(s: string): string {
     return s.replace(/\|/g, "\\|");
 }
 
+/** The MR tip: what would merge now, read by sha so the report does not depend on the checkout. */
+export interface TipViews {
+    sha: string;
+    /** Path at the tip → its lines, or null when the file is not there. */
+    views: Map<string, string[] | null>;
+    /** `<head_sha>:<path>` → the path the file has at the tip, when it was renamed since. */
+    renames: Map<string, string>;
+}
+
 export interface RenderMarkdownOpts {
     mrIid: string;
     project: string;
@@ -106,6 +117,8 @@ export interface RenderMarkdownOpts {
     contextLines: number;
     /** `<head_sha>:<path>` → file lines at that sha. */
     anchorViews?: Map<string, string[]>;
+    /** With the tip, each thread shows the tip and a divergence label, and the checkout only when it differs. */
+    tip?: TipViews;
     /** Extra bullets under "Next steps"; `{iid}` becomes the MR iid. */
     nextSteps?: string[];
 }
@@ -180,7 +193,113 @@ function noteBlock(note: Note): Block {
     return { raw: `**@${note.author?.username ?? "(unknown)"}**${ts}:\n> ${body.split("\n").join("\n> ")}` };
 }
 
+/** A window of `lines` around `anchor`, numbered, with ▶ on the anchor. */
+function viewBlock(lines: string[], anchor: number, context: number, path: string): { range: string; block: Block } {
+    const lo = Math.max(1, anchor - context);
+    const hi = Math.min(lines.length, anchor + context);
+    const sliced = lines.slice(lo - 1, hi);
+
+    if (sliced.length === 0) {
+        return {
+            range: `${lo}–${hi}`,
+            block: `_(the file has ${lines.length} lines; line ${anchor} is past its end)_`,
+        };
+    }
+
+    return {
+        range: `${lo}–${hi}`,
+        block: { code: { content: numbered(sliced, lo, anchor), language: fenceLanguage(path) } },
+    };
+}
+
+function readLocalFile(path: string): string[] | null {
+    const window = readLocalWindow(path, 1, Number.MAX_SAFE_INTEGER);
+
+    return window ? window.lines : null;
+}
+
+/** The divergence of one thread's anchor between the reviewer's view and the tip. */
+export function threadDivergence(d: Discussion, opts: RenderMarkdownOpts): Divergence | null {
+    const pos = d.notes?.[0]?.position;
+    const tip = opts.tip;
+
+    if (!pos || !tip || pos.new_line == null) {
+        return null;
+    }
+
+    const path = pos.new_path ?? pos.old_path ?? "";
+    const renamedTo = tip.renames.get(`${pos.head_sha}:${path}`);
+    const tipLines = tip.views.get(renamedTo ?? path) ?? null;
+
+    return classifyDivergence({
+        reviewer: opts.anchorViews?.get(`${pos.head_sha}:${path}`) ?? null,
+        tip: renamedTo ? null : tipLines,
+        anchorLine: pos.new_line,
+        window: opts.contextLines,
+        renamedTo,
+    });
+}
+
+function tipThreadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts, tip: TipViews): BlockInput {
+    const pos = d.notes?.[0]?.position;
+    const file = pos?.new_path ?? pos?.old_path ?? "(unknown path)";
+    const line = pos?.new_line ?? pos?.old_line ?? 0;
+    const removedLine = pos?.new_line == null && pos?.old_line != null;
+    const divergence = threadDivergence(d, opts);
+    const tipPath = tip.renames.get(`${pos?.head_sha}:${file}`) ?? file;
+    const tipLines = tip.views.get(tipPath) ?? null;
+    const tipLine = divergence?.tipLine ?? line;
+    const reviewerLines = opts.anchorViews?.get(`${pos?.head_sha}:${file}`) ?? null;
+    const localPath = resolve(opts.cwd, tipPath);
+    const localLines = readLocalFile(localPath);
+    const localDiffers = localLines !== null && tipLines !== null && localLines.join("\n") !== tipLines.join("\n");
+    const noteCount = d.notes?.length ?? 0;
+    const label = removedLine ? "comment on a removed line" : (divergence?.text ?? "unknown");
+    const blocks: BlockInput[] = [
+        { h2: `Thread ${idx + 1} — \`${file}\`:${line} · ${label}` },
+        {
+            ul: [
+                `**File**: ${fileLink(localPath, tipLine || null)}`,
+                `**Divergence**: ${label}`,
+                `**Reviewer's sha**: \`${shortSha(pos?.head_sha)}\` · **MR tip**: \`${shortSha(tip.sha)}\``,
+            ],
+        },
+    ];
+
+    if (tipLines === null) {
+        blocks.push(
+            { h3: `MR tip \`${shortSha(tip.sha)}\`` },
+            `_(${file} is not at the tip${tipPath !== file ? `; it is ${tipPath} now` : ""})_`
+        );
+    } else {
+        const view = viewBlock(tipLines, tipLine, opts.contextLines, tipPath);
+        blocks.push({ h3: `MR tip \`${shortSha(tip.sha)}\` (lines ${view.range}):` }, view.block);
+    }
+
+    if (reviewerLines !== null && divergence?.label !== "unchanged") {
+        const view = viewBlock(reviewerLines, line, opts.contextLines, file);
+        blocks.push({ h3: `Reviewer's view at \`${shortSha(pos?.head_sha)}\` (lines ${view.range}):` }, view.block);
+    }
+
+    if (localDiffers && localLines !== null) {
+        const view = viewBlock(localLines, tipLine, opts.contextLines, tipPath);
+        blocks.push({ h3: `Local checkout, not pushed (lines ${view.range}):` }, view.block);
+    }
+
+    blocks.push(
+        { h3: `Discussion (${noteCount} note${noteCount === 1 ? "" : "s"}):` },
+        (d.notes ?? []).map(noteBlock),
+        { hr: true }
+    );
+
+    return blocks;
+}
+
 function threadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts): BlockInput {
+    if (opts.tip) {
+        return tipThreadBlocks(d, idx, opts, opts.tip);
+    }
+
     const pos = d.notes?.[0]?.position;
     const file = pos?.new_path ?? pos?.old_path ?? "(unknown path)";
     const line = pos?.new_line ?? pos?.old_line ?? 0;
@@ -226,11 +345,13 @@ export async function collectThreadContext(options: {
     cwd: string;
     fetchRemote: boolean;
     onWarn: (msg: string) => void;
-}): Promise<{ discussions: Discussion[]; anchorViews: Map<string, string[]> }> {
+}): Promise<{ discussions: Discussion[]; anchorViews: Map<string, string[]>; tip: TipViews }> {
     const discussions = await restGetPaginated<Discussion>(
         options.api,
         `${projectBase(options.api)}/merge_requests/${options.iid}/discussions`
     );
+    // The tip first: its git fetch also brings in the reviewers' commits the checkout lacks.
+    const tip = await fetchTipViews({ ...options, discussions });
     const { views } = await fetchAnchorViews({
         pairs: collectUnresolvedAnchorPairs(discussions),
         api: options.api,
@@ -239,7 +360,7 @@ export async function collectThreadContext(options: {
         cwd: options.cwd,
     });
 
-    return { discussions, anchorViews: views };
+    return { discussions, anchorViews: views, tip };
 }
 
 /** The fetch-review report as json2md blocks: header facts, one section per unresolved thread, next steps. */
@@ -300,6 +421,105 @@ export function collectUnresolvedAnchorPairs(discussions: Discussion[]): Set<str
     }
 
     return pairs;
+}
+
+function hasCommit(cwd: string, sha: string): boolean {
+    return gitResult(cwd, ["cat-file", "-e", `${sha}^{commit}`]).exitCode === 0;
+}
+
+/**
+ * The tip's version of every file an unresolved thread names, read by sha. A commit missing from the
+ * checkout is fetched once from `refs/merge-requests/<iid>/head`; the files API by sha is the last resort.
+ */
+export async function fetchTipViews(options: {
+    api: ProjectApi;
+    iid: string;
+    cwd: string;
+    discussions: Discussion[];
+    fetchRemote: boolean;
+    onWarn: (msg: string) => void;
+}): Promise<TipViews> {
+    const mr = await restGet<{ sha: string }>(options.api, `${projectBase(options.api)}/merge_requests/${options.iid}`);
+    const threads = unresolvedThreads(options.discussions);
+    const headShas = new Set(
+        threads.map((t) => t.notes?.[0]?.position?.head_sha).filter((sha): sha is string => Boolean(sha))
+    );
+    const needed = [mr.sha, ...headShas];
+
+    if (options.fetchRemote && needed.some((sha) => !hasCommit(options.cwd, sha))) {
+        const fetched = gitResult(options.cwd, [
+            "fetch",
+            "--quiet",
+            "origin",
+            `refs/merge-requests/${options.iid}/head`,
+        ]);
+
+        if (fetched.exitCode !== 0) {
+            options.onWarn(`git fetch of refs/merge-requests/${options.iid}/head failed; the files API fills in`);
+        }
+    }
+
+    const renames = new Map<string, string>();
+
+    for (const sha of headShas) {
+        if (!hasCommit(options.cwd, sha) || !hasCommit(options.cwd, mr.sha)) {
+            continue;
+        }
+
+        const listed = gitResult(options.cwd, ["diff", "-M", "--name-status", sha, mr.sha]);
+
+        for (const row of listed.stdout.split("\n")) {
+            const [status, from, to] = row.split("\t");
+
+            if (status?.startsWith("R") && from && to) {
+                renames.set(`${sha}:${from}`, to);
+            }
+        }
+    }
+
+    const paths = new Set<string>();
+
+    for (const thread of threads) {
+        const pos = thread.notes?.[0]?.position;
+        const path = pos?.new_path ?? pos?.old_path;
+
+        if (path) {
+            paths.add(renames.get(`${pos?.head_sha}:${path}`) ?? path);
+        }
+    }
+
+    const views = new Map<string, string[] | null>();
+
+    await Promise.all(
+        [...paths].map(async (path) => {
+            const shown = gitResult(options.cwd, ["show", `${mr.sha}:${path}`]);
+
+            if (shown.exitCode === 0) {
+                views.set(path, shown.stdout.split(/\r?\n/));
+
+                return;
+            }
+
+            if (hasCommit(options.cwd, mr.sha)) {
+                views.set(path, null);
+
+                return;
+            }
+
+            try {
+                const text = await restGetText(
+                    options.api,
+                    `${projectBase(options.api)}/repository/files/${encodeURIComponent(path)}/raw?ref=${mr.sha}`
+                );
+                views.set(path, text.trim().split(/\r?\n/));
+            } catch (error) {
+                logger.debug({ error, path }, "gitlab: tip view not found");
+                views.set(path, null);
+            }
+        })
+    );
+
+    return { sha: mr.sha, views, renames };
 }
 
 export interface AnchorFetchStats {
