@@ -14,6 +14,7 @@ import {
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { harnessOf } from "./harness";
+import { isProcessAlive } from "./process-alive";
 
 const SafeJSON = JSON;
 
@@ -271,15 +272,6 @@ function ensureDir() {
     }
 }
 
-function processIsAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch {
-        return false;
-    }
-}
-
 async function withBoundedLock<T>(lockPath: string, fn: () => T | Promise<T>, waitMs = LOCK_WAIT_MS): Promise<T> {
     const deadline = Date.now() + waitMs;
 
@@ -302,7 +294,7 @@ async function withBoundedLock<T>(lockPath: string, fn: () => T | Promise<T>, wa
                         ? holder.pid
                         : 0;
                 const age = Date.now() - statSync(lockPath).mtimeMs;
-                if (age > LOCK_STALE_MS || (pid > 0 && !processIsAlive(pid))) {
+                if (age > LOCK_STALE_MS || (pid > 0 && !isProcessAlive(pid))) {
                     unlinkSync(lockPath);
                     continue;
                 }
