@@ -1,6 +1,7 @@
 import { loadConfig as loadQuestionConfig } from "@app/question/lib/config";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env/envVariables";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
     type CallToolResult,
@@ -115,6 +116,9 @@ export function serverInstructions(askViaQuestionTool: boolean): string {
         "cmd, url, image, pr-thread), resolved into real content when the item is saved; `question_tokens` lists " +
         "them and previews a text. To correct an unanswered item, post it again with `supersedes: <id>`.\n\n" +
         "2. LOG YOUR OWN ANSWER (after the fact, no waiting): `question_answer`, described next.\n\n" +
+        'Screenshot evidence goes in optional attachments: [{type: "image", path: "/absolute/local/image.png", ' +
+        'label: "Result"}]. PNG/JPEG/WebP files are validated and copied into durable storage. For comparison, ' +
+        'add comparison: {group: "layout", role: "before" or "after"}. Keep refs for ordinary source references.\n\n' +
         "WHEN TO USE THE question_answer TOOL:\n" +
         '- The user directly asks a question important enough to preserve for later review: rationale ("why did ' +
         'you choose X over Y"), design/architecture decisions, "how does Y work", tradeoff explanations.\n' +
@@ -169,7 +173,7 @@ function buildToolRegistry(askViaQuestionTool: boolean): Record<string, ToolEntr
             inputSchema: QUESTION_ANSWER_INPUT_SCHEMA as unknown as Record<string, unknown>,
             handler: async (args) => {
                 const r = await handleQuestionAnswer(args as unknown as QuestionAnswerArgs);
-                return r.summary;
+                return SafeJSON.stringify(r);
             },
         },
         question_post: {

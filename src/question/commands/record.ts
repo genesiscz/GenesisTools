@@ -1,4 +1,7 @@
 import { readFileSync } from "node:fs";
+import { parseImageAttachmentInputs } from "@genesiscz/utils/image/attachments";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { recordAnswer } from "../lib/record";
 import type { QaTag } from "../lib/types";
@@ -12,6 +15,11 @@ export function registerRecordCommand(program: Command): void {
         .requiredOption("--q <question>", "the question")
         .option("--a <answer>", "the answer (markdown)")
         .option("--a-file <path>", "read answer from file")
+        .option(
+            "--attachments-file <path>",
+            "JSON array of local image attachments, including optional comparison roles"
+        )
+        .option("--json", "return the receipt and durable attachment paths as JSON")
         .option("--tag <tag>", "question|action|directive", "question")
         .option("--agent <label>", "subagent attribution label")
         .option("--session <id>", "override session id")
@@ -28,12 +36,20 @@ export function registerRecordCommand(program: Command): void {
                 question: o.q,
                 answer,
                 tag: (o.tag as QaTag) ?? "question",
+                attachments: o.attachmentsFile
+                    ? parseImageAttachmentInputs(SafeJSON.parse(readFileSync(o.attachmentsFile, "utf8")))
+                    : undefined,
                 agentLabel: o.agent,
                 sessionId: o.session,
                 project: o.project,
                 source: "cli",
             });
-            process.stdout.write(`recorded ${res.id}\n`);
+            if (o.json) {
+                out.result(res);
+            } else {
+                out.print(`recorded ${res.id}\n`);
+            }
+
             // One-shot command: a sink (e.g. the grammy Telegram client) can
             // leave an open handle that keeps the event loop alive, so a bare
             // `bun run … record` would hang. Exit explicitly once done.

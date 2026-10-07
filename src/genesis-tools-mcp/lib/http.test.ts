@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentCaller } from "@genesiscz/utils/agent/runtime";
 import { env } from "@genesiscz/utils/env";
+import { encodeRgbaToPng } from "@genesiscz/utils/image/raster";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { CAPABILITIES_HEADER, serveGenesisToolsHttp } from "./http";
@@ -56,10 +57,14 @@ describe("genesis-tools MCP over HTTP (resident, per-request caller)", () => {
         expect(toolsB).toEqual(["question_answer"]);
         expect((await a.listTools()).tools.map((tool) => tool.name)).toContain("handoff_post");
 
-        await Promise.all([
+        const responses = await Promise.all([
             a.callTool({ name: "question_answer", arguments: { question: "qa from a", answer: "x", tag: "action" } }),
             b.callTool({ name: "question_answer", arguments: { question: "qa from b", answer: "y", tag: "action" } }),
         ]);
+        for (const response of responses) {
+            expect(response.isError).not.toBe(true);
+        }
+
         await Promise.all([a.close(), b.close()]);
 
         const rows = readdirSync(logBase).flatMap((file) =>
@@ -75,4 +80,33 @@ describe("genesis-tools MCP over HTTP (resident, per-request caller)", () => {
         expect(byQuestion["qa from a"]).toMatchObject({ sessionId: "session-alpha", cwd: cwdA, agent: "claude-code" });
         expect(byQuestion["qa from b"]).toMatchObject({ sessionId: "unknown", cwd: cwdB, agent: "codex" });
     }, 20000);
+
+    it("returns durable image metadata across the actual tools/call boundary", async () => {
+        const client = await connect("a", "question_answer");
+        const path = join(cwdA, "screenshot.png");
+        writeFileSync(path, encodeRgbaToPng(new Uint8ClampedArray([10, 20, 30, 255]), 1, 1));
+        try {
+            const response = await client.callTool({
+                name: "question_answer",
+                arguments: {
+                    question: "A visual answer",
+                    answer: "Here is the screenshot.",
+                    tag: "question",
+                    attachments: [{ type: "image", path, label: "Result" }],
+                },
+            });
+            expect(response.isError).not.toBe(true);
+            const content = response.content as { type: string; text?: string }[];
+            const text = content.find((item) => item.type === "text")?.text;
+            expect(text).toBeDefined();
+            const receipt: { id: string; attachments: { path: string; label: string }[] } = SafeJSON.parse(text!);
+            expect(receipt.id).toBeTruthy();
+            expect(receipt.attachments).toHaveLength(1);
+            expect(receipt.attachments[0].label).toBe("Result");
+            expect(receipt.attachments[0].path).not.toBe(path);
+            expect(readFileSync(receipt.attachments[0].path).equals(readFileSync(path))).toBe(true);
+        } finally {
+            await client.close();
+        }
+    });
 });

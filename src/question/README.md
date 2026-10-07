@@ -94,10 +94,47 @@ tools question config --notify on --sound synth:soft
 | `--q <question>` | The question |
 | `--a <answer>` | The answer, markdown allowed |
 | `--a-file <path>` | Read the answer from a file instead |
+| `--attachments-file <path>` | JSON array of local images and optional before/after roles |
+| `--json` | Return the record receipt with durable attachment paths |
 | `--tag <tag>` | `question`, `action` or `directive` (default: `question`) |
 | `--agent <label>` | Subagent attribution label |
 | `--session <id>` | Override the session id |
 | `--project <name>` | Override the project |
+
+### Images attached to recorded answers
+
+The question_answer MCP tool accepts an optional attachments array. The CLI accepts the same array from a JSON file:
+
+~~~bash
+tools question record --q "Did the layout fix work?" \
+    --a-file answer.md --attachments-file screenshots.json --json
+tools question log --session SESSION_ID --format json
+~~~
+
+~~~json
+[
+  {
+    "type": "image",
+    "path": "/absolute/local/path/before.png",
+    "label": "Before",
+    "comparison": { "group": "layout", "role": "before" }
+  },
+  {
+    "type": "image",
+    "path": "/absolute/local/path/after.png",
+    "label": "After",
+    "comparison": { "group": "layout", "role": "after" }
+  }
+]
+~~~
+
+Only type and path are required. V1 accepts actual still PNG, JPEG and WebP files, not URLs or base64. Header dimensions are checked before full decoding; animated PNG/WebP files are rejected. Label and comparison roles are optional; each group can contain one before and one after image. Duplicate roles are rejected.
+
+The recorder validates the entire batch before recording the answer and imports images into the shared durable attachment directory. The receipt and history include IDs, durable paths, content hashes, dimensions, MIME types and byte counts. Moving the original screenshot later does not break the archived copy.
+
+Limits: 24 images, 25 MiB each, 100 MiB per batch, 48 million pixels per decoded image. Invalid or unavailable images fail the recording rather than silently disappearing from its answer.
+
+Existing text-only records remain valid and read with an empty attachments list. The input schema and stored metadata are implemented; native archive cards and the comparison viewer are separate consumers of this format.
 
 ### `log` options
 
@@ -105,6 +142,7 @@ tools question config --notify on --sound synth:soft
 |------|-------------|
 | `-p, --project <name>` | Filter by project |
 | `-t, --tag <tag>` | Filter by tag |
+| `--session <id>` | Filter by originating session before applying the limit |
 | `--unread` | Only unread entries |
 | `-l, --limit <n>` | Limit the number of entries |
 | `--format <fmt>` | `ai` or `json` (default: `ai`) |

@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { parseJsonlChunk } from "@genesiscz/utils/jsonl";
+import { parseJsonlChunk, readJsonlRows } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
 import { logDir } from "./log-store";
 import type { QaAgent, QaEntry } from "./types";
@@ -42,6 +42,8 @@ export function openReadModel(dbPath: string): Database {
     db.exec("CREATE INDEX IF NOT EXISTS idx_entries_project_ts ON entries(project, ts);");
     ensureColumn(db, "entries", "commit_message", "ALTER TABLE entries ADD COLUMN commit_message TEXT");
     ensureColumn(db, "entries", "agent", "ALTER TABLE entries ADD COLUMN agent TEXT");
+    ensureColumn(db, "entries", "attachments_json", "ALTER TABLE entries ADD COLUMN attachments_json TEXT");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_entries_missing_images ON entries(id) WHERE attachments_json IS NULL");
     return db;
 }
 
@@ -57,8 +59,8 @@ function catchUp(db: Database, logBase?: string): void {
     }
 
     const insert = db.prepare(`INSERT OR REPLACE INTO entries
-        (id,ts,session_id,session_title,project,repo_root,cwd,branch,commit_sha,commit_message,agent,is_worktree,worktree_path,ai_agent,agent_label,tag,question,answer_md,refs_json,source,turn_uuid,superseded_by,read_at,dedupe_key)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?)`);
+        (id,ts,session_id,session_title,project,repo_root,cwd,branch,commit_sha,commit_message,agent,is_worktree,worktree_path,ai_agent,agent_label,tag,question,answer_md,refs_json,source,turn_uuid,superseded_by,read_at,dedupe_key,attachments_json)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?)`);
     const getOff = db.prepare("SELECT byte_offset FROM ingest_offsets WHERE file = ?");
     const setOff = db.prepare("INSERT OR REPLACE INTO ingest_offsets (file, byte_offset) VALUES (?, ?)");
     const supersede = db.prepare(
@@ -117,7 +119,8 @@ function catchUp(db: Database, logBase?: string): void {
                     SafeJSON.stringify(en.refs),
                     en.source,
                     en.turnUuid,
-                    key
+                    key,
+                    SafeJSON.stringify(en.attachments ?? [])
                 );
                 supersede.run(en.id, key, en.id); // older same-key rows point at the newest
             }
@@ -127,11 +130,64 @@ function catchUp(db: Database, logBase?: string): void {
         });
         tx(entries);
     }
+
+    backfillAttachments(db, dir);
+}
+
+/** Old resident readers can advance the shared offset without indexing fields added by a newer writer. */
+function backfillAttachments(db: Database, dir: string): void {
+    const missing = db.query("SELECT id FROM entries WHERE attachments_json IS NULL").all() as { id: string }[];
+    if (missing.length === 0) {
+        return;
+    }
+
+    const pending = new Set(missing.map((row) => row.id));
+    const update = db.prepare("UPDATE entries SET attachments_json = ? WHERE id = ? AND attachments_json IS NULL");
+
+    for (const name of readdirSync(dir)
+        .filter((name) => name.endsWith(".jsonl"))
+        .sort()) {
+        const parsed = readJsonlRows<unknown>(join(dir, name));
+        let skipped = parsed.skipped;
+        const hydrate = db.transaction(() => {
+            for (const entry of parsed.rows) {
+                if (!entry || typeof entry !== "object" || !("id" in entry) || typeof entry.id !== "string") {
+                    skipped++;
+                    continue;
+                }
+
+                if (pending.delete(entry.id)) {
+                    const attachments =
+                        "attachments" in entry && Array.isArray(entry.attachments) ? entry.attachments : [];
+                    update.run(SafeJSON.stringify(attachments), entry.id);
+                }
+            }
+        });
+        hydrate();
+
+        if (skipped > 0) {
+            log.warn({ file: name, skipped }, "skipped corrupt rows during attachment backfill");
+        }
+
+        if (pending.size === 0) {
+            break;
+        }
+    }
+
+    // Entries whose source log was retired have no attachment metadata to recover.
+    const finish = db.transaction(() => {
+        for (const id of pending) {
+            update.run("[]", id);
+        }
+    });
+    finish();
+    log.info({ count: missing.length, unavailable: pending.size }, "backfilled answer attachment metadata");
 }
 
 export interface QueryOpts {
     logBase?: string;
     project?: string;
+    sessionId?: string;
     tag?: string;
     unread?: boolean;
     limit?: number;
@@ -162,6 +218,7 @@ function rowToQaRow(r: Record<string, unknown>): QaRow {
         question: r.question as string,
         answerMd: r.answer_md as string,
         refs: SafeJSON.parse(r.refs_json as string) as QaEntry["refs"],
+        attachments: r.attachments_json ? SafeJSON.parse(String(r.attachments_json)) : [],
         source: r.source as QaEntry["source"],
         turnUuid: r.turn_uuid as string | null,
         supersededBy: r.superseded_by as string | null,
@@ -176,6 +233,11 @@ export function queryEntries(db: Database, opts: QueryOpts = {}): QaRow[] {
     if (opts.project) {
         where.push("project = ?");
         params.push(opts.project);
+    }
+
+    if (opts.sessionId) {
+        where.push("session_id = ?");
+        params.push(opts.sessionId);
     }
 
     if (opts.tag) {

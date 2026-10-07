@@ -1,8 +1,8 @@
 import { decodeImageRgba, decodeImageRgbaScaled, encodeRgbaToPng } from "@genesiscz/utils/image";
+import { compareImagePixels } from "@genesiscz/utils/image/difference";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
-import pixelmatch from "pixelmatch";
 
 interface CompareOptions {
     threshold: string;
@@ -65,11 +65,13 @@ export function registerCompareScreenshotCommand(program: Command): void {
                 resized = true;
             }
 
-            const diff = opts.diffOut ? new Uint8ClampedArray(a.width * a.height * 4) : undefined;
-            const mismatched = pixelmatch(a.data, b.data, diff, a.width, a.height, { threshold });
-            const total = a.width * a.height;
-            const mismatchPct = (100 * mismatched) / total;
-            const similarity = 1 - mismatched / total;
+            const {
+                diff,
+                mismatchedPixels: mismatched,
+                totalPixels: total,
+                differencePct: mismatchPct,
+                similarity,
+            } = compareImagePixels({ a, b, sensitivity: threshold, includeDiff: !!opts.diffOut });
 
             if (opts.diffOut && diff) {
                 await Bun.write(opts.diffOut, encodeRgbaToPng(diff, a.width, a.height));

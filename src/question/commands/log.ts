@@ -1,13 +1,12 @@
-import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { formatQaEntry } from "../lib/format";
 import { openReadModel, type QueryOpts, queryEntries } from "../lib/read-model";
 
 export function defaultDbPath(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "question", "qa.db");
+    return toolDataDir("question", "qa.db");
 }
 
 export function renderDigest(opts: QueryOpts & { dbPath: string }): string {
@@ -30,23 +29,34 @@ export function registerLogCommand(program: Command): void {
         .description("Show recorded Q→A (oldest first; last N entries)")
         .option("-p, --project <name>", "filter by project")
         .option("-t, --tag <tag>", "filter by tag")
+        .option("--session <id>", "filter by originating session")
         .option("--unread", "only unread")
         .option("-l, --limit <n>", "limit", (v) => Number.parseInt(v, 10))
         .option("--format <fmt>", "ai|json", "ai")
-        .action((o: { project?: string; tag?: string; unread?: boolean; limit?: number; format?: string }) => {
-            const dbPath = defaultDbPath();
-            if (o.format === "json") {
-                const db = openReadModel(dbPath);
-                try {
-                    process.stdout.write(`${SafeJSON.stringify(queryEntries(db, o), null, 2)}\n`);
-                } finally {
-                    db.close();
+        .action(
+            (o: {
+                project?: string;
+                session?: string;
+                tag?: string;
+                unread?: boolean;
+                limit?: number;
+                format?: string;
+            }) => {
+                const query = { ...o, sessionId: o.session };
+                const dbPath = defaultDbPath();
+                if (o.format === "json") {
+                    const db = openReadModel(dbPath);
+                    try {
+                        process.stdout.write(`${SafeJSON.stringify(queryEntries(db, query), null, 2)}\n`);
+                    } finally {
+                        db.close();
+                    }
+
+                    process.exit(0);
                 }
 
+                process.stdout.write(`${renderDigest({ ...query, dbPath })}\n`);
                 process.exit(0);
             }
-
-            process.stdout.write(`${renderDigest({ ...o, dbPath })}\n`);
-            process.exit(0);
-        });
+        );
 }

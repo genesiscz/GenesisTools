@@ -1,3 +1,5 @@
+import type { ImageAttachment, ImageAttachmentInput } from "@genesiscz/utils/image/attachments";
+
 export type QaTag = "question" | "action" | "directive";
 /** `ask` marks an entry that came from answering a blocking pending form, not a log-after call. */
 export type QaSource = "question" | "mcp" | "skill" | "cli" | "ask";
@@ -27,6 +29,7 @@ export interface QaEntry {
     question: string;
     answerMd: string;
     refs: QaRef[];
+    attachments?: ImageAttachment[];
     source: QaSource;
     turnUuid: string | null;
 }
@@ -36,6 +39,7 @@ export interface RecordInput {
     answer: string;
     tag: QaTag;
     refs?: QaRef[];
+    attachments?: ImageAttachmentInput[];
     agentLabel?: string;
     source: QaSource;
     sessionId?: string;
@@ -52,4 +56,5 @@ export interface RecordResult {
     id: string;
     sinks: SinkResult[];
     superseded?: string;
+    attachments?: ImageAttachment[];
 }

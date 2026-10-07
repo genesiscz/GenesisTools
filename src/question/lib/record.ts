@@ -14,6 +14,7 @@ const log = logger.child({ component: "question:record" });
 
 export interface RecordDeps {
     logBase?: string;
+    attachmentsRoot?: string;
     env?: NodeJS.ProcessEnv;
     ctx?: Partial<AgentRuntimeContext>;
     /** Override resolved config (tests inject this to avoid touching the real vault). */
@@ -60,12 +61,24 @@ export async function recordAnswer(input: RecordInput, deps: RecordDeps = {}): P
         question,
         answerMd: answer,
         refs: input.refs ?? [],
+        attachments: [],
         source: input.source,
         turnUuid: null,
     };
 
-    appendEntry(entry, deps.logBase);
+    if (input.attachments !== undefined) {
+        entry.attachments = await (await import("@genesiscz/utils/image/attachments")).importImageAttachments({
+            attachments: input.attachments,
+            root: deps.attachmentsRoot,
+            publish: (images) => {
+                appendEntry({ ...entry, attachments: images }, deps.logBase);
+            },
+        });
+    } else {
+        appendEntry(entry, deps.logBase);
+    }
+
     log.info({ id: entry.id, project: entry.project, tag: entry.tag, source: entry.source }, "qa recorded");
     const sinks = await runFanOut(entry, { ...loadConfig(), ...deps.config });
-    return { id: entry.id, sinks };
+    return { id: entry.id, sinks, attachments: entry.attachments };
 }

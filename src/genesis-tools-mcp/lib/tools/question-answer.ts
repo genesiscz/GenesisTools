@@ -1,11 +1,13 @@
 import { type RecordDeps, recordAnswer } from "@app/question/lib/record";
 import type { QaRef, QaTag } from "@app/question/lib/types";
+import { IMAGE_ATTACHMENT_INPUT_SCHEMA, type ImageAttachmentInput } from "@genesiscz/utils/image/attachments";
 
 export interface QuestionAnswerArgs {
     question: string;
     answer: string;
     tag: QaTag;
     refs?: QaRef[];
+    attachments?: ImageAttachmentInput[];
     agentLabel?: string;
 }
 
@@ -16,12 +18,18 @@ export async function handleQuestionAnswer(args: QuestionAnswerArgs, deps: Recor
             answer: args.answer,
             tag: args.tag,
             refs: args.refs,
+            attachments: args.attachments,
             agentLabel: args.agentLabel,
             source: "mcp",
         },
         deps
     );
-    return { id: res.id, sinks: res.sinks, summary: `Logged Q→A ${res.id} (${args.tag}).` };
+    return {
+        id: res.id,
+        sinks: res.sinks,
+        attachments: res.attachments ?? [],
+        summary: `Logged Q→A ${res.id} (${args.tag}).`,
+    };
 }
 
 export const QUESTION_ANSWER_INPUT_SCHEMA = {
@@ -41,6 +49,7 @@ export const QUESTION_ANSWER_INPUT_SCHEMA = {
                 required: ["type", "value"],
             },
         },
+        attachments: IMAGE_ATTACHMENT_INPUT_SCHEMA,
         agentLabel: { type: "string", description: "if you are a subagent, your role/task label" },
     },
     required: ["question", "answer", "tag"],

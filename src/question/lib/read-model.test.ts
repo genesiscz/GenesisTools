@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendEntry } from "./log-store";
-import { markEntriesRead, markEntriesUnread, openReadModel, queryEntries } from "./read-model";
+import { getEntryById, markEntriesRead, markEntriesUnread, openReadModel, queryEntries } from "./read-model";
 import type { QaEntry } from "./types";
 
 function e(id: string, over: Partial<QaEntry> = {}): QaEntry {
@@ -96,4 +96,123 @@ describe("read-model", () => {
         expect(markEntriesUnread(db, ["u1"], { logBase })).toBe(1);
         expect(queryEntries(db, { logBase, unread: true }).length).toBe(1);
     });
+});
+
+describe("answer attachments and session reads", () => {
+    it("roundtrips image metadata and keeps legacy records readable", () => {
+        const root = mkdtempSync(join(tmpdir(), "qa-image-index-"));
+        const logBase = join(root, "log");
+        const image = {
+            type: "image" as const,
+            id: "image-1",
+            path: "/evidence/shot.png",
+            name: "shot.png",
+            mimeType: "image/png" as const,
+            width: 2,
+            height: 1,
+            bytes: 90,
+            sha256: "fixture-digest",
+            label: "Before",
+            comparison: { group: "layout", role: "before" as const },
+        };
+        appendEntry(e("legacy", { ts: 10 }), logBase);
+        appendEntry(e("visual", { ts: 20, attachments: [image] }), logBase);
+        const db = openReadModel(join(root, "qa.db"));
+        try {
+            const rows = queryEntries(db, { logBase });
+            expect(rows[0].attachments).toEqual([]);
+            expect(rows[1].attachments).toEqual([image]);
+        } finally {
+            db.close();
+        }
+    });
+
+    it("filters a session before applying the result limit", () => {
+        const root = mkdtempSync(join(tmpdir(), "qa-session-index-"));
+        const logBase = join(root, "log");
+        appendEntry(e("wanted", { ts: 10, sessionId: "selected" }), logBase);
+        appendEntry(e("other", { ts: 20, sessionId: "unrelated" }), logBase);
+        const db = openReadModel(join(root, "qa.db"));
+        try {
+            expect(queryEntries(db, { logBase, sessionId: "selected", limit: 1 }).map((row) => row.id)).toEqual([
+                "wanted",
+            ]);
+        } finally {
+            db.close();
+        }
+    });
+
+    it("adds attachment storage to an existing index", () => {
+        const root = mkdtempSync(join(tmpdir(), "qa-index-migration-"));
+        const dbPath = join(root, "qa.db");
+        const db = openReadModel(dbPath);
+        db.exec("DROP INDEX idx_entries_missing_images");
+        db.exec("ALTER TABLE entries DROP COLUMN attachments_json");
+        db.close();
+        const migrated = openReadModel(dbPath);
+        try {
+            const columns = migrated.query("PRAGMA table_info(entries)").all() as { name: string }[];
+            expect(columns.some((column) => column.name === "attachments_json")).toBe(true);
+        } finally {
+            migrated.close();
+        }
+    });
+});
+
+it("recovers attachments ingested by an old reader without losing read/supersession state", () => {
+    const root = mkdtempSync(join(tmpdir(), "qa-mixed-readers-"));
+    const logBase = join(root, "log");
+    const image = {
+        type: "image" as const,
+        id: "screenshot",
+        path: "/evidence/image.png",
+        name: "image.png",
+        mimeType: "image/png" as const,
+        width: 2,
+        height: 2,
+        bytes: 100,
+        sha256: "fixture-digest",
+    };
+    appendEntry(e("old-reader", { attachments: [image] }), logBase);
+    const db = openReadModel(join(root, "qa.db"));
+    try {
+        queryEntries(db, { logBase });
+        // An old process stores the row without attachments and advances the shared byte offset.
+        db.run(
+            "UPDATE entries SET attachments_json = NULL, read_at = 123, superseded_by = 'newer' WHERE id = 'old-reader'"
+        );
+        const row = getEntryById(db, "old-reader", { logBase });
+        expect(row?.attachments).toEqual([image]);
+        expect(row?.readAt).toBe(123);
+        expect(row?.supersededBy).toBe("newer");
+    } finally {
+        db.close();
+    }
+});
+
+it("backfills around corrupt JSONL rows already consumed by an older reader", () => {
+    const root = mkdtempSync(join(tmpdir(), "qa-backfill-corrupt-"));
+    const logBase = join(root, "log");
+    const image = {
+        type: "image" as const,
+        id: "shot",
+        path: "/evidence/image.png",
+        name: "image.png",
+        mimeType: "image/png" as const,
+        width: 1,
+        height: 1,
+        bytes: 90,
+        sha256: "fixture-digest",
+    };
+    const file = appendEntry(e("recover", { attachments: [image] }), logBase);
+    const db = openReadModel(join(root, "qa.db"));
+    try {
+        queryEntries(db, { logBase });
+        writeFileSync(file, `{broken\nnull\n${readFileSync(file, "utf8")}also-broken\n`);
+        db.run("UPDATE entries SET attachments_json = NULL WHERE id = 'recover'");
+        db.run("UPDATE ingest_offsets SET byte_offset = ?", [statSync(file).size]);
+        expect(getEntryById(db, "recover", { logBase })?.attachments).toEqual([image]);
+    } finally {
+        db.close();
+    }
 });
