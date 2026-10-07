@@ -127,6 +127,9 @@ struct GitWorkingTreeSource {
     static let emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
     let repo: URL
+    /// The base the Branch scope compares against when it exists here: the PR's target branch
+    /// (`origin/<target>`). Without it, a stacked PR's Branch diff ran against `origin/HEAD`.
+    var preferredBase: String? = nil
 
     /// The old and new revisions of a scope. `nil` new side = the working tree on disk; `""` = the index.
     private func sides(_ scope: DiffScope) throws -> (old: String, new: String?, diffArgs: [String], untracked: Bool, base: String?) {
@@ -183,7 +186,7 @@ struct GitWorkingTreeSource {
 
     func load(scope: DiffScope = .uncommitted, session: String? = nil) throws -> Snapshot {
         let layout = try repositoryLayout()
-        let source = GitWorkingTreeSource(repo: layout.root)
+        let source = GitWorkingTreeSource(repo: layout.root, preferredBase: preferredBase)
         var snapshot = try source.loadCanonical(scope: scope, session: session)
         snapshot.repository = layout
         switch scope {
@@ -378,6 +381,9 @@ struct GitWorkingTreeSource {
 
     /// The branch this one will merge into: origin's default branch, else main/master.
     func baseBranch() -> String {
+        if let preferredBase, (try? git(["rev-parse", "--verify", "--quiet", preferredBase])) != nil {
+            return preferredBase
+        }
         if let head = try? git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]).trimmed, !head.isEmpty {
             return head
         }

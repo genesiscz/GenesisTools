@@ -626,6 +626,7 @@ final class ReviewModel: ObservableObject {
         let session = session
         let primary = repo
         let commitRange = remoteHead?.commitRange
+        let preferredBase = targetRef
         let onlyPrimary: Bool
         switch scope {
         case .commit, .range, .compare: onlyPrimary = true
@@ -650,14 +651,15 @@ final class ReviewModel: ObservableObject {
                     result = .success(GitWorkingTreeSource.Snapshot(branch: "", base: nil, files: []))
                 } else {
                     let span = HubPerf.begin("review.load", namesRoot ? "\(scope) \(job.repo.lastPathComponent)" : "\(scope)")
-                    result = Result { try GitWorkingTreeSource(repo: job.repo).load(scope: scope, session: session) }
+                    let base = job.repo.path == primary.path ? preferredBase : nil
+                    result = Result { try GitWorkingTreeSource(repo: job.repo, preferredBase: base).load(scope: scope, session: session) }
                     span.end()
                 }
                 lock.lock()
                 results[job.folder] = result
                 lock.unlock()
             }
-            let commits = loadsPrimary ? GitWorkingTreeSource(repo: primary).commits(range: commitRange) : nil
+            let commits = loadsPrimary ? GitWorkingTreeSource(repo: primary, preferredBase: preferredBase).commits(range: commitRange) : nil
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 if let commits {
@@ -868,8 +870,16 @@ final class ReviewModel: ObservableObject {
 
     // MARK: pushes after the diff on screen
 
+    /// The target branch the Branch scope last loaded with (or tried): one reload per target.
+    private var branchBaseTried: String?
+
     /// The threads name the PR's head; when the diff shows another one, ask the host what came.
     func checkForPush() {
+        // A Branch diff loaded before the PR was known compared against the guessed base (`origin/HEAD`).
+        if case .branch = scope, let ref = targetRef, base != ref, branchBaseTried != ref {
+            branchBaseTried = ref
+            reload()
+        }
         guard let head = pr?.payload?.pr.headSha, let shown = scope.pinnedHead else { return }
         if PRThreadRendering.sameCommit(head, shown) {
             pushNews = nil
@@ -889,6 +899,12 @@ final class ReviewModel: ObservableObject {
     /// The target branch as a ref here, for an end whose base the host did not record (GitHub).
     private var targetRef: String? {
         pr?.payload?.pr.targetBranch.map { "origin/\($0)" }
+    }
+
+    /// The PR's own diff, its base against its head (what the PR page shows), whatever scope is on screen.
+    var prScope: DiffScope? {
+        guard let info = pr?.payload?.pr, let head = info.headSha, let base = info.baseSha else { return nil }
+        return .range(base: base, head: head, label: "\(info.identity.label) \(info.title.prefix(40))", fallbackBase: targetRef)
     }
 
     /// The diff moves to the PR's newest push; the base follows the push's own (a rebase moves it).
@@ -2318,6 +2334,9 @@ struct ScopeMenu: View {
                     model.setScope(.commit(sha: commit.sha, title: commit.subject))
                 }
             }
+        let prItem: [MenuButtonItem] = model.prScope.map { scope in
+            [.action("PR \(model.prLabel)", checked: model.scope == scope) { model.setScope(scope) }]
+        } ?? []
         let versions: [MenuButtonItem] = model.pr == nil ? [] : [
             .divider,
             .action("Compare pushes…") { model.showsComparePicker = true },
@@ -2332,7 +2351,7 @@ struct ScopeMenu: View {
             .divider,
             .submenu("Committed", committed),
             scopeItem(.branch, model: model),
-        ] + versions
+        ] + prItem + versions
     }
 
     private var label: String {

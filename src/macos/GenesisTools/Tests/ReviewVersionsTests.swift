@@ -77,6 +77,16 @@ final class ReviewVersionsTests: XCTestCase {
         XCTAssertEqual(try git("diff", "--name-only", from.head, to.head), "a.txt\nu.txt")
     }
 
+    func testTheBranchScopeComparesAgainstThePRTargetWhenItExists() throws {
+        try write("a.txt", "1\n")
+        _ = try commit("base")
+        try git("branch", "stack-target")
+        let source = GitWorkingTreeSource(repo: repo, preferredBase: "stack-target")
+        XCTAssertEqual(source.baseBranch(), "stack-target", "a stacked PR's target, not the repo default")
+        let missing = GitWorkingTreeSource(repo: repo, preferredBase: "origin/gone")
+        XCTAssertEqual(missing.baseBranch(), "main", "a target that is not here falls back to the guess")
+    }
+
     func testTheSameBaseIsAPlainDiffOfTheTwoHeads() throws {
         let (from, _) = try rebasedPR(upstreamTouchesLine2: false)
         let replayed = try GitWorkingTreeSource(repo: repo).compareTree(from: from, to: CompareEnd(base: from.base, head: from.head), targetRef: nil)
