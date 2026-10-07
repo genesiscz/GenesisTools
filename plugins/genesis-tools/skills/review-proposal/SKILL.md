@@ -27,9 +27,13 @@ the calling skill describes. Exit 0 means continue.
   The same run saves the facts (`<tmp>/gitlab-pr-<project>-<key>-<iid>.json`, path on stderr; JSON by default on stdout
   without the flag) and the numbered report (`.md`, or `--md` on stdout): diff hunks with new-side
   line numbers, the file checklist, existing threads, your pending drafts, other open MRs this one
-  breaks or overlaps, and the configured gates. `--llm` is a compact view; `--expand f3,t1` prints
+  breaks or overlaps, and the configured gates. `--llm` is a compact view; `--expand F03,T01` prints
   one file or thread in full. `--threads` adds every unresolved thread with the code at its
   anchor.
+- GitLab, when the review was judged in a judgements file (`review skeleton`, `review check`):
+  `tools gitlab pr <iid> review render --file <judgements.md> --proposal | tools hub proposal push -`
+  builds the whole proposal from it (new findings as drafts, threads with verdicts and replies), so
+  there is nothing to fill by hand.
 - GitHub: `tools github review <pr> --llm` for existing threads; `tools github pr <pr>` for details.
   A GitHub thread's `threadId` is its review-thread node id (`PRRT_…`, the `threadId` field of
   `tools github review <pr> --json`): the window replies with `tools github review comment --thread`.
