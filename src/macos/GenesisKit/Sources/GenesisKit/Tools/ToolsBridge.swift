@@ -335,6 +335,18 @@ public struct ToolsBridge: Sendable {
             captured = try await (outData, errData)
             try Task.checkCancellation()
         } catch {
+            // The watchdog stops the collectors before it kills the child, so a timeout lands here
+            // and must leave the same trace and mark as one that is noticed further down.
+            if timedOutFlag.fired {
+                let spanLabel = Self.spanLabel(subcommand: subcommand, args: args)
+                MonitorPerf.record(spanLabel, ms: Date().timeIntervalSince(started) * 1000)
+                MonitorPerf.mark("\(spanLabel) TIMEOUT after \(timeoutSeconds)s (killed)")
+                ToolsCallTrace.record(
+                    traceId: traceId, via: "process-timeout", argv: argv, started: started,
+                    exit: process.terminationStatus, outBytes: 0, stderr: ""
+                )
+                throw ToolsBridgeError.timeout(seconds: timeoutSeconds)
+            }
             MonitorPerf.mark("tools.\(subcommand) incomplete output: \(error.localizedDescription)")
             throw error
         }
