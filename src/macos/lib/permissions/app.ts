@@ -21,6 +21,7 @@ import { withFileLock } from "@genesiscz/utils/storage";
 export const APP_SOURCE_DIR = resolve(import.meta.dirname, "../../GenesisTools");
 /** The app build's own SwiftPM scratch folder, apart from `.build/debug` (tests, benches) so the two never rebuild each other. */
 const APP_SCRATCH_PATH = join(APP_SOURCE_DIR, ".build", "opt");
+export const APP_TOOLS_PATH = resolve(APP_SOURCE_DIR, "../../../tools");
 /** The shared SwiftUI package the app links (src/macos/GenesisKit), so an edit there marks the build stale too. */
 const SOURCE_ROOTS = [
     "Package.swift",
@@ -57,6 +58,7 @@ export interface AppSourceInfo {
 export interface AppManifest extends AppSourceInfo {
     builtAt: string;
     sourceHash: string;
+    sourceToolsPath?: string;
     signedWith: string;
     teamId?: string;
 }
@@ -244,7 +246,11 @@ export function appStatus(): AppStatus {
     const built = existsSync(launcherPath);
     const manifest = built ? readManifest() : undefined;
     const signature = built ? readSignature(bundlePath) : undefined;
-    const stale = built && manifest !== undefined && manifest.sourceHash !== sourceHash();
+    const stale =
+        built &&
+        manifest !== undefined &&
+        (manifest.sourceHash !== sourceHash() ||
+            (manifest.sourceToolsPath !== undefined && manifest.sourceToolsPath !== APP_TOOLS_PATH));
 
     return {
         bundlePath,
@@ -277,6 +283,24 @@ export function stampInfoPlist(template: string, buildNumber: number): string {
     return template
         .replace(PLIST_VERSION_MARKER, "<string>1.0</string>")
         .replace(PLIST_BUILD_MARKER, `<key>CFBundleVersion</key>\n\t<string>${buildNumber}</string>`);
+}
+
+export function stampAppToolsPath(template: string, toolsPath: string): string {
+    const closing = /<\/dict>\s*<\/plist>\s*$/;
+
+    if (
+        !closing.test(template) ||
+        template.includes("<key>GenesisToolsSourceToolsPath</key>") ||
+        !toolsPath.startsWith("/")
+    ) {
+        throw new Error("Cannot stamp the native app's tools origin into this Info.plist.");
+    }
+
+    const escaped = toolsPath.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    return template.replace(
+        closing,
+        () => `\t<key>GenesisToolsSourceToolsPath</key>\n\t<string>${escaped}</string>\n</dict>\n</plist>\n`
+    );
 }
 
 /**
@@ -399,9 +423,9 @@ async function buildAppSteps(step: (message: string) => void): Promise<BuildResu
     }
 
     step("assemble bundle");
-    const plist = stampInfoPlist(
-        readFileSync(join(APP_SOURCE_DIR, "Info.plist"), "utf8"),
-        Math.floor(Date.now() / 1000)
+    const plist = stampAppToolsPath(
+        stampInfoPlist(readFileSync(join(APP_SOURCE_DIR, "Info.plist"), "utf8"), Math.floor(Date.now() / 1000)),
+        APP_TOOLS_PATH
     );
     const iconPath = join(APP_SOURCE_DIR, ICON_SOURCE);
 
@@ -534,6 +558,7 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
         builtAt: new Date().toISOString(),
         sourceHash: sourceHash(),
         ...(await readSourceInfo()),
+        sourceToolsPath: APP_TOOLS_PATH,
         signedWith: signature.authority,
         teamId: signature.teamId,
     };

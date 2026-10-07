@@ -584,7 +584,9 @@ export class Browser {
 export const TARGETS_TIMEOUT_MS = 5000;
 
 export async function targets(port = BROWSER_DEVTOOLS_PORT, opts: { signal?: AbortSignal } = {}): Promise<Target[]> {
-    const signal = opts.signal ?? AbortSignal.timeout(TARGETS_TIMEOUT_MS);
+    const timeout = AbortSignal.timeout(TARGETS_TIMEOUT_MS);
+    // A caller's signal never removes the deadline: a port that accepts and never answers would hang the call.
+    const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
     const r = await fetch(`http://127.0.0.1:${port}/json/list`, { signal });
 
     return (await r.json()) as Target[];

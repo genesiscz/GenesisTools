@@ -2,7 +2,7 @@ import { describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertFullXcodeToolchain, retiredBundlesToKeep, runningExecutableInodes } from "./app";
+import { assertFullXcodeToolchain, retiredBundlesToKeep, runningExecutableInodes, stampAppToolsPath } from "./app";
 import {
     type BuildOfferDeps,
     createRealBuildOfferDeps,
@@ -13,6 +13,23 @@ import {
     shouldAsk,
     writeOfferStateTo,
 } from "./build-offer";
+
+describe("stampAppToolsPath", () => {
+    it("records the actual build checkout as XML text without changing template values", () => {
+        const template = "<plist><dict><key>Existing</key><string>unchanged</string></dict></plist>";
+        const stamped = stampAppToolsPath(template, "/fixture/space & <branch>/tools");
+        expect(stamped).toContain("<key>GenesisToolsSourceToolsPath</key>");
+        expect(stamped).toContain("/fixture/space &amp; &lt;branch&gt;/tools");
+        expect(stamped).toContain("<key>Existing</key><string>unchanged</string>");
+    });
+
+    it("refuses duplicate origin keys, malformed plists and relative executables", () => {
+        expect(() => stampAppToolsPath("<plist></plist>", "/fixture/tools")).toThrow("Cannot stamp");
+        expect(() => stampAppToolsPath("<plist><dict></dict></plist>", "tools")).toThrow("Cannot stamp");
+        const stamped = stampAppToolsPath("<plist><dict></dict></plist>", "/fixture/tools");
+        expect(() => stampAppToolsPath(stamped, "/another/tools")).toThrow("Cannot stamp");
+    });
+});
 
 describe("runningExecutableInodes", () => {
     it("reads the inode lines of lsof -Fi and ignores the rest", () => {

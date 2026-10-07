@@ -1,4 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, readdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import {
     CdpLaunchError,
     COLD_PROFILE_TIMEOUT_MS,
@@ -6,6 +14,7 @@ import {
     launchArgs,
     launchCdpBrowser,
 } from "./launch.ts";
+import { openRecordingBrowser } from "./recording-browser";
 
 describe("launchArgs (PR #326 review — the profile-isolation rule, pinned)", () => {
     test("a plain launch carries the debug port and NO --user-data-dir (the real profile)", () => {
@@ -240,3 +249,195 @@ describe("launchCdpBrowser", () => {
         expect(waits).toEqual([5_000]);
     });
 });
+
+describe("separate recording browser onboarding", () => {
+    const installed = () => [{ id: "chrome", name: "Google Chrome" }];
+    let snapshot: ReturnType<typeof env.testing.snapshot>;
+    beforeEach(async () => {
+        snapshot = env.testing.snapshot();
+        env.testing.set("GENESIS_TOOLS_HOME", await mkdtemp(join(tmpdir(), "recording-browser-")));
+    });
+    afterEach(() => {
+        env.testing.restore(snapshot);
+    });
+    test("opens the selected installed browser on the allocated endpoint with a unique separate profile", async () => {
+        const commands: string[][] = [];
+        let killed = 0;
+        const result = await openRecordingBrowser({
+            browserId: "chrome",
+            url: "http://localhost:1234/fixture",
+            dependencies: {
+                installed,
+                freePort: async () => 45678,
+                probe: liveProbe,
+                spawnLogged: (command) => {
+                    commands.push(command);
+                    return {
+                        pid: 4242,
+                        kill: () => {
+                            killed++;
+                        },
+                    };
+                },
+            },
+        });
+        expect(result.browserId).toBe("chrome");
+        expect(result.pid).toBe(4242);
+        expect(result.port).toBe(45678);
+        expect(commands[0]).toContain("--remote-debugging-port=45678");
+        expect(commands[0]).toContain(`--user-data-dir=${result.userDataDir}`);
+        expect(commands[0].at(-1)).toBe("http://localhost:1234/fixture");
+        expect(killed).toBe(0);
+    });
+    test("refuses an uninstalled choice and executable URL before allocating or spawning", async () => {
+        let allocated = 0;
+        let spawned = 0;
+        const dependencies = {
+            installed,
+            spawnLogged: () => {
+                spawned++;
+                throw new Error("Irreversible spawn unexpectedly reached");
+            },
+            freePort: async () => {
+                allocated++;
+                return 45678;
+            },
+        };
+        await expect(openRecordingBrowser({ browserId: "missing", dependencies })).rejects.toThrow("installed");
+        await expect(
+            openRecordingBrowser({ browserId: "chrome", url: "javascript:alert(1)", dependencies })
+        ).rejects.toThrow("HTTP");
+        expect(allocated).toBe(0);
+        expect(spawned).toBe(0);
+    });
+    test("pre-cancelled startup never allocates a port or launches", async () => {
+        const controller = new AbortController();
+        controller.abort();
+        let allocated = 0;
+        let spawned = 0;
+        await expect(
+            openRecordingBrowser({
+                browserId: "chrome",
+                signal: controller.signal,
+                dependencies: {
+                    installed,
+                    spawnLogged: () => {
+                        spawned++;
+                        throw new Error("Irreversible spawn unexpectedly reached");
+                    },
+                    freePort: async () => {
+                        allocated++;
+                        return 45678;
+                    },
+                },
+            })
+        ).rejects.toThrow();
+        expect(allocated).toBe(0);
+        expect(spawned).toBe(0);
+    });
+    test("cancelling readiness terminates exactly the process returned by the owned spawn", async () => {
+        const controller = new AbortController();
+        let killed = 0;
+        const pending = openRecordingBrowser({
+            browserId: "chrome",
+            signal: controller.signal,
+            dependencies: {
+                installed,
+                freePort: async () => 45678,
+                spawnLogged: () => ({
+                    pid: 4242,
+                    kill: () => {
+                        killed++;
+                    },
+                }),
+                probe: async () => {
+                    controller.abort();
+                    return null;
+                },
+            },
+        });
+        await expect(pending).rejects.toThrow();
+        expect(killed).toBe(1);
+    });
+    test("spawn refusal reaches the caller without starting a replacement browser", async () => {
+        let attempted = 0;
+        await expect(
+            openRecordingBrowser({
+                browserId: "chrome",
+                dependencies: {
+                    installed,
+                    freePort: async () => 45678,
+                    probe: liveProbe,
+                    spawnLogged: () => {
+                        attempted++;
+                        throw new Error("fixture spawn refused");
+                    },
+                },
+            })
+        ).rejects.toThrow("fixture spawn refused");
+        expect(attempted).toBe(1);
+        expect(await readdir(toolDataDir("chrome-devtools", "recording-browsers"))).toEqual([]);
+    });
+});
+
+test.skipIf(process.platform === "win32")(
+    "one-shot browser launcher exits while its owned browser keeps running",
+    async () => {
+        await mkdir("/tmp/cc/GenesisTools/bug-to-test", { recursive: true });
+        const directory = await mkdtemp("/tmp/cc/GenesisTools/bug-to-test/browser-exit-");
+        const script = join(directory, "launch.ts");
+        await Bun.write(
+            script,
+            `import { defaultSpawnLogged } from ${SafeJSON.stringify(join(import.meta.dir, "launch.ts"))};
+const child = defaultSpawnLogged([process.execPath, '-e', 'setInterval(() => {}, 1000)'], ${SafeJSON.stringify(join(directory, "browser.log"))});
+console.log('OWNED:' + child.pid);
+`
+        );
+        const cli = spawn(process.execPath, [script], {
+            cwd: process.cwd(),
+            env: process.env,
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+        let output = "";
+        let errors = "";
+        cli.stdout.on("data", (chunk) => {
+            output += chunk.toString();
+        });
+        cli.stderr.on("data", (chunk) => {
+            errors += chunk.toString();
+        });
+        let expired = false;
+        let cleanupFailure: unknown;
+        const timer = setTimeout(() => {
+            expired = true;
+            cli.kill("SIGKILL");
+        }, 1500);
+        try {
+            const exit = await new Promise<number>((accept, reject) => {
+                cli.once("error", reject);
+                cli.once("close", (code) => accept(code ?? -1));
+            });
+            expect(errors).toBe("");
+            expect(expired).toBe(false);
+            expect(exit).toBe(0);
+            const pid = Number(output.match(/OWNED:(\d+)/)?.[1]);
+            expect(pid).toBeGreaterThan(0);
+            expect(isProcessAlive(pid)).toBe(true);
+        } finally {
+            clearTimeout(timer);
+            cli.kill("SIGKILL");
+            const pid = Number(output.match(/OWNED:(\d+)/)?.[1]);
+            if (pid > 0) {
+                try {
+                    process.kill(pid, "SIGTERM");
+                } catch (error) {
+                    if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) {
+                        cleanupFailure = error;
+                    }
+                }
+            }
+        }
+        expect(cleanupFailure).toBeUndefined();
+    },
+    5000
+);

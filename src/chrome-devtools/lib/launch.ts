@@ -73,13 +73,14 @@ export function launchArgs(
 /** Spawn that keeps the browser's stdio, so a failed launch leaves a readable log. Injectable for tests. */
 export type SpawnLoggedFn = (cmd: string[], logPath: string) => { pid: number; kill: () => void };
 
-const defaultSpawnLogged: SpawnLoggedFn = (cmd, logPath) => {
+export const defaultSpawnLogged: SpawnLoggedFn = (cmd, logPath) => {
     // stdio ["ignore","ignore","ignore"] makes Chrome/Brave STALL before it
     // opens the CDP port — confirmed live, repeatedly: the process starts,
     // spawns exactly a GPU helper and never progresses. Piping stdout/stderr
     // to a real file (not /dev/null, not ignored) is the fix. Do not
     // "simplify" this back to ignore.
     const child = Bun.spawn(cmd, { stdio: ["ignore", Bun.file(logPath), Bun.file(logPath)] });
+    child.unref();
 
     return { pid: child.pid, kill: () => child.kill() };
 };

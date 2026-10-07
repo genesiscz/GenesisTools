@@ -76,4 +76,11 @@ final class HubMovedCheckoutTests: XCTestCase {
         XCTAssertTrue(MovedCheckout.isRepository(worktree), "a relative gitdir resolves from the worktree")
         XCTAssertNil(MovedCheckout.resolve(worktree))
     }
+
+    func testNativeBuildOriginNeverSilentlySwitchesCheckouts() throws {
+        let built = "/fixture/feature/tools"
+        XCTAssertEqual(try AppToolsOrigin.resolve(configured: built, isExecutable: { $0 == built }, fallback: { "/fixture/main/tools" }), built)
+        XCTAssertEqual(try AppToolsOrigin.resolve(configured: nil, isExecutable: { _ in false }, fallback: { "/fixture/legacy/tools" }), "/fixture/legacy/tools")
+        XCTAssertThrowsError(try AppToolsOrigin.resolve(configured: built, isExecutable: { _ in false }, fallback: { "/fixture/main/tools" }))
+    }
 }
