@@ -284,10 +284,10 @@ export function claimTurnLog(options: {
     }
 }
 
-async function runTurn(
-    store: GrokSessionStore,
-    meta: GrokSessionMeta,
-    turnArgs: string[],
+interface TurnPlan {
+    args: string[];
+    readOnly: boolean;
+    surfaces?: WorkerSurfaces;
     /**
      * Metadata to persist only once this turn has WON the reservation below.
      * A safety-mode change must not be written before that: two concurrent
@@ -296,24 +296,36 @@ async function runTurn(
      * left `readOnly: false` behind, so the next unflagged steer of a read-only
      * session ran writable (PR #330 review t28).
      */
-    reservedMetaPatch?: Partial<GrokSessionMeta>
+    reservedMetaPatch?: Partial<GrokSessionMeta>;
+}
+
+/**
+ * Runs one turn under the session's turn lock. `plan` is called with the metadata read INSIDE the
+ * lock, so a steer that waited behind another turn builds its arguments and its safety mode from
+ * what that turn left behind, not from what it read before waiting.
+ */
+async function runTurn(
+    store: GrokSessionStore,
+    name: string,
+    plan: (fresh: GrokSessionMeta) => TurnPlan
 ): Promise<TurnResult> {
-    return withFileLock(`${sessionMetaPath(meta.name)}.turn.lock`, async () => {
-        const fresh = store.readMeta(meta.name);
+    return withFileLock(`${sessionMetaPath(name)}.turn.lock`, async () => {
+        const fresh = store.readMeta(name);
         if (!fresh) {
-            throw new Error(`Grok session not found: ${meta.name}`);
+            throw new Error(`Grok session not found: ${name}`);
         }
         if (fresh.activeTurn?.childPid && isProcessAlive(fresh.activeTurn.childPid)) {
             throw new Error(
-                `Grok session '${meta.name}' still has turn ${fresh.activeTurn.turn} running (pid ${fresh.activeTurn.childPid})`
+                `Grok session '${name}' still has turn ${fresh.activeTurn.turn} running (pid ${fresh.activeTurn.childPid})`
             );
         }
         const turn = fresh.turns + 1;
-        meta = { ...fresh, readOnly: meta.readOnly, surfaces: meta.surfaces };
+        const planned = plan(fresh);
+        const meta: GrokSessionMeta = { ...fresh, readOnly: planned.readOnly, surfaces: planned.surfaces };
         const binary = resolveGrokBinary();
         const logPath = turnLogPath(meta.name, turn);
         const errPath = turnErrPath(meta.name, turn);
-        const args = [...turnArgs, "--cwd", meta.cwd, "--output-format", "streaming-json"];
+        const args = [...planned.args, "--cwd", meta.cwd, "--output-format", "streaming-json"];
         const authPath = subscriptionAuthPath(env.getProcessEnv());
         const authMode = resolveAuthMode(meta.auth, authPath);
         if (authMode === "subscription" && !existsSync(authPath)) {
@@ -332,7 +344,7 @@ async function runTurn(
         // O_EXCL: the turn log doubles as the turn reservation. Two concurrent
         // steers derive the same next turn from the same metadata, and "w" would
         // let the loser silently truncate the winner's transcript.
-        const logFd = claimTurnLog({ store, name: meta.name, turn, metaPatch: reservedMetaPatch });
+        const logFd = claimTurnLog({ store, name: meta.name, turn, metaPatch: planned.reservedMetaPatch });
         let errFd: number;
 
         try {
@@ -477,7 +489,11 @@ export async function runSession(options: RunSessionOptions): Promise<TurnResult
     };
     store.createMeta(meta);
 
-    return runTurn(store, meta, buildRunArgs(meta, promptArguments));
+    return runTurn(store, meta.name, (fresh) => ({
+        args: buildRunArgs(fresh, promptArguments),
+        readOnly: fresh.readOnly,
+        surfaces: fresh.surfaces,
+    }));
 }
 
 export async function steerSession(options: SteerSessionOptions): Promise<TurnResult> {
@@ -487,17 +503,24 @@ export async function steerSession(options: SteerSessionOptions): Promise<TurnRe
         throw new Error(`Grok session not found: ${options.name}. Start one with '${toolCommand("grok run")}'.`);
     }
 
-    const readOnly = options.readOnly ?? meta.readOnly;
-    const previous = meta.surfaces ?? DEFAULT_SURFACES;
-    const surfaces = surfacesFromFlags(options.surfaces ?? {}, previous);
-    const args = buildNextTurnArgs(meta, readOnly, surfaces, promptArgs(options));
-    const surfacesChanged = surfaces.skills !== previous.skills || surfaces.rules !== previous.rules;
-    const modeChange =
-        readOnly === meta.readOnly && !surfacesChanged
-            ? undefined
-            : { ...(readOnly === meta.readOnly ? {} : { readOnly }), ...(surfacesChanged ? { surfaces } : {}) };
+    const promptArguments = promptArgs(options);
+    return runTurn(store, meta.name, (fresh) => {
+        const readOnly = options.readOnly ?? fresh.readOnly;
+        const previous = fresh.surfaces ?? DEFAULT_SURFACES;
+        const surfaces = surfacesFromFlags(options.surfaces ?? {}, previous);
+        const surfacesChanged = surfaces.skills !== previous.skills || surfaces.rules !== previous.rules;
+        const reservedMetaPatch =
+            readOnly === fresh.readOnly && !surfacesChanged
+                ? undefined
+                : { ...(readOnly === fresh.readOnly ? {} : { readOnly }), ...(surfacesChanged ? { surfaces } : {}) };
 
-    return runTurn(store, { ...meta, readOnly, surfaces }, args, modeChange);
+        return {
+            args: buildNextTurnArgs(fresh, readOnly, surfaces, promptArguments),
+            readOnly,
+            surfaces,
+            reservedMetaPatch,
+        };
+    });
 }
 
 /** The turn report a finished grok turn renders as, for the shared worker verbs. */

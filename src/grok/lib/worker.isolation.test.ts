@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { turnLogPath } from "./paths";
+import { withFileLock } from "@genesiscz/utils/storage";
+import { sessionMetaPath, turnLogPath } from "./paths";
 import { GrokSessionStore } from "./store";
 import {
     buildNextTurnArgs,
@@ -278,6 +279,45 @@ describe("safety mode is only persisted by the turn that wins the reservation", 
                 );
 
                 expect(store.readMeta("reviewer")?.readOnly).toBe(true);
+            }
+        );
+    });
+});
+describe("a steer that waits for the turn lock", () => {
+    test("builds its arguments and safety mode from the metadata it finds inside the lock", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-grok-locked-plan-"));
+        const binDir = mkdtempSync(join(tmpdir(), "gt-grok-locked-bin-"));
+        const argsFile = join(home, "argv.txt");
+        writeFileSync(join(binDir, "grok"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${argsFile}"\n`, { mode: 0o755 });
+
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: home, PATH: `${binDir}:${process.env.PATH}` },
+            async () => {
+                const store = new GrokSessionStore();
+                store.createMeta({
+                    name: "reviewer",
+                    sessionId: "3f1d2a9c-0000-4000-8000-000000000000",
+                    cwd: home,
+                    workerHome: join(home, "worker"),
+                    readOnly: true,
+                    auth: "api-key",
+                    turns: 1,
+                    sessionStarted: false,
+                    createdAt: new Date(0).toISOString(),
+                });
+
+                let steer: Promise<unknown> = Promise.resolve();
+                await withFileLock(`${sessionMetaPath("reviewer")}.turn.lock`, async () => {
+                    steer = steerSession({ name: "reviewer", prompt: "next" });
+                    // The turn holding the lock finishes: the session now exists and became writable.
+                    store.updateMeta("reviewer", { sessionStarted: true, readOnly: false });
+                });
+                await steer;
+
+                const argv = readFileSync(argsFile, "utf8").split("\n");
+                expect(argv).toContain("--resume");
+                expect(argv).not.toContain("--session-id");
+                expect(argv).not.toContain("--tools");
             }
         );
     });
