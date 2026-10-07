@@ -33,7 +33,7 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
 
     /// A local `.html` file Launch Services handed to this face, or launched it for (LocalFileHandoff).
     func application(_ application: NSApplication, open urls: [URL]) {
-        LocalFileHandoff.open(urls)
+        LocalFileHandoff.deliver(urls)
     }
 
     init(showWindowImmediately: Bool) {

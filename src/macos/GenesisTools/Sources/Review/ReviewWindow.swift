@@ -174,7 +174,7 @@ private final class ReviewAppDelegate: NSObject, NSApplicationDelegate {
 
     /// A local `.html` file Launch Services handed to this running face (LocalFileHandoff).
     func application(_ application: NSApplication, open urls: [URL]) {
-        LocalFileHandoff.open(urls)
+        LocalFileHandoff.deliver(urls)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

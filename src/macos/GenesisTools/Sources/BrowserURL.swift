@@ -93,6 +93,12 @@ final class BrowserURLForwarder: NSObject {
         guard let raw = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
               raw.contains("://")
         else { return }
+        forward(raw)
+    }
+
+    /// One link into a fresh router instance; also the path for links AppKit hands to a delegate's
+    /// `application(_:open:)` (LocalFileHandoff.deliver).
+    func forward(_ raw: String) {
         // A new instance started by LaunchServices, not a child Process: a child inherits this face's
         // session, and a route's `open message://…` then failed inside LaunchServices
         // (`_LSOpenURLsWithCompletionHandler() failed`, 2026-09-24).
@@ -156,7 +162,7 @@ private let browserLinkApp = BrowserLinkApp()
 
 private final class BrowserLinkApp: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
-        LocalFileHandoff.open(urls)
+        LocalFileHandoff.deliver(urls)
     }
 
     func application(_ app: NSApplication, shouldRestoreSecureApplicationState coder: NSCoder) -> Bool { false }
@@ -288,6 +294,18 @@ private func finishBrowserLink(message: String, failedURL: String?, toast: Route
 enum LocalFileHandoff {
     static func arguments(for file: URL) -> [String] {
         fallbackOpenArguments(file.path)
+    }
+
+    /// Everything AppKit hands to a delegate's `application(_:open:)`. 🛑 A delegate that implements it
+    /// makes AppKit install its own URL-event handler at launch, over `installBrowserURLForwarder`'s, so
+    /// links arrive here too: they go on to the forwarder exactly as before, files to the browser. Dropping
+    /// the non-file URLs sent every https click to a running window face into nothing (2026-10-07 21:40
+    /// to 22:0x: a genesis.tools/md link only brought the review window forward).
+    static func deliver(_ urls: [URL]) {
+        for url in urls where !url.isFileURL {
+            BrowserURLForwarder.shared.forward(url.absoluteString)
+        }
+        open(urls)
     }
 
     /// The file URLs among `urls` go to the browser; returns how many.
