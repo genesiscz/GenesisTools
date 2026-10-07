@@ -291,9 +291,12 @@ final class ReviewCommentStore {
         }
     }
 
+    /// A change written to disk in the background. A failed write stays here, marked, so the
+    /// edit stays visible and rides along with the next save instead of being lost.
     private struct Pending {
         let id: UUID
         let patches: [Patch]
+        var failed = false
     }
     private static let writer = DispatchQueue(label: "review.comments.writer", qos: .utility)
     private static let registryLock = NSLock()
@@ -336,7 +339,9 @@ final class ReviewCommentStore {
             old[row.id] == row ? nil : Patch(before: old[row.id], after: row)
         } + projection.filter { new[$0.id] == nil }.map { Patch(before: $0, after: nil) }
         guard !patches.isEmpty else { return }
-        let change = Pending(id: UUID(), patches: patches)
+        let retried = pending.filter(\.failed).flatMap(\.patches)
+        pending.removeAll(where: \.failed)
+        let change = Pending(id: UUID(), patches: retried + patches)
         pending.append(change)
         projection = comments
         let target = file
@@ -354,9 +359,9 @@ final class ReviewCommentStore {
                 }
             }
             DispatchQueue.main.async {
-                self.pending.removeAll { $0.id == change.id }
                 switch result {
                 case .success(let rows):
+                    self.pending.removeAll { $0.id == change.id }
                     Self.registryLock.lock()
                     let stores = Self.registry.allObjects.filter { $0.file == target }
                     Self.registryLock.unlock()
@@ -365,11 +370,14 @@ final class ReviewCommentStore {
                         store.pending.flatMap(\.patches).forEach { $0.apply(to: &visible) }
                         store.comments = visible
                         store.projection = visible
-                        store.saveError = nil
+                        if !store.pending.contains(where: \.failed) { store.saveError = nil }
                         NotificationCenter.default.post(name: Self.changed, object: store)
                     }
                 case .failure(let error):
-                    self.saveError = "Comment changes could not be saved: \(error.localizedDescription)"
+                    if let index = self.pending.firstIndex(where: { $0.id == change.id }) {
+                        self.pending[index].failed = true
+                    }
+                    self.saveError = "Comment changes could not be saved yet; they are retried with the next change: \(error.localizedDescription)"
                     FileHandle.standardError.write(Data("review comments: could not write \(target.path): \(error)\n".utf8))
                     NotificationCenter.default.post(name: Self.changed, object: self)
                 }
