@@ -1,6 +1,6 @@
 import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
-import { type CdpEventListener, Conn, evaluationExpression, localDebuggerUrl, newTab } from "./cdp";
+import { CdpDeadlineError, type CdpEventListener, Conn, evaluationExpression, localDebuggerUrl, newTab } from "./cdp";
 import { listTabs, type TabInfo, tabTarget } from "./tabs";
 
 const { log } = logger.scoped("chrome-devtools-tab-driver");
@@ -107,43 +107,60 @@ class CdpTabDriver implements TabDriver {
         return listTabs(this.port);
     }
 
-    private connect(tabId: string): Promise<Conn> {
+    private connect(tabId: string, signal?: AbortSignal): Promise<Conn> {
         const known = this.connections.get(tabId);
         if (known) {
             return known;
         }
 
-        const pending = this.attach(tabId);
+        const pending = this.attach(tabId, signal);
+        const forget = () => {
+            if (this.connections.get(tabId) === pending) {
+                this.connections.delete(tabId);
+            }
+        };
         this.connections.set(tabId, pending);
-        pending.catch((error: unknown) => {
-            log.debug({ tabId, error }, "attaching to the tab failed");
-            this.connections.delete(tabId);
-        });
+        void pending.then(
+            (conn) => conn.closed.then(forget),
+            (error: unknown) => {
+                log.debug({ tabId, error }, "attaching to the tab failed");
+                forget();
+            }
+        );
         return pending;
     }
 
-    private async attach(tabId: string): Promise<Conn> {
-        const target = await tabTarget(this.port, tabId);
+    private async attach(tabId: string, signal?: AbortSignal): Promise<Conn> {
+        const target = await tabTarget(this.port, tabId, { signal });
         if (!target) {
             throw new TabGoneError(tabId);
         }
 
-        const conn = new Conn(localDebuggerUrl(target, this.port));
-        void conn.closed.then(() => {
-            log.debug({ tabId }, "tab connection closed");
-            this.connections.delete(tabId);
-        });
-        await conn.send("Page.enable");
-        log.debug({ port: this.port, tabId, url: target.url }, "attached to tab");
-        return conn;
+        const conn = new Conn(localDebuggerUrl(target, this.port), { signal });
+        try {
+            await conn.send("Page.enable", {}, undefined, { signal });
+            log.debug({ port: this.port, tabId, url: target.url }, "attached to tab");
+            return conn;
+        } catch (error) {
+            conn.close();
+            throw error;
+        }
     }
 
     /** A call failed: a tab that no longer exists says so, anything else is rethrown as it is. */
-    private async failed(tabId: string, error: unknown): Promise<never> {
-        const target = await tabTarget(this.port, tabId).catch((lookup: unknown) => {
+    private async failed(tabId: string, error: unknown, signal?: AbortSignal): Promise<never> {
+        if (signal?.aborted || error instanceof CdpDeadlineError) {
+            throw error;
+        }
+
+        const target = await tabTarget(this.port, tabId, { signal }).catch((lookup: unknown) => {
             log.debug({ tabId, lookup }, "tab lookup after a failed call failed too");
             return undefined;
         });
+        if (signal?.aborted) {
+            throw signal.reason;
+        }
+
         if (!target) {
             throw new TabGoneError(tabId);
         }
@@ -152,25 +169,34 @@ class CdpTabDriver implements TabDriver {
     }
 
     async evaluate(tabId: string, source: string, options: { deadlineMs?: number } = {}): Promise<unknown> {
-        const conn = await this.connect(tabId);
         const deadlineMs = options.deadlineMs ?? EVALUATE_DEADLINE_MS;
-        const sent = conn.send("Runtime.evaluate", {
-            expression: evaluationExpression(source),
-            awaitPromise: true,
-            returnByValue: true,
-        });
-        const reply = (await withTimeout(
-            sent,
-            deadlineMs,
-            new Error(`The page did not answer within ${deadlineMs} ms`)
-        ).catch((error: unknown) => this.failed(tabId, error))) as EvaluateReply;
-        if (reply.exceptionDetails) {
-            throw new Error(
-                `${reply.exceptionDetails.text} ${reply.exceptionDetails.exception?.description ?? ""}`.trim()
-            );
-        }
+        const controller = new AbortController();
+        const expired = new CdpDeadlineError(`The page did not answer within ${deadlineMs} ms`);
+        const timer = setTimeout(() => controller.abort(expired), deadlineMs);
+        try {
+            const conn = await withTimeout(this.connect(tabId, controller.signal), deadlineMs, expired);
+            const reply = (await conn
+                .send(
+                    "Runtime.evaluate",
+                    {
+                        expression: evaluationExpression(source),
+                        awaitPromise: true,
+                        returnByValue: true,
+                    },
+                    undefined,
+                    { timeoutMs: deadlineMs, signal: controller.signal }
+                )
+                .catch((error: unknown) => this.failed(tabId, error, controller.signal))) as EvaluateReply;
+            if (reply.exceptionDetails) {
+                throw new Error(
+                    `${reply.exceptionDetails.text} ${reply.exceptionDetails.exception?.description ?? ""}`.trim()
+                );
+            }
 
-        return reply.result?.value;
+            return reply.result?.value;
+        } finally {
+            clearTimeout(timer);
+        }
     }
 
     async navigate(tabId: string, url: string): Promise<boolean> {

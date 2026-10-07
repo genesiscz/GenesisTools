@@ -26,6 +26,10 @@ body{font:14px sans-serif;margin:0;padding:10px}
 <button id="move" onclick="log('moved clicked')">Move me</button>
 <button id="noop">Nothing happens</button>
 <button id="covered" onclick="log('covered clicked')">Covered</button>
+<button id="hover-cover">Hover cover</button>
+<button id="hover-move">Hover move</button>
+<button id="stable-hover">Stable hover</button>
+<button id="add-shadow">Add shadow</button>
 <button id="hidden" style="display:none">Hidden</button>
 <form onsubmit="return false">
 <label for="email">Email</label><input id="email" name="email" oninput="log('email '+this.value.length)">
@@ -40,6 +44,29 @@ body{font:14px sans-serif;margin:0;padding:10px}
 <form action="/b" id="nav-form"><input type="hidden" name="from" value="form"><button>Submit form</button></form>
 <div id="cover"></div>
 <script>function log(t){document.getElementById('log').textContent=t}</script>
+<script>
+window.downs = { target: 0, overlay: 0, stable: 0 };
+document.getElementById('hover-cover').addEventListener('mouseover', event => {
+  const rect = event.target.getBoundingClientRect();
+  const cover = document.getElementById('cover');
+  Object.assign(cover.style, {display:'block', inset:'auto', left:rect.left+'px', top:rect.top+'px', width:rect.width+'px', height:rect.height+'px'});
+});
+document.getElementById('hover-cover').addEventListener('mousedown', () => window.downs.target++);
+document.getElementById('cover').addEventListener('mousedown', () => window.downs.overlay++);
+document.getElementById('hover-move').addEventListener('mouseover', event => { event.target.style.transform = 'translateY(40px)'; });
+document.getElementById('hover-move').addEventListener('mousedown', () => window.downs.target++);
+document.getElementById('stable-hover').addEventListener('mousedown', () => window.downs.stable++);
+document.getElementById('add-shadow').addEventListener('click', () => {
+  const host = document.createElement('div');
+  host.id = 'late-shadow';
+  document.body.append(host);
+  queueMicrotask(() => {
+    const root = host.attachShadow({mode:'open'});
+    root.innerHTML = '<p>early</p>';
+    setTimeout(() => { root.querySelector('p').textContent = 'late shadow ready'; }, 20);
+  });
+});
+</script>
 </body></html>`;
 const SECOND_HTML = "<!doctype html><title>B</title><p>Second page</p>";
 // An extension-style panel in an open shadow root, a nested component, and a closed root that
@@ -175,6 +202,37 @@ try {
         covered.ok ? "clicked" : covered.error
     );
     await main.evaluate("() => { document.getElementById('cover').style.display = 'none'; }");
+
+    const hoverCovered = await page.click(find(await page.snapshot(), "Hover cover"));
+    check(
+        "an overlay created by this click's hover receives no mouse-down",
+        !hoverCovered.ok &&
+            !hoverCovered.dispatched &&
+            (await main.evaluate("() => window.downs.target + window.downs.overlay")) === 0,
+        hoverCovered.ok ? "clicked" : hoverCovered.error
+    );
+    await main.evaluate("() => { document.getElementById('cover').style.display = 'none'; }");
+    const hoverMoved = await page.click(find(await page.snapshot(), "Hover move"));
+    check(
+        "a center moved by this click's hover is refused before mouse-down",
+        !hoverMoved.ok && !hoverMoved.dispatched && (await main.evaluate("() => window.downs.target")) === 0,
+        hoverMoved.ok ? "clicked" : hoverMoved.error
+    );
+    const stableHover = await page.click(find(await page.snapshot(), "Stable hover"));
+    check(
+        "a stable hover target receives exactly one mouse-down",
+        stableHover.ok && (await main.evaluate("() => window.downs.stable")) === 1
+    );
+    const lateShadow = await page.click(find(await page.snapshot(), "Add shadow"));
+    check(
+        "settle observes a late attached shadow root and its delayed mutation",
+        lateShadow.ok &&
+            lateShadow.settled !== "navigated" &&
+            lateShadow.settled.reason === "quiet" &&
+            lateShadow.settled.mutations >= 2 &&
+            (await page.snapshot()).text.includes("late shadow ready"),
+        lateShadow.ok ? SafeJSON.stringify(lateShadow.settled) : lateShadow.error
+    );
 
     const beforeFill = await page.snapshot();
     const filled = await page.fill(find(beforeFill, "Email", "fill"), "ada@example.com");

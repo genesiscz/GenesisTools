@@ -4,6 +4,7 @@ import {
     AmbiguousTabError,
     Browser,
     type CdpCookie,
+    Conn,
     cdpPortOf,
     classifyEvalError,
     closeTabCandidates,
@@ -16,7 +17,9 @@ import {
     pickPageTarget,
 } from "./cdp.ts";
 import { findTargets } from "./dom/find.ts";
-import type { DomAction, DomSnapshot } from "./dom/in-page.ts";
+import { type DomAction, type DomSnapshot, installPageAgent } from "./dom/in-page.ts";
+import { DomPage } from "./dom/page.ts";
+import { createTabDriver } from "./tab-driver.ts";
 
 test("a payload file's doc comment and trailing semicolon do not stop its function from running", () => {
     const file = "/**\n * BROWSER PAYLOAD\n */\n// helper\nasync () => {\n    return 1;\n};\n";
@@ -399,5 +402,562 @@ describe("pickPageTarget ranks url above title", () => {
         ];
 
         expect(pickPageTarget(list, { url: "app.example.com" }).type).toBe("page");
+    });
+});
+
+describe("DOM input dispatch and settle evidence", () => {
+    const action: DomAction = { id: "n1", node: 1, kind: "click", label: "Continue", role: "button", guard: "safe" };
+    const point = { ok: true, x: 20, y: 30, screen: { x: 20, y: 30 }, visible: true };
+    const nativeSetTimeout = globalThis.setTimeout;
+    let restore: Array<() => void> = [];
+
+    afterEach(() => {
+        for (const undo of restore.reverse()) {
+            undo();
+        }
+
+        restore = [];
+    });
+
+    async function fixture(
+        options: {
+            hover?: "occluded" | "moved";
+            settle?: "hang" | "lost" | "loaded";
+            press?: "hang" | "closed";
+            mutationFailure?: "selectOption" | "scroll";
+        } = {}
+    ) {
+        const inputs: string[] = [];
+        const methods: string[] = [];
+        let preparations = 0;
+        let listener: ((method: string, params: Record<string, unknown>) => void) | undefined;
+        const websocket = Object.getOwnPropertyDescriptor(globalThis, "WebSocket")!;
+        Object.defineProperty(globalThis, "WebSocket", {
+            configurable: true,
+            value: class {
+                onopen?: () => void;
+                constructor() {
+                    queueMicrotask(() => this.onopen?.());
+                }
+                close() {}
+                addEventListener() {}
+            },
+        });
+        const on = spyOn(Conn.prototype, "on").mockImplementation((fn) => {
+            listener = fn;
+        });
+        const send = spyOn(Conn.prototype, "send").mockImplementation(async (method, params = {}) => {
+            if (method === "Input.dispatchMouseEvent") {
+                inputs.push(String(params.type));
+                if (params.type === "mousePressed" && options.press === "closed") {
+                    throw new Error("CDP connection closed");
+                }
+                if (params.type === "mousePressed" && options.press === "hang") {
+                    return new Promise(() => {});
+                }
+            }
+
+            if (method === "Page.getFrameTree") {
+                return { frameTree: { frame: { id: "main" } } };
+            }
+
+            if (method === "Page.createIsolatedWorld") {
+                return { executionContextId: 1 };
+            }
+
+            if (method !== "Runtime.evaluate") {
+                return {};
+            }
+
+            if (params.expression === "document.readyState") {
+                return { result: { value: "complete" } };
+            }
+
+            const agentMethod = String(params.expression).match(/globalThis\.__gtJevAgent\.(\w+)\(/)?.[1];
+            methods.push(agentMethod ?? "unknown");
+            if (options.mutationFailure && agentMethod === options.mutationFailure) {
+                throw new Error("CDP connection closed");
+            }
+            let value: unknown = true;
+            if (agentMethod === "prepare" || agentMethod === "focusField" || agentMethod === "selectOption") {
+                preparations++;
+                value =
+                    preparations > 1 && options.hover === "occluded"
+                        ? { ok: false, reason: "occluded" }
+                        : preparations > 1 && options.hover === "moved"
+                          ? { ...point, x: 50 }
+                          : point;
+            }
+
+            if (agentMethod === "scroll") {
+                value = 1;
+            }
+
+            if (agentMethod === "settle") {
+                if (options.settle === "hang") {
+                    return new Promise(() => {});
+                }
+
+                if (options.settle === "loaded") {
+                    listener?.("Page.domContentEventFired", {});
+                }
+
+                if (options.settle === "lost" || options.settle === "loaded") {
+                    throw new Error("Execution context was destroyed");
+                }
+
+                value = { reason: "quiet", mutations: 1, ms: 50 };
+            }
+
+            return { result: { value } };
+        });
+        const timer = spyOn(globalThis, "setTimeout").mockImplementation(
+            Object.assign(
+                (...[fn, ms, ...args]: Parameters<typeof setTimeout>) =>
+                    nativeSetTimeout(fn, ms && ms > 1000 ? 5 : ms, ...args),
+                nativeSetTimeout
+            )
+        );
+        restore.push(
+            () => Object.defineProperty(globalThis, "WebSocket", websocket),
+            () => on.mockRestore(),
+            () => send.mockRestore(),
+            () => timer.mockRestore()
+        );
+        const page = await DomPage.attach({
+            port: 9222,
+            target: {
+                id: "fixture",
+                type: "page",
+                title: "Fixture",
+                url: "https://fixture.example.com",
+                webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/fixture",
+            },
+        });
+        return { page, inputs, methods, preparations: () => preparations };
+    }
+
+    test.each(["occluded", "moved"] as const)("refuses a target %s by hover before mouse-down", async (hover) => {
+        const f = await fixture({ hover });
+        expect(await f.page.click(action)).toEqual({
+            ok: false,
+            error: "target changed after hover",
+            dispatched: false,
+        });
+        expect(f.inputs).toEqual(["mouseMoved"]);
+        expect(f.preparations()).toBe(2);
+    });
+
+    test("a stable target gets one press/release and a confirmed settle", async () => {
+        const f = await fixture();
+        expect((await f.page.click(action)).ok).toBe(true);
+        expect(f.inputs).toEqual(["mouseMoved", "mousePressed", "mouseReleased"]);
+        expect(f.preparations()).toBe(2);
+    });
+
+    test("a press without a reply still releases and reports uncertain delivery", async () => {
+        const f = await fixture({ press: "hang" });
+        expect(await f.page.click(action)).toMatchObject({ ok: false, dispatched: true });
+        expect(f.inputs).toEqual(["mouseMoved", "mousePressed", "mouseReleased"]);
+        expect(f.methods).not.toContain("settle");
+    });
+
+    test("connection loss after sending input remains uncertain and is never replayed", async () => {
+        const f = await fixture({ press: "closed" });
+        expect(await f.page.click(action)).toMatchObject({ ok: false, dispatched: true });
+        expect(f.inputs).toEqual(["mouseMoved", "mousePressed", "mouseReleased"]);
+        expect(f.methods.at(-1)).toBe("disarm");
+    });
+
+    test.each(["selectOption", "scroll"] as const)(
+        "%s reports transport loss as dispatched uncertainty",
+        async (mutationFailure) => {
+            const f = await fixture({ mutationFailure });
+            const result =
+                mutationFailure === "scroll"
+                    ? await f.page.scroll(1)
+                    : await f.page.select({ ...action, kind: "select", option: { index: 0, label: "First" } });
+            expect(result).toMatchObject({ ok: false, dispatched: true });
+            expect(f.methods.filter((method) => method === mutationFailure)).toHaveLength(1);
+            expect(f.methods.at(-1)).toBe("disarm");
+        }
+    );
+
+    test.each(["click", "fill", "select", "scroll", "wait"] as const)(
+        "%s cannot certify an unanswered settle",
+        async (kind) => {
+            const f = await fixture({ settle: "hang" });
+            const result =
+                kind === "click"
+                    ? await f.page.click(action)
+                    : kind === "fill"
+                      ? await f.page.fill(action, "value")
+                      : kind === "select"
+                        ? await f.page.select({ ...action, kind: "select", option: { index: 0, label: "First" } })
+                        : kind === "scroll"
+                          ? await f.page.scroll(1)
+                          : await f.page.wait();
+            expect(result).toMatchObject({ ok: false, dispatched: kind !== "wait" });
+            expect(result.ok ? "" : result.error).toContain("settle_unconfirmed");
+            expect(f.methods).not.toContain("holds");
+            expect(f.methods).not.toContain("selected");
+        }
+    );
+
+    test("context loss without readiness is unconfirmed", async () => {
+        const f = await fixture({ settle: "lost" });
+        expect(await f.page.click(action)).toEqual({
+            ok: false,
+            error: "navigation_unconfirmed: no load event",
+            dispatched: true,
+        });
+    });
+
+    test("context loss followed by readiness confirms navigation", async () => {
+        const f = await fixture({ settle: "loaded" });
+        expect(await f.page.fill(action, "value")).toEqual({ ok: true, settled: "navigated" });
+    });
+});
+
+describe("CDP transport deadlines", () => {
+    type Packet = { id: number; method: string };
+    const sockets: FixtureSocket[] = [];
+    const socketUrl = "ws://127.0.0.1:9222/devtools/page/fixture";
+    let opening = true;
+    let respond: (socket: FixtureSocket, packet: Packet) => void = () => {};
+    let websocket: PropertyDescriptor | undefined;
+    let undoFetch: (() => void) | undefined;
+
+    class FixtureSocket extends EventTarget {
+        static OPEN = 1;
+        readyState = 0;
+        onopen: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        onmessage: ((event: { data: string }) => void) | null = null;
+        packets: Packet[] = [];
+        closes = 0;
+
+        constructor() {
+            super();
+            sockets.push(this);
+            if (opening) {
+                queueMicrotask(() => {
+                    this.readyState = 1;
+                    this.onopen?.();
+                });
+            }
+        }
+
+        send(raw: string) {
+            const packet = SafeJSON.parse(raw, { strict: true }) as Packet;
+            this.packets.push(packet);
+            respond(this, packet);
+        }
+
+        reply(id: number, result: unknown) {
+            this.onmessage?.({ data: SafeJSON.stringify({ id, result }, { strict: true }) });
+        }
+
+        close() {
+            this.closes++;
+            this.readyState = 3;
+            this.dispatchEvent(new Event("close"));
+        }
+    }
+
+    function fixture() {
+        websocket = Object.getOwnPropertyDescriptor(globalThis, "WebSocket");
+        Object.defineProperty(globalThis, "WebSocket", { configurable: true, value: FixtureSocket });
+    }
+
+    afterEach(() => {
+        for (const socket of sockets.splice(0)) {
+            socket.close();
+        }
+
+        if (websocket) {
+            Object.defineProperty(globalThis, "WebSocket", websocket);
+        }
+
+        undoFetch?.();
+        undoFetch = undefined;
+        opening = true;
+        respond = () => {};
+    });
+
+    test("an unopened socket expires and closes", async () => {
+        fixture();
+        opening = false;
+        const conn = new Conn(socketUrl, { handshakeTimeoutMs: 5 });
+        await expect(conn.send("Page.enable")).rejects.toThrow("socket did not open within");
+        expect(sockets[0].closes).toBe(1);
+    });
+
+    test("command expiry forgets the request; a late reply cannot affect the next command", async () => {
+        fixture();
+        const conn = new Conn(socketUrl);
+        await expect(conn.send("First", {}, undefined, { timeoutMs: 5 })).rejects.toThrow("First did not answer");
+        sockets[0].reply(sockets[0].packets[0].id, "late");
+        respond = (socket, packet) => socket.reply(packet.id, 42);
+        expect(await conn.send("Second")).toBe(42);
+        expect(Reflect.get(conn, "pending").size).toBe(0);
+        conn.close();
+    });
+
+    test("abort and socket close reject pending commands and remove them", async () => {
+        fixture();
+        const conn = new Conn(socketUrl);
+        const controller = new AbortController();
+        const aborted = conn.send("Aborted", {}, undefined, { signal: controller.signal });
+        controller.abort(new Error("cancelled"));
+        await expect(aborted).rejects.toThrow("cancelled");
+        const closed = conn.send("Closed");
+        await Promise.resolve();
+        sockets[0].close();
+        await expect(closed).rejects.toThrow("connection closed");
+        expect(Reflect.get(conn, "pending").size).toBe(0);
+    });
+
+    test("a send deadline includes a pending handshake and never dispatches after it expires", async () => {
+        fixture();
+        opening = false;
+        const conn = new Conn(socketUrl);
+        await expect(conn.send("First", {}, undefined, { timeoutMs: 5 })).rejects.toThrow("First did not answer");
+        sockets[0].readyState = 1;
+        sockets[0].onopen?.();
+        await Promise.resolve();
+        expect(sockets[0].packets).toHaveLength(0);
+        conn.close();
+    });
+
+    test("the public evaluate budget includes enable and a failed attachment is replaceable", async () => {
+        fixture();
+        const fetch = spyOn(globalThis, "fetch").mockImplementation(
+            Object.assign(
+                async () =>
+                    new Response(
+                        SafeJSON.stringify(
+                            [
+                                {
+                                    id: "fixture",
+                                    type: "page",
+                                    title: "Fixture",
+                                    url: "https://fixture.example.com",
+                                    webSocketDebuggerUrl: socketUrl,
+                                },
+                            ],
+                            { strict: true }
+                        )
+                    ),
+                globalThis.fetch
+            )
+        );
+        undoFetch = () => fetch.mockRestore();
+        const driver = createTabDriver(9222);
+        const started = performance.now();
+        await expect(driver.evaluate("fixture", "42", { deadlineMs: 15 })).rejects.toThrow("within 15 ms");
+        expect(performance.now() - started).toBeLessThan(500);
+        expect(sockets[0].closes).toBe(1);
+        expect(sockets[0].packets.map((packet) => packet.method)).toEqual(["Page.enable"]);
+        respond = (socket, packet) =>
+            socket.reply(packet.id, packet.method === "Runtime.evaluate" ? { result: { value: 42 } } : {});
+        expect(await driver.evaluate("fixture", "42", { deadlineMs: 100 })).toBe(42);
+        expect(sockets).toHaveLength(2);
+        // An old close event must not evict the replacement connection.
+        sockets[0].close();
+        await Promise.resolve();
+        expect(await driver.evaluate("fixture", "42", { deadlineMs: 100 })).toBe(42);
+        expect(sockets).toHaveLength(2);
+        driver.close();
+    });
+
+    test("the public evaluate budget aborts stalled target discovery", async () => {
+        fixture();
+        const fetch = spyOn(globalThis, "fetch").mockImplementation(
+            Object.assign(
+                async (...[_input, init]: Parameters<typeof globalThis.fetch>) =>
+                    new Promise<Response>((_resolve, reject) => {
+                        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+                    }),
+                globalThis.fetch
+            )
+        );
+        undoFetch = () => fetch.mockRestore();
+        const driver = createTabDriver(9222);
+        await expect(driver.evaluate("fixture", "42", { deadlineMs: 5 })).rejects.toThrow("within 5 ms");
+        expect(sockets).toHaveLength(0);
+        driver.close();
+    });
+
+    test("DOM attachment closes a partial socket on protocol failure", async () => {
+        fixture();
+        respond = (socket, packet) =>
+            socket.onmessage?.({
+                data: SafeJSON.stringify({ id: packet.id, error: { message: "enable failed" } }, { strict: true }),
+            });
+        await expect(
+            DomPage.attach({
+                port: 9222,
+                target: {
+                    id: "fixture",
+                    type: "page",
+                    title: "Fixture",
+                    url: "https://fixture.example.com",
+                    webSocketDebuggerUrl: socketUrl,
+                },
+            })
+        ).rejects.toThrow("enable failed");
+        expect(sockets[0].closes).toBe(1);
+    });
+});
+
+describe("one page-agent action observer", () => {
+    type Agent = {
+        arm(): void;
+        disarm(): void;
+        settle(options: { capMs: number; quietMs: number }): Promise<{ reason: string; mutations: number }>;
+    };
+    function fixture(size = 0) {
+        const saved = new Map<string, PropertyDescriptor | undefined>();
+        let scans = 0;
+        let reads = 0;
+        const observers: Observer[] = [];
+        class Root {
+            elements: Element[] = [];
+            querySelectorAll() {
+                scans++;
+                return this.elements;
+            }
+        }
+        class Element extends Root {
+            root: Root | null = null;
+            get shadowRoot() {
+                reads++;
+                return this.root;
+            }
+        }
+        class Observer {
+            roots = new Set<Root>();
+            queued: MutationRecord[] = [];
+            constructor(readonly callback: (records: MutationRecord[]) => void) {
+                observers.push(this);
+            }
+            observe(root: Root) {
+                this.roots.add(root);
+            }
+            disconnect() {
+                this.roots.clear();
+            }
+            takeRecords() {
+                const records = this.queued;
+                this.queued = [];
+                return records;
+            }
+            emit(count: number, added: Element[] = []) {
+                this.callback(
+                    Array.from({ length: count }, () => ({ addedNodes: added }) as unknown as MutationRecord)
+                );
+            }
+        }
+        const document = new Root();
+        document.elements = Array.from({ length: size }, () => new Element());
+        for (const [name, value] of Object.entries({
+            document,
+            Element,
+            MutationObserver: Observer,
+            __gtJevAgent: undefined,
+        })) {
+            saved.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+            Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
+        }
+        installPageAgent();
+        const agent = Reflect.get(globalThis, "__gtJevAgent") as Agent;
+        return {
+            agent,
+            observers,
+            Element,
+            Root,
+            counts: () => ({ scans, reads }),
+            close: () => {
+                agent.disarm();
+                for (const [name, descriptor] of saved) {
+                    if (descriptor) {
+                        Object.defineProperty(globalThis, name, descriptor);
+                    } else {
+                        Reflect.deleteProperty(globalThis, name);
+                    }
+                }
+            },
+        };
+    }
+
+    test("arm and settle scan a 20,000-element document once with one observer", async () => {
+        const f = fixture(20_000);
+        try {
+            f.agent.arm();
+            const result = await f.agent.settle({ capMs: 5, quietMs: 1 });
+            expect(result).toMatchObject({ reason: "cap", mutations: 0 });
+            expect(f.counts()).toEqual({ scans: 1, reads: 20_000 });
+            expect(f.observers).toHaveLength(1);
+            expect(f.observers[0].roots.size).toBe(0);
+        } finally {
+            f.close();
+        }
+    });
+
+    test("early and late mutation batches share exact counts and wake the quiet timer", async () => {
+        const f = fixture();
+        try {
+            f.agent.arm();
+            f.observers[0].emit(2);
+            f.observers[0].queued = [{ addedNodes: [] } as unknown as MutationRecord];
+            const settled = f.agent.settle({ capMs: 50, quietMs: 1 });
+            f.observers[0].emit(3);
+            expect(await settled).toMatchObject({ reason: "quiet", mutations: 6 });
+            expect(f.observers).toHaveLength(1);
+        } finally {
+            f.close();
+        }
+    });
+
+    test("new nested shadow roots, including a root attached between arm and settle, are observed", async () => {
+        const f = fixture();
+        try {
+            f.agent.arm();
+            const host = new f.Element();
+            f.observers[0].emit(1, [host]);
+            const shadow = new f.Root();
+            const nested = new f.Element();
+            const inner = new f.Root();
+            nested.root = inner;
+            shadow.elements = [nested];
+            host.root = shadow;
+            const settled = f.agent.settle({ capMs: 50, quietMs: 1 });
+            expect(f.observers[0].roots.has(shadow)).toBe(true);
+            expect(f.observers[0].roots.has(inner)).toBe(true);
+            const later = new f.Element();
+            later.root = new f.Root();
+            f.observers[0].emit(1, [later]);
+            expect(f.observers[0].roots.has(later.root)).toBe(true);
+            expect(await settled).toMatchObject({ reason: "quiet", mutations: 2 });
+        } finally {
+            f.close();
+        }
+    });
+
+    test("disarm and rearm clean observer roots and complete an interrupted settle", async () => {
+        const f = fixture();
+        try {
+            f.agent.arm();
+            const settled = f.agent.settle({ capMs: 1000, quietMs: 50 });
+            f.agent.arm();
+            expect(await settled).toMatchObject({ reason: "cap", mutations: 0 });
+            expect(f.observers[0].roots.size).toBe(0);
+            f.agent.disarm();
+            expect(f.observers[1].roots.size).toBe(0);
+            expect(() => f.agent.settle({ capMs: 5, quietMs: 1 })).toThrow("not armed");
+        } finally {
+            f.close();
+        }
     });
 });

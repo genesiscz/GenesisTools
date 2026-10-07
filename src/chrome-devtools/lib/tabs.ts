@@ -80,6 +80,10 @@ function toTab(target: Target): TabInfo {
 }
 
 /** The page target for a tab, with its debugger socket, or undefined when the tab is gone. */
-export async function tabTarget(port: number, id: string): Promise<Target | undefined> {
-    return (await targets(port)).find((target) => target.id === id);
+export async function tabTarget(
+    port: number,
+    id: string,
+    options: { signal?: AbortSignal } = {}
+): Promise<Target | undefined> {
+    return (await targets(port, options)).find((target) => target.id === id);
 }

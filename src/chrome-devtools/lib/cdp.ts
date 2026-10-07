@@ -23,7 +23,19 @@ interface CdpIncoming {
     sessionId?: string;
 }
 
+export class CdpDeadlineError extends Error {}
+
+export interface CdpCallOptions {
+    timeoutMs?: number;
+    signal?: AbortSignal;
+}
+
+const COMMAND_TIMEOUT_MS = 30_000;
+const HANDSHAKE_TIMEOUT_MS = 10_000;
+
 export interface ConnOpts {
+    handshakeTimeoutMs?: number;
+    signal?: AbortSignal;
     /**
      * Called with every raw packet BEFORE JSON.parse; return true to skip the
      * parse entirely. This is the recorder's CPU lever: high-rate packets
@@ -38,6 +50,7 @@ export class Conn {
     private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
     private listeners: CdpEventListener[] = [];
     private ready: Promise<void>;
+    private rejectReady: (error: Error) => void = () => {};
     readonly closed: Promise<void>;
 
     /** Settle every in-flight send() — a request against a dead socket must reject, never hang. */
@@ -52,14 +65,38 @@ export class Conn {
     constructor(wsUrl: string, opts?: ConnOpts) {
         this.ws = new WebSocket(wsUrl);
         this.ready = new Promise((resolve, reject) => {
-            this.ws.onopen = () => resolve();
-            // A raw ErrorEvent reaches callers as "[object Event]" once they stringify
-            // it, so the one thing that went wrong — the socket never opened — is the
-            // one thing the message does not say.
-            this.ws.onerror = () => reject(new Error(`CDP socket did not open: ${wsUrl}`));
+            const finish = (error?: Error) => {
+                clearTimeout(timer);
+                opts?.signal?.removeEventListener("abort", abort);
+                this.rejectReady = () => {};
+                if (error) {
+                    reject(error);
+                } else {
+                    resolve();
+                }
+            };
+            const abort = () => {
+                finish(opts?.signal?.reason ?? new Error("CDP attachment aborted"));
+                this.ws.close();
+            };
+            const timeoutMs = opts?.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS;
+            const timer = setTimeout(() => {
+                finish(new CdpDeadlineError(`CDP socket did not open within ${timeoutMs} ms`));
+                this.ws.close();
+            }, timeoutMs);
+            this.rejectReady = finish;
+            this.ws.onopen = () => finish();
+            this.ws.onerror = () => finish(new Error(`CDP socket did not open: ${wsUrl}`));
+            opts?.signal?.addEventListener("abort", abort, { once: true });
+            if (opts?.signal?.aborted) {
+                abort();
+            }
         });
+        // A connection may time out before its first send. Keep its rejection observed until then.
+        void this.ready.catch((error: unknown) => log.debug({ error }, "CDP handshake failed"));
         this.closed = new Promise((resolve) => {
             const finish = () => {
+                this.rejectReady(new Error("CDP connection closed"));
                 this.rejectPending("CDP connection closed");
                 resolve();
             };
@@ -93,23 +130,70 @@ export class Conn {
         };
     }
 
-    async send(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<unknown> {
-        await this.ready;
-
-        if (this.ws.readyState !== WebSocket.OPEN) {
-            throw new Error("CDP connection closed");
-        }
-
+    async send(
+        method: string,
+        params: Record<string, unknown> = {},
+        sessionId?: string,
+        options: CdpCallOptions = {}
+    ): Promise<unknown> {
         const id = ++this.id;
-
+        const timeoutMs = options.timeoutMs ?? COMMAND_TIMEOUT_MS;
         return new Promise((resolve, reject) => {
-            this.pending.set(id, { resolve, reject });
-            const payload: Record<string, unknown> = { id, method, params };
-            if (sessionId) {
-                payload.sessionId = sessionId;
+            let finished = false;
+            const finish = (error?: Error, value?: unknown) => {
+                if (finished) {
+                    return;
+                }
+
+                finished = true;
+                clearTimeout(timer);
+                options.signal?.removeEventListener("abort", abort);
+                this.pending.delete(id);
+                if (error) {
+                    reject(error);
+                } else {
+                    resolve(value);
+                }
+            };
+            const abort = () => finish(options.signal?.reason ?? new Error(`${method} aborted`));
+            const timer = setTimeout(
+                () => finish(new CdpDeadlineError(`${method} did not answer within ${timeoutMs} ms`)),
+                timeoutMs
+            );
+            options.signal?.addEventListener("abort", abort, { once: true });
+            if (options.signal?.aborted) {
+                abort();
+                return;
             }
 
-            this.ws.send(SafeJSON.stringify(payload, { strict: true }));
+            void this.ready.then(
+                () => {
+                    if (finished) {
+                        return;
+                    }
+
+                    if (this.ws.readyState !== WebSocket.OPEN) {
+                        finish(new Error("CDP connection closed"));
+                        return;
+                    }
+
+                    this.pending.set(id, {
+                        resolve: (value) => finish(undefined, value),
+                        reject: (error) => finish(error),
+                    });
+                    const payload: Record<string, unknown> = { id, method, params };
+                    if (sessionId) {
+                        payload.sessionId = sessionId;
+                    }
+
+                    try {
+                        this.ws.send(SafeJSON.stringify(payload, { strict: true }));
+                    } catch (error) {
+                        finish(error instanceof Error ? error : new Error(String(error)));
+                    }
+                },
+                (error: Error) => finish(error)
+            );
         });
     }
 
@@ -123,6 +207,7 @@ export class Conn {
     }
 
     close(): void {
+        this.rejectReady(new Error("CDP connection closed by client"));
         this.rejectPending("CDP connection closed by client");
         this.ws.close();
     }
@@ -186,7 +271,8 @@ export class Page {
         public target: Target
     ) {}
 
-    send = (method: string, params?: Record<string, unknown>) => this.conn.send(method, params);
+    send = (method: string, params?: Record<string, unknown>, options?: CdpCallOptions) =>
+        this.conn.send(method, params, undefined, options);
     on = (fn: CdpEventListener) => this.conn.on(fn);
     close = () => this.conn.close();
 
@@ -207,12 +293,17 @@ export class Page {
     }
 
     /** Pass a function source string (`"() => …"`) or a bare expression. */
-    async evaluate(fnOrExpr: string): Promise<unknown> {
-        const r = (await this.conn.send("Runtime.evaluate", {
-            expression: evaluationExpression(fnOrExpr),
-            awaitPromise: true,
-            returnByValue: true,
-        })) as {
+    async evaluate(fnOrExpr: string, options: CdpCallOptions = {}): Promise<unknown> {
+        const r = (await this.conn.send(
+            "Runtime.evaluate",
+            {
+                expression: evaluationExpression(fnOrExpr),
+                awaitPromise: true,
+                returnByValue: true,
+            },
+            undefined,
+            options
+        )) as {
             result?: { value?: unknown };
             exceptionDetails?: { text: string; exception?: { description?: string } };
         };
@@ -341,14 +432,18 @@ export class Page {
 
         while (Date.now() < deadline) {
             const found = await this.evaluate(
-                `() => ${SafeJSON.stringify(texts, { strict: true })}.some(t => document.body?.innerText?.includes(t))`
-            ).catch(() => false);
+                `() => ${SafeJSON.stringify(texts, { strict: true })}.some(t => document.body?.innerText?.includes(t))`,
+                { timeoutMs: Math.max(1, deadline - Date.now()) }
+            ).catch((error: unknown) => {
+                log.debug({ error }, "text wait evaluation failed");
+                return false;
+            });
 
             if (found) {
                 return true;
             }
 
-            await Bun.sleep(300);
+            await Bun.sleep(Math.max(0, Math.min(300, deadline - Date.now())));
         }
 
         return false;
@@ -391,7 +486,8 @@ export class Browser {
         public port: number
     ) {}
 
-    send = (method: string, params?: Record<string, unknown>) => this.conn.send(method, params);
+    send = (method: string, params?: Record<string, unknown>, options?: CdpCallOptions) =>
+        this.conn.send(method, params, undefined, options);
     close = () => this.conn.close();
 
     /** ALL cookies incl. httpOnly and other domains — impossible from page JS. */
@@ -693,7 +789,11 @@ export async function newTab(port: number, url: string): Promise<Target> {
 
 /** Browser-level connection (cookies across all domains). */
 export async function browser(port = BROWSER_DEVTOOLS_PORT): Promise<Browser> {
-    const v = (await (await fetch(`http://127.0.0.1:${port}/json/version`)).json()) as {
+    const v = (await (
+        await fetch(`http://127.0.0.1:${port}/json/version`, {
+            signal: AbortSignal.timeout(TARGETS_TIMEOUT_MS),
+        })
+    ).json()) as {
         webSocketDebuggerUrl: string;
     };
 

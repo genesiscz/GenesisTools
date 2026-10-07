@@ -94,6 +94,11 @@ export function installPageAgent(): void {
         observer: MutationObserver | undefined;
         mutations: number;
         changedAt: number;
+        roots: Set<Document | ShadowRoot>;
+        addedSubtrees: Set<Element>;
+        onChange?: () => void;
+        finishSettle?: () => void;
+        observerTimer?: ReturnType<typeof setTimeout>;
     }
 
     const scope = globalThis as typeof globalThis & { __gtJevAgent?: Record<string, unknown> };
@@ -109,6 +114,8 @@ export function installPageAgent(): void {
         observer: undefined,
         mutations: 0,
         changedAt: 0,
+        roots: new Set(),
+        addedSubtrees: new Set(),
     };
 
     const CANDIDATES = [
@@ -809,36 +816,100 @@ export function installPageAgent(): void {
         return element instanceof HTMLSelectElement && element.selectedIndex === request.option;
     };
 
-    /** Starts counting DOM changes. Called right before input so the settle wait sees the first one. */
-    const arm = (): void => {
+    const disarm = (): void => {
+        state.finishSettle?.();
+        clearTimeout(state.observerTimer);
+        state.observerTimer = undefined;
         state.observer?.disconnect();
-        state.mutations = 0;
-        state.changedAt = 0;
-        state.observer = new MutationObserver((records) => {
-            state.mutations += records.length;
-            state.changedAt = performance.now();
-        });
-        for (const root of openRoots()) {
-            state.observer.observe(root, MUTATIONS);
+        state.observer = undefined;
+        state.roots.clear();
+        state.addedSubtrees.clear();
+        state.onChange = undefined;
+    };
+
+    const observeRoots = (roots: Array<Document | ShadowRoot>): void => {
+        for (let index = 0; index < roots.length; index++) {
+            const root = roots[index];
+            if (state.roots.has(root)) {
+                continue;
+            }
+
+            state.roots.add(root);
+            state.observer?.observe(root, MUTATIONS);
+            for (const element of Array.from(root.querySelectorAll("*"))) {
+                const shadow = element.shadowRoot;
+                if (shadow) {
+                    roots.push(shadow);
+                }
+            }
         }
     };
 
-    /**
-     * Resolves once the page has changed and then stayed quiet, or at the cap. Event driven: the
-     * mutation observer wakes it, nothing polls. The observation that ends this wait is the next
-     * decision's input, so waiting costs no extra round trip.
-     */
+    const discoverAdded = (node: Element): void => {
+        for (const element of [node, ...Array.from(node.querySelectorAll("*"))]) {
+            const shadow = element.shadowRoot;
+            if (shadow) {
+                observeRoots([shadow]);
+            }
+        }
+    };
+
+    const mutations = (records: MutationRecord[]): void => {
+        if (records.length === 0) {
+            return;
+        }
+
+        state.mutations += records.length;
+        state.changedAt = performance.now();
+        // Only added subtrees need discovery. Existing roots stay observed for this action.
+        for (const record of records) {
+            for (const node of Array.from(record.addedNodes)) {
+                if (node instanceof Element) {
+                    state.addedSubtrees.add(node);
+                    discoverAdded(node);
+                }
+            }
+        }
+        state.onChange?.();
+    };
+
+    /** One action observer counts early changes and later wakes the settle quiet timer. */
+    const arm = (): void => {
+        disarm();
+        state.mutations = 0;
+        state.changedAt = 0;
+        state.observer = new MutationObserver(mutations);
+        observeRoots([document]);
+        // A refused input or disconnected client may never call settle/disarm.
+        state.observerTimer = setTimeout(disarm, 30_000);
+    };
+
+    /** Event-driven quiet/cap wait, attached to the observer that was armed before input. */
     const settle = (options: { capMs: number; quietMs: number }): Promise<DomSettled> => {
+        if (!state.observer) {
+            throw new Error("action observation expired or was not armed");
+        }
+
+        mutations(state.observer.takeRecords());
+        // A just-added custom element can attach its root after the mutation callback ran.
+        for (const node of state.addedSubtrees) {
+            discoverAdded(node);
+        }
+        state.addedSubtrees.clear();
         const started = performance.now();
         return new Promise((resolve) => {
             let quiet: ReturnType<typeof setTimeout> | undefined;
-            let watcher: MutationObserver | undefined;
+            let finished = false;
             const finish = (reason: DomSettled["reason"]) => {
+                if (finished) {
+                    return;
+                }
+
+                finished = true;
                 clearTimeout(cap);
                 clearTimeout(quiet);
-                watcher?.disconnect();
-                state.observer?.disconnect();
-                state.observer = undefined;
+                state.finishSettle = undefined;
+                disarm();
                 resolve({ reason, mutations: state.mutations, ms: Math.round(performance.now() - started) });
             };
             const cap = setTimeout(() => finish("cap"), options.capMs);
@@ -846,13 +917,10 @@ export function installPageAgent(): void {
                 clearTimeout(quiet);
                 quiet = setTimeout(() => finish("quiet"), options.quietMs);
             };
+            state.onChange = restart;
+            state.finishSettle = () => finish("cap");
             if (state.mutations > 0) {
                 restart();
-            }
-
-            watcher = new MutationObserver(restart);
-            for (const root of openRoots()) {
-                watcher.observe(root, MUTATIONS);
             }
         });
     };
@@ -872,6 +940,7 @@ export function installPageAgent(): void {
         selectOption,
         selected,
         arm,
+        disarm,
         settle,
         scroll,
     };

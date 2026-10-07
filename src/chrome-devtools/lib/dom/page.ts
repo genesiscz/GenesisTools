@@ -2,7 +2,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { z } from "zod";
-import { Conn, localDebuggerUrl, type Target } from "../cdp";
+import { CdpDeadlineError, Conn, localDebuggerUrl, type Target } from "../cdp";
 import {
     type DomAction,
     type DomPrepared,
@@ -97,14 +97,10 @@ const settledSchema = z.object({
     ms: z.number(),
 });
 
-class DeadlineError extends Error {}
+class DeadlineError extends CdpDeadlineError {}
 
-/** The execution context vanished, or a call ran out its deadline while a navigation replaced it. */
+/** Only a browser-reported context loss is evidence of document replacement. */
 function isContextLoss(error: unknown): boolean {
-    if (error instanceof DeadlineError) {
-        return true;
-    }
-
     const message = error instanceof Error ? error.message : String(error);
     return /context was destroyed|Cannot find context|Inspected target navigated|Execution context/i.test(message);
 }
@@ -114,11 +110,8 @@ function isContextLoss(error: unknown): boolean {
  * dispatched, so a caller never repeats an input that may already have landed.
  */
 function uncertain(error: unknown): DomActResult {
-    if (!(error instanceof DeadlineError)) {
-        throw error;
-    }
-
-    return { ok: false, error: `dispatch_uncertain: ${error.message}`, dispatched: true };
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: `dispatch_uncertain: ${message}`, dispatched: true };
 }
 
 interface LoadWaiter {
@@ -180,14 +173,18 @@ export class DomPage {
         const { target } = options;
         const conn = new Conn(localDebuggerUrl(target, options.port));
         const page = new DomPage(conn, target, options.port);
-        await conn.send("Page.enable");
-        await conn.send("Runtime.enable");
-        // Keeps timers, animations and focus alive in a tab the user is not looking at, so the
-        // agent works in a background tab without bringing it to the front.
-        await conn.send("Emulation.setFocusEmulationEnabled", { enabled: true });
-        await page.ready();
-        log.debug({ port: options.port, url: target.url, title: target.title }, "DOM page attached");
-        return page;
+        try {
+            await conn.send("Page.enable");
+            await conn.send("Runtime.enable");
+            // Keeps background-tab timers and focus alive without activating the browser window.
+            await conn.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+            await page.ready();
+            log.debug({ port: options.port, url: target.url, title: target.title }, "DOM page attached");
+            return page;
+        } catch (error) {
+            conn.close();
+            throw error;
+        }
     }
 
     /** A tab opened for the goal may still be loading; the first read must see the parsed document. */
@@ -195,7 +192,12 @@ export class DomPage {
         const load = this.nextLoad();
         try {
             const state = await withDeadline(
-                this.conn.send("Runtime.evaluate", { expression: "document.readyState", returnByValue: true }),
+                this.conn.send(
+                    "Runtime.evaluate",
+                    { expression: "document.readyState", returnByValue: true },
+                    undefined,
+                    { timeoutMs: CALL_DEADLINE_MS }
+                ),
                 CALL_DEADLINE_MS,
                 "readyState"
             )
@@ -204,8 +206,8 @@ export class DomPage {
                     log.debug({ error }, "readyState read failed while attaching; waiting for the load event");
                     return undefined;
                 });
-            if (state !== "complete" && state !== "interactive") {
-                await this.untilLoaded(load.loaded);
+            if (state !== "complete" && state !== "interactive" && !(await this.untilLoaded(load.loaded))) {
+                throw new CdpDeadlineError("navigation_unconfirmed: attached document did not become ready");
             }
         } finally {
             load.cancel();
@@ -221,12 +223,21 @@ export class DomPage {
             return this.contextId;
         }
 
-        const tree = (await this.conn.send("Page.getFrameTree")) as { frameTree: { frame: { id: string } } };
-        const created = (await this.conn.send("Page.createIsolatedWorld", {
-            frameId: tree.frameTree.frame.id,
-            worldName: WORLD_NAME,
-            grantUniveralAccess: false,
-        })) as { executionContextId: number };
+        const signal = AbortSignal.timeout(CALL_DEADLINE_MS);
+        const tree = (await this.conn.send("Page.getFrameTree", {}, undefined, {
+            signal,
+            timeoutMs: CALL_DEADLINE_MS,
+        })) as { frameTree: { frame: { id: string } } };
+        const created = (await this.conn.send(
+            "Page.createIsolatedWorld",
+            {
+                frameId: tree.frameTree.frame.id,
+                worldName: WORLD_NAME,
+                grantUniveralAccess: false,
+            },
+            undefined,
+            { signal, timeoutMs: CALL_DEADLINE_MS }
+        )) as { executionContextId: number };
         this.contextId = created.executionContextId;
         return this.contextId;
     }
@@ -244,12 +255,17 @@ export class DomPage {
         for (let attempt = 0; ; attempt++) {
             try {
                 const contextId = await withDeadline(this.world(), CALL_DEADLINE_MS, "isolated world");
-                const evaluated = this.conn.send("Runtime.evaluate", {
-                    expression,
-                    contextId,
-                    returnByValue: true,
-                    awaitPromise: true,
-                });
+                const evaluated = this.conn.send(
+                    "Runtime.evaluate",
+                    {
+                        expression,
+                        contextId,
+                        returnByValue: true,
+                        awaitPromise: true,
+                    },
+                    undefined,
+                    { timeoutMs: options.deadlineMs ?? CALL_DEADLINE_MS }
+                );
                 const result = (await withDeadline(
                     evaluated,
                     options.deadlineMs ?? CALL_DEADLINE_MS,
@@ -270,12 +286,6 @@ export class DomPage {
                     throw error;
                 }
 
-                // A deadline alone is a slow page, not a navigation: retrying it into a fresh document
-                // would run the call twice. Only a context the page itself reported gone is retried.
-                if (error instanceof DeadlineError && this.contextId !== undefined) {
-                    throw error;
-                }
-
                 this.contextId = undefined;
                 if (options.retry === false || attempt > 0) {
                     throw error;
@@ -293,38 +303,77 @@ export class DomPage {
     }
 
     private async prepared(method: "prepare" | "focusField", action: DomAction): Promise<DomPrepared> {
-        return preparedSchema.parse(await this.agent(method, { node: action.node, guard: action.guard }));
+        return preparedSchema.parse(
+            await this.agent(method, { node: action.node, guard: action.guard }, { retry: false })
+        );
     }
 
     /** Every input send has a deadline, like every agent call: a document being replaced can leave one unanswered. */
     private input(method: string, params: Record<string, unknown>): Promise<unknown> {
-        return withDeadline(this.conn.send(method, params), CALL_DEADLINE_MS, method);
+        return withDeadline(
+            this.conn.send(method, params, undefined, { timeoutMs: CALL_DEADLINE_MS }),
+            CALL_DEADLINE_MS,
+            method
+        );
     }
 
-    private async mouseClick(x: number, y: number): Promise<void> {
+    private async disarm(): Promise<void> {
+        await this.agent("disarm", null, { retry: false, deadlineMs: 1000 }).catch((error: unknown) => {
+            log.debug({ error }, "could not release the action observer; its own deadline will expire it");
+        });
+    }
+
+    private async mouseClick(action: DomAction, point: { x: number; y: number }): Promise<DomActResult | undefined> {
+        const { x, y } = point;
         await this.input("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
-        await this.input("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
-        await this.input("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+        const live = await this.prepared("prepare", action).catch((error: unknown) => {
+            log.debug({ error }, "hover target could not be revalidated");
+            return undefined;
+        });
+        if (!live?.ok || live.x !== x || live.y !== y) {
+            return { ok: false, error: "target changed after hover", dispatched: false };
+        }
+
+        try {
+            await this.input("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+        } finally {
+            // A lost reply does not prove the press was lost. Release even when its delivery is uncertain.
+            await this.input("Input.dispatchMouseEvent", {
+                type: "mouseReleased",
+                x,
+                y,
+                button: "left",
+                clickCount: 1,
+            });
+        }
     }
 
     /**
      * Waits for the change the last input caused. `loaded` was registered BEFORE the input, so a
      * navigation it started ends the wait on that document's load event however fast it landed.
-     * Never retried: a lost context here IS the navigation.
+     * Never retried: the mutation may already have landed even when the renderer stops answering.
      */
-    private async settle(load: LoadWaiter, capMs = SETTLE_CAP_MS): Promise<DomSettled | "navigated"> {
+    private async settle(load: LoadWaiter, capMs = SETTLE_CAP_MS): Promise<DomActResult> {
         try {
             const raw = await prof.measureAsync("dom-settle", () =>
                 this.agent("settle", { capMs, quietMs: SETTLE_QUIET_MS }, { retry: false, deadlineMs: capMs + 2000 })
             );
-            return settledSchema.parse(raw);
+            return { ok: true, settled: settledSchema.parse(raw) };
         } catch (error) {
-            if (!isContextLoss(error)) {
-                throw error;
+            if (error instanceof CdpDeadlineError) {
+                return { ok: false, error: `settle_unconfirmed: ${error.message}`, dispatched: true };
             }
 
-            await this.untilLoaded(load.loaded);
-            return "navigated";
+            if (!isContextLoss(error)) {
+                const message = error instanceof Error ? error.message : String(error);
+                return { ok: false, error: `settle_unconfirmed: ${message}`, dispatched: true };
+            }
+
+            if (!(await this.untilLoaded(load.loaded))) {
+                return { ok: false, error: "navigation_unconfirmed: no load event", dispatched: true };
+            }
+
+            return { ok: true, settled: "navigated" };
         } finally {
             load.cancel();
         }
@@ -397,14 +446,20 @@ export class DomPage {
         await this.agent("arm", null);
         const load = this.nextLoad();
         try {
-            await this.mouseClick(prepared.x, prepared.y);
+            const refused = await this.mouseClick(action, prepared);
+            if (refused) {
+                await this.disarm();
+                load.cancel();
+                return refused;
+            }
         } catch (error) {
+            await this.disarm();
             load.cancel();
             return uncertain(error);
         }
 
-        const settled = await this.settle(load);
-        return { ok: true, settled, ...(prepared.visible ? { screen: prepared.screen } : {}) };
+        const result = await this.settle(load);
+        return result.ok && prepared.visible ? { ...result, screen: prepared.screen } : result;
     }
 
     /** Replaces the field's content and proves it holds exactly the supplied value. */
@@ -421,6 +476,7 @@ export class DomPage {
         await this.agent("arm", null);
         const load = this.nextLoad();
         if ((await this.agent("hasFocus", { node: action.node }, { retry: false })) !== true) {
+            await this.disarm();
             load.cancel();
             return { ok: false, error: "target changed: focus moved before typing", dispatched: false };
         }
@@ -428,14 +484,17 @@ export class DomPage {
         try {
             await this.input("Input.insertText", { text: value });
         } catch (error) {
+            await this.disarm();
             load.cancel();
             return uncertain(error);
         }
 
-        const settled = await this.settle(load);
-        if (settled === "navigated") {
-            return { ok: true, settled };
+        const result = await this.settle(load);
+        if (!result.ok || result.settled === "navigated") {
+            return result;
         }
+
+        const { settled } = result;
 
         const holds = await this.agent("holds", { node: action.node, expected: value });
         if (holds !== true) {
@@ -471,11 +530,13 @@ export class DomPage {
                 )
             );
         } catch (error) {
+            await this.disarm();
             load.cancel();
-            throw error;
+            return uncertain(error);
         }
 
         if (!prepared.ok) {
+            await this.disarm();
             load.cancel();
             return {
                 ok: false,
@@ -484,10 +545,12 @@ export class DomPage {
             };
         }
 
-        const settled = await this.settle(load);
-        if (settled === "navigated") {
-            return { ok: true, settled };
+        const result = await this.settle(load);
+        if (!result.ok || result.settled === "navigated") {
+            return result;
         }
+
+        const { settled } = result;
 
         // A change event may already have run page code, so an unconfirmed select is reported and
         // never repeated.
@@ -500,26 +563,32 @@ export class DomPage {
     async scroll(direction: 1 | -1): Promise<DomActResult> {
         await this.agent("arm", null);
         const load = this.nextLoad();
-        const moved = await this.agent("scroll", direction, { retry: false }).catch((error: unknown) => {
+        let moved: unknown;
+        try {
+            moved = await this.agent("scroll", direction, { retry: false });
+        } catch (error) {
+            await this.disarm();
             load.cancel();
-            throw error;
-        });
+            return uncertain(error);
+        }
         if (moved === 0) {
+            await this.disarm();
             load.cancel();
             return { ok: false, error: "scroll moved nothing", dispatched: true };
         }
 
-        return { ok: true, settled: await this.settle(load) };
+        return this.settle(load);
     }
 
     async wait(): Promise<DomActResult> {
         await this.agent("arm", null);
-        return { ok: true, settled: await this.settle(this.nextLoad(), WAIT_CAP_MS) };
+        const result = await this.settle(this.nextLoad(), WAIT_CAP_MS);
+        return result.ok ? result : { ...result, dispatched: false };
     }
 
     async back(): Promise<DomActResult> {
         const history = (await withDeadline(
-            this.conn.send("Page.getNavigationHistory"),
+            this.conn.send("Page.getNavigationHistory", {}, undefined, { timeoutMs: CALL_DEADLINE_MS }),
             CALL_DEADLINE_MS,
             "Page.getNavigationHistory"
         )) as {
@@ -532,15 +601,21 @@ export class DomPage {
         }
 
         return this.navigateBy("Page.navigateToHistoryEntry", () =>
-            this.conn.send("Page.navigateToHistoryEntry", { entryId: previous.id })
+            this.conn.send("Page.navigateToHistoryEntry", { entryId: previous.id }, undefined, {
+                timeoutMs: CALL_DEADLINE_MS,
+            })
         );
     }
 
     reload(): Promise<DomActResult> {
-        return this.navigateBy("Page.reload", () => this.conn.send("Page.reload", { ignoreCache: false }));
+        return this.navigateBy("Page.reload", () =>
+            this.conn.send("Page.reload", { ignoreCache: false }, undefined, { timeoutMs: CALL_DEADLINE_MS })
+        );
     }
 
     navigate(url: string): Promise<DomActResult> {
-        return this.navigateBy("Page.navigate", () => this.conn.send("Page.navigate", { url }));
+        return this.navigateBy("Page.navigate", () =>
+            this.conn.send("Page.navigate", { url }, undefined, { timeoutMs: CALL_DEADLINE_MS })
+        );
     }
 }
