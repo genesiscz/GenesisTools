@@ -91,6 +91,27 @@ describe("codex control channel", () => {
         });
     });
 
+    test("the daemon cursor reads a record larger than one read chunk and skips other generations", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-control-cursor-chunks-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            await appendControlRequest("reviewer", "old-launch", {
+                op: "steer",
+                body: "o".repeat(70_000),
+                force: false,
+            });
+            const current = await appendControlRequest("reviewer", "current-launch", {
+                op: "steer",
+                body: "c".repeat(150_000),
+                force: false,
+            });
+            const cursor = new ControlLogCursor({ name: "reviewer", generation: "current-launch" });
+
+            expect(await cursor.readAppendedRequests()).toEqual([current]);
+            expect(await cursor.readAppendedRequests()).toEqual([]);
+        });
+    });
+
     test("the daemon cursor retains a partial line and recovers after truncation", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-codex-control-cursor-recovery-"));
 

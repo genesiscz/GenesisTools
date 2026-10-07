@@ -27,6 +27,7 @@ export interface ControlLogReadSample {
 }
 
 const MAX_CONTROL_RECORD_BYTES = 16 * 1024 * 1024;
+const CONTROL_READ_CHUNK_BYTES = 64 * 1024;
 
 function readRequests(path: string): ControlRequest[] {
     if (!existsSync(path)) {
@@ -71,45 +72,57 @@ export class ControlLogCursor {
             return [];
         }
 
-        const length = stat.size - this.offset;
-        const chunk = Buffer.allocUnsafe(length);
-        const fd = openSync(path, "r");
+        // Fixed-size reads, one record at a time: a long backlog (every earlier generation) never
+        // becomes one allocation, and only this generation's new requests are retained.
+        const chunk = Buffer.allocUnsafe(CONTROL_READ_CHUNK_BYTES);
+        const appended: ControlRequest[] = [];
         let bytesRead = 0;
+        let records = 0;
+        const fd = openSync(path, "r");
         try {
-            while (bytesRead < length) {
-                const read = readSync(fd, chunk, bytesRead, length - bytesRead, this.offset + bytesRead);
+            while (this.offset < stat.size) {
+                const read = readSync(fd, chunk, 0, Math.min(chunk.length, stat.size - this.offset), this.offset);
                 if (read === 0) {
                     break;
                 }
+
+                this.offset += read;
                 bytesRead += read;
+                const view = chunk.subarray(0, read);
+                let start = 0;
+                let newline = view.indexOf(0x0a, start);
+                while (newline >= 0) {
+                    const line = Buffer.concat([this.partial, view.subarray(start, newline)]);
+                    this.partial = Buffer.alloc(0);
+                    if (line.length > MAX_CONTROL_RECORD_BYTES) {
+                        throw new Error(`Codex control record exceeds ${MAX_CONTROL_RECORD_BYTES} bytes`);
+                    }
+
+                    const text = line.toString("utf8").trim();
+                    if (text) {
+                        records += 1;
+                        for (const request of parseJsonl<ControlRequest>(text)) {
+                            if (request.seq > this.afterSeq && request.generation === this.options.generation) {
+                                appended.push(request);
+                                this.afterSeq = request.seq;
+                            }
+                        }
+                    }
+
+                    start = newline + 1;
+                    newline = view.indexOf(0x0a, start);
+                }
+
+                this.partial = Buffer.concat([this.partial, view.subarray(start)]);
+                if (this.partial.length > MAX_CONTROL_RECORD_BYTES) {
+                    throw new Error(`Codex control record exceeds ${MAX_CONTROL_RECORD_BYTES} bytes`);
+                }
             }
         } finally {
             closeSync(fd);
         }
 
-        this.offset += bytesRead;
-        const combined = Buffer.concat([this.partial, chunk.subarray(0, bytesRead)]);
-        if (combined.length > MAX_CONTROL_RECORD_BYTES && combined.indexOf(0x0a) < 0) {
-            throw new Error(`Codex control record exceeds ${MAX_CONTROL_RECORD_BYTES} bytes`);
-        }
-        const lastNewline = combined.lastIndexOf(0x0a);
-        if (lastNewline < 0) {
-            this.partial = combined;
-            this.options.onRead?.({ bytes: bytesRead, records: 0 });
-            return [];
-        }
-
-        const complete = combined.subarray(0, lastNewline).toString("utf8").trim();
-        if (complete.split("\n").some((line) => Buffer.byteLength(line) > MAX_CONTROL_RECORD_BYTES)) {
-            throw new Error(`Codex control record exceeds ${MAX_CONTROL_RECORD_BYTES} bytes`);
-        }
-        this.partial = Buffer.from(combined.subarray(lastNewline + 1));
-        const requests = complete ? parseJsonl<ControlRequest>(complete) : [];
-        this.options.onRead?.({ bytes: bytesRead, records: requests.length });
-        const appended = requests.filter(
-            (request) => request.seq > this.afterSeq && request.generation === this.options.generation
-        );
-        this.afterSeq = appended.reduce((highest, request) => Math.max(highest, request.seq), this.afterSeq);
+        this.options.onRead?.({ bytes: bytesRead, records });
         return appended;
     }
 }
