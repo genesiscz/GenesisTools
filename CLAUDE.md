@@ -359,8 +359,9 @@ editor sessions, long builds all run under it.
 **Which commit is installed? One command: `bun run app:status`.** Its `source` line reads
 `<branch> @ <12-char sha>[+dirty] (<checkout>)`, written into `~/.genesis-tools/app/manifest.json` by every build
 (`sourceRoot`, `sourceBranch`, `sourceCommit`, `sourceDirty`). `+dirty` means the Swift sources had uncommitted changes,
-so the sha alone does not name the code. A build from before 2026-10-06 shows "unknown": its manifest only has
-`sourceToolsPath` (the worktree) and `builtAt`; match the time against that worktree's `git log`. `built … (stale: sources
+so the sha alone does not name the code. A build from before 2026-10-06 shows "unknown": its manifest has only `builtAt`,
+`sourceHash`, `signedWith` and `teamId`, so it records no checkout and no commit; `builtAt` against the `git log` of the
+checkouts you build from is the only lead. `built … (stale: sources
 changed)` compares file contents of THIS checkout with the install, so a stale flag from another worktree's build is expected.
 
 **Before believing an app-face bug report, check what is actually running:**

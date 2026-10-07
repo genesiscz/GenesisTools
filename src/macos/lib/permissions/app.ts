@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { createGit } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -94,28 +95,35 @@ function run(cmd: string[], cwd?: string): { code: number; stdout: string; stder
     };
 }
 
-export function readSourceInfo(sourceDir = APP_SOURCE_DIR): AppSourceInfo {
-    const git = (...args: string[]) => run(["git", "-C", sourceDir, ...args]);
-    const root = git("rev-parse", "--show-toplevel");
-    const commit = git("rev-parse", "HEAD");
+/**
+ * The checkout, branch and commit the build reads, through the shared git readers. Dirty means an
+ * uncommitted change under any build input (`SOURCE_ROOTS`, the GenesisKit package included), the
+ * same set `sourceHash` covers. A failed git read records nothing rather than a clean build.
+ */
+export async function readSourceInfo(sourceDir = APP_SOURCE_DIR): Promise<AppSourceInfo> {
+    const git = createGit({ cwd: sourceDir });
 
-    if (root.code !== 0 || commit.code !== 0) {
-        logger.warn(
-            { sourceDir, stderr: root.stderr || commit.stderr },
-            "permissions app: build source is not a git checkout"
+    try {
+        const root = await git.getRepoRoot();
+        const status = await git.status({ cwd: sourceDir, untracked: "normal" });
+        const inputs = SOURCE_ROOTS.map((input) => relative(root, resolve(sourceDir, input)));
+        const dirty = status.entries.some(
+            (entry) =>
+                entry.kind !== "ignored" &&
+                inputs.some((input) => entry.path === input || entry.path.startsWith(`${input}/`))
         );
+        const head = status.branch?.head;
+
+        return {
+            sourceRoot: root,
+            sourceBranch: !head || head === "(detached)" ? "(detached)" : head,
+            sourceCommit: status.branch?.oid || (await git.getSha("HEAD")),
+            sourceDirty: dirty,
+        };
+    } catch (error) {
+        logger.warn({ sourceDir, error }, "permissions app: build source is not a readable git checkout");
         return {};
     }
-
-    const branch = git("branch", "--show-current").stdout.trim();
-    const dirty = git("status", "--porcelain", "--", sourceDir).stdout.trim() !== "";
-
-    return {
-        sourceRoot: root.stdout.trim(),
-        sourceBranch: branch || "(detached)",
-        sourceCommit: commit.stdout.trim(),
-        sourceDirty: dirty,
-    };
 }
 
 /** `feat/x @ 1a2b3c4d5e6f+dirty (/path/to/checkout)`, or undefined for a build that predates the record. */
@@ -523,7 +531,7 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     const manifest: AppManifest = {
         builtAt: new Date().toISOString(),
         sourceHash: sourceHash(),
-        ...readSourceInfo(),
+        ...(await readSourceInfo()),
         signedWith: signature.authority,
         teamId: signature.teamId,
     };

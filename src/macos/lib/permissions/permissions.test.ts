@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { skip } from "@genesiscz/utils/test/skip";
@@ -377,11 +378,37 @@ describe("build source record", () => {
         expect(describeSource({ sourceRoot: "/r" })).toBeUndefined();
     });
 
-    it("reads this checkout's commit, and nothing for a folder outside git", () => {
-        const info = readSourceInfo();
+    it("reads this checkout's commit, and nothing for a folder outside git", async () => {
+        const info = await readSourceInfo();
         expect(info.sourceCommit).toMatch(/^[0-9a-f]{40}$/);
         expect(info.sourceRoot).toBeTruthy();
-        expect(readSourceInfo(mkdtempSync(join(tmpdir(), "no-git-")))).toEqual({});
+        expect(await readSourceInfo(mkdtempSync(join(tmpdir(), "no-git-")))).toEqual({});
+    });
+
+    it("an uncommitted edit in GenesisKit alone marks the build dirty; one outside the build inputs does not", async () => {
+        const repo = realpathSync(mkdtempSync(join(tmpdir(), "app-source-")));
+        const app = join(repo, "src/macos/GenesisTools");
+        const kit = join(repo, "src/macos/GenesisKit");
+        const git = (...args: string[]) =>
+            spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", ...args], {
+                cwd: repo,
+                env: process.env,
+            });
+
+        mkdirSync(join(app, "Sources"), { recursive: true });
+        mkdirSync(join(kit, "Sources"), { recursive: true });
+        writeFileSync(join(app, "Package.swift"), "// app\n");
+        writeFileSync(join(kit, "Sources/Kit.swift"), "let a = 1\n");
+        writeFileSync(join(repo, "README.md"), "x\n");
+        git("init", "-q", "-b", "main");
+        git("add", ".");
+        git("commit", "-q", "-m", "base");
+
+        writeFileSync(join(repo, "README.md"), "changed\n");
+        expect(await readSourceInfo(app)).toMatchObject({ sourceRoot: repo, sourceBranch: "main", sourceDirty: false });
+
+        writeFileSync(join(kit, "Sources/Kit.swift"), "let a = 2\n");
+        expect((await readSourceInfo(app)).sourceDirty).toBe(true);
     });
 });
 
