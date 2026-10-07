@@ -1,6 +1,6 @@
 ---
 name: gt:azure-devops
-description: Azure DevOps work items, queries, and dashboards. Use for "get workitem", "fetch task", "show query", "analyze task", or any Azure DevOps URL. For time logging (Timely sync, Clarity fill), invoke the `/gt:timelog` command instead — this skill defers to it.
+description: Azure DevOps work items, queries, dashboards, sprints, wiki pages, comments, history, and parent chains. Use for "get workitem", "fetch task", "show query", "analyze task", or any Azure DevOps URL. For time logging (Timely sync, Clarity fill), invoke the `/gt:timelog` command instead.
 ---
 
 # Azure DevOps Work Item Tool
@@ -9,33 +9,49 @@ Fetch, manage, and analyze Azure DevOps work items using `tools azure-devops`.
 
 > **Time logging:** If the user wants to log time, sync Timely, or fill Clarity timesheets, stop here and invoke the `/gt:timelog` command. This skill only covers raw work-item operations.
 
+## First-Time Setup
+
+Once per machine, then once per project:
+
+```bash
+az extension add --name azure-devops
+az login --allow-no-subscriptions --use-device-code    # if Conditional Access blocks it: az login --scope 499b84ac-1321-427f-aa17-267ca6975798/.default --allow-no-subscriptions
+tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
+```
+
+`configure` takes any Azure DevOps URL of the project and writes `.claude/azure/config.json`. The tool finds that file from the current directory up to three parent levels. A missing login or config stops the command with a message that names the missing step. Add `-v` for debug logging. `tools azure-devops --readme` prints the full README.
+
 ## CLI Reference
 
 ```bash
-tools azure-devops workitem <id|ids>             # Fetch work item(s)
+tools azure-devops workitem <id|ids>             # Fetch work item(s) (alias: wi; --full = no truncation)
 tools azure-devops query <id|url|name>           # Fetch query results (supports name matching)
 tools azure-devops query <id> --tree             # Hierarchy plus the query's own columns
 tools azure-devops query <id> --tree -f json     # Same tree as one JSON document
 tools azure-devops query <id> --download-workitems  # Download all to files
+tools azure-devops ancestors <id>                # Parent chain up to the root (--depth <n>, --format table|json)
+tools azure-devops tree <id>                     # Parents, children and related items (--force, --format table|json)
 tools azure-devops dashboard <id|url>            # Get dashboard queries
 tools azure-devops iterations                    # List the project's sprints (alias: sprints)
 tools azure-devops sprint [nameOrPath]           # Work items of one sprint (default: current)
-tools azure-devops list                          # List cached items
+tools azure-devops list                          # List cached items (alias: ls)
 tools azure-devops wiki list                     # The project's wikis
 tools azure-devops wiki pages [path] --depth 2   # Page tree under a path
-tools azure-devops wiki get <url|id|path>        # Page details + markdown (--images, -o, -f json)
+tools azure-devops wiki get <url|id|path>        # Page details + markdown (--images, --no-content, --wiki, -o, -f json)
 tools azure-devops wiki search "<text>"          # Full-text search over wiki pages
 tools azure-devops wiki history <page>           # Commits that changed a page
 tools azure-devops wiki diff <page> [from] [to]  # What an edit changed (default: the last one)
-tools azure-devops comment list <id>             # Comments, newest first (--format json)
+tools azure-devops comment list <id>             # Comments, newest first (alias: ls; --format json)
 tools azure-devops comment add <id> --file x.md  # Post markdown (--text, --file - for stdin, --html)
 tools azure-devops comment edit <id> <commentId> --file x.md   # Replace a comment's text
-tools azure-devops comment delete <id> <commentId>
-tools azure-devops workitem-create               # Create work item
+tools azure-devops comment delete <id> <commentId> --yes   # --yes is required without a terminal (alias: rm)
+tools azure-devops workitem-create               # Create work item (alias: create)
 tools azure-devops timelog configure             # Interactive: setup API key, user, allowed types
 tools azure-devops timelog types                 # List available time types
-tools azure-devops timelog list -w <id>          # List time logs for work item
-tools azure-devops timelog add -w <id> -h <hrs>  # Log time entry (with precheck)
+tools azure-devops timelog list -w <id>          # List time logs for work item (--day <date>, --from/--to, --user @me)
+tools azure-devops timelog add -w <id> -h <hrs>  # Log time entry (with precheck; --date <date>, default today)
+tools azure-devops timelog delete <timeLogId> --yes   # Delete an entry and roll back effort
+tools azure-devops timelog export-month --month <n>   # One month of time logs with a summary
 tools azure-devops timelog prepare-import add    # Stage entries for review before import
 tools azure-devops timelog prepare-import list   # Review staged entries
 tools azure-devops timelog prepare-import remove # Remove staged entry
@@ -49,7 +65,10 @@ tools azure-devops timelog import <file>         # Bulk import time logs (with p
 |--------|-------------|
 | `--format ai\|md\|json` | Output format (default: ai) |
 | `--tree` | Print the saved query as a tree, including every column it shows |
-| `--force`, `--refresh` | Bypass cache |
+| `--force` | Bypass cache |
+| `--full` | `workitem`: print the full description and comments, no truncation |
+| `--changes-from <date>` | `query`: show changes from this date (ISO format) |
+| `--changes-to <date>` | `query`: show changes up to this date (ISO format) |
 | `--state <states>` | Filter by state (comma-separated) |
 | `--severity <sev>` | Filter by severity (comma-separated) |
 | `--download-workitems` | Download all items from query |
@@ -61,10 +80,12 @@ tools azure-devops timelog import <file>         # Bulk import time logs (with p
 | `--attachments-suffix <suffix>` | Only attachments ending with this (e.g. .har) |
 | `--output-dir <path>` | Custom directory for downloaded attachments |
 | `--images` | Download inline images from description/comments |
+| `-v, --verbose` | Debug logging (before or after the subcommand) |
+| `--readme` | Print the tool's README and exit |
 
 ### Wiki pages
 
-Read an ADO wiki page (an ITA analysis, a spec linked from a work item) with `wiki get`, never
+Read an ADO wiki page (an analysis document, a spec linked from a work item) with `wiki get`, never
 with a hand-built `az` token and `curl`. It takes the URL exactly as a work item links it.
 
 ```bash
@@ -82,7 +103,7 @@ Before trusting an analysis you read earlier, check the details table's **Last c
 Post, edit and delete comments with `comment`, never with a hand-built `az` token and `curl`. The
 text goes as markdown. Keep the draft in a file, post it with `comment add <id> --file draft.md`,
 and apply corrections with `comment edit <id> <commentId> --file draft.md`, so the thread keeps one
-comment instead of a trail of reposts.
+comment instead of a trail of reposts. `comment delete` needs `--yes` when no terminal can ask.
 
 ### Sprint backlog
 
@@ -126,6 +147,19 @@ tools azure-devops configure \
 
 The board URL carries the team, and `configure` stores it as `team` in `.claude/azure/config.json`. You can also pass `--team "<Your Team>"` per run.
 
+### Parent chain and neighbourhood
+
+`ancestors` climbs from a work item to the root. `tree` shows one work item's neighbourhood: the parent chain, every child and every related item.
+
+```bash
+tools azure-devops ancestors 12345                  # Parent chain up to the root, no cap by default
+tools azure-devops ancestors 12345 --depth 2        # Only the two nearest ancestors
+tools azure-devops tree 12345 --format json         # Parents, children and related items as JSON
+tools azure-devops tree 12345 --force               # Refetch instead of reading the cache
+```
+
+Both take `--format table|json` (default: table), not `ai|md|json`.
+
 ### Output Paths
 
 - **Tasks**: `.claude/azure/tasks/` → `<id>-<Slug-Title>.md`
@@ -160,13 +194,14 @@ tools azure-devops workitem 12345,12346,12347
 tools azure-devops workitem 12345 --category react19
 tools azure-devops workitem 12345 --force
 tools azure-devops workitem 12345,12346 -f json   # one JSON array of work items
+tools azure-devops wi 12345 --full                # whole description and comments, no truncation
 ```
 
 **`-f json` shape:** always a single JSON array (`[{…}]` for one id, `[{…},{…}]` for many). Never concatenated objects or `---` separators (those are only for `ai` / `md`).
 
 ### Fetch Query
 
-The `--query` option supports three input formats:
+The `query` argument takes three formats:
 
 1. **Query ID (GUID)**: `d6e14134-9d22-4cbb-b897-b1514f888667`
 2. **Full URL**: `https://dev.azure.com/org/project/_queries/query/abc123`
@@ -184,7 +219,10 @@ tools azure-devops query "Open bugs"
 tools azure-devops query <id> --state Active,Development
 tools azure-devops query "Active Tasks" --download-workitems --category react19
 
-# The query editor's tree, including custom columns such as Merge proběhl
+# Only changes inside a date range
+tools azure-devops query <id> --changes-from 2026-01-20 --changes-to 2026-01-25
+
+# The query editor's tree, including custom columns
 tools azure-devops query "<id-or-url>" --tree
 tools azure-devops query "<id-or-url>" --tree -f json
 ```
@@ -195,7 +233,7 @@ A release query is a tree. Without `--tree`, the result is a flat list and the q
 - Exact matches are used immediately
 - Fuzzy matching finds the closest query name if no exact match
 - Shows alternatives if multiple similar queries exist
-- Query list is cached for 1 day for fast lookups
+- The query list is cached for 30 days and `--force` does not refresh it. For a query created or renamed since, pass its id or URL, or delete `~/.genesis-tools/azure-devops/cache/queries-list.json`
 
 ### Analyze Work Items
 
@@ -217,7 +255,7 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
    - Design mockups showing expected behavior
    - UI comparisons (current vs expected)
 
-4. Spawn **Explore agent** (Task tool with `subagent_type: "Explore"`) for each:
+4. Spawn **Explore agent** (Agent tool with `subagent_type: "Explore"`) for each:
 
    ```
    Analyze codebase for Azure DevOps work item:
@@ -280,6 +318,9 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
 | "Show sprint 17 in backlog order" | `tools azure-devops sprint "Sprint 17" --mine --order` |
 | "Show query results for X" | `tools azure-devops query X` |
 | "Show the release query tree" | `tools azure-devops query <url> --tree -f json` |
+| "Show the parent chain of 12345" | `tools azure-devops ancestors 12345` |
+| "What is around 12345" | `tools azure-devops tree 12345` |
+| "Show 12345 in full" | `tools azure-devops wi 12345 --full` |
 | "Show Open Bugs query" | `tools azure-devops query "Open Bugs"` |
 | "Fetch Open bugs" | `tools azure-devops query "Open bugs"` |
 | "Download React19 bugs" | `tools azure-devops query "React19 Bugs" --download-workitems --category react19` |
@@ -293,7 +334,7 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
 
 ## Creating Work Items
 
-The `--create` command supports multiple modes for creating new work items.
+The `workitem-create` command (alias `create`) supports multiple modes for creating new work items.
 
 ### CLI Reference
 
@@ -303,6 +344,7 @@ tools azure-devops workitem-create --from-file <path>     # From template file
 tools azure-devops workitem-create <query-url> --type Bug # Generate template from query
 tools azure-devops workitem-create <workitem-url>         # Generate template from work item
 tools azure-devops workitem-create --type Task --title X  # Quick creation
+tools azure-devops workitem-create --type Task --title X --parent 12345  # Quick creation under a parent
 ```
 
 ### Create Options
@@ -316,6 +358,7 @@ tools azure-devops workitem-create --type Task --title X  # Quick creation
 | `--severity <sev>` | Severity level |
 | `--tags <tags>` | Tags (comma-separated) |
 | `--assignee <email>` | Assignee email |
+| `--parent <id>` | Parent work item ID |
 
 ### Creation Modes
 
@@ -421,10 +464,11 @@ When user asks to "create a work item" or "file a bug":
 
 | User Request | Action |
 |--------------|--------|
-| "Create a bug for the login issue" | `--create --type Bug --title "Login issue" --severity "B - high"` |
-| "File a task to update docs" | `--create --type Task --title "Update documentation"` |
-| "Create a bug like #12345" | `--create <workitem-url>` then `--from-file template.json` |
-| "Help me create a detailed work item" | `--create -i` (interactive) |
+| "Create a bug for the login issue" | `tools azure-devops workitem-create --type Bug --title "Login issue" --severity "B - high"` |
+| "File a task to update docs" | `tools azure-devops workitem-create --type Task --title "Update documentation"` |
+| "File a task under story 12345" | `tools azure-devops workitem-create --type Task --title "Update documentation" --parent 12345` |
+| "Create a bug like #12345" | `tools azure-devops workitem-create <workitem-url>` then `workitem-create --from-file template.json` |
+| "Help me create a detailed work item" | `tools azure-devops workitem-create -i` (interactive) |
 
 ## History Commands
 
@@ -441,46 +485,57 @@ tools azure-devops history show <id> --assigned-to "X"  # Filter by assignee
 tools azure-devops history show <id> --state Active     # Filter by state
 
 tools azure-devops history search --assigned-to-me --wiql          # Currently assigned to me (WIQL @Me)
-tools azure-devops history search --assigned-to "Martin" --wiql    # Ever assigned to user (server-side)
-tools azure-devops history search --assigned-to "Martin" --wiql --current  # Currently assigned
-tools azure-devops history search --assigned-to "Martin"           # Local cached history search
-tools azure-devops history search --assigned-to "Martin" --min-time 2h     # Min time filter
+tools azure-devops history search --assigned-to "Jane" --wiql    # Ever assigned to user (server-side)
+tools azure-devops history search --assigned-to "Jane" --wiql --current  # Currently assigned
+tools azure-devops history search --assigned-to "Jane"           # Local cached history search
+tools azure-devops history search --assigned-to "Jane" --min-time 2h     # Min time filter
 tools azure-devops history search --state Active --since 2024-12-01 --wiql # State + date range (--since/--until aliases for --from/--to)
-tools azure-devops history search --assigned-to "Prášil" --wiql --current --exclude-state Closed --all-projects  # Open items of someone outside the team, in every project
+tools azure-devops history search --assigned-to "Smith" --wiql --current --exclude-state Closed --all-projects  # Open items of someone outside the team, in every project
 
 tools azure-devops history sync                   # Bulk sync history for cached work items (per-item mode)
 tools azure-devops history sync --force           # Force re-sync all
 tools azure-devops history sync --dry-run         # Show what would be synced
+tools azure-devops history sync --since 2026-02-01  # Only revisions since a date
 tools azure-devops history sync --batch           # Use batch reporting API instead
+
+tools azure-devops history activity --from 2026-02-01 --to 2026-02-08   # What a user did, as a timeline (--user, default @me)
+tools azure-devops history activity --from 2026-02-01 --discover -o json  # Also ask ADO for items not cached locally
+tools azure-devops history mentions                          # Comments that named me in the last 7 days
+tools azure-devops history mentions --user "Jane Doe" --from 2026-02-01 -o json
 ```
 
 **Dates in `history show` are the moment a change was made**: `System.ChangedDate` of that update,
 then `System.AuthorizedDate`, and only then a real `revisedDate`. The API's `revisedDate` is the
 moment the next revision replaced it, `9999-01-01` on the latest one, so it is only a last resort; an
 update with none of the three prints `no date` rather than the current time. Before 2026-09-17 every
-state and assignment change showed one revision late (a bug closed on 5.8. printed 1.9., the day an automation edited a field). Who closed an item is
-`Microsoft.VSTS.Common.ClosedBy` of the closing revision, never the item's last `changedBy`.
+state and assignment change showed one revision late (a bug closed on 5.8. printed 1.9., the day an
+automation edited a field). Who closed an item is `Microsoft.VSTS.Common.ClosedBy` of the closing
+revision, never the item's last `changedBy`.
 
 ### NL Query Translation
 
 | User says | Command |
 |-----------|---------|
 | "tasks assigned to me" | `history search --assigned-to-me --wiql` |
-| "tasks ever assigned to Martin" | `history search --assigned-to "Martin" --wiql` |
+| "tasks ever assigned to Jane" | `history search --assigned-to "Jane" --wiql` |
 | "how long was #123 in Active" | `history show 123 --state Active` |
-| "time Martin spent on #456" | `history show 456 --assigned-to Martin` |
-| "all work in last 2 months" | `history search --assigned-to "Martin" --from 2024-12-01 --wiql` |
+| "time Jane spent on #456" | `history show 456 --assigned-to Jane` |
+| "all work in last 2 months" | `history search --assigned-to "Jane" --from 2024-12-01 --wiql` |
+| "what did I do last week" | `history activity --from <monday> --to <sunday> --discover` |
+| "where was I mentioned" | `history mentions` |
 | "everything assigned to X that is not Closed" | `history search --assigned-to "X" --wiql --current --exclude-state Closed --all-projects` |
 
 ### Features
 
 - **@me support**: `--assigned-to @me` or `--assigned-to-me` uses WIQL `@Me` macro (auto-enables WIQL)
 - **--current flag**: Uses `=` instead of `EVER` for current assignment
-- **Fuzzy user matching**: "Martin" matches "Martin Novak (QK)", diacritics normalized
+- **Fuzzy user matching**: "Jane" matches "Jane Doe (Contractor)", diacritics normalized
 - **Names outside the team**: when no team member matches, `--current` falls back to `[System.AssignedTo] CONTAINS '<name>'`, which finds deactivated accounts and people in no team. Without `--current` the name is used verbatim as the exact display name, because ADO rejects `EVER … CONTAINS` on identity fields
 - **--exclude-state**: `[System.State] NOT IN (...)`, the way to ask for "everything not Closed" (implies `--wiql`)
 - **--all-projects**: drops `[System.TeamProject] = @project`. A person's items in another project of the organization are invisible without it (implies `--wiql`); the table gains a Project column and each URL points at the item's own project
 - **Cache stats**: Local search shows data date range and last sync time
+- **`history activity`**: A user's timeline across work items: state changes, assignments, comments, creations, field edits. It reads the local history cache. `--discover` asks ADO for every item the user changed, so uncached items count too. `--no-comments` is faster. `-o timeline|summary|json`.
+- **`history mentions`**: Comments that named a user inside a date window (default: the last 7 days, `--user` default `@me`). It searches in two passes, a WIQL candidate list and then the comment text, and prints both counts. It stops above 500 candidates unless `--max-candidates <n>` raises the limit.
 - **Per-item sync** (default): Targeted API calls per work item, faster for <200 items
 - **Batch sync** (`--batch`): Uses reporting API, better for 500+ items
 
@@ -500,6 +555,7 @@ This launches an interactive prompt (using clack) that configures:
 - `defaultUser`: Your user email/name for time logging
 - `allowedWorkItemTypes`: Work item types that can be logged to (e.g., "Bug,Task")
 - `allowedStatesPerType`: Required states per type (e.g., "Task:In Progress")
+- `deprioritizedStates`: States that rank last when the precheck picks a child
 
 The configuration is saved to `.claude/azure/config.json`.
 
@@ -508,6 +564,9 @@ The configuration is saved to `.claude/azure/config.json`.
 ```bash
 # Non-interactive mode (for scripting)
 tools azure-devops timelog configure --allowed-work-item-types "Bug,Task" --allowed-states-for-type "Task:In Progress"
+
+# States that rank last when the precheck chooses a child (default: Closed, Done, Resolved, Removed)
+tools azure-devops timelog configure --deprioritized-states "Closed,Done,Resolved"
 ```
 
 ### List Time Types
@@ -522,11 +581,12 @@ tools azure-devops timelog types --format json  # JSON output
 ```bash
 tools azure-devops timelog list -w <workItemId>
 tools azure-devops timelog list -w 12345 --format md
+tools azure-devops timelog list --day 2026-02-04 --format json
 tools azure-devops timelog list --from 2026-02-01 --to 2026-02-08 --format json
 tools azure-devops timelog list --from 2026-02-01 --to 2026-02-08 --user @me --format json
 ```
 
-The `--user @me` resolves to the configured default username. Use `--from`/`--to` for date ranges (`--since`/`--upto` also accepted as aliases).
+The `--user @me` resolves to the configured default username. Use `--day` for one date, or `--from`/`--to` for a range (`--since`/`--upto` also accepted as aliases).
 
 ### Add Time Log Entry
 
@@ -535,6 +595,7 @@ The `--user @me` resolves to the configured default username. Use `--from`/`--to
 tools azure-devops timelog add -w <id> -h <hours> -t <type>
 tools azure-devops timelog add -w 12345 -h 2 -t "Development"
 tools azure-devops timelog add -w 12345 -h 1 -m 30 -t "Code Review" -c "PR review"
+tools azure-devops timelog add -w 12345 -h 2 -t "Development" --date 2026-02-04   # another day (default: today)
 
 # Interactive mode
 tools azure-devops timelog add -i
@@ -542,6 +603,25 @@ tools azure-devops timelog add -w 12345 -i
 ```
 
 Before creating the entry, the command runs a workitem type precheck (see Workitem Type Validation below).
+
+### Delete a Time Log Entry
+
+```bash
+tools azure-devops timelog delete <timeLogId> --yes             # Delete one entry and roll back Remaining/Completed Work
+tools azure-devops timelog delete <timeLogId> --dry-run         # Print the planned effort change, change nothing
+tools azure-devops timelog delete <timeLogId> --no-effort --yes # Delete the row only, leave effort untouched
+tools azure-devops timelog delete -w 12345                      # Interactive picker for one work item (needs a terminal)
+```
+
+`--yes` is required when no terminal can ask, so an agent always passes it. Run `--dry-run` first to see the effort rollback.
+
+### Export a Month
+
+```bash
+tools azure-devops timelog export-month --month 2 --year 2026 --format table
+tools azure-devops timelog export-month --month 2 --format json --output feb.json   # --year defaults to this year
+tools azure-devops timelog export-month --month 2 --user <id>                       # Override the configured user
+```
 
 ### Prepare Entries for Import (Recommended for Batch Operations)
 
@@ -559,10 +639,10 @@ tools azure-devops timelog prepare-import add --from 2026-02-01 --to 2026-02-08 
 
 # Add another entry (same date range)
 tools azure-devops timelog prepare-import add --from 2026-02-01 --to 2026-02-08 --entry '{
-  "workItemId": 262042,
+  "workItemId": 12345,
   "date": "2026-02-04",
   "hours": 0.5,
-  "timeType": "Ceremonie",
+  "timeType": "Meeting",
   "comment": "Daily standup"
 }'
 
@@ -584,7 +664,7 @@ Do **not** include `workItemTitle` in staged `--entry` JSON unless you already h
 
 ```bash
 # Import from prepare-import staging file
-tools azure-devops timelog import .genesis-tools/azure-devops/cache/prepare-import/2026-02-01.2026-02-08.json
+tools azure-devops timelog import ~/.genesis-tools/azure-devops/cache/prepare-import/2026-02-01.2026-02-08.json
 
 # Or import from custom JSON file
 tools azure-devops timelog import entries.json
@@ -601,11 +681,16 @@ The import command runs workitem type precheck for each entry before creating it
 
 Before creating time log entries, the tool validates that the workitem type is configured as allowed in `allowedWorkItemTypes`. This precheck behavior helps prevent errors:
 
-**Automatic Redirect for User Stories:**
-- If a workitem is a User Story (not typically allowed for time logging), the tool looks for child Tasks/Bugs
-- Exactly 1 child of allowed type: Auto-redirect with warning
-- 0 children of allowed type: Error
-- Multiple children: Error with list for user to choose from
+**Automatic Redirect for a Type That Is Not Allowed (a User Story, a Feature, any type outside `allowedWorkItemTypes`):**
+- The tool collects the children of an allowed type. When `allowedStatesPerType` lists a child's type, the child must be in one of those states.
+- 0 matching children: Error
+- Several matching children: they are ranked in three tiers, and only the best non-empty tier counts:
+  1. Not in a deprioritized state and assigned to the configured default user
+  2. Not in a deprioritized state, assigned to anyone
+  3. In a deprioritized state, most recently changed first
+- Exactly 1 child in the best tier: Auto-redirect with warning
+- More than 1 child in the best tier: Error with a list for the user to choose from
+- Deprioritized states default to `Closed`, `Done`, `Resolved`, `Removed`. Change them with `timelog configure --deprioritized-states "<comma-separated states>"`.
 
 **Configuration:**
 - Run `tools azure-devops timelog configure` to set `allowedWorkItemTypes`
@@ -656,15 +741,17 @@ git log --oneline -5
 
 **3. Infer Time Type from Context:**
 
-| Context Clues | Time Type |
-|---------------|-----------|
+Time types belong to the organization. Run `tools azure-devops timelog types` and pick the closest type; default to `Development`. The names below are examples.
+
+| Context Clues | Example Time Type |
+|---------------|-------------------|
 | "reviewing PR", "code review", "review" | Code Review |
 | "implementing", "coding", "development", "fixing" | Development |
 | "testing", "writing tests", "QA" | Test |
-| "documentation", "docs", "readme" | Dokumentace |
-| "meeting", "standup", "planning", "retro" | Ceremonie |
-| "analysis", "analyzing", "design" | IT Analýza |
-| "configuring", "setup", "deployment" | Konfigurace |
+| "documentation", "docs", "readme" | Documentation |
+| "meeting", "standup", "planning", "retro" | Meeting |
+| "analysis", "analyzing", "design" | Analysis |
+| "configuring", "setup", "deployment" | Configuration |
 
 Default to "Development" if no context clues.
 
@@ -725,7 +812,7 @@ This command:
 - Extracts workitem IDs from commit messages and branch names via configured patterns
 - Returns commit metadata (hash, message, author, date)
 - Includes stats (files changed, insertions, deletions)
-- Filters by configured authors (see `tools git configure authors`)
+- Filters by configured authors (see `tools git authors --list`)
 
 The extracted workitem IDs can be used to match commits to Azure DevOps work items for time logging purposes.
 
@@ -745,6 +832,5 @@ Do NOT download or analyze HAR files automatically -- only when the user request
 ## Documentation Resources
 
 For deeper API research beyond this skill:
-- **Local docs**: `src/azure-devops/docs/` contains 14 reference files (work items, iterations, PRs, REST API, WIQL syntax, timelog history)
+- **README**: `tools azure-devops --readme` prints the full README (sprint rules, history, TimeLog, caching, storage)
 - **Context7**: Use library ID `/websites/learn_microsoft_en-us_rest_api_azure_devops` for detailed REST API specs
-- **CLAUDE.md**: Contains context7 library IDs and batch endpoint quick reference

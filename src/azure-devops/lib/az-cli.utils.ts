@@ -30,6 +30,23 @@ function tenantArg(opts: AzLoginCommandOptions): string {
     return opts.tenant ? ` --tenant "${opts.tenant}"` : "";
 }
 
+/**
+ * Whether `az` resolves on this process's PATH. A missing `az` fails `az account show` the same way
+ * an expired login does, so callers check this first and say which of the two it is. Typical cause on
+ * Windows: a terminal opened before the Azure CLI install, so it never got the new PATH.
+ */
+export function isAzOnPath(which: (command: string) => string | null = Bun.which): boolean {
+    return which("az") !== null;
+}
+
+export function azNotOnPathMessage(): string {
+    return (
+        "Azure CLI (az) was not found on PATH.\n" +
+        "  Install it: https://learn.microsoft.com/en-us/cli/azure/install-azure-cli\n" +
+        "  Already installed? Open a new terminal so it picks up the updated PATH."
+    );
+}
+
 /** Device-code flow. Recommended default. */
 export function azLoginPrimaryCommand(opts: AzLoginCommandOptions = {}): string {
     return `az login${tenantArg(opts)} --allow-no-subscriptions --use-device-code`;

@@ -21,8 +21,8 @@ CLI tool for fetching and tracking Azure DevOps work items with change detection
 Run with any Azure DevOps URL from your project:
 
 ```bash
-tools azure-devops --configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
-tools azure-devops --configure "https://myorg.visualstudio.com/MyProject/_queries/query/..."
+tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
+tools azure-devops configure "https://myorg.visualstudio.com/MyProject/_queries/query/..."
 ```
 
 This auto-detects org, project, and projectId from the URL and saves to `.claude/azure/config.json`.
@@ -31,38 +31,38 @@ This auto-detects org, project, and projectId from the URL and saves to `.claude
 
 ```bash
 # Get dashboard queries
-tools azure-devops --dashboard <url|id>
+tools azure-devops dashboard <url|id>
 
 # Fetch query with change detection
-tools azure-devops --query <url|id>
+tools azure-devops query <url|id>
 
 # Filter query by state or severity
-tools azure-devops --query <id> --state Active,Development
-tools azure-devops --query <id> --severity A,B
+tools azure-devops query <id> --state Active,Development
+tools azure-devops query <id> --severity A,B
 
-# Get full work item + comments + relations (cached 5 min)
-tools azure-devops --workitem <url|id>
+# Get full work item + comments + relations (cached, 5-minute freshness window)
+tools azure-devops workitem <url|id>
 
 # Fetch multiple work items
-tools azure-devops --workitem 12345,12346,12347
+tools azure-devops workitem 12345,12346,12347
 
 # Force refresh (bypass cache)
-tools azure-devops --workitem <id> --force
+tools azure-devops workitem <id> --force
 
 # Download all work items from a query to tasks/
-tools azure-devops --query <id> --download-workitems
-tools azure-devops --query <id> --state Active --download-workitems
+tools azure-devops query <id> --download-workitems
+tools azure-devops query <id> --state Active --download-workitems
 
 # Organize by category (remembered for future fetches)
-tools azure-devops --query <id> --download-workitems --category react19
-tools azure-devops --workitem 12345 --category hotfixes
+tools azure-devops query <id> --download-workitems --category react19
+tools azure-devops workitem 12345 --category hotfixes
 
 # Use task folders (each task in its own subfolder)
-tools azure-devops --workitem 12345 --task-folders
-tools azure-devops --query <id> --download-workitems --category react19 --task-folders
+tools azure-devops workitem 12345 --task-folders
+tools azure-devops query <id> --download-workitems --category react19 --task-folders
 
 # List all cached work items
-tools azure-devops --list
+tools azure-devops list
 ```
 
 ## Storage Structure
@@ -71,7 +71,7 @@ tools azure-devops --list
 ~/.genesis-tools/azure-devops/     # Global cache
 ├── cache/
 │   ├── query-{id}.json           # Query cache for change detection (180 days)
-│   ├── workitem-{id}.json        # Work item cache (180 days, 5-min freshness)
+│   ├── workitem-{id}.json        # Work item cache (365 days, 5-min freshness)
 │   ├── dashboard-{id}.json       # Dashboard cache (180 days)
 │   ├── history-{id}.json         # Work item history (7 days)
 │   ├── team-members-{projId}.json # Team members (30 days)
@@ -102,8 +102,8 @@ tools azure-devops --list
 
 ## Features
 
-### Work Item Caching (5-min TTL)
-Work items are cached for 5 minutes. Shows "📦 From cache" when using cached data.
+### Work Item Caching (5-minute freshness window)
+Work items are stored for 365 days. A copy fetched less than 5 minutes ago is used without an API call. Shows "📦 From cache" when using cached data.
 Use `--force` to bypass cache.
 
 ### Query Change Detection
@@ -121,27 +121,27 @@ Work items are saved to `.claude/azure/tasks/` with slugified filenames:
 - `{id}-{title-slug}.md` - Human-readable markdown
 
 ### Batch Download
-Use `--download-workitems` with `--query` to download all work items from a query:
+Use `--download-workitems` with the `query` command to download all work items from a query:
 ```bash
-tools azure-devops --query <id> --download-workitems
+tools azure-devops query <id> --download-workitems
 ```
 This fetches full details (comments, relations) for each item and saves to tasks/.
 
 ### Categories
 Organize work items into subdirectories using `--category`:
 ```bash
-tools azure-devops --query <id> --download-workitems --category react19
-tools azure-devops --workitem 12345 --category hotfixes
+tools azure-devops query <id> --download-workitems --category react19
+tools azure-devops workitem 12345 --category hotfixes
 ```
 The category is **remembered per work item** in the global cache. Future fetches of the same work item will automatically use the same category, even without specifying `--category` again.
 
 ### Task Folders
 Use `--task-folders` to save each work item in its own subfolder:
 ```bash
-tools azure-devops --workitem 12345 --task-folders
+tools azure-devops workitem 12345 --task-folders
 # Creates: tasks/12345/12345-Task-Title.json
 
-tools azure-devops --query <id> --download-workitems --category react19 --task-folders
+tools azure-devops query <id> --download-workitems --category react19 --task-folders
 # Creates: tasks/react19/12345/12345-Task-Title.json
 ```
 
@@ -167,9 +167,9 @@ tools azure-devops history show <id> -f json
 tools azure-devops history show <id> --force
 
 # Filter by assignee and/or state
-tools azure-devops history show <id> --assigned-to "Martin"
+tools azure-devops history show <id> --assigned-to "Jane"
 tools azure-devops history show <id> --state Active,Development
-tools azure-devops history show <id> --assigned-to "Martin" --from 2024-12-01
+tools azure-devops history show <id> --assigned-to "Jane" --from 2024-12-01
 ```
 
 ### Search Across Items (WIQL - Server-Side)
@@ -178,7 +178,7 @@ Uses the WIQL `EVER` operator for server-side queries (no local history needed):
 
 ```bash
 # Items ever assigned to a user (fuzzy matching)
-tools azure-devops history search --assigned-to "Martin" --wiql
+tools azure-devops history search --assigned-to "Jane" --wiql
 
 # Items ever in a state
 tools azure-devops history search --state "Active" --wiql
@@ -193,10 +193,10 @@ Searches through locally cached history files:
 
 ```bash
 # Items ever assigned to user (from cached history)
-tools azure-devops history search --assigned-to "Martin"
+tools azure-devops history search --assigned-to "Jane"
 
 # With minimum time filter
-tools azure-devops history search --assigned-to "Martin" --min-time 2h
+tools azure-devops history search --assigned-to "Jane" --min-time 2h
 
 # Filter by state and date range
 tools azure-devops history search --state Active --from 2024-12-01
@@ -205,7 +205,7 @@ tools azure-devops history search --state Active --from 2024-12-01
 ### Bulk Sync History
 
 ```bash
-# Sync history for all cached work items (batch mode - efficient)
+# Sync history for all cached work items (per-item updates, precise deltas)
 tools azure-devops history sync
 
 # Force re-sync all
@@ -214,29 +214,36 @@ tools azure-devops history sync --force
 # Dry run - see what would be synced
 tools azure-devops history sync --dry-run
 
-# Per-item mode (more precise deltas, slower)
-tools azure-devops history sync --per-item
+# Batch reporting API (faster for 500+ items, no field deltas)
+tools azure-devops history sync --batch
 
 # Only revisions since a date
 tools azure-devops history sync --since 2024-12-01
 ```
 
-### Auto-History with Query Download
+### History After a Download
 
-When using `--download-workitems`, history is automatically fetched too:
+`query --download-workitems` does not fetch history. Run `history sync` afterwards to sync history for the cached items:
 
 ```bash
-# Downloads work items AND their history
 tools azure-devops query <id> --download-workitems
+tools azure-devops history sync
+```
 
-# Skip auto-history download
-tools azure-devops query <id> --download-workitems --without-history
+### Activity and Mentions
+
+```bash
+# What a user did across work items (state changes, comments, edits); --discover includes uncached items
+tools azure-devops history activity --from 2024-12-01 --to 2024-12-31 --discover
+
+# Comments that named a user in a date window (default: the last 7 days)
+tools azure-devops history mentions --user "Jane Doe" --from 2024-12-01
 ```
 
 ### Fuzzy User Matching
 
 The history commands support fuzzy user matching with diacritics normalization:
-- `"Jana"` matches `"Jana Nováková"`, `"Jana Nováková (QK)"`
+- `"Jana"` matches `"Jana Nováková"`, `"Jana Nováková (Contractor)"`
 - `"Novakova"` (no diacritics) matches `"Nováková"` (with diacritics)
 - Names are matched in any order: `"Nováková Jana"` matches `"Jana Nováková"`
 
@@ -244,10 +251,10 @@ The history commands support fuzzy user matching with diacritics normalization:
 
 | User says | Command |
 |-----------|---------|
-| "tasks ever assigned to Martin" | `history search --assigned-to "Martin" --wiql` |
+| "tasks ever assigned to Jane" | `history search --assigned-to "Jane" --wiql` |
 | "how long was #123 in Active" | `history show 123 --state Active` |
-| "time Martin spent on #456" | `history show 456 --assigned-to Martin` |
-| "all work in last 2 months" | `history search --assigned-to "Martin" --from 2024-12-01 --wiql` |
+| "time Jane spent on #456" | `history show 456 --assigned-to Jane` |
+| "all work in last 2 months" | `history search --assigned-to "Jane" --from 2024-12-01 --wiql` |
 
 ## SSL Issues (Proxy/Corporate Environments)
 

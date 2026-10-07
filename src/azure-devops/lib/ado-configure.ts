@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Api, AZURE_DEVOPS_RESOURCE_ID } from "@app/azure-devops/api";
-import { azLoginSuggestionBlock } from "@app/azure-devops/lib/az-cli.utils";
+import { azLoginSuggestionBlock, azNotOnPathMessage, isAzOnPath } from "@app/azure-devops/lib/az-cli.utils";
 import type { AzureConfig, AzureConfigWithTimeLog } from "@app/azure-devops/types";
 import { extractTeamFromUrl, parseAzureDevOpsUrl } from "@app/azure-devops/url-parser";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -9,11 +9,27 @@ import { logger } from "@genesiscz/utils/logger";
 import { $ } from "bun";
 
 export async function checkAzureCliLogin(): Promise<void> {
+    if (!isAzOnPath()) {
+        throw new Error(azNotOnPathMessage());
+    }
+
     try {
         await $`az account show`.quiet();
     } catch (error) {
         throw new Error(`Azure CLI not logged in. Run:\n${azLoginSuggestionBlock()}`, { cause: error });
     }
+}
+
+/**
+ * Values for `az devops configure --defaults`. The project goes in by ID, not by name: on Windows `az`
+ * is `az.cmd` under "C:\Program Files\...", and cmd.exe breaks any argument containing a space there
+ * ("'C:\Program' is not recognized ..."). Project names often have one; az accepts the ID.
+ */
+export function azDevopsDefaults(config: Pick<AzureConfig, "org" | "project" | "projectId">): {
+    organization: string;
+    project: string;
+} {
+    return { organization: config.org, project: config.projectId || config.project };
 }
 
 export async function buildAdoConfig(url: string): Promise<AzureConfig & { orgId: string }> {

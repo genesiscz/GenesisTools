@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { saveAdoConfig } from "@app/azure-devops/lib/ado-configure";
+import { azDevopsDefaults, saveAdoConfig } from "@app/azure-devops/lib/ado-configure";
 import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -220,5 +220,30 @@ describe("saveAdoConfig", () => {
 
         expect(saved.org).toBe("contoso");
         expect(saved.team).toBeUndefined();
+    });
+});
+
+/**
+ * Regression test: on Windows `az` is az.cmd under "C:\Program Files\...", and cmd.exe breaks any
+ * argument with a space ("'C:\Program' is not recognized ..."), so `project=Moje Projekty` failed.
+ */
+describe("azDevopsDefaults", () => {
+    test("sets the project by ID so a project name with a space never reaches az", () => {
+        const defaults = azDevopsDefaults({
+            org: "https://dev.azure.com/contoso",
+            project: "Moje Projekty",
+            projectId: "00000000-0000-0000-0000-000000000001",
+        });
+
+        expect(defaults).toEqual({
+            organization: "https://dev.azure.com/contoso",
+            project: "00000000-0000-0000-0000-000000000001",
+        });
+    });
+
+    test("falls back to the project name when the ID is unknown", () => {
+        const defaults = azDevopsDefaults({ org: "https://dev.azure.com/contoso", project: "Widgets", projectId: "" });
+
+        expect(defaults.project).toBe("Widgets");
     });
 });

@@ -3,16 +3,16 @@ import { buildCombinedQuery } from "@app/azure-devops/wiql-builder";
 
 describe("buildCombinedQuery", () => {
     test("scopes to the configured project and matches the current assignee with =", () => {
-        const wiql = buildCombinedQuery({ currentAssignedTo: "Vývojář Karel (QK)" });
+        const wiql = buildCombinedQuery({ currentAssignedTo: "Nováková Jana (Contractor)" });
 
         expect(wiql).toContain("[System.TeamProject] = @project");
-        expect(wiql).toContain("[System.AssignedTo] = 'Vývojář Karel (QK)'");
+        expect(wiql).toContain("[System.AssignedTo] = 'Nováková Jana (Contractor)'");
     });
 
     test("assigneeContains switches the current-assignee predicate to CONTAINS", () => {
-        const wiql = buildCombinedQuery({ currentAssignedTo: "Prášil", assigneeContains: true });
+        const wiql = buildCombinedQuery({ currentAssignedTo: "Smith", assigneeContains: true });
 
-        expect(wiql).toContain("[System.AssignedTo] CONTAINS 'Prášil'");
+        expect(wiql).toContain("[System.AssignedTo] CONTAINS 'Smith'");
         expect(wiql).not.toContain("EVER");
     });
 
@@ -23,9 +23,9 @@ describe("buildCombinedQuery", () => {
     });
 
     test("EVER assignment keeps = even when assigneeContains is set", () => {
-        const wiql = buildCombinedQuery({ assignedTo: "Prášil Jan (QT)", assigneeContains: true });
+        const wiql = buildCombinedQuery({ assignedTo: "Smith John (Vendor)", assigneeContains: true });
 
-        expect(wiql).toContain("EVER [System.AssignedTo] = 'Prášil Jan (QT)'");
+        expect(wiql).toContain("EVER [System.AssignedTo] = 'Smith John (Vendor)'");
     });
 
     test("excludeStates emits NOT IN and coexists with states", () => {

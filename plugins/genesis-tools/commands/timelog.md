@@ -11,9 +11,9 @@ Analyze Timely events, auto-tracked memories, and git commits to propose Azure D
 ## Prerequisites
 
 1. Timely configured: `tools timely login && tools timely accounts --select`
-2. Azure DevOps configured: `tools azure-devops --configure <url>`
+2. Azure DevOps configured: `tools azure-devops configure <url>`
 3. TimeLog configured: `tools azure-devops timelog configure`
-4. Git authors configured: `tools git configure authors` (for using `tools git commits`)
+4. Git authors configured: `tools git authors --add "<name>"` (for using `tools git commits`; `--list` shows them)
 
 ## Data Model
 
@@ -97,7 +97,7 @@ Use `suggested_event` to associate unlinked memories with the best-matching even
 tools git commits --from YYYY-MM-DD --to YYYY-MM-DD --format json 2>/dev/null | tools json
 ```
 
-This command automatically extracts workitem IDs from commit messages and branch names via configured patterns (default: `col-(\d+)`, `#(\d{5,6})`, `COL-(\d+)-` on branches).
+This command automatically extracts workitem IDs from commit messages and branch names via configured patterns (`tools git patterns --list` shows them, `--add <regex>` and `--remove <index>` change them).
 
 The output includes commit metadata (hash, message, author, date), stats (files changed, insertions, deletions), and extracted workitem IDs. Stats are always included.
 
@@ -123,7 +123,7 @@ Present a table for user approval:
 | 12345  | 2.5     | Development  | Gen2 2: coding, timelog impl    |
 | 12345  | 0.5     | Code Review  | PR review and feedback          |
 | 123456  | 1.0     | Development  | fix: validation error handling  |
-| ???     | 0.75    | Ceremonie    | Teams standup (unlinked, assign) |
+| ???     | 0.75    | Meeting      | Teams standup (unlinked, assign) |
 +---------+---------+--------------+---------------------------------+
 ```
 
@@ -148,7 +148,7 @@ tools azure-devops timelog prepare-import add --from YYYY-MM-DD --to YYYY-MM-DD 
 tools azure-devops timelog prepare-import list --name YYYY-MM-DD.YYYY-MM-DD --format table
 
 # On user approval, import all at once
-tools azure-devops timelog import .genesis-tools/azure-devops/cache/prepare-import/YYYY-MM-DD.YYYY-MM-DD.json
+tools azure-devops timelog import ~/.genesis-tools/azure-devops/cache/prepare-import/YYYY-MM-DD.YYYY-MM-DD.json
 ```
 
 This workflow:
@@ -170,15 +170,17 @@ tools azure-devops timelog add -w <id> -h <hours> -t "<type>" -c "<comment>"
 
 ## Time Type Mapping
 
-| Activity Context | Time Type |
+Time types belong to the organization. Run `tools azure-devops timelog types` and pick the closest type; default to `Development`. The names below are examples.
+
+| Activity Context | Example Time Type |
 |---|---|
 | Cursor/Warp coding | Development |
 | GitLab MR review | Code Review |
-| Teams meeting | Ceremonie |
-| Documentation edits | Dokumentace |
+| Teams meeting | Meeting |
+| Documentation edits | Documentation |
 | Testing activities | Test |
-| Analysis/design | IT Analyza |
-| Configuration/deploy | Konfigurace |
+| Analysis/design | Analysis |
+| Configuration/deploy | Configuration |
 
 ## Key Commands Reference
 
@@ -193,8 +195,8 @@ tools azure-devops timelog add -w <id> -h <hours> -t "<type>" -c "<comment>"
 | Memories (force fresh fetch) | `tools timely memories --day YYYY-MM-DD --force` |
 | Memories for date range | `tools timely memories --from YYYY-MM-DD --to YYYY-MM-DD --format json` |
 | Git commits with workitem IDs | `tools git commits --from YYYY-MM-DD --to YYYY-MM-DD --format json` |
-| Configure git authors | `tools git configure authors` (interactive) |
-| Configure workitem patterns | `tools git configure patterns` (interactive) |
+| Configure git authors | `tools git authors --add "<name>"` (also `--list`, `--remove`; interactive without flags) |
+| Configure workitem patterns | `tools git patterns --list` (also `--add <regex>`, `--remove <index>`, `--suggest`) |
 | Existing timelogs | `tools azure-devops timelog list --day YYYY-MM-DD --format json` |
 | Timelogs by date range | `tools azure-devops timelog list --from YYYY-MM-DD --to YYYY-MM-DD --format json` |
 | Timelogs filtered to me | `tools azure-devops timelog list --from YYYY-MM-DD --to YYYY-MM-DD --user @me --format json` |
@@ -217,18 +219,18 @@ For time that can't be matched to a work item:
 
 ## Fixed Workitem Mappings
 
-These workitems are always the same and should be used automatically:
+Recurring work items that never change should be used automatically. Keep them in a table like this one. The ids and type names below are placeholders: replace them with your own.
 
 | Pattern | Workitem ID | Time Type | Description |
 |---|---|---|---|
-| SU, standup | **262042** | Ceremonie | Standup (always 0.5h) |
-| Planning, retro, ceremonies | **262042** | Ceremonie | Planning, retrospective, etc. |
-| `(sentry)` in commit messages | **269409** | Development | Sentry-related work |
-| Support, provoz | **266796** | Provoz - Správa Aplikací | Support/operations |
-| Release (only when user explicitly says) | **262351** | Release | Release work |
-| `col-<taskid>` in commit messages | **\<taskid\>** | Development | Maps directly to that workitem |
+| SU, standup | **12345** | Meeting | Standup (always 0.5h) |
+| Planning, retro, team meetings | **12345** | Meeting | Planning, retrospective, etc. |
+| `(sentry)` in commit messages | **12346** | Development | Sentry-related work |
+| Support, operations | **12347** | Support | Support/operations |
+| Release (only when user explicitly says) | **12348** | Release | Release work |
+| `<prefix>-<taskid>` in commit messages | **\<taskid\>** | Development | Maps directly to that workitem |
 
-> **Validation:** Periodically verify these IDs are still active: `tools azure-devops workitem 262042,269409,266796,262351 --format ai`. Update mappings if any return Closed/Removed state.
+> **Validation:** Periodically verify these IDs are still active: `tools azure-devops workitem 12345,12346,12347,12348 --format ai`. Update mappings if any return Closed/Removed state.
 
 ## Git Commit Stats for Time Estimation
 
@@ -239,7 +241,7 @@ When estimating time from commits (useful for days without Timely events or for 
 tools git commits --from YYYY-MM-DD --to YYYY-MM-DD --format json 2>/dev/null | tools json
 ```
 
-The command uses configured authors (from `tools git configure authors`) and automatically filters by author date in the specified range. Authors can be added with `--author "Name"` or `--with-author "Name"` flags if needed.
+The command uses configured authors (see `tools git authors --list`) and automatically filters by author date in the specified range. Authors can be added with `--author "Name"` or `--with-author "Name"` flags if needed.
 
 Line count estimation heuristics:
 - < 20 lines changed: 0.5h minimum
@@ -365,7 +367,7 @@ Reports go in `.claude/timelog/YYYY-MM.md`. Structure:
 
 | Work Item | Description | Commits | Lines Changed |
 |-----------|-------------|---------|--------------|
-| col-XXXXX | ... | N | NNN |
+| #12345 | ... | N | NNN |
 
 ---
 
@@ -396,7 +398,7 @@ When syncing multiple days at once:
    - Review: `tools azure-devops timelog prepare-import list --name <from>.<to>`
 6. **Present proposal** to user with friendly readable table and totals per day
 7. **Use AskUserQuestion** to get approval: "Approve all", "Let me modify", "Cancel"
-8. **On approval**, run `tools azure-devops timelog import .genesis-tools/azure-devops/cache/prepare-import/<name>.json`
+8. **On approval**, run `tools azure-devops timelog import ~/.genesis-tools/azure-devops/cache/prepare-import/<name>.json`
 
 The Timely event notes often contain the user's own time breakdown (e.g., "SU (0.5), Support (4), Login (7.5)"). Use these as primary allocation guide, then distribute the specific development hours across workitems based on commit line counts.
 

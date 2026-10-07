@@ -27,7 +27,7 @@ Examples:
   ${toolCommand("azure-devops timelog add")} --workitem 12345 --interactive
   ${toolCommand("azure-devops timelog list")} --workitem 12345
   ${toolCommand("azure-devops timelog list")} --day 2026-01-30
-  ${toolCommand("azure-devops timelog list")} --since 2026-01-01 --upto 2026-01-31 --user "Martin"
+  ${toolCommand("azure-devops timelog list")} --since 2026-01-01 --upto 2026-01-31 --user "Jane"
   ${toolCommand("azure-devops timelog list")} --day 2026-01-30 --format table
   ${toolCommand("azure-devops timelog delete")} <timeLogId> --yes
   ${toolCommand("azure-devops timelog delete")} <timeLogId> --dry-run
@@ -37,8 +37,8 @@ Examples:
   ${toolCommand("azure-devops timelog import")} entries.json
 
 Available Time Types (run 'timelog types' for full list):
-  Development, Code Review, Business Anal\u00fdza, IT Anal\u00fdza, Test,
-  Dokumentace, Ceremonie, Konfigurace, Release, UX, ...
+  Development, Code Review, Analysis, Test,
+  Documentation, Meeting, Configuration, Release, UX, ...
 
 Hours/Minutes:
   --hours 2              \u2192 120 minutes

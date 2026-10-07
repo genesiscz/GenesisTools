@@ -14,7 +14,7 @@ const columns = [
     { name: "Work Item Type", referenceName: "System.WorkItemType" },
     { name: "Title", referenceName: "System.Title" },
     { name: "Assigned To", referenceName: "System.AssignedTo" },
-    { name: "Merge proběhl", referenceName: "Custom.MergeProbehl" },
+    { name: "Merged", referenceName: "Custom.Merged" },
 ];
 
 describe("workItemIdsFromQueryResult", () => {
@@ -79,8 +79,8 @@ describe("buildQueryTreeView", () => {
             {
                 "System.WorkItemType": "Incident",
                 "System.Title": "Parent",
-                "System.AssignedTo": { displayName: "Dvořák Petr" },
-                "Custom.MergeProbehl": "Ano",
+                "System.AssignedTo": { displayName: "Doe Jane" },
+                "Custom.Merged": "Yes",
             },
         ],
         [
@@ -88,7 +88,7 @@ describe("buildQueryTreeView", () => {
             {
                 "System.WorkItemType": "Task",
                 "System.Title": "FE task",
-                "Custom.MergeProbehl": null,
+                "Custom.Merged": null,
             },
         ],
     ]);
@@ -113,16 +113,16 @@ describe("buildQueryTreeView", () => {
         expect(view.roots).toHaveLength(1);
         expect(view.roots[0]?.children.map((child) => child.id)).toEqual([2]);
         expect(view.roots[0]?.url).toBe("https://example.test/1");
-        expect(view.roots[0]?.values["Merge proběhl"]).toBe("Ano");
-        expect(view.roots[0]?.children[0]?.values["Merge proběhl"]).toBeNull();
+        expect(view.roots[0]?.values.Merged).toBe("Yes");
+        expect(view.roots[0]?.children[0]?.values.Merged).toBeNull();
         expect(formatQueryTreeText(view)).toBe(
             [
                 "# Release 8.10.2026",
                 "Shared Queries/RELEASE 2026/Release 8.10.2026",
                 "tree · 2 work items · as of 2026-09-29T12:00:00Z",
                 "",
-                "1 | Incident | Parent | Assigned To: Dvořák Petr | Merge proběhl: Ano",
-                "  2 | Task | FE task | Assigned To: — | Merge proběhl: —",
+                "1 | Incident | Parent | Assigned To: Doe Jane | Merged: Yes",
+                "  2 | Task | FE task | Assigned To: — | Merged: —",
             ].join("\n")
         );
         expect(formatQueryTreeMarkdown(view)).toContain("\n- 1 | Incident | Parent");

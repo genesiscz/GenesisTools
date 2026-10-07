@@ -50,6 +50,9 @@ az devops configure --list
 |-----|-------------|
 | [work-item-history-api-reference](./work-item-history-api-reference.md) | Revisions, updates, comments, reporting APIs |
 | [wiql-syntax-reference](./wiql-syntax-reference.md) | WIQL query language (operators, macros, ASOF, links) |
+| [wiql-syntax](./wiql-syntax.md) | WIQL syntax: clauses, field types, operators, macros, date formats |
+| [work-items-queries](./work-items-queries.md) | Schema tables and verified WIQL patterns, plus history and comment REST calls |
+| [timelog](./timelog.md) | TimeLog extension API (third party): endpoints, authentication, time entries |
 
 ## Common Parameters
 

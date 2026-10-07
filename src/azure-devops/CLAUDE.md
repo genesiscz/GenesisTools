@@ -13,10 +13,10 @@ When researching Microsoft/Azure APIs, use these context7 library IDs:
 **Usage with context7 MCP:**
 ```bash
 # 1. Resolve library ID
-mcp__context7-mcp__resolve-library-id with libraryName="azure devops rest api"
+mcp__context7-mcp__resolve-library-id with libraryName="azure devops rest api" query="work item revisions"
 
 # 2. Query docs (use the resolved ID)
-mcp__context7-mcp__get-library-docs with context7CompatibleLibraryID="/websites/learn_microsoft_en-us_rest_api_azure_devops" topic="work item revisions"
+mcp__context7-mcp__query-docs with libraryId="/websites/learn_microsoft_en-us_rest_api_azure_devops" query="work item revisions"
 ```
 
 **When to use context7 vs local docs:**
@@ -25,12 +25,14 @@ mcp__context7-mcp__get-library-docs with context7CompatibleLibraryID="/websites/
 
 ## Local Azure DevOps CLI Documentation
 
-See `src/azure-devops/docs/` for comprehensive CLI reference (~15K tokens total):
+See `src/azure-devops/docs/README.md` for the index of all 15 files (about 130 KB in total, so read only the file you need). The ones used most:
 - `az-boards-work-item.md` - Work item CRUD
 - `az-boards-iteration.md` - Sprint/iteration management
 - `az-repos-pr.md` - Pull request workflows
 - `az-rest.md` - Raw REST API calls
 - `work-item-history-api-reference.md` - **Revisions, updates, comments APIs** (detailed)
+- `wiql-syntax.md`, `wiql-syntax-reference.md`, `work-items-queries.md` - WIQL syntax and verified query patterns
+- `timelog.md` - TimeLog extension API
 
 ## Azure DevOps API Quick Reference
 

@@ -333,7 +333,7 @@ curl -X DELETE "https://boznet-timelogapi.azurewebsites.net/api/{orgId}/timelog/
 
 ## Configuration
 
-The API key (`x-functions-key`) can be automatically fetched from Azure DevOps via the Extension Data API. Use the GenesisTools CLI:
+The API key (`x-functions-key`) can be automatically fetched from Azure DevOps via the Extension Data API. Use the CLI:
 
 ```bash
 tools azure-devops timelog configure

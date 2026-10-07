@@ -6,7 +6,8 @@
  */
 
 import { exitWithAuthGuide } from "@app/azure-devops/cli.utils";
-import { buildAdoConfig, saveAdoConfig } from "@app/azure-devops/lib/ado-configure";
+import { azDevopsDefaults, buildAdoConfig, saveAdoConfig } from "@app/azure-devops/lib/ado-configure";
+import { azNotOnPathMessage, isAzOnPath } from "@app/azure-devops/lib/az-cli.utils";
 import { getLocalConfigDir } from "@app/azure-devops/utils";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -17,6 +18,11 @@ import type { Command } from "commander";
 async function handleConfigure(url: string): Promise<void> {
     out.println("🔧 Configuring Azure DevOps CLI...\n");
     logger.debug(`[configure] Starting configuration with URL: ${url}`);
+
+    if (!isAzOnPath()) {
+        out.error(azNotOnPathMessage());
+        process.exit(1);
+    }
 
     logger.debug("[configure] Checking Azure CLI login status...");
     try {
@@ -74,9 +80,11 @@ async function handleConfigure(url: string): Promise<void> {
     out.println("```");
 
     out.println("\nConfiguring az devops defaults...");
+    const defaults = azDevopsDefaults(newConfig);
+    const manualCommand = `az devops configure --defaults organization="${defaults.organization}" project="${defaults.project}"`;
     try {
         const result =
-            await $`az devops configure --defaults organization=${newConfig.org} project=${newConfig.project}`
+            await $`az devops configure --defaults organization=${defaults.organization} project=${defaults.project}`
                 .quiet()
                 .nothrow();
 
@@ -95,16 +103,12 @@ async function handleConfigure(url: string): Promise<void> {
                 out.println(`   stdout: ${stdout}`);
             }
 
-            out.println(
-                `   You can run this manually:\n     az devops configure --defaults organization="${newConfig.org}" project="${newConfig.project}"`
-            );
+            out.println(`   You can run this manually:\n     ${manualCommand}`);
         }
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         out.println(`⚠️  Could not configure az devops defaults: ${message}`);
-        out.println(
-            `   You can run this manually:\n     az devops configure --defaults organization="${newConfig.org}" project="${newConfig.project}"`
-        );
+        out.println(`   You can run this manually:\n     ${manualCommand}`);
     }
 
     out.println(`

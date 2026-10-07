@@ -7,7 +7,7 @@ CLI tool for fetching, tracking, and managing Azure DevOps work items, queries, 
 -   ✅ **Work Item Management**: Fetch individual work items with full details, comments, and relations
 -   ✅ **Query Support**: Run Azure DevOps queries with change detection between runs
 -   ✅ **Dashboard Integration**: Extract queries from dashboards automatically
--   ✅ **Smart Caching**: 5-minute cache for work items, 180-day cache for queries (with change detection)
+-   ✅ **Smart Caching**: work items are kept 365 days and served without an API call for 5 minutes after a fetch; queries are kept 180 days (with change detection)
 -   ✅ **Change Detection**: Automatically detects new items and updates (state, assignee, severity, title changes)
 -   ✅ **Task File Generation**: Saves work items as JSON and Markdown files for easy reference
 -   ✅ **Category Organization**: Organize work items into categories (remembered per item)
@@ -205,6 +205,22 @@ Two details that are easy to get wrong:
 - Comment text is normalized as TEXT, not as a display name. Running a name normalizer over prose
   deletes bracketed spans, and a mention written inside a parenthesis then disappears with them.
 
+## `history activity`: what a user did
+
+```bash
+# My timeline for one week, from the local history cache
+tools azure-devops history activity --from 2026-09-07 --to 2026-09-11
+
+# Somebody else, including items that were never cached, as JSON
+tools azure-devops history activity --user "Smith Jane" --from 2026-09-07 --discover -o json
+```
+
+Lists a user's actions across work items, grouped by day: state changes, assignments, comments,
+creations and field edits. By default it reads the history cache, so run `history sync` first.
+`--discover` asks Azure DevOps for every item the user changed, including items that were never
+cached. `--no-comments` skips the comment fetch and is faster. `-o` takes `timeline`, `summary` or
+`json`. `--user` defaults to `@me`.
+
 ## Ancestor walk and `tree`
 
 ```bash
@@ -303,7 +319,7 @@ tools azure-devops comment list 12345                       # newest first; --fo
 tools azure-devops comment add 12345 --file note.md         # markdown by default
 tools azure-devops comment add 12345 --text "Short note"    # or inline; --file - reads stdin
 tools azure-devops comment edit 12345 678 --file note.md    # replace the text of comment 678
-tools azure-devops comment delete 12345 678
+tools azure-devops comment delete 12345 678 --yes          # --yes is required without a terminal
 ```
 
 Comments are sent as **markdown** (Comments API `7.1-preview.4`, `format=markdown`), so bold, lists,
@@ -317,95 +333,108 @@ The work item accepts a URL as well as an id.
 
 ```bash
 # Configure for your project (first-time setup)
-tools azure-devops --configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
+tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
 
 # Fetch a work item
-tools azure-devops --workitem 12345
+tools azure-devops workitem 12345
 
 # Fetch multiple work items
-tools azure-devops --workitem 12345,12346,12347
+tools azure-devops workitem 12345,12346,12347
 
 # Fetch a query with change detection
-tools azure-devops --query d6e14134-9d22-4cbb-b897-b1514f888667
+tools azure-devops query d6e14134-9d22-4cbb-b897-b1514f888667
 
 # Filter query results by state
-tools azure-devops --query <id> --state Active,Development
+tools azure-devops query <id> --state Active,Development
 
 # Filter by severity
-tools azure-devops --query <id> --severity A,B
+tools azure-devops query <id> --severity A,B
 
 # Download all work items from a query
-tools azure-devops --query <id> --download-workitems
+tools azure-devops query <id> --download-workitems
 
 # Organize into categories
-tools azure-devops --query <id> --download-workitems --category react19
-tools azure-devops --workitem 12345 --category hotfixes
+tools azure-devops query <id> --download-workitems --category react19
+tools azure-devops workitem 12345 --category hotfixes
 
 # Use task folders (each task in its own subfolder)
-tools azure-devops --workitem 12345 --task-folders
+tools azure-devops workitem 12345 --task-folders
 
 # Get dashboard queries
-tools azure-devops --dashboard <url|id>
+tools azure-devops dashboard <url|id>
 
 # List all cached work items
-tools azure-devops --list
+tools azure-devops list
 
 # Force refresh (bypass cache)
-tools azure-devops --workitem 12345 --force
+tools azure-devops workitem 12345 --force
 
 # Filter changes by date range
-tools azure-devops --query <id> --changes-from 2026-01-24
-tools azure-devops --query <id> --changes-from 2026-01-20 --changes-to 2026-01-25
+tools azure-devops query <id> --changes-from 2026-01-24
+tools azure-devops query <id> --changes-from 2026-01-20 --changes-to 2026-01-25
 
 # Create work items (interactive mode)
-tools azure-devops --create -i
+tools azure-devops workitem-create -i
 
 # Create from template file
-tools azure-devops --create --from-file template.json
+tools azure-devops workitem-create --from-file template.json
 
 # Generate template from query (analyzes patterns)
-tools azure-devops --create "https://dev.azure.com/.../query/abc" --type Bug
+tools azure-devops workitem-create "https://dev.azure.com/.../query/abc" --type Bug
 
 # Generate template from existing work item
-tools azure-devops --create "https://dev.azure.com/.../_workitems/edit/12345"
+tools azure-devops workitem-create "https://dev.azure.com/.../_workitems/edit/12345"
 
 # Quick non-interactive creation
-tools azure-devops --create --type Task --title "Fix login bug"
-tools azure-devops --create --type Bug --title "Error in checkout" --severity "A - critical"
+tools azure-devops workitem-create --type Task --title "Fix login bug"
+tools azure-devops workitem-create --type Bug --title "Error in checkout" --severity "A - critical"
 ```
 
 ### Commands
 
 | Command        | Description                                    |
 | -------------- | ---------------------------------------------- |
-| `--configure`  | Configure Azure DevOps connection for project  |
-| `--query`      | Fetch query results with change detection      |
-| `--workitem`   | Fetch work item(s) with full details           |
-| `--dashboard`  | Extract queries from a dashboard               |
-| `--list`       | List all cached work items                     |
-| `--create`     | Create new work items (interactive or from template) |
+| `configure <url>` (alias `config`) | Configure Azure DevOps connection for project |
+| `query <input>` | Fetch query results with change detection      |
+| `workitem <input>` (alias `wi`) | Fetch work item(s) with full details |
+| `dashboard <input>` | Extract queries from a dashboard           |
+| `list` (alias `ls`) | List all cached work items                 |
+| `workitem-create` (alias `create`) | Create new work items (interactive or from template) |
 | `iterations`   | List the project's sprints (alias `sprints`)      |
 | `sprint`       | List the work items of one sprint              |
+| `history show`, `history sync` | One item's history; bulk history sync for cached items (`--since`, `--batch`) |
+| `history activity` | A user's activity timeline across work items (`--discover` for uncached items) |
 | `history mentions` | Comments that named a user, in a date window |
 | `history search` | Work items by assignee and state; `--wiql --current` is server-side, `--all-projects` widens it to every project, `--exclude-state Closed` drops closed items |
 | `ancestors`    | Walk a work item's parent chain up to the root  |
 | `tree`         | Parents, children and related items of one work item |
 | `wiki`         | Wikis: `list`, `pages`, `get`, `search`, `history`, `diff` |
+| `comment`      | Work item comments: `list`, `add`, `edit`, `delete` (`delete` needs `--yes` without a terminal) |
+| `timelog`      | TimeLog entries: `add`, `list`, `delete`, `types`, `import`, `configure`, `prepare-import`, `export-month` |
 
 ### Options
 
 | Option                        | Description                                           | Default |
 | ----------------------------- | ----------------------------------------------------- | ------- |
 | `--format <ai\|md\|json>`     | Output format                                         | `ai`    |
-| `--force`, `--refresh`, `--no-cache` | Force refresh, ignore cache                    | -       |
+| `--force`                     | Force refresh, ignore cache                           | -       |
 | `--state <states>`            | Filter by state (comma-separated)                     | -       |
 | `--severity <sev>`            | Filter by severity (comma-separated)                  | -       |
 | `--changes-from <date>`       | Show changes from this date (ISO format)              | -       |
 | `--changes-to <date>`         | Show changes up to this date (ISO format)             | -       |
-| `--download-workitems`        | With `--query`: download all work items to tasks/     | -       |
+| `--download-workitems`        | With `query`: download all work items to tasks/       | -       |
 | `--category <name>`           | Save to tasks/<category>/ (remembered per work item)  | -       |
 | `--task-folders`              | Save in tasks/<id>/ subfolder (only for new files)    | -       |
-| `--help`                      | Show help message                                     | -       |
+| `--full`                      | `workitem`: full description and comments, no truncation | -    |
+| `--images`                    | Download inline images from description and comments  | -       |
+| `--attachments-from <datetime>` | Download attachments created after this date        | -       |
+| `--attachments-to <datetime>` | Download attachments created before this date         | -       |
+| `--attachments-prefix <prefix>` | Only attachments starting with this name            | -       |
+| `--attachments-suffix <suffix>` | Only attachments ending with this (e.g. `.har`)     | -       |
+| `--output-dir <path>`         | Custom directory for downloaded attachments           | -       |
+| `-v`, `--verbose`             | Debug logging                                         | -       |
+| `--readme`                    | Print this README and exit                            | -       |
+| `--help`, `--help-full`       | Show help, or help with examples                      | -       |
 
 ### Create Options
 
@@ -415,6 +444,7 @@ tools azure-devops --create --type Bug --title "Error in checkout" --severity "A
 | `--from-file <path>`    | Create from template JSON file                        | -       |
 | `--type <type>`         | Work item type (Bug, Task, User Story, etc.)          | -       |
 | `--title <text>`        | Work item title (for quick non-interactive creation)  | -       |
+| `--severity <sev>`      | Severity level                                        | -       |
 | `--tags <tags>`         | Tags (comma-separated)                                | -       |
 | `--assignee <email>`    | Assignee email                                        | -       |
 | `--parent <id>`         | Parent work item ID                                   | -       |
@@ -452,8 +482,8 @@ tools azure-devops --create --type Bug --title "Error in checkout" --severity "A
 Run with any Azure DevOps URL from your project:
 
 ```bash
-tools azure-devops --configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
-tools azure-devops --configure "https://myorg.visualstudio.com/MyProject/_queries/query/..."
+tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
+tools azure-devops configure "https://myorg.visualstudio.com/MyProject/_queries/query/..."
 ```
 
 This auto-detects:
@@ -471,8 +501,12 @@ Configuration is saved to `.claude/azure/config.json` in your project directory.
 ~/.genesis-tools/azure-devops/
 └── cache/
     ├── query-{id}.json           # Query cache (180 days TTL)
-    ├── workitem-{id}.json        # Work item cache (5 min TTL)
-    └── dashboard-{id}.json       # Dashboard cache
+    ├── workitem-{id}.json        # Work item cache (365 days TTL, 5-minute freshness window)
+    ├── dashboard-{id}.json       # Dashboard cache (180 days)
+    ├── queries-list.json         # Saved query names for name matching (30 days)
+    ├── timetypes-{projectId}.json    # TimeLog types (7 days)
+    ├── team-members-{projectId}.json # Team roster (30 days)
+    └── prepare-import/           # Staged TimeLog entries
 ```
 
 ### Project Storage
@@ -553,15 +587,17 @@ Raw JSON data for programmatic use:
 
 ## Features Explained
 
-### Work Item Caching (5-minute TTL)
+### Work Item Caching (365-day file TTL, 5-minute freshness window)
 
-Work items are cached for 5 minutes to reduce API calls. When using cached data, the output shows:
+Work items are kept in the cache for 365 days. A copy fetched less than 5 minutes ago is used without
+any API call, which reduces API calls. A query run also reuses a cached copy whenever the item's
+revision is unchanged. When using cached data, the output shows:
 
 ```
 📦 From cache (2 minutes ago) - use --force to refresh
 ```
 
-Use `--force` or `--refresh` to bypass cache and fetch fresh data.
+Use `--force` to bypass cache and fetch fresh data.
 
 ### Query Change Detection
 
@@ -596,10 +632,10 @@ Files are created/updated whenever you fetch a work item.
 
 ### Batch Download
 
-Use `--download-workitems` with `--query` to download all work items from a query:
+Use `--download-workitems` with the `query` command to download all work items from a query:
 
 ```bash
-tools azure-devops --query <id> --download-workitems
+tools azure-devops query <id> --download-workitems
 ```
 
 This:
@@ -612,8 +648,8 @@ This:
 Organize work items into subdirectories using `--category`:
 
 ```bash
-tools azure-devops --query <id> --download-workitems --category react19
-tools azure-devops --workitem 12345 --category hotfixes
+tools azure-devops query <id> --download-workitems --category react19
+tools azure-devops workitem 12345 --category hotfixes
 ```
 
 **Category Memory**: The category is **remembered per work item** in the global cache. Future fetches of the same work item will automatically use the same category, even without specifying `--category` again.
@@ -623,10 +659,10 @@ tools azure-devops --workitem 12345 --category hotfixes
 Use `--task-folders` to save each work item in its own subfolder:
 
 ```bash
-tools azure-devops --workitem 12345 --task-folders
+tools azure-devops workitem 12345 --task-folders
 # Creates: tasks/12345/12345-Task-Title.json
 
-tools azure-devops --query <id> --download-workitems --category react19 --task-folders
+tools azure-devops query <id> --download-workitems --category react19 --task-folders
 # Creates: tasks/react19/12345/12345-Task-Title.json
 ```
 
@@ -634,14 +670,14 @@ tools azure-devops --query <id> --download-workitems --category react19 --task-f
 
 ### Work Item Creation
 
-The `--create` command supports multiple modes for creating new work items:
+The `workitem-create` command (alias `create`) supports multiple modes for creating new work items:
 
 #### Interactive Mode
 
 Step-by-step guided creation with project selection, field prompts, and back navigation (ESC to go back):
 
 ```bash
-tools azure-devops --create -i
+tools azure-devops workitem-create -i
 ```
 
 Features:
@@ -657,13 +693,13 @@ Generate a template from existing data, fill it in, then create:
 
 ```bash
 # Generate template from a query (analyzes patterns in similar items)
-tools azure-devops --create "https://dev.azure.com/.../query/abc" --type Bug
+tools azure-devops workitem-create "https://dev.azure.com/.../query/abc" --type Bug
 
 # Generate template from an existing work item (pre-fills fields)
-tools azure-devops --create "https://dev.azure.com/.../_workitems/edit/12345"
+tools azure-devops workitem-create "https://dev.azure.com/.../_workitems/edit/12345"
 
 # Fill the template, then create
-tools azure-devops --create --from-file ".claude/azure/tasks/created/template.json"
+tools azure-devops workitem-create --from-file ".claude/azure/tasks/created/template.json"
 ```
 
 Template files use the schema `azure-devops-workitem-v1` and include field hints with allowed values.
@@ -673,8 +709,8 @@ Template files use the schema `azure-devops-workitem-v1` and include field hints
 Create a work item directly from command line:
 
 ```bash
-tools azure-devops --create --type Task --title "Fix login bug"
-tools azure-devops --create --type Bug --title "Error in checkout" --severity "A - critical" --tags "frontend,urgent"
+tools azure-devops workitem-create --type Task --title "Fix login bug"
+tools azure-devops workitem-create --type Bug --title "Error in checkout" --severity "A - critical" --tags "frontend,urgent"
 ```
 
 ### Change Filtering
@@ -683,10 +719,10 @@ Filter query changes by date range to focus on recent activity:
 
 ```bash
 # Show changes from a specific date
-tools azure-devops --query <id> --changes-from 2026-01-24
+tools azure-devops query <id> --changes-from 2026-01-24
 
 # Show changes within a date range
-tools azure-devops --query <id> --changes-from 2026-01-20 --changes-to 2026-01-25
+tools azure-devops query <id> --changes-from 2026-01-20 --changes-to 2026-01-25
 ```
 
 Dates should be in ISO format (YYYY-MM-DD).
@@ -697,50 +733,50 @@ Dates should be in ISO format (YYYY-MM-DD).
 
 ```bash
 # Fetch your active work items query
-tools azure-devops --query <your-active-items-query-id>
+tools azure-devops query <your-active-items-query-id>
 
 # Review changes since yesterday
 # Tool automatically highlights new/updated items
 
 # Get full details for items that changed
-tools azure-devops --workitem 12345,12346 --force
+tools azure-devops workitem 12345,12346 --force
 ```
 
 ### Sprint Planning
 
 ```bash
 # Download all items from sprint backlog query
-tools azure-devops --query <sprint-query-id> --download-workitems --category sprint-2024-01
+tools azure-devops query <sprint-query-id> --download-workitems --category sprint-2024-01
 
 # Filter by severity for prioritization
-tools azure-devops --query <sprint-query-id> --severity A,B --download-workitems --category sprint-2024-01
+tools azure-devops query <sprint-query-id> --severity A,B --download-workitems --category sprint-2024-01
 ```
 
 ### Bug Triage
 
 ```bash
 # Get dashboard with all bug queries
-tools azure-devops --dashboard <bugs-dashboard-id>
+tools azure-devops dashboard <bugs-dashboard-id>
 
 # Download active bugs
-tools azure-devops --query <active-bugs-query-id> --state Active --download-workitems --category bugs
+tools azure-devops query <active-bugs-query-id> --state Active --download-workitems --category bugs
 
 # Organize critical bugs separately
-tools azure-devops --query <critical-bugs-query-id> --severity A --download-workitems --category critical-bugs --task-folders
+tools azure-devops query <critical-bugs-query-id> --severity A --download-workitems --category critical-bugs --task-folders
 ```
 
 ### Feature Development
 
 ```bash
 # Download feature work items
-tools azure-devops --query <feature-query-id> --download-workitems --category react19 --task-folders
+tools azure-devops query <feature-query-id> --download-workitems --category react19 --task-folders
 
 # Files are organized as:
 # tasks/react19/12345/12345-Feature-Title.json
 # tasks/react19/12345/12345-Feature-Title.md
 
 # Later, fetch updates (category remembered automatically)
-tools azure-devops --workitem 12345 --force
+tools azure-devops workitem 12345 --force
 ```
 
 ## Configuration Reference
@@ -752,14 +788,26 @@ The config file (`.claude/azure/config.json`) contains:
   "org": "https://dev.azure.com/MyOrg",
   "project": "MyProject",
   "projectId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-  "apiResource": "499b84ac-1321-427f-aa17-267ca6975798"
+  "orgId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "apiResource": "499b84ac-1321-427f-aa17-267ca6975798",
+  "team": "Payments Team",
+  "timelog": {
+    "functionsKey": "<auto-fetched>",
+    "defaultUser": { "userId": "<id>", "userName": "<Your Display Name>", "userEmail": "<your-email@example.com>" },
+    "allowedWorkItemTypes": ["Bug", "Task"],
+    "allowedStatesPerType": { "Task": ["In Progress"] },
+    "deprioritizedStates": ["Closed", "Done", "Resolved"]
+  }
 }
 ```
 
 - **org**: Organization URL (extracted from your Azure DevOps URL)
 - **project**: Project name (URL-decoded)
 - **projectId**: Project GUID (fetched via API during configure)
+- **orgId**: Organization GUID (fetched via API during configure)
 - **apiResource**: Azure DevOps OAuth resource ID (constant, same for all orgs)
+- **team**: Optional. Stored by `configure` when the URL is a board or backlog URL. Used by `iterations` and `sprint`
+- **timelog**: Optional. Written by `timelog configure`: the TimeLog API key, the default user, the allowed work item types and states, and the states that rank last when the precheck picks a child
 
 ## Troubleshooting
 
@@ -768,7 +816,7 @@ The config file (`.claude/azure/config.json`) contains:
 Run the configure command with any Azure DevOps URL from your project:
 
 ```bash
-tools azure-devops --configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
+tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
 ```
 
 ### "Azure CLI Authentication Required"
@@ -801,8 +849,9 @@ If SSL errors occur:
 
 - Use `--force` to bypass cache
 - Clear cache manually: Delete `~/.genesis-tools/azure-devops/cache/`
-- Work item cache expires after 5 minutes automatically
+- A work item fetched less than 5 minutes ago is served from cache; the cache file itself is kept for 365 days
 - Query cache expires after 180 days
+- The saved query list used for name matching is kept 30 days and `--force` does not refresh it. Pass the query id or URL, or delete `queries-list.json` in the cache folder
 
 ### Task Files Not Found
 
@@ -818,7 +867,7 @@ If a file was moved manually, the tool will create a new one in the expected loc
 ### Caching Strategy
 
 - **Query Cache**: 180-day TTL, stores query results for change detection
-- **Work Item Cache**: 5-minute TTL, stores work item metadata (not full data)
+- **Work Item Cache**: 365-day file TTL with a 5-minute freshness window, stores work item metadata (not full data). History and comment sections inside it are refetched after 7 days
 - **Dashboard Cache**: 180-day TTL, stores dashboard query list
 
 ### Change Detection Algorithm
@@ -845,27 +894,18 @@ If a file was moved manually, the tool will create a new one in the expected loc
 - **Azure CLI**: Required for authentication and API access
 - **Azure DevOps Extension**: `az extension add --name azure-devops`
 - **Bun**: Runtime environment
-- **Storage Utility**: Uses `src/utils/storage.ts` for global cache management
+- **Storage Utility**: The shared Storage utility manages the global cache
 
 ## Claude AI Skill
 
 This tool includes a Claude AI skill that enables AI assistants to automatically use the Azure DevOps tool when users ask about work items, queries, or tasks.
 
-### Installing the Skill
+The skill lives in `plugins/genesis-tools/skills/azure-devops/SKILL.md` and is installed with the genesis-tools plugin.
 
-Install the skill for Claude AI (Codex/Cursor):
-
-```bash
-# Using skill-installer (if available)
-tools skill-installer install azure-devops
-
-# Or manually copy the skill file
-cp skills/azure-devops.skill ~/.codex/skills/
-```
-
-The skill automatically triggers when users mention:
+It automatically triggers when users mention:
 - "get workitem", "fetch task", "show query"
 - "download tasks", "analyze workitem", "analyze task"
+- Sprints, wiki pages, work item comments, history or parent chains
 - Azure DevOps URLs
 
 ### Skill Features
@@ -915,23 +955,46 @@ tools azure-devops timelog configure
 tools azure-devops timelog types
 tools azure-devops timelog types --format json
 
-# List time logs for a work item
+# List time logs for a work item, one day, or a range
 tools azure-devops timelog list -w 12345
 tools azure-devops timelog list -w 12345 --format md
+tools azure-devops timelog list --day 2026-02-04 --user @me
+tools azure-devops timelog list --from 2026-02-01 --to 2026-02-08 --format json
 
 # Add time log entry (quick)
 tools azure-devops timelog add -w 12345 -h 2 -t "Development"
 tools azure-devops timelog add -w 12345 -h 1 -m 30 -t "Code Review" -c "PR review"
 tools azure-devops timelog add -w 12345 -h 0 -m 30 -t "Test"
+tools azure-devops timelog add -w 12345 -h 2 -t "Development" --date 2026-02-04  # default: today
 
 # Add time log entry (interactive)
 tools azure-devops timelog add -i
 tools azure-devops timelog add -w 12345 -i
 
+# Delete an entry and roll back Remaining/Completed Work (--yes is required without a terminal)
+tools azure-devops timelog delete <timeLogId> --yes
+tools azure-devops timelog delete <timeLogId> --dry-run
+tools azure-devops timelog delete <timeLogId> --no-effort --yes  # delete the row only
+
+# Stage entries one by one (validated), review them, then import the file
+tools azure-devops timelog prepare-import add --from 2026-02-01 --to 2026-02-08 --entry '{"workItemId": 12345, "date": "2026-02-04", "hours": 2, "timeType": "Development"}'
+tools azure-devops timelog prepare-import list --name 2026-02-01.2026-02-08
+tools azure-devops timelog prepare-import remove --name 2026-02-01.2026-02-08 --id <uuid>
+tools azure-devops timelog prepare-import clear --name 2026-02-01.2026-02-08
+
 # Bulk import from JSON file
 tools azure-devops timelog import entries.json
 tools azure-devops timelog import entries.json --dry-run
+
+# One month of time logs with a summary
+tools azure-devops timelog export-month --month 2 --year 2026
+tools azure-devops timelog export-month --month 2 --format json --output feb.json
+
+# Allowed types and states for the work item precheck
+tools azure-devops timelog configure --allowed-work-item-types "Bug,Task" --deprioritized-states "Closed,Done,Resolved"
 ```
+
+The precheck redirects a work item whose type is not allowed (a User Story, for example) to its single best child of an allowed type. See `plugins/genesis-tools/skills/azure-devops/SKILL.md` for the ranking rule.
 
 ### Import File Format
 
@@ -968,8 +1031,6 @@ The TimeLog API uses minutes internally:
 ## Related Tools
 
 - `mcp-manager`: Manage MCP server configurations
-
-
 - `git commits`: List the commits that reference a work item
 
 ## Documentation

@@ -7,11 +7,16 @@
  *   tools azure-devops configure <any-azure-devops-url>
  *   tools azure-devops query <url|id> [options]
  *   tools azure-devops workitem <url|id> [options]
+ *   tools azure-devops ancestors <id> [options]
+ *   tools azure-devops tree <id> [options]
  *   tools azure-devops dashboard <url|id> [options]
  *   tools azure-devops list
  *   tools azure-devops workitem-create [options]
- *   tools azure-devops timelog <subcommand> [options]
- *   tools azure-devops wiki <list|pages|get|search|history> [options]
+ *   tools azure-devops timelog <add|list|delete|types|import|configure|prepare-import|export-month> [options]
+ *   tools azure-devops history <show|search|sync|activity|mentions> [options]
+ *   tools azure-devops iterations [options]
+ *   tools azure-devops sprint [nameOrPath] [options]
+ *   tools azure-devops wiki <list|pages|get|search|history|diff> [options]
  *   tools azure-devops comment <list|add|edit|delete> <workitem> [options]
  */
 
@@ -89,14 +94,17 @@ Usage:
   ${toolCommand("azure-devops")} <command> [options]
 
 Commands:
-  configure <url>        Configure organization and project from any Azure DevOps URL
+  configure <url>        Configure organization and project from any Azure DevOps URL (alias: config)
   query <input>          Run an Azure DevOps query and display results
-  workitem <input>       Fetch work item(s) by ID or URL
+  workitem <input>       Fetch work item(s) by ID or URL (alias: wi)
+  ancestors <id>         Walk a work item's parent chain up to the root
+  tree <id>              Parents, children and related items of one work item
   dashboard <input>      Fetch dashboard and list its queries
-  list                   List cached work items
-  workitem-create        Create a new work item (interactive or from template)
-  timelog                Manage time log entries (add, list, delete, types, import)
-  history                Work item history commands (show, search, sync)
+  list                   List cached work items (alias: ls)
+  workitem-create        Create a new work item, interactive or from template (alias: create)
+  timelog                Manage time log entries (add, list, delete, types, import, configure,
+                         prepare-import, export-month)
+  history                Work item history commands (show, search, sync, activity, mentions)
   iterations             List the project's sprints (alias: sprints)
   sprint [nameOrPath]    List the work items of one sprint
   wiki <subcommand>      Wikis: list, pages, get, search, history, diff
@@ -104,6 +112,8 @@ Commands:
 
 Global Options:
   --team <name>          Optional team; narrows team-scoped lists (overrides config.team)
+  -v, --verbose          Enable verbose debug logging
+  --readme               Print this tool's README and exit
 
 Sprint Options:
   -f, --format <fmt>     ai | md | json (default: ai)
@@ -127,8 +137,18 @@ Query Options:
 Workitem Options:
   --format <ai|md|json>  Output format (default: ai)
   --force                Force refresh, ignore cache
+  --full                 Full description and comments, no truncation
   --category <name>      Save to tasks/<category>/
   --task-folders         Save in tasks/<id>/ subfolder
+  --images               Download inline images from description and comments
+  --attachments-from <datetime>, --attachments-to <datetime>
+  --attachments-prefix <prefix>, --attachments-suffix <suffix>
+  --output-dir <path>    Custom directory for downloaded attachments
+
+Ancestors / Tree Options:
+  --format <table|json>  Output format (default: table)
+  --depth <n>            ancestors: cap the climb at n ancestors (default: to the root)
+  --force                tree: refetch every work item instead of reading the cache
 
 Workitem-Create Options:
   -i, --interactive      Interactive mode with prompts
@@ -138,13 +158,17 @@ Workitem-Create Options:
   --severity <sev>       Severity level
   --tags <tags>          Tags (comma-separated)
   --assignee <email>     Assignee email
+  --parent <id>          Parent work item ID
 
 Timelog Subcommands:
-  timelog add            Add a time log entry
-  timelog list           List time logs for a work item
+  timelog add            Add a time log entry (--date <date>, default today)
+  timelog list           List time logs (--workitem, --day, --from/--to, --user)
   timelog delete         Delete a time log entry and roll back effort
   timelog types          List available time types
   timelog import <file>  Import time logs from JSON file
+  timelog configure      Set the allowed work item types, states and deprioritized states
+  timelog prepare-import Build an import file entry by entry, with validation (add, list, remove, clear)
+  timelog export-month   Export one month of time logs with a summary (--month, --year)
 
 First-Time Setup:
   1. Install Azure CLI: https://learn.microsoft.com/en-us/cli/azure/install-azure-cli
@@ -198,6 +222,11 @@ Examples:
   ${toolCommand("azure-devops timelog list")} --workitem 12345
   ${toolCommand("azure-devops timelog delete")} <timeLogId> --yes
   ${toolCommand("azure-devops timelog types")}
+  ${toolCommand("azure-devops timelog export-month")} --month 2 --year 2026
+
+Ancestors and Tree:
+  ${toolCommand("azure-devops ancestors")} 12345 --depth 2
+  ${toolCommand("azure-devops tree")} 12345 --format json
 
 Sprint Commands:
   ${toolCommand("azure-devops iterations")}                          List the project's sprints
@@ -218,17 +247,20 @@ Comment Commands:
   ${toolCommand("azure-devops comment list")} <id>                     Comments, newest first (--format json)
   ${toolCommand("azure-devops comment add")} <id> --file note.md       Post markdown (--text "...", --file - for stdin, --html)
   ${toolCommand("azure-devops comment edit")} <id> <commentId> --file note.md   Replace a comment's text
-  ${toolCommand("azure-devops comment delete")} <id> <commentId>       Delete a comment
+  ${toolCommand("azure-devops comment delete")} <id> <commentId> --yes Delete a comment (--yes is required without a terminal)
 
 History Commands:
   ${toolCommand("azure-devops history show")} <id>          Show history for a work item
   ${toolCommand("azure-devops history search")} --wiql      Search via WIQL EVER query (server-side)
   ${toolCommand("azure-devops history search")}             Search local cached history
-  ${toolCommand("azure-devops history sync")}               Bulk sync history for cached items
+  ${toolCommand("azure-devops history sync")}               Bulk sync history for cached items (--since <date>, --batch)
+  ${toolCommand("azure-devops history activity")}           A user's activity timeline (--user, --from, --to, --discover)
+  ${toolCommand("azure-devops history mentions")}           Comments that named a user in a date window (--user, --from, --to)
 
 Storage:
   Config:  .claude/azure/config.json (per-project, searched up to 3 levels)
-  Cache:   ~/.genesis-tools/azure-devops/cache/ (global, 180 days)
+  Cache:   ~/.genesis-tools/azure-devops/cache/ (global; queries 180 days, work items 365 days
+           with a 5-minute freshness window, history and comments 7 days)
   Tasks:   .claude/azure/tasks/ (per-project, in cwd)
 
 Documentation: https://learn.microsoft.com/en-us/azure/devops/cli/?view=azure-devops

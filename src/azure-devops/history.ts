@@ -18,7 +18,7 @@ import { removeDiacritics } from "@genesiscz/utils/string";
 
 /**
  * Normalize a user name for fuzzy matching.
- * Lowercases, removes parenthetical content (e.g. "(QK)"),
+ * Lowercases, removes parenthetical content (e.g. "(Contractor)"),
  * and replaces Czech/French/German diacritics with ASCII equivalents.
  */
 export function normalizeUserName(name: string): string {
