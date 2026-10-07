@@ -339,8 +339,12 @@ describe("OpenAiSubscriptionProvider", () => {
         expect(result.status).toBe(502);
     });
 
-    it("decodes complete SSE frames with multibyte text split at every byte", async () => {
-        const bytes = new TextEncoder().encode(WHAM_SSE.replace("CODEX", "žluťoučký"));
+    it.each([
+        ["LF", "\n"],
+        ["CRLF", "\r\n"],
+        ["CR", "\r"],
+    ])("decodes complete SSE frames with %s line ends and multibyte text split at every byte", async (_, eol) => {
+        const bytes = new TextEncoder().encode(WHAM_SSE.replace("CODEX", "žluťoučký").replaceAll("\n", eol));
         globalThis.fetch = Object.assign(
             async () =>
                 new Response(

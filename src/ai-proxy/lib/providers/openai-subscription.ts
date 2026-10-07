@@ -725,7 +725,13 @@ export function buildWhamResponsesBody(
     return { body, dropped };
 }
 
-/** Decode complete SSE frames while retaining only the unfinished frame between reads. */
+const SSE_LINE_END = /\r\n|\r|\n/;
+
+/**
+ * Decode complete SSE frames while retaining only the unfinished frame between reads. A line ends
+ * at CRLF, LF or a lone CR, as the SSE grammar allows; a CR that ends a read waits for the next
+ * read, which may carry its LF.
+ */
 async function* whamSsePayloads(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
@@ -735,10 +741,10 @@ async function* whamSsePayloads(stream: ReadableStream<Uint8Array>): AsyncGenera
         while (true) {
             const chunk = await reader.read();
             pending += decoder.decode(chunk.value, { stream: !chunk.done });
-            let newline = pending.indexOf("\n");
-            while (newline >= 0) {
-                const line = pending.slice(0, newline).replace(/\r$/, "");
-                pending = pending.slice(newline + 1);
+            let end = SSE_LINE_END.exec(pending);
+            while (end && !(end[0] === "\r" && end.index === pending.length - 1 && !chunk.done)) {
+                const line = pending.slice(0, end.index);
+                pending = pending.slice(end.index + end[0].length);
                 if (line === "") {
                     if (data.length > 0) {
                         yield data.join("\n");
@@ -747,7 +753,7 @@ async function* whamSsePayloads(stream: ReadableStream<Uint8Array>): AsyncGenera
                 } else if (line.startsWith("data:")) {
                     data.push(line.slice(5).replace(/^ /, ""));
                 }
-                newline = pending.indexOf("\n");
+                end = SSE_LINE_END.exec(pending);
             }
             if (chunk.done) {
                 return;
