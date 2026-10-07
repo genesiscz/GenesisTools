@@ -17,6 +17,9 @@ import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
 export const GENESIS_APP_BUNDLE_ID = "com.genesiscz.genesistools";
 export const GENESIS_APP_NAME = "GenesisTools";
 
+/** Genesis Markdown.app: what a `genesis-md://` link opens, found by Launch Services wherever the app sits. */
+export const GENESIS_MARKDOWN_BUNDLE_ID = "dev.foltyn.genesis.markdown";
+
 /** Build manifest and prompt stamps; the bundle itself lives in ~/Applications. */
 export function genesisAppDir(): string {
     return join(env.tools.getHome(), ".genesis-tools", "app");

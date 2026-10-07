@@ -15,6 +15,7 @@ export type Capability =
     | "cmux:installed"
     | "claude:installed"
     | "codex:installed"
+    | `app:${string}`
     | `file:${string}`;
 
 export type CapabilityCheck = (capability: Capability) => boolean;
@@ -45,6 +46,10 @@ function evaluate(capability: Capability): boolean {
         return existsSync(capability.slice("file:".length));
     }
 
+    if (capability.startsWith("app:")) {
+        return appInstalled(capability.slice("app:".length));
+    }
+
     switch (capability) {
         case "browser-router:installed":
             return existsSync(genesisAppBundlePath());
@@ -63,6 +68,25 @@ function evaluate(capability: Capability): boolean {
         default:
             return false;
     }
+}
+
+/** Whether Spotlight knows an app with this bundle id, wherever it is installed. */
+function appInstalled(bundleId: string): boolean {
+    if (process.platform !== "darwin") {
+        return false;
+    }
+
+    const run = Bun.spawnSync(["mdfind", `kMDItemCFBundleIdentifier == '${bundleId}'`], {
+        stdout: "pipe",
+        stderr: "pipe",
+    });
+
+    if (run.exitCode !== 0) {
+        logger.debug({ bundleId, stderr: run.stderr.toString() }, "browser-router: mdfind could not look up an app");
+        return false;
+    }
+
+    return run.stdout.toString().trim() !== "";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

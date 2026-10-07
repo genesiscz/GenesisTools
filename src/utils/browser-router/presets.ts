@@ -1,13 +1,13 @@
 import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
+import { GENESIS_MARKDOWN_BUNDLE_ID } from "@genesiscz/utils/macos/genesis-app";
 import { type Capability, type CapabilityCheck, hasCapability } from "./capabilities";
 import { compileRoutePattern, linkPattern, type PresetOptions, type RouteRule, type RouterConfig } from "./route";
 import { dashboardNameRoutes, localServiceRoutes } from "./services";
 
 export type { Capability, CapabilityCheck } from "./capabilities";
 
-const markdownApp = "/Applications/Genesis.app/Contents/Helpers/Genesis Markdown.app";
 const toolsBin = join(import.meta.dir, "..", "..", "..", "tools");
 
 /** The link `handoff_post` mints, query and all: a route anchored at `/run$` must not count. */
@@ -49,6 +49,8 @@ export interface PresetSpec {
     options?: (keyof PresetOptions)[];
     /** A link this preset serves. `presetRouted` checks that the saved config really sends it here. */
     probe?: string;
+    /** Shown by `presets` when the preset is chosen but unavailable: what still works without it. */
+    unavailableNote?: string;
     routes: RouteRule[];
 }
 
@@ -103,7 +105,8 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
             title: "Genesis Markdown",
             kind: "installable",
             description: "https://<link host>/md/<path> opens genesis-md://<path> in Genesis Markdown.",
-            enabledIf: [`file:${markdownApp}`],
+            enabledIf: [`app:${GENESIS_MARKDOWN_BUNDLE_ID}`],
+            unavailableNote: `A genesis-md:// link still opens by bundle id ${GENESIS_MARKDOWN_BUNDLE_ID}, wherever the app sits. There is no path fallback, and the app check only decides whether this preset writes its /md/ route.`,
             needsLinkHost: true,
             routes: withHost((host) => [
                 { preset: "genesis-md", pattern: on(host, "md/(.*)"), action: { type: "open", to: "genesis-md://$1" } },
@@ -279,6 +282,29 @@ export function presets({
         const enabled = available && (spec.kind === "default" || chosen[spec.id] !== undefined);
         return { ...spec, available, enabled, missing };
     });
+}
+
+/**
+ * One block per preset the config switches on that this Mac cannot serve: why, what happens to its
+ * routes, and what still works without it. `presets sync` drops the routes of an unavailable preset.
+ */
+export function presetWarnings(config: RouterConfig | null, catalogue: Preset[]): string[] {
+    const chosen = config?.presets ?? {};
+
+    return catalogue
+        .filter((preset) => !preset.available && chosen[preset.id] !== undefined)
+        .map((preset) => {
+            const lines = [
+                `${preset.id} is switched on in the config but unavailable: needs ${preset.missing.join(", ")}.`,
+                "Its routes are not written, and `presets sync` removes the saved ones.",
+            ];
+
+            if (preset.unavailableNote) {
+                lines.push(preset.unavailableNote);
+            }
+
+            return lines.join(" ");
+        });
 }
 
 export function presetById(id: string, catalogue: Preset[]): Preset | undefined {

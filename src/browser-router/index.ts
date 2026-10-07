@@ -4,7 +4,7 @@ import { extensionAdvice } from "@app/browser-extension/lib/host/loaded";
 import { hasCapability } from "@genesiscz/utils/browser-router/capabilities";
 import { configFile } from "@genesiscz/utils/browser-router/config";
 import { tokenLink } from "@genesiscz/utils/browser-router/links";
-import { presets } from "@genesiscz/utils/browser-router/presets";
+import { presets, presetWarnings } from "@genesiscz/utils/browser-router/presets";
 import { RouteError, route } from "@genesiscz/utils/browser-router/route";
 import { routerStatus } from "@genesiscz/utils/browser-router/status";
 import { mintBundleToken, withTokenLock } from "@genesiscz/utils/browser-router/tokens";
@@ -244,6 +244,11 @@ const presetsCommand = program
         }
 
         out.println(table.toString());
+
+        for (const warning of presetWarnings(config, catalogue)) {
+            out.println(formatDotStatus("warn", warning));
+        }
+
         out.println(
             `Switch one on: ${suggestCommand("tools browser-router", { replaceCommand: ["presets", "enable", "<id>"] })}`
         );

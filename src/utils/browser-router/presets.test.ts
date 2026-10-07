@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Capability } from "./capabilities";
-import { applyPresets, presetById, presetRouted, presets } from "./presets";
+import { applyPresets, presetById, presetRouted, presets, presetWarnings } from "./presets";
 import { defaultRouterConfig, type RouteRule, type RouterConfig, route } from "./route";
 
 const LINK_HOST = "links.example.test";
@@ -42,6 +42,38 @@ describe("preset kinds", () => {
             presetById("cmux-claude", presets({ config, check: only("browser-router:installed") }))?.missing
         ).toEqual(["cmux:installed"]);
         expect(presetById("mail", presets({ config, check: only("platform:darwin") }))?.enabled).toBe(true);
+    });
+
+    test("genesis-md needs the Genesis Markdown app by bundle id, not by a path", () => {
+        const config = configWith({ "genesis-md": {} });
+        const missing = presetById("genesis-md", presets({ config, check: all(false) }))?.missing;
+
+        expect(missing).toEqual(["app:dev.foltyn.genesis.markdown"]);
+        expect(ids(config, all(true))).toContain("genesis-md");
+    });
+
+    test("a chosen but unavailable preset is warned about, with what still works", () => {
+        const config = configWith({ "genesis-md": {}, mail: {} });
+        const warnings = presetWarnings(
+            config,
+            presets({ config, check: (capability) => capability === "platform:darwin" })
+        );
+
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain("genesis-md is switched on in the config but unavailable");
+        expect(warnings[0]).toContain("app:dev.foltyn.genesis.markdown");
+        expect(warnings[0]).toContain("`presets sync` removes the saved ones");
+        expect(warnings[0]).toContain("opens by bundle id dev.foltyn.genesis.markdown");
+        expect(warnings[0]).toContain("no path fallback");
+    });
+
+    test("no warning when the preset is available or was never chosen", () => {
+        const chosen = configWith({ "genesis-md": {} });
+        const never = configWith({});
+
+        expect(presetWarnings(chosen, presets({ config: chosen, check: all(true) }))).toEqual([]);
+        expect(presetWarnings(never, presets({ config: never, check: all(false) }))).toEqual([]);
+        expect(presetWarnings(null, presets({ config: null, check: all(false) }))).toEqual([]);
     });
 
     test("the catalog ships no personal presets", () => {

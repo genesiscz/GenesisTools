@@ -1,4 +1,4 @@
-import { GENESIS_APP_BUNDLE_ID } from "@genesiscz/utils/macos/genesis-app";
+import { GENESIS_APP_BUNDLE_ID, GENESIS_MARKDOWN_BUNDLE_ID } from "@genesiscz/utils/macos/genesis-app";
 import { cleanUrl } from "./clean";
 import { takeToken } from "./tokens";
 
@@ -666,7 +666,7 @@ function applyAction(
 
 function schemeHandler(protocol: string): NormalizedBrowser | null {
     if (protocol === "genesis-md:") {
-        return { name: "dev.foltyn.genesis.markdown", appType: "bundleId", openInBackground: false };
+        return { name: GENESIS_MARKDOWN_BUNDLE_ID, appType: "bundleId", openInBackground: false };
     }
 
     return null;
