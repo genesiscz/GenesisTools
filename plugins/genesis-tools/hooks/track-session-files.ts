@@ -264,11 +264,70 @@ const CLEANUP_DAYS = 30;
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const LOCK_STALE_MS = 30_000;
 const LOCK_RETRY_MS = 100;
+// A takeover marker older than this belongs to a hook that died mid-recovery.
+const TAKEOVER_STALE_MS = 2_000;
 const LOCK_WAIT_MS = 1000;
 
 function ensureDir() {
     if (!existsSync(STORAGE_DIR)) {
         mkdirSync(STORAGE_DIR, { recursive: true });
+    }
+}
+
+function lockState(lockPath: string): "missing" | "stale" | "held" {
+    let mtimeMs: number;
+    try {
+        mtimeMs = statSync(lockPath).mtimeMs;
+    } catch {
+        return "missing";
+    }
+
+    if (Date.now() - mtimeMs > LOCK_STALE_MS) {
+        return "stale";
+    }
+
+    try {
+        const holder: unknown = SafeJSON.parse(readFileSync(lockPath, "utf8"));
+        const pid =
+            holder && typeof holder === "object" && "pid" in holder && typeof holder.pid === "number" ? holder.pid : 0;
+        return pid > 0 && !isProcessAlive(pid) ? "stale" : "held";
+    } catch {
+        // Half-written or vanished: treat as held and let the age rule recover it.
+        return "held";
+    }
+}
+
+/**
+ * Removes a stale lock under a takeover marker, re-checking staleness while holding it. Two waiters
+ * that both saw the same dead holder can no longer both unlink: the second one finds either the
+ * marker or a fresh, live lock, and a new lock can only appear after the stale one is gone.
+ */
+function breakStaleLock(lockPath: string): boolean {
+    const takeover = `${lockPath}.takeover`;
+    try {
+        closeSync(openSync(takeover, "wx", 0o600));
+    } catch {
+        try {
+            if (Date.now() - statSync(takeover).mtimeMs > TAKEOVER_STALE_MS) {
+                unlinkSync(takeover);
+            }
+        } catch {
+            // The marker went away between the two calls; the next round tries again.
+        }
+        return false;
+    }
+
+    try {
+        if (lockState(lockPath) === "stale") {
+            unlinkSync(lockPath);
+        }
+        return true;
+    } finally {
+        try {
+            unlinkSync(takeover);
+        } catch {
+            // Only possible when this hook outlived TAKEOVER_STALE_MS and another one cleared it.
+        }
     }
 }
 
@@ -287,26 +346,9 @@ async function withBoundedLock<T>(lockPath: string, fn: () => T | Promise<T>, wa
                 throw error;
             }
 
-            try {
-                const holder: unknown = SafeJSON.parse(readFileSync(lockPath, "utf8"));
-                const pid =
-                    holder && typeof holder === "object" && "pid" in holder && typeof holder.pid === "number"
-                        ? holder.pid
-                        : 0;
-                const age = Date.now() - statSync(lockPath).mtimeMs;
-                if (age > LOCK_STALE_MS || (pid > 0 && !isProcessAlive(pid))) {
-                    unlinkSync(lockPath);
-                    continue;
-                }
-            } catch {
-                try {
-                    if (Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS) {
-                        unlinkSync(lockPath);
-                        continue;
-                    }
-                } catch {
-                    continue;
-                }
+            const state = lockState(lockPath);
+            if (state === "missing" || (state === "stale" && breakStaleLock(lockPath))) {
+                continue;
             }
 
             if (Date.now() >= deadline) {

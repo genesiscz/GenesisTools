@@ -251,6 +251,29 @@ test("concurrent hook processes preserve the union of edited paths", async () =>
     expect((await readJson<{ files: string[] }>("sessions", "shared-session.json")).files.sort()).toEqual(paths.sort());
 });
 
+test("concurrent hooks recover from a preseeded stale lock without losing an edit", async () => {
+    const paths = Array.from({ length: 12 }, (_, index) => `/repo/stale-${index}.ts`);
+    const sessions = join(home, ".genesis-tools", "claude-code", "sessions");
+    await mkdir(sessions, { recursive: true });
+    // A holder pid that cannot be alive: every waiter sees the same dead owner at once.
+    await writeFile(join(sessions, "stale-session.json.lock"), JSON.stringify({ pid: 2 ** 31 - 2, at: 0 }));
+
+    const exits = await Promise.all(
+        paths.map((filePath) =>
+            runHook({
+                session_id: "stale-session",
+                hook_event_name: "PostToolUse",
+                tool_name: "Edit",
+                tool_input: { file_path: filePath },
+                transcript_path: CLAUDE_TRANSCRIPT,
+            })
+        )
+    );
+
+    expect(exits).toEqual(paths.map(() => 0));
+    expect((await readJson<{ files: string[] }>("sessions", "stale-session.json")).files.sort()).toEqual(paths.sort());
+});
+
 test("repeated SessionStart runs cleanup at most once per cadence", async () => {
     const payload = {
         session_id: "start-session",
