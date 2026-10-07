@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyDivergence } from "./divergence";
+import { classifyDivergence, locateAnchorText } from "./divergence";
 
 const file = (n: number): string[] => Array.from({ length: n }, (_, i) => `line ${i + 1}`);
 
@@ -66,5 +66,46 @@ describe("classifyDivergence", () => {
         expect(classifyDivergence({ reviewer: null, tip: reviewer, anchorLine: 5, window: 10 }).label).toBe(
             "unavailable"
         );
+    });
+});
+
+describe("locating the anchor's code at the tip", () => {
+    test("an edited anchor line that moved is found by its text, not left at the mapped neighbour", () => {
+        const reviewer = ["import a;", "const x = 1;", "    detail: productDetailId ? lookup(id) : null,", "end();"];
+        const tip = [
+            "import a;",
+            "import b;",
+            "const x = 1;",
+            "const z = 3;",
+            "    detail: productId ? lookupDetail(id) : null,",
+            "end();",
+        ];
+        const divergence = classifyDivergence({ reviewer, tip, anchorLine: 3, window: 1 });
+
+        expect(divergence).toMatchObject({ label: "changed at the anchor", nearLine: 5 });
+        expect(divergence.text).toBe("changed at the anchor (closest line L5)");
+        expect(locateAnchorText("const x = 1; // the same text", [...tip, "const x = 1; // the same text"], 2)).toEqual(
+            {
+                line: 7,
+                exact: true,
+            }
+        );
+    });
+
+    test("an edited line is found by similarity, and a short one is not looked up", () => {
+        const tip = ["foo();", "    detail: productId ? lookupDetail(id) : null,", "bar();"];
+
+        expect(locateAnchorText("    detail: productDetailId ? lookup(id) : null,", tip, 1)).toEqual({
+            line: 2,
+            exact: false,
+        });
+        expect(locateAnchorText("}", tip, 1)).toBeNull();
+        expect(locateAnchorText("    totally different text here", tip, 1)).toBeNull();
+    });
+
+    test("a deleted file names where its line went when a search found it", () => {
+        expect(
+            classifyDivergence({ reviewer: file(3), tip: null, anchorLine: 2, window: 1, movedTo: "src/b.ts:9" }).text
+        ).toBe("deleted at the tip (its line is now at src/b.ts:9)");
     });
 });

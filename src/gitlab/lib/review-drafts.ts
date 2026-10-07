@@ -12,6 +12,8 @@ export interface DiscussionSummary {
     line: number | null;
     body: string;
     resolved: boolean;
+    /** A thread someone can resolve (a diff comment or a started discussion), not a plain note. */
+    resolvable?: boolean;
     noteCount: number;
 }
 
@@ -53,6 +55,7 @@ interface RawNote {
     body?: string;
     system?: boolean;
     resolved?: boolean;
+    resolvable?: boolean;
     author?: { username?: string };
     position?: RawPosition;
 }
@@ -102,6 +105,7 @@ export async function fetchDiscussions(api: ProjectApi, iid: string): Promise<Di
             line,
             body: (first.body ?? "").replace(/\s+/g, " ").trim(),
             resolved: Boolean(first.resolved),
+            resolvable: Boolean(first.resolvable),
             noteCount: human.length,
         });
     }

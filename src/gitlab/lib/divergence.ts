@@ -42,6 +42,8 @@ export interface DivergenceInput {
     window: number;
     /** Where the file went, when the tip has it under another path. */
     renamedTo?: string;
+    /** For a file gone at the tip: where the anchor's line is now (`path:line`), when a search found it. */
+    movedTo?: string;
 }
 
 /** A changed region in the reviewer's file: removed lines `[start, end]`, or an insertion before `start` (`end = start - 1`). */
@@ -111,7 +113,13 @@ export function classifyDivergence(input: DivergenceInput): Divergence {
     if (input.tip === null) {
         return input.renamedTo
             ? { label: "renamed", tipLine: null, text: `renamed to ${input.renamedTo}` }
-            : { label: "deleted", tipLine: null, text: "deleted at the tip" };
+            : {
+                  label: "deleted",
+                  tipLine: null,
+                  text: input.movedTo
+                      ? `deleted at the tip (its line is now at ${input.movedTo})`
+                      : "deleted at the tip",
+              };
     }
 
     const { regions, tipLineOf, nearTipLineOf } = changedRegions(input.reviewer, input.tip);
@@ -122,11 +130,16 @@ export function classifyDivergence(input: DivergenceInput): Divergence {
     }
 
     if (tipLine === null || regions.some((region) => touches(region, input.anchorLine, input.anchorLine))) {
+        const near = Math.min(nearTipLineOf(input.anchorLine), Math.max(1, input.tip.length));
+        const found = locateAnchorText(input.reviewer[input.anchorLine - 1] ?? "", input.tip, near);
+
         return {
             label: "changed at the anchor",
             tipLine,
-            nearLine: Math.min(nearTipLineOf(input.anchorLine), Math.max(1, input.tip.length)),
-            text: "changed at the anchor",
+            nearLine: found?.line ?? near,
+            text: found
+                ? `changed at the anchor (${found.exact ? "its line is now" : "closest line"} L${found.line})`
+                : "changed at the anchor",
         };
     }
 
@@ -140,4 +153,77 @@ export function classifyDivergence(input: DivergenceInput): Divergence {
     const moved = tipLine === input.anchorLine ? "" : ` (L${input.anchorLine} → L${tipLine})`;
 
     return { label: "changed elsewhere", tipLine, text: `changed elsewhere${moved}` };
+}
+
+/** Character bigrams of a line with its whitespace removed, for a similarity score. */
+function bigrams(text: string): string[] {
+    const plain = text.replace(/\s+/g, "");
+
+    return Array.from({ length: Math.max(0, plain.length - 1) }, (_, i) => plain.slice(i, i + 2));
+}
+
+/** Dice coefficient of two lines' bigrams, 0 to 1. */
+function similarity(a: string, b: string): number {
+    const left = bigrams(a);
+    const right = bigrams(b);
+
+    if (left.length === 0 || right.length === 0) {
+        return 0;
+    }
+
+    const pool = new Map<string, number>();
+
+    for (const gram of right) {
+        pool.set(gram, (pool.get(gram) ?? 0) + 1);
+    }
+
+    let shared = 0;
+
+    for (const gram of left) {
+        const count = pool.get(gram) ?? 0;
+
+        if (count > 0) {
+            shared++;
+            pool.set(gram, count - 1);
+        }
+    }
+
+    return (2 * shared) / (left.length + right.length);
+}
+
+/**
+ * Where the anchor's line sits at the tip when the diff could not map it: the same text nearest to
+ * `near`, else the most similar line (at least 0.6), nearest on a tie. Too short a line (`}`, `return;`)
+ * matches anywhere, so it is not looked up.
+ */
+export function locateAnchorText(text: string, tip: string[], near: number): { line: number; exact: boolean } | null {
+    const wanted = text.trim();
+
+    if (wanted.replace(/\s+/g, "").length < 8) {
+        return null;
+    }
+
+    const distance = (line: number): number => Math.abs(line - near);
+    const exact = tip.map((line, i) => (line.trim() === wanted ? i + 1 : 0)).filter((line) => line > 0);
+
+    if (exact.length > 0) {
+        return { line: exact.sort((a, b) => distance(a) - distance(b))[0], exact: true };
+    }
+
+    let best: { line: number; score: number } | null = null;
+
+    tip.forEach((line, i) => {
+        const score = similarity(wanted, line);
+
+        if (
+            score >= 0.6 &&
+            (!best || score > best.score || (score === best.score && distance(i + 1) < distance(best.line)))
+        ) {
+            best = { line: i + 1, score };
+        }
+    });
+
+    const found = best as { line: number; score: number } | null;
+
+    return found ? { line: found.line, exact: false } : null;
 }

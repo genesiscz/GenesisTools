@@ -22,9 +22,11 @@ import {
     expandThreads,
     fetchAnchorViews,
     fetchTipViews,
+    locateMovedLines,
     receiveIndex,
     renderMarkdown,
     threadStats,
+    unresolvedThreads,
 } from "@app/gitlab/lib/review-render";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -165,6 +167,7 @@ export async function runFetchReview(mrIid: string, opts: FetchReviewOptions): P
             onWarn: status.warn,
             cwd,
         });
+        tip.moved = locateMovedLines({ cwd, tip, threads: unresolvedThreads(discussions), anchorViews: views });
         status.success(
             `Fetched ${views.size}/${total} anchor view(s) (${gitHits} from local git, ${views.size - gitHits} from the API).`
         );

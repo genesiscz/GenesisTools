@@ -100,7 +100,8 @@ export async function reviewItems(
     const publishedThreads = new Set(publishedItems.map((item) => item.pair.value));
     const known =
         mode === "receive"
-            ? discussions.filter((d) => !d.resolved && d.path !== null && d.author !== me.username).map(threadItem)
+            ? // Top-level threads count too: a started discussion on the MR is as owed a verdict as a diff comment.
+              discussions.filter((d) => d.resolvable && !d.resolved && d.author !== me.username).map(threadItem)
             : [
                   ...draftItems,
                   ...publishedItems,

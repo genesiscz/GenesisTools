@@ -13,6 +13,8 @@ import { logger } from "@genesiscz/utils/logger";
 export interface Note {
     author?: { username?: string };
     body?: string;
+    /** A note GitLab wrote itself ("changed this line in version 3 of the diff"), not a person. */
+    system?: boolean;
     created_at?: string;
     resolvable?: boolean;
     resolved?: boolean;
@@ -30,6 +32,22 @@ export interface Discussion {
     id?: string;
     individual_note?: boolean;
     notes?: Note[];
+}
+
+/**
+ * Started discussions on the MR page (no diff anchor) with a resolvable note still open. A plain
+ * comment (`individual_note`) is not a thread and is not listed.
+ */
+export function unresolvedTopLevelThreads(discussions: Discussion[]): Discussion[] {
+    return discussions.filter((d) => {
+        const first = d.notes?.[0];
+
+        if (d.individual_note || !first?.resolvable || first.position) {
+            return false;
+        }
+
+        return !(d.notes ?? []).filter((n) => n.resolvable).every((n) => n.resolved);
+    });
 }
 
 /** Diff-attached threads with at least one resolvable note still open. */
@@ -121,6 +139,59 @@ export interface TipViews {
     checkoutFollowsTip: boolean;
     /** Paths whose tip version could not be read (a timeout, a 5xx, no access): unknown, not deleted. */
     unavailable?: Set<string>;
+    /** Discussion id → where its anchor line is at the tip (`path:line`), for a file gone at the tip. */
+    moved?: Map<string, string>;
+}
+
+/**
+ * For each thread whose file is gone at the tip, where its anchor line went: one `git grep` of the
+ * line's text at the tip sha, kept to the file's own package (the first three path segments), since a
+ * common line such as `staleTime: Infinity,` also exists in unrelated modules. A line too short to be
+ * distinctive, or found in more than three places there, gets no hint rather than a wrong one.
+ */
+export function locateMovedLines(options: {
+    cwd: string;
+    tip: TipViews;
+    threads: Discussion[];
+    anchorViews: Map<string, string[]>;
+}): Map<string, string> {
+    const moved = new Map<string, string>();
+
+    for (const d of options.threads) {
+        const pos = d.notes?.[0]?.position;
+        const path = pos?.new_path ?? pos?.old_path;
+
+        if (!d.id || !pos?.head_sha || !path || pos.new_line == null) {
+            continue;
+        }
+
+        if (options.tip.views.get(path) !== null || options.tip.renames.has(`${pos.head_sha}:${path}`)) {
+            continue;
+        }
+
+        const text = options.anchorViews.get(`${pos.head_sha}:${path}`)?.[pos.new_line - 1]?.trim() ?? "";
+
+        if (text.replace(/\s+/g, "").length < 12) {
+            continue;
+        }
+
+        const scope = path.split("/").slice(0, 3).join("/");
+        const grep = gitResult(options.cwd, ["grep", "-n", "-F", "-e", text, options.tip.sha, "--", scope]);
+        const hits = grep.exitCode === 0 ? grep.stdout.split("\n").filter(Boolean) : [];
+
+        if (hits.length === 0 || hits.length > 3) {
+            continue;
+        }
+
+        // `<sha>:<path>:<line>:<text>`
+        const [, hitPath, hitLine] = hits[0].split(":");
+
+        if (hitPath && hitLine) {
+            moved.set(d.id, `${hitPath}:${hitLine}${hits.length > 1 ? ` (+${hits.length - 1} more)` : ""}`);
+        }
+    }
+
+    return moved;
 }
 
 export interface RenderMarkdownOpts {
@@ -259,6 +330,7 @@ export function threadDivergence(d: Discussion, opts: RenderMarkdownOpts): Diver
         anchorLine: pos.new_line,
         window: opts.contextLines,
         renamedTo,
+        movedTo: d.id ? tip.moved?.get(d.id) : undefined,
     });
 }
 
@@ -372,9 +444,10 @@ function threadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts): Blo
 /** The receive mode's compact view: one line per unresolved thread, with its id, anchor and divergence. */
 export function receiveIndex(discussions: Discussion[], opts: RenderMarkdownOpts, command: string): string {
     const threads = unresolvedThreads(discussions);
+    const topLevel = unresolvedTopLevelThreads(discussions);
     const lines = [
         `=== GitLab MR review received: ${opts.project}!${opts.mrIid} ===`,
-        `Unresolved threads: ${threads.length} of ${discussions.length} discussions${opts.tip ? ` | MR tip ${shortSha(opts.tip.sha)}` : ""}`,
+        `Unresolved threads: ${threads.length + topLevel.length} of ${discussions.length} discussions (${topLevel.length} top-level)${opts.tip ? ` | MR tip ${shortSha(opts.tip.sha)}` : ""}`,
         "",
     ];
 
@@ -393,7 +466,20 @@ export function receiveIndex(discussions: Discussion[], opts: RenderMarkdownOpts
         );
     });
 
-    const sample = threads[0]?.id ? (opts.refs?.get(threads[0].id) ?? "T01") : "T01";
+    topLevel.forEach((d, idx) => {
+        const first = d.notes?.[0];
+        const ref = (d.id && opts.refs?.get(d.id)) || `top${idx + 1}`;
+        const body = String(first?.body ?? "")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        lines.push(
+            `  ${ref}  top-level  @${first?.author?.username ?? "?"}  ${d.notes?.length ?? 0}n  ${body.length > 60 ? `${body.slice(0, 59)}…` : body}`
+        );
+    });
+
+    const first = threads[0] ?? topLevel[0];
+    const sample = first?.id ? (opts.refs?.get(first.id) ?? "T01") : "T01";
     lines.push("", `Expand: ${command} --expand ${sample}`, `Markdown: ${command} --md`);
 
     return `${lines.join("\n")}\n`;
@@ -401,7 +487,7 @@ export function receiveIndex(discussions: Discussion[], opts: RenderMarkdownOpts
 
 /** The full sections of the chosen threads, by review id (`T03`) or discussion id prefix. */
 export function expandThreads(discussions: Discussion[], opts: RenderMarkdownOpts, ids: string[]): string {
-    const threads = unresolvedThreads(discussions);
+    const threads = [...unresolvedThreads(discussions), ...unresolvedTopLevelThreads(discussions)];
     const wanted = ids.map((id) => id.trim()).filter(Boolean);
     const blocks: BlockInput[] = wanted.map((id) => {
         const index = threads.findIndex(
@@ -409,7 +495,7 @@ export function expandThreads(discussions: Discussion[], opts: RenderMarkdownOpt
         );
         const thread = threads[index];
 
-        return thread ? threadBlocks(thread, index, opts) : `_${id}: no unresolved thread has this id._`;
+        return thread ? threadSectionsOf([thread], opts) : `_${id}: no unresolved thread has this id._`;
     });
 
     return json2md(blocks);
@@ -469,12 +555,15 @@ export async function collectThreadContext(options: {
         cwd: options.cwd,
     });
 
+    tip.moved = locateMovedLines({ cwd: options.cwd, tip, threads: selected, anchorViews: views });
+
     return { discussions, selected, anchorViews: views, tip };
 }
 
 /** The fetch-review report as json2md blocks: header facts, one section per unresolved thread, next steps. */
 export function reviewBlocks(discussions: Discussion[], opts: RenderMarkdownOpts): BlockInput {
     const threads = unresolvedThreads(discussions);
+    const topLevel = unresolvedTopLevelThreads(discussions);
     const stats = threadStats(discussions);
 
     return [
@@ -484,6 +573,7 @@ export function reviewBlocks(discussions: Discussion[], opts: RenderMarkdownOpts
                 `**Project**: \`${opts.project}\``,
                 `**Discussions total**: ${discussions.length}`,
                 `**Unresolved diff-attached threads**: ${threads.length}`,
+                `**Unresolved top-level threads**: ${topLevel.length}`,
                 `**Files touched**: ${stats.files}`,
                 `**Distinct head_shas**: ${stats.headShas}  _(each comment may be anchored to a different commit — fetch / read at its own \`head_sha\`)_`,
                 `**Local cwd**: \`${opts.cwd}\``,
@@ -492,6 +582,7 @@ export function reviewBlocks(discussions: Discussion[], opts: RenderMarkdownOpts
         { hr: true },
         threads.map((d, idx) => threadBlocks(d, idx, opts)),
         threads.length === 0 ? "_No unresolved diff-attached threads._" : [],
+        topLevel.length > 0 ? threadSectionsOf(topLevel, opts) : [],
         { h2: "Next steps" },
         {
             ul: [
@@ -504,7 +595,7 @@ export function reviewBlocks(discussions: Discussion[], opts: RenderMarkdownOpts
 }
 
 export function renderMarkdown(discussions: Discussion[], opts: RenderMarkdownOpts): RenderMarkdownResult {
-    const threads = unresolvedThreads(discussions);
+    const threads = [...unresolvedThreads(discussions), ...unresolvedTopLevelThreads(discussions)];
     const stats = threadStats(discussions);
 
     return {

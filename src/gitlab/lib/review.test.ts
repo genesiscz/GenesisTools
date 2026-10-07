@@ -24,6 +24,7 @@ import {
     fileLines,
     renderMarkdown,
     unresolvedThreads,
+    unresolvedTopLevelThreads,
 } from "@app/gitlab/lib/review-render";
 import { formatSearchText, type MRNode, matchedPaths, searchMrsByFiles } from "@app/gitlab/lib/search-by-file";
 import { localImagePath, rewriteLocalImages, uploadToProject } from "@app/gitlab/lib/uploads";
@@ -785,6 +786,7 @@ describe("review render", () => {
           - **Project**: \`group/app\`
           - **Discussions total**: 5
           - **Unresolved diff-attached threads**: 3
+          - **Unresolved top-level threads**: 0
           - **Files touched**: 3
           - **Distinct head_shas**: 3  _(each comment may be anchored to a different commit — fetch / read at its own \`head_sha\`)_
           - **Local cwd**: \`<cwd>\`
@@ -895,6 +897,7 @@ describe("review render", () => {
               - **Project**: \`group/app\`
               - **Discussions total**: 0
               - **Unresolved diff-attached threads**: 0
+              - **Unresolved top-level threads**: 0
               - **Files touched**: 0
               - **Distinct head_shas**: 0  _(each comment may be anchored to a different commit — fetch / read at its own \`head_sha\`)_
               - **Local cwd**: \`/x\`
@@ -1060,5 +1063,43 @@ describe("local images in a draft", () => {
         const api = { host: "http://gitlab.example.com", token: "t", project: "group/app" };
 
         await expect(uploadToProject(api, shot)).rejects.toThrow("Refusing to send a GitLab token");
+    });
+});
+
+describe("top-level threads in the receive report", () => {
+    const position = { head_sha: "a1b2c3", base_sha: "0f0f0f", new_path: "src/app.ts", new_line: 2 };
+    const discussions: Discussion[] = [
+        {
+            id: "diff1",
+            notes: [{ resolvable: true, resolved: false, position, author: { username: "bob" }, body: "On a line" }],
+        },
+        {
+            id: "top1",
+            notes: [
+                { resolvable: true, resolved: false, author: { username: "bob" }, body: "About the MR as a whole" },
+            ],
+        },
+        {
+            id: "note1",
+            individual_note: true,
+            notes: [{ resolvable: false, author: { username: "bob" }, body: "LGTM" }],
+        },
+        { id: "top2", notes: [{ resolvable: true, resolved: true, author: { username: "bob" }, body: "Done" }] },
+    ];
+
+    test("a started discussion without an anchor counts and is shown; a plain note and a resolved one are not", () => {
+        expect(unresolvedTopLevelThreads(discussions).map((d) => d.id)).toEqual(["top1"]);
+
+        const { md, threadCount } = renderMarkdown(discussions, {
+            mrIid: "42",
+            project: "group/app",
+            cwd: "/nonexistent-checkout",
+            contextLines: 1,
+        });
+
+        expect(threadCount).toBe(2);
+        expect(md).toContain("**Unresolved top-level threads**: 1");
+        expect(md).toContain("About the MR as a whole");
+        expect(md).not.toContain("LGTM");
     });
 });
