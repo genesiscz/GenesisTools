@@ -70,8 +70,7 @@ struct RepoCommit: Identifiable, Hashable {
     var when: String
 }
 
-/// A repository's changes for one scope. Blob metadata is checked in batches before eligible
-/// immutable objects are read, so excluded large blobs never enter the captured output.
+/// Where a reviewed repository lives: its root and Git directories, and which file events matter.
 struct ReviewRepositoryLayout: Equatable {
     let root: URL
     let gitDirectory: URL
@@ -93,6 +92,8 @@ struct ReviewRepositoryLayout: Equatable {
     }
 }
 
+/// A repository's changes for one scope. Blob metadata is checked in batches before eligible
+/// immutable objects are read, so excluded large blobs never enter the captured output.
 struct GitWorkingTreeSource {
     struct Snapshot {
         var branch: String

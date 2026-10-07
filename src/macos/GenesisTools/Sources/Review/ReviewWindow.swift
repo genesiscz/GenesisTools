@@ -1574,7 +1574,7 @@ final class ReviewModel: ObservableObject {
     /// An edit of a local comment that is my pending draft also replaces the draft's text (it is private
     /// until the review is submitted, so it asks nothing).
     private func syncEditedDraft(_ id: String) {
-        guard let comment = comments.comments.first(where: { $0.id == id }), comment.state == .draft,
+        guard let comment = commentOwner(id)?.store.comments.first(where: { $0.id == id }), comment.state == .draft,
               let draftId = comment.remoteDraftID, let store = pr else { return }
         guard comment.remoteOwner?.permits(pr: store.payload?.pr.identity, draftID: draftId) == true else {
             notice = "The edit was saved locally. The remote draft has different or unknown ownership and was left unchanged."

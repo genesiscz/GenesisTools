@@ -110,13 +110,15 @@ final class ReviewCommentStore {
     }
 
     func reconcileSubmitted(pr: PRIdentity, ids: Set<String>) {
+        var changed = false
         for index in comments.indices {
             guard comments[index].state == .draft, let owner = comments[index].remoteOwner,
                   owner.pr == pr, owner.draftID == comments[index].remoteDraftID, ids.contains(owner.draftID) else { continue }
             comments[index].state = .posted
             comments[index].updatedAt = Date()
+            changed = true
         }
-        save()
+        if changed { save() }
     }
 
     // MARK: anchoring
