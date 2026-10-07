@@ -345,6 +345,7 @@ export const env = {
         getUrl: () => getWithDefault("JENKINS_URL", ""),
         getUser: () => getWithDefault("JENKINS_USER", ""),
         getToken: () => getWithDefault("JENKINS_TOKEN", ""),
+        getTlsAcceptUnauthorized: () => getTrimmed("JENKINS_TLS_ACCEPT_UNAUTHORIZED"),
     },
 
     shops: {

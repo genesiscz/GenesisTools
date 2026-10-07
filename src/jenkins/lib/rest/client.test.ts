@@ -47,13 +47,28 @@ function backendWith(
 }
 
 describe("createRestBackend", () => {
-    it("joins paths onto the base URL and leaves absolute URLs alone", () => {
+    it("joins paths onto the base URL and keeps an absolute URL only on the configured Jenkins", () => {
         const { backend } = backendWith(() => ({}));
 
         expect(backend.baseUrl).toBe("https://jenkins.example.invalid");
         expect(backend.fullUrl("job/app/1/api/json")).toBe("https://jenkins.example.invalid/job/app/1/api/json");
         expect(backend.fullUrl("/queue/api/json")).toBe("https://jenkins.example.invalid/queue/api/json");
-        expect(backend.fullUrl("https://other.invalid/x")).toBe("https://other.invalid/x");
+        expect(backend.fullUrl("https://jenkins.example.invalid/queue/item/7/")).toBe(
+            "https://jenkins.example.invalid/queue/item/7/"
+        );
+        expect(() => backend.fullUrl("https://other.invalid/x")).toThrow("Refusing to send Jenkins credentials");
+        expect(() => backend.fullUrl("http://jenkins.example.invalid/queue/item/7/")).toThrow(
+            "Refusing to send Jenkins credentials"
+        );
+    });
+
+    it("sends no request at all for a queue location on another host", async () => {
+        const { backend, seen } = backendWith(() => ({ data: "{}" }));
+
+        await expect(backend.apiOrNull("https://other.invalid/queue/item/7/api/json")).rejects.toThrow(
+            "Refusing to send Jenkins credentials"
+        );
+        expect(seen).toEqual([]);
     });
 
     it("api returns the JSON body and throws JenkinsHttpError on a 4xx", async () => {

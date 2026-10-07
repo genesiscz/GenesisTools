@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,8 @@ import {
     isCertificateError,
     loadTrustedPems,
     TLS_ACCEPT_FLAG,
+    tlsAccepted,
+    tlsAcceptFlag,
     tlsAcceptUnauthorized,
 } from "./client";
 
@@ -47,11 +49,11 @@ describe("loadTrustedPems", () => {
 
 describe("tlsAcceptUnauthorized", () => {
     it("is on only for 1, true or yes", () => {
-        expect(tlsAcceptUnauthorized({ JENKINS_TLS_ACCEPT_UNAUTHORIZED: "1" })).toBe(true);
-        expect(tlsAcceptUnauthorized({ JENKINS_TLS_ACCEPT_UNAUTHORIZED: "TRUE" })).toBe(true);
-        expect(tlsAcceptUnauthorized({ JENKINS_TLS_ACCEPT_UNAUTHORIZED: "0" })).toBe(false);
-        expect(tlsAcceptUnauthorized({ JENKINS_TLS_ACCEPT_UNAUTHORIZED: "" })).toBe(false);
-        expect(tlsAcceptUnauthorized({})).toBe(false);
+        expect(tlsAcceptUnauthorized("1")).toBe(true);
+        expect(tlsAcceptUnauthorized("TRUE")).toBe(true);
+        expect(tlsAcceptUnauthorized("0")).toBe(false);
+        expect(tlsAcceptUnauthorized("")).toBe(false);
+        expect(tlsAcceptUnauthorized(undefined)).toBe(false);
     });
 });
 
@@ -85,18 +87,53 @@ describe("certificate errors", () => {
 });
 
 describe("applyTlsAcceptFlag", () => {
-    it("strips the flag anywhere on the line and sets the env switch", () => {
-        const env: Record<string, string | undefined> = {};
-
-        expect(applyTlsAcceptFlag(["jobs", TLS_ACCEPT_FLAG, "--folder", "x"], env)).toEqual(["jobs", "--folder", "x"]);
-        expect(env.JENKINS_TLS_ACCEPT_UNAUTHORIZED).toBe("1");
+    afterEach(() => {
+        tlsAcceptFlag.given = false;
     });
 
-    it("leaves argv and env alone without the flag", () => {
-        const env: Record<string, string | undefined> = {};
+    it("strips the flag anywhere on the line and turns verification off", () => {
+        expect(applyTlsAcceptFlag(["jobs", TLS_ACCEPT_FLAG, "--folder", "x"])).toEqual(["jobs", "--folder", "x"]);
+        expect(tlsAcceptFlag.given).toBe(true);
+        expect(tlsAccepted()).toBe(true);
+    });
+
+    it("leaves argv and the switch alone without the flag", () => {
         const argv = ["jobs"];
 
-        expect(applyTlsAcceptFlag(argv, env)).toBe(argv);
-        expect(env.JENKINS_TLS_ACCEPT_UNAUTHORIZED).toBeUndefined();
+        expect(applyTlsAcceptFlag(argv)).toBe(argv);
+        expect(tlsAcceptFlag.given).toBe(false);
+    });
+});
+
+describe("retries", () => {
+    it("never repeats a POST: a build Jenkins accepted before the answer was lost is not triggered twice", async () => {
+        const client = createClient({ url: "https://invalid", user: "u", token: "t" });
+        let calls = 0;
+        client.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
+            calls++;
+            throw new AxiosError("socket hang up", "ECONNRESET", config);
+        };
+
+        await expect(client.post("/job/app/build")).rejects.toThrow("socket hang up");
+        expect(calls).toBe(1);
+    });
+
+    it("still retries a GET after a lost answer", async () => {
+        const client = createClient({ url: "https://invalid", user: "u", token: "t" });
+        let calls = 0;
+        client.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
+            calls++;
+
+            if (calls === 1) {
+                throw new AxiosError("socket hang up", "ECONNRESET", config);
+            }
+
+            return { status: 200, statusText: "", headers: {}, config, request: {}, data: { ok: true } };
+        };
+
+        const res = await client.get("/api/json");
+
+        expect(res.data).toEqual({ ok: true });
+        expect(calls).toBe(2);
     });
 });

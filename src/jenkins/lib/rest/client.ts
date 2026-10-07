@@ -57,8 +57,20 @@ export function createRestBackend(opts: RestBackendOptions): JenkinsBackend {
     const client = opts.client ?? createClient(opts.auth);
     const auditLog = opts.auditLog ?? API_LOG;
 
+    const base = new URL(`${baseUrl}/`);
+
+    // The client sends the Jenkins user and token with every request, so an absolute URL (a queue
+    // `Location` header, for one) must stay on the configured Jenkins: same scheme, host, port and path.
     const fullUrl = (path: string): string => {
-        if (/^https?:\/\//.test(path)) {
+        if (/^[a-z][a-z0-9+.-]*:/i.test(path)) {
+            const target = new URL(path);
+
+            if (target.origin !== base.origin || !target.pathname.startsWith(base.pathname)) {
+                throw new Error(
+                    `Refusing to send Jenkins credentials to ${target.origin}${target.pathname}: it is not under ${baseUrl}`
+                );
+            }
+
             return path;
         }
 

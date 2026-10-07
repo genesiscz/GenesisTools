@@ -51,19 +51,27 @@ export function loadTrustedPems(dir: string = import.meta.dir): string[] {
  * `JENKINS_TLS_ACCEPT_UNAUTHORIZED=1` skips certificate verification. A last resort for a Jenkins whose
  * chain cannot be verified; the `*.pem` files beside this file are the safe way to trust a private chain.
  */
-export function tlsAcceptUnauthorized(env: Record<string, string | undefined> = process.env): boolean {
-    return /^(1|true|yes)$/i.test(env.JENKINS_TLS_ACCEPT_UNAUTHORIZED ?? "");
+export function tlsAcceptUnauthorized(value: string | undefined = env.jenkins.getTlsAcceptUnauthorized()): boolean {
+    return /^(1|true|yes)$/i.test(value ?? "");
 }
 
 export const TLS_ACCEPT_FLAG = "--tls-accept-unauthorized";
 
-/** Strips `--tls-accept-unauthorized` from anywhere in argv and turns it into JENKINS_TLS_ACCEPT_UNAUTHORIZED=1. */
-export function applyTlsAcceptFlag(argv: string[], env: Record<string, string | undefined> = process.env): string[] {
+/** Set by `applyTlsAcceptFlag` when the command line carried `--tls-accept-unauthorized`. */
+export const tlsAcceptFlag = { given: false };
+
+/** Verification is off when the flag was given or the environment asks for it. */
+export function tlsAccepted(): boolean {
+    return tlsAcceptFlag.given || tlsAcceptUnauthorized();
+}
+
+/** Strips `--tls-accept-unauthorized` from anywhere in argv and records it in `tlsAcceptFlag`. */
+export function applyTlsAcceptFlag(argv: string[]): string[] {
     if (!argv.includes(TLS_ACCEPT_FLAG)) {
         return argv;
     }
 
-    env.JENKINS_TLS_ACCEPT_UNAUTHORIZED = "1";
+    tlsAcceptFlag.given = true;
 
     return argv.filter((arg) => arg !== TLS_ACCEPT_FLAG);
 }
@@ -88,7 +96,7 @@ export function certificateErrorMessage(baseUrl: string, cause: unknown): string
 }
 
 function createHttpsAgent(): https.Agent | undefined {
-    const accept = tlsAcceptUnauthorized();
+    const accept = tlsAccepted();
     const extraCa = loadTrustedPems();
 
     if (!accept && extraCa.length === 0) {
@@ -104,6 +112,8 @@ function createHttpsAgent(): https.Agent | undefined {
         rejectUnauthorized: !accept,
     });
 }
+
+const IDEMPOTENT_METHODS = new Set(["get", "head", "options"]);
 
 interface RetryConfig extends InternalAxiosRequestConfig {
     _retry?: number;
@@ -128,13 +138,16 @@ export function createClient(auth: JenkinsAuth): AxiosInstance {
             throw error;
         }
 
-        if (!error.response && !tlsAcceptUnauthorized() && isCertificateError(error)) {
+        if (!error.response && !tlsAccepted() && isCertificateError(error)) {
             throw new Error(certificateErrorMessage(auth.url, error), { cause: error });
         }
 
         cfg._retry = (cfg._retry ?? 0) + 1;
         const status = error.response?.status as number | undefined;
-        const retriable = status === undefined || (status >= 500 && status < 600);
+        // Only a request that is safe to repeat is retried. A POST Jenkins accepted before its answer
+        // was lost (a timeout, a proxy's 502) would otherwise trigger the same build again.
+        const idempotent = IDEMPOTENT_METHODS.has((cfg.method ?? "get").toLowerCase());
+        const retriable = idempotent && (status === undefined || (status >= 500 && status < 600));
 
         if (cfg._retry > 3 || !retriable) {
             throw error;
