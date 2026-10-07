@@ -101,7 +101,9 @@ function wrapDescription(description: string, available: number): string[] {
  * help printed beside that first error enough to fix the whole command line at once.
  */
 export function markRequiredOptionsDeep(cmd: Command): void {
+    // configureHelp(config) replaces the whole configuration; keep what the tool set (e.g. commandUsage).
     cmd.configureHelp({
+        ...cmd.configureHelp(),
         optionDescription(this: Help, option: Option): string {
             const base = Help.prototype.optionDescription.call(this, option);
 
