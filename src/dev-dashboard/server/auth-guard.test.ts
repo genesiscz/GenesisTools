@@ -32,6 +32,26 @@ describe("decideApiAuth", () => {
         expect(d.decision).toBe("deny");
     });
 
+    it("denies a foreign-origin mutation on the Origin comparison when Fetch Metadata is same-site or absent", () => {
+        const fetchMetadata: Array<Record<string, string>> = [{ "sec-fetch-site": "same-site" }, {}];
+
+        for (const fetchSite of fetchMetadata) {
+            const d = decideApiAuth({
+                method: "POST",
+                pathname: "/api/ttyd/spawn",
+                requestUrl: "http://localhost:3042/api/ttyd/spawn",
+                headers: {
+                    host: "localhost:3042",
+                    origin: "http://localhost:9999",
+                    "x-dd-local-origin": "1",
+                    ...fetchSite,
+                },
+                provision,
+            });
+            expect(d.decision).toBe("deny");
+        }
+    });
+
     it("keeps same-origin browser and absent-Origin native mutations working", () => {
         expect(
             decideApiAuth({

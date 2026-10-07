@@ -80,6 +80,17 @@ describe("decideProxyAuth — the ttyd/WS gate matrix", () => {
         }
     });
 
+    test("the Origin comparison alone denies a foreign origin when Fetch Metadata is same-site or absent", () => {
+        const fetchMetadata: Array<Record<string, string>> = [{ "sec-fetch-site": "same-site" }, {}];
+
+        for (const fetchSite of fetchMetadata) {
+            for (const origin of ["https://attacker.test", "http://localhost:9999", "null"]) {
+                const req = reqWith({ host: "localhost:3042", origin, ...fetchSite });
+                expect(decideProxyAuth({ req, isLocal: true, provision })).toBe("deny");
+            }
+        }
+    });
+
     test("same-origin browser and absent-Origin native loopback clients still work", () => {
         const browser = reqWith({
             host: "localhost:3042",

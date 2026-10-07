@@ -362,7 +362,7 @@ describe("activity aggregate queries", () => {
                     userId,
                     eventType: "pomodoro_phase_change",
                     timestamp: "2026-10-02T14:00:00.000Z",
-                    previousValue: 0,
+                    previousValue: 1_000_000,
                     newValue: 0,
                     metadata: { fromPhase: "work", durationMs: 1_500_000 },
                 },
@@ -400,18 +400,20 @@ describe("activity aggregate queries", () => {
             ])
             .run();
 
+        // The work phase ran 1_500_000 ms, of which pause rows had covered 1_000_000: the unpaused
+        // final run adds 500_000 and one session; the break phase adds nothing.
         expect(queryProductivityStatsForUser({ userId, startIso, endIso })).toEqual({
-            totalTimeTracked: 6_000,
-            sessionCount: 3,
-            averageSessionDuration: 2_000,
-            longestSession: 3_000,
-            timerBreakdown: { "timer-a": 4_000, "timer-b": 2_000 },
-            dailyBreakdown: { "2026-10-01": 4_000, "2026-10-02": 2_000 },
+            totalTimeTracked: 506_000,
+            sessionCount: 4,
+            averageSessionDuration: 126_500,
+            longestSession: 500_000,
+            timerBreakdown: { "timer-a": 504_000, "timer-b": 2_000 },
+            dailyBreakdown: { "2026-10-01": 4_000, "2026-10-02": 502_000 },
             pomodoroCompleted: 1,
         });
         expect(queryFocusStatsForUser({ userId, startIso, endIso })).toEqual({
-            timeFocusedTodayMs: 6_000,
-            sessionsToday: 3,
+            timeFocusedTodayMs: 506_000,
+            sessionsToday: 4,
         });
     });
 
@@ -494,5 +496,21 @@ describe("reading item owner boundary", () => {
         const foreign = db.select().from(readingItems).where(eq(readingItems.id, foreignItemId)).get();
         expect(foreign?.title).toBe("Private title");
         expect(foreign?.userId).toBe(otherId);
+    });
+
+    test("a patch that names userId or id cannot move the row to another owner", () => {
+        const hostilePatch = { title: "Renamed", userId: otherId, id: "hijacked-id" };
+
+        const updated = updateReadingItemForUser({
+            userId: ownerId,
+            data: { id: ownItemId, patch: hostilePatch },
+            onUpdated: vi.fn(),
+        });
+
+        expect(updated.title).toBe("Renamed");
+        expect(updated.userId).toBe(ownerId);
+        expect(updated.id).toBe(ownItemId);
+        const stored = db.select().from(readingItems).where(eq(readingItems.id, ownItemId)).get();
+        expect(stored?.userId).toBe(ownerId);
     });
 });

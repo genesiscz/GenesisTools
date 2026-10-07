@@ -68,6 +68,9 @@ describe("ToolCallCard", () => {
         expect(closed).toContain("Read");
         expect(closed).not.toContain("result marker");
         expect(open).toContain("result marker");
-        expect(open).not.toContain("onerror=");
+        // The escaped source text may show "onerror" in a code block; only a live element or handler is a defect.
+        expect(open).not.toMatch(/<img\b/i);
+        expect(open).not.toMatch(/<[^>]+\sonerror=/i);
+        expect(open).toContain("&lt;");
     });
 });

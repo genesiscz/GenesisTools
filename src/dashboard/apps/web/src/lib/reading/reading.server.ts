@@ -72,12 +72,40 @@ export const createReadingItem = createServerFn({ method: "POST" })
 // Items — Update (status / page / rating / fields)
 // ============================================
 
-type ReadingItemPatch = Partial<
-    Pick<
-        ReadingItem,
-        "title" | "author" | "type" | "url" | "coverUrl" | "status" | "currentPage" | "totalPages" | "rating" | "tags"
-    >
->;
+const READING_ITEM_PATCH_FIELDS = [
+    "title",
+    "author",
+    "type",
+    "url",
+    "coverUrl",
+    "status",
+    "currentPage",
+    "totalPages",
+    "rating",
+    "tags",
+] as const satisfies ReadonlyArray<keyof ReadingItem>;
+
+type ReadingItemPatch = Partial<Pick<ReadingItem, (typeof READING_ITEM_PATCH_FIELDS)[number]>>;
+
+function copyPatchField<K extends keyof ReadingItemPatch>(
+    target: ReadingItemPatch,
+    source: ReadingItemPatch,
+    field: K
+): void {
+    target[field] = source[field];
+}
+
+/** The client sends an untyped object; only editable fields may reach `.set()`, never `userId` or `id`. */
+function pickReadingItemPatch(patch: ReadingItemPatch): ReadingItemPatch {
+    const picked: ReadingItemPatch = {};
+    for (const field of READING_ITEM_PATCH_FIELDS) {
+        if (Object.hasOwn(patch, field)) {
+            copyPatchField(picked, patch, field);
+        }
+    }
+
+    return picked;
+}
 
 interface UpdateReadingItemForUserOptions {
     userId: string;
@@ -92,7 +120,7 @@ export function updateReadingItemForUser({
 }: UpdateReadingItemForUserOptions): ReadingItemRow {
     const updated = db
         .update(readingItems)
-        .set({ ...data.patch, updatedAt: new Date().toISOString() })
+        .set({ ...pickReadingItemPatch(data.patch), updatedAt: new Date().toISOString() })
         .where(and(eq(readingItems.id, data.id), eq(readingItems.userId, userId)))
         .returning()
         .get();

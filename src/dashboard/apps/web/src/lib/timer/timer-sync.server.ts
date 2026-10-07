@@ -8,7 +8,7 @@
 
 import type { PomodoroSettings, ProductivityStats } from "@dashboard/shared";
 import { createServerFn } from "@tanstack/react-start";
-import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { type ActivityLog, activityLogs, db, type NewTimer, type Timer, timers } from "@/drizzle";
 import { requireUserId } from "@/lib/auth/requireUser";
 import {
@@ -448,6 +448,19 @@ const validPauseDuration = sql`${activityLogs.eventType} = 'pause'
     AND ${activityLogs.previousValue} IS NOT NULL
     AND ${activityLogs.newValue} > ${activityLogs.previousValue}`;
 const pauseDuration = sql`${activityLogs.newValue} - ${activityLogs.previousValue}`;
+// A work phase that ends while running: its last run has no pause row. The phase-change row stores the
+// whole phase (`durationMs`) and the part earlier pause rows already counted (`previousValue`), so only
+// the remainder is new tracked time.
+const completedWorkDurationMs = sql`json_extract(${activityLogs.metadata}, '$.durationMs')`;
+const validCompletedWorkTail = sql`${activityLogs.eventType} = 'pomodoro_phase_change'
+    AND json_extract(${activityLogs.metadata}, '$.fromPhase') = 'work'
+    AND ${activityLogs.previousValue} IS NOT NULL
+    AND json_type(${activityLogs.metadata}, '$.durationMs') IN ('integer', 'real')
+    AND ${completedWorkDurationMs} > ${activityLogs.previousValue}`;
+const completedWorkTail = sql`${completedWorkDurationMs} - ${activityLogs.previousValue}`;
+const isTrackedInterval = sql`((${validPauseDuration}) OR (${validCompletedWorkTail}))`;
+const trackedDuration = sql`case when ${validPauseDuration} then ${pauseDuration}
+    when ${validCompletedWorkTail} then ${completedWorkTail} else 0 end`;
 
 export function queryProductivityStatsForUser(options: {
     userId: string;
@@ -461,9 +474,9 @@ export function queryProductivityStatsForUser(options: {
     );
     const summary = db
         .select({
-            totalTimeTracked: sql<number>`coalesce(sum(case when ${validPauseDuration} then ${pauseDuration} else 0 end), 0)`,
-            sessionCount: sql<number>`coalesce(sum(case when ${validPauseDuration} then 1 else 0 end), 0)`,
-            longestSession: sql<number>`coalesce(max(case when ${validPauseDuration} then ${pauseDuration} else 0 end), 0)`,
+            totalTimeTracked: sql<number>`coalesce(sum(${trackedDuration}), 0)`,
+            sessionCount: sql<number>`coalesce(sum(case when ${isTrackedInterval} then 1 else 0 end), 0)`,
+            longestSession: sql<number>`coalesce(max(${trackedDuration}), 0)`,
             pomodoroCompleted: sql<number>`coalesce(sum(case when ${activityLogs.eventType} = 'pomodoro_phase_change'
                 and json_extract(${activityLogs.metadata}, '$.fromPhase') = 'work' then 1 else 0 end), 0)`,
         })
@@ -473,20 +486,20 @@ export function queryProductivityStatsForUser(options: {
     const timerRows = db
         .select({
             timerId: activityLogs.timerId,
-            duration: sql<number>`sum(${pauseDuration})`,
+            duration: sql<number>`sum(${trackedDuration})`,
         })
         .from(activityLogs)
-        .where(and(range, validPauseDuration))
+        .where(and(range, isTrackedInterval))
         .groupBy(activityLogs.timerId)
         .all();
     const dayExpression = sql<string>`substr(${activityLogs.timestamp}, 1, 10)`;
     const dayRows = db
         .select({
             day: dayExpression,
-            duration: sql<number>`sum(${pauseDuration})`,
+            duration: sql<number>`sum(${trackedDuration})`,
         })
         .from(activityLogs)
-        .where(and(range, validPauseDuration))
+        .where(and(range, isTrackedInterval))
         .groupBy(dayExpression)
         .all();
     const totalTimeTracked = summary?.totalTimeTracked ?? 0;
@@ -523,7 +536,7 @@ export function queryFocusStatsForUser(options: {
 }): FocusStatsForToday {
     const summary = db
         .select({
-            timeFocusedTodayMs: sql<number>`coalesce(sum(${pauseDuration}), 0)`,
+            timeFocusedTodayMs: sql<number>`coalesce(sum(${trackedDuration}), 0)`,
             sessionsToday: sql<number>`count(*)`,
         })
         .from(activityLogs)
@@ -532,7 +545,7 @@ export function queryFocusStatsForUser(options: {
                 eq(activityLogs.userId, options.userId),
                 gte(activityLogs.timestamp, options.startIso),
                 lt(activityLogs.timestamp, options.endIso),
-                validPauseDuration
+                isTrackedInterval
             )
         )
         .get();
@@ -574,19 +587,22 @@ export const aggregateFocusSessions = createServerFn({ method: "GET" }).handler(
             .select({
                 timerId: activityLogs.timerId,
                 timestamp: activityLogs.timestamp,
+                eventType: activityLogs.eventType,
                 elapsedAtEvent: activityLogs.elapsedAtEvent,
                 previousValue: activityLogs.previousValue,
+                newValue: activityLogs.newValue,
                 metadata: activityLogs.metadata,
             })
             .from(activityLogs)
             .where(
                 and(
                     eq(activityLogs.userId, userId),
-                    eq(activityLogs.eventType, "pomodoro_phase_change"),
+                    inArray(activityLogs.eventType, ["pause", "reset", "pomodoro_phase_change"]),
                     gte(activityLogs.timestamp, startOfToday.toISOString()),
                     lt(activityLogs.timestamp, startOfTomorrow.toISOString())
                 )
             )
+            .orderBy(asc(activityLogs.timestamp))
             .all();
 
         return focusSessionsFromPomodoroRows(rows);

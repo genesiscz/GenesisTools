@@ -187,7 +187,7 @@ describe("applyAction — advance_pomodoro_phase", () => {
 });
 
 describe("completed Pomodoro activity", () => {
-    it("persists and aggregates the completed running work duration before the reset", () => {
+    it("persists the completed work duration and blocks only the final run that no pause row covered", () => {
         const current = makeTimer({
             timerType: "pomodoro",
             pomodoroPhase: "work",
@@ -212,9 +212,84 @@ describe("completed Pomodoro activity", () => {
         expect(sessions).toEqual([
             {
                 timerId: current.id,
-                startIso: "2026-05-15T10:00:00.000Z",
+                startIso: "2026-05-15T10:20:00.000Z",
                 endIso: timestamp,
             },
+        ]);
+    });
+
+    it("shows a paused and resumed work phase as separate runs, not one block across the pause", () => {
+        const rows = [
+            {
+                timerId: "t1",
+                timestamp: "2026-05-15T10:20:00.000Z",
+                eventType: "pause",
+                elapsedAtEvent: 20 * 60 * 1000,
+                previousValue: 0,
+                newValue: 20 * 60 * 1000,
+                metadata: {},
+            },
+            {
+                timerId: "t1",
+                timestamp: "2026-05-15T10:35:00.000Z",
+                eventType: "pomodoro_phase_change",
+                elapsedAtEvent: 0,
+                previousValue: 20 * 60 * 1000,
+                newValue: 0,
+                metadata: { fromPhase: "work", durationMs: 25 * 60 * 1000 },
+            },
+        ];
+
+        expect(focusSessionsFromPomodoroRows(rows)).toEqual([
+            { timerId: "t1", startIso: "2026-05-15T10:00:00.000Z", endIso: "2026-05-15T10:20:00.000Z" },
+            { timerId: "t1", startIso: "2026-05-15T10:30:00.000Z", endIso: "2026-05-15T10:35:00.000Z" },
+        ]);
+    });
+
+    it("drops runs from a break phase or from before a reset", () => {
+        const pause = (timestamp: string) => ({
+            timerId: "t1",
+            timestamp,
+            eventType: "pause",
+            elapsedAtEvent: 60_000,
+            previousValue: 0,
+            newValue: 60_000,
+            metadata: {},
+        });
+        const rows = [
+            pause("2026-05-15T10:01:00.000Z"),
+            {
+                timerId: "t1",
+                timestamp: "2026-05-15T10:02:00.000Z",
+                eventType: "pomodoro_phase_change",
+                elapsedAtEvent: 0,
+                previousValue: 60_000,
+                newValue: 0,
+                metadata: { fromPhase: "short_break", durationMs: 60_000 },
+            },
+            pause("2026-05-15T10:04:00.000Z"),
+            {
+                timerId: "t1",
+                timestamp: "2026-05-15T10:05:00.000Z",
+                eventType: "reset",
+                elapsedAtEvent: 0,
+                previousValue: 60_000,
+                newValue: 0,
+                metadata: {},
+            },
+            {
+                timerId: "t1",
+                timestamp: "2026-05-15T10:10:00.000Z",
+                eventType: "pomodoro_phase_change",
+                elapsedAtEvent: 0,
+                previousValue: 0,
+                newValue: 0,
+                metadata: { fromPhase: "work", durationMs: 120_000 },
+            },
+        ];
+
+        expect(focusSessionsFromPomodoroRows(rows)).toEqual([
+            { timerId: "t1", startIso: "2026-05-15T10:08:00.000Z", endIso: "2026-05-15T10:10:00.000Z" },
         ]);
     });
 

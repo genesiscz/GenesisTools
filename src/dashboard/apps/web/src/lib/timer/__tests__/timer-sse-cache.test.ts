@@ -65,7 +65,7 @@ describe("timer SSE cache contract", () => {
         });
         expect(timerQueryDirtiness(["pomodoro_phase_change"])).toEqual({
             activityDirty: true,
-            focusStatsDirty: false,
+            focusStatsDirty: true,
             focusSessionsDirty: true,
         });
         expect(timerQueryDirtiness([])).toEqual({
