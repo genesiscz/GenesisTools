@@ -1619,7 +1619,7 @@ struct PRDetailView: View {
                         .freezesWidthWhileResizing()
                         .hubSurface(.content)
                 }
-                .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
+                .measuredWidth("prs.detail", $width)
             } else if showDiff, prs.fetchState(pr) == .fetching {
                 // The head is on its way into the main checkout: the diff's place shows its shape.
                 HStack(spacing: 0) {
@@ -1631,7 +1631,7 @@ struct PRDetailView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         .hubSurface(.content)
                 }
-                .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
+                .measuredWidth("prs.detail", $width)
             } else {
                 overview
             }

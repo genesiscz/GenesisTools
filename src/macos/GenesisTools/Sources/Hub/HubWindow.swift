@@ -1770,7 +1770,7 @@ struct HubRootView: View {
         .preferredColorScheme(.dark)
         // Every stall and dropped-frame line in app-perf.log names this (GenesisKit Perf/PerfContext.swift).
         .task(id: perfArea) { PerfContext.area = perfArea }
-        .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
+        .measuredWidth("hub.root", $width)
         .onGeometryChange(for: Int.self, of: { $0.frame(in: .global).minX < -0.5 ? 1 : 0 }) { HubBench.note("hub.root.clipped", $0) }
         .background(HubWindowReader { window in
             HubGlass.apply(to: window, enabled: glass)
@@ -1909,7 +1909,7 @@ private struct HubModePicker: View {
         .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(ReviewPalette.hairline))
         .frame(maxWidth: .infinity)
-        .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
+        .measuredWidth("hub.modes", $width)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("Mode"))
     }

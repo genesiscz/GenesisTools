@@ -1950,12 +1950,12 @@ struct ReviewRootView: View {
                 }
             }
             filesSplit
-                .onGeometryChange(for: CGFloat.self, of: \.size.width) { innerWidth = $0 }
+                .measuredWidth("review.files", $innerWidth)
                 .freezesWidthWhileDragging(panel: ReviewContextPanel.key)
         }
         .hubSurface(.content)
         .preferredColorScheme(.dark)
-        .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
+        .measuredWidth("review.root", $width)
         .onGeometryChange(for: CGFloat.self, of: \.size.height) { height = $0 }
         .onAppear { model.start() }
         .onDisappear { model.stop() }

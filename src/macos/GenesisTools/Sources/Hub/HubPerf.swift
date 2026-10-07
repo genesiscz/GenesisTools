@@ -1,5 +1,6 @@
 import Foundation
 import os
+import SwiftUI
 
 /// Spans for the hub and review window, on top of GenesisKit's `PerfLog` (Perf/PerfLog.swift).
 /// Every load that can be slow (a `tools` call, git, a transcript page, a diff render) runs inside a
@@ -93,5 +94,40 @@ enum HubStallTest {
             spins &+= 1
         }
         PerfLog.mark("stall test: blocked the main thread \(Int(ms)) ms (\(spins) spins)")
+    }
+}
+
+/// A view's width read into its own state, the shape behind a layout loop: the state changes the layout,
+/// the layout changes the width, and SwiftUI runs transaction after transaction inside one run-loop pass.
+/// The hub's main thread sat in such a pass for over 115 s on the PRs view (hang 2026-10-08 01:46,
+/// `GraphHost.flushTransactions` → `RootGeometry` → `StackLayout.sizeThatFits`). Whole points only, so a
+/// sub-pixel see-saw writes nothing, and more than 30 writes in a second log the label and its values.
+enum LayoutLoopWatch {
+    private static var windows: [String: (start: CFAbsoluteTime, values: [Int], logged: Bool)] = [:]
+
+    static func note(_ label: String, _ value: CGFloat) {
+        let now = CFAbsoluteTimeGetCurrent()
+        var window = windows[label] ?? (now, [], false)
+        if now - window.start > 1 {
+            window = (now, [], false)
+        }
+        window.values.append(Int(value))
+        if window.values.count > 30, !window.logged {
+            window.logged = true
+            HubPerf.log("layout.loop \(label): \(window.values.count) width writes in 1 s, last \(window.values.suffix(8).map(String.init).joined(separator: ","))")
+        }
+        windows[label] = window
+    }
+}
+
+extension View {
+    /// `.onGeometryChange` of the width into `width`, in whole points, watched by `LayoutLoopWatch`.
+    func measuredWidth(_ label: String, _ width: Binding<CGFloat>) -> some View {
+        onGeometryChange(for: CGFloat.self, of: { $0.size.width.rounded() }) { value in
+            LayoutLoopWatch.note(label, value)
+            if width.wrappedValue != value {
+                width.wrappedValue = value
+            }
+        }
     }
 }
