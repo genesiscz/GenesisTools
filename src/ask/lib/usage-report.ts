@@ -14,7 +14,7 @@ export async function showSummary(db: UsageDatabase, scope: UsageScope) {
     const total = await db.getTotalUsage(scope);
 
     out.println(chalk.bold.cyan("\n📊 USAGE SUMMARY\n"));
-    out.println(chalk.white(`Period: Last ${scope.days} days`));
+    out.println(chalk.white(`Period: ${scope.days === undefined ? "All history" : `Last ${scope.days} days`}`));
     out.println(chalk.white(`Total Cost: ${chalk.green.bold(formatCost(total.totalCost))}`));
     out.println(chalk.white(`Total Tokens: ${chalk.yellow(formatTokens(total.totalTokens))}`));
     out.println(chalk.white(`Messages: ${chalk.blue(total.messageCount.toLocaleString())}`));
@@ -131,7 +131,8 @@ export async function showCostTrend(db: UsageDatabase, scope: UsageScope) {
     const barLength = 40;
 
     for (const day of trend) {
-        const barFill = Math.round((day.cost / maxCost) * barLength);
+        // A slice of free or local models costs 0 every day; 0 / 0 would make the bar NaN.
+        const barFill = maxCost > 0 ? Math.round((day.cost / maxCost) * barLength) : 0;
         const bar = chalk.green("█".repeat(barFill)) + chalk.gray("░".repeat(barLength - barFill));
         out.println(`${formatDate(day.date).padEnd(15)} ${bar} ${chalk.green(formatCost(day.cost))}`);
     }

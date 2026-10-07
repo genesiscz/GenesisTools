@@ -8,6 +8,7 @@ import type { LanguageModelUsage } from "ai";
 import { sql } from "kysely";
 
 export interface UsageScope {
+    /** Whole days back from today; undefined means the full history. */
     days?: number;
     provider?: string;
     model?: string;
@@ -116,6 +117,11 @@ export class UsageDatabase {
         const filters = typeof scope === "number" ? { days: scope } : (scope ?? {});
         let query = this.client.kysely.selectFrom("usage_records");
         if (filters.days !== undefined) {
+            // SQLite turns a malformed date modifier into NULL, which matches no row and reads as "no usage".
+            if (!Number.isFinite(filters.days) || filters.days < 0) {
+                throw new Error(`Usage days must be a finite number of 0 or more, got ${filters.days}`);
+            }
+
             query = query.where(sql<string>`date(timestamp)`, ">=", sinceDays(filters.days));
         }
         if (filters.provider) {
