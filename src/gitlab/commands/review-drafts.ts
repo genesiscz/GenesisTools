@@ -472,15 +472,12 @@ async function runPublish(iid: string, opts: PublishOptions): Promise<void> {
     const api = await resolveProjectApi({ host: opts.host, project: opts.project });
     const drafts = await fetchDrafts(api, iid);
 
-    if (drafts.length === 0) {
-        out.println(`!${iid} — nothing to publish.`);
-
-        return;
+    if (drafts.length > 0) {
+        out.println(`!${iid} — ${drafts.length} pending draft(s) would be published:\n`);
+        out.println(renderDraftTable(drafts));
     }
 
-    out.println(`!${iid} — ${drafts.length} pending draft(s) would be published:\n`);
-    out.println(renderDraftTable(drafts));
-
+    // Before the empty check: an approved draft that was deleted or already published is a refusal, not a no-op.
     if (opts.expect !== undefined) {
         const { ids: expected, unknown } = expectedDraftIds(api, Number(iid), opts.expect.split(","));
 
@@ -505,6 +502,12 @@ async function runPublish(iid: string, opts: PublishOptions): Promise<void> {
 
             throw new Error("The pending drafts differ from --expect; nothing was published.");
         }
+    }
+
+    if (drafts.length === 0) {
+        out.println(`!${iid} — nothing to publish.`);
+
+        return;
     }
 
     if (!opts.apply) {
