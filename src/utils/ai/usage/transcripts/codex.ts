@@ -190,15 +190,17 @@ export function createCodexUsageParser(options: CreateParserOptions): DriverLine
             const model = firstString(raw.payload?.model, info?.model, state.model) ?? "unknown";
             const cacheWrite = Math.min(num(usage.cache_write_input_tokens), inputTotal - cached);
             const inputTokens = inputTotal - cached - cacheWrite;
-            const signature = [timestamp, model, inputTokens, cached, cacheWrite, output, reasoning].join("|");
+            const counts = [model, inputTokens, cached, cacheWrite, output, reasoning].join("|");
+            const signature = `${timestamp}|${counts}`;
             const responseId =
                 typeof payload.response_id === "string" && payload.response_id ? payload.response_id : undefined;
             const dialect = current ? "current" : "legacy";
             const duplicate = responseId ? state.recentResponses?.includes(responseId) : false;
-            // Mirror records must agree in timestamp, model and counts across dialects.
-            // Distinct response IDs with equal usage still represent separate calls.
-            const mirrored = state.lastUsage?.signature === signature && state.lastUsage.dialect !== dialect;
-            state.lastUsage = { signature, dialect };
+            // A mirror is the other dialect's copy of the call just seen: same model and counts.
+            // The timestamps of the two copies differ, so they are not compared. Distinct response
+            // IDs with equal usage in the same dialect still represent separate calls.
+            const mirrored = state.lastUsage?.signature === counts && state.lastUsage.dialect !== dialect;
+            state.lastUsage = { signature: counts, dialect };
             if (responseId) {
                 state.recentResponses = [...(state.recentResponses ?? []), responseId].slice(-256);
             }

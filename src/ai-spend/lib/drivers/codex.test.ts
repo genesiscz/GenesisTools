@@ -66,6 +66,15 @@ describe("codex driver", () => {
         ]) {
             expect(collectEvents(codexDriver, [turnContext("gpt-5"), ...rows])).toHaveLength(1);
         }
+        // The two copies of one call carry different timestamps; a legacy-first mirror still pairs.
+        const earlier = tokenCount("2026-08-27T09:00:09.846Z", usage, usage);
+        const legacyFirst = collectEvents(codexDriver, [turnContext("gpt-5"), earlier, currentUsage("fixture-one")]);
+        expect(legacyFirst).toHaveLength(1);
+        // A legacy call followed by a record with different counts is two calls.
+        const other = { ...usage, output_tokens: 31 };
+        const distinct = tokenCount("2026-08-27T09:00:09.846Z", other, other);
+        const twoCalls = collectEvents(codexDriver, [turnContext("gpt-5"), distinct, currentUsage("fixture-one")]);
+        expect(twoCalls).toHaveLength(2);
     });
 
     test("a rollout with per-response records counts each call once although its token_count lands later", () => {
