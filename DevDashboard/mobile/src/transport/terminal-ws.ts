@@ -56,7 +56,7 @@ export function createTerminalTransport(opts: TerminalTransportOptions): Termina
 
     function onMessage(ev: MessageEvent): void {
         const wireFrame = ev.data as string | ArrayBuffer;
-        const decodedWireFrame = opts.wire?.decode(wireFrame) ?? wireFrame;
+        const decodedWireFrame = opts.wire ? opts.wire.decode(wireFrame) : wireFrame;
         if (decodedWireFrame === null) {
             return;
         }

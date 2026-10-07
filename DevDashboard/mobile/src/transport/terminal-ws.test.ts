@@ -90,6 +90,21 @@ describe("ttyd protocol transport", () => {
         expect(output).toEqual(["hello"]);
     });
 
+    it("drops a frame the wire decoder rejects instead of reading it as plaintext", () => {
+        const socket = new FakeSocket();
+        const transport = createTerminalTransport({
+            wsUrl: "ws://agent/ttyd/1/ws",
+            socketFactory: () => socket as never,
+            wire: { encode: (frame) => frame, decode: () => null },
+        });
+        const output: string[] = [];
+        transport.onMessage((data) => output.push(new TextDecoder().decode(data as ArrayBuffer)));
+
+        socket.emit("message", { data: encodeTtydInput("injected output") });
+
+        expect(output).toEqual([]);
+    });
+
     it("keeps a healthy idle socket open without an invented ping timer", () => {
         const interval = spyOn(globalThis, "setInterval");
         const socket = new FakeSocket();
