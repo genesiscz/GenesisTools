@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+    appendFileSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    rmSync,
+    statSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
@@ -287,6 +296,22 @@ describe("monitor report", () => {
         // +$4.00 append, +$0.80 sibling, +$0.40 new project dir on top of $3.48.
         expect(second.today.cost).toBeCloseTo(8.68, 5);
         expect(second.today.tokens).toBe(2_850_000 + 1_000_000 + 1_000_000 + 500_000);
+    });
+
+    test("a run that changed nothing does not rewrite the cache, and a run that parsed does", () => {
+        const storage = new Storage("ai-spend");
+        const cacheFile = join(storage.getCacheDir(), "monitor-cache.json");
+        const ttl = 60 * 60 * 1000;
+        buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
+        // The cache is replaced atomically, so a write shows up as a new inode.
+        const written = statSync(cacheFile).ino;
+
+        buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: ttl });
+        expect(statSync(cacheFile).ino).toBe(written);
+
+        appendFileSync(mainFile, line("msg-dirty", new Date().toISOString(), { output_tokens: 10 }));
+        expect(buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: ttl }).parsedFiles).toBe(1);
+        expect(statSync(cacheFile).ino).not.toBe(written);
     });
 
     test("the claude roots and findRecentTranscripts never look outside the fixed roots", () => {

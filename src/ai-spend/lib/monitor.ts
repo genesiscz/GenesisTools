@@ -202,12 +202,8 @@ interface FileCacheEntry {
     accountId?: string;
     /** Byte offset already parsed (== size unless the file shrank). */
     offset: number;
+    /** One row per usage event; its ids are also the dedup set for the next parse. */
     events: Array<DaySums & { id: string; day: string; sidechain?: boolean }>;
-    /**
-     * Event-id dedup frontier: transcript duplicates of one event sit
-     * adjacent (streaming rewrites), so a bounded tail window is enough.
-     */
-    recentIds: string[];
     /** Driver resume state (codex's sticky model and cumulative totals). */
     state?: unknown;
 }
@@ -252,8 +248,6 @@ interface MonitorCache {
     agents: Record<AgentId, AgentCache>;
 }
 
-const RECENT_ID_WINDOW = 50;
-
 /**
  * A full walk of the transcript trees costs seconds on this class of machine
  * (~11.5k Claude files, ~33k Grok directory entries), so it runs at most once
@@ -294,8 +288,7 @@ function isFileEntry(entry: unknown): entry is FileCacheEntry {
         typeof row.size === "number" &&
         typeof row.mtimeMs === "number" &&
         typeof row.offset === "number" &&
-        Array.isArray(row.events) &&
-        Array.isArray(row.recentIds)
+        Array.isArray(row.events)
     );
 }
 
@@ -504,7 +497,6 @@ function parseChunk(options: ParseChunkOptions): void {
         }
 
         seen.add(event.id);
-        entry.recentIds.push(event.id);
 
         const day = localDayString(when);
         const tokens = event.inputTokens + event.outputTokens + event.cacheCreationTokens + event.cacheReadTokens;
@@ -537,10 +529,6 @@ function parseChunk(options: ParseChunkOptions): void {
     }
 
     entry.state = parser.snapshot();
-
-    if (entry.recentIds.length > RECENT_ID_WINDOW) {
-        entry.recentIds = entry.recentIds.slice(-RECENT_ID_WINDOW);
-    }
 }
 
 export interface BuildMonitorOptions {
@@ -573,6 +561,8 @@ export interface BuildMonitorOptions {
 interface ScanResult {
     parsedFiles: number;
     recentFiles: number;
+    /** The cache changed, so it must be written back. */
+    dirty: boolean;
 }
 
 interface ScanOptions {
@@ -613,6 +603,8 @@ function scanAgent(options: ScanOptions): ScanResult {
     }
 
     let parsedFiles = 0;
+    // A sweep moves sweepAt and may drop rows; anything else marks the cache below.
+    let dirty = sweepDue;
 
     for (const file of files) {
         let stat: import("node:fs").Stats;
@@ -620,6 +612,7 @@ function scanAgent(options: ScanOptions): ScanResult {
             stat = statSync(file);
         } catch (err) {
             logger.debug({ err, file }, "ai-spend monitor: file vanished mid-run");
+            dirty ||= file in cache.files;
             delete cache.files[file];
             continue;
         }
@@ -636,7 +629,7 @@ function scanAgent(options: ScanOptions): ScanResult {
             // Append-only growth: parse just the tail.
             entry = cached;
         } else {
-            entry = { size: 0, mtimeMs: 0, offset: 0, events: [], recentIds: [] };
+            entry = { size: 0, mtimeMs: 0, offset: 0, events: [] };
         }
 
         const chunk = tailReader(file, entry.offset, stat.size);
@@ -653,6 +646,7 @@ function scanAgent(options: ScanOptions): ScanResult {
         entry.mtimeMs = stat.mtimeMs;
         cache.files[file] = entry;
         parsedFiles++;
+        dirty = true;
     }
 
     // Re-stamped for every candidate, not just the parsed ones: binding a home
@@ -662,9 +656,12 @@ function scanAgent(options: ScanOptions): ScanResult {
         const entry = cache.files[file];
 
         if (entry) {
-            entry.accountId = accountIdForFile(file, driverRoots);
+            const accountId = accountIdForFile(file, driverRoots);
             const cutoff = localDayString(new Date(minMtimeMs));
-            entry.events = entry.events.filter((event) => event.day >= cutoff);
+            const events = entry.events.filter((event) => event.day >= cutoff);
+            dirty ||= entry.accountId !== accountId || events.length !== entry.events.length;
+            entry.accountId = accountId;
+            entry.events = events;
         }
     }
 
@@ -684,7 +681,7 @@ function scanAgent(options: ScanOptions): ScanResult {
         "ai-spend monitor: agent scanned"
     );
 
-    return { parsedFiles, recentFiles: files.length };
+    return { parsedFiles, recentFiles: files.length, dirty };
 }
 
 function emptyAgentTotals(): AgentTotals {
@@ -763,6 +760,7 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
     };
     let parsedFiles = 0;
     let recentFiles = 0;
+    let dirty = false;
 
     for (const driver of drivers) {
         const result = scanAgent({
@@ -779,9 +777,13 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
         });
         parsedFiles += result.parsedFiles;
         recentFiles += result.recentFiles;
+        dirty ||= result.dirty;
     }
 
-    atomicWriteFileSync(cachePath(storage), SafeJSON.stringify(cache, { strict: true }));
+    // The cache holds a row per event, so an unchanged run must not pay for rewriting it.
+    if (dirty) {
+        atomicWriteFileSync(cachePath(storage), SafeJSON.stringify(cache, { strict: true }));
+    }
 
     const overall = emptyAgentTotals();
 
