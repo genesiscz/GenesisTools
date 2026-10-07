@@ -111,9 +111,7 @@ const PR_REVIEW: ReviewDoor = {
 const GIVE_ONLY = [
     "repo",
     "worktree",
-    "llm",
     "print",
-    "expand",
     "refresh",
     "proposalSkeleton",
     "agent",
@@ -173,10 +171,10 @@ export function registerPrReview(pr: Command): Command {
             )
             .option(
                 "--llm",
-                "--give: same as --format llm, a compact view with refs (f1 files, t1 threads, d1 drafts, m1 MRs)"
+                "A compact view with ids (F01 files, T01 threads, Y01 my threads, D01 drafts, M01 MRs); only when the user asks for it"
             )
             .option("--print", "--give: print the markdown report to stdout (same as --md)")
-            .option("--expand <refs>", "--give: print these refs in full, e.g. f2,t1 (reads the saved facts)")
+            .option("--expand <ids>", "Print these ids in full, e.g. F02,T01 (--give reads the saved facts)")
             .option("--refresh", "--give: with --expand, collect the facts again instead of reading the saved ones")
             .option("--proposal-skeleton", "--give: print a review proposal JSON pre-filled from the facts")
             .option("--agent <name>", "--give: author.agent in the proposal skeleton", "agent")
@@ -265,6 +263,8 @@ async function runReview(iid: string, opts: Options, cmd: Command): Promise<void
         schemaSidecar: opts.schemaSidecar,
         mdSidecar: opts.mdSidecar,
         confirm: opts.confirm,
+        llm: opts.llm,
+        expand: opts.expand,
     };
 
     await runFetchReview(iid, receive);

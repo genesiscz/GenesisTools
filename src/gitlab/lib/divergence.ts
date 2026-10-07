@@ -24,6 +24,8 @@ export interface Divergence {
     label: DivergenceLabel;
     /** The anchor's line at the tip, or null when it changed or the file is gone. */
     tipLine: number | null;
+    /** Where the anchor's code sits at the tip when the line itself changed: just after its nearest unchanged line above. */
+    nearLine?: number;
     /** The label as one phrase for a heading: `changed elsewhere (L39 → L44)`, `renamed to src/b.ts`. */
     text: string;
 }
@@ -50,7 +52,7 @@ interface OldRegion {
 function changedRegions(
     reviewer: string[],
     tip: string[]
-): { regions: OldRegion[]; tipLineOf: (line: number) => number | null } {
+): { regions: OldRegion[]; tipLineOf: (line: number) => number | null; nearTipLineOf: (line: number) => number } {
     const regions: OldRegion[] = [];
     /** For each reviewer line kept unchanged, its line at the tip. */
     const kept = new Map<number, number>();
@@ -76,7 +78,19 @@ function changedRegions(
         }
     }
 
-    return { regions, tipLineOf: (line) => kept.get(line) ?? null };
+    const nearTipLineOf = (line: number): number => {
+        for (let above = line - 1; above >= 1; above--) {
+            const mapped = kept.get(above);
+
+            if (mapped !== undefined) {
+                return mapped + 1;
+            }
+        }
+
+        return 1;
+    };
+
+    return { regions, tipLineOf: (line) => kept.get(line) ?? null, nearTipLineOf };
 }
 
 function touches(region: OldRegion, from: number, to: number): boolean {
@@ -99,7 +113,7 @@ export function classifyDivergence(input: DivergenceInput): Divergence {
             : { label: "deleted", tipLine: null, text: "deleted at the tip" };
     }
 
-    const { regions, tipLineOf } = changedRegions(input.reviewer, input.tip);
+    const { regions, tipLineOf, nearTipLineOf } = changedRegions(input.reviewer, input.tip);
     const tipLine = tipLineOf(input.anchorLine);
 
     if (regions.length === 0) {
@@ -107,7 +121,12 @@ export function classifyDivergence(input: DivergenceInput): Divergence {
     }
 
     if (tipLine === null || regions.some((region) => touches(region, input.anchorLine, input.anchorLine))) {
-        return { label: "changed at the anchor", tipLine, text: "changed at the anchor" };
+        return {
+            label: "changed at the anchor",
+            tipLine,
+            nearLine: Math.min(nearTipLineOf(input.anchorLine), Math.max(1, input.tip.length)),
+            text: "changed at the anchor",
+        };
     }
 
     const from = input.anchorLine - input.window;

@@ -514,13 +514,52 @@ describe("review render", () => {
 
     describe("with the MR tip known", () => {
         const reviewer = ["one", "two", "three"];
-        const opts = (tipLines: string[] | null, renames = new Map<string, string>()) => ({
+        const opts = (
+            tipLines: string[] | null,
+            renames = new Map<string, string>(),
+            checkout = { cwd: "/nonexistent-checkout", follows: false }
+        ) => ({
             mrIid: "42",
             project: "acme/web-app",
-            cwd: "/nonexistent-checkout",
+            cwd: checkout.cwd,
             contextLines: 1,
             anchorViews: new Map([["a1b2c3d4e5f6a7b8:src/app.ts", reviewer]]),
-            tip: { sha: "ffffeeeedddd", views: new Map([["src/app.ts", tipLines]]), renames },
+            tip: {
+                sha: "ffffeeeedddd",
+                views: new Map([["src/app.ts", tipLines]]),
+                renames,
+                checkoutFollowsTip: checkout.follows,
+            },
+        });
+
+        test("a checkout's own version shows only when the checkout follows the MR", () => {
+            const cwd = mkdtempSync(join(tmpdir(), "gt-tip-"));
+            mkdirSync(join(cwd, "src"));
+            writeFileSync(join(cwd, "src/app.ts"), "one\ntwo, edited locally\nthree");
+
+            expect(renderMarkdown(discussions, opts([...reviewer], undefined, { cwd, follows: true })).md).toContain(
+                "### Local checkout, not pushed (lines 1–3):"
+            );
+            expect(
+                renderMarkdown(discussions, opts([...reviewer], undefined, { cwd, follows: false })).md
+            ).not.toContain("Local checkout");
+        });
+
+        test("when the anchor line itself changed, the tip window sits where that code is now", () => {
+            const long = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
+            const tip = [...long.slice(0, 3), ...long.slice(5)];
+            const moved = {
+                ...opts(tip),
+                anchorViews: new Map([["a1b2c3d4e5f6a7b8:src/app.ts", long]]),
+            };
+            const shifted = [
+                {
+                    ...discussions[0],
+                    notes: [{ ...discussions[0].notes?.[0], position: { ...position, new_line: 5 } }],
+                },
+            ];
+
+            expect(renderMarkdown(shifted, moved).md).toContain("### MR tip `ffffeeeedd` (lines 3–5):");
         });
 
         test("an unchanged thread shows the tip only, in the file's language", () => {

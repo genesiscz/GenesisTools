@@ -97,20 +97,32 @@ export function saveIdMap(path: string, map: IdMap): void {
     atomicWriteFileSync(path, SafeJSON.stringify(map, null, 2));
 }
 
+/** Discussion id → `T…` for threads others started, `Y…` for the ones `me` started. Mutates `map`. */
+export function assignThreadRefs(
+    map: IdMap,
+    threads: Array<{ id: string; author: string }>,
+    me: string | undefined
+): Map<string, string> {
+    const isMine = (author: string): boolean => Boolean(me) && author === me;
+    const others = threads.filter((t) => !isMine(t.author)).map((t) => t.id);
+    const mine = threads.filter((t) => isMine(t.author)).map((t) => t.id);
+    const otherIds = assignIds(map, "T", others);
+    const mineIds = assignIds(map, "Y", mine);
+
+    return new Map([
+        ...others.map((id, i) => [id, otherIds[i]] as const),
+        ...mine.map((id, i) => [id, mineIds[i]] as const),
+    ]);
+}
+
 /** The facts with every file, thread, draft and affected MR carrying its id; threads `me` started are `Y`. */
 export function applyRefs(facts: PrReviewFacts, map: IdMap): PrReviewFacts {
-    const isMine = (author: string): boolean => Boolean(facts.me) && author === facts.me;
     const files = assignIds(
         map,
         "F",
         facts.files.map((file) => file.path)
     );
-    const others = facts.discussions.filter((d) => !isMine(d.author)).map((d) => d.id);
-    const mine = facts.discussions.filter((d) => isMine(d.author)).map((d) => d.id);
-    const threadRefs = new Map([
-        ...others.map((id, i) => [id, assignIds(map, "T", others)[i]] as const),
-        ...mine.map((id, i) => [id, assignIds(map, "Y", mine)[i]] as const),
-    ]);
+    const threadRefs = assignThreadRefs(map, facts.discussions, facts.me);
     const drafts = assignIds(
         map,
         "D",

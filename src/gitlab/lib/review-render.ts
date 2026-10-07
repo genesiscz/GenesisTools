@@ -108,6 +108,8 @@ export interface TipViews {
     views: Map<string, string[] | null>;
     /** `<head_sha>:<path>` → the path the file has at the tip, when it was renamed since. */
     renames: Map<string, string>;
+    /** The checkout is on the MR: HEAD is the tip or descends from it, so a different file there is local work. */
+    checkoutFollowsTip: boolean;
 }
 
 export interface RenderMarkdownOpts {
@@ -119,6 +121,8 @@ export interface RenderMarkdownOpts {
     anchorViews?: Map<string, string[]>;
     /** With the tip, each thread shows the tip and a divergence label, and the checkout only when it differs. */
     tip?: TipViews;
+    /** Discussion id → its review id (`T03`, `Y01`). */
+    refs?: Map<string, string>;
     /** Extra bullets under "Next steps"; `{iid}` becomes the MR iid. */
     nextSteps?: string[];
 }
@@ -201,7 +205,7 @@ function viewBlock(lines: string[], anchor: number, context: number, path: strin
 
     if (sliced.length === 0) {
         return {
-            range: `${lo}–${hi}`,
+            range: `line ${anchor}`,
             block: `_(the file has ${lines.length} lines; line ${anchor} is past its end)_`,
         };
     }
@@ -248,18 +252,25 @@ function tipThreadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts, t
     const divergence = threadDivergence(d, opts);
     const tipPath = tip.renames.get(`${pos?.head_sha}:${file}`) ?? file;
     const tipLines = tip.views.get(tipPath) ?? null;
-    const tipLine = divergence?.tipLine ?? line;
+    const tipLine = divergence?.tipLine ?? divergence?.nearLine ?? line;
     const reviewerLines = opts.anchorViews?.get(`${pos?.head_sha}:${file}`) ?? null;
     const localPath = resolve(opts.cwd, tipPath);
     const localLines = readLocalFile(localPath);
-    const localDiffers = localLines !== null && tipLines !== null && localLines.join("\n") !== tipLines.join("\n");
+    // A checkout on another branch holds another version, not local work on this MR.
+    const localDiffers =
+        tip.checkoutFollowsTip &&
+        localLines !== null &&
+        tipLines !== null &&
+        localLines.join("\n") !== tipLines.join("\n");
     const noteCount = d.notes?.length ?? 0;
     const label = removedLine ? "comment on a removed line" : (divergence?.text ?? "unknown");
+    const ref = (d.id && opts.refs?.get(d.id)) || `Thread ${idx + 1}`;
     const blocks: BlockInput[] = [
-        { h2: `Thread ${idx + 1} — \`${file}\`:${line} · ${label}` },
+        { h2: `${ref} — \`${file}\`:${line} · ${label}` },
         {
             ul: [
                 `**File**: ${fileLink(localPath, tipLine || null)}`,
+                `**Discussion**: \`${d.id ?? "?"}\``,
                 `**Divergence**: ${label}`,
                 `**Reviewer's sha**: \`${shortSha(pos?.head_sha)}\` · **MR tip**: \`${shortSha(tip.sha)}\``,
             ],
@@ -331,6 +342,52 @@ function threadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts): Blo
         (d.notes ?? []).map(noteBlock),
         { hr: true },
     ];
+}
+
+/** The receive mode's compact view: one line per unresolved thread, with its id, anchor and divergence. */
+export function receiveIndex(discussions: Discussion[], opts: RenderMarkdownOpts, command: string): string {
+    const threads = unresolvedThreads(discussions);
+    const lines = [
+        `=== GitLab MR review received: ${opts.project}!${opts.mrIid} ===`,
+        `Unresolved threads: ${threads.length} of ${discussions.length} discussions${opts.tip ? ` | MR tip ${shortSha(opts.tip.sha)}` : ""}`,
+        "",
+    ];
+
+    threads.forEach((d, idx) => {
+        const pos = d.notes?.[0]?.position;
+        const first = d.notes?.[0];
+        const ref = (d.id && opts.refs?.get(d.id)) || `thread${idx + 1}`;
+        const removed = pos?.new_line == null && pos?.old_line != null;
+        const label = removed ? "removed line" : (threadDivergence(d, opts)?.text ?? "unknown");
+        const body = String(first?.body ?? "")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        lines.push(
+            `  ${ref}  ${pos?.new_path ?? pos?.old_path ?? "?"}:${pos?.new_line ?? pos?.old_line ?? "?"}  @${first?.author?.username ?? "?"}  ${d.notes?.length ?? 0}n  ${label}  ${body.length > 60 ? `${body.slice(0, 59)}…` : body}`
+        );
+    });
+
+    const sample = threads[0]?.id ? (opts.refs?.get(threads[0].id) ?? "T01") : "T01";
+    lines.push("", `Expand: ${command} --expand ${sample}`, `Markdown: ${command} --md`);
+
+    return `${lines.join("\n")}\n`;
+}
+
+/** The full sections of the chosen threads, by review id (`T03`) or discussion id prefix. */
+export function expandThreads(discussions: Discussion[], opts: RenderMarkdownOpts, ids: string[]): string {
+    const threads = unresolvedThreads(discussions);
+    const wanted = ids.map((id) => id.trim()).filter(Boolean);
+    const blocks: BlockInput[] = wanted.map((id) => {
+        const index = threads.findIndex(
+            (d) => (d.id && opts.refs?.get(d.id)?.toUpperCase() === id.toUpperCase()) || (d.id ?? "").startsWith(id)
+        );
+        const thread = threads[index];
+
+        return thread ? threadBlocks(thread, index, opts) : `_${id}: no unresolved thread has this id._`;
+    });
+
+    return json2md(blocks);
 }
 
 /** One section per unresolved diff-attached thread: every note, the local window and the frozen view. */
@@ -519,7 +576,13 @@ export async function fetchTipViews(options: {
         })
     );
 
-    return { sha: mr.sha, views, renames };
+    const head = gitResult(options.cwd, ["rev-parse", "HEAD"]);
+    const checkoutFollowsTip =
+        head.exitCode === 0 &&
+        (head.stdout === mr.sha ||
+            gitResult(options.cwd, ["merge-base", "--is-ancestor", mr.sha, "HEAD"]).exitCode === 0);
+
+    return { sha: mr.sha, views, renames, checkoutFollowsTip };
 }
 
 export interface AnchorFetchStats {

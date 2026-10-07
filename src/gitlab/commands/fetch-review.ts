@@ -13,16 +13,20 @@ import { existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { TargetOptions } from "@app/gitlab/commands/shared";
-import { projectBase, resolveProjectApi, restGetPaginated } from "@app/gitlab/lib/client";
+import { currentUser, type ProjectApi, projectBase, resolveProjectApi, restGetPaginated } from "@app/gitlab/lib/client";
 import { FETCH_FORMATS, loadConfig } from "@app/gitlab/lib/config";
+import { assignThreadRefs, idMapPath, loadIdMap, saveIdMap } from "@app/gitlab/lib/ids";
 import {
     collectUnresolvedAnchorPairs,
     type Discussion,
+    expandThreads,
     fetchAnchorViews,
     fetchTipViews,
+    receiveIndex,
     renderMarkdown,
     threadStats,
 } from "@app/gitlab/lib/review-render";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { formatSchema, type OutputMode } from "@genesiscz/utils/json-schema";
 import { out } from "@genesiscz/utils/logger";
@@ -32,6 +36,8 @@ const FORMATS = FETCH_FORMATS;
 const SCHEMA_FORMATS = ["schema", "skeleton", "typescript", "none"] as const;
 
 export interface FetchReviewOptions extends TargetOptions {
+    llm?: boolean;
+    expand?: string;
     cwd?: string;
     out?: string;
     format?: string;
@@ -54,6 +60,20 @@ const status = {
     warn: (msg: string) => (isTty() ? out.log.warn(msg) : out.printlnErr(`⚠  ${msg}`)),
     message: (msg: string) => (isTty() ? out.log.message(msg) : out.printlnErr(msg)),
 };
+
+/** Review ids for the MR's threads, from its stored map (new threads get new ids, the map is saved). */
+async function threadRefs(api: ProjectApi, iid: string, discussions: Discussion[]): Promise<Map<string, string>> {
+    const me = await currentUser(api);
+    const path = idMapPath({ host: api.host, project: api.project, iid: Number(iid) });
+    const map = loadIdMap(path);
+    const threads = discussions
+        .filter((d) => !d.individual_note && d.id)
+        .map((d) => ({ id: d.id ?? "", author: d.notes?.[0]?.author?.username ?? "" }));
+    const refs = assignThreadRefs(map, threads, me.username);
+    saveIdMap(path, map);
+
+    return refs;
+}
 
 export async function runFetchReview(mrIid: string, opts: FetchReviewOptions): Promise<void> {
     const tty = isTty();
@@ -123,7 +143,9 @@ export async function runFetchReview(mrIid: string, opts: FetchReviewOptions): P
         status.success(`Saved discussions JSON → ${outPath}`);
     }
 
-    if (format === "md" || format === "both") {
+    const compact = Boolean(opts.llm || opts.expand);
+
+    if (format === "md" || format === "both" || compact) {
         // The tip first: its git fetch also brings in the reviewers' commits the checkout lacks.
         const tip = await fetchTipViews({
             api,
@@ -145,15 +167,29 @@ export async function runFetchReview(mrIid: string, opts: FetchReviewOptions): P
             `Fetched ${views.size}/${total} anchor view(s) (${gitHits} from local git, ${views.size - gitHits} from the API).`
         );
 
-        const { md, threadCount, totalDiscussions, headShas, files } = renderMarkdown(discussions, {
+        const renderOpts = {
             mrIid,
             project: api.project,
             cwd,
             contextLines,
             anchorViews: views,
             tip,
+            refs: await threadRefs(api, mrIid, discussions),
             nextSteps: config.review.nextSteps,
-        });
+        };
+
+        if (compact) {
+            const command = `${toolCommand("gitlab pr", mrIid, "review", "--receive")}`;
+            out.print(
+                opts.expand
+                    ? expandThreads(discussions, renderOpts, opts.expand.split(","))
+                    : receiveIndex(discussions, renderOpts, command)
+            );
+
+            return;
+        }
+
+        const { md, threadCount, totalDiscussions, headShas, files } = renderMarkdown(discussions, renderOpts);
         if (opts.mdSidecar !== false) {
             const mdPath = `${outPath.replace(/\.json$/, "")}.md`;
             writeFileSync(mdPath, md);
