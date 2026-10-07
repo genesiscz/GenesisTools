@@ -1,8 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import {
     CdpLaunchError,
     COLD_PROFILE_TIMEOUT_MS,
@@ -248,6 +251,14 @@ describe("launchCdpBrowser", () => {
 
 describe("separate recording browser onboarding", () => {
     const installed = () => [{ id: "chrome", name: "Google Chrome" }];
+    let snapshot: ReturnType<typeof env.testing.snapshot>;
+    beforeEach(async () => {
+        snapshot = env.testing.snapshot();
+        env.testing.set("GENESIS_TOOLS_HOME", await mkdtemp(join(tmpdir(), "recording-browser-")));
+    });
+    afterEach(() => {
+        env.testing.restore(snapshot);
+    });
     test("opens the selected installed browser on the allocated endpoint with a unique separate profile", async () => {
         const commands: string[][] = [];
         let killed = 0;
@@ -364,6 +375,7 @@ describe("separate recording browser onboarding", () => {
             })
         ).rejects.toThrow("fixture spawn refused");
         expect(attempted).toBe(1);
+        expect(await readdir(toolDataDir("chrome-devtools", "recording-browsers"))).toEqual([]);
     });
 });
 

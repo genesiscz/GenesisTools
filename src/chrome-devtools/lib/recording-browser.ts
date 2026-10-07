@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { abortableSleep } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
@@ -147,6 +147,9 @@ export async function openRecordingBrowser(options: {
         return { ...result, pid: result.pid, userDataDir: result.userDataDir, browserId: options.browserId, logPath };
     } catch (error) {
         cancelOwned();
+        await rm(directory, { recursive: true, force: true }).catch((cleanupError) => {
+            logger.debug({ error: cleanupError, directory }, "recording browser directory cleanup failed");
+        });
         throw error;
     } finally {
         options.signal?.removeEventListener("abort", cancelOwned);
