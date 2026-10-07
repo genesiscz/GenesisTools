@@ -184,6 +184,8 @@ export interface CheckInput {
     /** The MR diff, for new findings' anchors; null in receive mode. */
     files: DiffFile[] | null;
     rules: DraftRules;
+    /** The MR the command targets; a file written for another MR is refused as a whole. */
+    iid?: number;
 }
 
 /** A text to be posted is empty only when it has no text: a ` | ` in it is a table or prose, not a placeholder. */
@@ -336,6 +338,15 @@ export function checkJudgements(input: CheckInput): CheckResult {
             id: warning.id,
             line: warning.line,
             message: warning.message,
+        });
+    }
+
+    // An N item names no MR-owned id, so only the file's own MR keeps a copied file off this MR.
+    if (input.iid !== undefined && input.judgements.mr !== undefined && input.judgements.mr !== input.iid) {
+        errors.push({
+            id: "file",
+            line: 1,
+            message: `this file was written for !${input.judgements.mr}, not !${input.iid}; run \`review skeleton\` for !${input.iid}`,
         });
     }
 

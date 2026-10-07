@@ -194,6 +194,7 @@ async function runCheck(iid: string, opts: JudgementOptions): Promise<void> {
         known: items.known,
         files,
         rules: config.review.draftRules,
+        iid: Number(iid),
     });
 
     for (const warning of result.warnings) {
@@ -447,7 +448,13 @@ async function runPost(iid: string, opts: PostOptions): Promise<void> {
         loadConfig(),
     ]);
     const selected = new Set([...ids, ...answers].map((id) => id.trim().toUpperCase()).filter(Boolean));
-    const check = checkJudgements({ judgements, known: items.known, files, rules: config.review.draftRules });
+    const check = checkJudgements({
+        judgements,
+        known: items.known,
+        files,
+        rules: config.review.draftRules,
+        iid: Number(iid),
+    });
     const blocking = blockingErrors({
         errors: check.errors,
         selected,

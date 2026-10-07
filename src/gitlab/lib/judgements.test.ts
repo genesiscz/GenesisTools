@@ -195,6 +195,26 @@ describe("judgements", () => {
         expect(result.warnings.map((w) => w.message)).toContain(ownThread);
     });
 
+    test("a file written for another MR is refused as a whole", () => {
+        const input = (text: string): CheckInput => ({
+            judgements: parseJudgements(text),
+            known: KNOWN,
+            files: FILES,
+            rules: RULES,
+            iid: 42,
+        });
+
+        expect(checkJudgements(input(GOOD)).errors).toEqual([]);
+        expect(checkJudgements(input(GOOD.replace("# MR !42", "# MR !43"))).errors).toEqual([
+            {
+                id: "file",
+                line: 1,
+                message: "this file was written for !43, not !42; run `review skeleton` for !42",
+            },
+        ]);
+        expect(parseJudgementsFile(SafeJSON.stringify({ mr: 43, items: [] }), "x.json").mr).toBe(43);
+    });
+
     test("a move may keep the draft's text: no rewording needed", () => {
         const move = [
             "# D01 Is this still needed · draft 22970 · src/lock.ts:2",

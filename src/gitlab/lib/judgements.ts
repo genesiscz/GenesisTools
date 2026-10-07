@@ -83,6 +83,8 @@ export interface Judgements {
     /** What the reader repaired or could not read, with the line. */
     warnings: JudgementWarning[];
     format: "md" | "json";
+    /** The MR the file was written for: `# MR !42 …` in markdown, `mr` in JSON; absent when it does not say. */
+    mr?: number;
 }
 
 /** The field names the flows use; anything else is reported and ignored. */
@@ -256,6 +258,7 @@ export function parseJudgements(text: string): Judgements {
     const header = new Map<string, string>();
     const items: JudgementItem[] = [];
     const sections = new Map<string, string>();
+    const result: Judgements = { header, items, sections, warnings, format: "md" };
 
     doc.sections.forEach((section, index) => {
         const item = itemFromSection(section, warnings);
@@ -266,6 +269,12 @@ export function parseJudgements(text: string): Judgements {
         }
 
         if (index === 0 && items.length === 0) {
+            const mr = /\bMR\s*!(\d+)/i.exec(section.title);
+
+            if (mr) {
+                result.mr = Number(mr[1]);
+            }
+
             for (const field of [...doc.preamble.fields, ...section.fields]) {
                 header.set(canonicalField(field.key) ?? field.key, field.value.trim());
             }
@@ -276,7 +285,7 @@ export function parseJudgements(text: string): Judgements {
         sections.set(section.title.trim(), section.body);
     });
 
-    return { header, items, sections, warnings, format: "md" };
+    return result;
 }
 
 // ─── anchors ───────────────────────────────────────────────────────────────────
@@ -383,6 +392,10 @@ export function parseJudgementsJson(value: unknown): Judgements {
 
     if (value.overall !== undefined) {
         result.header.set("Overall", asString(value.overall));
+    }
+
+    if (typeof value.mr === "number" || (typeof value.mr === "string" && /^\d+$/.test(value.mr))) {
+        result.mr = Number(value.mr);
     }
 
     for (const [name, body] of Object.entries(isRecord(value.sections) ? value.sections : {})) {
