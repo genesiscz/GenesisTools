@@ -703,12 +703,23 @@ func cmdSee(appName _: String) {
 private func workflowOwnsFocusedWindow(_ window: ObservedWindow, focused: CFTypeRef) -> Bool {
     guard CFGetTypeID(focused) == AXUIElementGetTypeID() else { return false }
     let deadline = Date().addingTimeInterval(min(0.5, workflowRemaining() ?? 0.5))
+    // Each element read carries its own timeout, bounded by what is left of the deadline. The
+    // observed window's own reference is left alone: later actions rely on its longer timeout.
+    let bound: (AXUIElement) -> Void = { element in
+        _ = AXUIElementSetMessagingTimeout(element, Float(max(0.05, deadline.timeIntervalSinceNow)))
+    }
     return focusedWindowBelongsToOwner(owner: window.ax, focused: focused) { owner in
         guard Date() < deadline, CFGetTypeID(owner) == AXUIElementGetTypeID() else { return [] }
         let element = owner as! AXUIElement
+        if element !== window.ax { bound(element) }
         let declared = axAttribute(element, "AXSheets") as? [AXUIElement] ?? []
+        guard Date() < deadline else { return [] }
         let children = axChildren(element)
-        return (declared + children).filter { axStringAttribute($0, "AXRole") == "AXSheet" }
+        return attachedSheetCandidates(declared + children, focused: focused, deadline: deadline) { candidate in
+            let child = candidate as! AXUIElement
+            bound(child)
+            return axStringAttribute(child, "AXRole") == "AXSheet"
+        }
     }
 }
 

@@ -22,3 +22,27 @@ public func focusedWindowBelongsToOwner(
     }
     return false
 }
+
+/// The sheets among one node's candidates (its `AXSheets` and children), read one at a time.
+///
+/// Each role read is a round trip to the app, so the deadline is checked before every one, and
+/// a slow provider ends the scan instead of holding up input. A candidate that IS the focused
+/// element is tried first: when it is a sheet, no other candidate's role is read at all.
+public func attachedSheetCandidates(
+    _ candidates: [CFTypeRef],
+    focused: CFTypeRef,
+    deadline: Date,
+    now: () -> Date = Date.init,
+    isSheet: (CFTypeRef) -> Bool
+) -> [CFTypeRef] {
+    if let hit = candidates.first(where: { CFEqual($0, focused) }), now() < deadline, isSheet(hit) {
+        return [hit]
+    }
+    var sheets: [CFTypeRef] = []
+    for candidate in candidates {
+        guard now() < deadline else { break }
+        if CFEqual(candidate, focused) || sheets.contains(where: { CFEqual($0, candidate) }) { continue }
+        if isSheet(candidate) { sheets.append(candidate) }
+    }
+    return sheets
+}

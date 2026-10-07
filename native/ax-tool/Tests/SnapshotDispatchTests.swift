@@ -532,3 +532,41 @@ extension SnapshotDispatchTests {
         XCTAssertNil(annotationWindowIndex(candidates: [], capturedWindowID: 8))
     }
 }
+
+final class AttachedSheetScanTests: XCTestCase {
+    private let far = Date().addingTimeInterval(60)
+
+    func testFocusedSheetIsAcceptedWithoutReadingAnyOtherRole() {
+        var reads: [String] = []
+        let found = attachedSheetCandidates(["a", "b", "save"].map { $0 as NSString }, focused: "save" as NSString, deadline: far) {
+            reads.append($0 as! String)
+            return true
+        }
+        XCTAssertEqual(found.map { $0 as! String }, ["save"])
+        XCTAssertEqual(reads, ["save"])
+    }
+
+    func testScanStopsAtTheDeadlineBetweenRoleReads() {
+        var clock = Date()
+        let deadline = clock.addingTimeInterval(1)
+        var reads: [String] = []
+        let found = attachedSheetCandidates(["a", "b", "c"].map { $0 as NSString }, focused: "missing" as NSString,
+                                            deadline: deadline, now: { clock }) { candidate in
+            reads.append(candidate as! String)
+            // A slow provider: this one read uses up the whole budget.
+            clock = clock.addingTimeInterval(2)
+            return true
+        }
+        XCTAssertEqual(reads, ["a"])
+        XCTAssertEqual(found.map { $0 as! String }, ["a"])
+    }
+
+    func testNestedChainStillFindsADeeperFocusedSheet() {
+        let tree = ["owner": ["toolbar", "save"], "save": ["go-to-folder"]]
+        let roles: Set<String> = ["save", "go-to-folder"]
+        XCTAssertTrue(focusedWindowBelongsToOwner(owner: "owner" as NSString, focused: "go-to-folder" as NSString) { node in
+            attachedSheetCandidates((tree[node as! String] ?? []).map { $0 as NSString },
+                                    focused: "go-to-folder" as NSString, deadline: self.far) { roles.contains($0 as! String) }
+        })
+    }
+}
