@@ -95,6 +95,33 @@ final class ReviewDiffTests: XCTestCase {
         XCTAssertEqual(reloaded.comments.map(\.id), [a.id, b.id])
     }
 
+    @MainActor
+    func testAnEditQueuedBehindAFailedAdditionIsWrittenWithIt() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("comments-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let store = ReviewCommentStore(repo: directory, directory: directory)
+        let file = DiffFile(id: "a", path: "a", status: .modified, additions: 1, deletions: 0,
+                            oldContents: "", newContents: "first\nsecond\n")
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        let a = try XCTUnwrap(store.add(CommentInput(editingID: nil, fileID: "a", side: .additions,
+                                                     startLine: 1, endLine: 1, body: "A"), files: [file]))
+        // The writer queue is serial: the addition fails, permissions recover, then the edit runs.
+        let path = directory.path
+        ReviewCommentStore.writer.async {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: path)
+        }
+        store.edit(id: a.id, body: "edited")
+        await store.flush()
+        XCTAssertNil(store.saveError)
+        XCTAssertEqual(store.comments.map(\.body), ["edited"])
+        let reloaded = ReviewCommentStore(repo: directory, directory: directory)
+        XCTAssertEqual(reloaded.comments.map(\.body), ["edited"])
+    }
+
     func testRemoteDraftOwnershipIncludesHostProjectNumberAndProvider() throws {
         let identity = PRIdentity(provider: "github", host: "github.com", project: "example/app", number: 7)
         let owner = PRDraftOwnership(pr: identity, headSha: "reviewed-head", draftID: "draft-1")

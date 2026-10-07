@@ -291,14 +291,15 @@ final class ReviewCommentStore {
         }
     }
 
-    /// A change written to disk in the background. A failed write stays here, marked, so the
-    /// edit stays visible and rides along with the next save instead of being lost.
+    /// A change written to disk in the background. Each write also carries the patches of every
+    /// change still pending before it, so a later edit never reaches disk without the addition
+    /// it depends on. A failed change stays here, marked, until a later write carries it.
     private struct Pending {
         let id: UUID
         let patches: [Patch]
         var failed = false
     }
-    private static let writer = DispatchQueue(label: "review.comments.writer", qos: .utility)
+    static let writer = DispatchQueue(label: "review.comments.writer", qos: .utility)
     private static let registryLock = NSLock()
     private static let registry = NSHashTable<ReviewCommentStore>.weakObjects()
     static let changed = Notification.Name("ReviewCommentStore.changed")
@@ -339,9 +340,9 @@ final class ReviewCommentStore {
             old[row.id] == row ? nil : Patch(before: old[row.id], after: row)
         } + projection.filter { new[$0.id] == nil }.map { Patch(before: $0, after: nil) }
         guard !patches.isEmpty else { return }
-        let retried = pending.filter(\.failed).flatMap(\.patches)
-        pending.removeAll(where: \.failed)
-        let change = Pending(id: UUID(), patches: retried + patches)
+        let change = Pending(id: UUID(), patches: patches)
+        let written = pending.flatMap(\.patches) + patches
+        let covered = Set(pending.map(\.id) + [change.id])
         pending.append(change)
         projection = comments
         let target = file
@@ -350,7 +351,7 @@ final class ReviewCommentStore {
                 try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
                 return try FileLock.withLock(target) {
                     var rows = try Self.read(target)
-                    change.patches.forEach { $0.apply(to: &rows) }
+                    written.forEach { $0.apply(to: &rows) }
                     let encoder = JSONEncoder()
                     encoder.dateEncodingStrategy = .iso8601
                     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -361,7 +362,7 @@ final class ReviewCommentStore {
             DispatchQueue.main.async {
                 switch result {
                 case .success(let rows):
-                    self.pending.removeAll { $0.id == change.id }
+                    self.pending.removeAll { covered.contains($0.id) }
                     Self.registryLock.lock()
                     let stores = Self.registry.allObjects.filter { $0.file == target }
                     Self.registryLock.unlock()
