@@ -12,7 +12,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, posix, resolve } from "node:path";
 import { type ProjectApi, projectBase, restGet, restGetPaginated } from "@app/gitlab/lib/client";
-import type { GateRunner, ReviewGate } from "@app/gitlab/lib/config";
+import { type GateRunner, IMPACT_SOURCES, type ImpactSource, type ReviewGate } from "@app/gitlab/lib/config";
 import { gitResult } from "@app/gitlab/lib/git";
 import { errorMessage, HttpError } from "@app/gitlab/lib/http";
 import { pool } from "@app/gitlab/lib/pool";
@@ -119,6 +119,8 @@ export interface PrReviewFacts {
     impactScanned: number;
     gates: PrReviewGate[];
     gateRunner: GateRunner;
+    /** Advice when no worktree has the MR branch; null means the built-in `git worktree add` line. */
+    worktreeHint?: string | null;
     /** Changed test files plus the test next to each changed source file (found only with a checkout). */
     testPaths: string[];
     /** Partial failures: the facts are real, a part is missing. */
@@ -652,9 +654,7 @@ export function branchDiff(repoPath: string, target: string, source: string): Di
 
 // ─── collect ───────────────────────────────────────────────────────────────────
 
-export const IMPACT_SOURCES = ["api", "git"] as const;
-/** `api`: one diffs request per other MR, capped. `git`: fetch every open branch and diff locally, no cap. */
-export type ImpactSource = (typeof IMPACT_SOURCES)[number];
+export { IMPACT_SOURCES, type ImpactSource };
 
 export interface CollectOptions {
     api: ProjectApi;
@@ -673,6 +673,8 @@ export interface CollectOptions {
     impactLimit?: number;
     gates?: ReviewGate[];
     gateRunner?: GateRunner;
+    /** The config's `review.worktreeHint`, carried into the facts for the report. */
+    worktreeHint?: string | null;
     concurrency?: number;
     onProgress?: (message: string) => void;
 }
@@ -921,6 +923,7 @@ export async function collectPrReviewFacts(options: CollectOptions): Promise<PrR
         impactScanned,
         gates: selectGates(options.gates ?? [], files, exists),
         gateRunner: options.gateRunner ?? "list",
+        worktreeHint: options.worktreeHint ?? null,
         testPaths: testCandidates(files, exists),
         warnings,
     };

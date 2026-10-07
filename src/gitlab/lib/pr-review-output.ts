@@ -57,7 +57,11 @@ function worktreeLine(facts: PrReviewFacts): string {
     }
 
     if (!facts.worktree) {
-        return `⚠️ Worktree: none has \`${facts.sourceBranch}\` checked out. The links point at \`${facts.repoPath}\`, which is NOT the MR code. Create one with \`git worktree add <dir> ${facts.sourceBranch}\`, then re-run.`;
+        const advice = facts.worktreeHint
+            ? facts.worktreeHint.replaceAll("{branch}", facts.sourceBranch).replaceAll("{iid}", String(facts.iid))
+            : `Create one with \`git worktree add <dir> ${facts.sourceBranch}\`, then re-run.`;
+
+        return `⚠️ Worktree: none has \`${facts.sourceBranch}\` checked out. The links point at \`${facts.repoPath}\`, which is NOT the MR code. ${advice}`;
     }
 
     if (facts.worktreeHead !== facts.headSha) {

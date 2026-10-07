@@ -195,6 +195,14 @@ describe("impact scan", () => {
 describe("gates", () => {
     const files = parseUnifiedDiff(GIT_DIFF);
 
+    test("the impact source and the worktree hint come from the config, checked", () => {
+        expect(mergeConfig({}, NEUTRAL_CONFIG).review).toMatchObject({ impactSource: "api", worktreeHint: null });
+        expect(mergeConfig({ review: { impactSource: "git" } }, NEUTRAL_CONFIG).review.impactSource).toBe("git");
+        expect(() => mergeConfig({ review: { impactSource: "ftp" } }, NEUTRAL_CONFIG)).toThrow(
+            "review.impactSource must be one of api, git"
+        );
+    });
+
     test("no gates configured means no gates, and the config default is empty", () => {
         expect(mergeConfig({}, NEUTRAL_CONFIG).review.gates).toEqual([]);
         expect(selectGates([], files)).toEqual([]);
@@ -610,6 +618,17 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
 
         expect(md).toContain("[util.ts:2](file:///work/app-tidy/src/lib/util.ts#L2)");
         expect(md).toContain("Worktree: `/work/app-tidy` (HEAD is the MR head)");
+    });
+
+    test("without a worktree on the branch the report says so, with the configured advice when there is one", () => {
+        const none = { ...facts, repoPath: "/work/app", worktree: null };
+
+        expect(renderPrReviewMarkdown(none)).toContain(
+            "which is NOT the MR code. Create one with `git worktree add <dir> feature/tidy`, then re-run."
+        );
+        expect(
+            renderPrReviewMarkdown({ ...none, worktreeHint: "Run `tool worktree init --pr {iid}` ({branch})." })
+        ).toContain("which is NOT the MR code. Run `tool worktree init --pr 42` (feature/tidy).");
     });
 
     test("the --llm view names refs and --expand prints one in full", () => {

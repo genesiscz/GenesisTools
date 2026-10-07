@@ -37,7 +37,6 @@ import {
     collectPrReviewFacts,
     DEFAULT_IMPACT_LIMIT,
     IMPACT_SOURCES,
-    type ImpactSource,
     type PrReviewFacts,
 } from "@app/gitlab/lib/pr-review";
 import {
@@ -98,14 +97,12 @@ interface FactsKey {
 /** The defaults of the give mode. */
 interface ReviewDoor {
     format: Format;
-    impactSource: ImpactSource;
     /** The report path when `--out` is not given. */
     defaultReport: (key: FactsKey, draftsOnly: boolean) => string;
 }
 
 const PR_REVIEW: ReviewDoor = {
     format: "json",
-    impactSource: "api",
     defaultReport: (key, draftsOnly) => join(tmpdir(), `${factsBaseName(key)}${draftsOnly ? "-drafts" : ""}.md`),
 };
 
@@ -190,7 +187,7 @@ export function registerPrReview(pr: Command): Command {
             )
             .option(
                 "--impact-source [source]",
-                `--give: ${IMPACT_SOURCES.join(" | ")} (default ${PR_REVIEW.impactSource}); api reads each MR's diff from GitLab, git fetches every open branch and diffs locally (needs a checkout, no cap)`
+                `--give: ${IMPACT_SOURCES.join(" | ")} (default: review.impactSource in the config, else api); api reads each MR's diff from GitLab, git fetches every open branch and diffs locally (needs a checkout, no cap)`
             )
             .option(
                 "--drafts-only",
@@ -405,7 +402,7 @@ async function runPrReview(mrIid: string, opts: Options, door: ReviewDoor): Prom
     const format = await pickFormat(opts, door);
     const impactSource =
         opts.impactSource === undefined
-            ? door.impactSource
+            ? (await loadConfig()).review.impactSource
             : await pickEnum(IMPACT_SOURCES, opts.impactSource, "--impact-source");
 
     if (!format || !impactSource) {
@@ -447,6 +444,7 @@ async function runPrReview(mrIid: string, opts: Options, door: ReviewDoor): Prom
             impactSource,
             gates: config?.review.gates ?? [],
             gateRunner: config?.review.runner ?? "list",
+            worktreeHint: config?.review.worktreeHint ?? null,
             onProgress: (message) => progress(`ℹ  ${message}`),
         }));
 

@@ -81,6 +81,10 @@ export const GATE_RUNNERS = ["list", "parallel"] as const;
 /** `list`: the commands one after another. `parallel`: each gate as a background `tools task` session, then every exit code. */
 export type GateRunner = (typeof GATE_RUNNERS)[number];
 
+export const IMPACT_SOURCES = ["api", "git"] as const;
+/** `api`: one diffs request per other MR, capped. `git`: fetch every open branch and diff locally, no cap. */
+export type ImpactSource = (typeof IMPACT_SOURCES)[number];
+
 export const FETCH_FORMATS = ["json", "md", "both"] as const;
 export type FetchFormat = (typeof FETCH_FORMATS)[number];
 
@@ -94,8 +98,12 @@ export interface ReviewConfig {
     gates: ReviewGate[];
     runner: GateRunner;
     fetch: FetchReviewConfig;
-    /** Extra bullets under "Next steps" in the `fetch-review` report. */
+    /** Extra bullets under "Next steps" in the receive report. */
     nextSteps: string[];
+    /** How `review --give` scans the other open MRs when `--impact-source` is not given. */
+    impactSource: ImpactSource;
+    /** Replaces the "create a worktree" advice when no worktree has the MR branch; `{branch}` and `{iid}` are filled in. */
+    worktreeHint: string | null;
 }
 
 export interface GitLabToolConfig {
@@ -129,7 +137,14 @@ export const NEUTRAL_CONFIG: GitLabToolConfig = {
         noteTags: [],
         contentCheckNote: null,
     },
-    review: { gates: [], runner: "list", fetch: { format: "json", contextLines: 3 }, nextSteps: [] },
+    review: {
+        gates: [],
+        runner: "list",
+        fetch: { format: "json", contextLines: 3 },
+        nextSteps: [],
+        impactSource: "api",
+        worktreeHint: null,
+    },
 };
 
 /** `NEUTRAL_CONFIG` under `defaults.config`, checked like a config file. */
@@ -278,6 +293,14 @@ export function mergeConfig(raw: unknown, base: GitLabToolConfig = DEFAULT_CONFI
         );
     }
 
+    const impactSource = review.impactSource ?? d.review.impactSource;
+
+    if (!IMPACT_SOURCES.includes(impactSource as ImpactSource)) {
+        throw new Error(
+            `gitlab config: review.impactSource must be one of ${IMPACT_SOURCES.join(", ")}, got ${String(impactSource)}`
+        );
+    }
+
     const contextLines = fetch.contextLines ?? d.review.fetch.contextLines;
 
     if (typeof contextLines !== "number" || !Number.isInteger(contextLines) || contextLines < 0) {
@@ -297,6 +320,8 @@ export function mergeConfig(raw: unknown, base: GitLabToolConfig = DEFAULT_CONFI
             runner: runner as GateRunner,
             fetch: { format: fetchFormat as FetchFormat, contextLines },
             nextSteps: stringList(review.nextSteps, "review.nextSteps", d.review.nextSteps),
+            impactSource: impactSource as ImpactSource,
+            worktreeHint: stringOrNull(review.worktreeHint, "review.worktreeHint", d.review.worktreeHint),
         },
     };
 }
