@@ -290,6 +290,11 @@ export class AiProxyConfigStore {
         });
     }
 
+    /** Runs `fn` on the config on disk while holding the config lock, and writes nothing. */
+    async readLocked<T>(fn: (config: AiProxyConfig) => T | Promise<T>): Promise<T> {
+        return this.storage.withConfigLock(async () => fn(await this.readFromDisk()));
+    }
+
     async mutate(fn: (config: AiProxyConfig) => void | Promise<void>): Promise<AiProxyConfig> {
         return this.storage.withConfigLock(async () => {
             const current = await this.readFromDisk();

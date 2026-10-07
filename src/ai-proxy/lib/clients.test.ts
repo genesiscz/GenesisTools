@@ -8,9 +8,11 @@ import {
     clientProviderDenial,
     OWNER_CLIENT_NAME,
     resolveClient,
+    rollbackClientKey,
     SUBSCRIPTION_PROVIDER_TYPES,
     validateClients,
 } from "@app/ai-proxy/lib/clients";
+import { getDefaultConfig } from "@app/ai-proxy/lib/config-store";
 import type { AiProxyClientConfig, AiProxyConfig } from "@app/ai-proxy/lib/types";
 import { env } from "@genesiscz/utils/env";
 import { _resetSecretsForTest, invalidateMasterKeyCache, secrets, secureRef } from "@genesiscz/utils/security";
@@ -257,5 +259,37 @@ describe("clientProviderDenial", () => {
         } as unknown as Parameters<typeof clientProviderDenial>[0];
         expect(clientProviderDenial(malformed, "xai-api-key")).toBeNull();
         expect(clientProviderDenial(malformed, "anthropic-subscription")).toContain("subscription");
+    });
+});
+describe("rollbackClientKey", () => {
+    function fixture(clients: AiProxyClientConfig[], stored: string | undefined) {
+        const deleted: string[] = [];
+        const vault = {
+            get: async () => stored,
+            delete: async (path: string) => {
+                deleted.push(path);
+                return true;
+            },
+        };
+        const store = {
+            readLocked: async <T>(fn: (config: AiProxyConfig) => T | Promise<T>) =>
+                fn({ ...getDefaultConfig(), clients }),
+        };
+        return { deleted, vault, store };
+    }
+
+    it("drops the key a failed add stored, and never a key another writer now owns", async () => {
+        const mine = "m".repeat(24);
+        const free = fixture([], mine);
+        expect(await rollbackClientKey({ name: "side", path: "p/side", key: mine, ...free })).toBe(true);
+        expect(free.deleted).toEqual(["p/side"]);
+
+        // A second writer added the same name after the failed write.
+        const taken = fixture([{ name: "side", key: "o".repeat(24) }], mine);
+        expect(await rollbackClientKey({ name: "side", path: "p/side", key: mine, ...taken })).toBe(false);
+        // A second writer overwrote the vault path with its own key.
+        const overwritten = fixture([], "o".repeat(24));
+        expect(await rollbackClientKey({ name: "side", path: "p/side", key: mine, ...overwritten })).toBe(false);
+        expect([...taken.deleted, ...overwritten.deleted]).toEqual([]);
     });
 });

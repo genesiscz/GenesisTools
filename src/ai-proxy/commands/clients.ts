@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { validateClients } from "@app/ai-proxy/lib/clients";
+import { rollbackClientKey, validateClients } from "@app/ai-proxy/lib/clients";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import { getAiProxyConfigStore } from "@app/ai-proxy/lib/config-store";
 import type { AiProxyClientConfig, AiProxyProviderType } from "@app/ai-proxy/lib/types";
@@ -142,13 +142,20 @@ export async function clientsAdd(input: {
             // The name is reserved by the config lock before its vault key is touched.
             progress.stage = "vault";
             client.key = await store.set(clientKeyPath(input.name), key);
-            progress.storedKey = () => store.delete(clientKeyPath(input.name));
+            progress.storedKey = () =>
+                rollbackClientKey({
+                    name: input.name,
+                    path: clientKeyPath(input.name),
+                    key,
+                    vault: store,
+                    store: getAiProxyConfigStore(),
+                });
             progress.stage = "config";
             current.clients = latest;
         });
     } catch (err) {
         if (progress.stage === "config") {
-            // The name was free under the lock, so the key just stored belongs to no client: drop it.
+            // The key just stored belongs to no client; the rollback re-checks that under the lock.
             await progress.storedKey?.().catch((cleanup: unknown) => {
                 logger.warn({ cleanup, client: input.name }, "ai-proxy: the orphaned client key could not be removed");
             });

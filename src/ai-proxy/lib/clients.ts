@@ -3,7 +3,7 @@ import { statSync } from "node:fs";
 import { extractBearerToken } from "@app/ai-proxy/lib/auth-middleware";
 import type { AiProxyClientConfig, AiProxyConfig, AiProxyProviderType } from "@app/ai-proxy/lib/types";
 import { logger } from "@genesiscz/utils/logger";
-import { isSecureRef, resolveSecret } from "@genesiscz/utils/security";
+import { isSecureRef, resolveSecret, type SecretStore } from "@genesiscz/utils/security";
 import { vaultAdmin } from "@genesiscz/utils/security/SecretStore";
 
 export const OWNER_CLIENT_NAME = "owner";
@@ -38,6 +38,37 @@ export const VALID_PROVIDER_TYPES: ReadonlySet<AiProxyProviderType> = new Set([
     "openai",
     "openrouter",
 ]);
+
+/**
+ * Drops the vault key a failed `clients add` stored, under the config lock: only when no client of
+ * that name is in the config and the vault still holds this run's key. Checked outside the lock, a
+ * second writer could add the same name in between, and the rollback would delete its live key.
+ */
+export async function rollbackClientKey({
+    name,
+    path,
+    key,
+    vault,
+    store,
+}: {
+    name: string;
+    path: string;
+    key: string;
+    vault: Pick<SecretStore, "get" | "delete">;
+    store: { readLocked<T>(fn: (config: AiProxyConfig) => T | Promise<T>): Promise<T> };
+}): Promise<boolean> {
+    return store.readLocked(async (config) => {
+        if (config.clients?.some((client) => client.name === name)) {
+            return false;
+        }
+
+        if ((await vault.get(path)) !== key) {
+            return false;
+        }
+
+        return vault.delete(path);
+    });
+}
 
 export function validateClients(clients: AiProxyClientConfig[] | undefined): string[] {
     if (clients === undefined) {
