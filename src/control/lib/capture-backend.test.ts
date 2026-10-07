@@ -119,37 +119,37 @@ describe("native capture target binding", () => {
         expect(f.calls.filter((args) => args[0] === "act")).toHaveLength(20);
         f.controls.dispose();
     });
-});
 
-it("a bound recording ignores window order/title changes but refuses a closed window or restarted app", async () => {
-    for (const change of ["retitle", "duplicate", "close", "restart"] as const) {
+    it("a bound recording ignores window order/title changes but refuses a closed window or restarted app", async () => {
+        for (const change of ["retitle", "duplicate", "close", "restart"] as const) {
+            const f = captureFixture();
+            expect((await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 })).ok).toBe(true);
+            f[change]();
+            const result = await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 });
+            const refused = change === "close" || change === "restart";
+            expect(result.ok).toBe(!refused);
+            expect(f.calls.filter((args) => args[0] === "window")).toHaveLength(1);
+            expect(f.calls.filter((args) => args[0] === "act")).toHaveLength(refused ? 1 : 2);
+            expect(f.calls.filter((args) => args[0] === "see").at(-1)).toContain("--window-id");
+            f.controls.dispose();
+        }
+    });
+
+    it("focus-stop and explicit focus force a fresh target resolution", async () => {
         const f = captureFixture();
-        expect((await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 })).ok).toBe(true);
-        f[change]();
-        const result = await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 });
-        const refused = change === "close" || change === "restart";
-        expect(result.ok).toBe(!refused);
-        expect(f.calls.filter((args) => args[0] === "window")).toHaveLength(1);
-        expect(f.calls.filter((args) => args[0] === "act")).toHaveLength(refused ? 1 : 2);
-        expect(f.calls.filter((args) => args[0] === "see").at(-1)).toContain("--window-id");
+        await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 });
+        await f.controls.run({ do: "focus-stop", atMs: 0 });
+        await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 });
+        await f.controls.focus({ app: "Fixture" });
+        expect(f.calls.filter((args) => args[0] === "window")).toHaveLength(3);
         f.controls.dispose();
-    }
-});
+    });
 
-it("focus-stop and explicit focus force a fresh target resolution", async () => {
-    const f = captureFixture();
-    await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 });
-    await f.controls.run({ do: "focus-stop", atMs: 0 });
-    await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 });
-    await f.controls.focus({ app: "Fixture" });
-    expect(f.calls.filter((args) => args[0] === "window")).toHaveLength(3);
-    f.controls.dispose();
-});
-
-it("ambiguous AX matches across windows never bind or dispatch", async () => {
-    const f = captureFixture();
-    f.duplicate();
-    expect((await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 })).ok).toBe(false);
-    expect(f.calls.filter((args) => args[0] === "act")).toHaveLength(0);
-    f.controls.dispose();
+    it("ambiguous AX matches across windows never bind or dispatch", async () => {
+        const f = captureFixture();
+        f.duplicate();
+        expect((await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 })).ok).toBe(false);
+        expect(f.calls.filter((args) => args[0] === "act")).toHaveLength(0);
+        f.controls.dispose();
+    });
 });

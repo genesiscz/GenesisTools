@@ -97,7 +97,16 @@ export class NativeCaptureControls {
             return state;
         } catch (error) {
             this.binding = undefined;
-            this.computer.close_session({ app: options.app });
+            // The cleanup must never replace the real error: closing a BUSY session throws BUSY too.
+            try {
+                this.computer.close_session({ app: options.app });
+            } catch (closeError) {
+                logger.debug(
+                    { closeError, app: options.app },
+                    "capture: session cleanup after a failed observation failed"
+                );
+            }
+
             throw error;
         }
     }
