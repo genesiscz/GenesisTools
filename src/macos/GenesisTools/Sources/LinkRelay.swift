@@ -57,7 +57,7 @@ enum LinkRelay {
             .contains { $0.processIdentifier == own }
         start()
         guard registered, mayRunAgain(arguments) else {
-            HubPerf.log("relay: started before \(arguments.first ?? "the settings window")")
+            LinkRelay.note("started before \(arguments.first ?? "the settings window")")
             return
         }
         runAgainAsChild(arguments)
@@ -71,7 +71,7 @@ enum LinkRelay {
         let opened = DispatchSemaphore(value: 0)
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, error in
             if let error {
-                HubPerf.log("relay: did not start: \(error)")
+                LinkRelay.note("did not start: \(error)")
             }
             opened.signal()
         }
@@ -82,13 +82,13 @@ enum LinkRelay {
             Thread.sleep(forTimeInterval: 0.1)
         }
         if !isRunning {
-            HubPerf.log("relay: not running after \(Int(startDeadline)) s; links keep reaching the window faces")
+            LinkRelay.note("not running after \(Int(startDeadline)) s; links keep reaching the window faces")
         }
     }
 
     private static func runAgainAsChild(_ arguments: [String]) -> Never {
         guard let executable = Bundle.main.executablePath else {
-            HubPerf.log("relay: no executable path, this face stays older than the relay")
+            LinkRelay.note("no executable path, this face stays older than the relay")
             return runOn(arguments)
         }
         let child = Process()
@@ -97,10 +97,10 @@ enum LinkRelay {
         do {
             try child.run()
         } catch {
-            HubPerf.log("relay: running \(arguments.first ?? "") again failed: \(error)")
+            LinkRelay.note("running \(arguments.first ?? "") again failed: \(error)")
             return runOn(arguments)
         }
-        HubPerf.log("relay: \(arguments.first ?? "") runs again as pid \(child.processIdentifier), younger than the relay")
+        LinkRelay.note("\(arguments.first ?? "") runs again as pid \(child.processIdentifier), younger than the relay")
         exit(0)
     }
 
@@ -113,18 +113,82 @@ enum LinkRelay {
         }
     }
 
+    /// One line in app-perf.log and in the relay's own journal (LinkRelayJournal.swift).
+    static func note(_ text: String) {
+        HubPerf.log("relay: \(text)")
+        RelayJournal.write(text)
+    }
+
+    private static let heartbeatSeconds = 60.0
+    private nonisolated(unsafe) static var state: RelayJournal.State?
+    private nonisolated(unsafe) static var heartbeat: DispatchSourceTimer?
+    private nonisolated(unsafe) static var terminationSources: [DispatchSourceSignal] = []
+
     /// The relay face itself. Exits at once when another relay holds the lock.
     static func run() -> Never {
-        guard claim() else { exit(0) }
+        RelayJournal.role = "relay"
+        guard claim() else {
+            note("another relay holds the lock, exiting")
+            exit(0)
+        }
+        if let previous = RelayJournal.previousEnd(
+            RelayJournal.readState(),
+            isAlive: { kill($0, 0) == 0 },
+            crashReport: { RelayJournal.crashReport(since: $0) }
+        ) {
+            note(previous)
+        }
+        let now = Date()
+        let started = RelayJournal.State(pid: getpid(), startedAt: now, heartbeatAt: now, cleanExit: false)
+        state = started
+        RelayJournal.writeState(started)
+        endCleanlyOnSignals()
         UserDefaults.standard.register(defaults: ["NSTreatUnknownArgumentsAsOpen": "NO"])
         let app = NSApplication.shared
         app.delegate = relayDelegate
         app.setActivationPolicy(.accessory)
         installBrowserURLForwarder()
         installNotificationClicksForWindowFace()
-        HubPerf.log("relay: running as pid \(getpid())")
+        MainActor.assumeIsolated {
+            // A hung relay holds every link: its stalls and samples land in app-perf.log and logs/hangs/.
+            HangWatch.start()
+        }
+        startHeartbeat()
+        note("running as pid \(getpid()), version \(bundleVersion()), parent pid \(getppid())")
         app.run()
         exit(0)
+    }
+
+    /// On the main queue, so a stale heartbeat in link-relay.json dates the moment the main thread stopped.
+    private static func startHeartbeat() {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + heartbeatSeconds, repeating: heartbeatSeconds, leeway: .seconds(5))
+        timer.setEventHandler {
+            guard var current = state else { return }
+            current.heartbeatAt = Date()
+            state = current
+            RelayJournal.writeState(current)
+        }
+        timer.resume()
+        heartbeat = timer
+    }
+
+    /// A rebuild's reap sends SIGTERM: recorded as a clean end, so only a crash or a SIGKILL reads as one.
+    private static func endCleanlyOnSignals() {
+        for number in [SIGTERM, SIGINT, SIGHUP] {
+            signal(number, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
+            source.setEventHandler {
+                note("ending on signal \(number)")
+                if var current = state {
+                    current.cleanExit = true
+                    RelayJournal.writeState(current)
+                }
+                exit(0)
+            }
+            source.resume()
+            terminationSources.append(source)
+        }
     }
 
     private static func claim() -> Bool {
@@ -145,6 +209,10 @@ private let relayDelegate = LinkRelayDelegate()
 private final class LinkRelayDelegate: NSObject, NSApplicationDelegate {
     /// A local `.html` file, or a link AppKit hands here instead of the URL event.
     func application(_ application: NSApplication, open urls: [URL]) {
+        let files = urls.filter(\.isFileURL).map(\.lastPathComponent)
+        if !files.isEmpty {
+            LinkRelay.note("files handed over: \(files.joined(separator: ", "))")
+        }
         LocalFileHandoff.deliver(urls)
     }
 
@@ -158,9 +226,9 @@ private final class LinkRelayDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if (AppMainWindow.current == .hub || HubSingleInstance.isRunningElsewhere), AppDock.showHub(nil) {
-            HubPerf.log("relay: reopen, showing the hub")
+            LinkRelay.note("reopen, showing the hub")
         } else if let executable = Bundle.main.executablePath {
-            HubPerf.log("relay: reopen, opening the settings window")
+            LinkRelay.note("reopen, opening the settings window")
             let child = Process()
             child.executableURL = URL(fileURLWithPath: executable)
             child.arguments = ["--window"]

@@ -124,6 +124,7 @@ final class BrowserURLForwarder: NSObject {
         // Kept until the deadline: a banner click activates this face again when its completion
         // handler runs, after the action (measured 2026-10-02: focus went back, then the hub returned).
         HubPerf.log("link: focus back to \(target.app.localizedName ?? "the previous app")")
+        RelayJournal.write("focus back to \(target.app.localizedName ?? "the previous app")")
         target.app.activate()
     }
 
@@ -148,9 +149,23 @@ final class BrowserURLForwarder: NSObject {
             if let error {
                 FileHandle.standardError.write(Data("link forward failed: \(error)\n".utf8))
                 HubPerf.log("link forward failed: \(error)")
+                RelayJournal.write("link forward FAILED: \(error)")
             }
         }
         HubPerf.log("link forwarded to a new router instance: \(raw.prefix(80))")
+        let activeFor = Int(Date().timeIntervalSince(activatedAt) * 1000)
+        RelayJournal.write(
+            "link \(RelayJournal.describe(raw)) forwarded; active=\(NSApp.isActive)"
+                + (activeFor < 5000 ? " activated \(activeFor) ms before" : "")
+                + "; came from \(lastOtherApp?.localizedName ?? "unknown")"
+        )
+        if RelayJournal.role != "relay" {
+            RelayJournal.write(
+                LinkRelay.isRunning
+                    ? "this window face is older than the running relay (it restarted after a crash or kill); links come here until the next rebuild"
+                    : "no relay runs; links come to the oldest window face"
+            )
+        }
         yieldActivation()
     }
 
