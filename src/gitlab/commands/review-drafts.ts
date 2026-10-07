@@ -22,6 +22,7 @@ import { dirname, resolve } from "node:path";
 import { runBatchComment } from "@app/gitlab/commands/batch-comment";
 import { type TargetOptions, withProject } from "@app/gitlab/commands/shared";
 import { currentUser, type ProjectApi, resolveProjectApi } from "@app/gitlab/lib/client";
+import { errorMessage } from "@app/gitlab/lib/http";
 import {
     deleteDraft,
     fetchDiscussions,
@@ -41,7 +42,7 @@ import { expectedDraftIds, recordPublished } from "@app/gitlab/lib/review-items"
 import { rewriteLocalImages, uploadToProject } from "@app/gitlab/lib/uploads";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 interface DiscussionsOptions extends TargetOptions {
@@ -530,9 +531,17 @@ async function runPublish(iid: string, opts: PublishOptions): Promise<void> {
 
     out.println(`\n✅ published ${drafts.length} draft(s) on !${iid}`);
 
-    const record = await recordPublished(api, Number(iid), drafts);
+    // The publish landed: a failed bookkeeping read must not turn it into an error a retry cannot repeat.
+    try {
+        const record = await recordPublished(api, Number(iid), drafts);
 
-    if (record.unmatched.length > 0) {
-        out.println(`⚠  no thread found yet for ${record.unmatched.join(", ")}; \`--answers\` cannot reach them`);
+        if (record.unmatched.length > 0) {
+            out.println(`⚠  no thread found yet for ${record.unmatched.join(", ")}; \`--answers\` cannot reach them`);
+        }
+    } catch (error) {
+        logger.warn({ error, iid }, "gitlab: recording the published drafts failed");
+        out.println(
+            `⚠  published, but recording which thread each D id became failed (${errorMessage(error)}); \`--answers\` cannot reach them`
+        );
     }
 }

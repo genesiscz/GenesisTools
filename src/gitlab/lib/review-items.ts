@@ -157,12 +157,14 @@ export async function recordPublished(
     map.published = publishedMap;
 
     published.forEach((draft, i) => {
-        const thread = discussions.find(
-            (d) =>
-                d.author === me.username &&
-                (draft.discussionId
-                    ? d.id === draft.discussionId
-                    : d.path === draft.path && d.line === draft.line && d.body === flatText(draft.note))
+        // A reply draft joins a thread anyone may have started; only a new thread is mine.
+        const thread = discussions.find((d) =>
+            draft.discussionId
+                ? d.id === draft.discussionId
+                : d.author === me.username &&
+                  d.path === draft.path &&
+                  d.line === draft.line &&
+                  d.body === flatText(draft.note)
         );
 
         if (thread && !draft.discussionId) {
