@@ -173,7 +173,7 @@ The reviewer's twin of `--receive`. Read-only: GETs on GitLab, and `git diff` / 
 
 ### Judgements: `review skeleton | check | render`, `comments post`
 
-The agent writes its judgement of a review into ONE markdown file per MR, in the report's own labels. Everything generated (excerpts, links, quoted comments) stays out of it and is added by `render`.
+The agent writes its judgement of a review into ONE judgements file per MR (markdown, or JSON, see below), in the report's own labels. Everything generated (excerpts, links, quoted comments) stays out of it and is added by `render`.
 
 ````markdown
 # T03 The lock stays off · discussion 0539a97f0000 · src/auth/lock.ts:83
