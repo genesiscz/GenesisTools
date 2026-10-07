@@ -550,6 +550,20 @@ final class AttachedSheetScanTests: XCTestCase {
         XCTAssertEqual(reads, ["save"])
     }
 
+    func testFocusedCandidateLookupStopsAtTheDeadline() {
+        var clock = start
+        var reads: [String] = []
+        // Every clock read costs one second, so the deadline passes while the lookup is still scanning.
+        let found = attachedSheetCandidates(["a", "b", "save"].map { $0 as NSString }, focused: "save" as NSString,
+                                            deadline: start.addingTimeInterval(1.5),
+                                            now: { defer { clock = clock.addingTimeInterval(1) }; return clock }) {
+            reads.append($0 as! String)
+            return true
+        }
+        XCTAssertTrue(found.isEmpty)
+        XCTAssertEqual(reads, [])
+    }
+
     func testScanStopsAtTheDeadlineBetweenRoleReads() {
         var clock = Date()
         let deadline = clock.addingTimeInterval(1)

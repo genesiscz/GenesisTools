@@ -35,7 +35,16 @@ public func attachedSheetCandidates(
     now: () -> Date = Date.init,
     isSheet: (CFTypeRef) -> Bool
 ) -> [CFTypeRef] {
-    if now() < deadline, let hit = candidates.first(where: { CFEqual($0, focused) }), isSheet(hit) {
+    // The lookup itself is checked against the deadline per candidate, and again before the role read.
+    var focusedCandidate: CFTypeRef?
+    for candidate in candidates {
+        guard now() < deadline else { return [] }
+        if CFEqual(candidate, focused) {
+            focusedCandidate = candidate
+            break
+        }
+    }
+    if let hit = focusedCandidate, now() < deadline, isSheet(hit) {
         return [hit]
     }
     var sheets: [CFTypeRef] = []
