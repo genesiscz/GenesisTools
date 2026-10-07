@@ -9,7 +9,7 @@ public enum EdgePanelGeometry {
     public static func frame(
         placement: EdgePanelPlacement, size: CGSize, screen: CGRect, visible: CGRect, sideCenterY: CGFloat
     ) -> CGRect {
-        let width = min(max(1, size.width), visible.width)
+        let width = min(max(1, size.width), screen.width)
         let height = min(max(1, size.height), placement == .top ? screen.height : visible.height)
         switch placement {
         case .top:
@@ -17,7 +17,7 @@ public enum EdgePanelGeometry {
         case .right, .left:
             let y = min(max(sideCenterY - height / 2, visible.minY), visible.maxY - height)
             return CGRect(
-                x: placement == .right ? visible.maxX - width : visible.minX, y: y, width: width, height: height)
+                x: placement == .right ? screen.maxX - width : screen.minX, y: y, width: width, height: height)
         }
     }
 

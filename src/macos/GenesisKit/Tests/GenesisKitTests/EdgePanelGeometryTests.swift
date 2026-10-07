@@ -42,6 +42,31 @@ final class EdgePanelGeometryTests: XCTestCase {
         XCTAssertEqual(frame, visible)
     }
 
+    func testSideJoinsPhysicalBezelWhenVisibleFrameIsInset() {
+        let inset = CGRect(x: -1560, y: 150, width: 1520, height: 920)
+        let right = EdgePanelGeometry.frame(placement: .right, size: CGSize(width: 38, height: 200),
+                                            screen: screen, visible: inset, sideCenterY: 600)
+        let left = EdgePanelGeometry.frame(placement: .left, size: CGSize(width: 38, height: 200),
+                                           screen: screen, visible: inset, sideCenterY: 600)
+        XCTAssertEqual(right.maxX, screen.maxX)
+        XCTAssertEqual(left.minX, screen.minX)
+        XCTAssertGreaterThanOrEqual(right.minY, inset.minY)
+    }
+
+    func testShapeJoinsBezelWithConcaveShoulders() {
+        let rect = CGRect(x: 0, y: 0, width: 100, height: 200)
+        let right = EdgePanelShape(placement: .right).path(in: rect)
+        XCTAssertTrue(right.contains(CGPoint(x: 99.9, y: 5)))
+        XCTAssertFalse(right.contains(CGPoint(x: 85, y: 5)))
+        XCTAssertTrue(right.contains(CGPoint(x: 5, y: 100)))
+        let left = EdgePanelShape(placement: .left).path(in: rect)
+        XCTAssertTrue(left.contains(CGPoint(x: 0.1, y: 5)))
+        XCTAssertFalse(left.contains(CGPoint(x: 15, y: 5)))
+        let top = EdgePanelShape(placement: .top).path(in: rect)
+        XCTAssertTrue(top.contains(CGPoint(x: 5, y: 0.1)))
+        XCTAssertFalse(top.contains(CGPoint(x: 5, y: 15)))
+    }
+
     func testMotionFinishesAtExactTargetAndClosingDoesNotOvershoot() {
         XCTAssertEqual(EdgePanelGeometry.motionProgress(0, opening: true), 0)
         XCTAssertEqual(EdgePanelGeometry.motionProgress(1, opening: true), 1)

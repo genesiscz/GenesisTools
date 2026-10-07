@@ -180,9 +180,9 @@ public struct AgentWidgetView: View {
                 WidgetInk.shell.opacity(0.97)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: expanded ? 20 : 14, style: .continuous))
+        .clipShape(EdgePanelShape(placement: placement, shoulder: expanded ? 10 : 7, corner: expanded ? 20 : 12))
         .overlay(
-            RoundedRectangle(cornerRadius: expanded ? 20 : 14, style: .continuous).stroke(
+            EdgePanelShape(placement: placement, shoulder: expanded ? 10 : 7, corner: expanded ? 20 : 12).stroke(
                 .white.opacity(0.10), lineWidth: 0.7)
         )
         .foregroundStyle(.white)
