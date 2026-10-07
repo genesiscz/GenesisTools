@@ -170,6 +170,7 @@ enum HubBench {
             if wants("window") { addWindowSweep() }
             if wants("split") { addSplitSweep() }
             if wants("fold"), model.mode == .prs { addFoldSweep() }
+            if wants("prslist"), model.mode == .prs { addPRListSelect() }
             if wants("activity"), model.mode == .timeline { addActivitySweep() }
             // From another mode (a session's transcript open), opt-in: GENESIS_HUB_BENCH_ONLY=inbox.
             if model.mode == .timeline ? wants("inbox") : model.mode != .inbox && only.contains("inbox") { addInboxSwitch() }
@@ -210,6 +211,20 @@ enum HubBench {
                 for click in clicks {
                     steps.append(Step(scenario: "activity", action: click, delay: 0.7))
                 }
+            }
+        }
+
+        /// `prslist`: select the first PRs of the list in turn (the list redraws for the new selection), 0.7 s
+        /// apart. Measures what one list update costs; with an accessibility client (`GENESIS_HUB_BENCH_AX=1`)
+        /// it grows with the controls on every row.
+        private func addPRListSelect() {
+            order.append("prslist")
+            let prs = model.prs
+            for index in [0, 1, 2, 3, 4, 5, 4, 3, 2, 1] {
+                steps.append(Step(scenario: "prslist", action: {
+                    guard !prs.prs.isEmpty else { return }
+                    prs.select(prs.prs[index % prs.prs.count], opened: false)
+                }, delay: 0.7))
             }
         }
 

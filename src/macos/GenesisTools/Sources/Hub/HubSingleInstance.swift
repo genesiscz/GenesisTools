@@ -76,6 +76,16 @@ enum HubSingleInstance {
         return false
     }
 
+    /// For a window that is already running (a review window's Dock click): post the request and go on.
+    /// `forwardToRunningHub` waits for the answer in a nested run loop, which froze a review window for
+    /// 4.5 s while the hub was busy (stall 2026-10-08 01:50); the hub applies the request when it is free.
+    static func handOff(_ args: [String]) {
+        DistributedNotificationCenter.default().postNotificationName(
+            request, object: UUID().uuidString, userInfo: ["args": args], deliverImmediately: true
+        )
+        HubPerf.log("singleInstance: handed \(args) to the running hub, not waiting for its answer")
+    }
+
     private static func post(_ args: [String]) -> Bool {
         let token = UUID().uuidString
         var answered = false

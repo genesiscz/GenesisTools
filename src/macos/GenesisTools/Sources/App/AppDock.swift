@@ -14,7 +14,7 @@ enum AppDock {
         if HubSingleInstance.isRunningElsewhere {
             HubPerf.log("dock: reopen, handing it to the running hub")
             // Answered through the run loop, so after this callback returns.
-            DispatchQueue.main.async { _ = HubSingleInstance.forwardToRunningHub([]) }
+            DispatchQueue.main.async { HubSingleInstance.handOff([]) }
         }
         return true
     }
@@ -48,7 +48,7 @@ enum AppDock {
         if let hubWindow {
             _ = reopenHub(hubWindow)
         } else if HubSingleInstance.isRunningElsewhere {
-            DispatchQueue.main.async { _ = HubSingleInstance.forwardToRunningHub([]) }
+            DispatchQueue.main.async { HubSingleInstance.handOff([]) }
         } else if let executable = Bundle.main.executablePath {
             HubPerf.log("dock: no hub runs, starting one")
             let process = Process()
