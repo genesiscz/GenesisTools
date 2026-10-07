@@ -27,12 +27,14 @@ struct ReviewSnapshotDemo {
     /// `--toggle`: x on the marked thread (it joins the Fix selection).
     var toggle = false
     var fixForm = false
+    /// `--agent-send`: the header's "Send N…" form, open, with its message preview.
+    var agentSend = false
     /// `--blame <path>:<line>`: that line's agent blame tip, as a hover would show it.
     var blame: (path: String, line: Int)?
     /// `--loading`: the header as it looks while the diff loads (the spinner beside the totals).
     var loading = false
 
-    private var needsPR: Bool { keys || selectOpen > 0 || steps > 0 || reply || toggle || fixForm }
+    private var needsPR: Bool { keys || selectOpen > 0 || steps > 0 || reply || toggle || fixForm || agentSend }
 
     static func blameTarget(_ value: String?) -> (path: String, line: Int)? {
         guard let value, let colon = value.lastIndex(of: ":"), let line = Int(value[value.index(after: colon)...]) else { return nil }
@@ -73,12 +75,15 @@ struct ReviewSnapshotDemo {
         if keys {
             model.renderer.showKeys(true)
         }
+        if agentSend {
+            model.showsAgentSendInline = true
+        }
         if fixForm {
             model.showsFixFormInline = true
         }
         HubPerf.log("review.snapshot demo: \(open.count) open threads, \(model.selectedThreads.count) selected, focused \(model.focusedCard ?? "none")")
         // The Fix form's plan is a `tools hub pr fix --dry-run` that searches the sessions.
-        DispatchQueue.main.asyncAfter(deadline: .now() + (fixForm ? 8 : 1)) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (fixForm || agentSend ? 8 : 1)) {
             applyBlame(to: model, done: done)
         }
     }

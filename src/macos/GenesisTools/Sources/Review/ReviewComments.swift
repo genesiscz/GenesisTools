@@ -34,6 +34,8 @@ struct ReviewComment: Codable, Identifiable, Equatable {
     var thread: String?
     /// The session that got it: its title or short id, set only by a real delivery to its pane.
     var deliveredTo: String?
+    /// Taken out of the agent sends ("Remove from this send"); nil or false: the next send takes it.
+    var heldFromAgent: Bool?
 
     private static let threadFooter = try? NSRegularExpression(pattern: "\\n*\\(A reply to PR thread ([0-9A-Za-z_-]+)(?: on [^)]*)?\\.\\)\\s*$")
 
@@ -60,6 +62,9 @@ final class ReviewCommentStore {
     private(set) var comments: [ReviewComment] = []
     /// Set when an unreadable comments.json could not be moved aside: saving would overwrite it.
     private var saveBlocked = false
+    /// A `--snapshot` run renders and exits: it reads the comments and never writes them back (opening
+    /// a review re-anchors every comment and saved the result into the user's real file, 2026-10-07).
+    static var readOnly = false
 
     private var file: URL { directory.appendingPathComponent("comments.json") }
 
@@ -113,12 +118,33 @@ final class ReviewCommentStore {
         save()
     }
 
-    /// Written for an agent, nobody told: only a comment that went nowhere yet moves to queued.
+    /// Written for an agent, nobody told: only a comment that went nowhere yet moves to queued. Queuing
+    /// it again takes it back into the next send.
     func markQueued(_ ids: [String]) {
-        for index in comments.indices where ids.contains(comments[index].id) && comments[index].state == .local {
-            comments[index].state = .queued
+        for index in comments.indices where ids.contains(comments[index].id) {
+            comments[index].heldFromAgent = nil
+            if comments[index].state == .local {
+                comments[index].state = .queued
+            }
         }
         save()
+    }
+
+    /// "Remove from this send": the comment stays mine, local, and no "Send N…" takes it until it is
+    /// queued again from its card.
+    func holdFromAgent(_ ids: [String]) {
+        for index in comments.indices where ids.contains(comments[index].id) {
+            comments[index].heldFromAgent = true
+            if comments[index].state == .queued {
+                comments[index].state = .local
+            }
+        }
+        save()
+    }
+
+    /// The comments the next send takes: written or queued for an agent, not held back, in file order.
+    var agentPending: [ReviewComment] {
+        comments.filter { ($0.state == .local || $0.state == .queued) && $0.heldFromAgent != true }
     }
 
     /// A session's pane got them: the only way a comment becomes "sent". A PR draft or post keeps its state.
@@ -129,6 +155,7 @@ final class ReviewCommentStore {
             }
             comments[index].sentAt = now
             comments[index].deliveredTo = target
+            comments[index].heldFromAgent = nil
         }
         save()
     }
@@ -348,7 +375,7 @@ final class ReviewCommentStore {
             changed(\.body); changed(\.updatedAt); changed(\.state)
             changed(\.anchor); changed(\.before); changed(\.after); changed(\.outdated)
             changed(\.sentAt); changed(\.remoteDraftID); changed(\.remoteOwner)
-            changed(\.thread); changed(\.deliveredTo)
+            changed(\.thread); changed(\.deliveredTo); changed(\.heldFromAgent)
         }
     }
 
@@ -432,6 +459,11 @@ final class ReviewCommentStore {
             old[row.id] == row ? nil : Patch(before: old[row.id], after: row)
         } + projection.filter { new[$0.id] == nil }.map { Patch(before: $0, after: nil) }
         guard !patches.isEmpty else { return }
+        if Self.readOnly {
+            projection = comments
+            NotificationCenter.default.post(name: Self.changed, object: self)
+            return
+        }
         let change = Pending(id: UUID(), patches: patches)
         pending.append(change)
         unwritten.append(change)

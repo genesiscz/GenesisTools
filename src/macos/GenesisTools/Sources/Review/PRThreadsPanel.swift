@@ -109,6 +109,11 @@ struct PRReviewBar: View {
             .buttonStyle(.genHoverPlain())
             .padding(.horizontal, 14)
             .frame(height: 34)
+            if model.showsAgentSendInline {
+                // A `--snapshot --agent-send` run: the header's "Send N…" form as its popover shows it.
+                AgentSendForm(model: model, previewOpen: true) { model.showsAgentSendInline = false }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if model.showsFixFormInline {
                 // A `--snapshot --fix-form` run: a popover is its own window and never reaches the PNG.
                 FixThreadsForm(model: model, store: store) { model.showsFixFormInline = false }

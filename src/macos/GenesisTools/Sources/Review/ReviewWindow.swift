@@ -40,6 +40,7 @@ func runReview(_ args: [String]) -> Never {
         case "--toggle": demo.toggle = true
         case "--loading": demo.loading = true
         case "--fix-form": demo.fixForm = true
+        case "--agent-send": demo.agentSend = true
         case "--blame": demo.blame = ReviewSnapshotDemo.blameTarget(value); index += 1
         case "--session": session = value; index += 1
         case "--scope": scope = DiffScope(argument: value ?? "") ?? .uncommitted; index += 1
@@ -67,6 +68,7 @@ func runReview(_ args: [String]) -> Never {
 
     if snapshotPath != nil {
         HubDefaults.isolate()
+        ReviewCommentStore.readOnly = true
         for (key, value) in settings { HubDefaults.store.set(value, forKey: key) }
     }
     ReviewContextPanel.registerDefaults()
@@ -280,6 +282,8 @@ final class ReviewModel: ObservableObject {
     @Published var fixRequests = 0
     /// A `--snapshot --fix-form` run shows the Fix form under the PR bar instead of in a popover.
     @Published var showsFixFormInline = false
+    /// A `--snapshot --agent-send` run: the "Send N…" form under the PR bar, as its popover would show it.
+    @Published var showsAgentSendInline = false
     /// The live thread cards on the diff in page order, for j / k.
     private var threadCards: [RenderedComment] = []
     /// `tools agents blame` for the files hovered so far: the page's hover tips, and "Open the turn".
@@ -1029,7 +1033,54 @@ final class ReviewModel: ObservableObject {
 
     /// Every comment not yet with an agent (written, or queued): the header's "Send N…" takes them all.
     var pendingAgentIDs: [String] {
-        commentRoots.flatMap { $0.store.comments.filter { $0.state == .local || $0.state == .queued }.map(\.id) }
+        pendingAgentItems.map(\.id)
+    }
+
+    /// The comments "Send N…" takes, as its list shows them: where each sits, the thread it answers,
+    /// and its text.
+    var pendingAgentItems: [AgentSendItem] {
+        commentRoots.flatMap { root, store in
+            store.agentPending.map { comment in
+                AgentSendItem(id: comment.id, path: root.prefix.isEmpty ? comment.path : "\(root.prefix)/\(comment.path)",
+                              startLine: comment.startLine, endLine: comment.endLine, thread: comment.thread,
+                              body: comment.body, state: comment.state.rawValue)
+            }
+        }
+    }
+
+    /// A comment's new text, from its card or from the send list: the same save, the PR draft synced.
+    func editComment(_ id: String, body: String) {
+        commentOwner(id)?.store.edit(id: id, body: body)
+        syncEditedDraft(id)
+        pushComments()
+    }
+
+    /// "Remove from this send": the comment stays, local, out of every send until queued again.
+    func holdFromAgent(_ id: String) {
+        commentOwner(id)?.store.holdFromAgent([id])
+        pushComments()
+    }
+
+    /// Delete from the send list: the card's Delete (a PR draft it owns goes too).
+    func deleteComment(_ id: String) {
+        deleteLocalComment(id)
+    }
+
+    /// The markdown the agent's file will hold for these comments (the outbox file, not written).
+    func agentMessage(ids: [String]) -> String {
+        composeAgentMessage(ids).message
+    }
+
+    private func composeAgentMessage(_ ids: [String]) -> (message: String, owners: [(store: ReviewCommentStore, ids: [String])]) {
+        let owners = commentRoots.map { root, store in
+            (root: root, store: store, ids: ids.filter { id in store.comments.contains { $0.id == id } })
+        }.filter { !$0.ids.isEmpty }
+        let message = owners.compactMap { owner -> String? in
+            guard let root = owner.root.repo else { return nil }
+            let rootBranch = root.path == repo.path ? (remoteHead?.branchNote ?? branch) : owner.root.branch
+            return owner.store.agentMessage(repo: root, branch: rootBranch, files: owner.root.files, ids: owner.ids)
+        }.joined(separator: "\n")
+        return (message, owners.map { ($0.store, $0.ids) })
     }
 
     /// Where comments go: the window's own session, else the session last picked for this PR (or this
@@ -1112,14 +1163,7 @@ final class ReviewModel: ObservableObject {
 
     /// One markdown file in the outbox with every comment and its code, one section per repository.
     private func writeOutbox(_ ids: [String]) -> (file: URL, message: String, owners: [(store: ReviewCommentStore, ids: [String])])? {
-        let owners = commentRoots.map { root, store in
-            (root: root, store: store, ids: ids.filter { id in store.comments.contains { $0.id == id } })
-        }.filter { !$0.ids.isEmpty }
-        let message = owners.compactMap { owner -> String? in
-            guard let root = owner.root.repo else { return nil }
-            let rootBranch = root.path == repo.path ? (remoteHead?.branchNote ?? branch) : owner.root.branch
-            return owner.store.agentMessage(repo: root, branch: rootBranch, files: owner.root.files, ids: owner.ids)
-        }.joined(separator: "\n")
+        let (message, owners) = composeAgentMessage(ids)
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let outbox = comments.directory.appendingPathComponent("outbox", isDirectory: true)
         let file = outbox.appendingPathComponent("\(stamp).md")
@@ -1130,7 +1174,7 @@ final class ReviewModel: ObservableObject {
             notice = "Could not write \(file.path): \(error.localizedDescription)"
             return nil
         }
-        return (file, message, owners.map { ($0.store, $0.ids) })
+        return (file, message, owners)
     }
 
     private func handle(_ event: DiffRendererEvent) {
@@ -1155,8 +1199,7 @@ final class ReviewModel: ObservableObject {
             } else if let id = input.editingID, id.hasPrefix("thread:") {
                 updateThread(id, editedReply: input.body)
             } else if let id = input.editingID {
-                commentOwner(id)?.store.edit(id: id, body: input.body)
-                syncEditedDraft(id)
+                editComment(id, body: input.body)
             } else {
                 addComment(input)
             }

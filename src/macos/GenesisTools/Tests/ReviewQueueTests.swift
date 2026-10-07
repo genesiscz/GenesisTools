@@ -12,6 +12,31 @@ final class ReviewQueueTests: XCTestCase {
         return (ReviewCommentStore(repo: directory, directory: directory), directory)
     }
 
+    @MainActor
+    func testASnapshotRunNeverWritesTheCommentFileButANormalRunDoes() async throws {
+        let (store, directory) = store()
+        defer {
+            ReviewCommentStore.readOnly = false
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let target = directory.appendingPathComponent("comments.json")
+        ReviewCommentStore.readOnly = true
+        XCTAssertNotNil(store.add(CommentInput(editingID: nil, fileID: "f", side: .additions, startLine: 2, endLine: 2, body: "Snap"), files: [file]))
+        XCTAssertEqual(store.comments.count, 1, "the run still sees its own change")
+        try await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.path), "a snapshot wrote the user's comments")
+
+        // The negative control: the same change in a normal run reaches the file.
+        ReviewCommentStore.readOnly = false
+        XCTAssertNotNil(store.add(CommentInput(editingID: nil, fileID: "f", side: .additions, startLine: 3, endLine: 3, body: "Real"), files: [file]))
+        var waited = 0
+        while !FileManager.default.fileExists(atPath: target.path), waited < 40 {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            waited += 1
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: target.path))
+    }
+
     // MARK: queued vs sent
 
     func testWithoutAPaneThatGotItAQueuedCommentNeverReadsSent() {
@@ -163,6 +188,48 @@ final class ReviewQueueTests: XCTestCase {
         XCTAssertTrue(gone[1].tooltip?.contains("origin did not give it") == true, "a disabled entry says why")
         XCTAssertEqual(try PRRefMenu.target(XCTUnwrap(URL(string: "https://gitlab.example.com/g/shop/-/commit/44a8c867b4"))), nil,
                        "a commit link is not a PR link")
+    }
+
+    // MARK: the send list
+
+    private func item(_ id: String, thread: String? = nil) -> AgentSendItem {
+        AgentSendItem(id: id, path: "col-mobile/jest.config.js", startLine: 51, endLine: 53, thread: thread, body: "Text", state: "queued")
+    }
+
+    func testTheSendTakesTheTickedCommentsInListOrder() {
+        let items = [item("a"), item("b"), item("c")]
+        XCTAssertEqual(AgentSendPlan.ids(items, unticked: []), ["a", "b", "c"], "every listed comment is ticked at first")
+        XCTAssertEqual(AgentSendPlan.ids(items, unticked: ["b"]), ["a", "c"])
+        XCTAssertEqual(AgentSendPlan.sendTitle(2), "Send 2")
+        XCTAssertEqual(AgentSendPlan.sendTitle(0), "Send")
+        XCTAssertEqual(AgentSendPlan.pruned(["b", "gone"], to: items), ["b"], "a comment that left the list leaves the unticked set")
+        XCTAssertEqual(item("r", thread: "28bdd24746bf").place, "Reply to thread 28bdd247 · jest.config.js:L51–53")
+        XCTAssertEqual(item("p").place, "jest.config.js:L51–53")
+    }
+
+    @MainActor
+    func testRemoveFromTheSendKeepsTheCommentLocalUntilQueuedAgain() async throws {
+        let (store, directory) = store()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let a = try XCTUnwrap(store.add(CommentInput(editingID: nil, fileID: "f", side: .additions, startLine: 1, endLine: 1, body: "A"), files: [file]))
+        let b = try XCTUnwrap(store.add(CommentInput(editingID: nil, fileID: "f", side: .additions, startLine: 2, endLine: 2, body: "B"), files: [file]))
+        store.markQueued([a.id, b.id])
+        XCTAssertEqual(store.agentPending.map(\.id), [a.id, b.id])
+
+        store.holdFromAgent([a.id])
+        XCTAssertEqual(store.agentPending.map(\.id), [b.id], "out of this send and the next")
+        XCTAssertEqual(store.comments.first { $0.id == a.id }?.state, .local, "it stays mine, local, not deleted")
+        XCTAssertEqual(store.rendered(for: [file]).first { $0.id == a.id }?.state, "local")
+
+        store.markQueued([a.id])
+        XCTAssertEqual(store.agentPending.map(\.id), [a.id, b.id], "Queue to agent on its card takes it back")
+        store.holdFromAgent([b.id])
+        store.markDelivered([a.id], to: "Fix")
+        XCTAssertTrue(store.agentPending.isEmpty, "a sent one and a held one are both out")
+        await store.flush()
+        let reloaded = ReviewCommentStore(repo: directory, directory: directory)
+        XCTAssertEqual(reloaded.comments.first { $0.id == b.id }?.heldFromAgent, true, "the hold is saved")
+        XCTAssertNil(reloaded.comments.first { $0.id == a.id }?.heldFromAgent)
     }
 
     // MARK: folding
