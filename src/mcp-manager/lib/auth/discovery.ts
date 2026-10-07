@@ -40,6 +40,13 @@ function parseResourceMetadata(wwwAuthenticate: string | null): string | undefin
 
 const MAX_DISCOVERY_REDIRECTS = 5;
 
+/** A pinned response wraps a live socket: release it when the body is not going to be read. */
+async function discardBody(response: Response): Promise<void> {
+    await response.body?.cancel().catch((error: unknown) => {
+        logger.debug({ error }, "cancelling an unread discovery response failed");
+    });
+}
+
 /**
  * No credential travels with this request and a well-known document is allowed to
  * redirect, but the destination is chosen by the remote server, so each hop is checked
@@ -54,6 +61,7 @@ async function getJson(url: string, origin: string): Promise<unknown | undefined
         const response = await mcpFetchChecked(current, origin, { headers: { Accept: "application/json" } });
 
         if (response.status >= 300 && response.status < 400) {
+            await discardBody(response);
             const location = response.headers.get("location");
 
             if (!location) {
@@ -65,6 +73,7 @@ async function getJson(url: string, origin: string): Promise<unknown | undefined
         }
 
         if (!response.ok) {
+            await discardBody(response);
             return undefined;
         }
 

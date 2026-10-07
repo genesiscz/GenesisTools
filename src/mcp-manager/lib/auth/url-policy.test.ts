@@ -46,6 +46,30 @@ describe("authorization server metadata endpoints", () => {
         expect(posts).toBe(0);
     });
 
+    test("discovery cancels the unread bodies of redirect and error responses", async () => {
+        publicLookup();
+        let calls = 0;
+        let cancelled = 0;
+        const body = () =>
+            new ReadableStream<Uint8Array>({
+                pull: () => undefined,
+                cancel: () => {
+                    cancelled += 1;
+                },
+            });
+        _setMcpFetchForTest(async (input) => {
+            calls += 1;
+            const redirect = String(input).endsWith("/start");
+            return redirect
+                ? new Response(body(), { status: 302, headers: { location: "/missing" } })
+                : new Response(body(), { status: 404 });
+        });
+
+        await expect(discoverAuthorizationServer("https://identity.example/start", PUBLIC_MCP)).rejects.toThrow();
+        expect(calls).toBeGreaterThan(0);
+        expect(cancelled).toBe(calls);
+    });
+
     test("a different public authorization-server origin remains valid", async () => {
         publicLookup();
         _setMcpFetchForTest(async () =>
