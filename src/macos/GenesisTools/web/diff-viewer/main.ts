@@ -2715,8 +2715,93 @@ function probeFrame(now: number): void {
     requestAnimationFrame(probeFrame);
 }
 
+/**
+ * The boxes under the pointer that can scroll on their own, with where they stood at the wheel event.
+ * A wheel that moved one of them and not the page is the "page stuck, code still moving" report
+ * (recording 2026-10-08 01:30: a new file drawn in a box with its own scroll bar).
+ */
+const innerScrollers = new Map<Element, number>();
+
+function noteInnerScrollers(event: WheelEvent): void {
+    for (const node of event.composedPath()) {
+        if (!(node instanceof Element) || node === host) {
+            continue;
+        }
+
+        if (node.scrollHeight > node.clientHeight + 1 && !innerScrollers.has(node)) {
+            innerScrollers.set(node, node.scrollTop);
+        }
+    }
+}
+
+function describeElement(node: Element): string {
+    const attributes = Array.from(node.attributes)
+        .filter((attribute) => attribute.name !== "style")
+        .map((attribute) => `${attribute.name}${attribute.value ? `=${attribute.value.slice(0, 30)}` : ""}`)
+        .slice(0, 5)
+        .join(" ");
+    const style = getComputedStyle(node);
+    return `<${node.tagName.toLowerCase()} ${attributes}> overflow ${style.overflowX}/${style.overflowY}, height ${node.clientHeight} of ${node.scrollHeight}`;
+}
+
+function reportInnerScrollers(): void {
+    const moved = Array.from(innerScrollers).filter(([node, top]) => node.isConnected && node.scrollTop !== top);
+    innerScrollers.clear();
+
+    if (moved.length === 0) {
+        return;
+    }
+
+    post({
+        type: "log",
+        message: `diff.scroll an inner box took the wheel: ${moved
+            .map(([node, top]) => `${describeElement(node)} moved ${Math.round(node.scrollTop - top)}px`)
+            .join("; ")}`,
+    });
+}
+
+/**
+ * Per drawn file: how far its measured rows differ from pierre's estimate (`cache.heightDeltas`, a private
+ * field read here for diagnosis only). A file whose rows all measure taller than the estimate grows while
+ * it is scrolled through, and the file under it moves down with the page.
+ */
+function heightDrift(): string {
+    return viewer
+        .getRenderedItems()
+        .map((item) => {
+            const cache: unknown = Reflect.get(item.instance, "cache");
+            const deltas: unknown = cache instanceof Object ? Reflect.get(cache, "heightDeltas") : undefined;
+            const total: unknown = cache instanceof Object ? Reflect.get(cache, "measuredHeightDeltaTotal") : undefined;
+            if (!(deltas instanceof Map) || typeof total !== "number") {
+                return null;
+            }
+
+            const counts = new Map<number, number>();
+            for (const value of deltas.values()) {
+                if (typeof value === "number") {
+                    counts.set(Math.round(value * 10) / 10, (counts.get(Math.round(value * 10) / 10) ?? 0) + 1);
+                }
+            }
+
+            const top = Array.from(counts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 3)
+                .map(([delta, count]) => `${delta}px×${count}`)
+                .join(" ");
+            return `${item.id.split("/").pop()} drift ${Math.round(total)}px over ${deltas.size} rows (${top || "none"})`;
+        })
+        .filter((line): line is string => line !== null)
+        .join("; ");
+}
+
 function probeEnd(now: number): void {
     probe.active = false;
+    reportInnerScrollers();
+    const drift = heightDrift();
+
+    if (drift) {
+        post({ type: "log", message: `diff.height ${drift}` });
+    }
 
     if (probe.travelled < 600 && probe.stuckFrames === 0) {
         return;
@@ -2749,6 +2834,7 @@ host.addEventListener(
         }
 
         probe.lastEvent = now;
+        noteInnerScrollers(event);
         probe.wheel += Math.abs(event.deltaY);
         probe.wheelEvents += 1;
         probe.wheelSinceFrame += Math.abs(event.deltaY) > 0 ? 1 : 0;
