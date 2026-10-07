@@ -534,11 +534,15 @@ extension SnapshotDispatchTests {
 }
 
 final class AttachedSheetScanTests: XCTestCase {
-    private let far = Date().addingTimeInterval(60)
+    // A fixed clock: the deadline never depends on how fast the test machine is.
+    private let start = Date(timeIntervalSinceReferenceDate: 0)
+    private var far: Date { start.addingTimeInterval(60) }
+    private var fixedNow: () -> Date { { self.start } }
 
     func testFocusedSheetIsAcceptedWithoutReadingAnyOtherRole() {
         var reads: [String] = []
-        let found = attachedSheetCandidates(["a", "b", "save"].map { $0 as NSString }, focused: "save" as NSString, deadline: far) {
+        let found = attachedSheetCandidates(["a", "b", "save"].map { $0 as NSString }, focused: "save" as NSString,
+                                            deadline: far, now: fixedNow) {
             reads.append($0 as! String)
             return true
         }
@@ -566,7 +570,8 @@ final class AttachedSheetScanTests: XCTestCase {
         let roles: Set<String> = ["save", "go-to-folder"]
         XCTAssertTrue(focusedWindowBelongsToOwner(owner: "owner" as NSString, focused: "go-to-folder" as NSString) { node in
             attachedSheetCandidates((tree[node as! String] ?? []).map { $0 as NSString },
-                                    focused: "go-to-folder" as NSString, deadline: self.far) { roles.contains($0 as! String) }
+                                    focused: "go-to-folder" as NSString, deadline: self.far,
+                                    now: self.fixedNow) { roles.contains($0 as! String) }
         })
     }
 }

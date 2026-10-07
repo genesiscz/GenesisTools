@@ -35,7 +35,7 @@ public func attachedSheetCandidates(
     now: () -> Date = Date.init,
     isSheet: (CFTypeRef) -> Bool
 ) -> [CFTypeRef] {
-    if let hit = candidates.first(where: { CFEqual($0, focused) }), now() < deadline, isSheet(hit) {
+    if now() < deadline, let hit = candidates.first(where: { CFEqual($0, focused) }), isSheet(hit) {
         return [hit]
     }
     var sheets: [CFTypeRef] = []
