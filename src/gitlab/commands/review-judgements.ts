@@ -141,7 +141,7 @@ async function target(iid: string, opts: JudgementOptions) {
     }
 
     const api = await resolveProjectApi({ host: opts.host, project: opts.project });
-    const mode = await pickMode(iid, opts);
+    const mode = await pickMode(iid, { ...opts, api });
     const file = resolve(opts.file ?? judgementsPath({ host: api.host, project: api.project, iid: Number(iid) }));
 
     return { api, mode, file };
@@ -512,7 +512,7 @@ async function runPost(iid: string, opts: PostOptions): Promise<void> {
         return;
     }
 
-    const drafts = await fetchDrafts(api, iid);
+    let drafts = await fetchDrafts(api, iid);
     const draftIds = new Map<string, number>();
 
     for (const step of recheck) {
@@ -547,6 +547,8 @@ async function runPost(iid: string, opts: PostOptions): Promise<void> {
             verified: false,
         };
         saveLedger(ledgerFile, ledger);
+        // The next step's reuse check must see what this one created, moved or deleted.
+        drafts = await fetchDrafts(api, iid);
     }
 
     const after = await fetchDrafts(api, iid);
