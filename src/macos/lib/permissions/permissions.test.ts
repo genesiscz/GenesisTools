@@ -409,6 +409,16 @@ describe("build source record", () => {
 
         writeFileSync(join(kit, "Sources/Kit.swift"), "let a = 2\n");
         expect((await readSourceInfo(app)).sourceDirty).toBe(true);
+
+        git("checkout", "--", ".");
+        git("mv", join(kit, "Sources/Kit.swift"), join(repo, "Kit.swift"));
+        expect((await readSourceInfo(app)).sourceDirty).toBe(true);
+
+        // A wholly untracked package: `git status -unormal` would show only `src/macos/GenesisKit/`.
+        git("reset", "-q", "--hard");
+        git("rm", "-r", "-q", "--cached", "src/macos/GenesisKit");
+        git("commit", "-q", "-m", "kit untracked");
+        expect((await readSourceInfo(app)).sourceDirty).toBe(true);
     });
 });
 

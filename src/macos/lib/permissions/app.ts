@@ -105,12 +105,14 @@ export async function readSourceInfo(sourceDir = APP_SOURCE_DIR): Promise<AppSou
 
     try {
         const root = await git.getRepoRoot();
-        const status = await git.status({ cwd: sourceDir, untracked: "normal" });
+        // `all`, not `normal`: a wholly untracked folder must list its files, not collapse into its parent.
+        const status = await git.status({ cwd: sourceDir, untracked: "all" });
         const inputs = SOURCE_ROOTS.map((input) => relative(root, resolve(sourceDir, input)));
+        const isInput = (path: string | undefined): boolean =>
+            path !== undefined && inputs.some((input) => path === input || path.startsWith(`${input}/`));
+        // A rename counts from either side: a file moved out of the inputs changes the build too.
         const dirty = status.entries.some(
-            (entry) =>
-                entry.kind !== "ignored" &&
-                inputs.some((input) => entry.path === input || entry.path.startsWith(`${input}/`))
+            (entry) => entry.kind !== "ignored" && (isInput(entry.path) || isInput(entry.origPath))
         );
         const head = status.branch?.head;
 
