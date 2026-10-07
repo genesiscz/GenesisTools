@@ -45,6 +45,43 @@ final class BrowserURLForwarder: NSObject {
     private var focusReturn: (app: NSRunningApplication, until: Date)?
     /// When this face last became active: an activation just before a link arrives is the delivery's.
     private var activatedAt = Date.distantPast
+    /// On-screen normal windows, front to back, as they stood when another app last became active: the
+    /// stacking a delivery's activation is undone to. Handing the focus back alone left this face's
+    /// windows raised above every other app's (a genesis.tools/md click put the review window over Brave).
+    private var stackBeforeDelivery: [Int] = []
+
+    static func onScreenStack() -> [Int] {
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        return list.compactMap { info in
+            guard (info[kCGWindowLayer as String] as? Int) == 0 else { return nil }
+            return info[kCGWindowNumber as String] as? Int
+        }
+    }
+
+    /// For each of `ours`, the window that sat directly above it in `stack` and is not ours; nil when it was on top.
+    static func windowsAbove(_ ours: Set<Int>, in stack: [Int]) -> [Int: Int] {
+        var result: [Int: Int] = [:]
+        for (index, number) in stack.enumerated() where ours.contains(number) {
+            if let above = stack[..<index].last(where: { !ours.contains($0) }) {
+                result[number] = above
+            }
+        }
+        return result
+    }
+
+    /// Puts this face's windows back under the windows that were above them before the delivery.
+    private func restoreStacking() {
+        guard !stackBeforeDelivery.isEmpty else { return }
+        let ours = Set(NSApp.windows.filter(\.isVisible).map(\.windowNumber))
+        let onScreen = Set(Self.onScreenStack())
+        // Back to front, so each window lands under its own neighbour, not under one of ours moved later.
+        for (number, above) in Self.windowsAbove(ours, in: stackBeforeDelivery).sorted(by: { a, b in
+            (stackBeforeDelivery.firstIndex(of: a.key) ?? 0) > (stackBeforeDelivery.firstIndex(of: b.key) ?? 0)
+        }) where onScreen.contains(above) {
+            NSApp.window(withWindowNumber: number)?.order(.below, relativeTo: above)
+        }
+        HubPerf.log("link: windows put back under the apps that were above them")
+    }
 
     func trackOtherApps() {
         let own = ProcessInfo.processInfo.processIdentifier
@@ -56,6 +93,7 @@ final class BrowserURLForwarder: NSObject {
                   app.bundleIdentifier != Bundle.main.bundleIdentifier
             else { return }
             self?.lastOtherApp = app
+            self?.stackBeforeDelivery = Self.onScreenStack()
             // The click's own action brought another app forward (Brave for an `open`): it keeps the focus.
             if let target = self?.focusReturn?.app, target.processIdentifier != app.processIdentifier {
                 self?.focusReturn = nil
@@ -124,6 +162,7 @@ final class BrowserURLForwarder: NSObject {
         if NSApp.isActive && Date().timeIntervalSince(activatedAt) > 0.5 {
             return
         }
+        restoreStacking()
         guard let previous = lastOtherApp, !previous.isTerminated else {
             DispatchQueue.main.async { NSApp.deactivate() }
             return
