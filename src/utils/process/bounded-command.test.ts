@@ -2,13 +2,14 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { boundedCommand } from "./bounded-command";
 
 let dir: string | undefined;
 let survivor: number | undefined;
 
 afterEach(() => {
-    if (survivor && alive(survivor)) {
+    if (survivor && isProcessAlive(survivor)) {
         // pid-verified: the sleep this test started and recorded itself, still running.
         process.kill(survivor, "SIGKILL");
     }
@@ -21,15 +22,6 @@ afterEach(() => {
     dir = undefined;
 });
 
-function alive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (error) {
-        return (error as NodeJS.ErrnoException).code === "EPERM";
-    }
-}
-
 test("a deadline kills a TERM-ignoring descendant even after the group leader exited", async () => {
     dir = mkdtempSync(join(tmpdir(), "bounded-command-"));
     const pidFile = join(dir, "descendant.pid");
@@ -41,5 +33,5 @@ test("a deadline kills a TERM-ignoring descendant even after the group leader ex
 
     survivor = Number(readFileSync(pidFile, "utf8").trim());
     expect(result.error?.code).toBe("ETIMEDOUT");
-    expect(alive(survivor)).toBe(false);
+    expect(isProcessAlive(survivor)).toBe(false);
 });
