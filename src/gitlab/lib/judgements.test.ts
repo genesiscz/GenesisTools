@@ -215,6 +215,18 @@ describe("judgements", () => {
         expect(parseJudgementsFile(SafeJSON.stringify({ mr: 43, items: [] }), "x.json").mr).toBe(43);
     });
 
+    test("a move is checked at its Move to line, never at a leftover Anchor", () => {
+        const move = [
+            "# D01 Is this still needed · draft 22970 · src/lock.ts:2",
+            "- Verdict on the comment: Misplaced [80%]",
+            "- Anchor: src/lock.ts:4 (new) `    return;`",
+            "- Action: move",
+            "- Move to: src/lock.ts:2 (new) `not this text`",
+        ].join("\n");
+
+        expect(check(move).errors[0]?.message).toContain("src/lock.ts:2 (new) is `const b = 2;`");
+    });
+
     test("a move may keep the draft's text: no rewording needed", () => {
         const move = [
             "# D01 Is this still needed · draft 22970 · src/lock.ts:2",

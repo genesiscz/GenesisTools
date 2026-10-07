@@ -153,6 +153,10 @@ describe("judgements render", () => {
             ].join("\n")
         );
         expect(copyBlock("one\n\ntwo")).toBe("```markdown\n   one\n\n   two\n```");
+        // An indented ``` inside still closes a ``` fence, so the outer fence grows instead.
+        expect(copyBlock("Use:\n```ts\nrun();\n```\nDone.")).toBe(
+            "````markdown\n   Use:\n   ```ts\n   run();\n   ```\n   Done.\n````"
+        );
     });
 
     test("an answer in my own thread is signed with its badge; other text is sent as written", () => {

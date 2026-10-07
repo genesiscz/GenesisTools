@@ -216,7 +216,8 @@ function linesWithText(file: DiffFile, text: string, side: "new" | "old"): numbe
 }
 
 function checkAnchor(item: JudgementItem, files: DiffFile[] | null, problems: CheckProblem[]): void {
-    const value = item.fields.get("Anchor") ?? item.fields.get("Move to");
+    // The field the post uses: a move goes to `Move to`, whatever a leftover `Anchor` says.
+    const value = item.fields.get(item.kind === "D" ? "Move to" : "Anchor");
 
     if (isBlank(value)) {
         problems.push({

@@ -81,14 +81,17 @@ export function quote(text: string): string {
         .join("\n");
 }
 
-/** A fenced copy block whose lines are indented by three spaces (display-only). */
+/**
+ * A fenced copy block whose lines are indented by three spaces (display-only). The shared code block
+ * grows its fence past any backtick run inside, so a code sample in the text cannot close it early.
+ */
 export function copyBlock(text: string, language = "markdown"): string {
     const body = text
         .split("\n")
         .map((line) => (line ? `   ${line}` : ""))
         .join("\n");
 
-    return `\`\`\`${language}\n${body}\n\`\`\``;
+    return json2md({ code: { content: body, language } }).trimEnd();
 }
 
 const PATH_LINE = /(?<![\w/.@-])((?:[\w@.-]+\/)*[\w@.-]+\.[A-Za-z0-9]+):(\d+)\b/g;
