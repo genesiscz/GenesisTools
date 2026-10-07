@@ -87,21 +87,34 @@ test("wait observes terminal records appended across snapshot startup", async ()
                     ? { type: "exit", code: 23, durationMs: 1, ts: "2026-10-06T00:00:00.000Z" }
                     : { type: "line", seq: 1, out: "stdout", ts: 1, text: "boundary-ready" };
 
+            let sawBuffered = false;
+            let markBuffered: () => void = () => {};
+            const buffered = new Promise<void>((resolve) => {
+                markBuffered = resolve;
+            });
             const result = await waitForSessionRecord(
                 {
                     session,
                     waitForExit: kind === "exit",
                     exitOnMatch: kind === "match" ? /boundary-ready/ : undefined,
-                    timeoutMs: 500,
+                    timeoutMs: 2_000,
                 },
                 {
+                    // Return the (empty) snapshot only once the tailer has delivered the appended
+                    // record into the startup buffer, so this exercises buffering, not the live path.
                     readExisting: async () => {
                         appendFileSync(path, `${SafeJSON.stringify(appended, { jsonl: true })}\n`);
-                        await Bun.sleep(25);
+                        await Promise.race([buffered, Bun.sleep(1_500)]);
                         return [];
+                    },
+                    onBuffered: () => {
+                        sawBuffered = true;
+                        markBuffered();
                     },
                 }
             );
+
+            expect(sawBuffered).toBe(true);
 
             expect(result).toEqual(
                 kind === "exit"
@@ -109,5 +122,28 @@ test("wait observes terminal records appended across snapshot startup", async ()
                     : { reason: "match", matchedLine: "boundary-ready" }
             );
         }
+    });
+});
+
+test("wait returns its timeout while the snapshot read is still stalled", async () => {
+    await processEnv.testing.withOverrides({ GENESIS_TOOLS_HOME: env.homeDir }, async () => {
+        const session = `wait-stalled-read-${Date.now()}`;
+        const path = join(env.sessionsDir(), `${session}.jsonl`);
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, "");
+        let releaseRead: (records: never[]) => void = () => {};
+        const stalledRead = new Promise<never[]>((resolve) => {
+            releaseRead = resolve;
+        });
+
+        const started = Date.now();
+        const result = await waitForSessionRecord(
+            { session, waitForExit: true, timeoutMs: 50 },
+            { readExisting: () => stalledRead }
+        );
+
+        expect(result).toEqual({ reason: "timeout" });
+        expect(Date.now() - started).toBeLessThan(2_000);
+        releaseRead([]);
     });
 });

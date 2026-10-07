@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
 import { argvWithChildDeadline } from "./child-deadline";
 import { killProcessGroup } from "./killWithEscalation";
 
@@ -82,7 +83,19 @@ export async function boundedCommand(options: {
         let escalation: ReturnType<typeof setTimeout> | undefined;
         let reap: ReturnType<typeof setTimeout> | undefined;
         const kill = (signal: NodeJS.Signals) => {
-            killProcessGroup(child, signal, "Owned command");
+            if (killProcessGroup(child, signal, "Owned command") || settled || !child.pid) {
+                return;
+            }
+
+            // The leader (the deadline watchdog) can die on SIGTERM while a descendant that ignores
+            // it keeps our pipes open. Until "close" fires a group member still holds them, so the
+            // group id cannot have been handed to anyone else: keep escalating to the group.
+            try {
+                // pid-verified: our detached group, alive because its members still hold our open pipes.
+                process.kill(-child.pid, signal);
+            } catch (error) {
+                logger.debug({ error, pid: child.pid, signal }, "Owned command group already ended");
+            }
         };
         const finish = () => {
             if (settled) {

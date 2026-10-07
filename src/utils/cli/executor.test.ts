@@ -352,4 +352,12 @@ describe("Executor bounded calls", () => {
 
         expect(result).toMatchObject({ success: true, exitCode: 0, stdout: "call", stderr: "diagnostic" });
     });
+
+    test("timeout 0 still means no timeout, as it did before bounded calls", async () => {
+        const result = await new Executor().exec([process.execPath, "-e", "process.stdout.write('ran')"], {
+            timeout: 0,
+        });
+
+        expect(result).toMatchObject({ success: true, stdout: "ran" });
+    });
 });

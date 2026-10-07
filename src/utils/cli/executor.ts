@@ -486,7 +486,7 @@ export interface ExecCallOptions {
     cwd?: string;
     /** Override/extend environment variables for this call */
     env?: Record<string, string | undefined>;
-    /** Timeout in milliseconds. Process is killed and promise rejects on expiry. */
+    /** Timeout in milliseconds. Process is killed and promise rejects on expiry. 0 or unset: no timeout. */
     timeout?: number;
 }
 
@@ -551,7 +551,7 @@ export class Executor {
         const stopTimer = spawnProf.start(spawnLabel(cmd));
         let result: ExecResult;
 
-        if (options?.timeout !== undefined) {
+        if (options?.timeout !== undefined && options.timeout > 0) {
             const timeoutMs = options.timeout;
             const bounded = await boundedCommand({
                 command: cmd,

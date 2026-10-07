@@ -2,6 +2,7 @@ import { jsonlPath } from "@app/task/lib/paths";
 import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 import { readJsonlFile } from "@genesiscz/utils/log-session/jsonl-reader";
 import type { JsonlRecord } from "@genesiscz/utils/log-session/types";
+import { logger } from "@genesiscz/utils/logger";
 
 export interface WaitOptions {
     session: string;
@@ -18,14 +19,18 @@ export interface WaitResult {
 
 export interface WaitDependencies {
     readExisting?: (path: string) => Promise<JsonlRecord[]>;
+    /** Test seam: called when a live record arrives before the snapshot finished and is held back. */
+    onBuffered?: (entry: JsonlRecord) => void;
 }
 
 export async function waitForSession(opts: WaitOptions, deps: WaitDependencies = {}): Promise<WaitResult> {
     const path = jsonlPath(opts.session);
     const readExisting = deps.readExisting ?? readJsonlFile;
     let resolveResult: (result: WaitResult) => void = () => {};
-    const result = new Promise<WaitResult>((resolve) => {
+    let rejectResult: (error: unknown) => void = () => {};
+    const result = new Promise<WaitResult>((resolve, reject) => {
         resolveResult = resolve;
+        rejectResult = reject;
     });
     let settled = false;
     let snapshotComplete = false;
@@ -50,6 +55,7 @@ export async function waitForSession(opts: WaitOptions, deps: WaitDependencies =
         onLine: (entry) => {
             if (!snapshotComplete) {
                 buffered.push(entry);
+                deps.onBuffered?.(entry);
                 return;
             }
 
@@ -78,35 +84,43 @@ export async function waitForSession(opts: WaitOptions, deps: WaitDependencies =
         timer = setTimeout(() => settle({ reason: "timeout" }), opts.timeoutMs);
     }
 
-    tailer.start();
-    let existing: JsonlRecord[];
-    try {
-        existing = await readExisting(path);
-    } catch (error) {
+    const fail = (error: unknown): void => {
+        if (settled) {
+            logger.debug({ error, session: opts.session }, "wait: snapshot read failed after the wait had settled");
+            return;
+        }
+
+        settled = true;
         tailer.stop();
         if (timer) {
             clearTimeout(timer);
         }
 
-        throw error;
-    }
+        rejectResult(error);
+    };
 
-    for (const entry of existing) {
-        const terminal = inspect(entry);
-        if (terminal) {
-            settle(terminal);
-            return result;
-        }
-    }
+    // The snapshot loads beside the deadline, not in front of it: a stalled read must not hold
+    // the caller past timeoutMs, and nothing is scanned once the wait has settled.
+    const loadSnapshot = async (): Promise<void> => {
+        const existing = await readExisting(path);
 
-    snapshotComplete = true;
-    for (const entry of buffered) {
-        const terminal = inspect(entry);
-        if (terminal) {
-            settle(terminal);
-            break;
+        for (const entry of [...existing, ...buffered]) {
+            if (settled) {
+                return;
+            }
+
+            const terminal = inspect(entry);
+            if (terminal) {
+                settle(terminal);
+                return;
+            }
         }
-    }
+
+        snapshotComplete = true;
+    };
+
+    tailer.start();
+    loadSnapshot().catch(fail);
 
     return result;
 }
