@@ -7,15 +7,20 @@ import Vision
 
 // MARK: - Screenshot
 
-// Shared window-capture: resolves the target window (fail-loud --window,
-// largest-area default), returns (image, title, pid, bounds in CG points)
-// plus other-window names for reporting.
-func captureWindowCGImage(_ appName: String) -> (CGImage, String, pid_t, CGRect) {
-    let (img, title, pid, bounds, _) = captureWindowCGImageFull(appName)
-    return (img, title, pid, bounds)
+struct CapturedWindowImage {
+    let image: CGImage
+    let title: String
+    let pid: pid_t
+    let bounds: CGRect
+    let windowID: CGWindowID
+    let otherWindowTitles: [String]
 }
 
-func captureWindowCGImageFull(_ appName: String) -> (CGImage, String, pid_t, CGRect, [String]) {
+func captureWindowCGImage(_ appName: String) -> CapturedWindowImage {
+    captureWindowCGImageFull(appName)
+}
+
+func captureWindowCGImageFull(_ appName: String) -> CapturedWindowImage {
     let pid = resolveApp(appName)
     requireScreenRecording()
     let windowScope = argValue("--window")
@@ -116,13 +121,16 @@ func captureWindowCGImageFull(_ appName: String) -> (CGImage, String, pid_t, CGR
     let bounds = CGRect(x: (b?["X"] as? Double) ?? 0, y: (b?["Y"] as? Double) ?? 0,
                         width: (b?["Width"] as? Double) ?? 1, height: (b?["Height"] as? Double) ?? 1)
     let others = appWindows.filter { ($0[kCGWindowNumber] as? CGWindowID) != windowID }.map { windowName($0) }
-    return (cgImage, windowName(win), pid, bounds, others)
+    return CapturedWindowImage(image: cgImage, title: windowName(win), pid: pid, bounds: bounds,
+                               windowID: windowID, otherWindowTitles: others)
 }
 
 func cmdScreenshot(appName: String, path: String) {
-    var (cgImage, title, pid, boundsPts, others) = captureWindowCGImageFull(appName)
-
-    var result: [String: Any] = ["ok": true, "action": "screenshot", "path": path, "window": title]
+    let captured = captureWindowCGImageFull(appName)
+    var cgImage = captured.image
+    let others = captured.otherWindowTitles
+    var result: [String: Any] = ["ok": true, "action": "screenshot", "path": path,
+                                "window": captured.title, "windowId": captured.windowID]
     // Only an UNSCOPED capture is picked by area. Saying "largest-area" after the caller named
     // a title or an id reports a guess where there was an exact choice.
     if !others.isEmpty && argValue("--window") == nil && argValue("--window-id") == nil {
@@ -133,11 +141,12 @@ func cmdScreenshot(appName: String, path: String) {
     // --annotate: draw numbered boxes around interactable AX elements
     // (--all = every element with id/desc/title) + legend in the JSON.
     if args.contains("--annotate") {
-        let (annotated, legend) = annotateImage(cgImage, appName: appName, pid: pid,
-                                               windowTitle: title, windowBoundsPts: boundsPts)
+        let (annotated, legend, warning) = annotateImage(cgImage, pid: captured.pid,
+            capturedWindowID: captured.windowID, windowBoundsPts: captured.bounds)
         cgImage = annotated
         result["annotations"] = legend
-        result["annotated"] = true
+        result["annotated"] = warning == nil
+        if let warning { result["annotationWarning"] = warning }
     }
 
     // --crop x,y,w,h in PIXELS of the captured image (retina px, origin top-left)

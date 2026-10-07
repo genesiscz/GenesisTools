@@ -1514,3 +1514,56 @@ test("menu references are scoped separately, require observed actions and expire
     );
     expect(calls.filter((args) => args[0] === "menu-act")).toHaveLength(1);
 });
+
+test("retained pages preserve projection and masking while reading only returned rows", async () => {
+    const f = fixture();
+    f.snapshot.elements[1].AXTitle = "Příliš žluťoučký 🐈".repeat(10);
+    f.snapshot.elements[1].AXEnabled = false;
+    f.snapshot.elements[2].index = 20;
+    const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+    const full = f.computer.get_elements({ app: "Fixture", limit: 100 });
+    expect(full.elements).toEqual(state.elements);
+    expect(full.text).toBe(state.text);
+    for (const offset of [0, 1, 3, 4, 9]) {
+        const page = f.computer.get_elements({ app: "Fixture", offset, limit: 1 });
+        expect(page.elements).toEqual(state.elements.slice(offset, offset + 1));
+        expect(page.page.total).toBe(4);
+        expect(page.page.nextOffset).toBe(offset + 1 < 4 ? offset + 1 : null);
+    }
+    expect(f.computer.find({ app: "Fixture", query: "SECRET" }).total).toBe(0);
+    expect(f.computer.find({ app: "Fixture", query: "secure" }).elements[0].value).toBe("[secure]");
+    const short = f.computer.get_elements({ app: "Fixture", offset: 1, limit: 1, text_limit: 100 });
+    expect(short.elements[0].label).toBe(state.elements[1].label.slice(0, 100));
+    expect(short.elements[0].truncated).toContain("label");
+    const records = Reflect.get(f.computer, "records") as Map<
+        string,
+        { snapshot: { elements: Observation["elements"] } }
+    >;
+    const rows = records.get("Fixture")!.snapshot.elements;
+    let titleReads = 0;
+    let actionReads = 0;
+    for (const row of rows) {
+        const title = row.AXTitle;
+        const actions = row.actions;
+        Object.defineProperty(row, "AXTitle", {
+            get: () => {
+                titleReads++;
+                return title;
+            },
+        });
+        Object.defineProperty(row, "actions", {
+            get: () => {
+                actionReads++;
+                return actions;
+            },
+        });
+    }
+    f.computer.get_elements({ app: "Fixture", offset: 1, limit: 1 });
+    expect(titleReads).toBe(1);
+    expect(actionReads).toBe(1);
+    actionReads = 0;
+    expect(f.computer.find({ app: "Fixture", query: "žluťoučký", limit: 1 }).total).toBe(1);
+    expect(actionReads).toBe(1);
+    expect(f.calls).toHaveLength(1);
+    f.computer.close_session();
+});

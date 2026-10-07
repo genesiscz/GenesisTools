@@ -100,3 +100,87 @@ it("compares structured selection ranges by content and preserves duplicate-labe
     const b = ["Y", "A"].map((AXTitle, index) => row(index, 0, "AXButton", { AXTitle }));
     expect(diffSnapshots(a, b).indexMap).toEqual({ 2: 1 });
 });
+
+it("bounded-memory alignment preserves the reference tie order and complete diff for duplicate labels", () => {
+    let seed = 413;
+    const random = () => {
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+        return seed;
+    };
+    for (let example = 0; example < 40; example++) {
+        const size = example < 10 ? 20 : 280;
+        const left = Array.from({ length: size }, (_, index) =>
+            row(index, 1, "AXButton", { AXTitle: String(random() % 11), AXValue: index % 3 })
+        );
+        const right = Array.from({ length: size + 3 }, (_, index) =>
+            row(index, 1, "AXButton", { AXTitle: String(random() % 11), AXValue: index % 3 })
+        );
+        const scores = Array.from({ length: left.length + 1 }, () => Array<number>(right.length + 1).fill(0));
+        for (let i = left.length - 1; i >= 0; i--) {
+            for (let j = right.length - 1; j >= 0; j--) {
+                scores[i][j] =
+                    left[i].AXTitle === right[j].AXTitle
+                        ? scores[i + 1][j + 1] + 1
+                        : Math.max(scores[i + 1][j], scores[i][j + 1]);
+            }
+        }
+        const pairs: Array<[number, number]> = [];
+        let i = 0;
+        let j = 0;
+        while (i < left.length && j < right.length) {
+            if (left[i].AXTitle === right[j].AXTitle) {
+                pairs.push([i++, j++]);
+            } else if (scores[i + 1][j] >= scores[i][j + 1]) {
+                i++;
+            } else {
+                j++;
+            }
+        }
+        const oldIndexes = new Set(pairs.map(([old]) => old));
+        const newIndexes = new Set(pairs.map(([, next]) => next));
+        const changed = pairs
+            .filter(([old, next]) => left[old].AXValue !== right[next].AXValue)
+            .map(([old, next]) => ({
+                index: next,
+                previousIndex: old,
+                role: "AXButton",
+                fields: { AXValue: { from: left[old].AXValue, to: right[next].AXValue } },
+            }));
+        expect(diffSnapshots(left, right)).toEqual({
+            added: right.filter((entry) => !newIndexes.has(entry.index)),
+            removed: left
+                .filter((entry) => !oldIndexes.has(entry.index))
+                .map((entry) => ({ index: entry.index, depth: 1, role: "AXButton", label: String(entry.AXTitle) })),
+            changed,
+            unchanged: pairs.length - changed.length,
+            indexMap: Object.fromEntries(pairs),
+        });
+    }
+});
+
+it("disjoint snapshots allocate no LCS cells and a large repeated-label residual stays linear", () => {
+    const original = globalThis.Uint32Array;
+    let cells = 0;
+    Object.defineProperty(globalThis, "Uint32Array", {
+        configurable: true,
+        value: class extends original {
+            constructor(length: number) {
+                super(length);
+                cells += length;
+            }
+        },
+    });
+    try {
+        const left = Array.from({ length: 2000 }, (_, index) =>
+            row(index, 1, "AXButton", { AXTitle: String(index % 7) })
+        );
+        const disjoint = left.map((entry) => ({ ...entry, AXTitle: `new-${entry.AXTitle}` }));
+        expect(diffSnapshots(left, disjoint).unchanged).toBe(0);
+        expect(cells).toBe(0);
+        const shifted = left.map((entry, index) => ({ ...entry, AXTitle: String((index + 1) % 7) }));
+        expect(diffSnapshots(left, shifted).unchanged).toBe(1999);
+        expect(cells).toBeLessThan(100_000);
+    } finally {
+        Object.defineProperty(globalThis, "Uint32Array", { configurable: true, value: original });
+    }
+});

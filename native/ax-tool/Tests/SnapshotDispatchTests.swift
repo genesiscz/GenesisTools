@@ -456,3 +456,18 @@ extension SnapshotDispatchTests {
                        message: "focus changed before input; no action dispatched; focus is on AXList \"Suggestions\", not the target")
     }
 }
+
+extension SnapshotDispatchTests {
+    func testAnnotationUsesCapturedIDRegardlessOfEqualFrameOrder() {
+        XCTAssertEqual(annotationWindowIndex(candidates: [(7, true), (8, true)], capturedWindowID: 8), 1)
+        XCTAssertEqual(annotationWindowIndex(candidates: [(8, true), (7, true)], capturedWindowID: 8), 0)
+    }
+    func testAnnotationGeometryFallbackMustBeUniqueAndHaveNoConflictingID() {
+        XCTAssertEqual(annotationWindowIndex(candidates: [(nil, true), (nil, false)], capturedWindowID: 8), 0)
+        XCTAssertNil(annotationWindowIndex(candidates: [(nil, true), (nil, true)], capturedWindowID: 8))
+        XCTAssertNil(annotationWindowIndex(candidates: [(7, true)], capturedWindowID: 8))
+        XCTAssertNil(annotationWindowIndex(candidates: [(8, false), (nil, true)], capturedWindowID: 8))
+        XCTAssertNil(annotationWindowIndex(candidates: [(8, true), (8, true)], capturedWindowID: 8))
+        XCTAssertNil(annotationWindowIndex(candidates: [], capturedWindowID: 8))
+    }
+}

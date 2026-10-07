@@ -163,10 +163,74 @@ function normalizeAction(name: string): string {
 function trueValue(value: unknown): boolean {
     return value === true || value === 1 || value === "1" || value === "true";
 }
+function safeRow(row: Observation["elements"][number]): Observation["elements"][number] {
+    return row.AXSubrole === "AXSecureTextField" ? { ...row, AXValue: "[secure]", AXSelectedText: "[secure]" } : row;
+}
 function safeRows(rows: Observation["elements"]): Observation["elements"] {
-    return rows.map((row) =>
-        row.AXSubrole === "AXSecureTextField" ? { ...row, AXValue: "[secure]", AXSelectedText: "[secure]" } : row
-    );
+    return rows.map(safeRow);
+}
+function projectRow({
+    row: source,
+    revision,
+    textLimit,
+}: {
+    row: Observation["elements"][number];
+    revision: string;
+    textLimit: number;
+}): ComputerElement {
+    const row = safeRow(source);
+    const label = elementLabel(row);
+    return {
+        ref: `${revision}:${row.index}`,
+        index: row.index,
+        depth: row.depth,
+        role: row.role,
+        label: label.slice(0, textLimit),
+        truncated: [
+            ...(label.length > textLimit ? ["label" as const] : []),
+            ...(typeof row.AXValue === "string" && row.AXValue.length > textLimit ? ["value" as const] : []),
+        ],
+        identifier: row.AXIdentifier,
+        url: row.AXURL,
+        value: typeof row.AXValue === "string" ? row.AXValue.slice(0, textLimit) : row.AXValue,
+        enabled: ![false, 0, "0", "false"].includes(row.AXEnabled ?? ""),
+        focused: trueValue(row.AXFocused),
+        actions: (row.actions ?? []).map((raw) => ({ raw, name: normalizeAction(raw) })),
+        bounds: [row.x, row.y, row.width, row.height].every((value) => typeof value === "number")
+            ? { x: Number(row.x), y: Number(row.y), width: Number(row.width), height: Number(row.height) }
+            : undefined,
+    };
+}
+function describeElements({
+    app,
+    record,
+    elements,
+    offset,
+    textLimit,
+    summary,
+    changedIds,
+}: {
+    app: string;
+    record: AppRecord;
+    elements: ComputerElement[];
+    offset: number;
+    textLimit: number;
+    summary?: string;
+    changedIds?: Set<number>;
+}): string {
+    const lines = elements
+        .filter((row) => !changedIds || changedIds.has(row.index))
+        .map(
+            (row) =>
+                `${"  ".repeat(Math.min(row.depth, 20))}[${row.index}] ${row.role} ${row.label}${row.value === undefined ? "" : ` value=${SafeJSON.stringify(row.value)}`}${row.focused ? " focused" : ""}${row.enabled ? "" : " disabled"}${row.actions.length ? ` actions=[${row.actions.map((action) => action.raw).join(",")}]` : ""} ref=${row.ref}`
+        );
+    return [
+        `${app} · window ${record.snapshot.window.id} · revision ${record.revision}`,
+        ...(record.snapshot.query ? [describeQueryWalk(record.snapshot.query)] : []),
+        summary ?? `${record.snapshot.elements.length} observed elements.`,
+        `Rows ${offset}–${offset + elements.length}; text values limited to ${textLimit} characters. Use get_elements or find for more.`,
+        ...lines,
+    ].join("\n");
 }
 
 /**
@@ -452,28 +516,7 @@ export class ComputerUse {
         textLimit?: number;
     }): ComputerState {
         const snapshot = record.snapshot;
-        const allElements = safeRows(snapshot.elements).map(
-            (row): ComputerElement => ({
-                ref: `${record.revision}:${row.index}`,
-                index: row.index,
-                depth: row.depth,
-                role: row.role,
-                label: elementLabel(row).slice(0, textLimit),
-                truncated: [
-                    ...(elementLabel(row).length > textLimit ? ["label" as const] : []),
-                    ...(typeof row.AXValue === "string" && row.AXValue.length > textLimit ? ["value" as const] : []),
-                ],
-                identifier: row.AXIdentifier,
-                url: row.AXURL,
-                value: typeof row.AXValue === "string" ? row.AXValue.slice(0, textLimit) : row.AXValue,
-                enabled: ![false, 0, "0", "false"].includes(row.AXEnabled ?? ""),
-                focused: trueValue(row.AXFocused),
-                actions: (row.actions ?? []).map((raw) => ({ raw, name: normalizeAction(raw) })),
-                bounds: [row.x, row.y, row.width, row.height].every((value) => typeof value === "number")
-                    ? { x: Number(row.x), y: Number(row.y), width: Number(row.width), height: Number(row.height) }
-                    : undefined,
-            })
-        );
+        const allElements = snapshot.elements.map((row) => projectRow({ row, revision: record.revision, textLimit }));
         const documentRow = primaryWebArea(safeRows(snapshot.elements));
         const documentElement = documentRow
             ? allElements.find((element) => element.index === documentRow.index)
@@ -521,21 +564,17 @@ export class ComputerUse {
         const changedIds = changes
             ? new Set([...changes.added.map((row) => row.index), ...changes.changed.map((row) => row.index)])
             : undefined;
-        const lines = elements
-            .filter((row) => !changedIds || changedIds.has(row.index))
-            .map(
-                (row) =>
-                    `${"  ".repeat(Math.min(row.depth, 20))}[${row.index}] ${row.role} ${row.label}${row.value === undefined ? "" : ` value=${SafeJSON.stringify(row.value)}`}${row.focused ? " focused" : ""}${row.enabled ? "" : " disabled"}${row.actions.length ? ` actions=[${row.actions.map((action) => action.raw).join(",")}]` : ""} ref=${row.ref}`
-            );
-        const text = [
-            `${app} · window ${snapshot.window.id} · revision ${record.revision}`,
-            ...(snapshot.query ? [describeQueryWalk(snapshot.query)] : []),
-            changes
+        const text = describeElements({
+            app,
+            record,
+            elements,
+            offset,
+            textLimit,
+            changedIds,
+            summary: changes
                 ? `Changes: +${fullChanges?.added.length} -${fullChanges?.removed.length} ~${fullChanges?.changed.length}; ${changes.unchanged} unchanged. Use current indexes or explicit refs; old refs are invalid.`
-                : `${allElements.length} observed elements.`,
-            `Rows ${offset}–${offset + elements.length}; text values limited to ${textLimit} characters. Use get_elements or find for more.`,
-            ...lines,
-        ].join("\n");
+                : undefined,
+        });
         const screenshot = snapshot.screenshot;
         const visual = visualObservationSchema.safeParse(snapshot);
         return {
@@ -1497,20 +1536,18 @@ export class ComputerUse {
     get_elements(input: ComputerCall<"get_elements">) {
         const { options } = parseCall("get_elements", input);
         const record = this.record(options);
-        const state = this.state({
-            app: options.app,
-            record,
-            offset: options.offset,
-            limit: options.limit,
-            textLimit: options.text_limit,
-        });
+        const { offset, limit, text_limit: textLimit } = options;
+        const total = record.snapshot.elements.length;
+        const elements = record.snapshot.elements
+            .slice(offset, offset + limit)
+            .map((row) => projectRow({ row, revision: record.revision, textLimit }));
         return {
-            app: state.app,
-            revision: state.revision,
-            observedAt: state.observedAt,
-            elements: state.elements,
-            page: state.page,
-            text: state.text,
+            app: options.app,
+            revision: record.revision,
+            observedAt: record.observedAt,
+            elements,
+            page: { offset, limit, total, nextOffset: offset + limit < total ? offset + limit : null },
+            text: describeElements({ app: options.app, record, elements, offset, textLimit }),
         };
     }
     find(input: ComputerCall<"find">) {
@@ -1518,30 +1555,27 @@ export class ComputerUse {
         const record = this.record({
             app: options.app,
         });
-        const state = this.state({
-            app: options.app,
-            record,
-            limit: record.snapshot.elements.length,
-        });
         const query = options.query.toLocaleLowerCase();
-        const matchedIndexes = new Set(
-            safeRows(record.snapshot.elements)
-                .filter(
-                    (row) =>
-                        (!options.role || row.role === options.role) &&
-                        [elementLabel(row), row.AXIdentifier, String(row.AXValue ?? "")].some((value) =>
-                            value?.toLocaleLowerCase().includes(query)
-                        )
-                )
-                .map((row) => row.index)
-        );
-        const matched = state.elements.filter((element) => matchedIndexes.has(element.index));
-        return {
-            revision: state.revision,
-            elements: matched.slice(0, options.limit),
-            total: matched.length,
-            truncated: matched.length > options.limit,
-        };
+        const elements: ComputerElement[] = [];
+        let total = 0;
+        for (const raw of record.snapshot.elements) {
+            if (options.role && raw.role !== options.role) {
+                continue;
+            }
+
+            const row = safeRow(raw);
+            const matched = [elementLabel(row), row.AXIdentifier, String(row.AXValue ?? "")].some((value) =>
+                value?.toLocaleLowerCase().includes(query)
+            );
+            if (matched) {
+                total++;
+                if (elements.length < options.limit) {
+                    elements.push(projectRow({ row, revision: record.revision, textLimit: 500 }));
+                }
+            }
+        }
+
+        return { revision: record.revision, elements, total, truncated: total > options.limit };
     }
     async assist_task(input: ComputerCall<"assist_task">) {
         const { options, signal } = parseCall("assist_task", input);

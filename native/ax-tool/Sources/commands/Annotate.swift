@@ -44,28 +44,22 @@ func collectFramedElements(_ root: AXUIElement, all: Bool, depth: Int = 0, maxDe
     return out
 }
 
-func annotateImage(_ image: CGImage, appName: String, pid: pid_t, windowTitle: String,
-                    windowBoundsPts: CGRect) -> (CGImage, [[String: Any]]) {
-    let app = AXUIElementCreateApplication(pid)
-    // Match the AX window to the CAPTURED window by FRAME, not just title —
-    // title-mismatch + .first fallback annotated a phantom translate popup's
-    // elements onto a screenshot of the real window (blind-test 4D).
-    var axWin: AXUIElement? = nil
-    for w in axWindows(app) {
-        guard let pos = axPointValue(w, "AXPosition"), let size = axSizeValue(w, "AXSize") else { continue }
-        if abs(pos.x - windowBoundsPts.origin.x) < 6 && abs(pos.y - windowBoundsPts.origin.y) < 6 &&
-           abs(size.width - windowBoundsPts.width) < 6 && abs(size.height - windowBoundsPts.height) < 6 {
-            axWin = w
-            break
+func annotateImage(_ image: CGImage, pid: pid_t, capturedWindowID: CGWindowID,
+                    windowBoundsPts: CGRect) -> (CGImage, [[String: Any]], String?) {
+    let windows = axWindows(AXUIElementCreateApplication(pid))
+    let candidates = windows.map { window -> (windowID: UInt32?, frameMatches: Bool) in
+        let id = nativeAXWindowID(window)
+        guard let pos = axPointValue(window, "AXPosition"), let size = axSizeValue(window, "AXSize") else {
+            return (id, false)
         }
+        let matches = abs(pos.x - windowBoundsPts.origin.x) < 6 && abs(pos.y - windowBoundsPts.origin.y) < 6 &&
+            abs(size.width - windowBoundsPts.width) < 6 && abs(size.height - windowBoundsPts.height) < 6
+        return (id, matches)
     }
-    if axWin == nil && !windowTitle.isEmpty {
-        for w in axWindows(app) {
-            if (axStringAttribute(w, "AXTitle") ?? "") == windowTitle { axWin = w; break }
-        }
+    guard let index = annotationWindowIndex(candidates: candidates, capturedWindowID: capturedWindowID) else {
+        return (image, [], "annotations withheld: captured window identity is unavailable, changed or ambiguous")
     }
-    // No frame/title match: better zero annotations than another window's boxes.
-    guard let win = axWin else { return (image, []) }
+    let win = windows[index]
 
     let all = args.contains("--all")
     let elements = collectFramedElements(win, all: all)
@@ -76,7 +70,7 @@ func annotateImage(_ image: CGImage, appName: String, pid: pid_t, windowTitle: S
     guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
                               bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                               bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
-        return (image, [])
+        return (image, [], "annotations withheld: could not create drawing context")
     }
     ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
 
@@ -131,7 +125,7 @@ func annotateImage(_ image: CGImage, appName: String, pid: pid_t, windowTitle: S
         legend.append(entry)
     }
     let annotated = ctx.makeImage() ?? image
-    return (annotated, legend)
+    return (annotated, legend, nil)
 }
 
 func writePNG(_ image: CGImage, to path: String) {
@@ -187,10 +181,11 @@ func cmdOcr(appName: String?) {
         image = loadCGImage(imgPath)
         source["image"] = imgPath
     } else if let appName = appName {
-        let (img, title, pid, _) = captureWindowCGImage(appName)
-        image = img
-        source["app"] = NSRunningApplication(processIdentifier: pid)?.localizedName ?? appName
-        source["window"] = title
+        let captured = captureWindowCGImage(appName)
+        image = captured.image
+        source["app"] = NSRunningApplication(processIdentifier: captured.pid)?.localizedName ?? appName
+        source["window"] = captured.title
+        source["windowId"] = captured.windowID
     } else {
         errorExit("ocr needs --image <path> or --app <name>")
     }

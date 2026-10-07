@@ -2,7 +2,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 import type { Action, CaptureSpec, CropTarget, Plan } from "./capture-plan";
-import { type ComputerElement, type ComputerState, ComputerUse } from "./computer-use/session";
+import { type ComputerElement, type ComputerState, ComputerUse, type NativeBridge } from "./computer-use/session";
 import { parseNativeWindowList, parseScreenList, type ScreenInfo } from "./native-record";
 import { type AxResult, runAx, runAxAsync } from "./runner";
 
@@ -57,9 +57,51 @@ function coordinates(value: string | { x: number; y: number }) {
     return z.tuple([z.number().finite(), z.number().finite()]).parse(point);
 }
 export class NativeCaptureControls {
-    private readonly computer = new ComputerUse();
-    constructor(private readonly capture: CaptureSpec) {}
+    private readonly computer: ComputerUse;
+    private readonly native: NativeBridge;
+    private binding: { key: string; windowId: number } | undefined;
+    constructor(
+        private readonly capture: CaptureSpec,
+        options: { native?: NativeBridge } = {}
+    ) {
+        this.native = options.native ?? { run: runAxAsync };
+        this.computer = new ComputerUse({ native: this.native });
+    }
     private async observe(options: { app: string; windowTitle?: string; action?: Action; image?: boolean }) {
+        const key = SafeJSON.stringify({
+            app: options.app,
+            windowTitle: options.windowTitle,
+            windowId: this.capture.windowId,
+            windowIndex: this.capture.windowIndex,
+        });
+        try {
+            if (this.binding?.key === key) {
+                // Require the retained session before observing implicitly. Passing the cached ID
+                // explicitly would bypass ComputerUse's process-launch replacement check.
+                this.computer.get_elements({ app: options.app, limit: 1 });
+                const state = await this.computer.get_app_state({
+                    app: options.app,
+                    image: options.image ?? false,
+                    element_limit: 2000,
+                });
+                if (state.window.id !== this.binding.windowId) {
+                    throw new Error("The bound recording window changed. Select the target again.");
+                }
+
+                return state;
+            }
+
+            this.binding = undefined;
+            const state = await this.resolveWindow(options);
+            this.binding = { key, windowId: state.window.id };
+            return state;
+        } catch (error) {
+            this.binding = undefined;
+            this.computer.close_session({ app: options.app });
+            throw error;
+        }
+    }
+    private async resolveWindow(options: { app: string; windowTitle?: string; action?: Action; image?: boolean }) {
         const { app, windowTitle, action } = options;
         if (this.capture.app === app && this.capture.windowId !== undefined) {
             return this.computer.get_app_state({
@@ -69,7 +111,7 @@ export class NativeCaptureControls {
                 element_limit: 2000,
             });
         }
-        const listed = required(await runAxAsync({ args: ["window", "--app", app], timeoutMs: 5000 }));
+        const listed = required(await this.native.run({ args: ["window", "--app", app], timeoutMs: 5000 }));
         const windows = z
             .array(z.object({ title: z.string().optional(), minimized: z.boolean().optional() }))
             .max(10)
@@ -119,6 +161,7 @@ export class NativeCaptureControls {
         );
     }
     async focus(target: { app: string; windowTitle?: string }) {
+        this.binding = undefined;
         const state = await this.observe(target);
         const result = await this.computer.focus({ app: target.app, revision: state.revision });
         return { ok: result.ok, via: "ax-tool" as const, detail: result.error ?? "" };
@@ -128,6 +171,8 @@ export class NativeCaptureControls {
             const relative = "relativeTo" in action ? action.relativeTo : undefined;
             const app = ("app" in action ? action.app : undefined) ?? relative?.app ?? ambient?.app ?? this.capture.app;
             if (action.do === "focus-stop") {
+                this.binding = undefined;
+                this.computer.close_session();
                 return { ok: true, stdout: "Native ambient focus disabled", stderr: "" };
             }
             if (!app) {
@@ -239,6 +284,7 @@ export class NativeCaptureControls {
         }
     }
     dispose() {
+        this.binding = undefined;
         this.computer.close_session();
     }
     [Symbol.dispose]() {

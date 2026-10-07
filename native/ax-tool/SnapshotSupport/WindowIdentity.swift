@@ -1,5 +1,18 @@
 import Foundation
 
+/// Annotation may use geometry only when exactly one candidate has that frame and its ID is unavailable.
+public func annotationWindowIndex(candidates: [(windowID: UInt32?, frameMatches: Bool)], capturedWindowID: UInt32) -> Int? {
+    let exact = candidates.indices.filter { candidates[$0].windowID == capturedWindowID }
+    if !exact.isEmpty {
+        guard exact.count == 1, candidates[exact[0]].frameMatches else { return nil }
+        return exact[0]
+    }
+
+    let geometry = candidates.indices.filter { candidates[$0].frameMatches }
+    guard geometry.count == 1, candidates[geometry[0]].windowID == nil else { return nil }
+    return geometry[0]
+}
+
 /// Native IDs distinguish overlapping windows; geometry remains required and is the strict fallback.
 public func matchesNativeWindowIdentity(reportedID: UInt32?, expectedID: UInt32, frameMatches: Bool) -> Bool {
     guard frameMatches else { return false }
