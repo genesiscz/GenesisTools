@@ -456,7 +456,7 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
           - Author: @alice · \`feature/tidy\` → \`main\` · head \`head420000\` · diff from api
           - MR: https://gitlab.example.com/group/app/-/merge_requests/42
           - Checkout: none given (\`--repo <checkout>\`); file references are repository paths.
-          - Files: 2 changed (+2 −2) · Existing threads: 2 (1 unresolved) · Your pending drafts: 1
+          - Files: 2 changed (+2 −2) · Existing threads: 2 (1 unresolved) · Your comments: 1 pending draft, 0 published threads
 
           ## Checklist
 
@@ -472,7 +472,11 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
           | @bob   | \`src/lib/util.ts:2\` | no       | Why \\| this? |
           | @carol | top-level           | yes      | Looks fine   |
 
-          ## Your pending drafts
+          ## Your comments
+
+          Your comments: 1 pending draft, 0 published threads
+
+          ### Pending drafts
 
           1 unpublished draft(s). They are visible only to their author.
 
@@ -755,7 +759,7 @@ describe("pending drafts in full", () => {
         const reply = { ...draft(null, null, null), id: 2, discussionId: "d".repeat(40), note: "agreed" };
         const md = renderDraftsOnlyMarkdown(facts([reply]));
 
-        expect(md).toContain("# Pending drafts: !7 Tidy");
+        expect(md).toContain("# Your comments: !7 Tidy");
         expect(md).toContain("### D01 · draft 2 · reply");
         expect(md).toContain(`- Target: reply in existing thread \`${"d".repeat(40)}\``);
         expect(md).not.toContain("Open MRs this one affects");

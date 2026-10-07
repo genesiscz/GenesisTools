@@ -395,6 +395,29 @@ export function threadSections(discussions: Discussion[], opts: RenderMarkdownOp
     return unresolvedThreads(discussions).map((d, idx) => threadBlocks(d, idx, opts));
 }
 
+/**
+ * One section per thread given, resolved ones included: a diff-attached thread as `threadSections`
+ * renders it, a top-level one as its notes.
+ */
+export function threadSectionsOf(threads: Discussion[], opts: RenderMarkdownOpts): BlockInput {
+    return threads.map((d, idx) => {
+        if (d.notes?.[0]?.position) {
+            return threadBlocks(d, idx, opts);
+        }
+
+        const ref = (d.id && opts.refs?.get(d.id)) || `Thread ${idx + 1}`;
+        const noteCount = d.notes?.length ?? 0;
+
+        return [
+            { h2: `${ref} — top-level` },
+            { ul: [`**Discussion**: \`${d.id ?? "?"}\``] },
+            { h3: `Discussion (${noteCount} note${noteCount === 1 ? "" : "s"}):` },
+            (d.notes ?? []).map(noteBlock),
+            { hr: true },
+        ];
+    });
+}
+
 /** Raw discussions plus the reviewer's frozen views, which `threadSections` renders. */
 export async function collectThreadContext(options: {
     api: ProjectApi;
@@ -402,22 +425,25 @@ export async function collectThreadContext(options: {
     cwd: string;
     fetchRemote: boolean;
     onWarn: (msg: string) => void;
-}): Promise<{ discussions: Discussion[]; anchorViews: Map<string, string[]>; tip: TipViews }> {
+    /** The threads to read files for; default every unresolved one. */
+    include?: (d: Discussion) => boolean;
+}): Promise<{ discussions: Discussion[]; selected: Discussion[]; anchorViews: Map<string, string[]>; tip: TipViews }> {
     const discussions = await restGetPaginated<Discussion>(
         options.api,
         `${projectBase(options.api)}/merge_requests/${options.iid}/discussions`
     );
+    const selected = options.include ? discussions.filter(options.include) : unresolvedThreads(discussions);
     // The tip first: its git fetch also brings in the reviewers' commits the checkout lacks.
-    const tip = await fetchTipViews({ ...options, discussions });
+    const tip = await fetchTipViews({ ...options, discussions, threads: selected });
     const { views } = await fetchAnchorViews({
-        pairs: collectUnresolvedAnchorPairs(discussions),
+        pairs: anchorPairsOf(selected),
         api: options.api,
         fetchRemote: options.fetchRemote,
         onWarn: options.onWarn,
         cwd: options.cwd,
     });
 
-    return { discussions, anchorViews: views, tip };
+    return { discussions, selected, anchorViews: views, tip };
 }
 
 /** The fetch-review report as json2md blocks: header facts, one section per unresolved thread, next steps. */
@@ -466,9 +492,14 @@ export function renderMarkdown(discussions: Discussion[], opts: RenderMarkdownOp
 
 /** `<head_sha> <path>` of every unresolved diff-attached thread. */
 export function collectUnresolvedAnchorPairs(discussions: Discussion[]): Set<string> {
+    return anchorPairsOf(unresolvedThreads(discussions));
+}
+
+/** `<head_sha> <path>` of each of these threads that is attached to a diff line. */
+export function anchorPairsOf(threads: Discussion[]): Set<string> {
     const pairs = new Set<string>();
 
-    for (const d of unresolvedThreads(discussions)) {
+    for (const d of threads) {
         const position = d.notes?.[0]?.position;
         const path = position?.new_path ?? position?.old_path;
 
@@ -493,11 +524,13 @@ export async function fetchTipViews(options: {
     iid: string;
     cwd: string;
     discussions: Discussion[];
+    /** The threads to read files for; default every unresolved one. */
+    threads?: Discussion[];
     fetchRemote: boolean;
     onWarn: (msg: string) => void;
 }): Promise<TipViews> {
     const mr = await restGet<{ sha: string }>(options.api, `${projectBase(options.api)}/merge_requests/${options.iid}`);
-    const threads = unresolvedThreads(options.discussions);
+    const threads = options.threads ?? unresolvedThreads(options.discussions);
     const headShas = new Set(
         threads.map((t) => t.notes?.[0]?.position?.head_sha).filter((sha): sha is string => Boolean(sha))
     );

@@ -17,7 +17,12 @@ import {
     type PrReviewGate,
 } from "@app/gitlab/lib/pr-review";
 import type { DraftSummary } from "@app/gitlab/lib/review-drafts";
-import { type Discussion, type RenderMarkdownOpts, threadSections } from "@app/gitlab/lib/review-render";
+import {
+    type Discussion,
+    type RenderMarkdownOpts,
+    threadSections,
+    threadSectionsOf,
+} from "@app/gitlab/lib/review-render";
 import { detectGenesisTools } from "@genesiscz/utils/cli/genesis-tools";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type BlockInput, json2md } from "@genesiscz/utils/json2md";
@@ -378,6 +383,27 @@ export function draftBlocks(facts: PrReviewFacts): BlockInput {
 export interface ReportExtras {
     /** `--threads`: every unresolved diff thread in full, as `fetch-review` renders it. */
     threads?: { discussions: Discussion[]; opts: RenderMarkdownOpts };
+    /** My published threads (`Y`) in full, for the Your comments section. */
+    mine?: { discussions: Discussion[]; opts: RenderMarkdownOpts };
+}
+
+/** The count line of the Your comments section. */
+export function yourCommentsLine(facts: PrReviewFacts): string {
+    const threads = facts.discussions.filter((d) => d.ref?.startsWith("Y")).length;
+
+    return `Your comments: ${facts.drafts.length} pending draft${facts.drafts.length === 1 ? "" : "s"}, ${threads} published thread${threads === 1 ? "" : "s"}`;
+}
+
+/** My pending drafts (`D`), then my published threads (`Y`) in full. */
+function yourCommentsBlocks(facts: PrReviewFacts, extras: ReportExtras): BlockInput {
+    const mine = extras.mine && extras.mine.discussions.length > 0 ? extras.mine : null;
+
+    return [
+        yourCommentsLine(facts),
+        { h3: "Pending drafts" },
+        draftBlocks(facts),
+        mine ? [{ h3: "Published threads" }, threadSectionsOf(mine.discussions, mine.opts)] : [],
+    ];
 }
 
 function threadBlocksOf(extras: ReportExtras): BlockInput {
@@ -394,9 +420,10 @@ function threadBlocksOf(extras: ReportExtras): BlockInput {
 }
 
 /** The drafts-only report: the header plus every pending draft in full, for a pass over one's own review. */
+/** `--yours-only`: my comments on the MR (pending drafts and published threads), no impact scan. */
 export function renderDraftsOnlyMarkdown(facts: PrReviewFacts, extras: ReportExtras = {}): string {
     return json2md([
-        { h1: `Pending drafts: !${facts.iid} ${facts.title}` },
+        { h1: `Your comments: !${facts.iid} ${facts.title}` },
         {
             ul: [
                 `Author: @${facts.author} · \`${facts.sourceBranch}\` → \`${facts.targetBranch}\` · head \`${facts.headSha.slice(0, 10)}\``,
@@ -404,7 +431,7 @@ export function renderDraftsOnlyMarkdown(facts: PrReviewFacts, extras: ReportExt
                 worktreeLine(facts),
             ],
         },
-        draftBlocks(facts),
+        yourCommentsBlocks(facts, extras),
         threadBlocksOf(extras),
     ]);
 }
@@ -420,7 +447,7 @@ export function prReviewBlocks(facts: PrReviewFacts, extras: ReportExtras = {}):
                 `Author: @${facts.author} · \`${facts.sourceBranch}\` → \`${facts.targetBranch}\` · head \`${facts.headSha.slice(0, 10)}\` · diff from ${facts.diffSource}`,
                 `MR: ${facts.webUrl}`,
                 worktreeLine(facts),
-                `Files: ${facts.files.length} changed (+${additions} −${deletions}) · Existing threads: ${facts.discussions.length} (${unresolved} unresolved) · Your pending drafts: ${facts.drafts.length}`,
+                `Files: ${facts.files.length} changed (+${additions} −${deletions}) · Existing threads: ${facts.discussions.length} (${unresolved} unresolved) · ${yourCommentsLine(facts)}`,
             ],
         },
         facts.warnings.length > 0
@@ -437,8 +464,8 @@ export function prReviewBlocks(facts: PrReviewFacts, extras: ReportExtras = {}):
         threadBlocksOf(extras),
         { h2: "Existing threads" },
         threadRows(facts),
-        { h2: "Your pending drafts" },
-        draftBlocks(facts),
+        { h2: "Your comments" },
+        yourCommentsBlocks(facts, extras),
         { h2: "Open MRs this one affects" },
         impactBlocks(facts),
         gateBlocks(facts),

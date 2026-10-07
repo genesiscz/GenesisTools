@@ -18,7 +18,7 @@
  *   tools gitlab pr 42 review --give --repo ~/code/app
  *   tools gitlab pr 42 review --give --llm
  *   tools gitlab pr 42 review --give --expand f3,t1
- *   tools gitlab pr 42 review --give --drafts-only --md
+ *   tools gitlab pr 42 review --give --yours-only --md
  *   tools gitlab pr 42 review --give --proposal-skeleton > proposal.json
  */
 
@@ -48,7 +48,7 @@ import {
     renderDraftsOnlyMarkdown,
     renderPrReviewMarkdown,
 } from "@app/gitlab/lib/pr-review-output";
-import { collectThreadContext } from "@app/gitlab/lib/review-render";
+import { collectThreadContext, type Discussion } from "@app/gitlab/lib/review-render";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -79,7 +79,7 @@ interface Options extends TargetOptions {
     impact?: boolean;
     impactLimit: string;
     impactSource?: string | true;
-    draftsOnly?: boolean;
+    yoursOnly?: boolean;
     threads?: boolean;
     anchors?: boolean;
     schemaFormat?: string;
@@ -118,7 +118,7 @@ const GIVE_ONLY = [
     "impact",
     "impactLimit",
     "impactSource",
-    "draftsOnly",
+    "yoursOnly",
     "threads",
 ] as const;
 const RECEIVE_ONLY = ["anchors", "schemaFormat", "schemaSidecar", "mdSidecar", "confirm"] as const;
@@ -189,8 +189,8 @@ export function registerPrReview(pr: Command): Command {
                 `--give: ${IMPACT_SOURCES.join(" | ")} (default: review.impactSource in the config, else api); api reads each MR's diff from GitLab, git fetches every open branch and diffs locally (needs a checkout, no cap)`
             )
             .option(
-                "--drafts-only",
-                "--give: only my pending drafts, each in full with the code at its anchor; no impact scan (critique your own review)"
+                "--yours-only",
+                "--give: only my comments: pending drafts in full with the code at the anchor, and my published threads; no impact scan"
             )
             .option(
                 "--threads",
@@ -432,7 +432,7 @@ async function runPrReview(mrIid: string, opts: Options, door: ReviewDoor): Prom
           : currentCheckout(process.cwd());
     const api = await resolveProjectApi({ host: opts.host, project: opts.project, cwd: repoPath ?? process.cwd() });
     const key = { host: api.host, project: api.project, iid };
-    const draftsOnly = Boolean(opts.draftsOnly);
+    const draftsOnly = Boolean(opts.yoursOnly);
     const reportPath = opts.out ? resolve(opts.out) : door.defaultReport(key, draftsOnly);
     const jsonPath = factsPathOf(reportPath);
     const cached = opts.expand && !opts.refresh && !draftsOnly ? savedFacts(jsonPath, key) : null;
@@ -465,18 +465,20 @@ async function runPrReview(mrIid: string, opts: Options, door: ReviewDoor): Prom
         ));
 
     const extras: ReportExtras = {};
-
-    if (opts.threads) {
-        const cwd = facts.worktree ?? facts.repoPath ?? process.cwd();
+    const cwd = facts.worktree ?? facts.repoPath ?? process.cwd();
+    const refs = new Map(facts.discussions.flatMap((d) => (d.ref ? [[d.id, d.ref] as const] : [])));
+    const contextOf = async (include?: (d: Discussion) => boolean) => {
         const context = await collectThreadContext({
             api,
             iid: String(iid),
             cwd,
             fetchRemote: true,
             onWarn: (message) => progress(`⚠  ${message}`),
+            include,
         });
-        extras.threads = {
-            discussions: context.discussions,
+
+        return {
+            discussions: context.selected,
             opts: {
                 mrIid: String(iid),
                 project: facts.project,
@@ -484,8 +486,21 @@ async function runPrReview(mrIid: string, opts: Options, door: ReviewDoor): Prom
                 contextLines,
                 anchorViews: context.anchorViews,
                 tip: context.tip,
+                refs,
             },
         };
+    };
+
+    if (opts.threads) {
+        const unresolved = await contextOf();
+        // threadSections picks the unresolved ones itself from every discussion it is given.
+        extras.threads = { discussions: unresolved.discussions, opts: unresolved.opts };
+    }
+
+    const mine = new Set(facts.discussions.filter((d) => d.ref?.startsWith("Y")).map((d) => d.id));
+
+    if (mine.size > 0 && !cached) {
+        extras.mine = await contextOf((d) => mine.has(d.id ?? ""));
     }
 
     if (!cached) {
