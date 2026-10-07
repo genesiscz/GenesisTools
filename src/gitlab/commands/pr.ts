@@ -15,6 +15,7 @@
 import { registerLabels } from "@app/gitlab/commands/batch-label";
 import { registerPrReview } from "@app/gitlab/commands/pr-review";
 import { registerComments } from "@app/gitlab/commands/review-drafts";
+import { registerReviewJudgements } from "@app/gitlab/commands/review-judgements";
 import { registerTouching } from "@app/gitlab/commands/search-by-file";
 import { type TargetOptions, withProject } from "@app/gitlab/commands/shared";
 import { registerStaleBranches } from "@app/gitlab/commands/stale-branches";
@@ -28,7 +29,12 @@ import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 /** The leaf a bare group runs: `pr 42` → `show`, `pr 42 comments` → `comments list`, `activity user` → `events`. */
-const DEFAULT_LEAF: Record<string, string> = { pr: "show", "pr comments": "list", "activity user": "events" };
+const DEFAULT_LEAF: Record<string, string> = {
+    pr: "show",
+    "pr comments": "list",
+    "pr review": "facts",
+    "activity user": "events",
+};
 
 interface ShowOptions extends TargetOptions {
     json?: boolean;
@@ -47,7 +53,7 @@ export function registerPr(program: Command): Command {
             .option("--json", "Emit JSON")
     ).action(runShow);
 
-    registerPrReview(pr);
+    registerReviewJudgements(registerPrReview(pr));
     registerComments(pr);
     registerLabels(pr);
     registerStaleBranches(pr);
@@ -83,6 +89,12 @@ export function publicUsage(cmd: Command): string | null {
 
     const prAt = names.indexOf("pr");
     const [first, ...rest] = cmd.registeredArguments;
+    const takesIid = (c: Command): boolean => c.registeredArguments[0]?.name() === "iid";
+
+    // A group under `pr` whose verbs all take the MR (`pr <iid> review`, `pr <iid> comments`).
+    if (prAt !== -1 && prAt < names.length - 1 && cmd.commands.length > 0 && cmd.commands.every(takesIid)) {
+        return [...names.slice(0, prAt + 1), "<iid>", ...names.slice(prAt + 1), "[command]", "[options]"].join(" ");
+    }
 
     if (prAt === -1 || first?.name() !== "iid") {
         return null;

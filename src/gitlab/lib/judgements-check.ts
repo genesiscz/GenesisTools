@@ -7,8 +7,8 @@
 
 import type { DraftRules } from "@app/gitlab/lib/config";
 import {
-    ACTION_TEXT,
     ACTIONS,
+    actionTextField,
     badgeOf,
     type JudgementItem,
     type Judgements,
@@ -371,7 +371,7 @@ export function checkJudgements(input: CheckInput): CheckResult {
             continue;
         }
 
-        const textField = ACTION_TEXT[action];
+        const textField = actionTextField(item.kind, action);
 
         if (textField && isBlank(item.fences.get(textField))) {
             errors.push({

@@ -91,6 +91,10 @@ describe("rewritePrArgv", () => {
         expect(rewritePrArgv(["user", "activity"], PR)).toEqual(["user", "activity"]);
     });
 
+    test("--help on a group after the MR shows the group, so its verbs are listed", () => {
+        expect(rewritePrArgv(["pr", "7412", "comments", "--help"], PR)).toEqual(["pr", "comments", "--help"]);
+    });
+
     test("--help after the MR asks for that leaf's help", () => {
         expect(rewritePrArgv(["pr", "7412", "comments", "reply", "--help"], PR)).toEqual([
             "pr",

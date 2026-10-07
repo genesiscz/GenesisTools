@@ -34,14 +34,18 @@ export const ACTIONS: Record<ItemKind, readonly string[]> = {
     N: ["comment", "none"],
 };
 
-/** The fenced field that carries the text an action sends. */
-export const ACTION_TEXT: Record<string, string> = {
-    reply: "Proposed draft reply",
-    "reply-resolve": "Proposed draft reply",
-    reword: "Proposed rewording",
-    move: "Proposed rewording",
-    comment: "Proposed draft comment",
-};
+/** The fenced field that carries the text an action sends; in my own thread a reply is the answer. */
+export function actionTextField(kind: ItemKind, action: string): string | null {
+    if (action === "reply" || action === "reply-resolve") {
+        return kind === "T" ? "Proposed draft reply" : "Proposed answer";
+    }
+
+    if (action === "reword" || action === "move") {
+        return "Proposed rewording";
+    }
+
+    return action === "comment" ? "Proposed draft comment" : null;
+}
 
 export interface JudgementItem {
     id: string;

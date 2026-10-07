@@ -136,10 +136,15 @@ function passed(cmd: Command, names: readonly string[]): string[] {
     return names.filter((name) => cmd.getOptionValueSource(name) === "cli").map((name) => flagOf(cmd, name));
 }
 
+/** `pr review` with its verbs; a bare `pr <iid> review` runs `facts`. */
 export function registerPrReview(pr: Command): Command {
-    return withProject(
-        pr
-            .command("review")
+    const review = pr
+        .command("review")
+        .description("A review: facts (default), then skeleton, check and render of the judgements file");
+
+    withProject(
+        review
+            .command("facts")
             .description(
                 "Facts for a review: --receive (threads on my MR) or --give (someone else's MR); no flag picks by author"
             )
@@ -208,10 +213,15 @@ export function registerPrReview(pr: Command): Command {
             .option("--no-md-sidecar", "--receive: don't write the <out>.md sidecar")
             .option("--no-confirm", "--receive: skip the confirm prompt in a terminal")
     ).action(runReview);
+
+    return review;
 }
 
 /** The mode the flags ask for, or by authorship: the token's owner wrote the MR → receive. */
-async function pickMode(iid: string, opts: Options): Promise<"receive" | "give"> {
+export async function pickMode(
+    iid: string,
+    opts: TargetOptions & { receive?: boolean; give?: boolean; cwd?: string; repo?: string }
+): Promise<"receive" | "give"> {
     if (opts.receive && opts.give) {
         throw new Error("Pick one: --receive (threads on my MR) or --give (someone else's MR).");
     }

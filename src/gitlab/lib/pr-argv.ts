@@ -135,6 +135,13 @@ export function rewritePrArgv(args: string[], pr: CommandNode): string[] {
         index++;
     }
 
+    const tail = rest.slice(index);
+
+    // `pr 42 review --help` asks what the group can do, so it gets the group's help, not its default leaf's.
+    if (node.defaultChild && (hasOption(tail, "--help") || hasOption(tail, "-h"))) {
+        return [...args.slice(0, refAt), ...path, ...tail];
+    }
+
     while (node.defaultChild) {
         const child = node.children.get(node.defaultChild);
 
@@ -146,7 +153,6 @@ export function rewritePrArgv(args: string[], pr: CommandNode): string[] {
         node = child;
     }
 
-    const tail = rest.slice(index);
     const target: string[] = [];
 
     if (host && !hasOption(tail, "--host")) {

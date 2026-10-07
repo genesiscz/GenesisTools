@@ -98,10 +98,7 @@ describe("judgements", () => {
     });
 
     test("a complete file passes the check", () => {
-        expect(check(GOOD)).toEqual({
-            errors: [],
-            warnings: [{ id: "D01", line: 0, message: expect.any(String) }].slice(0, 0),
-        });
+        expect(check(GOOD)).toEqual({ errors: [], warnings: [] });
     });
 
     test("the skeleton parses back, and its untouched blocks are warnings, not errors", () => {
@@ -170,6 +167,32 @@ describe("judgements", () => {
         expect(messages).toContain(
             'Proposed answer: "máš pravdu" addresses nobody in your own thread; name the MR author or state it flat'
         );
+    });
+
+    test("a reply in my own thread sends the Proposed answer", () => {
+        const reply = (text: string) =>
+            [
+                "# D01 Is this still needed · draft 22970 · src/lock.ts:2",
+                "- Verdict on the comment: Still needed [80%]",
+                "- Action: keep",
+                "- Proposed answer:",
+                "",
+                "```markdown",
+                text,
+                "```",
+            ].join("\n");
+        const yours: KnownItem = { ...KNOWN[1], id: "Y01", kind: "Y", pair: { kind: "discussion", value: "abc" } };
+        const input = (text: string): CheckInput => ({
+            judgements: parseJudgements(
+                reply(text).replace("# D01", "# Y01").replace("draft 22970", "discussion abc").replace("keep", "reply")
+            ),
+            known: [yours],
+            files: FILES,
+            rules: RULES,
+        });
+
+        expect(checkJudgements(input("Je to potřeba kvůli cache.")).errors).toEqual([]);
+        expect(checkJudgements(input("")).errors[0]?.message).toBe('Action reply sends "Proposed answer"; it is empty');
     });
 
     test("anchors parse from the one documented form", () => {
