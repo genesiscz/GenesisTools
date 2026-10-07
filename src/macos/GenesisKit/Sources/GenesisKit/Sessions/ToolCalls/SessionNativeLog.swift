@@ -771,10 +771,15 @@ public final class SessionNativeLogStore: @unchecked Sendable {
         return log
     }
 
+    /// Each entry's size is measured once per call: `retainedBytes` walks every map of the log
+    /// under its locks, and this runs on every load, cache hits included.
     private func trim() {
-        while entries.count > countLimit || entries.values.reduce(0, { $0 + $1.log.retainedBytes }) > byteLimit {
+        var sizes = entries.mapValues { $0.log.retainedBytes }
+        var total = sizes.values.reduce(0, +)
+        while entries.count > countLimit || total > byteLimit {
             guard let oldest = entries.min(by: { $0.value.used < $1.value.used })?.key else { return }
             entries.removeValue(forKey: oldest)
+            total -= sizes.removeValue(forKey: oldest) ?? 0
         }
     }
 }
