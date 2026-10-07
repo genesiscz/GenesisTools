@@ -186,6 +186,7 @@ class FileSecretStore implements SecretStore {
 
             const key = masterKeySync();
             if (!key) {
+                projectionMissedKey = true;
                 missingKey++;
                 if (missingKey === 1) {
                     logger.warn(
@@ -328,17 +329,30 @@ export async function secrets(): Promise<SecretStore> {
 
 export function _resetSecretsForTest(): void {
     instance = null;
+    projectionMissedKey = false;
 }
+
+/** A projection needed a vault secret and no rung had the master key. */
+let projectionMissedKey = false;
 
 /** Nonsecret file/key identity. Reads metadata only, never resolves the master key. */
 export function secretGeneration(): string {
     const path = fileStore().vaultFilePath();
     try {
         const stat = statSync(path);
-        // A projection made while no rung had the key cached its secrets as missing. Asking for the
-        // key here (a read; a found key is cached) moves the generation once it becomes readable,
-        // so that projection is not reused forever.
-        masterKeySync();
+        // A projection that needed a secret while no rung had the key cached it as missing. Only
+        // then is the key asked for again (a read; a found key is cached), which moves the generation
+        // once it is readable. A config whose accounts use no vault secret never reaches the
+        // keychain here, and a keychain that throws costs one log line, not the stamp.
+        if (projectionMissedKey) {
+            try {
+                if (masterKeySync()) {
+                    projectionMissedKey = false;
+                }
+            } catch (error) {
+                logger.debug({ error }, "secret generation: the master key is still unreadable");
+            }
+        }
         return [path, stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs, masterKeyGeneration()].join(":");
     } catch (error) {
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {

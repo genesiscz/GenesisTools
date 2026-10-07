@@ -13,7 +13,14 @@ import {
     masterKeySource,
     masterKeySync,
 } from "./MasterKey";
-import { _resetSecretsForTest, redactSecrets, resolveSecret, secretGeneration, secrets } from "./SecretStore";
+import {
+    _resetSecretsForTest,
+    redactSecrets,
+    resolveSecret,
+    secretGeneration,
+    secretSnapshotResolver,
+    secrets,
+} from "./SecretStore";
 import type { VaultFile } from "./vault-format";
 
 const KEY = randomBytes(32);
@@ -89,11 +96,33 @@ describe("SecretStore", () => {
                 },
             },
         ]);
+        expect(secretSnapshotResolver()({ type: "secure", path: "ai/acc_x/apiKey" })).toBeUndefined();
         const unresolved = secretGeneration();
         expect(secretGeneration()).toBe(unresolved);
         available = true;
         // Nobody else asked for the key: the generation alone must notice it.
         expect(secretGeneration()).not.toBe(unresolved);
+    });
+
+    test("the secret generation never reaches the keychain unless a projection missed the key", async () => {
+        await (await secrets()).set("ai/acc_x/apiKey", "xai-secret-value");
+        let reads = 0;
+        _setMasterKeyProvidersForTest([
+            {
+                id: "keychain",
+                available: async () => true,
+                get: async () => undefined,
+                getSync: () => {
+                    reads++;
+                    throw new Error("the keychain is locked");
+                },
+                set: async () => {
+                    throw new Error("test must never write a key");
+                },
+            },
+        ]);
+        expect(() => secretGeneration()).not.toThrow();
+        expect(reads).toBe(0);
     });
 
     test("round-trips a secret and returns a usable ref", async () => {
