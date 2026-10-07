@@ -29,7 +29,15 @@ export async function toWhamRequest(input: RequestInfo | URL, init?: RequestInit
 }
 
 /** Read a Request body under the caller's budget, so a stalled upload cannot outlive it. */
-async function readRequestText({ request, signal }: { request: Request; signal?: AbortSignal }): Promise<string> {
+async function readRequestText({
+    request,
+    signal,
+    onProgress,
+}: {
+    request: Request;
+    signal?: AbortSignal;
+    onProgress?: () => void;
+}): Promise<string> {
     if (!signal) {
         return request.clone().text();
     }
@@ -52,6 +60,7 @@ async function readRequestText({ request, signal }: { request: Request; signal?:
                 return text + decoder.decode();
             }
 
+            onProgress?.();
             text += decoder.decode(next.value, { stream: true });
         }
     } finally {
@@ -64,10 +73,12 @@ async function prepareWhamRequest({
     input,
     init,
     signal,
+    onProgress,
 }: {
     input: RequestInfo | URL;
     init?: RequestInit;
     signal?: AbortSignal;
+    onProgress?: () => void;
 }): Promise<{ init: RequestInit; collect: boolean }> {
     const request = input instanceof Request ? input : null;
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -76,7 +87,8 @@ async function prepareWhamRequest({
     headers.set("originator", "codex_cli_rs");
     headers.set("session_id", randomUUID());
     headers.set("Accept", "text/event-stream");
-    const rawBody = init?.body === undefined && request?.body ? await readRequestText({ request, signal }) : init?.body;
+    const rawBody =
+        init?.body === undefined && request?.body ? await readRequestText({ request, signal, onProgress }) : init?.body;
     const passthrough: RequestInit = { ...init, headers, ...(rawBody === undefined ? {} : { body: rawBody }) };
 
     if (!url.endsWith("/responses") || typeof rawBody !== "string") {
@@ -148,7 +160,7 @@ export async function fetchWhamResponse({
     touch();
 
     try {
-        const prepared = await prepareWhamRequest({ input, init, signal });
+        const prepared = await prepareWhamRequest({ input, init, signal, onProgress: touch });
         signal.throwIfAborted();
 
         if (!prepared.collect) {
@@ -176,7 +188,7 @@ export async function fetchWhamResponse({
             "Subscription response for non-streaming caller"
         );
 
-        if (!response.ok || !(await isWhamEventStream({ response, signal }))) {
+        if (!response.ok || !(await isWhamEventStream({ response, signal, onProgress: touch }))) {
             return response;
         }
 

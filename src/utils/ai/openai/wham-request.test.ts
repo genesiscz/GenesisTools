@@ -584,3 +584,49 @@ test("an id that is present but not a string is still rejected", async () => {
         ])
     ).rejects.toThrow("invalid completed output item");
 });
+
+function slowStream(parts: string[], delayMs: number): ReadableStream<Uint8Array> {
+    const chunks = parts.map((part) => new TextEncoder().encode(part));
+    return new ReadableStream<Uint8Array>({
+        async pull(controller) {
+            const next = chunks.shift();
+
+            if (!next) {
+                controller.close();
+                return;
+            }
+
+            await Bun.sleep(delayMs);
+            controller.enqueue(next);
+        },
+    });
+}
+
+const sseWire = [
+    `data: ${SafeJSON.stringify({ type: "response.output_item.done", output_index: 0, item: completedMessage })}\n\n`,
+    `data: ${SafeJSON.stringify({ type: "response.completed", response: completedResponse })}\n\n`,
+].join("");
+
+test("an upload that keeps sending is not cut off by the idle deadline", async () => {
+    const body = '{"model":"fixture","input":"a fixture prompt"}';
+    const parts = Array.from({ length: 6 }, (_, i) => body.slice((i * body.length) / 6, ((i + 1) * body.length) / 6));
+    const response = await fetchWhamResponse({
+        input: new Request(URL, { method: "POST", body: slowStream(parts, 15) }),
+        timeoutMs: 40,
+        fetch: async (_input, wham) => {
+            expect(bodyOf(wham ?? {}).model).toBe("fixture");
+            return new Response(sseWire, { headers: { "content-type": "text/event-stream" } });
+        },
+    });
+    expect((await response.json()).output).toEqual([completedMessage]);
+});
+
+test("a headerless SSE prefix fragmented past one window is still inspected and collected", async () => {
+    const response = await fetchWhamResponse({
+        input: URL,
+        init: { body: "{}" },
+        timeoutMs: 40,
+        fetch: async () => new Response(slowStream(["\n", "d", "a", "t", "a", sseWire.slice(4)], 15)),
+    });
+    expect((await response.json()).output).toEqual([completedMessage]);
+});

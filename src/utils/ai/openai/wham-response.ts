@@ -228,9 +228,12 @@ export async function collectWhamResponse({
 export async function isWhamEventStream({
     response,
     signal,
+    onProgress,
 }: {
     response: Response;
     signal: AbortSignal;
+    /** Called for every inspected chunk; the caller's idle deadline restarts on it. */
+    onProgress?: () => void;
 }): Promise<boolean> {
     const contentType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
 
@@ -255,6 +258,7 @@ export async function isWhamEventStream({
                 return false;
             }
 
+            onProgress?.();
             const chunk = next.value.subarray(0, 8192 - inspected);
             inspected += chunk.length;
             prefix += decoder.decode(chunk, { stream: true });
