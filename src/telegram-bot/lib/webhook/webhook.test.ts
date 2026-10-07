@@ -83,6 +83,9 @@ function memorySecretStore(): SecretStore & { writes: number } {
         async delete(path) {
             return entries.delete(path);
         },
+        async deleteIf(path, expected) {
+            return entries.get(path) === expected && entries.delete(path);
+        },
         async list() {
             return [...entries.keys()];
         },

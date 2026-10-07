@@ -20,6 +20,8 @@ export interface SecretStore {
     getSync(path: string): string | undefined;
     set(path: string, value: string): Promise<SecureRef>;
     delete(path: string): Promise<boolean>;
+    /** Deletes `path` only while it still holds `expected`, compared and removed under one vault lock. */
+    deleteIf(path: string, expected: string): Promise<boolean>;
     list(prefix?: string): Promise<string[]>;
     has(path: string): Promise<boolean>;
 }
@@ -264,6 +266,25 @@ class FileSecretStore implements SecretStore {
                 delete vault.entries[path];
                 this.write(vault);
                 logger.debug({ path }, "deleted secret from vault");
+                return true;
+            },
+        });
+    }
+
+    async deleteIf(path: string, expected: string): Promise<boolean> {
+        const master = await masterKey();
+        return this.storage.withFileLock({
+            file: this.vaultPath(),
+            fn: async () => {
+                const vault = this.read();
+                const entry = vault.entries[path];
+                if (!entry || decryptEntry(master, path, entry) !== expected) {
+                    return false;
+                }
+
+                delete vault.entries[path];
+                this.write(vault);
+                logger.debug({ path }, "deleted secret from vault after its value matched");
                 return true;
             },
         });

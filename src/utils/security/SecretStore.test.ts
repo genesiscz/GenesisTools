@@ -125,6 +125,16 @@ describe("SecretStore", () => {
         expect(reads).toBe(0);
     });
 
+    test("deleteIf removes a secret only while it still holds the expected value", async () => {
+        const store = await secrets();
+        await store.set("ai/acc_x/apiKey", "replacement-value");
+        expect(await store.deleteIf("ai/acc_x/apiKey", "original-value")).toBe(false);
+        expect(await store.get("ai/acc_x/apiKey")).toBe("replacement-value");
+        expect(await store.deleteIf("ai/acc_x/apiKey", "replacement-value")).toBe(true);
+        expect(await store.has("ai/acc_x/apiKey")).toBe(false);
+        expect(await store.deleteIf("ai/acc_x/apiKey", "replacement-value")).toBe(false);
+    });
+
     test("round-trips a secret and returns a usable ref", async () => {
         const store = await secrets();
         const ref = await store.set("ai/acc_x/apiKey", "xai-secret-value");
