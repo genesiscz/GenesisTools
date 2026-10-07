@@ -138,6 +138,7 @@ export function skeletonText(input: SkeletonInput): string {
         "",
         "- ",
         "",
+        ...(input.mode === "give" ? ["# Gates", "", "| Gate | Exit code |", "|---|---|", ""] : []),
         "# Decisions",
         "",
         ""
@@ -482,5 +483,62 @@ export function checkJudgements(input: CheckInput): CheckResult {
         }
     }
 
+    if (input.files) {
+        warnings.push(...pathWarnings(input.judgements, input.files));
+    }
+
     return { errors, warnings };
+}
+
+const BARE_PATH = /(?<![\w/.@-])([\w@-][\w.@-]*\.[A-Za-z0-9]+):(\d+)\b/g;
+
+/**
+ * Two things render cannot do for the reader: link a bare `name.ts:12` (it needs the repository path),
+ * and show that every changed file was read (`# Checked and fine` names each one).
+ */
+function pathWarnings(judgements: Judgements, files: DiffFile[]): CheckProblem[] {
+    const problems: CheckProblem[] = [];
+    const byName = new Map<string, string[]>();
+
+    for (const file of files) {
+        const name = file.path.split("/").pop() ?? file.path;
+        byName.set(name, [...(byName.get(name) ?? []), file.path]);
+    }
+
+    for (const item of judgements.items) {
+        const texts = [...item.fields.values(), ...[...item.bullets.values()].flat()];
+
+        for (const text of texts) {
+            for (const match of text.matchAll(BARE_PATH)) {
+                const full = byName.get(match[1]);
+
+                if (full?.length === 1) {
+                    problems.push({
+                        id: item.id,
+                        line: item.line,
+                        message: `\`${match[0]}\` is not linked: write the repository path \`${full[0]}:${match[2]}\``,
+                    });
+                }
+            }
+        }
+    }
+
+    const checked = judgements.sections.get("Checked and fine");
+
+    if (checked !== undefined) {
+        const missing = files
+            .filter((file) => file.status !== "deleted")
+            .map((file) => file.path)
+            .filter((path) => !checked.includes(path) && !checked.includes(path.split("/").pop() ?? path));
+
+        if (missing.length > 0) {
+            problems.push({
+                id: "file",
+                line: 0,
+                message: `\`# Checked and fine\` does not name ${missing.length} changed file(s): ${missing.join(", ")} (one bullet per file: what you checked in it)`,
+            });
+        }
+    }
+
+    return problems;
 }

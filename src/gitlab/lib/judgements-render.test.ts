@@ -255,3 +255,32 @@ describe("judgements render", () => {
         expect(linkify("see package.json:1", process.cwd())).toContain("[package.json:1](file://");
     });
 });
+
+describe("the digest and GitLab's own notes", () => {
+    test("a system note (changed this line in version 3) is metadata and is left out of the digest", () => {
+        const thread = CTX.threads.get("aaaa1111");
+        const withSystem: RenderContext = {
+            ...CTX,
+            threads: new Map([
+                [
+                    "aaaa1111",
+                    {
+                        ...thread,
+                        notes: [
+                            ...(thread?.notes ?? []),
+                            {
+                                system: true,
+                                author: { username: "me" },
+                                body: "changed this line in version 3 of the diff",
+                            },
+                        ],
+                    },
+                ],
+            ]),
+        };
+        const digest = renderDigest(parseJudgements(FILLED), withSystem);
+
+        expect(digest).toContain(quote(LONG_COMMENT));
+        expect(digest).not.toContain("changed this line in version 3");
+    });
+});

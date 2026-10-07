@@ -81,7 +81,7 @@ const GOOD = [
     "",
     "# Checked and fine",
     "",
-    "- The rename is mechanical.",
+    "- src/lock.ts: the rename is mechanical.",
 ].join("\n");
 
 describe("judgements", () => {
@@ -95,7 +95,7 @@ describe("judgements", () => {
         expect(t01.fields.get("Verdict")).toBe("Valid [95%]");
         expect(t01.bullets.get("Rationale")).toEqual(["The guard returns early: src/lock.ts:3", "Second bullet"]);
         expect(t01.fences.get("Proposed draft reply")).toBe("Dobrej catch, opravím to.");
-        expect(parsed.sections.get("Checked and fine")).toBe("- The rename is mechanical.");
+        expect(parsed.sections.get("Checked and fine")).toBe("- src/lock.ts: the rename is mechanical.");
     });
 
     test("a complete file passes the check", () => {
@@ -110,7 +110,8 @@ describe("judgements", () => {
             "# T01 The lock stays off while a browser is open · discussion 0539a97f0000 · src/lock.ts:3"
         );
         expect(result.errors).toEqual([]);
-        expect(result.warnings.map((w) => w.id)).toEqual(["T01", "D01"]);
+        expect(result.warnings.map((w) => w.id)).toEqual(["T01", "D01", "file"]);
+        expect(skeleton).toContain("# Gates\n\n| Gate | Exit code |");
     });
 
     test("a missing badge, a wrong action and an empty text are errors", () => {
@@ -132,6 +133,19 @@ describe("judgements", () => {
         );
         expect(check(GOOD.replace("src/lock.ts:4 (new) `    return;`", "src/lock.ts:4 (new)")).errors[0]?.message).toBe(
             "copy the line's text into the anchor: src/lock.ts:4 (new) `return;`"
+        );
+    });
+
+    test("a bare file name is not linked, and a changed file missing from Checked and fine is named", () => {
+        const bare = GOOD.replace("  - Second bullet", "  - lock.ts:3 returns early").replace(
+            "- src/lock.ts: the rename is mechanical.",
+            "- The rename is mechanical."
+        );
+        const messages = check(bare).warnings.map((w) => w.message);
+
+        expect(messages).toContain("`lock.ts:3` is not linked: write the repository path `src/lock.ts:3`");
+        expect(messages).toContain(
+            "`# Checked and fine` does not name 1 changed file(s): src/lock.ts (one bullet per file: what you checked in it)"
         );
     });
 

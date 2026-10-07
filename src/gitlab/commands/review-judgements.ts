@@ -42,7 +42,7 @@ import {
     renderItems,
 } from "@app/gitlab/lib/judgements-render";
 import { fetchMr } from "@app/gitlab/lib/merge-requests";
-import { fetchMrDiffs } from "@app/gitlab/lib/pr-review";
+import { fetchMrDiffs, findWorktree } from "@app/gitlab/lib/pr-review";
 import {
     anchoredPosition,
     type DraftSummary,
@@ -229,13 +229,38 @@ export function registerCommentsPost(comments: Command): void {
 }
 
 /** Everything a render needs about the MR, read once. */
+/**
+ * The checkout render links into: `--repo` when given, else the worktree that has the MR's branch, else
+ * the current directory with a warning, since its files may be another branch's.
+ */
+function renderCheckout(repo: string | undefined, branch: string): string {
+    if (repo) {
+        return resolve(repo);
+    }
+
+    const here = process.cwd();
+    const worktree = findWorktree(here, branch);
+
+    if (worktree) {
+        progress(`ℹ  file links point into the MR worktree ${worktree}`);
+        return worktree;
+    }
+
+    progress(
+        `⚠  no worktree has ${branch} checked out; file links point into ${here}, which may hold other code. Pass --repo <MR worktree>.`
+    );
+
+    return here;
+}
+
 async function renderContext(
     iid: string,
     mode: "receive" | "give",
     opts: RenderOptions,
     api: Awaited<ReturnType<typeof resolveProjectApi>>
 ): Promise<RenderContext> {
-    const repoPath = resolve(opts.repo ?? process.cwd());
+    const mrSummary = await fetchMr(api, Number(iid));
+    const repoPath = renderCheckout(opts.repo, mrSummary.sourceBranch);
     const config = await loadConfig();
     const parsedContext = Number.parseInt(opts.contextLines ?? "", 10);
     const contextLines = Number.isNaN(parsedContext) ? config.review.fetch.contextLines : Math.max(0, parsedContext);
@@ -243,8 +268,8 @@ async function renderContext(
     const threadIds = new Set(
         items.known.flatMap((item) => (item.pair.kind === "discussion" ? [item.pair.value] : []))
     );
-    const [mr, refs, files, context] = await Promise.all([
-        fetchMr(api, Number(iid)),
+    const mr = mrSummary;
+    const [refs, files, context] = await Promise.all([
         fetchDiffRefs(api, iid),
         fetchMrDiffs(api, Number(iid)),
         collectThreadContext({

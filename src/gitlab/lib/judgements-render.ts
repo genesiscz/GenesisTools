@@ -245,7 +245,8 @@ function threadItemBlocks(item: JudgementItem, ctx: RenderContext, full: boolean
     }
 
     const label = thread && ctx.threadOpts ? threadDivergence(thread, ctx.threadOpts)?.text : null;
-    const notes = (thread?.notes ?? []).filter((note) => String(note.body ?? "").trim());
+    // GitLab's own notes ("changed this line in version 3 of the diff") are metadata, not a comment.
+    const notes = (thread?.notes ?? []).filter((note) => !note.system && String(note.body ?? "").trim());
 
     return [
         { h3: `${item.id} · ${where(ctx, known?.path ?? null, known?.line ?? null)}${label ? ` · ${label}` : ""}` },
