@@ -154,6 +154,48 @@ describe("trackPipeline", () => {
         ]);
         expect(notes).toEqual(["app-build #3 pipeline complete - android-app SUCCESS, ios-app SUCCESS"]);
     });
+
+    it("a configured downstream build that is never found fails the pipeline, whether one or all are missing", async () => {
+        const builds: Record<string, { number: number; result: string; building: boolean }> = {
+            [`${APP}/3`]: { number: 3, result: "SUCCESS", building: false },
+            [`${ANDROID}/40`]: { number: 40, result: "SUCCESS", building: false },
+        };
+        const get = async <T>(path: string): Promise<T | null> => {
+            const found = builds[path.split("/api/json")[0] ?? ""];
+
+            return found ? ({ duration: 1, timestamp: 0, ...found } as T) : null;
+        };
+        const backendLogging = (log: string): JenkinsBackend => ({
+            baseUrl: BASE,
+            client: axios.create(),
+            fullUrl: (p) => `${BASE}/${p}`,
+            api: async <T>(p: string) => (await get<T>(p)) as T,
+            apiOrNull: get,
+            apiTextOrNull: async () => log,
+            post: async () => ({ status: 500 }),
+        });
+        const notes: string[] = [];
+        const deps = {
+            ...CTX,
+            sleep: async () => {},
+            notify: async (m: string) => {
+                notes.push(m);
+            },
+        };
+
+        const partial = await trackPipeline(backendLogging("Triggering android-app #40"), APP, 3, deps);
+        expect(partial.allPassed).toBe(false);
+        expect(partial.missing).toEqual(["ios-app"]);
+
+        const none = await trackPipeline(backendLogging(""), APP, 3, deps);
+        expect(none.allPassed).toBe(false);
+        expect(none.downstream).toEqual([]);
+        expect(none.missing).toEqual(["android-app", "ios-app"]);
+        expect(notes).toEqual([
+            "app-build #3 pipeline complete - android-app SUCCESS, ios-app NOT FOUND",
+            "app-build #3 pipeline complete - android-app NOT FOUND, ios-app NOT FOUND",
+        ]);
+    });
 });
 
 describe("wfapi helpers", () => {

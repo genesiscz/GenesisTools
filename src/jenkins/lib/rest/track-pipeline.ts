@@ -245,14 +245,31 @@ export async function trackPipeline(
         }
     }
 
-    const allPassed = masterResult.status === "SUCCESS" && downstream.every((ds) => ds.result.status === "SUCCESS");
+    // A downstream build that was never found is not a pass: `every` over the builds that were found
+    // says true for none at all.
+    const missing = getDownstreamJobs(jobPath, deps)
+        .filter((path) => !downstreamBuilds.has(path))
+        .map(getJobNameFromPath);
+
+    for (const name of missing) {
+        out.println(pc.red(`# ${name}: no build found`));
+    }
+
+    const allPassed =
+        masterResult.status === "SUCCESS" &&
+        missing.length === 0 &&
+        downstream.every((ds) => ds.result.status === "SUCCESS");
+    const parts = [
+        ...downstream.map((ds) => `${ds.jobName} ${ds.result.status}`),
+        ...missing.map((name) => `${name} NOT FOUND`),
+    ];
     const summary =
-        downstream.length > 0
-            ? `${jobName} #${masterBuild.number} pipeline complete - ${downstream.map((ds) => `${ds.jobName} ${ds.result.status}`).join(", ")}`
+        parts.length > 0
+            ? `${jobName} #${masterBuild.number} pipeline complete - ${parts.join(", ")}`
             : `${jobName} #${masterBuild.number} ${masterResult.status}`;
 
     out.println(pc.bold(allPassed ? pc.green("# Pipeline SUCCESS") : pc.red("# Pipeline FAILED")));
     await (deps.notify ?? notifyDone)(summary);
 
-    return { master: masterResult, downstream, allPassed };
+    return { master: masterResult, downstream, missing, allPassed };
 }

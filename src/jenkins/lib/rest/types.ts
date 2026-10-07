@@ -13,6 +13,8 @@ export interface BuildResult {
 export interface PipelineResult {
     master: BuildResult;
     downstream: Array<{ jobName: string; buildNumber: number; result: BuildResult }>;
+    /** Configured downstream jobs whose build was never found; any of them makes `allPassed` false. */
+    missing: string[];
     allPassed: boolean;
 }
 
