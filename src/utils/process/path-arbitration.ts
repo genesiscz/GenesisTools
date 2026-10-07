@@ -1,6 +1,20 @@
 import { mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname } from "node:path";
-import lockfile from "proper-lockfile";
+
+const requireModule = createRequire(import.meta.url);
+let loadedLockfile: typeof import("proper-lockfile") | null = null;
+
+/**
+ * proper-lockfile hooks signal-exit's SIGINT/SIGTERM handlers the moment it loads. Storage imports
+ * this file, so a top-level import put those handlers into every process (and every test); it is
+ * loaded on the first arbitration instead.
+ */
+function lockfile(): typeof import("proper-lockfile") {
+    loadedLockfile ??= requireModule("proper-lockfile") as typeof import("proper-lockfile");
+
+    return loadedLockfile;
+}
 
 const STALE_MS = 30_000;
 const UPDATE_MS = 10_000;
@@ -29,7 +43,7 @@ export async function tryWithPathArbitration<T>(
     mkdirSync(dirname(targetPath), { recursive: true });
     let release: (() => Promise<void>) | undefined;
     try {
-        release = await lockfile.lock(arbitrationPath(targetPath), {
+        release = await lockfile().lock(arbitrationPath(targetPath), {
             realpath: false,
             stale: STALE_MS,
             update: UPDATE_MS,
@@ -53,7 +67,7 @@ export async function tryWithPathArbitration<T>(
 /** Synchronous twin for legacy pidfile writers; a busy arbiter fails fast. */
 export function withPathArbitrationSync<T>(targetPath: string, fn: () => T): T {
     mkdirSync(dirname(targetPath), { recursive: true });
-    const release = lockfile.lockSync(arbitrationPath(targetPath), {
+    const release = lockfile().lockSync(arbitrationPath(targetPath), {
         realpath: false,
         stale: STALE_MS,
         update: UPDATE_MS,
