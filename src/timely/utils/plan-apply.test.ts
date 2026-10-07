@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { unlink } from "node:fs/promises";
 import { TimelyHttpError } from "@app/timely/api/errors";
 import type { Duration, TimelyEntry } from "@app/timely/types/api";
 import type { CreatePlanV1 } from "@app/timely/types/plan";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
-import { applyPlan } from "./plan-apply";
+import { applyPlan, applyReceiptPath } from "./plan-apply";
 
 setupStorageSandbox();
 
@@ -241,6 +242,31 @@ describe("applyPlan receipts", () => {
         const retry = await applyPlan(options);
 
         expect(retry[0]).toMatchObject({ eventId: 952, alreadyApplied: true });
+        expect(createCalls).toBe(1);
+    });
+
+    test("a receipt an earlier build kept in the cache still prevents a second POST", async () => {
+        stubMemories([memory(1)]);
+        const storage = new Storage("timely-apply-receipt-legacy-test");
+        let createCalls = 0;
+        const service = {
+            createEvent: async () => {
+                createCalls++;
+                return { id: 990, duration: duration() };
+            },
+        };
+        const options = { plan: plan([1]), service, storage, accountId: 558, accessToken: "test-token", dryRun: false };
+
+        // Learn the identity the way a first run records it, then move that ledger to the legacy spot.
+        await applyPlan(options);
+        const durable = applyReceiptPath(558);
+        const ledger = await Bun.file(durable).text();
+        await Bun.write(`${storage.getCacheDir()}/accounts/558/apply-receipts.json`, ledger);
+        await unlink(durable);
+
+        const retry = await applyPlan(options);
+
+        expect(retry[0]).toMatchObject({ eventId: 990, alreadyApplied: true });
         expect(createCalls).toBe(1);
     });
 

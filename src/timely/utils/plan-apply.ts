@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { TimelyHttpError } from "@app/timely/api/errors";
 import type { TimelyService } from "@app/timely/api/service";
 import type { TimelyEvent } from "@app/timely/types/api";
 import type { CreatePlanV1, PlanIssue } from "@app/timely/types/plan";
 
+import { timelyAccountCacheKey } from "@app/timely/utils/account-cache";
 import { buildPayloadFromFlat, flattenMemories } from "@app/timely/utils/flatten-memories";
 import { fetchMemoriesForDates } from "@app/timely/utils/memories";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -50,18 +51,27 @@ export function applyReceiptPath(accountId: number): string {
     return toolDataDir("timely", "apply-receipts", `${accountId}.json`);
 }
 
+function readLedger(path: string): ApplyReceiptLedger | null {
+    return existsSync(path)
+        ? (SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as ApplyReceiptLedger)
+        : null;
+}
+
+/**
+ * Update the durable ledger under its lock. Until the durable file exists, the ledger an earlier
+ * build kept in the cache (`legacyPath`) is its starting point, so an upgrade never forgets a
+ * pending or created receipt; the legacy file is left in place and simply stops being read.
+ */
 async function updateReceiptLedger(
-    path: string,
+    receipts: { path: string; legacyPath: string },
     updater: (current: ApplyReceiptLedger | null) => ApplyReceiptLedger
 ): Promise<ApplyReceiptLedger> {
-    mkdirSync(dirname(path), { recursive: true });
+    mkdirSync(dirname(receipts.path), { recursive: true });
 
-    return withFileLock(`${path}.lock`, async () => {
-        const current = existsSync(path)
-            ? (SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as ApplyReceiptLedger)
-            : null;
+    return withFileLock(`${receipts.path}.lock`, async () => {
+        const current = readLedger(receipts.path) ?? readLedger(receipts.legacyPath);
         const next = updater(current);
-        atomicWriteFileSync(path, SafeJSON.stringify(next, undefined, 2));
+        atomicWriteFileSync(receipts.path, SafeJSON.stringify(next, undefined, 2));
         return next;
     });
 }
@@ -256,10 +266,16 @@ export async function applyPlan(args: {
                     })
                 )
                 .digest("hex");
-            const receiptPath = applyReceiptPath(args.accountId);
+            const receipts = {
+                path: applyReceiptPath(args.accountId),
+                legacyPath: join(
+                    args.storage.getCacheDir(),
+                    timelyAccountCacheKey(args.accountId, "apply-receipts.json")
+                ),
+            };
             let priorReceipt: ApplyReceipt | undefined;
 
-            await updateReceiptLedger(receiptPath, (current) => {
+            await updateReceiptLedger(receipts, (current) => {
                 const ledger = current ?? {};
                 priorReceipt = ledger[identity];
 
@@ -312,7 +328,7 @@ export async function applyPlan(args: {
 
                     if (matching.length === 1) {
                         const reconciled = matching[0];
-                        await updateReceiptLedger(receiptPath, (current) => ({
+                        await updateReceiptLedger(receipts, (current) => ({
                             ...(current ?? {}),
                             [identity]: {
                                 identity,
@@ -350,7 +366,7 @@ export async function applyPlan(args: {
 
             try {
                 const created = await args.service.createEvent(args.accountId, input);
-                await updateReceiptLedger(receiptPath, (current) => ({
+                await updateReceiptLedger(receipts, (current) => ({
                     ...(current ?? {}),
                     [identity]: {
                         identity,
@@ -370,7 +386,7 @@ export async function applyPlan(args: {
                 });
             } catch (err) {
                 if (isDefinitiveCreateRejection(err)) {
-                    await updateReceiptLedger(receiptPath, (current) => {
+                    await updateReceiptLedger(receipts, (current) => {
                         const ledger = { ...(current ?? {}) };
                         delete ledger[identity];
                         return ledger;
