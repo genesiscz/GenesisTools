@@ -205,15 +205,21 @@ describe("comments post plan", () => {
         expect(unverifiedSteps(ledger, [reply, reword]).map((step) => step.id)).toEqual(["T01"]);
     });
 
-    test("a file-level error blocks every post, an item's error only that item", () => {
+    test("an error of no item blocks every post, an item's error only that item", () => {
         const errors = [
             { id: "file", message: "a fence swallowed N01" },
+            { id: "item 7", message: "an item must be an object" },
             { id: "T01", message: "no badge" },
             { id: "D01", message: "empty text" },
         ];
+        const itemIds = new Set(["T01", "D01"]);
 
-        expect(blockingErrors(errors, new Set(["T01"])).map((e) => e.id)).toEqual(["file", "T01"]);
-        expect(blockingErrors(errors.slice(2), new Set(["T01"]))).toEqual([]);
+        expect(blockingErrors({ errors, selected: new Set(["T01"]), itemIds }).map((e) => e.id)).toEqual([
+            "file",
+            "item 7",
+            "T01",
+        ]);
+        expect(blockingErrors({ errors: errors.slice(3), selected: new Set(["T01"]), itemIds })).toEqual([]);
     });
 
     test("a move whose old draft cannot be deleted removes the new one again, so a re-run does not duplicate it", async () => {

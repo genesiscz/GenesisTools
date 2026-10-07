@@ -170,8 +170,8 @@ async function runSkeleton(iid: string, opts: JudgementOptions): Promise<void> {
     }
 
     writeFileSync(file, body);
-    progress(`i  ${items.known.length} item(s) to judge → ${file}`);
-    progress(`i  then: ${toolCommand("gitlab pr", iid, "review", "check", `--${mode}`, "--file", file)}`);
+    progress(`ℹ  ${items.known.length} item(s) to judge → ${file}`);
+    progress(`ℹ  then: ${toolCommand("gitlab pr", iid, "review", "check", `--${mode}`, "--file", file)}`);
 }
 
 async function runCheck(iid: string, opts: JudgementOptions): Promise<void> {
@@ -196,7 +196,7 @@ async function runCheck(iid: string, opts: JudgementOptions): Promise<void> {
     });
 
     for (const warning of result.warnings) {
-        out.println(`!  ${warning.id}${warning.line ? ` (line ${warning.line})` : ""}: ${warning.message}`);
+        out.println(`⚠  ${warning.id}${warning.line ? ` (line ${warning.line})` : ""}: ${warning.message}`);
     }
 
     for (const error of result.errors) {
@@ -250,7 +250,7 @@ async function renderContext(
             iid,
             cwd: repoPath,
             fetchRemote: true,
-            onWarn: (message) => progress(`!  ${message}`),
+            onWarn: (message) => progress(`⚠  ${message}`),
             include: (d) => threadIds.has(d.id ?? ""),
         }),
     ]);
@@ -322,14 +322,14 @@ async function runRender(iid: string, opts: RenderOptions): Promise<void> {
     }
 
     writeFileSync(reportPath, renderFull(judgements, ctx));
-    progress(`i  full layout → ${reportPath}`);
+    progress(`ℹ  full layout → ${reportPath}`);
 
     if (opts.open && platform === "darwin") {
         const link = `genesis-md://open?path=${encodeURIComponent(reportPath)}`;
         const opened = Bun.spawnSync(["open", link]);
 
         if (opened.exitCode !== 0) {
-            progress(`!  could not open ${link}: ${opened.stderr.toString().trim()}`);
+            progress(`⚠  could not open ${link}: ${opened.stderr.toString().trim()}`);
         }
     }
 
@@ -434,7 +434,11 @@ async function runPost(iid: string, opts: PostOptions): Promise<void> {
     ]);
     const selected = new Set([...ids, ...answers].map((id) => id.trim().toUpperCase()).filter(Boolean));
     const check = checkJudgements({ judgements, known: items.known, files, rules: config.review.draftRules });
-    const blocking = blockingErrors(check.errors, selected);
+    const blocking = blockingErrors({
+        errors: check.errors,
+        selected,
+        itemIds: new Set(judgements.items.map((item) => item.id)),
+    });
     const plan = planPost({ judgements, known: items.known, ids, answers, agent: opts.agent });
     const problems = [...blocking.map((e) => ({ id: e.id, message: e.message })), ...plan.errors];
 

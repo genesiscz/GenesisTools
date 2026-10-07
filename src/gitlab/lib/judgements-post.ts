@@ -283,12 +283,16 @@ export function unverifiedSteps(ledger: Ledger, steps: PostStep[]): PostStep[] {
 }
 
 /**
- * The check errors that stop `comments post`: the selected items' own, and every file-level one. A
- * fence that swallowed a later item's heading is a file-level error, and it would post that text inside
- * a selected reply.
+ * The check errors that stop `comments post`: the selected items' own, and every one that belongs to no
+ * item of the file (`file`, a broken JSON entry). A fence that swallowed a later item's heading is such an
+ * error, and it would post that text inside a selected reply.
  */
-export function blockingErrors<T extends { id: string }>(errors: T[], selected: Set<string>): T[] {
-    return errors.filter((error) => error.id === "file" || selected.has(error.id));
+export function blockingErrors<T extends { id: string }>(input: {
+    errors: T[];
+    selected: Set<string>;
+    itemIds: Set<string>;
+}): T[] {
+    return input.errors.filter((error) => input.selected.has(error.id) || !input.itemIds.has(error.id));
 }
 
 // ─── read back ─────────────────────────────────────────────────────────────────

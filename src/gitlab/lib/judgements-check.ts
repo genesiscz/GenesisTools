@@ -191,6 +191,11 @@ function isBlank(value: string | undefined): boolean {
     return value === undefined || value.trim() === "" || PLACEHOLDER.test(value.trim());
 }
 
+/** A text to be posted is empty only when it has no text: a ` | ` in it is a table or prose, not a placeholder. */
+function isEmptyText(value: string | undefined): boolean {
+    return value === undefined || value.trim() === "";
+}
+
 /** The text at `line` of `side` in the diff, or null when the line is outside every hunk. */
 function lineAt(file: DiffFile, line: number, side: "new" | "old"): string | null {
     for (const hunk of file.hunks) {
@@ -421,7 +426,7 @@ export function checkJudgements(input: CheckInput): CheckResult {
 
         const textField = actionTextField(item.kind, action);
 
-        if (textField && isBlank(item.fences.get(textField))) {
+        if (textField && isEmptyText(item.fences.get(textField))) {
             errors.push({
                 id: item.id,
                 line: item.line,

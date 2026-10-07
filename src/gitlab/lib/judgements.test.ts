@@ -195,6 +195,12 @@ describe("judgements", () => {
         expect(result.warnings.map((w) => w.message)).toContain(ownThread);
     });
 
+    test("a reply whose text holds a table row or an `a | b` is not an unfilled placeholder", () => {
+        const table = GOOD.replace("Dobrej catch, opravím to.", "| před | po |\n| --- | --- |\n| a | b |");
+
+        expect(check(table).errors).toEqual([]);
+    });
+
     test("a reply in my own thread sends the Proposed answer", () => {
         const reply = (text: string) =>
             [
@@ -271,7 +277,7 @@ describe("a judgements file edited by hand", () => {
 
     const repaired: Array<[string, (text: string) => string]> = [
         ["Windows line ends", (t) => t.replace(/\n/g, "\r\n")],
-        ["a byte-order mark", (t) => `�${t}`],
+        ["a byte-order mark", (t) => `﻿${t}`],
         ["item headings at level 2", (t) => t.replace("# T01", "## T01").replace("# N01", "### N01")],
         ["a lower-case, unpadded id", (t) => t.replace("# T01 ", "# t1 ")],
         [
