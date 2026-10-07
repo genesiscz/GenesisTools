@@ -39,6 +39,21 @@ describe("chunkComments", () => {
         expect(chunks[0]?.text).toBe("@alice: root one\n@bob: first reply\n@carol: second reply");
     });
 
+    it("cuts an oversized root or reply and keeps the author on every piece", () => {
+        const chunks = chunkComments([
+            makeComment({ commentId: "big", author: "@alice", text: "a".repeat(12_000) }),
+            makeComment({ commentId: "bigr", author: "bob", text: "b".repeat(9_000), parentCommentId: "big" }),
+        ]);
+        const pieces = chunks.flatMap((chunk) => chunk.text.split("\n"));
+
+        expect(chunks.every((chunk) => chunk.text.length <= 6000)).toBe(true);
+        expect(pieces.filter((piece) => piece.startsWith("@alice: ")).map((p) => p.length - 8)).toEqual([
+            5992, 5992, 16,
+        ]);
+        expect(pieces.filter((piece) => piece.startsWith("@bob: ")).length).toBe(2);
+        expect(pieces.every((piece) => piece.startsWith("@alice: ") || piece.startsWith("@bob: "))).toBe(true);
+    });
+
     it("treats replies to unknown parents as roots", () => {
         const chunks = chunkComments([makeComment({ commentId: "orphan", parentCommentId: "gone", text: "hello" })]);
 

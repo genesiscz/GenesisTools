@@ -628,15 +628,19 @@ export function chunkComments(comments: VideoComment[]): CommentChunk[] {
     }
 
     // Per-thread pass: one chunk per thread, splitting oversize threads at
-    // reply (message) boundaries — never mid-message.
+    // reply (message) boundaries. Only a message longer than the target is cut,
+    // and every piece of it keeps its author prefix.
     const perThread: CommentChunk[] = [];
 
     for (const root of roots) {
         const messages = [root, ...(repliesByParent.get(root.commentId) ?? [])].flatMap(
             // yt-dlp authors usually already carry the "@" — normalize so the
-            // prefix is always exactly one "@". A message longer than the target is cut.
-            (comment) =>
-                splitByChars(`@${(comment.author ?? "unknown").replace(/^@/, "")}: ${comment.text}`, TARGET_CHARS)
+            // prefix is always exactly one "@".
+            (comment) => {
+                const prefix = `@${(comment.author ?? "unknown").replace(/^@/, "")}: `;
+                const budget = Math.max(1, TARGET_CHARS - prefix.length);
+                return splitByChars(comment.text, budget).map((piece) => `${prefix}${piece}`);
+            }
         );
         let buffer: string[] = [];
         let bufferChars = 0;
