@@ -242,11 +242,12 @@ export function registerFillCommand(program: Command): void {
 
             out.println("Loading Clarity timesheet data...");
 
-            const { weeks, unresolvedDates, userId, records } = await resolveFillWeeks({
+            const { weeks, unresolvedDates, userId, records, clearingOnlyWeekIds } = await resolveFillWeeks({
                 api: clarityApi,
                 dates: allDates,
                 month: options.month,
                 year,
+                includeMonthWeeks: true,
             });
 
             if (unresolvedDates.length > 0) {
@@ -355,6 +356,11 @@ export function registerFillCommand(program: Command): void {
                         taskId: timeEntry.taskId,
                         existingSegments,
                     });
+                }
+
+                if (clearingOnlyWeekIds.has(week.timesheetId) && plan.entries.length === 0) {
+                    // An empty ADO week with no requested-month hours to clear: nothing to write.
+                    continue;
                 }
 
                 weekPlans.push(plan);

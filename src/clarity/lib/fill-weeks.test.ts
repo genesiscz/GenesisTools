@@ -242,3 +242,24 @@ describe("zero-minute weeks", () => {
         expect(replacementChangesActuals(segments, neighbourOnly)).toBe(false);
     });
 });
+
+describe("resolveFillWeeks clearing inventory", () => {
+    test("adds every open week of the month, even one with no ADO entries, and marks it clearing-only", async () => {
+        const api = fakeApi();
+
+        const result = await resolveFillWeeks({
+            api,
+            dates: ["2026-08-26"],
+            month: 8,
+            year: 2026,
+            includeMonthWeeks: true,
+        });
+        const ids = result.weeks.map((week) => week.timesheetId);
+
+        expect(ids[0]).toBe(555004);
+        expect(ids).toContain(555003);
+        expect(result.clearingOnlyWeekIds.has(555003)).toBe(true);
+        expect(result.clearingOnlyWeekIds.has(555004)).toBe(false);
+        expect(ids).not.toContain(555006);
+    });
+});
