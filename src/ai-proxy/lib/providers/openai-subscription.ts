@@ -725,27 +725,55 @@ export function buildWhamResponsesBody(
     return { body, dropped };
 }
 
+/** Decode complete SSE frames while retaining only the unfinished frame between reads. */
+async function* whamSsePayloads(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+    let data: string[] = [];
+    try {
+        while (true) {
+            const chunk = await reader.read();
+            pending += decoder.decode(chunk.value, { stream: !chunk.done });
+            let newline = pending.indexOf("\n");
+            while (newline >= 0) {
+                const line = pending.slice(0, newline).replace(/\r$/, "");
+                pending = pending.slice(newline + 1);
+                if (line === "") {
+                    if (data.length > 0) {
+                        yield data.join("\n");
+                        data = [];
+                    }
+                } else if (line.startsWith("data:")) {
+                    data.push(line.slice(5).replace(/^ /, ""));
+                }
+                newline = pending.indexOf("\n");
+            }
+            if (chunk.done) {
+                return;
+            }
+        }
+    } finally {
+        try {
+            await reader.cancel();
+        } finally {
+            reader.releaseLock();
+        }
+    }
+}
+
 async function accumulateResponsesJson(
     stream: ReadableStream<Uint8Array>,
     itemScope: string
 ): Promise<{ failed: false; body: string } | { failed: true; error: string; errorCode?: string }> {
-    const raw = await new Response(stream).text();
     let text = "";
     const functionCalls: unknown[] = [];
     const reasoningItems: unknown[] = [];
-    let completed: Record<string, unknown> = {};
+    let completed: Record<string, unknown> | undefined;
     let failure: string | undefined;
     let failureCode: string | undefined;
 
-    for (const line of raw.split("\n")) {
-        const trimmed = line.trimStart();
-
-        if (!trimmed.startsWith("data:")) {
-            continue;
-        }
-
-        const payload = trimmed.slice("data:".length).trim();
-
+    for await (const payload of whamSsePayloads(stream)) {
         if (payload.length === 0 || payload === "[DONE]") {
             continue;
         }
@@ -754,7 +782,7 @@ async function accumulateResponsesJson(
         try {
             event = SafeJSON.parse(payload, { strict: true });
         } catch (err) {
-            logger.debug({ err, payload }, "ai-proxy: WHAM SSE line parse failed");
+            logger.debug({ err }, "ai-proxy: WHAM SSE event parse failed");
             continue;
         }
 
@@ -780,9 +808,13 @@ async function accumulateResponsesJson(
             continue;
         }
 
-        if (event.type === "response.completed" && isObject(event.response)) {
+        if (event.type === "response.completed" && isObject(event.response) && event.response.status === "completed") {
             completed = event.response;
             continue;
+        }
+
+        if (event.type === "response.incomplete") {
+            failure = "WHAM response.incomplete";
         }
 
         if (event.type === "response.failed") {
@@ -795,6 +827,10 @@ async function accumulateResponsesJson(
 
     if (failure) {
         return { failed: true, error: failure, errorCode: failureCode };
+    }
+
+    if (!completed) {
+        return { failed: true, error: "WHAM stream ended before response.completed" };
     }
 
     const output: unknown[] = [];

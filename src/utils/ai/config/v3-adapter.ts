@@ -31,7 +31,7 @@ export function appsFor(config: AiConfigData, accountId: string): string[] {
     return apps;
 }
 
-function toSecondary(account: AccountEntry): AISecondaryLogin | undefined {
+function toSecondary(account: AccountEntry, resolve: typeof resolveSecretSync): AISecondaryLogin | undefined {
     const secondary = account.credentials.secondary;
     if (!secondary) {
         return undefined;
@@ -39,13 +39,21 @@ function toSecondary(account: AccountEntry): AISecondaryLogin | undefined {
 
     return {
         ...secondary,
-        accessToken: resolveSecretSync(secondary.accessToken) ?? "",
-        refreshToken: resolveSecretSync(secondary.refreshToken) ?? "",
+        accessToken: resolve(secondary.accessToken) ?? "",
+        refreshToken: resolve(secondary.refreshToken) ?? "",
     };
 }
 
 /** v4 account seen through v3 eyes. Vault refs are resolved, so callers see values. */
-export function toV3Account(account: AccountEntry, config: AiConfigData): AIAccountEntry {
+export function toV3Account({
+    account,
+    config,
+    resolve = resolveSecretSync,
+}: {
+    account: AccountEntry;
+    config: AiConfigData;
+    resolve?: typeof resolveSecretSync;
+}): AIAccountEntry {
     const { credentials } = account;
 
     // Each field is resolved ONCE. `resolveSecretSync` reads and parses the whole
@@ -55,7 +63,7 @@ export function toV3Account(account: AccountEntry, config: AiConfigData): AIAcco
     const tokens: Partial<Record<(typeof SECRET_FIELDS)[number], string>> = {};
 
     for (const field of SECRET_FIELDS) {
-        const value = resolveSecretSync(credentials[field]);
+        const value = resolve(credentials[field]);
 
         if (value) {
             tokens[field] = value;
@@ -79,7 +87,7 @@ export function toV3Account(account: AccountEntry, config: AiConfigData): AIAcco
         },
     };
 
-    const secondary = toSecondary(account);
+    const secondary = toSecondary(account, resolve);
     if (secondary) {
         entry.secondary = secondary;
     }

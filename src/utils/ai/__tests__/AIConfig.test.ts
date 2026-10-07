@@ -1,10 +1,16 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import * as fs from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { _resetMasterKeyProviders, _setMasterKeyProvidersForTest } from "@genesiscz/utils/security/MasterKey";
+import { _resetSecretsForTest, secrets, vaultAdmin } from "@genesiscz/utils/security/SecretStore";
 import { AIConfig, mergeAccountEntry } from "../AIConfig";
+import { AiConfigStore } from "../config/AiConfigStore";
+import { aiDataDir } from "../config/paths";
 
 describe("AIConfig", () => {
     // Without this sandbox these tests load and WRITE the user's real
@@ -16,6 +22,16 @@ describe("AIConfig", () => {
         home = mkdtempSync(join(tmpdir(), "gt-aiconfig-"));
         env.testing.set("GENESIS_TOOLS_HOME", home);
         AIConfig.invalidate();
+        _setMasterKeyProvidersForTest([
+            {
+                id: "keychain",
+                available: async () => true,
+                get: async () => Buffer.alloc(32, 7),
+                getSync: () => Buffer.alloc(32, 7),
+                set: async () => {},
+            },
+        ]);
+        _resetSecretsForTest();
     });
 
     // Removed only AFTER the singleton is dropped: it holds a Storage bound to
@@ -25,7 +41,78 @@ describe("AIConfig", () => {
     afterEach(() => {
         env.testing.unset("GENESIS_TOOLS_HOME");
         AIConfig.invalidate();
+        _resetMasterKeyProviders();
+        _resetSecretsForTest();
         rmSync(home, { recursive: true, force: true });
+    });
+
+    it("refreshes a held facade on canonical edits, external replacement and vault-only replacement", async () => {
+        const store = await AiConfigStore.load();
+        const vault = await secrets();
+        const ref = await vault.set("ai/acc_work/longLivedToken", "fixture-first");
+        await store.mutate((data) => {
+            data.accounts = [
+                {
+                    id: "acc_work",
+                    name: "work",
+                    provider: "anthropic-sub",
+                    enabled: true,
+                    billing: { mode: "subscription" },
+                    useEnvApiKey: false,
+                    credentials: { longLivedToken: ref },
+                },
+            ];
+        });
+        const facade = await AIConfig.load();
+        expect(facade.getAccount("work")?.tokens.longLivedToken).toBe("fixture-first");
+        const unchanged = facade.getAccount("work");
+        expect(await AIConfig.load()).toBe(facade);
+        expect(facade.getAccount("work")).toEqual(unchanged);
+        await vault.set(ref.path, "fixture-second");
+        await AIConfig.load();
+        expect(facade.getAccount("work")?.tokens.longLivedToken).toBe("fixture-second");
+        await store.mutate((data) => {
+            data.accounts[0].credentials = {};
+        });
+        await AIConfig.load();
+        expect(facade.getAccount("work")?.tokens.longLivedToken).toBeUndefined();
+        const replacement = structuredClone(store.data());
+        replacement.accounts[0].credentials.longLivedToken = "fixture-external";
+        // Another process writes the file: no AiConfigStore, no lock.
+        await Bun.write(aiDataDir("config.json"), SafeJSON.stringify(replacement, null, 2));
+        await AIConfig.load();
+        expect(facade.getAccount("work")?.tokens.longLivedToken).toBe("fixture-external");
+    });
+
+    it("parses a vault once per projection and never again on unchanged loads", async () => {
+        const store = await AiConfigStore.load();
+        const vault = await secrets();
+        const accessToken = await vault.set("ai/acc_work/accessToken", "fixture-access");
+        const refreshToken = await vault.set("ai/acc_work/refreshToken", "fixture-refresh");
+        const longLivedToken = await vault.set("ai/acc_work/longLivedToken", "fixture-long");
+        await store.mutate((data) => {
+            data.accounts = Array.from({ length: 12 }, (_, i) => ({
+                id: `acc_fixture${i}`,
+                name: `fixture${i}`,
+                provider: "anthropic-sub",
+                enabled: true,
+                billing: { mode: "subscription" },
+                useEnvApiKey: false,
+                credentials: { accessToken, refreshToken, longLivedToken },
+            }));
+        });
+        const read = spyOn(fs, "readFileSync");
+        try {
+            const facade = await AIConfig.load();
+            expect(facade.listAccounts()).toHaveLength(12);
+            expect(read.mock.calls.filter(([path]) => path === vaultAdmin.path())).toHaveLength(1);
+            for (let i = 0; i < 10; i++) {
+                await AIConfig.load();
+            }
+            expect(read.mock.calls.filter(([path]) => path === vaultAdmin.path())).toHaveLength(1);
+        } finally {
+            read.mockRestore();
+        }
     });
 
     it("load() returns a singleton", async () => {

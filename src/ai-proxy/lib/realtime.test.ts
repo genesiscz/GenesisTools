@@ -421,7 +421,9 @@ describe("realtime client_secrets mint", () => {
     it("refuses to mint when realtime.allowClientSecrets is off", async () => {
         // The server re-reads the config per request (`loadConfigFresh`), so
         // flipping the stored flag is what actually exercises the guard.
-        await getAiProxyConfigStore().save({ ...baseConfig, realtime: { allowClientSecrets: false } });
+        await getAiProxyConfigStore().mutate((config) => {
+            config.realtime = { allowClientSecrets: false };
+        });
 
         try {
             const res = await fetch(`http://127.0.0.1:${proxy.port}/v1/realtime/client_secrets`, {
@@ -435,7 +437,9 @@ describe("realtime client_secrets mint", () => {
             expect(body.error.code).toBe("client_secrets_disabled");
             expect(body.error.message).toContain("never reach this proxy's logs");
         } finally {
-            await getAiProxyConfigStore().save(baseConfig);
+            await getAiProxyConfigStore().mutate((config) => {
+                config.realtime = baseConfig.realtime;
+            });
         }
     });
 });

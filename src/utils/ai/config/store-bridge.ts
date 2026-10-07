@@ -1,7 +1,8 @@
 import type { AIConfigData as V3ConfigData } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
+import { secretSnapshotResolver } from "@genesiscz/utils/security/SecretStore";
 import { slugifyAccountId } from "./migrations/2026-08-configV4";
-import { type AccountRef, accountRef, isAccountRef, refToId } from "./refs";
+import { type AccountRef, accountRef, accountRefIn, isAccountRef, refToId } from "./refs";
 import { type AccountEntry, type AiConfigData, isTaskName } from "./schema";
 import { applyV3Secondary, applyV3Tokens, appsFor, toV3Account } from "./v3-adapter";
 
@@ -78,9 +79,10 @@ export function projectToV3(config: AiConfigData): V3ConfigData {
         providers[provider] = { enabled: false, envVariable: "" };
     }
 
+    const resolve = secretSnapshotResolver();
     return {
         _schemaVersion: 3,
-        accounts: config.accounts.map((account) => toV3Account(account, config)),
+        accounts: config.accounts.map((account) => toV3Account({ account, config, resolve })),
         defaultAccounts,
         tasks,
         apps,
@@ -223,7 +225,13 @@ export async function syncV3IntoStore(config: AiConfigData, v3: V3ConfigData): P
             continue;
         }
 
-        config.defaults.app[context] = { ...(config.defaults.app[context] ?? {}), chat: { model: accountRef(id) } };
+        const previous = config.defaults.app[context]?.chat;
+        const ref = accountRef(id);
+        const sameAccount = accountRefIn(previous?.model ?? "") === ref;
+        config.defaults.app[context] = {
+            ...(config.defaults.app[context] ?? {}),
+            chat: { ...previous, model: sameAccount ? (previous?.model ?? ref) : ref },
+        };
     }
 
     for (const [task, taskConfig] of Object.entries(v3.tasks ?? {})) {

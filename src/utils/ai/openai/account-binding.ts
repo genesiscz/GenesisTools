@@ -8,6 +8,7 @@ import {
     extractAccountId,
     readCodexAuthJson,
 } from "@genesiscz/utils/ai/openai/codex-auth";
+import { isTransportFailure } from "@genesiscz/utils/ai/usage-poll/poll-gate";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { profiler } from "@genesiscz/utils/profile";
 import { masterKey, resolveSecret, secrets } from "@genesiscz/utils/security";
@@ -137,10 +138,11 @@ export class CodexAccountBinding {
                     rotated = await profiler
                         .scope("codex-account")
                         .measureAsync("network-refresh", () => codexOAuth.refresh(latest.refreshToken));
-                } catch {
-                    // Provider errors can contain credentials. Never send their text to clients or logs.
-                    throw new Error(
-                        `Codex token refresh failed; re-login with ${toolCommand("codex login")} <account>`
+                } catch (error) {
+                    // Preserve only classification. Raw bodies/causes can carry credentials.
+                    throw Object.assign(
+                        new Error(`Codex token refresh failed; re-login with ${toolCommand("codex login")} <account>`),
+                        { code: isTransportFailure(error) ? "UPSTREAM_TRANSPORT_ERROR" : "CODEX_REFRESH_REJECTED" }
                     );
                 }
 

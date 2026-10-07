@@ -1,6 +1,6 @@
 import { runConfigDetect, runConfigInit, runConfigShow } from "@app/ai-proxy/commands/config";
 import { runUpCommand } from "@app/ai-proxy/commands/up";
-import { detectAccounts, getDefaultConfig, loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
+import { detectAccounts, loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { normalizeBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { buildPublicHealthUrl, resolveCursorBaseUrl } from "@app/ai-proxy/lib/public-url";
 import {
@@ -20,7 +20,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 
 async function ensureConfigInitialized(): Promise<AiProxyConfig> {
-    let config = await loadConfig();
+    const config = await loadConfig();
 
     if (config.accounts.length === 0) {
         const detected = await detectAccounts({
@@ -31,7 +31,6 @@ async function ensureConfigInitialized(): Promise<AiProxyConfig> {
             throw new Error("No accounts detected. Run `grok login` or set XAI_API_KEY first.");
         }
 
-        config = getDefaultConfig();
         config.accounts = detected;
         await saveConfig(config);
         log.success(`Initialized config with ${detected.length} account(s)`);

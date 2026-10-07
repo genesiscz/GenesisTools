@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+    AiProxyConfigStore,
     type ConfigPermissionOps,
     checkConfigPermissions,
     getAiProxyConfigStore,
@@ -47,6 +48,64 @@ describe("config-store migration", () => {
     it("defaults thinking presentation to cursor", () => {
         const config = parseConfigJson(SafeJSON.stringify({}));
         expect(config.translation.thinking).toBe("cursor");
+    });
+
+    it("reconciles stale snapshots and serializes independent field and named-array mutations", async () => {
+        const tempDir = mkdtempSync(join(tmpdir(), "ai-proxy-config-race-"));
+        env.testing.set("GENESIS_TOOLS_HOME", tempDir);
+        resetAiProxyStorage();
+        const first = new AiProxyConfigStore();
+        const second = new AiProxyConfigStore();
+        try {
+            const a = await first.load(),
+                b = await second.load();
+            a.listen.port = 9123;
+            await first.save(a);
+            b.translation.thinking = "raw";
+            await second.save(b);
+            expect((await first.loadFresh()).listen.port).toBe(9123);
+            expect((await first.loadFresh()).translation.thinking).toBe("raw");
+
+            const c = await first.loadFresh(),
+                d = await second.loadFresh();
+            c.accounts.push({ name: "work", provider: "openai", providerSlug: "openai", enabled: true });
+            d.accounts.push({ name: "shop", provider: "openrouter", providerSlug: "openrouter", enabled: true });
+            await first.save(c);
+            await second.save(d);
+            expect((await first.loadFresh()).accounts.map((account) => account.name)).toEqual(["work", "shop"]);
+
+            await Promise.all([
+                first.update({ listen: { host: "127.0.0.1", port: 9234 } }),
+                second.update({ translation: { cursorAgent: "auto", thinking: "folded" } }),
+            ]);
+            expect(await first.loadFresh()).toMatchObject({
+                listen: { port: 9234 },
+                translation: { thinking: "folded" },
+            });
+            const e = await first.loadFresh(),
+                f = await second.loadFresh();
+            e.accounts[0].enabled = false;
+            f.accounts[0].label = "renamed label";
+            await first.save(e);
+            await second.save(f);
+            expect((await first.loadFresh()).accounts[0]).toMatchObject({ enabled: false, label: "renamed label" });
+
+            const g = await first.loadFresh(),
+                h = await second.loadFresh();
+            g.listen.port = 9345;
+            h.listen.port = 9456;
+            await first.save(g);
+            await expect(second.save(h)).rejects.toThrow("changed concurrently");
+            await expect(second.update({ listen: { host: "127.0.0.1", port: -1 } })).rejects.toThrow("Invalid");
+            expect((await first.loadFresh()).listen.port).toBe(9345);
+            const expected = await first.loadFresh();
+            const replacement = { ...expected, listen: { host: "127.0.0.1", port: 9567 } };
+            await first.replace(replacement, expected);
+            expect((await second.loadFresh()).listen.port).toBe(9567);
+            await expect(second.replace(expected, expected)).rejects.toThrow("changed since");
+        } finally {
+            rmSync(tempDir, { recursive: true, force: true });
+        }
     });
 
     it("loadFresh reads disk without stale in-process cache", async () => {

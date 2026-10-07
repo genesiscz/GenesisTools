@@ -97,10 +97,12 @@ function matches(account: AccountEntry, filter: AccountFilter): boolean {
  */
 interface FileStamp {
     mtimeMs: number;
+    ctimeMs: number;
+    ino: number;
     size: number;
 }
 
-const MISSING_FILE: FileStamp = { mtimeMs: 0, size: 0 };
+const MISSING_FILE: FileStamp = { mtimeMs: 0, ctimeMs: 0, ino: 0, size: 0 };
 
 export class AiConfigStore {
     private static instance: AiConfigStore | null = null;
@@ -193,7 +195,7 @@ export class AiConfigStore {
         try {
             const stat = statSync(storage.getConfigPath());
 
-            return { mtimeMs: stat.mtimeMs, size: stat.size };
+            return { mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, ino: stat.ino, size: stat.size };
         } catch (err) {
             logger.debug({ err }, "ai config not on disk yet");
             return MISSING_FILE;
@@ -203,7 +205,12 @@ export class AiConfigStore {
     /** Re-read when another process has written since we loaded. */
     private async refreshIfStale(): Promise<void> {
         const current = AiConfigStore.stampOf(this.storage);
-        if (current.mtimeMs === this.stamp.mtimeMs && current.size === this.stamp.size) {
+        if (
+            current.mtimeMs === this.stamp.mtimeMs &&
+            current.size === this.stamp.size &&
+            current.ino === this.stamp.ino &&
+            current.ctimeMs === this.stamp.ctimeMs
+        ) {
             return;
         }
 

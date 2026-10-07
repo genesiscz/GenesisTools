@@ -305,8 +305,8 @@ export class CodexOAuthClient {
         });
 
         if (!res.ok) {
-            const text = await res.text();
-            throw new Error(`Token refresh failed: ${res.status} ${text}`);
+            await res.body?.cancel();
+            throw Object.assign(new Error(`Token refresh failed: ${res.status}`), { statusCode: res.status });
         }
 
         const data = await res.json();

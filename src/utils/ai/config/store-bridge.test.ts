@@ -67,3 +67,35 @@ describe("syncV3IntoStore with one name under two providers", () => {
         ]);
     });
 });
+
+test("legacy write-back preserves an untouched account-qualified model pin and provider", async () => {
+    const store = config(["anthropic-sub"]);
+    store.defaults.app = {
+        fixture: {
+            chat: { provider: "anthropic-sub", model: "@account/acc_anthropic-sub:fixture-model" },
+            temperature: 0.3,
+        },
+    };
+    const v3 = projectToV3(store);
+    v3.accounts[0].label = "updated";
+    v3.apps.fixture.defaults!.temperature = 0.7;
+    await syncV3IntoStore(store, v3);
+    expect(store.defaults.app.fixture).toEqual({
+        chat: { provider: "anthropic-sub", model: "@account/acc_anthropic-sub:fixture-model" },
+        temperature: 0.7,
+    });
+    const changedModel = projectToV3(store);
+    changedModel.apps.fixture.defaults!.model = "other-model";
+    await syncV3IntoStore(store, changedModel);
+    expect(store.defaults.app.fixture?.chat?.model).toBe("other-model");
+});
+
+test("explicitly switching the legacy account drops the old account's model pin", async () => {
+    const store = config(["anthropic-sub", "openai-sub"]);
+    store.accounts[1].name = "shop";
+    store.defaults.app = { fixture: { chat: { model: "@account/acc_anthropic-sub:fixture-model" } } };
+    const v3 = projectToV3(store);
+    v3.defaultAccounts.fixture = "shop";
+    await syncV3IntoStore(store, v3);
+    expect(store.defaults.app.fixture?.chat?.model).toBe("@account/acc_openai-sub");
+});

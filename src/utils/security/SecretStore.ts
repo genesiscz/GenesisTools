@@ -1,12 +1,12 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
-import { masterKey, masterKeySync } from "./MasterKey";
+import { masterKey, masterKeyGeneration, masterKeySync } from "./MasterKey";
 import { isSecretPath, isSecureRef, type MaybeSecret, type SecureRef, secureRef } from "./SecureRef";
 import { emptyVault, VAULT_HKDF_SALT, VAULT_VERSION, type VaultEntry, type VaultFile } from "./vault-format";
 
@@ -166,22 +166,30 @@ class FileSecretStore implements SecretStore {
     }
 
     getSync(path: string): string | undefined {
-        const entry = this.read().entries[path];
-        if (!entry) {
-            return undefined;
-        }
+        return this.snapshotReader()(path);
+    }
 
-        const key = masterKeySync();
-        if (!key) {
-            logger.warn({ path }, "vault secret needs the master key but no rung could supply it synchronously");
-            return undefined;
-        }
+    snapshotReader(): (path: string) => string | undefined {
+        let snapshot: VaultFile | undefined;
+        return (path) => {
+            snapshot ??= this.read();
+            const entry = snapshot.entries[path];
+            if (!entry) {
+                return undefined;
+            }
 
-        try {
-            return decryptEntry(key, path, entry);
-        } catch (err) {
-            throw describeDecryptFailure(path, err);
-        }
+            const key = masterKeySync();
+            if (!key) {
+                logger.warn({ path }, "vault secret needs the master key but no rung could supply it synchronously");
+                return undefined;
+            }
+
+            try {
+                return decryptEntry(key, path, entry);
+            } catch (err) {
+                throw describeDecryptFailure(path, err);
+            }
+        };
     }
 
     /**
@@ -307,8 +315,35 @@ export function _resetSecretsForTest(): void {
     instance = null;
 }
 
+/** Nonsecret file/key identity. Reads metadata only, never resolves the master key. */
+export function secretGeneration(): string {
+    const path = fileStore().vaultFilePath();
+    try {
+        const stat = statSync(path);
+        return [path, stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs, masterKeyGeneration()].join(":");
+    } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+            throw error;
+        }
+        return [path, "missing", masterKeyGeneration()].join(":");
+    }
+}
+
+/** One synchronous projection owns this reader; no plaintext or snapshot is cached globally. */
+export function secretSnapshotResolver(): typeof resolveSecretSync {
+    const get = fileStore().snapshotReader();
+    return (value) => resolveSecretValue(value, get);
+}
+
 /** Resolve a config field that may be a literal or a vault pointer. */
 export function resolveSecretSync(value: MaybeSecret | undefined): string | undefined {
+    return resolveSecretValue(value, (path) => fileStore().getSync(path));
+}
+
+function resolveSecretValue(
+    value: MaybeSecret | undefined,
+    get: (path: string) => string | undefined
+): string | undefined {
     if (value === undefined) {
         return undefined;
     }
@@ -322,7 +357,7 @@ export function resolveSecretSync(value: MaybeSecret | undefined): string | unde
         return undefined;
     }
 
-    return fileStore().getSync(value.path);
+    return get(value.path);
 }
 
 export async function resolveSecret(value: MaybeSecret | undefined): Promise<string | undefined> {

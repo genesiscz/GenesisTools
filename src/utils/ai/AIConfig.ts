@@ -10,6 +10,7 @@ import type {
     TaskConfig,
 } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
+import { secretGeneration } from "@genesiscz/utils/security/SecretStore";
 import { AiConfigStore } from "./config/AiConfigStore";
 import { projectToV3, syncV3IntoStore } from "./config/store-bridge";
 
@@ -79,6 +80,8 @@ export function mergeAccountEntry(existing: AIAccountEntry, incoming: AIAccountE
 export class AIConfig {
     private static instance: AIConfig | null = null;
     private data: AIConfigData;
+    private source?: object;
+    private secretRevision?: string;
 
     private constructor(data: AIConfigData) {
         this.data = data;
@@ -87,16 +90,19 @@ export class AIConfig {
     // ── Lifecycle ──
 
     static async load(): Promise<AIConfig> {
-        if (AIConfig.instance) {
+        const store = await AiConfigStore.load();
+        const source = store.data();
+        // Stamp before projecting. A concurrent vault replacement may cause one
+        // extra projection, but can never label old credentials with a new stamp.
+        const revision = secretGeneration();
+        if (AIConfig.instance?.source === source && AIConfig.instance.secretRevision === revision) {
             return AIConfig.instance;
         }
-
-        // AiConfigStore.load runs the migration chain, so both entry points land
-        // on a shape their reader understands.
-        const store = await AiConfigStore.load();
-        const data = applyDefaults(projectToV3(store.data()));
-
-        AIConfig.instance = new AIConfig(data);
+        const data = applyDefaults(projectToV3(source));
+        AIConfig.instance ??= new AIConfig(data);
+        AIConfig.instance.data = data;
+        AIConfig.instance.source = source;
+        AIConfig.instance.secretRevision = revision;
         return AIConfig.instance;
     }
 

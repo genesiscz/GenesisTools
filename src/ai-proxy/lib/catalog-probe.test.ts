@@ -2,6 +2,11 @@ import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import * as anthropicModels from "@genesiscz/utils/ai/anthropic/models";
 import * as subModels from "@genesiscz/utils/ai/openai/sub-models";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
+import { resetProxyCatalogCache } from "./catalog";
+
+setupStorageSandbox();
 
 /**
  * `tools ai-proxy models` and `accounts list` only print a table, but the two
@@ -49,6 +54,8 @@ mock.module("@app/ai-proxy/lib/providers/openai-sub-token", () => ({
 
 let anthropicLiveCalls = 0;
 let whamLiveCalls = 0;
+let activeWham = 0;
+let maxActiveWham = 0;
 
 // Spread the real namespaces: these modules export more than this file needs,
 // and a hand-listed mock silently breaks whatever imports the rest.
@@ -65,6 +72,10 @@ mock.module("@genesiscz/utils/ai/openai/sub-models", () => ({
     ...subModels,
     tryFetchWhamModels: async () => {
         whamLiveCalls += 1;
+        activeWham++;
+        maxActiveWham = Math.max(maxActiveWham, activeWham);
+        await new Promise<void>((resolve) => setTimeout(resolve, 1));
+        activeWham--;
 
         return [{ slug: "codex-live", displayName: "Live", contextWindow: 400_000, visibility: "list" }];
     },
@@ -89,9 +100,30 @@ afterEach(() => {
     spent.length = 0;
     anthropicLiveCalls = 0;
     whamLiveCalls = 0;
+    activeWham = 0;
+    maxActiveWham = 0;
+    resetProxyCatalogCache();
 });
 
 describe("buildProxyModelCatalog under probe", () => {
+    it("coalesces concurrent catalogs, caps independent discovery and invalidates config edits", async () => {
+        const { buildProxyModelCatalog } = await import("./catalog");
+        const accounts = Array.from({ length: 6 }, (_, i) => ({ ...codex, name: `fixture-${i}` }));
+        const batches = await Promise.all(Array.from({ length: 10 }, () => buildProxyModelCatalog(accounts)));
+        expect(whamLiveCalls).toBe(6);
+        expect(maxActiveWham).toBeLessThanOrEqual(3);
+        expect(maxActiveWham).toBeGreaterThan(1);
+        expect(batches.every((models) => SafeJSON.stringify(models) === SafeJSON.stringify(batches[0]))).toBe(true);
+        await buildProxyModelCatalog(accounts);
+        expect(whamLiveCalls).toBe(6);
+        await buildProxyModelCatalog([{ ...accounts[0], baseUrl: "https://fixture.invalid" }]);
+        expect(whamLiveCalls).toBe(7);
+        await buildProxyModelCatalog(accounts, { fresh: true });
+        expect(whamLiveCalls).toBe(13);
+        await buildProxyModelCatalog(accounts, { probe: true });
+        expect(whamLiveCalls).toBe(13);
+    });
+
     it("never refreshes a token to decorate a listing, for either subscription provider", async () => {
         const { buildProxyModelCatalog } = await import("./catalog");
 

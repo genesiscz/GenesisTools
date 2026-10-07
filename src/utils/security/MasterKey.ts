@@ -57,6 +57,7 @@ export async function masterKey(): Promise<Buffer> {
 
         const key = await provider.get();
         if (key) {
+            generation++;
             cached = { key, source: provider.id };
             logger.debug({ source: provider.id }, "resolved vault master key");
             return key;
@@ -104,6 +105,7 @@ export function masterKeySync(): Buffer | undefined {
     for (const provider of providers) {
         const key = provider.getSync?.();
         if (key) {
+            generation++;
             cached = { key, source: provider.id };
             return key;
         }
@@ -121,6 +123,7 @@ export async function masterKeySource(): Promise<MasterKeySource | undefined> {
         if (await provider.available()) {
             const key = await provider.get();
             if (key) {
+                generation++;
                 cached = { key, source: provider.id };
                 return provider.id;
             }
@@ -130,7 +133,14 @@ export async function masterKeySource(): Promise<MasterKeySource | undefined> {
     return undefined;
 }
 
+let generation = 0;
+
+export function masterKeyGeneration(): number {
+    return generation;
+}
+
 export function invalidateMasterKeyCache(): void {
+    generation++;
     cached = null;
 }
 
@@ -171,6 +181,7 @@ export async function writeMasterKey(key: Buffer): Promise<MasterKeySource> {
 
         if (await provider.available()) {
             await provider.set(key);
+            generation++;
             cached = { key, source: provider.id };
             return provider.id;
         }
@@ -182,10 +193,10 @@ export async function writeMasterKey(key: Buffer): Promise<MasterKeySource> {
 /** Test seam: swap the ladder for fakes. Production code never calls this. */
 export function _setMasterKeyProvidersForTest(next: MasterKeyProvider[]): void {
     providers = next;
-    cached = null;
+    invalidateMasterKeyCache();
 }
 
 export function _resetMasterKeyProviders(): void {
     providers = [envKeyProvider, osKeyring, fileKeyProvider];
-    cached = null;
+    invalidateMasterKeyCache();
 }

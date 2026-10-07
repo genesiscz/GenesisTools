@@ -1,11 +1,15 @@
+import { existsSync } from "node:fs";
 import { chmod, stat } from "node:fs/promises";
+import { isDeepStrictEqual } from "node:util";
 import { migrateAccountConfig } from "@app/ai-proxy/lib/account-config";
+import { validateClients } from "@app/ai-proxy/lib/clients";
 import { normalizeBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { maskApiKey } from "@app/ai-proxy/lib/providers/api-key-state";
 import { AI_PROXY_CONFIG_FILE_MODE, getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { AiProxyConfig, AiProxyPublicConfig } from "@app/ai-proxy/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 
 /** Owner-only: the config carries the proxy bearer key and billed vendor keys. */
 const CONFIG_FILE_MODE = AI_PROXY_CONFIG_FILE_MODE;
@@ -120,7 +124,7 @@ function migratePublicConfig(raw?: AiProxyPublicConfig): AiProxyPublicConfig | u
 function mergeConfig(existing: Partial<AiProxyConfig>): AiProxyConfig {
     const defaults = getDefaultConfig();
 
-    return {
+    const merged = {
         ...defaults,
         ...existing,
         listen: { ...defaults.listen, ...existing.listen },
@@ -132,11 +136,106 @@ function mergeConfig(existing: Partial<AiProxyConfig>): AiProxyConfig {
         public: migratePublicConfig(existing.public),
         accounts: (existing.accounts ?? []).map((account) => migrateAccountConfig(account)),
     };
+    // Compare the same persisted shape before and after a write. Migration helpers
+    // may materialize optional undefined fields that JSON does not retain.
+    return SafeJSON.parse(SafeJSON.stringify(merged, { strict: true }), { strict: true });
+}
+
+/** Apply only the edited fields; reject competing edits instead of losing either writer. */
+function mergeConfigEdit({
+    before,
+    after,
+    current,
+    field = "config",
+}: {
+    before: unknown;
+    after: unknown;
+    current: unknown;
+    field?: string;
+}): unknown {
+    if (isDeepStrictEqual(before, after)) {
+        return current;
+    }
+    if (isDeepStrictEqual(before, current) || isDeepStrictEqual(after, current)) {
+        return after;
+    }
+    if (
+        isObject(before) &&
+        isObject(after) &&
+        isObject(current) &&
+        !Array.isArray(before) &&
+        !Array.isArray(after) &&
+        !Array.isArray(current)
+    ) {
+        const merged: Record<string, unknown> = { ...current };
+        for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+            const value = mergeConfigEdit({
+                before: before[key],
+                after: after[key],
+                current: current[key],
+                field: `${field}.${key}`,
+            });
+            if (value === undefined) {
+                delete merged[key];
+            } else {
+                merged[key] = value;
+            }
+        }
+        return merged;
+    }
+    if (Array.isArray(before) && Array.isArray(after) && Array.isArray(current)) {
+        const identity = (value: unknown): string | undefined => {
+            if (!isObject(value)) {
+                return undefined;
+            }
+            if (typeof value.name === "string") {
+                return SafeJSON.stringify([value.provider ?? "", value.name]);
+            }
+            return typeof value.match === "string" ? value.match : undefined;
+        };
+        const indexed = (values: unknown[]): Map<string, unknown> | undefined => {
+            const rows = new Map<string, unknown>();
+            for (const value of values) {
+                const id = identity(value);
+                if (id === undefined || rows.has(id)) {
+                    return undefined;
+                }
+                rows.set(id, value);
+            }
+            return rows;
+        };
+        const base = indexed(before),
+            next = indexed(after),
+            latest = indexed(current);
+        if (base && next && latest) {
+            const result: unknown[] = [];
+            for (const id of new Set([...latest.keys(), ...next.keys()])) {
+                const value = mergeConfigEdit({
+                    before: base.get(id),
+                    after: next.get(id),
+                    current: latest.get(id),
+                    field: `${field}[]`,
+                });
+                if (value !== undefined) {
+                    result.push(value);
+                }
+            }
+            return result;
+        }
+    }
+    throw new Error(`Proxy config changed concurrently at ${field}; reload and retry`);
 }
 
 export class AiProxyConfigStore {
     private readonly storage = getAiProxyStorage();
     private cached: AiProxyConfig | null = null;
+    private readonly snapshots = new WeakMap<AiProxyConfig, AiProxyConfig>();
+
+    private snapshot(config: AiProxyConfig): AiProxyConfig {
+        const copy = structuredClone(config);
+        this.snapshots.set(copy, structuredClone(config));
+        return copy;
+    }
 
     where(): string {
         return this.storage.getConfigPath();
@@ -144,18 +243,18 @@ export class AiProxyConfigStore {
 
     async load(): Promise<AiProxyConfig> {
         if (this.cached) {
-            return structuredClone(this.cached);
+            return this.snapshot(this.cached);
         }
 
         const config = await this.readFromDisk();
         this.cached = config;
 
-        return structuredClone(config);
+        return this.snapshot(config);
     }
 
     /** Always reads config.json — use in long-running serve process for hot reload. */
     async loadFresh(): Promise<AiProxyConfig> {
-        return structuredClone(await this.readFromDisk());
+        return this.snapshot(await this.readFromDisk());
     }
 
     private async readFromDisk(): Promise<AiProxyConfig> {
@@ -164,7 +263,56 @@ export class AiProxyConfigStore {
     }
 
     async save(config: AiProxyConfig): Promise<void> {
+        const before = this.snapshots.get(config);
+        await this.storage.withConfigLock(async () => {
+            const present = existsSync(this.where());
+            if (!before && present) {
+                throw new Error("Replacing proxy config requires replace(config, expectedSnapshot)");
+            }
+            const current = present ? await this.readFromDisk() : (before ?? config);
+            const next = before
+                ? parseConfigJson(SafeJSON.stringify(mergeConfigEdit({ before, after: config, current })))
+                : config;
+            await this.write(next);
+            this.snapshots.set(config, structuredClone(config));
+        });
+    }
+
+    async mutate(fn: (config: AiProxyConfig) => void | Promise<void>): Promise<AiProxyConfig> {
+        return this.storage.withConfigLock(async () => {
+            const current = await this.readFromDisk();
+            await fn(current);
+            await this.write(current);
+            return this.snapshot(current);
+        });
+    }
+
+    async replace(config: AiProxyConfig, expected: AiProxyConfig): Promise<void> {
+        await this.storage.withConfigLock(async () => {
+            if (!isDeepStrictEqual(await this.readFromDisk(), expected)) {
+                throw new Error("Proxy config changed since the replacement snapshot; reload and retry");
+            }
+            await this.write(config);
+        });
+    }
+
+    private async write(config: AiProxyConfig): Promise<void> {
         const normalized = mergeConfig(config);
+        if (
+            !Number.isInteger(normalized.listen.port) ||
+            normalized.listen.port < 0 ||
+            normalized.listen.port > 65535 ||
+            typeof normalized.listen.host !== "string" ||
+            !normalized.listen.host ||
+            typeof normalized.proxyApiKey !== "string" ||
+            !normalized.proxyApiKey
+        ) {
+            throw new Error("Invalid proxy listener or authentication configuration");
+        }
+        const problems = validateClients(normalized.clients);
+        if (problems.length > 0) {
+            throw new Error(problems.join("; "));
+        }
         await this.storage.ensureDirs();
         // Mode comes from the storage instance (AI_PROXY_CONFIG_FILE_MODE) and
         // travels with the temp file through the rename, so the key is never
@@ -206,25 +354,25 @@ export class AiProxyConfigStore {
     }
 
     async update(patch: Partial<AiProxyConfig>): Promise<AiProxyConfig> {
-        const current = await this.load();
-        const next = mergeConfig({
-            ...current,
-            ...patch,
-            listen: { ...current.listen, ...patch.listen },
-            translation: { ...current.translation, ...patch.translation },
-            public:
-                patch.public !== undefined
-                    ? {
-                          ...current.public,
-                          ...patch.public,
-                          cloudflared: { ...current.public?.cloudflared, ...patch.public?.cloudflared },
-                          tailscale: { ...current.public?.tailscale, ...patch.public?.tailscale },
-                      }
-                    : current.public,
-            accounts: patch.accounts ?? current.accounts,
+        return this.mutate((current) => {
+            const next = mergeConfig({
+                ...current,
+                ...patch,
+                listen: { ...current.listen, ...patch.listen },
+                translation: { ...current.translation, ...patch.translation },
+                public:
+                    patch.public !== undefined
+                        ? {
+                              ...current.public,
+                              ...patch.public,
+                              cloudflared: { ...current.public?.cloudflared, ...patch.public?.cloudflared },
+                              tailscale: { ...current.public?.tailscale, ...patch.public?.tailscale },
+                          }
+                        : current.public,
+                accounts: patch.accounts ?? current.accounts,
+            });
+            Object.assign(current, next);
         });
-        await this.save(next);
-        return next;
     }
 }
 

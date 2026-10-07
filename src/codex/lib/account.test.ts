@@ -5,9 +5,10 @@ import { join } from "node:path";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type AccountEntry, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import type { AppServerProcess } from "@genesiscz/utils/ai/openai/app-server-client";
-import { resolveCodexAccountToken } from "@genesiscz/utils/ai/openai/codex-auth";
+import { codexOAuth, resolveCodexAccountToken } from "@genesiscz/utils/ai/openai/codex-auth";
 import { resolveNativeCodexModel } from "@genesiscz/utils/ai/openai/resolve-native-model";
 import { pollCodexAccount } from "@genesiscz/utils/ai/providers/plugins/openai-sub/usage";
+import { isTransportFailure } from "@genesiscz/utils/ai/usage-poll/poll-gate";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
@@ -581,5 +582,33 @@ test("an unavailable vault key is detected before spending a legacy plaintext re
         expect(network).not.toHaveBeenCalled();
     } finally {
         network.mockRestore();
+    }
+});
+
+test.each([
+    Object.assign(new Error("fixture-secret"), { code: "ECONNREFUSED" }),
+    new DOMException("fixture-secret", "TimeoutError"),
+    Object.assign(new Error("fixture-secret"), { statusCode: 503 }),
+    Object.assign(new Error("fixture-secret"), { statusCode: 400 }),
+])("managed refresh preserves sanitized transport classification", async (failure) => {
+    account.credentials = { accessToken: token("workspace-a", 1), refreshToken: "fixture-refresh", expiresAt: 1 };
+    saveConfig();
+    const refresh = spyOn(codexOAuth, "refresh").mockRejectedValue(failure);
+    try {
+        const binding = await CodexAccountBinding.create("work", { allowRefresh: true });
+        let caught: unknown;
+        try {
+            await binding.tokens();
+        } catch (error) {
+            caught = error;
+        }
+        expect(caught).toBeInstanceOf(Error);
+        expect(isTransportFailure(caught)).toBe(isTransportFailure(failure));
+        expect(String(caught)).not.toContain("fixture-secret");
+        expect(SafeJSON.stringify(caught)).not.toContain("fixture-secret");
+        expect(caught).not.toHaveProperty("cause");
+        expect(refresh).toHaveBeenCalledTimes(1);
+    } finally {
+        refresh.mockRestore();
     }
 });

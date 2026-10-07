@@ -31,7 +31,7 @@ function fakeKeyring() {
 function account(overrides: Partial<AccountEntry> = {}): AccountEntry {
     return {
         id: "acc_max",
-        name: "martin-max",
+        name: "work-max",
         provider: "anthropic-sub",
         enabled: true,
         label: "max 20x",
@@ -67,7 +67,7 @@ describe("toV3Account", () => {
         const ref = await store.set("ai/acc_max/accessToken", "sk-ant-oat01-value");
         const entry = account({ credentials: { accessToken: ref, expiresAt: 42 } });
 
-        const v3 = toV3Account(entry, config([entry]));
+        const v3 = toV3Account({ account: entry, config: config([entry]) });
 
         expect(v3.tokens.accessToken).toBe("sk-ant-oat01-value");
         expect(v3.tokens.expiresAt).toBe(42);
@@ -81,7 +81,7 @@ describe("toV3Account", () => {
             subscriptionCheckedAt: 1_700_000_000_000,
         });
 
-        const v3 = toV3Account(entry, config([entry]));
+        const v3 = toV3Account({ account: entry, config: config([entry]) });
 
         expect(v3.subscriptionPlan).toBe("claude_max");
         expect(v3.subscriptionStatus).toBe("active");
@@ -89,7 +89,7 @@ describe("toV3Account", () => {
     });
 
     test("omits token fields that are absent rather than emitting empty strings", () => {
-        const v3 = toV3Account(account(), config([account()]));
+        const v3 = toV3Account({ account: account(), config: config([account()]) });
 
         expect(v3.tokens.accessToken).toBeUndefined();
         expect(v3.tokens.apiKey).toBeUndefined();
@@ -100,15 +100,15 @@ describe("toV3Account", () => {
         const withEnv = account({ useEnvApiKey: "XAI_API_KEY" });
         const withList = account({ useEnvApiKey: ["XAI_API_KEY", "X_AI_API_KEY"] });
 
-        expect(toV3Account(withEnv, config([withEnv])).tokens.apiKeyEnv).toBe("XAI_API_KEY");
+        expect(toV3Account({ account: withEnv, config: config([withEnv]) }).tokens.apiKeyEnv).toBe("XAI_API_KEY");
         // A list has no v3 equivalent; emitting the first would silently narrow it.
-        expect(toV3Account(withList, config([withList])).tokens.apiKeyEnv).toBeUndefined();
+        expect(toV3Account({ account: withList, config: config([withList]) }).tokens.apiKeyEnv).toBeUndefined();
     });
 
     test("keeps authFile a path, never a resolved secret", () => {
         const entry = account({ credentials: { authFile: "~/.grok/auth.json" } });
 
-        expect(toV3Account(entry, config([entry])).tokens.authFile).toBe("~/.grok/auth.json");
+        expect(toV3Account({ account: entry, config: config([entry]) }).tokens.authFile).toBe("~/.grok/auth.json");
     });
 
     test("derives the apps list from app defaults that reference the account", () => {
@@ -118,7 +118,7 @@ describe("toV3Account", () => {
         });
 
         expect(appsFor(cfg, "acc_max")).toEqual(["youtube"]);
-        expect(toV3Account(entry, cfg).apps).toEqual(["youtube"]);
+        expect(toV3Account({ account: entry, config: cfg }).apps).toEqual(["youtube"]);
     });
 });
 
@@ -141,7 +141,7 @@ describe("applyV3Tokens", () => {
 
         // What a facade save does for every account, changed or not: read the
         // resolved v3 shape back and apply it again.
-        await applyV3Tokens(entry, toV3Account(entry, config([entry])).tokens);
+        await applyV3Tokens(entry, toV3Account({ account: entry, config: config([entry]) }).tokens);
 
         expect(readFileSync(vaultFile, "utf8")).toBe(before);
         expect(isSecureRef(entry.credentials.accessToken)).toBe(true);
@@ -170,7 +170,7 @@ describe("applyV3Tokens", () => {
         const entry = account();
         await applyV3Tokens(entry, { apiKey: "sk-round", accessToken: "sk-ant-round" });
 
-        const v3 = toV3Account(entry, config([entry]));
+        const v3 = toV3Account({ account: entry, config: config([entry]) });
         expect(v3.tokens.apiKey).toBe("sk-round");
         expect(v3.tokens.accessToken).toBe("sk-ant-round");
 

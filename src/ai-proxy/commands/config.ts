@@ -1,11 +1,4 @@
-import {
-    detectAccountReports,
-    detectAccounts,
-    getDefaultConfig,
-    loadConfig,
-    redactConfig,
-    saveConfig,
-} from "@app/ai-proxy/lib/config";
+import { detectAccountReports, detectAccounts, loadConfig, redactConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { formatDetectReportText } from "@app/ai-proxy/lib/detect-report";
 import { isValidThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import type { ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
@@ -53,9 +46,8 @@ export async function runConfigInit(options?: { append?: boolean }): Promise<voi
     }
 
     if (existing.accounts.length === 0) {
-        const config = getDefaultConfig();
-        config.accounts = detected;
-        await saveConfig(config);
+        existing.accounts = detected;
+        await saveConfig(existing);
         out.log.success(`Wrote config with ${detected.length} account(s)`);
         return;
     }

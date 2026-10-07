@@ -5,7 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { _resetMasterKeyProviders, _setMasterKeyProvidersForTest } from "./MasterKey";
+import {
+    _resetMasterKeyProviders,
+    _setMasterKeyProvidersForTest,
+    masterKey,
+    masterKeyGeneration,
+    masterKeySource,
+    masterKeySync,
+} from "./MasterKey";
 import { _resetSecretsForTest, redactSecrets, resolveSecret, secrets } from "./SecretStore";
 import type { VaultFile } from "./vault-format";
 
@@ -44,6 +51,30 @@ function vaultPath(): string {
 }
 
 describe("SecretStore", () => {
+    test("a newly readable key invalidates projections once for every resolver", async () => {
+        for (const resolve of [masterKey, masterKeySync, masterKeySource]) {
+            let available = false;
+            _setMasterKeyProvidersForTest([
+                {
+                    id: "keychain",
+                    available: async () => true,
+                    get: async () => (available ? KEY : undefined),
+                    getSync: () => (available ? KEY : undefined),
+                    set: async () => {
+                        throw new Error("test must never write a key");
+                    },
+                },
+            ]);
+            expect(masterKeySync()).toBeUndefined();
+            const before = masterKeyGeneration();
+            available = true;
+            await resolve();
+            expect(masterKeyGeneration()).toBe(before + 1);
+            await resolve();
+            expect(masterKeyGeneration()).toBe(before + 1);
+        }
+    });
+
     test("round-trips a secret and returns a usable ref", async () => {
         const store = await secrets();
         const ref = await store.set("ai/acc_x/apiKey", "xai-secret-value");

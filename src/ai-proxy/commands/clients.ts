@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { validateClients } from "@app/ai-proxy/lib/clients";
-import { loadConfigFresh, saveConfig } from "@app/ai-proxy/lib/config";
+import { loadConfigFresh } from "@app/ai-proxy/lib/config";
+import { getAiProxyConfigStore } from "@app/ai-proxy/lib/config-store";
 import type { AiProxyClientConfig, AiProxyProviderType } from "@app/ai-proxy/lib/types";
 import { readClientLedger } from "@app/ai-proxy/lib/usage/client-ledger";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -67,21 +68,17 @@ export async function clientsSecure(): Promise<void> {
         return;
     }
 
-    const next: AiProxyClientConfig[] = [];
-
-    for (const client of clients) {
-        if (typeof client.key !== "string") {
-            next.push(client);
-            continue;
+    let moved = 0;
+    await getAiProxyConfigStore().mutate(async (current) => {
+        for (const client of current.clients ?? []) {
+            if (typeof client.key !== "string") {
+                continue;
+            }
+            client.key = await store.set(clientKeyPath(client.name), client.key);
+            moved++;
         }
-
-        const ref = await store.set(clientKeyPath(client.name), client.key);
-        next.push({ ...client, key: ref });
-        out.log.info(`${client.name} → ${ref.path}`);
-    }
-
-    await saveConfig({ ...config, clients: next });
-    out.log.success(`Moved ${plaintext.length} client key(s) into the vault.`);
+    });
+    out.log.success(`Moved ${moved} client key(s) into the vault.`);
 }
 
 export async function clientsAdd(input: {
@@ -132,7 +129,16 @@ export async function clientsAdd(input: {
     // silently downgrading storage is worse than asking the caller to retry.
     try {
         const store = await secrets();
-        client.key = await store.set(clientKeyPath(input.name), key);
+        await getAiProxyConfigStore().mutate(async (current) => {
+            const latest = [...(current.clients ?? []), client];
+            const conflicts = validateClients(latest);
+            if (conflicts.length > 0) {
+                throw new Error(conflicts.join("; "));
+            }
+            // The name is reserved by the config lock before its vault key is touched.
+            client.key = await store.set(clientKeyPath(input.name), key);
+            current.clients = latest;
+        });
     } catch (err) {
         logger.error({ err, client: input.name }, "ai-proxy: vault unavailable — refusing to add the client");
         out.log.error(
@@ -143,7 +149,6 @@ export async function clientsAdd(input: {
         return;
     }
 
-    await saveConfig({ ...config, clients: next });
     out.log.success(`Client "${input.name}" added.`);
     out.print(key);
     out.log.info("This key is shown ONCE — hand it to the user now.");

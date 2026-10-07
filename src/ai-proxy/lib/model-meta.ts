@@ -69,6 +69,8 @@ import { matchGlob } from "@genesiscz/utils/string";
  */
 export interface CatalogOptions {
     probe?: boolean;
+    /** Explicit discovery bypasses the short result cache, while sharing a matching in-flight read. */
+    fresh?: boolean;
 }
 
 export function buildGrokModelDescription(meta: {

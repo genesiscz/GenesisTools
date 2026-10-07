@@ -319,6 +319,54 @@ describe("OpenAiSubscriptionProvider", () => {
         expect(res.status).toBe(400);
     });
 
+    it.each([
+        "",
+        'data: {"type":"response.output_text.delta","delta":"partial"}\n\n',
+        'data: {"type":"response.output_item.done","item":{"type":"function_call","name":"fixture","arguments":"{}"}}\n\n',
+        'data: {"type":"response.completed","response":{}}\n\n',
+        'data: {"type":"response.incomplete","response":{"status":"incomplete"}}\n\n',
+        'data: {"type":"response.completed"\n\n',
+    ])("rejects a nonterminal or malformed WHAM stream", async (sse) => {
+        globalThis.fetch = Object.assign(async () => new Response(sse), { preconnect: realFetch.preconnect });
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+        const body = SafeJSON.stringify({ messages: [{ role: "user", content: "hi" }] });
+        const result = await provider.responses(
+            new Request("http://localhost/v1/responses", { method: "POST", body }),
+            "gpt-5.5",
+            body
+        );
+        expect(result.status).toBe(502);
+    });
+
+    it("decodes complete SSE frames with multibyte text split at every byte", async () => {
+        const bytes = new TextEncoder().encode(WHAM_SSE.replace("CODEX", "žluťoučký"));
+        globalThis.fetch = Object.assign(
+            async () =>
+                new Response(
+                    new ReadableStream<Uint8Array>({
+                        start(controller) {
+                            for (const byte of bytes) {
+                                controller.enqueue(Uint8Array.of(byte));
+                            }
+                            controller.close();
+                        },
+                    })
+                ),
+            { preconnect: realFetch.preconnect }
+        );
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+        const body = SafeJSON.stringify({ messages: [{ role: "user", content: "hi" }] });
+        const result = await provider.responses(
+            new Request("http://localhost/v1/responses", { method: "POST", body }),
+            "gpt-5.5",
+            body
+        );
+        expect(result.status).toBe(200);
+        expect(await result.text()).toContain("žluťoučký_OK");
+    });
+
     it("returns 502 (not 200 with empty output) when WHAM emits response.failed", async () => {
         const FAILED_SSE =
             'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5.5","status":"in_progress"}}\n\n' +

@@ -114,6 +114,7 @@ const TRANSPORT_MAX_BACKOFF_MS = 5 * 60_000;
  * an account can influence.
  */
 const TRANSPORT_ERROR_CODES = new Set([
+    "UPSTREAM_TRANSPORT_ERROR",
     "ConnectionRefused",
     "ConnectionClosed",
     "FailedToOpenSocket",
