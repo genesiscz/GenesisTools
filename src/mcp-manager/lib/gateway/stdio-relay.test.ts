@@ -616,6 +616,111 @@ describe("runStdioHttpRelay", () => {
         expect(seen).toEqual(["initialize", "tools/call", "notifications/cancelled"]);
     });
 
+    test("a cancelled queued request never runs, a full backlog rejects, and the cancellation still goes upstream", async () => {
+        const seen: string[] = [];
+        const written: string[] = [];
+        let slowSignal: AbortSignal | undefined;
+        const stdin = (async function* () {
+            yield Buffer.from('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n', "utf8");
+            yield Buffer.from(
+                '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{}}\n' +
+                    '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{}}\n' +
+                    '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{}}\n' +
+                    '{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":3}}\n' +
+                    '{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}\n',
+                "utf8"
+            );
+        })();
+
+        await runStdioHttpRelay({
+            url: "http://fixture.invalid/mcp",
+            headers: {},
+            stdin,
+            stdout: {
+                write(chunk) {
+                    written.push(Buffer.from(chunk).toString("utf8"));
+                },
+            },
+            maxInFlight: 1,
+            maxQueued: 1,
+            requestTimeoutMs: 1000,
+            shutdownTimeoutMs: 200,
+            fetchImpl: async (_input, init) => {
+                const body = SafeJSON.parse(String(init?.body), { strict: true }) as {
+                    id?: number;
+                    method?: string;
+                    params?: { requestId?: number };
+                };
+                seen.push(body.id === undefined ? `cancel:${body.params?.requestId}` : `id:${body.id}`);
+                if (body.id === 1) {
+                    return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+                if (body.id === 2) {
+                    slowSignal = init?.signal ?? undefined;
+                    return new Promise<Response>((_resolve, reject) => {
+                        slowSignal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+                            once: true,
+                        });
+                    });
+                }
+
+                return new Response(null, { status: 202 });
+            },
+        });
+
+        expect(seen).not.toContain("id:3");
+        expect(seen).not.toContain("id:4");
+        expect(seen).toContain("cancel:3");
+        expect(slowSignal?.reason).toBe("cancelled");
+        const output = written.join("");
+        expect(output).toContain('"id":3,"error":{"code":-32000,"message":"gateway request cancelled"}');
+        expect(output).toContain('"id":4,"error":{"code":-32000,"message":"gateway relay backlog full"}');
+    });
+
+    test("a failing stdin aborts the requests it already started", async () => {
+        let slowSignal: AbortSignal | undefined;
+        let started: () => void = () => {};
+        const requestStarted = new Promise<void>((resolve) => {
+            started = resolve;
+        });
+        const stdin = (async function* () {
+            yield Buffer.from('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n', "utf8");
+            yield Buffer.from('{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{}}\n', "utf8");
+            await requestStarted;
+            throw new Error("stdin broke");
+        })();
+
+        await expect(
+            runStdioHttpRelay({
+                url: "http://fixture.invalid/mcp",
+                headers: {},
+                stdin,
+                stdout: { write() {} },
+                requestTimeoutMs: 1000,
+                shutdownTimeoutMs: 100,
+                fetchImpl: async (_input, init) => {
+                    const body = SafeJSON.parse(String(init?.body), { strict: true }) as { id?: number };
+                    if (body.id === 1) {
+                        return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+                            headers: { "Content-Type": "application/json" },
+                        });
+                    }
+
+                    slowSignal = init?.signal ?? undefined;
+                    started();
+                    return new Promise<Response>((_resolve, reject) => {
+                        slowSignal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+                            once: true,
+                        });
+                    });
+                },
+            })
+        ).rejects.toThrow("stdin broke");
+        expect(slowSignal?.reason).toBe("shutdown");
+    });
+
     test("shutdown owns and aborts a stalled notification controller", async () => {
         let notificationSignal: AbortSignal | undefined;
         let calls = 0;

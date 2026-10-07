@@ -124,7 +124,20 @@ export async function jsonRpcBodiesFromHttp(response: Response): Promise<string[
     return bodies;
 }
 
-function requestMeta(message: string): { hasId: boolean; id?: unknown; cancellationId?: unknown } {
+interface RequestMeta {
+    hasId: boolean;
+    id?: unknown;
+    cancellationId?: unknown;
+}
+
+interface QueuedMessage {
+    message: string;
+    meta: RequestMeta;
+    /** The serialized JSON-RPC id of a queued request, so a cancellation can find it. */
+    key: string | null;
+}
+
+function requestMeta(message: string): RequestMeta {
     try {
         const parsed = SafeJSON.parse(message, { strict: true });
 
@@ -175,15 +188,21 @@ export async function runStdioHttpRelay(opts: {
     requestTimeoutMs?: number;
     shutdownTimeoutMs?: number;
     maxInFlight?: number;
+    /** Requests and notifications each wait in their own queue of at most this many messages. */
+    maxQueued?: number;
     maxMessageBytes?: number;
 }): Promise<void> {
     const fetchImpl = opts.fetchImpl ?? fetch;
     const requestTimeoutMs = opts.requestTimeoutMs ?? 300_000;
     const shutdownTimeoutMs = opts.shutdownTimeoutMs ?? 1000;
     const maxInFlight = opts.maxInFlight ?? 32;
+    const maxQueued = opts.maxQueued ?? 256;
     const maxMessageBytes = opts.maxMessageBytes ?? 16 * 1024 * 1024;
     if (maxInFlight < 1) {
         throw new Error(`stdio relay maxInFlight must be at least 1, got ${maxInFlight}`);
+    }
+    if (maxQueued < 0) {
+        throw new Error(`stdio relay maxQueued must not be negative, got ${maxQueued}`);
     }
     if (maxMessageBytes < 1) {
         throw new Error(`stdio relay maxMessageBytes must be at least 1, got ${maxMessageBytes}`);
@@ -195,8 +214,10 @@ export async function runStdioHttpRelay(opts: {
     const inFlight = new Set<Promise<boolean>>();
     const controllers = new Map<string, AbortController>();
     const allControllers = new Set<AbortController>();
-    const queuedRequests: string[] = [];
+    const queuedRequests: QueuedMessage[] = [];
+    const queuedNotifications: QueuedMessage[] = [];
     let activeRequests = 0;
+    let activeNotifications = 0;
     let shuttingDown = false;
     let stdoutQueue = Promise.resolve();
 
@@ -249,12 +270,7 @@ export async function runStdioHttpRelay(opts: {
         return messages;
     }
 
-    async function dispatch(message: string): Promise<void> {
-        const meta = requestMeta(message);
-        if (meta.cancellationId !== undefined) {
-            controllers.get(SafeJSON.stringify(meta.cancellationId, { strict: true }))?.abort("cancelled");
-        }
-
+    async function dispatch(message: string, meta: RequestMeta): Promise<void> {
         const controller = new AbortController();
         allControllers.add(controller);
         const controllerKey = meta.hasId ? SafeJSON.stringify(meta.id, { strict: true }) : null;
@@ -344,21 +360,31 @@ export async function runStdioHttpRelay(opts: {
 
     function drainQueuedRequests(): void {
         while (!shuttingDown && activeRequests < maxInFlight) {
-            const message = queuedRequests.shift();
-            if (!message) {
-                return;
+            const queued = queuedRequests.shift();
+            if (!queued) {
+                break;
             }
 
-            void track(message);
+            void track(queued.message, queued.meta);
+        }
+
+        while (!shuttingDown && activeNotifications < maxInFlight) {
+            const queued = queuedNotifications.shift();
+            if (!queued) {
+                break;
+            }
+
+            void track(queued.message, queued.meta);
         }
     }
 
-    function track(message: string): Promise<boolean> {
-        const meta = requestMeta(message);
+    function track(message: string, meta: RequestMeta = requestMeta(message)): Promise<boolean> {
         if (meta.hasId) {
             activeRequests += 1;
+        } else {
+            activeNotifications += 1;
         }
-        const task = dispatch(message).then(
+        const task = dispatch(message, meta).then(
             () => true,
             async (error: unknown) => {
                 if (meta.hasId) {
@@ -374,6 +400,8 @@ export async function runStdioHttpRelay(opts: {
             inFlight.delete(task);
             if (meta.hasId) {
                 activeRequests -= 1;
+            } else {
+                activeNotifications -= 1;
             }
             drainQueuedRequests();
         });
@@ -381,19 +409,60 @@ export async function runStdioHttpRelay(opts: {
         return task;
     }
 
+    // A cancellation acts locally the moment it is read, before its own notification waits
+    // for a slot: a dispatched request is aborted, a queued one never runs.
+    function applyCancellation(cancellationId: unknown): void {
+        const key = SafeJSON.stringify(cancellationId, { strict: true });
+        controllers.get(key)?.abort("cancelled");
+        const index = queuedRequests.findIndex((queued) => queued.key === key);
+        if (index !== -1) {
+            const [cancelled] = queuedRequests.splice(index, 1);
+            void writeOutput(encodeStdioMessage(jsonRpcErrorLine(cancelled?.meta.id, "gateway request cancelled")));
+        }
+    }
+
     function schedule(message: string): void {
         const meta = requestMeta(message);
-        if (meta.hasId && activeRequests >= maxInFlight) {
-            queuedRequests.push(message);
+        if (meta.cancellationId !== undefined) {
+            applyCancellation(meta.cancellationId);
+        }
+
+        if (meta.hasId) {
+            if (activeRequests < maxInFlight) {
+                void track(message, meta);
+                return;
+            }
+
+            if (queuedRequests.length >= maxQueued) {
+                logger.warn({ url: opts.url, maxQueued }, "stdio relay request backlog full, rejecting request");
+                void writeOutput(encodeStdioMessage(jsonRpcErrorLine(meta.id, "gateway relay backlog full")));
+                return;
+            }
+
+            queuedRequests.push({ message, meta, key: SafeJSON.stringify(meta.id, { strict: true }) });
             return;
         }
 
-        void track(message);
+        if (activeNotifications < maxInFlight) {
+            void track(message, meta);
+            return;
+        }
+
+        if (queuedNotifications.length >= maxQueued) {
+            logger.warn({ url: opts.url, maxQueued }, "stdio relay notification backlog full, dropping notification");
+            return;
+        }
+
+        queuedNotifications.push({ message, meta, key: null });
+    }
+
+    function hasPendingWork(): boolean {
+        return queuedRequests.length > 0 || queuedNotifications.length > 0 || inFlight.size > 0;
     }
 
     async function drainAll(): Promise<void> {
         drainQueuedRequests();
-        while (queuedRequests.length > 0 || inFlight.size > 0) {
+        while (hasPendingWork()) {
             if (inFlight.size === 0) {
                 drainQueuedRequests();
                 continue;
@@ -404,46 +473,54 @@ export async function runStdioHttpRelay(opts: {
         }
     }
 
-    for await (const chunk of opts.stdin) {
-        for (const message of pushChunk(chunk)) {
-            // Only the handshake is serialized, because the session id comes back on its
-            // response and every later request has to carry it. After that, awaiting each
-            // call in the read loop made a slow tool call block everything queued behind
-            // it — including the notifications/cancelled that was meant to stop it.
-            if (!handshakeDone) {
-                handshakeDone = await track(message);
-                continue;
-            }
-
-            schedule(message);
+    async function abortOutstanding(error: unknown, reason: string): Promise<void> {
+        shuttingDown = true;
+        queuedNotifications.splice(0);
+        for (const queued of queuedRequests.splice(0)) {
+            await writeOutput(encodeStdioMessage(jsonRpcErrorLine(queued.meta.id, "gateway shutting down")));
+        }
+        const remaining = [...inFlight];
+        for (const controller of allControllers) {
+            controller.abort("shutdown");
+        }
+        logger.warn({ error, url: opts.url }, reason);
+        try {
+            await withTimeout(
+                Promise.all(remaining),
+                Math.min(shutdownTimeoutMs, 250),
+                new Error("stdio relay abort drain timed out")
+            );
+        } catch (abortError) {
+            logger.warn({ error: abortError, url: opts.url }, "stdio relay requests ignored abort");
         }
     }
 
-    if (queuedRequests.length > 0 || inFlight.size > 0) {
+    try {
+        for await (const chunk of opts.stdin) {
+            for (const message of pushChunk(chunk)) {
+                // Only the handshake is serialized, because the session id comes back on its
+                // response and every later request has to carry it. After that, awaiting each
+                // call in the read loop made a slow tool call block everything queued behind
+                // it — including the notifications/cancelled that was meant to stop it.
+                if (!handshakeDone) {
+                    handshakeDone = await track(message);
+                    continue;
+                }
+
+                schedule(message);
+            }
+        }
+    } catch (error) {
+        // An oversized line or a failing stdin ends the relay; nothing it started may keep running.
+        await abortOutstanding(error, "stdio relay input failed, aborted outstanding requests");
+        throw error;
+    }
+
+    if (hasPendingWork()) {
         try {
             await withTimeout(drainAll(), shutdownTimeoutMs, new Error("stdio relay shutdown drain timed out"));
         } catch (error) {
-            shuttingDown = true;
-            for (const message of queuedRequests.splice(0)) {
-                const meta = requestMeta(message);
-                if (meta.hasId) {
-                    await writeOutput(encodeStdioMessage(jsonRpcErrorLine(meta.id, "gateway shutting down")));
-                }
-            }
-            const remaining = [...inFlight];
-            for (const controller of allControllers) {
-                controller.abort("shutdown");
-            }
-            logger.warn({ error, url: opts.url }, "stdio relay aborted requests after shutdown deadline");
-            try {
-                await withTimeout(
-                    Promise.all(remaining),
-                    Math.min(shutdownTimeoutMs, 250),
-                    new Error("stdio relay abort drain timed out")
-                );
-            } catch (abortError) {
-                logger.warn({ error: abortError, url: opts.url }, "stdio relay requests ignored abort");
-            }
+            await abortOutstanding(error, "stdio relay aborted requests after shutdown deadline");
         }
     }
 }
