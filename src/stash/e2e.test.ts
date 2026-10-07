@@ -210,6 +210,47 @@ describe.serial("stash e2e", () => {
         expect(await readFile(join(projectB, "main.ts"), "utf8")).toBe("export function main() { return 9; }\n");
     });
 
+    test("a failed archive write takes its applications row back, so abort leaves the stash re-appliable", async () => {
+        process.chdir(projectA);
+        await writeFile(join(projectA, "main.ts"), "export function main() { return 2; }\n");
+        await saveCommand({ name: "archive-fail", mode: "all", tags: [], description: undefined });
+
+        process.chdir(projectB);
+        const { Database } = await import("bun:sqlite");
+        const { createHash } = await import("node:crypto");
+        const { mkdir } = await import("node:fs/promises");
+        const { openStashDb } = await import("./lib/stash-db");
+        const { StashStorage } = await import("./lib/storage");
+        const storage = new StashStorage();
+        const root = (await runGitIn(projectB, ["rev-parse", "--show-toplevel"])).trim();
+        const projectHash = createHash("sha256").update(root).digest("hex");
+        const readDb = () => openStashDb(new Database(storage.dbPath()));
+        const db = readDb();
+        const stashId = db.query<{ id: string }, []>("SELECT id FROM stashes WHERE name = 'archive-fail'").get()?.id;
+        db.close();
+        // A directory where the archive file goes makes the archive rename fail.
+        const archive = join(storage.stateDir(), `${projectHash}--applied--${stashId}.json`);
+        await mkdir(archive, { recursive: true });
+
+        await expect(applyCommand({ name: "archive-fail", verboseMarkers: false })).rejects.toThrow();
+        const check = readDb();
+        const active = check
+            .query<{ c: number }, [string]>(
+                "SELECT COUNT(*) as c FROM applications WHERE stash_id = ? AND state = 'active'"
+            )
+            .get(stashId ?? "");
+        check.close();
+        expect(active?.c).toBe(0);
+
+        await applyCommand({ name: "archive-fail", verboseMarkers: false, action: "abort" });
+        expect(await readFile(join(projectB, "main.ts"), "utf8")).toBe("export function main() { return 1; }\n");
+        await rm(archive, { recursive: true });
+        // Abort restores the original index bytes, stale stat data included; git status would refresh it.
+        await runGitIn(projectB, ["update-index", "-q", "--refresh"]);
+        await applyCommand({ name: "archive-fail", verboseMarkers: false });
+        expect(process.exitCode ?? 0).toBe(0);
+    });
+
     test("a patch git rejects outright leaves no session behind, so a retry is not blocked", async () => {
         process.chdir(projectA);
         await writeFile(join(projectA, "main.ts"), "export function main() { return 2; }\n");

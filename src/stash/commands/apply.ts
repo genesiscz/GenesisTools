@@ -341,13 +341,21 @@ async function finalizeApplication(args: {
     }
 
     const now = new Date().toISOString();
+    const applicationId = newStashId();
     args.db.run(
         `INSERT INTO applications (id, stash_id, version_id, project_path, project_origin, project_sha_at_apply, applied_at, state)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
-        [newStashId(), stash.id, version.id, project.rootPath, project.origin, project.sha, now]
+        [applicationId, stash.id, version.id, project.rootPath, project.origin, project.sha, now]
     );
 
-    await session.archiveApplication({ restorePatch, unsupportedFiles });
+    try {
+        await session.archiveApplication({ restorePatch, unsupportedFiles });
+    } catch (error) {
+        // The session survives for --abort, so the row must go: an abort that restores the tree
+        // while an active row remains would block every later apply of this stash here.
+        args.db.run("DELETE FROM applications WHERE id = ?", [applicationId]);
+        throw error;
+    }
 }
 
 async function fetchBaselineBlobs(args: { projectRoot: string; storeDir: string; baselineRef: string }): Promise<void> {
