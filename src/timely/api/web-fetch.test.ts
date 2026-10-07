@@ -168,12 +168,31 @@ describe("fetchTimelyWebJson", () => {
         expect(calls).toBe(2);
     });
 
+    test("a Retry-After longer than the request deadline fails at once as a 429", async () => {
+        let calls = 0;
+        stubFetch(async () => {
+            calls++;
+            return new Response("rate limited", { status: 429, headers: { "retry-after": "86400" } });
+        });
+        const started = Date.now();
+
+        const error = await fetchTimelyWebJson(
+            options({ url: "https://app.timelyapp.com/990001/entries.json?id=8" })
+        ).catch((err: unknown) => err);
+
+        expect(error).toBeInstanceOf(TimelyHttpError);
+        expect((error as TimelyHttpError).status).toBe(429);
+        expect((error as Error).message).toContain("rate limited by Timely for another");
+        expect(calls).toBe(1);
+        expect(Date.now() - started).toBeLessThan(1_000);
+    });
+
     test("honors caller cancellation while waiting for Retry-After", async () => {
         stubFetch(async () => new Response("rate limited", { status: 429, headers: { "retry-after": "2" } }));
 
         const promise = fetchTimelyWebJson(options({ signal: AbortSignal.timeout(20) }));
 
-        await expect(promise).rejects.toBeDefined();
+        await expect(promise).rejects.toMatchObject({ name: "TimeoutError" });
     });
 });
 

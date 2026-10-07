@@ -3,6 +3,7 @@ import { TimelyHttpError } from "@app/timely/api/errors";
 import type { TimelyService } from "@app/timely/api/service";
 import type { TimelyEvent } from "@app/timely/types/api";
 import type { CreatePlanV1, PlanIssue } from "@app/timely/types/plan";
+import { timelyAccountCacheKey } from "@app/timely/utils/account-cache";
 import { buildPayloadFromFlat, flattenMemories } from "@app/timely/utils/flatten-memories";
 import { fetchMemoriesForDates } from "@app/timely/utils/memories";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -225,7 +226,7 @@ export async function applyPlan(args: {
                     })
                 )
                 .digest("hex");
-            const receiptPath = `accounts/${args.accountId}/apply-receipts.json`;
+            const receiptPath = timelyAccountCacheKey(args.accountId, "apply-receipts.json");
             let priorReceipt: ApplyReceipt | undefined;
 
             await args.storage.atomicUpdate<ApplyReceiptLedger>(receiptPath, (current) => {
@@ -273,7 +274,10 @@ export async function applyPlan(args: {
                             event.project?.id === ev.project_id &&
                             event.note === input.note &&
                             event.from === input.from &&
-                            event.to === input.to
+                            event.to === input.to &&
+                            // Same bounds can hide different gaps, so the billed time must match
+                            // too (to the minute, in case Timely drops the seconds).
+                            Math.floor(event.duration.total_seconds / 60) === Math.floor(totalSeconds / 60)
                     );
 
                     if (matching.length === 1) {

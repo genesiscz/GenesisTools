@@ -207,6 +207,40 @@ describe("applyPlan receipts", () => {
         expect(createCalls).toBe(1);
     });
 
+    test("does not adopt a remote event with the same bounds but a different billed duration", async () => {
+        stubMemories([memory(1)]);
+        const storage = new Storage("timely-apply-receipt-duration-test");
+        const remoteEvent = {
+            id: 951,
+            day: "2026-07-20",
+            project: { id: 10 },
+            note: "Event 1",
+            from: "2026-07-20T09:00:00.000Z",
+            to: "2026-07-20T09:10:00.000Z",
+            duration: { ...duration("00:04"), minutes: 4, total_seconds: 240, total_minutes: 4 },
+        };
+        const service = {
+            createEvent: async () => {
+                throw new Error("connection closed after upload");
+            },
+            getAllEvents: async () => [remoteEvent],
+        };
+        const options = {
+            plan: plan([1]),
+            service,
+            storage,
+            accountId: 556,
+            accessToken: "test-token",
+            dryRun: false,
+        };
+
+        await applyPlan(options);
+        const retry = await applyPlan(options);
+
+        expect(retry[0].eventId).toBeUndefined();
+        expect(retry[0].error).toContain("no unique remote event matched");
+    });
+
     test("retries only a definitively rejected event after a partial apply", async () => {
         stubMemories([memory(1), memory(2)]);
         const storage = new Storage("timely-apply-receipt-rejected-test");

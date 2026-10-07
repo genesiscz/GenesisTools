@@ -133,6 +133,9 @@ export async function fetchMemoriesForDates(options: FetchMemoriesOptions): Prom
                         return;
                     }
 
+                    // Stop the sibling workers too: Promise.all rejects at once, and they would
+                    // otherwise keep fetching and writing the cache after this call has failed.
+                    controller.abort(err);
                     throw err;
                 }
             }

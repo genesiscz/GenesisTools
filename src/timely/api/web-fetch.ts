@@ -109,12 +109,28 @@ function limiterKey(url: string): string {
     return `${parsed.origin}/${account}`;
 }
 
-async function waitForRateLimit(key: string, signal?: AbortSignal): Promise<void> {
-    const remaining = (rateLimitUntil.get(key) ?? 0) - Date.now();
+/**
+ * Wait out a server-requested pause, but only inside the request's own deadline. A pause that
+ * would outlast it (a `Retry-After: 86400`) fails at once as a 429 naming the wait, rather than
+ * holding the CLI, and every request sharing the key, for a day.
+ */
+async function waitForRateLimit(args: {
+    key: string;
+    deadline: number;
+    signal?: AbortSignal;
+    fail: (waitMs: number) => Error;
+}): Promise<void> {
+    const remaining = (rateLimitUntil.get(args.key) ?? 0) - Date.now();
 
-    if (remaining > 0) {
-        await abortableSleep(remaining, signal);
+    if (remaining <= 0) {
+        return;
     }
+
+    if (remaining >= args.deadline - Date.now()) {
+        throw args.fail(remaining);
+    }
+
+    await abortableSleep(remaining, args.signal);
 }
 
 /**
@@ -129,14 +145,21 @@ async function waitForRateLimit(key: string, signal?: AbortSignal): Promise<void
 export async function fetchTimelyWebJson(options: TimelyWebJsonOptions): Promise<unknown> {
     const { url, accessToken, cookie, scope, label } = options;
     const key = limiterKey(url);
+    // One deadline for the whole call: backoff waits, both attempts and reading the body.
+    const deadline = Date.now() + (options.timeoutMs ?? WEB_REQUEST_TIMEOUT_MS);
+    const rateLimited = (waitMs: number) =>
+        new TimelyHttpError(
+            `${label} is rate limited by Timely for another ${Math.ceil(waitMs / 1000)}s, longer than the request deadline`,
+            { status: 429, scope, usedCookie: Boolean(cookie), retryAfterMs: waitMs }
+        );
 
     for (let attempt = 0; attempt < 2; attempt++) {
-        await waitForRateLimit(key, options.signal);
+        await waitForRateLimit({ key, deadline, signal: options.signal, fail: rateLimited });
 
         const response = await fetchTimelyWebResponse({
             url,
             headers: webSessionHeaders({ accessToken, cookie }),
-            timeoutMs: options.timeoutMs ?? WEB_REQUEST_TIMEOUT_MS,
+            timeoutMs: Math.max(1, deadline - Date.now()),
             signal: options.signal,
         });
         const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
