@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { extensionProfiles } from "@genesiscz/utils/browser-extension/profiles";
+import { detectGenesisTools } from "@genesiscz/utils/cli/genesis-tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_APP_BUNDLE_ID, genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
@@ -15,6 +16,7 @@ export type Capability =
     | "cmux:installed"
     | "claude:installed"
     | "codex:installed"
+    | "genesis-tools:installed"
     | `app:${string}`
     | `file:${string}`;
 
@@ -65,6 +67,8 @@ function evaluate(capability: Capability): boolean {
             return Bun.which("claude") !== null;
         case "codex:installed":
             return Bun.which("codex") !== null;
+        case "genesis-tools:installed":
+            return detectGenesisTools() !== null;
         default:
             return false;
     }

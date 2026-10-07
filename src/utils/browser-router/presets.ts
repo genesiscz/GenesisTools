@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_MARKDOWN_BUNDLE_ID } from "@genesiscz/utils/macos/genesis-app";
@@ -7,8 +6,6 @@ import { compileRoutePattern, linkPattern, type PresetOptions, type RouteRule, t
 import { dashboardNameRoutes, localServiceRoutes } from "./services";
 
 export type { Capability, CapabilityCheck } from "./capabilities";
-
-const toolsBin = join(import.meta.dir, "..", "..", "..", "tools");
 
 /** The link `handoff_post` mints, query and all: a route anchored at `/run$` must not count. */
 export function cmuxLaunchUrl(linkHost: string): string {
@@ -223,7 +220,7 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
             title: "Artifacts",
             kind: "installable",
             description: "https://<link host>/artifact/<name>/<page> opens a registered artifact page.",
-            enabledIf: [`file:${toolsBin}`],
+            enabledIf: ["genesis-tools:installed"],
             needsLinkHost: true,
             routes: withHost((host) => [
                 {
@@ -234,7 +231,9 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
                     action: {
                         type: "run",
                         // `--` keeps a page that starts with a hyphen from being read as a flag.
-                        argv: [toolsBin, "artifact", "open", "--", "$1", "$2"],
+                        // Bare `tools`, like every other preset: a saved route outlives the checkout that
+                        // wrote it, and an absolute path into a worktree breaks once the worktree is removed.
+                        argv: ["tools", "artifact", "open", "--", "$1", "$2"],
                         approval: "allow",
                         notify: "Opened artifact $1",
                     },
