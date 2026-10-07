@@ -124,6 +124,13 @@ export async function embedTextsInBatches(
     signal?: AbortSignal
 ): Promise<Awaited<ReturnType<QaServiceEmbedder["embedBatch"]>>> {
     const results: Awaited<ReturnType<QaServiceEmbedder["embedBatch"]>> = [];
+    const oversized = texts.findIndex((text) => text.length > MAX_EMBED_BATCH_CHARS);
+    if (oversized !== -1) {
+        throw new Error(
+            `embedding text ${oversized} has ${texts[oversized]!.length} chars, over the ${MAX_EMBED_BATCH_CHARS}-char request cap`
+        );
+    }
+
     for (let start = 0; start < texts.length; ) {
         let end = start;
         let chars = 0;
@@ -446,6 +453,20 @@ export class QaService {
     }
 }
 
+/** Cut a text into pieces of at most `max` characters, so no single chunk outgrows the target. */
+function splitByChars(text: string, max: number): string[] {
+    if (text.length <= max) {
+        return [text];
+    }
+
+    const pieces: string[] = [];
+    for (let i = 0; i < text.length; i += max) {
+        pieces.push(text.slice(i, i + max));
+    }
+
+    return pieces;
+}
+
 export function chunkTranscript(transcript: TranscriptChunkSource): ChunkedTranscript[] {
     if (!transcript.segments.length) {
         const out: ChunkedTranscript[] = [];
@@ -463,7 +484,12 @@ export function chunkTranscript(transcript: TranscriptChunkSource): ChunkedTrans
     let bufferEnd = bufferStart;
     let bufferChars = 0;
 
-    for (const segment of transcript.segments) {
+    // A segment longer than the target is cut into target-sized pieces that keep its timestamps.
+    const segments = transcript.segments.flatMap((segment) =>
+        splitByChars(segment.text, TARGET_CHARS).map((text) => ({ ...segment, text }))
+    );
+
+    for (const segment of segments) {
         const nextLength = bufferChars + segment.text.length + 1;
 
         if (nextLength > TARGET_CHARS && buffer.length) {
@@ -606,10 +632,11 @@ export function chunkComments(comments: VideoComment[]): CommentChunk[] {
     const perThread: CommentChunk[] = [];
 
     for (const root of roots) {
-        const messages = [root, ...(repliesByParent.get(root.commentId) ?? [])].map(
+        const messages = [root, ...(repliesByParent.get(root.commentId) ?? [])].flatMap(
             // yt-dlp authors usually already carry the "@" — normalize so the
-            // prefix is always exactly one "@".
-            (comment) => `@${(comment.author ?? "unknown").replace(/^@/, "")}: ${comment.text}`
+            // prefix is always exactly one "@". A message longer than the target is cut.
+            (comment) =>
+                splitByChars(`@${(comment.author ?? "unknown").replace(/^@/, "")}: ${comment.text}`, TARGET_CHARS)
         );
         let buffer: string[] = [];
         let bufferChars = 0;

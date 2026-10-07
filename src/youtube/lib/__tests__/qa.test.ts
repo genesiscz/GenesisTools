@@ -391,6 +391,19 @@ describe("chunkTranscript", () => {
             { text: "b".repeat(10), startSec: null, endSec: null },
         ]);
     });
+
+    it("cuts a single segment longer than the target and keeps its timestamps", () => {
+        const chunks = chunkTranscript({
+            text: "",
+            segments: [{ start: 5, end: 9, text: "z".repeat(60_000) }],
+            durationSec: 10,
+        });
+
+        expect(chunks.length).toBe(10);
+        expect(chunks.every((chunk) => chunk.text.length <= 6000)).toBe(true);
+        expect(chunks.every((chunk) => chunk.startSec === 5 && chunk.endSec === 9)).toBe(true);
+        expect(chunks.map((chunk) => chunk.text).join("")).toBe("z".repeat(60_000));
+    });
 });
 
 describe("cosine", () => {
@@ -461,6 +474,24 @@ describe("bounded embedding batches", () => {
         ).toBeLessThanOrEqual(MAX_EMBED_BATCH_CHARS);
         expect(vectors.map((result) => result.vector[0])).toEqual(Array.from({ length: 100 }, (_, index) => index));
         expect(calls.length).toBeGreaterThan(1);
+    });
+
+    it("refuses a single text over the request cap instead of sending it", async () => {
+        let called = false;
+        await expect(
+            embedTextsInBatches(
+                {
+                    embed: async () => ({ vector: new Float32Array(), dimensions: 0 }),
+                    embedBatch: async () => {
+                        called = true;
+                        return [];
+                    },
+                    dispose: () => {},
+                },
+                ["x".repeat(MAX_EMBED_BATCH_CHARS + 1)]
+            )
+        ).rejects.toThrow("request cap");
+        expect(called).toBe(false);
     });
 });
 
