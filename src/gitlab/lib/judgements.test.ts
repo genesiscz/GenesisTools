@@ -188,6 +188,17 @@ describe("judgements", () => {
         expect(messages).toContain('Proposed draft reply: "kontrakt" is banned; write interface');
     });
 
+    test("a local file link never goes to the MR, with or without the file:// scheme", () => {
+        const problem =
+            "Proposed draft reply: no local file link in text that goes to the MR; name the path in backticks";
+
+        for (const link of ["[a.ts:3](/work/app/a.ts#L3)", "[a.ts:3](file:///work/app/a.ts#L3)"]) {
+            const text = GOOD.replace("Dobrej catch, opravím to.", `Dobrej catch, ${link} opravím.`);
+
+            expect(check(text).errors.map((e) => e.message)).toContain(problem);
+        }
+    });
+
     test("an answer in my own thread has no hand-written Opus prefix and no second person", () => {
         const answer = [
             "# D01 Is this still needed · draft 22970 · src/lock.ts:2",

@@ -94,14 +94,16 @@ export function copyBlock(text: string, language = "markdown"): string {
     return json2md({ code: { content: body, language } }).trimEnd();
 }
 
-const PATH_LINE = /(?<![\w/.@-])((?:[\w@.-]+\/)*[\w@.-]+\.[A-Za-z0-9]+):(\d+)\b/g;
+const PATH_LINE = /(?<![\w/.@-])((?:[\w@.-]+\/)*[\w@.-]+\.[A-Za-z0-9]+):(\d+)(?:-(\d+))?\b/g;
 
-/** Each `path:line` of a file in the checkout becomes a clickable link; the rest stays as written. */
+/** Each `path:line` or `path:start-end` of a file in the checkout becomes a clickable link; the rest stays as written. */
 export function linkify(text: string, repoPath: string): string {
-    return text.replace(PATH_LINE, (whole, path: string, line: string) => {
+    return text.replace(PATH_LINE, (whole, path: string, line: string, end: string | undefined) => {
         const abs = join(repoPath, path);
 
-        return existsSync(abs) ? fileLink(abs, Number(line)) : whole;
+        return existsSync(abs)
+            ? fileLink(abs, Number(line), { root: repoPath, endLine: end ? Number(end) : null })
+            : whole;
     });
 }
 
@@ -203,7 +205,7 @@ function where(ctx: RenderContext, path: string | null, line: number | null): st
         return "top-level";
     }
 
-    return fileLink(join(ctx.repoPath, path), line);
+    return fileLink(join(ctx.repoPath, path), line, { root: ctx.repoPath });
 }
 
 function excerptBlock(

@@ -309,11 +309,11 @@ function lintText(item: JudgementItem, field: string, text: string, rules: Draft
         }
     }
 
-    if (/file:\/\//.test(text)) {
+    if (/file:\/\/|\]\(\/(?!\/)/.test(text)) {
         problems.push({
             id: item.id,
             line: item.line,
-            message: `${where}: no file:// link in text that goes to the MR; name the path in backticks`,
+            message: `${where}: no local file link in text that goes to the MR; name the path in backticks`,
         });
     }
 }

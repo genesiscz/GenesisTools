@@ -359,7 +359,7 @@ function tipThreadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts, t
         { h2: `${ref} — \`${file}\`:${line} · ${label}` },
         {
             ul: [
-                `**File**: ${fileLink(localPath, tipLine || null)}`,
+                `**File**: ${fileLink(localPath, tipLine || null, { root: opts.cwd })}`,
                 `**Discussion**: \`${d.id ?? "?"}\``,
                 `**Divergence**: ${label}`,
                 `**Reviewer's sha**: \`${shortSha(pos?.head_sha)}\` · **MR tip**: \`${shortSha(tip.sha)}\``,
@@ -423,7 +423,7 @@ function threadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts): Blo
         },
         {
             ul: [
-                `**File**: ${fileLink(localPath, line || null)}`,
+                `**File**: ${fileLink(localPath, line || null, { root: opts.cwd })}`,
                 `**Anchored at**: \`${shortSha(pos?.head_sha)}\` _(per-thread head_sha; **NOT** necessarily MR HEAD)_`,
                 `**Base sha**: \`${shortSha(pos?.base_sha)}\``,
                 `**Local state**: ${window ? `file is ${window.total} lines locally` : "file not in cwd"}`,

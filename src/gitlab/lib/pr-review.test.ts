@@ -624,7 +624,7 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
             worktreeHead: facts.headSha,
         });
 
-        expect(md).toContain("[util.ts:2](file:///work/app-tidy/src/lib/util.ts#L2)");
+        expect(md).toContain("[src/lib/util.ts:2](/work/app-tidy/src/lib/util.ts#L2)");
         expect(md).toContain("Worktree: `/work/app-tidy` (HEAD is the MR head)");
     });
 

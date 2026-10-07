@@ -795,7 +795,7 @@ describe("review render", () => {
 
           ## Thread 1 — \`src/app.ts\`:3
 
-          - **File**: [app.ts:3](file://<cwd>/src/app.ts#L3)
+          - **File**: [src/app.ts:3](<cwd>/src/app.ts#L3)
           - **Anchored at**: \`1111111111\` _(per-thread head_sha; **NOT** necessarily MR HEAD)_
           - **Base sha**: \`b0b0b0b0b0\`
           - **Local state**: file is 5 lines locally
@@ -831,7 +831,7 @@ describe("review render", () => {
 
           ## Thread 2 — \`src/moved.ts\`:2
 
-          - **File**: [moved.ts:2](file://<cwd>/src/moved.ts#L2)
+          - **File**: [src/moved.ts:2](<cwd>/src/moved.ts#L2)
           - **Anchored at**: \`2222222222\` _(per-thread head_sha; **NOT** necessarily MR HEAD)_
           - **Base sha**: \`b0b0b0b0b0\`
           - **Local state**: file is 3 lines locally
@@ -863,7 +863,7 @@ describe("review render", () => {
 
           ## Thread 3 — \`src/gone.ts\`:7 _(deleted line — comment on removed code)_
 
-          - **File**: [gone.ts:7](file://<cwd>/src/gone.ts#L7)
+          - **File**: [src/gone.ts:7](<cwd>/src/gone.ts#L7)
           - **Anchored at**: \`3333333333\` _(per-thread head_sha; **NOT** necessarily MR HEAD)_
           - **Base sha**: \`b0b0b0b0b0\`
           - **Local state**: file not in cwd

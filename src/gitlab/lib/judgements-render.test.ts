@@ -252,7 +252,12 @@ describe("judgements render", () => {
 
     test("a path:line becomes a link only when the file exists in the checkout", () => {
         expect(linkify("see src/lock.ts:3", "/nonexistent-checkout")).toBe("see src/lock.ts:3");
-        expect(linkify("see package.json:1", process.cwd())).toContain("[package.json:1](file://");
+        expect(linkify("see package.json:1", process.cwd())).toContain(
+            `[package.json:1](${process.cwd()}/package.json#L1)`
+        );
+        expect(linkify("see package.json:2-4", process.cwd())).toContain(
+            `[package.json:2-4](${process.cwd()}/package.json#L2-L4)`
+        );
     });
 });
 

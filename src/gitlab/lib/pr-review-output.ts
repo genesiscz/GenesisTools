@@ -45,7 +45,7 @@ function anchor(facts: PrReviewFacts, path: string | null, line: number | null):
 
     const base = linkBase(facts);
 
-    return base ? fileLink(join(base, path), line) : `\`${path}:${line ?? 1}\``;
+    return base ? fileLink(join(base, path), line, { root: base }) : `\`${path}:${line ?? 1}\``;
 }
 
 function totals(facts: PrReviewFacts): { additions: number; deletions: number; unresolved: number } {
