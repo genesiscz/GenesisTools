@@ -22,6 +22,8 @@ Talks to the GitLab REST and GraphQL APIs directly. Nothing about the instance i
 | **Receiving a review** | `pr <iid> review --receive` returns the MR's discussions as JSON; `--md` renders unresolved threads with the local code and the reviewer's frozen view |
 | **Giving a review** | `pr <iid> review --give` gathers what a reviewer of someone else's MR needs: numbered hunks, file checklist, existing threads, your drafts, open MRs this one breaks or overlaps, configured gates; JSON, markdown, a compact `--llm` view, or a review-proposal skeleton for the GenesisTools.app review window. No mode flag: your own MR is `--receive`, anyone else's `--give` |
 | **Comments** | `pr <iid> comments reply` folds into the one pending draft GitLab allows per thread instead of failing; `publish` is a dry run until `--apply` and can check the pending set with `--expect` |
+| **Judgements** | An agent judges a review in one markdown file per MR: `review skeleton` writes every item's heading, `review check` proves it complete (text-checked anchors, badges, house rules), `review render` gives the full report or a chat digest, `comments post` turns the decisions into drafts with a ledger and a read back |
+| **Stable ids** | Every file, thread, draft and affected MR gets an id kept per MR (`F03`, `T01` threads by others, `Y02` threads I started, `D04` my drafts, `M01`), and each id travels with the GitLab id it names, so a stale id cannot reach the wrong thread |
 | **Batch writes** | `pr <iids> comments add --top-level --now` and `pr <iids> labels` keep a ledger, dedupe, and log before/after |
 | **Stale-MR cleanup** | `pr stale` collects facts, lets an agent review, renders a note, then posts, labels and closes one MR at a time |
 
@@ -54,16 +56,23 @@ tools gitlab pr 42 review --receive --cwd ~/code/web-app --md
 tools gitlab pr 57 review --give --repo ~/code/web-app
 tools gitlab pr 57 review --give --md
 tools gitlab pr 57 review --give --llm
-tools gitlab pr 57 review --give --expand f3,t1
+tools gitlab pr 57 review --give --expand F03,T01
 tools gitlab pr 57 review --give --proposal-skeleton --agent claude > /tmp/review-57.json
-tools gitlab pr 57 review --give --drafts-only --threads --md   # critique your own pending review
+tools gitlab pr 57 review --give --yours-only --threads --md   # critique your own comments
+
+# Judging a review: one file per MR, checked, rendered, then posted as drafts
+tools gitlab pr 57 review skeleton --give --file MR57-judgements.md
+tools gitlab pr 57 review check --give --file MR57-judgements.md
+tools gitlab pr 57 review render --give --file MR57-judgements.md --open      # full layout
+tools gitlab pr 57 review render --give --file MR57-judgements.md --digest    # chat view
+tools gitlab pr 57 comments post --give --file MR57-judgements.md --do D01,N01   # dry run; add --apply
 
 # Threads, draft replies, new comments, publish
 tools gitlab pr 42 comments --unresolved
 tools gitlab pr 42 comments reply 3f9c2d1 --body-file reply.md
 tools gitlab pr 42 comments add --file src/api/client.ts --line 34 --body-file note.md
 tools gitlab pr 42 comments drafts
-tools gitlab pr 42 comments publish --expect 501,502 --apply
+tools gitlab pr 42 comments publish --expect D01,D02 --apply
 
 # Batch writes (always try --dry-run first)
 tools gitlab pr 12,34,56 comments add --top-level --body "Please rebase onto main." --dry-run
@@ -107,15 +116,19 @@ Tests assert against `NEUTRAL_DEFAULTS` and `NEUTRAL_CONFIG`, never the seam.
 | Command | Description |
 |---------|-------------|
 | `pr <iid>` | The MR: title, author, branches, state, merge status, labels, thread and draft counts; `--json` |
-| `pr <iid> review --receive` | Discussions JSON (default); `--md` (or `--format md\|both`) renders the per-thread report with local and frozen code views |
-| `pr <iid> review --give` | Facts for reviewing someone else's MR (see below); `--md`, `--llm`, `--format summary`, `--expand <refs>`, `--proposal-skeleton`, `--drafts-only` |
+| `pr <iid> review --receive` | Discussions JSON (default); `--md` (or `--format md\|both`) renders each unresolved thread with the MR tip, the reviewer's view when it differs, and a divergence label; `--llm` one line per thread, `--expand T01,T03` those threads in full |
+| `pr <iid> review --give` | Facts for reviewing someone else's MR (see below); `--md`, `--llm`, `--format summary`, `--expand <ids>`, `--proposal-skeleton`, `--yours-only` |
+| `pr <iid> review skeleton` | Write the judgements file: every judgeable item's heading (id, `discussion …` or `draft …`, anchor) and empty fields; `--force` starts over |
+| `pr <iid> review check` | Check a filled judgements file; exit 1 with the item and line of every error |
+| `pr <iid> review render` | The full layout to a file (`--out`, `--open`), or `--digest`, `--item <ids>`, `--proposal` (for `tools hub proposal push -`) |
 | `pr <iid> comments` | Threads with author, anchor and state; `--mine`, `--author`, `--unresolved`, `--json` |
 | `pr <iid> comments drafts` | My pending drafts with where each one landed |
 | `pr <iid> comments reply <thread>` | Draft reply in a thread (full id or unique prefix), or `--now` with `--resolve` |
 | `pr <iid> comments add` | Anchored draft (`--file --line`) or top-level draft (`--top-level`); a comma list of MRs with `--top-level --now` posts on each, skipping a (project, MR, text) already in the ledger |
 | `pr <iid> comments delete <draft…>` | Delete pending drafts of mine |
 | `pr <iid> comments resolve <thread…>` | Resolve threads; `--unresolve` reopens them |
-| `pr <iid> comments publish` | Submit every pending draft of mine; a dry run until `--apply`, refuses when `--expect <ids>` differs from the pending set |
+| `pr <iid> comments post` | Run the judgements file's actions as drafts (`--do T01,N01`), or answers into my own threads (`--answers D05`); a dry run until `--apply`, then read back; a ledger skips what already landed |
+| `pr <iid> comments publish` | Submit every pending draft of mine; a dry run until `--apply`, refuses when `--expect <ids>` (D ids or draft ids) differs from the pending set |
 | `pr <iids> labels --add/--remove <label>` | Change labels on one MR or a comma list; refuses unknown labels unless `--create-missing` |
 | `pr touching <file…>` | Open MRs whose diff touches the files |
 | `pr stale <step>` | The stale-MR workflow below |
@@ -143,6 +156,8 @@ tools gitlab pr stale closed-bug sweep.json --dry-run                    # close
 
 Other steps: `reconcile`, `sync-note`, `shipped-detail`, `side-comment`, `mark-review`. The sweep JSON records the host and project, so later steps need no `--host` or `--project`.
 
+**Content check, not history.** `shipped` samples the lines an MR branch adds and looks for them in the environment branches, because squash merges and rebases make ancestry say "never merged" for code that shipped.
+
 ### `pr <iid> review --give`
 
 The reviewer's twin of `--receive`. Read-only: GETs on GitLab, and `git diff` / `cat-file` / `worktree list` in the checkout.
@@ -151,12 +166,43 @@ The reviewer's twin of `--receive`. Read-only: GETs on GitLab, and `git diff` / 
 - **Checkout**: `--repo <checkout>` (or `--cwd`; default: the current checkout when `--project` is not given). File links point at the worktree that has the MR's source branch checked out; the report warns when there is none or it is behind the MR head. `--worktree <dir>` uses that directory as the MR worktree even when its HEAD is on another branch.
 - **Impact**: other open MRs that add an import of a module this MR deletes or renames (relative, root-relative and `@/` or `~/` aliased imports), or change the same files. `--impact-source api` (default) reads the diffs of at most 50 other open MRs from GitLab, the most recently updated first (`--impact-limit <n>` changes that), and warns when the result is partial. `--impact-source git` needs a checkout: it fetches every open MR branch into `refs/remotes/origin/*` and diffs locally, with no cap and no diff GitLab collapsed. `--no-impact` skips the scan.
 - **Gates**: the `review.gates` from the config, below. None configured, no gates section. `review.runner: "parallel"` prints one block that starts every gate as a background `tools task` session and then prints each exit code (needs a POSIX shell). When `tools` is not on PATH, that block lists each command instead. A gate whose `{tests}` finds no test file is replaced by a note.
-- **Drafts**: every pending draft of yours in full: its body, whether it replies to a thread or opens one, where it sits in the diff (added, context or removed line) and the code around the anchor. `--drafts-only` prints only that, skips the impact scan and writes `...-drafts.json` and `.md`.
-- **Threads**: `--threads` adds every unresolved diff thread in full after the checklist, as `--receive` renders it: all notes, the local code and the reviewer's frozen view. With `--drafts-only` it is the re-review view: your pending drafts and the conversation they join.
-- **Output**: stdout is the facts JSON by default; `--md` (or `--print`) the numbered report (json2md); `--llm` a compact view with refs (`f1` files, `t1` threads, `d1` your drafts, `m1` affected MRs); `--format summary` nothing, only the summary lines on stderr; `--expand f3,t1` prints refs in full from the saved facts (`--refresh` collects again). Every collecting run writes `$TMPDIR/gitlab-pr-<project>-<key>-<iid>.json` and `.md` (`<key>` is a hash of the host and project, so two hosts never share a file), or the report at `--out <file>` with the JSON beside it, and prints both paths on stderr.
+- **Your comments**: every pending draft of yours (`D`) in full: its body, whether it replies to a thread or opens one, where it sits in the diff (added, context or removed line) and the code around the anchor; then every thread you started (`Y`) in full. `--yours-only` prints only that, skips the impact scan and writes `...-drafts.json` and `.md`.
+- **Threads**: `--threads` adds every unresolved diff thread in full after the checklist, as `--receive` renders it: all notes, the MR tip and the reviewer's view. With `--yours-only` it is the re-review view: your comments and the conversations they join.
+- **Output**: stdout is the facts JSON by default; `--md` (or `--print`) the numbered report (json2md); `--llm` a compact view with ids (`F01` files, `T01` threads, `Y01` your threads, `D01` your drafts, `M01` affected MRs); `--format summary` nothing, only the summary lines on stderr; `--expand F03,T01` prints ids in full from the saved facts (`--refresh` collects again). Ids are kept per MR, so a second run gives the same thread the same id. Every collecting run writes `$TMPDIR/gitlab-pr-<project>-<key>-<iid>.json` and `.md` (`<key>` is a hash of the host and project, so two hosts never share a file), or the report at `--out <file>` with the JSON beside it, and prints both paths on stderr.
 - **Proposal skeleton**: `--proposal-skeleton` prints a review proposal pre-filled from the facts (provider, host, project, number, branches, `baseSha`, `headSha`, `repoPath`, every thread with its `resolved` state). An agent adds the verdict and drafts. The `gt:review-proposal` skill says how to fill the proposal and push it with `tools hub proposal push`.
 
-**Content check, not history.** `shipped` samples the lines an MR branch adds and looks for them in the environment branches, because squash merges and rebases make ancestry say "never merged" for code that shipped.
+### Judgements: `review skeleton | check | render`, `comments post`
+
+The agent writes its judgement of a review into ONE markdown file per MR, in the report's own labels. Everything generated (excerpts, links, quoted comments) stays out of it and is added by `render`.
+
+````markdown
+# T03 The lock stays off · discussion 0539a97f0000 · src/auth/lock.ts:83
+- Verdict: Valid [95%]
+- Proposal: Accept
+- Rationale:
+  - The guard returns early while a browser is open: src/auth/lock.ts:83
+- Action: reply
+- Proposed draft reply:
+
+```markdown
+Fixed in the next push.
+```
+
+# N01 Early return skips the cleanup
+- Severity: ⚠️ should fix
+- Anchor: src/auth/lock.ts:91 (new) `    return;`
+- Verdict: Bug [85%]
+- Action: comment
+- Proposed draft comment:
+…
+````
+
+- **Items**: `T` threads others started (receive), `D` my pending drafts and `Y` threads I started (give), `N01…` new findings. The heading's `discussion …` / `draft …` is checked against the MR, so an id from an older run cannot reach another thread.
+- **Actions**: `T` reply, reply-resolve, none; `Y` reply, none; `D` keep, reword, move, delete; `N` comment, none.
+- **Anchors** carry the text of the line: `check` refuses a line outside the diff, or a line whose text differs, and names the line where that text really is.
+- **`check`** also wants a `[NN%]` badge on every verdict, the text each action sends, and the configured `review.draftRules`.
+- **`render`**: quoted comments are never shortened; text meant to be posted is a fenced block indented by three spaces (display only). An answer in my own thread is signed `[NN%] <agent>:` from its badge (`--agent`, default `Opus`).
+- **`comments post`**: a dry run lists each step; `--apply` posts them as drafts, stops at the first failure, reads every result back and records it in the ledger. A D draft that `publish` turned into a thread is answered with `--answers D05`.
 
 ---
 
@@ -218,8 +264,11 @@ The reviewer's twin of `--receive`. Read-only: GETs on GitLab, and `git diff` / 
 | `review.fetch.contextLines` | `3` | `pr <iid> review --receive --context-lines` when the flag is not given |
 | `review.nextSteps` | `[]` | Extra bullets under "Next steps" in the `--receive` report; `{iid}` becomes the MR iid |
 | `review.runner` | `list` | `list`: the gate commands one after another. `parallel`: each gate as a background `tools task` session, then every exit code |
+| `review.impactSource` | `api` | Default of `--impact-source`: `api` or `git` |
+| `review.worktreeHint` | `null` | Replaces the "create a worktree" advice when no worktree has the MR branch; `{branch}` and `{iid}` are filled in |
+| `review.draftRules` | none | What `review check` enforces in text that goes to the MR: `bannedWords` (`[{ word, instead }]`), `forbidDashes`, `ownThreadForbidden` (phrases that address nobody in a thread you started) |
 
-Ledgers of writes live next to the config: `comment-batch.jsonl` and `label-batch.jsonl`.
+Ledgers of writes live next to the config: `comment-batch.jsonl`, `label-batch.jsonl`, `review-ledger/` (what `comments post` landed) and `review-ids/` (the id map of each MR).
 
 ---
 
