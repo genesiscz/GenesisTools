@@ -127,6 +127,12 @@ export interface RunToolOpts {
     trace?: boolean;
     enhanceHelp?: boolean;
     ignoreParams?: string[];
+    /**
+     * Rewrites the user arguments (argv after the script) before Commander parses them, for a public form
+     * Commander cannot route itself, e.g. `gitlab pr 42 comments` → `gitlab pr comments 42`. The run stays a
+     * real CLI run: process.argv is not touched.
+     */
+    rewriteArgs?: (args: string[]) => string[];
 }
 
 export interface RunToolResult {
@@ -285,7 +291,7 @@ export async function runTool(
     setBaseBinding({ tool });
 
     try {
-        await program.parseAsync(argv);
+        await program.parseAsync(opts.rewriteArgs ? [...argv.slice(0, 2), ...opts.rewriteArgs(argv.slice(2))] : argv);
     } catch (error) {
         // a test passes its own argv and gets the error back; commander's own errors keep their exit path
         if (argv !== process.argv || error instanceof CommanderError) {

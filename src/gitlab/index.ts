@@ -10,11 +10,10 @@ import { logger, out } from "@genesiscz/utils/logger";
 const { program } = buildProgram();
 
 if (import.meta.main) {
-    // `gitlab pr <iid> <verb>` and bare groups are rewritten in place, so runTool still sees the real process.argv.
-    process.argv.splice(2, process.argv.length - 2, ...rewriteArgv(process.argv.slice(2), commandTree(program)));
-
     try {
-        await runTool(program, { tool: "gitlab" });
+        // `gitlab pr <iid> <verb>` puts the MR first, and a bare group runs its default leaf (lib/pr-argv.ts).
+        const tree = commandTree(program);
+        await runTool(program, { tool: "gitlab", rewriteArgs: (args) => rewriteArgv(args, tree) });
     } catch (error) {
         logger.debug({ error }, "gitlab: command failed");
         out.printlnErr(`Error: ${errorMessage(error)}`);
