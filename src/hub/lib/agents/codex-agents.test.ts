@@ -225,6 +225,15 @@ describe("attachCodexAgents", () => {
         expect(children.find((node) => node.id === CHILD_B)?.children.map((node) => node.id)).toEqual([GRANDCHILD]);
     });
 
+    test("an active grandchild whose spawner fell out of the window still hangs under the lead", () => {
+        const { records, cache } = family();
+        const onlyGrandchild = records.filter((r) => r.id === GRANDCHILD);
+        const tops = attachCodexAgents(onlyGrandchild, { now: NOW, cachePath: cache, model: null });
+
+        expect([...tops.keys()]).toEqual([ROOT]);
+        expect((tops.get(ROOT) ?? []).map((node) => node.id)).toEqual([GRANDCHILD]);
+    });
+
     test("a node carries what the Agents tab shows: harness, task name, role, own model, status, tool calls", () => {
         const { records, cache } = family();
         const tops = attachCodexAgents(records, { now: NOW, cachePath: cache, model: "gpt-lead" });

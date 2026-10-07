@@ -368,6 +368,7 @@ export function attachCodexAgents(records: CodexAgentRecord[], context: CodexAge
     const cache = loadCache(cachePath);
     const byId = new Map<string, AgentNode>();
     const parents = new Map<string, string>();
+    const roots = new Map<string, string>();
     let changed = false;
 
     for (const record of records) {
@@ -391,6 +392,7 @@ export function attachCodexAgents(records: CodexAgentRecord[], context: CodexAge
         changed = changed || built.changed;
         byId.set(record.id, built.node);
         parents.set(record.id, head.parentId);
+        roots.set(record.id, record.rootId);
     }
 
     const tops = new Map<string, AgentNode[]>();
@@ -404,7 +406,10 @@ export function attachCodexAgents(records: CodexAgentRecord[], context: CodexAge
             continue;
         }
 
-        tops.set(parentId, [...(tops.get(parentId) ?? []), node]);
+        // A spawner outside the listed records (older than the window) leaves its sub-agent under
+        // the conversation's lead rather than under an id no list row carries.
+        const top = parentId !== id && !byId.has(parentId) ? (roots.get(id) ?? parentId) : parentId;
+        tops.set(top, [...(tops.get(top) ?? []), node]);
     }
 
     for (const nodes of tops.values()) {
