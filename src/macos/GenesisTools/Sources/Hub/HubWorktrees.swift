@@ -405,7 +405,7 @@ struct WorktreeDetailView: View {
         // `--worktree <path>` and a forwarded request set the selection without a click, so nothing made
         // the review: the page showed its header and nothing else.
         .task(id: worktree.path) {
-            if model.review?.repo.path != worktree.path {
+            if model.review?.home.path != worktree.path {
                 model.selectWorktree(worktree)
             }
         }

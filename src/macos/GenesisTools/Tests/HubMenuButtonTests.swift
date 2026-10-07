@@ -80,8 +80,12 @@ final class HubMenuButtonTests: XCTestCase {
         XCTAssertEqual(trees?.items.map(\.title), ["main  ·  tools", "agent/task  ·  tools-agent"])
         XCTAssertEqual(trees?.items.first?.state, .on)
 
+        var told: [String] = []
+        model.onWorktreeChange = { told.append($0.path) }
         trees?.performActionForItem(at: 1)
         XCTAssertEqual(model.repo.path, "/work/tools-agent")
+        XCTAssertEqual(model.home.path, "/work/tools", "the hub still knows this review is the session's own")
+        XCTAssertEqual(told, ["/work/tools-agent"])
         XCTAssertEqual(model.roots.first?.folder, "/work/tools-agent", "the diff reads the agent's checkout")
 
         items = MenuButtonPresenter.menu(ScopeMenu.items(model: model)).items

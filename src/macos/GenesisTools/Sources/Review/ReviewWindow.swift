@@ -219,6 +219,11 @@ enum ReviewPalette {
 
 final class ReviewModel: ObservableObject {
     private(set) var repo: URL
+    /// The folder the review was made for (a session's folder). `repo` moves on with the Worktree choice
+    /// or to the git root; this does not, so the hub can tell its own review from one for another folder.
+    let home: URL
+    /// Told the checkout the Worktree choice picked: the hub keeps it per session.
+    var onWorktreeChange: ((URL) -> Void)?
     private let makeRenderer: () -> DiffRenderer
     private var builtRenderer: DiffRenderer?
     private(set) var comments: ReviewCommentStore
@@ -338,6 +343,7 @@ final class ReviewModel: ObservableObject {
 
     init(repo: URL, options: DiffViewOptions, session: String? = nil, renderer: @autoclosure @escaping () -> DiffRenderer = PierreWebDiffRenderer()) {
         self.repo = repo
+        home = repo
         self.options = options
         self.session = session
         makeRenderer = renderer
@@ -1000,6 +1006,7 @@ final class ReviewModel: ObservableObject {
         base = nil
         branch = ""
         commits = []
+        onWorktreeChange?(url)
         guard started else { return }
         watchRoots()
         restartLoad()

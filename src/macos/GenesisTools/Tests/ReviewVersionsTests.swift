@@ -106,6 +106,12 @@ final class ReviewVersionsTests: XCTestCase {
         XCTAssertEqual(snapshot.files.map(\.path), ["a.txt"])
         XCTAssertEqual(GitWorkingTreeSource(repo: tree, preferredBase: "agent-base").baseBranch(), "agent-base")
         XCTAssertTrue(GitWorkingTreeSource(repo: repo).baseCandidates().contains("agent-base"))
+
+        // Uncommitted reads the picked checkout: the agent's edit and new file, none in the main one.
+        try "new\n".write(to: tree.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)
+        let uncommitted = try GitWorkingTreeSource(repo: tree).load(scope: .uncommitted)
+        XCTAssertEqual(uncommitted.files.map(\.path).sorted(), ["a.txt", "b.txt"])
+        XCTAssertEqual(try GitWorkingTreeSource(repo: repo).load(scope: .uncommitted).files.count, 0)
     }
 
     func testWorktreePorcelainSkipsTheBareEntryAndNamesADetachedHead() {

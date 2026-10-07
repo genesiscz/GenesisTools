@@ -808,7 +808,7 @@ final class PRsModel: ObservableObject {
     /// head there. Rebuilt only when the PR, the folder, the stored proposal or the head changed.
     private func showReview(_ pr: HubPR, path: String, fetch: HubPRFetch?) {
         // Same PR in a different worktree: the old model still points at the old checkout.
-        guard reviewPRID != pr.id || review?.repo.path != URL(fileURLWithPath: path).path
+        guard reviewPRID != pr.id || review?.home.path != URL(fileURLWithPath: path).path
             || reviewProposalStamp != pr.proposalStamp || reviewHeadSha != pr.headSha else { return }
         if reviewPRID == pr.id, reviewHeadSha != pr.headSha, details[pr.id]?.headSha != pr.headSha {
             // A new head can come with a new recorded base (a rebase): fetch the detail again. A detail

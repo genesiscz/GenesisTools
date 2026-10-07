@@ -898,7 +898,7 @@ final class HubModel: ObservableObject {
     func selectWorktree(_ worktree: HubWorktree) {
         selectedWorktree = worktree.path
         notice = nil
-        if review?.repo.path != worktree.path {
+        if review?.home.path != worktree.path {
             let next = ReviewModel(repo: URL(fileURLWithPath: worktree.path), options: DiffViewOptions(), session: sessions(for: worktree).first?.sessionId)
             next.embedded = true
             next.scope = worktree.isMain ? .uncommitted : .branch
@@ -1474,9 +1474,18 @@ final class HubModel: ObservableObject {
         let cwd = moved ?? session.cwd
         if !cwd.isEmpty, FileManager.default.fileExists(atPath: cwd) {
             // The session too: two agents in one checkout share the folder, and "Send to agent" targets `review.session`.
-            if review?.repo.path != cwd || review?.session != session.sessionId {
+            // `home`, not `repo`: the Worktree choice moves `repo` to another checkout, and comparing that with
+            // the session's folder made every refresh build a new review on the main checkout again.
+            if review?.home.path != cwd || review?.session != session.sessionId {
                 let next = ReviewModel(repo: URL(fileURLWithPath: cwd), options: DiffViewOptions(), session: session.sessionId)
                 next.embedded = true
+                let worktreeKey = "hub.reviewWorktree.\(session.sessionId)"
+                if let picked = HubDefaults.store.string(forKey: worktreeKey), FileManager.default.fileExists(atPath: picked) {
+                    next.switchWorktree(to: picked)
+                }
+                next.onWorktreeChange = { url in
+                    HubDefaults.store.set(url.path == cwd ? nil : url.path, forKey: worktreeKey)
+                }
                 if moved != nil {
                     let from = (session.cwd as NSString).abbreviatingWithTildeInPath
                     next.notice = "\(from) holds no repository, so this shows \((cwd as NSString).abbreviatingWithTildeInPath), the checkout of the same name"
