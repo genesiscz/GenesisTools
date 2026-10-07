@@ -21,15 +21,15 @@ One target, folders by job. A file goes where its job is, not where its first ca
 | `Paths/` | `PathOpener` (folder in Finder by bundle id, file in Cursor at a line), `PathLabel`, `PathActionsMenu`, `Clipboard` + `CopyToast` |
 | `Time/` | `LiveTime`, `LiveAgo`, `LiveTimeFormat` |
 | `Cmux/` | `CmuxTree`, `CmuxTarget`, `CmuxTargetPicker` (Tree / Layout), `CmuxSessionPanel` |
-| `Window/` | `WindowTitlebar`: `.titlebarZone()`, `.titlebarBackground`, `.titlebarRow()`, the snapshot audit |
-| `Perf/` | `PerfLog`, `HangWatch`, `MainStackSampler`, `MonitorPerf`, `RenderProbe`, `PerfConfiguration` |
+| `Window/` | `WindowTitlebar`: `.titlebarZone()`, `.titlebarBackground`, `.titlebarRow()`, the snapshot audit; `HostWindow` + `HostWindowReader` (the window a view is in, without SwiftUI state) |
+| `Perf/` | `PerfLog`, `HangWatch`, `MainStackSampler`, `MonitorPerf`, `RenderProbe`, `PerfConfiguration`, `MainBusy` (main-thread busy time after an event, `measureUntilSettled`, and a `Meter` for benches), `SessionOpenBench` (times one open of a session screen for the bench tests of both apps) |
 | `Tools/` | `ToolsBridge` (runs `tools`), `ToolsLineStream` (one long-running `tools` child, stdout as whole lines on the main queue, stdin held open so the child ends with the app), `MonitorJSON`, `TitleFormatter`, `SessionTranscriptClient` (the `tools ai sessions tail` envelope), `TranscriptPromptPart`, `DiskCache` (last answers on disk; `load` / `loadData` read off the main thread), `DirectoryWatcher` (one FSEvents stream over several folders, a path filter, main-queue callback) |
 | `Providers/` | `AIProviderMeta`, `AIProviders`, `AIProviderGlyph` |
 | `Sessions/` | `SessionPalette`, `SessionFormat` |
-| `Sessions/Transcript/` | `SessionTranscriptList`, `TranscriptDocument`, prompt parts, `TranscriptScrollAnchor`, `TranscriptBus` / `TranscriptFilters`, `TranscriptMarkdownStyle` |
-| `Sessions/ToolCalls/` | `SessionToolCallView` + `TranscriptServices`, `SessionNativeLog`, `SessionToolChanges` |
+| `Sessions/Transcript/` | `SessionTranscriptList`, `TranscriptDocument`, prompt parts, `TranscriptScrollAnchor`, `TranscriptBus` / `TranscriptFilters`, `TranscriptMarkdownStyle`, `TranscriptLiveTail` (one `tools ai sessions tail --live` child, or a server subscription, per open screen) |
+| `Sessions/ToolCalls/` | `SessionToolCallView` + `TranscriptServices`, `SessionNativeLog` + `SessionNativeLogStore`, `SessionToolChanges`, `BatchedToolChangeSource` + `ToolChangeBatcher` (rows that ask within 100 ms share one `tools agents changes` run) |
 | `Sessions/Code/` | `CodeBlock`, `CodeBlockText`, `SessionSyntaxHighlighter` |
-| `Sessions/Detail/` | `SessionDetailScreen`, its header and sidebar, `SessionSidebarSplit` |
+| `Sessions/Detail/` | `SessionDetailScreen`, its header and sidebar, `SessionSidebarSplit`, `TranscriptPaging` (first page 12, pages of 150, refresh to the end), `TranscriptBuildQueue` (one document build at a time, newest pending wins) |
 
 ## API rules
 

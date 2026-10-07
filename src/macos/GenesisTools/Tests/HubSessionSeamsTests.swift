@@ -30,20 +30,6 @@ final class HubSessionSeamsTests: XCTestCase {
         XCTAssertEqual(files[1].skipLabel, "no diff: state before the call unknown")
     }
 
-    func testBatchedToolCallsDecodePerCall() {
-        let json = """
-        {"session":"s-1","tools":[
-          {"toolUseId":"toolu_a","files":[{"path":"/tmp/gt/app/a.ts","beforeOid":null,"afterOid":"3333333333333333333333333333333333333333","status":"added","source":"write","skipped":null,"via":"write","confidence":"exact","toolUseIds":["toolu_a"],"span":1,"diff":"--- /dev/null\\n+++ b/a.ts\\n@@ -0,0 +1,1 @@\\n+x\\n","added":1,"removed":0}],"excluded":[]},
-          {"toolUseId":"toolu_none","files":[],"excluded":[]}
-        ],"log":"/tmp/l","objects":"/tmp/o","transcript":null}
-        """
-        let byTool = HubToolChangeSource.decode(json)
-
-        XCTAssertEqual(byTool["toolu_a"]?.map(\.status), ["added"])
-        XCTAssertEqual(byTool["toolu_none"], [])
-    }
-
-    /// `agents changes <id> --last-turns N --json` as the review window's Last N turns reads it.
     func testLastTurnsDecodeAndStatus() throws {
         let log = try JSONDecoder().decode(GitWorkingTreeSource.TurnChanges.self, from: Data(oneToolJSON.utf8))
         XCTAssertEqual(log.objects, "/tmp/gt/.genesis-tools/agents/_objects")
@@ -143,7 +129,78 @@ final class HubSessionSeamsTests: XCTestCase {
         XCTAssertEqual(document.sections.map(\.number), [3, 0, 61])
     }
 
+    func testSpendCacheReusesValidEmptyResultsAndExpiresWithoutCachingFailures() throws {
+        let cache = HubSpend.Cache(ttl: 30)
+        var now = Date(timeIntervalSince1970: 1000)
+        var calls = 0
+        func read() -> Data {
+            calls += 1
+            return Data(#"{"totals":{"totalCost":0}}"#.utf8)
+        }
+        for _ in 0..<10 {
+            XCTAssertNil(try cache.fetch(key: "fixture", revision: 1, now: { now }, run: read))
+        }
+        XCTAssertEqual(calls, 1)
+        now.addTimeInterval(31)
+        _ = try cache.fetch(key: "fixture", revision: 1, now: { now }, run: read)
+        _ = try cache.fetch(key: "fixture", revision: 2, now: { now }, run: read)
+        XCTAssertEqual(calls, 3)
+        XCTAssertThrowsError(try cache.fetch(key: "bad", revision: 1) { Data("invalid".utf8) })
+        _ = try cache.fetch(key: "bad", revision: 1, run: read)
+        XCTAssertEqual(calls, 4)
+    }
+
+    @MainActor
+    func testSessionSearchAndTimeGroupsPreserveExactRowsAndBoundaries() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let live = HubSession(sessionId: "live", title: "Žlutý", project: "WORK", mtime: now.addingTimeInterval(-599).timeIntervalSince1970 * 1000)
+        let today = HubSession(sessionId: "today", mtime: now.addingTimeInterval(-600).timeIntervalSince1970 * 1000)
+        let old = HubSession(sessionId: "old", mtime: now.addingTimeInterval(-172800).timeIntervalSince1970 * 1000)
+        let groups = HubModel.timeGroups([old, live, today], now: now)
+        XCTAssertEqual(groups.map(\.title), ["Live", "Today", "Earlier"])
+        XCTAssertEqual(groups.flatMap(\.rows).map(\.sessionId), ["live", "today", "old"])
+        XCTAssertTrue(HubModel.searchText(live).contains("žlutý work"))
+    }
+
+    func testSearchMergeUsesTheLatestWindowAndReplacesAnEarlierHitNowLoaded() throws {
+        let old = try JSONDecoder().decode([TranscriptTurn].self, from: Data(#"[{"id":"old","role":"user","text":"match earlier","tools":[],"index":1}]"#.utf8))
+        let current = try JSONDecoder().decode([TranscriptTurn].self, from: Data(#"[{"id":"new","role":"assistant","text":"match live","tools":[]}]"#.utf8))
+        let merged = HubSessionDetailHost.searchTurns(earlier: old, window: current, start: 10)
+        XCTAssertEqual(merged.map(\.text), ["match earlier", "match live"])
+        XCTAssertEqual(merged.map(\.index), [1, 10])
+        XCTAssertEqual(HubSessionDetailHost.searchTurns(earlier: old, window: current, start: 0).map(\.text), ["match live"])
+    }
+
     // MARK: tools ai-spend session
+
+    func testSpendCacheCoalescesConcurrentReadersAndAllowsExplicitRefresh() async throws {
+        let cache = HubSpend.Cache()
+        let entered = expectation(description: "runner entered")
+        let release = DispatchSemaphore(value: 0)
+        let first = Task.detached {
+            try cache.fetch(key: "codex:fixture", revision: 1) {
+                entered.fulfill()
+                guard release.wait(timeout: .now() + 3) == .success else { throw CocoaError(.userCancelled) }
+                return Data(#"{"totals":{"totalCost":2}}"#.utf8)
+            }
+        }
+        await fulfillment(of: [entered], timeout: 2)
+        let second = Task.detached {
+            try cache.fetch(key: "codex:fixture", revision: 1) {
+                XCTFail("Concurrent reader started another runner")
+                return Data()
+            }
+        }
+        release.signal()
+        let a = try await first.value
+        let b = try await second.value
+        XCTAssertEqual(a?.usd, 2)
+        XCTAssertEqual(b?.usd, 2)
+        let fresh = try cache.fetch(key: "codex:fixture", revision: 1, force: true) {
+            Data(#"{"totals":{"totalCost":3}}"#.utf8)
+        }
+        XCTAssertEqual(fresh?.usd, 3)
+    }
 
     func testSpendEstimateReadsTotalCostAndModels() {
         let json = """

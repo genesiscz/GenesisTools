@@ -1,32 +1,32 @@
 import Foundation
 
-/// Follows the open transcript with ONE `tools ai sessions tail <query> --live --offset <n>` process
-/// for as long as the detail shows it (src/utils/ai/transcripts/live.ts). Each stdout line is a turn
-/// with its session-wide `index`, sent again whenever it changes, or a `totals` line after a change;
-/// the lines of one chunk arrive together as a `Batch`. No timer and no file watcher here: the child
-/// watches the file, and a process per growth (about 150 ms each, most of them finding nothing) is gone.
+/// Follows an open transcript with ONE `tools ai sessions tail <query> --live --offset <n>` process for as
+/// long as the screen shows it (src/utils/ai/transcripts/live.ts). Each stdout line is a turn with its
+/// session-wide `index`, sent again whenever it changes, or a `totals` line after a change; the lines of
+/// one chunk arrive together as a `Batch`. No timer and no file watcher here: the child watches the file,
+/// and a process per growth (about 150 ms each, most of them finding nothing) is gone.
 ///
-/// The follow runs inside the resident hub server when one answers (`HubSource.server`, src/hub/server): no
-/// process at all. Otherwise, or when the server refuses it, it is the `tools` process as before.
+/// With a `server` (GenesisTools' resident `tools hub serve`) the follow runs inside it: no process at
+/// all. Otherwise, or when the server refuses it, it is the `tools` process.
 ///
-/// An exit we did not ask for starts the follow once more from the last turn it saw; a second one
-/// stays down and is logged with its stderr. A server that goes away (a restart after a code change, a
-/// memory cap, a dropped connection) does not spend that retry: the follow starts again at once, through
-/// the new server or a process.
+/// An exit we did not ask for starts the follow once more from the last turn it saw; a second one stays
+/// down and is logged with its stderr. A server that goes away (a restart after a code change, a memory
+/// cap, a dropped connection) does not spend that retry: the follow starts again at once, through the new
+/// server or a process.
 @MainActor
-final class HubTranscriptTail {
-    struct Totals: Decodable, Equatable {
-        var modelCalls: Int?
-        var inputTokens: Int?
-        var cacheReadTokens: Int?
-        var outputTokens: Int?
-        var reasoningTokens: Int?
-        var costUsd: Double?
-        var terminated: String?
-        var nextOffset: Int
-        var turnCount: Int?
+public final class TranscriptLiveTail {
+    public struct Totals: Decodable, Equatable, Sendable {
+        public var modelCalls: Int?
+        public var inputTokens: Int?
+        public var cacheReadTokens: Int?
+        public var outputTokens: Int?
+        public var reasoningTokens: Int?
+        public var costUsd: Double?
+        public var terminated: String?
+        public var nextOffset: Int
+        public var turnCount: Int?
 
-        var transcriptTotals: TranscriptTotals {
+        public var transcriptTotals: TranscriptTotals {
             TranscriptTotals(
                 modelCalls: modelCalls,
                 inputTokens: inputTokens,
@@ -39,12 +39,21 @@ final class HubTranscriptTail {
     }
 
     /// Turns carry their `index`; `totals` is the last totals line of the chunk, if any.
-    struct Batch {
-        var turns: [TranscriptTurn] = []
-        var totals: Totals?
+    public struct Batch: Sendable {
+        public var turns: [TranscriptTurn] = []
+        public var totals: Totals?
+
+        public init(turns: [TranscriptTurn] = [], totals: Totals? = nil) {
+            self.turns = turns
+            self.totals = totals
+        }
     }
 
     private let query: String
+    private let provider: String?
+    private let bridge: ToolsBridge
+    private let server: ToolsServerClient?
+    private let log: (String) -> Void
     private let onBatch: (Batch) -> Void
     private var stream: ToolsLineStream?
     private var subscription: ToolsServerClient.Subscription?
@@ -54,17 +63,32 @@ final class HubTranscriptTail {
     /// Subscribes the old server refused while it drained after a restart (see `serverEnded`).
     private var drainingRetries = 0
     private var stopped = false
-    /// The server follow in flight, for its one app-perf.log line (ToolsCallTrace) when it ends.
+    /// The server follow in flight, for its one perf line (ToolsCallTrace) when it ends.
     private var serverTrace: (id: String, argv: [String], started: Date, bytes: Int)?
 
-    init(query: String, offset: Int, onBatch: @escaping (Batch) -> Void) {
+    /// `query`: a session id, a worker name or an absolute transcript path (`provider` names the provider
+    /// of a path outside the known roots). `log` gets the `transcript.follow …` lines; nil writes them to
+    /// the perf file as they are.
+    public init(
+        query: String,
+        offset: Int,
+        provider: String? = nil,
+        bridge: ToolsBridge,
+        server: ToolsServerClient? = nil,
+        log: ((String) -> Void)? = nil,
+        onBatch: @escaping (Batch) -> Void
+    ) {
         self.query = query
         self.offset = offset
+        self.provider = provider
+        self.bridge = bridge
+        self.server = server
+        self.log = log ?? { PerfLog.mark($0) }
         self.onBatch = onBatch
         start()
     }
 
-    func stop() {
+    public func stop() {
         stopped = true
         stream?.stop()
         stream = nil
@@ -83,7 +107,11 @@ final class HubTranscriptTail {
     }
 
     private var args: [String] {
-        ["sessions", "tail", query, "--live", "--offset", String(max(0, offset))]
+        var args = ["sessions", "tail", query, "--live", "--offset", String(max(0, offset))]
+        if let provider {
+            args += ["--provider", provider]
+        }
+        return args
     }
 
     private func start() {
@@ -97,7 +125,7 @@ final class HubTranscriptTail {
     private func subscribe() -> Bool {
         let argv = ["ai"] + args
         let traceId = ToolsCallTrace.newId()
-        guard let server = HubSource.server,
+        guard let server,
               let subscription = server.subscribe(
                   argv: argv,
                   traceId: traceId,
@@ -111,12 +139,12 @@ final class HubTranscriptTail {
 
         self.subscription = subscription
         serverTrace = (traceId, argv, Date(), 0)
-        HubPerf.log("transcript.follow started via server \(query.suffix(24)) offset=\(offset)")
+        log("transcript.follow started via server \(query.suffix(24)) offset=\(offset)")
         return true
     }
 
     /// After a server restart the new one is a second or so away (the hub starts it on its next call). Try
-    /// again every 500 ms for 5 s before the follow falls back to a process for the rest of this detail.
+    /// again every 500 ms for 5 s before the follow falls back to a process for the rest of this screen.
     private func resubscribe(attempt: Int = 0) {
         guard !stopped else { return }
         if subscribe() {
@@ -138,10 +166,10 @@ final class HubTranscriptTail {
         subscription = nil
         recordServerFollow(exit: end.exit, stderr: end.stderr, reason: end.reason)
         guard !stopped, end.reason != "cancelled" else { return }
-        HubPerf.log("transcript.follow server ended (\(end.reason)) \(query.suffix(24)) offset=\(offset)")
+        log("transcript.follow server ended (\(end.reason)) \(query.suffix(24)) offset=\(offset)")
         switch end.reason {
         case "restart", "disconnected":
-            // A server going away is not this follow's failure; three in one detail means stay on a process.
+            // A server going away is not this follow's failure; three in one screen means stay on a process.
             serverRestarts += 1
             if serverRestarts <= 3 {
                 resubscribe()
@@ -166,16 +194,16 @@ final class HubTranscriptTail {
     private func startProcess() {
         do {
             let stream = try ToolsLineStream(
-                bridge: HubSource.bridge,
+                bridge: bridge,
                 subcommand: "ai",
                 args: args,
                 onLines: { [weak self] lines in self?.receive(lines) },
                 onExit: { [weak self] exit in self?.exited(exit) }
             )
             self.stream = stream
-            HubPerf.log("transcript.follow started pid=\(stream.processIdentifier) \(query.suffix(24)) offset=\(offset)")
+            log("transcript.follow started pid=\(stream.processIdentifier) \(query.suffix(24)) offset=\(offset)")
         } catch {
-            HubPerf.log("transcript.follow cannot start: \(error.localizedDescription)")
+            log("transcript.follow cannot start: \(error.localizedDescription)")
         }
     }
 
@@ -199,7 +227,7 @@ final class HubTranscriptTail {
                     offset = max(offset, index)
                 }
             } catch {
-                HubPerf.log("transcript.follow unreadable line (\(line.count) chars): \(error.localizedDescription)")
+                log("transcript.follow unreadable line (\(line.count) chars): \(error.localizedDescription)")
             }
         }
         guard !batch.turns.isEmpty || batch.totals != nil else { return }
@@ -213,7 +241,7 @@ final class HubTranscriptTail {
 
     private func ended(status: Int32, stderr rawStderr: String) {
         let stderr = rawStderr.trimmingCharacters(in: .whitespacesAndNewlines).suffix(600)
-        HubPerf.log("transcript.follow exited \(status) \(query.suffix(24)): \(stderr.isEmpty ? "(no stderr)" : String(stderr))")
+        log("transcript.follow exited \(status) \(query.suffix(24)): \(stderr.isEmpty ? "(no stderr)" : String(stderr))")
         stream = nil
         guard !restarted else { return }
         restarted = true

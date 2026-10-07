@@ -166,7 +166,7 @@ committed. Keep them verbatim until then; `Hub/StolenShims.swift` stands in for 
   per root, every path under its root's folder name. Map a merged file back with `locate(fileID:)`,
   `absolutePath(of:)`, `file(atPath:)`; never join `model.repo` with `file.path`.
 - The open transcript follows its session with ONE long-running `tools ai sessions tail <id> --live --offset <n>`
-  per open detail (Hub/HubTranscriptTail.swift on GenesisKit `ToolsLineStream`): each stdout line is a turn with its
+  per open detail (GenesisKit `TranscriptLiveTail` on `ToolsLineStream`, shared with Genesis): each stdout line is a turn with its
   `index` (a changed turn comes again and replaces its row) or a totals line. It stops when the detail closes, the
   session changes, the window hides or minimizes, and when the app quits (the child ends on stdin EOF); one restart
   on an unexpected exit, stderr in `app-perf.log` (`hub.transcript.follow`). Never spawn a `tools` process per file

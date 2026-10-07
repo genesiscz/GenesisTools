@@ -1,7 +1,7 @@
 import type { TaskNotification } from "@genesiscz/utils/ai/transcripts/file-scan";
 import type { SessionSubagent } from "@genesiscz/utils/ai/transcripts/subagents";
 import type { SessionTeam } from "./team";
-import type { AgentKind, AgentNode, AgentParent, AgentStatus } from "./types";
+import type { AgentHarness, AgentKind, AgentNode, AgentParent, AgentStatus } from "./types";
 import type { WorkerAgent } from "./workers";
 
 /** A parent written this recently is live even with no running child. */
@@ -9,6 +9,8 @@ export const LIVE_PARENT_MS = 2 * 60 * 1000;
 
 /** The parent row fields the tree needs, as `listAgentSessionRows` returns them. */
 export interface ParentRow {
+    /** Whose session this is; Claude when absent. */
+    provider?: AgentHarness;
     sessionId: string;
     title: string | null;
     project: string | null;
@@ -148,7 +150,7 @@ export function sortNodes(nodes: AgentNode[]): AgentNode[] {
     return nodes.sort((a, b) => statusRank(a) - statusRank(b) || b.lastAt.localeCompare(a.lastAt));
 }
 
-function hasRunning(nodes: AgentNode[]): boolean {
+export function hasRunning(nodes: AgentNode[]): boolean {
     return nodes.some((node) => node.status === "running" || hasRunning(node.children));
 }
 

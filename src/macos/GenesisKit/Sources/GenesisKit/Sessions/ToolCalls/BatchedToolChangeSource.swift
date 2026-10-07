@@ -1,60 +1,80 @@
 import Foundation
 
-/// The transcript's "N files changed" rows for the hub: every tool row that asks within 100 ms of the
-/// first shares one `tools agents changes <session> --tools a,b,c --json` run, one run at a time.
+/// The transcript's "N files changed" rows: every tool row that asks within 100 ms of the first shares
+/// one `tools agents changes <session> --tools a,b,c --json` run, one run at a time.
 ///
-/// The stolen `CLIToolChangeSource` starts one `tools agents changes --tool` process per row, and
-/// each process reads the whole session (0.25 s for a 16 MB session, 0.7 s for 136 MB). Opening a
-/// transcript started 44 of them, 11 at once, 13.6 CPU seconds (measured 2026-09-24). A row that
-/// leaves the screen before its batch starts is dropped from the queue; an answer is kept for the
-/// life of the source (one per open session), so scrolling back asks nothing.
-final class HubToolChangeSource: ToolChangeSource, @unchecked Sendable {
+/// `CLIToolChangeSource` starts one `tools agents changes --tool` process per row, and each process reads
+/// the whole session (0.25 s for a 16 MB session, 0.7 s for 136 MB). Opening a transcript started 44 of
+/// them, 11 at once, 13.6 CPU seconds (GenesisTools, measured 2026-09-24). A row that leaves the screen
+/// before its batch starts is dropped from the queue; an answer is kept for the life of the source (one per
+/// open session), so scrolling back asks nothing.
+public final class BatchedToolChangeSource: ToolChangeSource, @unchecked Sendable {
+    /// Called when a batch run starts with its call count; the returned closure ends it with a note
+    /// ("3 files", "failed"). GenesisTools passes its hub span; nil writes a `toolChanges.batch` span.
+    public typealias Trace = @Sendable (_ calls: Int) -> @Sendable (_ note: String) -> Void
+
     private let cli: CLIToolChangeSource
     private let batcher: ToolChangeBatcher
 
-    init(toolsBinary: String) {
+    public init(toolsBinary: String?, trace: Trace? = nil) {
         let cli = CLIToolChangeSource(toolsBinary: toolsBinary)
         self.cli = cli
+        let binary = cli.binaryPath
+        let trace = trace ?? Self.defaultTrace
         batcher = ToolChangeBatcher { sessionId, toolIds in
-            await Self.fetch(binary: toolsBinary, sessionId: sessionId, toolIds: toolIds, cli: cli)
+            guard let binary else { return nil }
+            return await Self.fetch(binary: binary, sessionId: sessionId, toolIds: toolIds, cli: cli, trace: trace)
         }
     }
 
-    func changes(sessionId: String, toolUseId: String) async -> [ToolFileChange] {
+    public func changes(sessionId: String, toolUseId: String) async -> [ToolFileChange] {
         await batcher.request(sessionId: sessionId, toolUseId: toolUseId)
     }
 
-    func expandedDiff(for change: ToolFileChange, context: Int) async -> String? {
+    public func expandedDiff(for change: ToolFileChange, context: Int) async -> String? {
         await cli.expandedDiff(for: change, context: context)
     }
 
+    /// Runs started so far, for tests and benches.
+    public var runs: Int {
+        get async { await batcher.runs }
+    }
+
+    private static let defaultTrace: Trace = { calls in
+        let start = CFAbsoluteTimeGetCurrent()
+        return { note in
+            let ms = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            PerfLog.mark(String(format: "toolChanges.batch %.1fms: %d calls, %@", ms, calls, note))
+        }
+    }
+
     /// One run for several calls; nil when it failed (nothing is cached then, a later row asks again).
-    private static func fetch(binary: String, sessionId: String, toolIds: [String], cli: CLIToolChangeSource) async -> [String: [ToolFileChange]]? {
-        let span = HubPerf.begin("toolChanges.batch", "\(toolIds.count) calls", awaits: true)
+    private static func fetch(binary: String, sessionId: String, toolIds: [String], cli: CLIToolChangeSource, trace: Trace) async -> [String: [ToolFileChange]]? {
+        let end = trace(toolIds.count)
         // `--store-blobs`: `expandedDiff` below reads the blobs from the object store, and `changes`
         // writes them only when asked.
         let output = await CLIToolChangeSource.run(binary, ["agents", "changes", sessionId, "--tools", toolIds.joined(separator: ","), "--json", "--store-blobs"], timeout: 30)
         guard let output else {
-            span.end("failed")
+            end("failed")
             return nil
         }
 
         var result = decode(output)
         for (tool, files) in result {
             var filled = files
-            // The same fill the stolen source does: a file with blobs but no diff text gets one.
+            // The same fill `CLIToolChangeSource` does: a file with blobs but no diff text gets one.
             for index in filled.indices where filled[index].unifiedDiff == nil && filled[index].skipReason == nil {
                 filled[index].unifiedDiff = await cli.expandedDiff(for: filled[index], context: 3)
             }
             result[tool] = filled
         }
-        span.end("\(result.values.reduce(0) { $0 + $1.count }) files")
+        end("\(result.values.reduce(0) { $0 + $1.count }) files")
         return result
     }
 
-    /// `{ tools: [{ toolUseId, files }] }`: each entry's files through the stolen decoder, so both
-    /// sources read a file the same way.
-    static func decode(_ text: String) -> [String: [ToolFileChange]] {
+    /// `{ tools: [{ toolUseId, files }] }`: each entry's files through `CLIToolChangeSource.decode`, so
+    /// both sources read a file the same way.
+    public static func decode(_ text: String) -> [String: [ToolFileChange]] {
         guard let start = text.firstIndex(of: "{"),
               let object = try? JSONSerialization.jsonObject(with: Data(text[start...].utf8)) as? [String: Any],
               let tools = object["tools"] as? [[String: Any]]
@@ -70,15 +90,15 @@ final class HubToolChangeSource: ToolChangeSource, @unchecked Sendable {
     }
 }
 
-/// The queue behind `HubToolChangeSource`: callers wait on a key (session and tool call), keys are
+/// The queue behind `BatchedToolChangeSource`: callers wait on a key (session and tool call), keys are
 /// sent in batches of at most `maxBatch`, one batch at a time, and a caller whose task is cancelled
 /// (its row scrolled away) stops waiting; a key nobody waits for any more is not sent.
-actor ToolChangeBatcher {
-    typealias Fetch = @Sendable (_ sessionId: String, _ toolIds: [String]) async -> [String: [ToolFileChange]]?
+public actor ToolChangeBatcher {
+    public typealias Fetch = @Sendable (_ sessionId: String, _ toolIds: [String]) async -> [String: [ToolFileChange]]?
 
-    static let maxBatch = 40
+    public static let maxBatch = 40
     /// How long the first request waits for the rows that appear with it.
-    static let gather: Duration = .milliseconds(100)
+    public static let gather: Duration = .milliseconds(100)
 
     private struct Key: Hashable {
         let sessionId: String
@@ -93,13 +113,13 @@ actor ToolChangeBatcher {
     private var cancelledEarly = Set<UUID>()
     private var draining = false
     /// Runs started, for tests and the log.
-    private(set) var runs = 0
+    public private(set) var runs = 0
 
-    init(fetch: @escaping Fetch) {
+    public init(fetch: @escaping Fetch) {
         self.fetch = fetch
     }
 
-    func request(sessionId: String, toolUseId: String) async -> [ToolFileChange] {
+    public func request(sessionId: String, toolUseId: String) async -> [ToolFileChange] {
         let key = Key(sessionId: sessionId, toolUseId: toolUseId)
         if let cached = cache[key] {
             return cached

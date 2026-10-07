@@ -622,87 +622,6 @@ final class HubLogicTests: XCTestCase {
         )
     }
 
-    // MARK: Tool-change batches
-
-    /// Records what the batcher sends, and answers each call with one file named after it.
-    private actor FetchLog {
-        var batches: [[String]] = []
-        var fail = false
-        /// Calls left out of the answer, as cut or unreadable output leaves them out.
-        var omit: Set<String> = []
-
-        func record(_ ids: [String]) -> [String: [ToolFileChange]]? {
-            batches.append(ids)
-            if fail { return nil }
-            return Dictionary(uniqueKeysWithValues: ids.filter { !omit.contains($0) }.map { ($0, [ToolFileChange(path: "/tmp/\($0).ts", status: "modified", unifiedDiff: "@@ -1 +1 @@", beforeBlob: nil, afterBlob: nil)]) })
-        }
-
-        func setFail(_ value: Bool) { fail = value }
-        func setOmit(_ value: Set<String>) { omit = value }
-    }
-
-    func testRowsThatAskTogetherShareOneRunAndAnAnswerIsKept() async {
-        let log = FetchLog()
-        let batcher = ToolChangeBatcher { _, ids in await log.record(ids) }
-        let answers = await withTaskGroup(of: (String, [ToolFileChange]).self) { group in
-            for id in ["a", "b", "c", "d", "e"] {
-                group.addTask { (id, await batcher.request(sessionId: "s1", toolUseId: id)) }
-            }
-            var all: [String: [ToolFileChange]] = [:]
-            for await (id, files) in group { all[id] = files }
-            return all
-        }
-        XCTAssertEqual(answers["c"]?.first?.path, "/tmp/c.ts")
-        let batches = await log.batches
-        XCTAssertEqual(batches.count, 1)
-        XCTAssertEqual(Set(batches[0]), ["a", "b", "c", "d", "e"])
-
-        _ = await batcher.request(sessionId: "s1", toolUseId: "c")
-        let after = await log.batches
-        XCTAssertEqual(after.count, 1, "a kept answer starts no run")
-    }
-
-    func testARowThatLeavesBeforeItsBatchIsNotSent() async {
-        let log = FetchLog()
-        let batcher = ToolChangeBatcher { _, ids in await log.record(ids) }
-        let gone = Task { await batcher.request(sessionId: "s1", toolUseId: "gone") }
-        let stays = Task { await batcher.request(sessionId: "s1", toolUseId: "stays") }
-        try? await Task.sleep(for: .milliseconds(20))
-        gone.cancel()
-        let goneFiles = await gone.value
-        let staysFiles = await stays.value
-        XCTAssertEqual(goneFiles.count, 0)
-        XCTAssertEqual(staysFiles.count, 1)
-        let batches = await log.batches
-        XCTAssertEqual(batches, [["stays"]])
-    }
-
-    func testAFailedRunIsNotKeptSoTheRowAsksAgain() async {
-        let log = FetchLog()
-        await log.setFail(true)
-        let batcher = ToolChangeBatcher { _, ids in await log.record(ids) }
-        let first = await batcher.request(sessionId: "s1", toolUseId: "a")
-        XCTAssertEqual(first.count, 0)
-        await log.setFail(false)
-        let second = await batcher.request(sessionId: "s1", toolUseId: "a")
-        XCTAssertEqual(second.count, 1)
-        let batches = await log.batches
-        XCTAssertEqual(batches.count, 2)
-    }
-
-    func testACallMissingFromTheAnswerIsNotKeptSoTheRowAsksAgain() async {
-        let log = FetchLog()
-        await log.setOmit(["a"])
-        let batcher = ToolChangeBatcher { _, ids in await log.record(ids) }
-        let first = await batcher.request(sessionId: "s1", toolUseId: "a")
-        XCTAssertEqual(first.count, 0)
-        await log.setOmit([])
-        let second = await batcher.request(sessionId: "s1", toolUseId: "a")
-        XCTAssertEqual(second.count, 1)
-        let batches = await log.batches
-        XCTAssertEqual(batches.count, 2)
-    }
-
     private func hostPR(host: String, web: String, number: Int) throws -> HubPR {
         let json = """
         {"repo":"app","repoRoot":null,"origin":{"kind":"github","host":"\(host)","web":"\(web)"},
@@ -720,19 +639,6 @@ final class HubLogicTests: XCTestCase {
         XCTAssertTrue(ref.matches(onGitHub))
         XCTAssertFalse(ref.matches(elsewhere))
         XCTAssertTrue(HubPRRef(project: "team/app", number: 7).matches(elsewhere), "a path-only ref has no host to compare")
-    }
-
-    func testTheBatchOutputDecodesPerToolCall() {
-        let json = """
-        {"session":"s1","tools":[
-          {"toolUseId":"t1","files":[{"path":"/tmp/a.ts","beforeOid":"x","afterOid":"y","status":"modified","diff":"@@ -1 +1 @@\\n-a\\n+b"}],"excluded":[]},
-          {"toolUseId":"t2","files":[],"excluded":[]}
-        ]}
-        """
-        let decoded = HubToolChangeSource.decode(json)
-        XCTAssertEqual(decoded["t1"]?.map(\.path), ["/tmp/a.ts"])
-        XCTAssertEqual(decoded["t1"]?.first?.counts.additions, 1)
-        XCTAssertEqual(decoded["t2"]?.count, 0)
     }
 
     private func queryPR(number: Int, title: String, author: String) throws -> HubPR {

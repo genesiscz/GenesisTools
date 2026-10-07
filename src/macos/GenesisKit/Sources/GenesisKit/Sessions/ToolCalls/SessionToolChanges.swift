@@ -126,6 +126,9 @@ public final class CLIToolChangeSource: ToolChangeSource, @unchecked Sendable {
         self.timeout = timeout
     }
 
+    /// The `tools` executable this source runs; nil when none was found.
+    public var binaryPath: String? { binary }
+
     public func changes(sessionId: String, toolUseId: String) async -> [ToolFileChange] {
         let key = "\(sessionId)|\(toolUseId)"
         lock.lock()
@@ -215,7 +218,9 @@ public final class CLIToolChangeSource: ToolChangeSource, @unchecked Sendable {
     /// folder, with the scrubbed environment. A GUI app's PATH has no bun, so `#!/usr/bin/env bun`
     /// failed there, and a signed app may not exec the script at all (see `ToolsBridge.launchPlan`).
     public static func run(_ executable: String, _ arguments: [String], timeout: TimeInterval) async -> String? {
-        await withCheckedContinuation { continuation in
+        // Counted for benches (`GENESIS_RENDER_PROBE=1`): one process per row against one per batch.
+        RenderProbe.hit(executable.hasSuffix("/git") ? "toolChanges.process.git" : "toolChanges.process.tools")
+        return await withCheckedContinuation { continuation in
             let plan = ToolsBridge.launchPlan(binaryPath: executable, argv: arguments)
             let process = Process()
             process.executableURL = plan.executable
