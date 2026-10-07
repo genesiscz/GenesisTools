@@ -75,15 +75,29 @@ public final class TranscriptScrollAnchor: ObservableObject {
     /// object, so rows inserted above it change its index, not what is anchored.
     private final class RowAnchor {
         weak var view: NSView?
-        let offset: CGFloat
+        /// The row's top and the viewport's top when they were last in step. A keep moves the viewport by how far
+        /// the ROW moved since then, so a reader's scroll in between is kept, not undone: an absolute position put
+        /// the reader back on the anchored row while they scrolled (2026-10-07, row 8 held for 2 s, ±460 pt).
+        var top: CGFloat
+        var clipY: CGFloat
 
-        init(view: NSView, offset: CGFloat) {
+        init(view: NSView, top: CGFloat, clipY: CGFloat) {
             self.view = view
-            self.offset = offset
+            self.top = top
+            self.clipY = clipY
         }
     }
 
     private var rowAnchor: RowAnchor?
+    /// Recent corrections by `keepRow`, newest last. Row heights that never settle make each correction
+    /// start the next: the live hub logged 520 in 16 s on 2026-10-06, up to 8466 pt in one second, the reader
+    /// unable to scroll up and the viewport finally 3158 pt past the content's end. Past `runawayPoints`
+    /// within `runawayWindow` the anchor lets go, and the reader's scroll rules until `anchorBackoff` passes.
+    private var corrections: [(at: CFAbsoluteTime, points: CGFloat)] = []
+    private var anchorSuspendedUntil: CFAbsoluteTime = 0
+    private static let runawayWindow: CFAbsoluteTime = 1
+    private static let runawayPoints: CGFloat = 1500
+    private static let anchorBackoff: CFAbsoluteTime = 2
     /// Posted by a scripted run (the hub bench) to scroll as a reader would: a glide stops, and the next
     /// move is the reader's.
     public static let readerScrolled = Notification.Name("GenesisKit.transcriptReaderScrolled")
@@ -105,6 +119,10 @@ public final class TranscriptScrollAnchor: ObservableObject {
         // A reader away from the end is kept by the row under them, which also covers rows growing
         // below in the same pass; the distance from the end is for a reader at the latest turn.
         if Self.rowAnchoring, gap > Self.endSlack, rowAnchor?.view != nil {
+            // The row keeps the reader, and during the prepend it must be kept INSIDE the resize: a keep one turn
+            // later drew a frame at the old distance from the top, and a reader still scrolling was left at the
+            // oldest turns (2026-10-07: "Load earlier turns" grew 1906 to 72190 pt, viewport 71069 pt from the end).
+            prependUntil = CFAbsoluteTimeGetCurrent() + seconds
             return
         }
         held = gap
@@ -135,8 +153,14 @@ public final class TranscriptScrollAnchor: ObservableObject {
     /// A wheel or key in the last 0.3 s, or the mouse held down after a press in the list (the scroller's
     /// knob, a drag). A press elsewhere (the split divider) is not the reader moving the list.
     private var readerMoving: Bool {
-        CFAbsoluteTimeGetCurrent() - readerScrollAt < 0.3 || (pressInList && (NSEvent.pressedMouseButtons & 1) != 0)
+        liveScrolling || CFAbsoluteTimeGetCurrent() - readerScrollAt < 0.3 || (pressInList && (NSEvent.pressedMouseButtons & 1) != 0)
     }
+
+    /// Between the scroll view's willStartLiveScroll and didEndLiveScroll: a trackpad gesture and its momentum. After
+    /// its first event the scroll view tracks the gesture itself (responsive scrolling), so the later events never
+    /// reach the event monitor, and without this every frame of the gesture read as someone else's move and was
+    /// pushed back to the anchored row (2026-10-06: 520 corrections in 16 s, the reader unable to scroll up).
+    private var liveScrolling = false
 
     /// Finds the list once it is on screen, so a reader at the latest turn is kept there from the start.
     fileprivate func attachSoon() {
@@ -172,6 +196,7 @@ public final class TranscriptScrollAnchor: ObservableObject {
         detach()
         // A follow measured on the previous list's content means nothing on this one.
         follow = nil
+        liveScrolling = false
         scrollView = scroll
         guard let document = scroll.documentView else { return }
         documentHeight = document.frame.height
@@ -186,6 +211,22 @@ public final class TranscriptScrollAnchor: ObservableObject {
             },
             center.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: nil) { [weak self] _ in
                 MainActor.assumeIsolated { self?.viewportMoved() }
+            },
+            center.addObserver(forName: NSScrollView.willStartLiveScrollNotification, object: scroll, queue: nil) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.liveScrolling = true
+                    self.releaseHold()
+                    self.stopFollowing()
+                    self.readerScrollAt = CFAbsoluteTimeGetCurrent()
+                }
+            },
+            center.addObserver(forName: NSScrollView.didEndLiveScrollNotification, object: scroll, queue: nil) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.liveScrolling = false
+                    self.readerScrollAt = CFAbsoluteTimeGetCurrent()
+                }
             },
             center.addObserver(forName: Self.readerScrolled, object: nil, queue: nil) { [weak self] _ in
                 MainActor.assumeIsolated {
@@ -235,16 +276,26 @@ public final class TranscriptScrollAnchor: ObservableObject {
         // Also while the reader scrolls: the anchor is the row their last scroll step left at the top, and
         // content that arrives mid-scroll (a turn above, a tool call's changes) must not move it.
         if Self.rowAnchoring, before > Self.endSlack, !animatingToEnd, !listMoving, let anchor = rowAnchor, anchor.view != nil {
-            if keepRow(anchor) {
-                // The same cost as a hold's move: the rows on screen need their height listener back.
-                scheduleRemeasure()
+            // One turn later, outside the resize. Moved inside it, the rows on screen lost their height listener
+            // and needed `remeasureVisibleRows`, which resets EVERY row to its estimated height: a live 18-row
+            // window fell from 5207 to 1115 pt, the viewport was clamped and thrown, the rows measured again,
+            // and the next keep started the next re-measure (2026-10-07, Agents › Main "jumping as fuck").
+            if CFAbsoluteTimeGetCurrent() < prependUntil {
+                // A prepend: rare and large, so the move happens inside the resize and pays for the re-measure.
+                if keepRow(anchor) {
+                    scheduleRemeasure()
+                }
+            } else {
+                scheduleRowKeep(anchor)
             }
             updateAtEnd()
         } else if let held {
             keep(held)
             // Only this move inside the resize costs the rows on screen their height listener.
             scheduleRemeasure()
-        } else if follow == nil, before <= Self.endSlack || animatingToEnd, !readerIsChanging {
+        } else if follow == nil, before <= Self.endSlack || animatingToEnd, !readerIsChanging, !readerMoving {
+            // Not while the reader scrolls: a row arriving as they left the end glided them back down, again and
+            // again, while their trackpad went up (Martin, 2026-10-07: "jumping like CRAZY", both directions).
             scheduleFollow(animatingToEnd ? 0 : max(0, before))
         } else {
             updateAtEnd()
@@ -300,6 +351,8 @@ public final class TranscriptScrollAnchor: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self, self.follow != nil else { return }
                 self.follow = nil
+                // The reader started scrolling after the follow was scheduled: the viewport is theirs.
+                guard !self.readerMoving else { return }
                 // To the end itself (a glide, 2026-10-01): the few points the reader sat above it are
                 // the list's spacer, and a glide to a fixed distance fell behind rows measured mid-way.
                 // Rows that wrap again after a width change are not new content: no glide (0.6 s covers
@@ -356,11 +409,39 @@ public final class TranscriptScrollAnchor: ObservableObject {
         // grows at the latest turn once made a mid-growth row the anchor, and the reader stayed there
         // instead of following the end (hub bench `open`: 2903 pt from the end, 2026-10-02).
         if readerMoving || listMoving {
-            recordRow()
+            // A keep still waiting for its turn would otherwise be measured against a row picked from the shifted
+            // rows, and the shift would become the reader's new place.
+            if rowKeepScheduled, !listMoving, let anchor = rowAnchor {
+                // The reader's own move counts; the row's shift is still owed to the waiting keep.
+                anchor.clipY = scrollView?.contentView.bounds.minY ?? anchor.clipY
+            } else {
+                recordRow()
+            }
         } else if let anchor = rowAnchor {
             // Not the reader's move and not the list's (the table restoring an old offset between two
             // resizes): undone, so the row under the reader stays.
             keepRow(anchor)
+        }
+    }
+
+    private var rowKeepScheduled = false
+    /// Until then a resize is the prepend `holdForPrepend` announced.
+    private var prependUntil: CFAbsoluteTime = 0
+
+    /// Keeps the anchored row once per main-queue turn, after the resize that moved it has finished.
+    private func scheduleRowKeep(_ anchor: RowAnchor) {
+        guard !rowKeepScheduled else { return }
+        rowKeepScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.rowKeepScheduled = false
+                // Also while the reader scrolls: rows measured above them must not move what they read. The list's
+                // own jump and a glide to the end win; `viewportMoved` does not replace the row while this waits.
+                guard !self.listMoving, !self.animatingToEnd, self.rowAnchor === anchor else { return }
+                self.keepRow(anchor)
+                self.updateAtEnd()
+            }
         }
     }
 
@@ -376,8 +457,22 @@ public final class TranscriptScrollAnchor: ObservableObject {
         }
         let clip = scroll.contentView
         let maxY = max(0, table.frame.height - clip.bounds.height)
-        let y = min(maxY, max(0, table.rect(ofRow: row).minY + anchor.offset))
+        let rowTop = table.rect(ofRow: row).minY
+        let y = min(maxY, max(0, anchor.clipY + rowTop - anchor.top))
+        anchor.top = rowTop
+        anchor.clipY = y
         guard abs(clip.bounds.origin.y - y) > 0.5 else { return false }
+        let now = CFAbsoluteTimeGetCurrent()
+        guard now >= anchorSuspendedUntil else { return false }
+        corrections.removeAll { now - $0.at > Self.runawayWindow }
+        corrections.append((now, abs(y - clip.bounds.origin.y)))
+        if corrections.reduce(0, { $0 + $1.points }) > Self.runawayPoints {
+            PerfLog.mark(String(format: "transcript.anchor runaway: %d corrections, backing off %.0f s, doc=%.0f", corrections.count, Self.anchorBackoff, table.frame.height))
+            corrections = []
+            anchorSuspendedUntil = now + Self.anchorBackoff
+            rowAnchor = nil
+            return false
+        }
         PerfLog.mark(String(format: "transcript.anchor row %d keep dy=%.0f doc=%.0f", row, y - clip.bounds.origin.y, table.frame.height))
         adjusting = true
         clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
@@ -403,7 +498,7 @@ public final class TranscriptScrollAnchor: ObservableObject {
             rowAnchor = nil
             return
         }
-        rowAnchor = RowAnchor(view: view, offset: clip.bounds.minY - table.rect(ofRow: row).minY)
+        rowAnchor = RowAnchor(view: view, top: table.rect(ofRow: row).minY, clipY: clip.bounds.minY)
     }
 
     /// Puts the viewport's end `distance` above the content's end. `animated`: an ease-out glide of
@@ -418,6 +513,7 @@ public final class TranscriptScrollAnchor: ObservableObject {
             return
         }
         let target = NSPoint(x: clip.bounds.origin.x, y: y)
+        PerfLog.mark(String(format: "transcript.anchor keep end-%.0f dy=%.0f doc=%.0f%@", distance, y - clip.bounds.origin.y, document.frame.height, animated ? " glide" : ""))
         if animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             // Every glide goes to the end (a follow or the pill); rows that measure meanwhile are
             // still the reader's at the end.

@@ -9,6 +9,91 @@ final class HubNavigationTests: XCTestCase {
         HubDefaults.isolate()
     }
 
+    @MainActor
+    private func isolatedModel(wanted: String? = nil) -> HubModel {
+        let model = HubModel(wantedSession: wanted, tab: .transcript)
+        model.panes = [.transcript]
+        model.readSessionCache = { _ in nil }
+        model.writeSessionCache = { _, _ in }
+        model.readDecisions = { SessionDecisionsEnvelope(sessionId: $0, decisions: []) }
+        return model
+    }
+
+    @MainActor
+    func testRefreshPreservesNavigationAndRejectsAnOlderListCompletion() async throws {
+        let a = HubSession(sessionId: "fixture-a"), b = HubSession(sessionId: "fixture-b"), c = HubSession(sessionId: "fixture-c")
+        let model = isolatedModel(wanted: a.sessionId)
+        let initial = expectation(description: "initial list")
+        model.readSessions = { _ in [a, b] }
+        model.writeSessionCache = { _, _ in initial.fulfill() }
+        model.loadSessions()
+        await fulfillment(of: [initial], timeout: 2)
+        XCTAssertEqual(model.selectedID, a.id)
+        model.select(b.id)
+        model.initialMode = .prs
+        model.setMode(.sessions)
+
+        let started = expectation(description: "both refreshes requested")
+        started.expectedFulfillmentCount = 2
+        var pending: [CheckedContinuation<[HubSession], Error>] = []
+        model.readSessions = { _ in try await withCheckedThrowingContinuation { continuation in
+            pending.append(continuation)
+            started.fulfill()
+        } }
+        let published = expectation(description: "newest list publishes")
+        var writes = 0
+        model.writeSessionCache = { _, _ in writes += 1; published.fulfill() }
+        model.loadSessions()
+        model.loadSessions()
+        await fulfillment(of: [started], timeout: 2)
+        model.sessions.append(c)
+        model.select(c.id)
+        pending[1].resume(returning: [b, c])
+        await fulfillment(of: [published], timeout: 2)
+        pending[0].resume(returning: [a])
+        for _ in 0..<5 { await Task.yield() }
+        XCTAssertEqual(model.selectedID, c.id)
+        XCTAssertEqual(model.mode, .sessions)
+        XCTAssertEqual(model.sessions.map(\.id), [b.id, c.id])
+        XCTAssertEqual(writes, 1)
+    }
+
+    @MainActor
+    func testLateHeaderSuccessOrFailureCannotPopulateTheNextSession() async throws {
+        for fail in [false, true] {
+            let a = HubSession(sessionId: "fixture-a"), b = HubSession(sessionId: "fixture-b")
+            let model = isolatedModel()
+            model.sessions = [a, b]
+            model.panes = [.files]
+            let started = expectation(description: "header A starts")
+            var pending: CheckedContinuation<TranscriptEnvelope, Error>?
+            model.readTranscript = { _, _ in try await withCheckedThrowingContinuation {
+                pending = $0
+                started.fulfill()
+            } }
+            model.select(a.id)
+            await fulfillment(of: [started], timeout: 2)
+            model.panes = [.transcript]
+            model.select(b.id)
+            let response = try SessionTranscriptClient.decode(Data(#"{"provider":"claude","sessionId":"fixture-a","filePath":"/fixture/a","byteSize":0,"truncated":false,"nextOffset":0,"turns":[],"totals":{"modelCalls":99}}"#.utf8))
+            if fail { pending?.resume(throwing: NSError(domain: "fixture-A", code: 1)) }
+            else { pending?.resume(returning: response) }
+            for _ in 0..<5 { await Task.yield() }
+            XCTAssertEqual(model.selectedID, b.id)
+            XCTAssertNil(model.transcriptTotals)
+            XCTAssertNil(model.transcriptError)
+            XCTAssertFalse(model.loadingTranscript)
+            let next = expectation(description: "header B can start")
+            model.readTranscript = { row, _ in
+                XCTAssertEqual(row.id, b.id)
+                next.fulfill()
+                return response
+            }
+            model.panes = [.files]
+            await fulfillment(of: [next], timeout: 2)
+        }
+    }
+
     private func place(_ mode: HubMode, _ selection: String?) -> HubNavEntry {
         HubNavEntry(mode: mode, selection: selection)
     }
@@ -99,6 +184,30 @@ final class HubNavigationTests: XCTestCase {
         drainMainQueue()
         XCTAssertEqual(model.selectedID, "claude:two")
         XCTAssertFalse(model.history.canGoForward)
+    }
+
+    // Martin, 2026-10-06: Agents at parent X, child Y; a banner opens PR 123; back must land on X / Y again.
+    func testBackFromAPrOpenedByABannerReturnsToTheAgentChild() {
+        let model = HubModel(wantedSession: nil, tab: .transcript)
+        let child = AgentTree.key(parent: "parent-x", child: "child-y")
+        MainActor.assumeIsolated {
+            model.setMode(.agents)
+            model.agents.select(parent: "parent-x", child: "child-y")
+        }
+        drainMainQueue()
+        MainActor.assumeIsolated {
+            model.setMode(.prs)
+            model.prs.selectedID = "github.com/acme/app#123"
+        }
+        drainMainQueue()
+        XCTAssertEqual(model.history.back.last, place(.agents, child))
+
+        MainActor.assumeIsolated { model.goBack() }
+        drainMainQueue()
+        XCTAssertEqual(model.mode, .agents)
+        let selected = MainActor.assumeIsolated { model.agents.selectedID }
+        XCTAssertEqual(selected, child)
+        XCTAssertEqual(model.history.forward, [place(.prs, "github.com/acme/app#123")])
     }
 
     private func drainMainQueue() {

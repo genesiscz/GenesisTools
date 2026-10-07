@@ -11,7 +11,8 @@ import type { SessionMetadataRecord } from "@genesiscz/utils/agent-sessions/cach
 import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
-import { readParent } from "./parent";
+import { attachCodexAgents, buildCodexParent, type CodexAgentRecord, recentCodexAgentRecords } from "./codex-agents";
+import { readParent, startedAtOf } from "./parent";
 import { type ParentRow, sortNodes, sortParents, withoutFullPrompts } from "./tree";
 import { type AgentNode, type AgentsTree, DEFAULT_AGENTS_LIMIT, DEFAULT_AGENTS_SINCE_HOURS } from "./types";
 
@@ -37,8 +38,27 @@ export interface HubAgentsOptions {
     promptChars?: number;
 }
 
+/**
+ * The file's own mtime when it is newer than the index row's. The session index can lag a large transcript that is
+ * being written by many minutes: on 2026-10-07 a running 128 MB session showed "18m ago" and not live while its
+ * file had changed seconds before. One stat per parent, and a missing file keeps the row's value.
+ */
+export function freshMtime(row: Pick<AgentSessionRow, "filePath" | "mtime">): number {
+    try {
+        const onDisk = statSync(row.filePath).mtimeMs;
+        return Math.max(row.mtime, onDisk);
+    } catch (error) {
+        logger.debug(
+            { error, filePath: row.filePath },
+            "[hub agents] parent file not readable; keeping the index mtime"
+        );
+        return row.mtime;
+    }
+}
+
 function parentRow(row: AgentSessionRow): ParentRow {
     return {
+        provider: row.provider === "codex" ? "codex" : "claude",
         sessionId: row.sessionId,
         title: row.title,
         project: row.project,
@@ -46,7 +66,7 @@ function parentRow(row: AgentSessionRow): ParentRow {
         filePath: row.filePath,
         model: row.model,
         account: row.account,
-        mtime: row.mtime,
+        mtime: freshMtime(row),
     };
 }
 
@@ -57,8 +77,19 @@ async function parentById(id: string, rows: AgentSessionRow[], now: number): Pro
         return parentRow(listed);
     }
 
+    for (const provider of ["claude", "codex"] as const) {
+        const found = await resolveParentRow(id, provider, now);
+        if (found) {
+            return found;
+        }
+    }
+
+    return null;
+}
+
+async function resolveParentRow(id: string, provider: "claude" | "codex", now: number): Promise<ParentRow | null> {
     try {
-        const resolved = await resolveTranscript(id, {}, "claude");
+        const resolved = await resolveTranscript(id, {}, provider);
         const mtime = Bun.file(resolved.filePath).lastModified;
         // The window reaching back to that session, so the index row (title, project, account)
         // is read rather than guessed. A live session's index row lags its file (a reused listing
@@ -66,7 +97,7 @@ async function parentById(id: string, rows: AgentSessionRow[], now: number): Pro
         // missed 7 of 40 lookups taken just after a write, and the hub showed the bare id.
         const hours = (now - mtime) / 3_600_000 + 1;
         const rows = await listAgentSessionRows({
-            providers: ["claude"],
+            providers: [provider],
             hours,
             maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
         });
@@ -74,6 +105,7 @@ async function parentById(id: string, rows: AgentSessionRow[], now: number): Pro
         return row
             ? parentRow(row)
             : {
+                  provider,
                   sessionId: resolved.sessionId,
                   title: null,
                   project: null,
@@ -84,7 +116,7 @@ async function parentById(id: string, rows: AgentSessionRow[], now: number): Pro
                   mtime,
               };
     } catch (error) {
-        logger.debug({ error, id }, "[hub agents] parent session not found");
+        logger.debug({ error, id, provider }, "[hub agents] parent session not found");
         return null;
     }
 }
@@ -152,6 +184,19 @@ export async function parentsOfRecentAgents(
     return [...extra.values()];
 }
 
+/** How far back a one-session lookup reaches for that session's Codex sub-agents. */
+const SESSION_AGENTS_LOOKBACK_MS = 14 * 24 * 3_600_000;
+
+/** Codex sub-agents from the session index; an index that cannot answer leaves the Codex rows without any. */
+async function codexAgentRecords(since: number): Promise<CodexAgentRecord[]> {
+    try {
+        return await recentCodexAgentRecords(since);
+    } catch (error) {
+        logger.warn({ error }, "[hub agents] codex sub-agent listing unavailable; codex sessions list without agents");
+        return [];
+    }
+}
+
 /** The full tree: every node carries its whole spawn prompt (the list strips it, `hubAgent` keeps it). */
 async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
     const now = options.now ?? Date.now();
@@ -160,19 +205,23 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
     const root = options.teamsRoot ?? teamsRoot();
     const since = now - hours * 3_600_000;
 
-    const [rows, workers] = await Promise.all([
+    const [rows, workers, codexRecords] = await Promise.all([
         prof.measureAsync("parents", () =>
             options.session
                 ? Promise.resolve([])
                 : listAgentSessionRows({
-                      providers: ["claude"],
+                      providers: ["claude", "codex"],
                       hours,
                       limit,
                       maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
                   })
         ),
         prof.measureAsync("workers", () => listWorkers({ now, since, promptChars: options.promptChars })),
+        prof.measureAsync("codex-agents", () =>
+            codexAgentRecords(options.session ? now - SESSION_AGENTS_LOOKBACK_MS : since)
+        ),
     ]);
+    const codexTops = prof.measure("codex-tree", () => attachCodexAgents(codexRecords, { now, model: null }));
 
     let parentRows: ParentRow[];
     if (options.session) {
@@ -186,6 +235,19 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
         for (const row of byChild) {
             parentRows.push(row);
             listed.add(row.sessionId);
+        }
+
+        // A Codex session older than the window whose sub-agent wrote inside it, like a Claude lead.
+        for (const id of codexTops.keys()) {
+            if (listed.has(id)) {
+                continue;
+            }
+
+            const lead = await parentById(id, rows, now);
+            if (lead) {
+                parentRows.push(lead);
+                listed.add(lead.sessionId);
+            }
         }
 
         const waiting = new Set(
@@ -212,7 +274,12 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
     const parents = sortParents(
         prof.measure("tree", () =>
             parentRows.map((row) =>
-                readParent(row, bySession.get(row.sessionId) ?? [], root, { now, promptChars: options.promptChars })
+                row.provider === "codex"
+                    ? buildCodexParent(row, codexTops.get(row.sessionId) ?? [], now, startedAtOf(row.filePath))
+                    : readParent(row, bySession.get(row.sessionId) ?? [], root, {
+                          now,
+                          promptChars: options.promptChars,
+                      })
             )
         )
     ).slice(0, limit);
@@ -236,8 +303,9 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
 }
 
 /**
- * Every Claude session in the window with its agents: sub-agents and teammates from its
- * `subagents/` folder, codex and grok workers from their rendezvous session. A session is in the
+ * Every Claude and Codex session in the window with its agents: a Claude session's sub-agents and
+ * teammates from its `subagents/` folder, a Codex session's sub-agents from the rollouts that name
+ * it as their spawner, and codex and grok workers from their rendezvous session. A session is in the
  * window when it or any of its agents wrote inside it. A worker whose rendezvous session is not
  * listed is an orphan; a RUNNING one pulls its session in whatever that session's age.
  *

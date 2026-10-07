@@ -202,6 +202,8 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
     public var banner: String?
     public var onLoadEarlier: () -> Void = {}
     public var onDismissBanner: () -> Void = {}
+    /// See `SessionTranscriptList.onReaderAtEnd`.
+    public var onReaderAtEnd: (Bool) -> Void = { _ in }
     public var preset = TranscriptPreset()
     /// Space before the header's first row. 80 pt clears the traffic lights of a window the
     /// screen fills; a host that places the screen beside its own sidebar passes 16.
@@ -233,6 +235,7 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
         banner: String? = nil,
         onLoadEarlier: @escaping () -> Void = {},
         onDismissBanner: @escaping () -> Void = {},
+        onReaderAtEnd: @escaping (Bool) -> Void = { _ in },
         preset: TranscriptPreset = TranscriptPreset(),
         leadingInset: CGFloat = SessionDetailScreenChrome.leadingInset,
         services: TranscriptServices = .none,
@@ -255,6 +258,7 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
         self.banner = banner
         self.onLoadEarlier = onLoadEarlier
         self.onDismissBanner = onDismissBanner
+        self.onReaderAtEnd = onReaderAtEnd
         self.preset = preset
         self.leadingInset = leadingInset
         self.services = services
@@ -283,7 +287,8 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
                     windowNote: windowNote,
                     onLoadEarlier: onLoadEarlier,
                     preset: preset,
-                    services: services
+                    services: services,
+                    onReaderAtEnd: onReaderAtEnd
                 )
                 .frame(maxWidth: .infinity)
                 if showSidebar {

@@ -114,6 +114,9 @@ public struct SessionTranscriptList: View {
     /// and a "Latest" button appears once they scrolled away.
     public var followsLatest = false
     public var emptyMessage = "No turns in this session file."
+    /// Whether the reader is at the latest turn, each time it flips: a host can trim a live window's oldest turns
+    /// only while nobody reads them.
+    public var onReaderAtEnd: (Bool) -> Void = { _ in }
 
     public init(
         document: TranscriptDocument,
@@ -127,8 +130,10 @@ public struct SessionTranscriptList: View {
         preset: TranscriptPreset = TranscriptPreset(),
         services: TranscriptServices = .none,
         followsLatest: Bool = false,
-        emptyMessage: String = "No turns in this session file."
+        emptyMessage: String = "No turns in this session file.",
+        onReaderAtEnd: @escaping (Bool) -> Void = { _ in }
     ) {
+        self.onReaderAtEnd = onReaderAtEnd
         self.document = document
         self.provider = provider
         self.modelName = modelName
@@ -683,6 +688,7 @@ public struct SessionTranscriptList: View {
                 if atEnd {
                     unseen = 0
                 }
+                onReaderAtEnd(atEnd)
             }
             .onChange(of: scrollTarget) { _, request in
                 guard let request else { return }

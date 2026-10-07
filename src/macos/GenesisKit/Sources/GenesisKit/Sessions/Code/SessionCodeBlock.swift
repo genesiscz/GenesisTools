@@ -292,8 +292,9 @@ public enum CodeBlockRenderer {
     // Lines the plain draw on the main thread gives text to (see `drawn`).
     // A Verbose result can run to thousands of lines; the rest arrive with the off-main pass.
     public static let firstDrawLimit = 200
-    /// Diff bands are padded to this many columns so a changed line reads as a full-width band.
-    public static let bandWidth = 96
+    /// Bands are padded to the block's widest line, up to this many columns: a minified line must not turn every
+    /// band into kilobytes of spaces.
+    public static let maxBandColumns = 400
 
     public static let font = Font.system(size: 11.5, design: .monospaced)
 
@@ -306,7 +307,10 @@ public enum CodeBlockRenderer {
         let lines = limit.map { Array(block.lines.prefix($0)) } ?? block.lines
         let width = String(lines.compactMap(\.number).max() ?? 0).count
         // A focus line is banded like a diff line.
-        let band = min(bandWidth, lines.filter { $0.mark == .added || $0.mark == .removed || $0.mark == .focus }.map { $0.text.count }.max() ?? 0)
+        // Every band ends at the block's widest line, so the bands share one right edge. Capped at 96 columns, a
+        // short changed line's band stopped there while a longer one beside it ran on (2026-10-07).
+        let banded = lines.contains { $0.mark == .added || $0.mark == .removed || $0.mark == .focus }
+        let band = banded ? min(maxBandColumns, lines.map { $0.text.count }.max() ?? 0) : 0
         // Once per block: `isDiff` walks every line, and it used to run for every line drawn.
         let isDiff = block.isDiff
         var highlighter = SyntaxHighlighter(language: highlight ? block.language : .plain)

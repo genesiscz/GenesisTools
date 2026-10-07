@@ -178,6 +178,7 @@ enum HubBench {
             if only.contains("open"), model.mode == .sessions, model.panes.contains(.transcript) { addTranscriptOpen() }
             if only.contains("panes"), model.mode == .sessions, model.panes.contains(.transcript) { addPaneToggle() }
             if only.contains("settle"), model.mode == .sessions, model.panes.contains(.transcript) { addSettleWatch() }
+            if only.contains("wheel"), model.mode == .sessions, model.panes.contains(.transcript) { addWheelUp() }
             PerfLog.mark("hub.bench start: \(steps.count) steps, panes \(model.panes.map(\.rawValue).joined(separator: ","))")
             guard ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_AX"] == "1" else {
                 tick()
@@ -475,6 +476,54 @@ enum HubBench {
                         HubBench.note("transcript.settleRow.\(n)", table.row(for: view))
                     }, delay: 0.05))
                 }
+            }
+        }
+
+        /// `wheel` (opt-in, `GENESIS_HUB_BENCH_OPEN=<session id prefix>`): a reader scrolling UP through a
+        /// session in small steps, the way a trackpad does. Every 50 ms the reader's scroll is announced as
+        /// a wheel would be and the viewport moves up `GENESIS_HUB_BENCH_WHEEL_PX` (default 60) points.
+        /// `transcript.wheel.delta` records how far the viewport really moved since the step before (-60
+        /// when nothing interfered; a positive or very different value is a jump), `transcript.wheel.row`
+        /// the row at the viewport's top, and `transcript.wheel.fromBottom` the distance from the end.
+        private func addWheelUp() {
+            let env = ProcessInfo.processInfo.environment
+            let wanted = (env["GENESIS_HUB_BENCH_OPEN"] ?? "").split(separator: ",").map(String.init)
+            guard let session = wanted.compactMap({ prefix in model.sessions.first { $0.sessionId.hasPrefix(prefix) } }).first else { return }
+            let px = CGFloat(env["GENESIS_HUB_BENCH_WHEEL_PX"].flatMap(Int.init) ?? 60)
+            let count = env["GENESIS_HUB_BENCH_WHEEL_STEPS"].flatMap(Int.init) ?? 200
+            order.append("wheel")
+            steps.append(Step(scenario: "wheel", action: { [weak self] in self?.model.select(session.id) }, delay: env["GENESIS_HUB_BENCH_WHEEL_WAIT"].flatMap(Double.init) ?? 3.0))
+            var last: CGFloat?
+            // The row view at the viewport's top and where it should sit after this step: a reader sees a jump when
+            // the text under them moves by more than their own scroll, even with the viewport itself still.
+            var topRow = -1
+            var expected: CGFloat = 0
+            for n in 0..<count {
+                steps.append(Step(scenario: "wheel", action: { [weak self] in
+                    guard let self, let table = HubBench.largestTable(in: self.window.contentView),
+                          let scroll = table.enclosingScrollView else { return }
+                    let clip = scroll.contentView
+                    if n == 0 {
+                        clip.scroll(to: NSPoint(x: 0, y: max(0, table.frame.height - clip.bounds.height)))
+                        scroll.reflectScrolledClipView(clip)
+                        last = clip.bounds.origin.y
+                    }
+                    if let before = last {
+                        HubBench.note("transcript.wheel.delta", Int((clip.bounds.origin.y - before).rounded()))
+                    }
+                    if topRow >= 0, topRow < table.numberOfRows {
+                        HubBench.note("transcript.wheel.jump", Int((table.rect(ofRow: topRow).minY - clip.bounds.minY - expected).rounded()))
+                    }
+                    NotificationCenter.default.post(name: TranscriptScrollAnchor.readerScrolled, object: nil)
+                    let from = clip.bounds.origin.y
+                    clip.scroll(to: NSPoint(x: 0, y: max(0, from - px)))
+                    scroll.reflectScrolledClipView(clip)
+                    last = clip.bounds.origin.y
+                    topRow = table.row(at: NSPoint(x: 1, y: clip.bounds.minY + 1))
+                    expected = topRow >= 0 ? table.rect(ofRow: topRow).minY - clip.bounds.minY : 0
+                    HubBench.note("transcript.wheel.row", table.row(at: NSPoint(x: 1, y: clip.bounds.minY + 1)))
+                    HubBench.note("transcript.wheel.fromBottom", Int((table.frame.height - clip.bounds.maxY).rounded()))
+                }, delay: 0.05))
             }
         }
 

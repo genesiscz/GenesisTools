@@ -153,6 +153,104 @@ final class SessionTranscriptScrollTests: XCTestCase {
         XCTAssertLessThanOrEqual(document.frame.height - list.contentView.bounds.maxY, 80, "the reader at the end was left behind")
     }
 
+
+    // GenesisTools adaptation: a trackpad scroll is tracked by the scroll view itself after its first event (responsive
+    // scrolling), so the later events and the momentum never reach the app's event monitor. The anchor saw the moves as
+    // "not the reader's" and pushed the viewport back to the anchored row on every frame: 520 corrections in 16 s on
+    // 2026-10-06, the reader unable to scroll up. A live scroll (willStart … didEnd) is the reader's for its whole length.
+    func testATrackpadLiveScrollIsNeverPushedBack() throws {
+        let session = try InventedSession.make(sections: 40)
+        let rig = Rig(session.list(), size: NSSize(width: 560, height: 700))
+        defer { rig.close() }
+        rig.settle(1.5)
+        let list = try XCTUnwrap(rig.transcript, "no transcript scroll view")
+        let document = try XCTUnwrap(list.documentView)
+        rig.scrollTranscript(to: document.frame.height * 0.6)
+        rig.settle(0.5)
+        // One wheel notch: the anchor takes a row as the reader's, then the reader's 0.3 s window runs out.
+        rig.notches(at: rig.center(of: list), dx: 0, dy: 1, count: 1)
+        rig.settle(0.8)
+        let center = NotificationCenter.default
+        center.post(name: NSScrollView.willStartLiveScrollNotification, object: list)
+        let start = list.contentView.bounds.origin.y
+        var previous = start
+        var leastUp = CGFloat.greatestFiniteMagnitude
+        for step in 1...40 {
+            list.contentView.scroll(to: NSPoint(x: 0, y: start - CGFloat(step) * 20))
+            list.reflectScrolledClipView(list.contentView)
+            center.post(name: NSScrollView.didLiveScrollNotification, object: list)
+            rig.settle(0.016)
+            let now = list.contentView.bounds.origin.y
+            leastUp = min(leastUp, previous - now)
+            previous = now
+        }
+        // Rows measured above the viewport may shift it a few points (the anchor keeps what is on screen still);
+        // a push back to the anchored row undoes the whole step.
+        XCTAssertGreaterThan(leastUp, 10, "a step of the reader's live scroll moved only \(leastUp) pt up: the anchor pushed it back")
+        center.post(name: NSScrollView.didEndLiveScrollNotification, object: list)
+        rig.settle(0.5)
+        XCTAssertLessThan(list.contentView.bounds.origin.y, start - 700, "the live scroll was pushed back by the anchor")
+    }
+
+    // GenesisTools adaptation: Martin, 2026-10-06 (screen recording of the Agents transcript): scrolling UP only, the
+    // view would not move, then threw the viewport 3158 pt past the content's end and landed on the last turn. The
+    // live log had 520 `transcript.anchor row 5 keep` corrections in 16 s, each pushing the viewport back DOWN.
+    // A reader's upward scroll through rows that have not been measured yet must never be pushed back down.
+    func testScrollingUpThroughUnmeasuredRowsIsNeverPushedBackDown() throws {
+        let session = try InventedSession.make(sections: 40)
+        let rig = Rig(session.list(), size: NSSize(width: 560, height: 700))
+        defer { rig.close() }
+        rig.settle(1.5)
+        let list = try XCTUnwrap(rig.transcript, "no transcript scroll view")
+        let document = try XCTUnwrap(list.documentView)
+        rig.scrollTranscript(to: document.frame.height * 0.6)
+        rig.settle(0.8)
+        let point = rig.center(of: list)
+        var previous = list.contentView.bounds.origin.y
+        var worstDown: CGFloat = 0
+        var worstJump: CGFloat = 0
+        var total: CGFloat = 0
+        for _ in 0..<120 {
+            rig.notches(at: point, dx: 0, dy: 6, count: 1)
+            rig.settle(0.02)
+            let now = list.contentView.bounds.origin.y
+            worstDown = max(worstDown, now - previous)
+            worstJump = max(worstJump, abs(now - previous))
+            total += previous - now
+            previous = now
+        }
+        let height = document.frame.height
+        XCTAssertLessThanOrEqual(worstDown, 2, "the viewport was pushed down by \(worstDown) pt while the reader scrolled up")
+        XCTAssertLessThan(worstJump, 1500, "the viewport jumped \(worstJump) pt in one step")
+        XCTAssertGreaterThan(total, 600, "120 notches up moved the viewport only \(total) pt")
+        XCTAssertLessThanOrEqual(list.contentView.bounds.maxY, height + 1, "the viewport ended past the content's end")
+    }
+
+    // GenesisTools adaptation: Martin, 2026-10-07, scrolling up from the latest turn of a running session "jumping
+    // like CRAZY". A row that arrived while the reader was still within the end's slack scheduled a follow, and the
+    // follow glided them back down while their trackpad scroll went up. Nothing pulls a reader who is scrolling.
+    func testAReaderScrollingUpFromTheEndIsNotPulledBackByArrivingRows() throws {
+        let session = try InventedSession.make(sections: 4)
+        let rig = Rig(Streaming(session: session), size: NSSize(width: 560, height: 700))
+        defer { rig.close() }
+        rig.settle(1.0)
+        let list = try XCTUnwrap(rig.transcript, "no transcript scroll view")
+        let center = NotificationCenter.default
+        center.post(name: NSScrollView.willStartLiveScrollNotification, object: list)
+        var previous = list.contentView.bounds.origin.y
+        var worstDown: CGFloat = 0
+        for _ in 0..<60 {
+            list.contentView.scroll(to: NSPoint(x: 0, y: max(0, list.contentView.bounds.origin.y - 6)))
+            list.reflectScrolledClipView(list.contentView)
+            center.post(name: NSScrollView.didLiveScrollNotification, object: list)
+            rig.settle(0.03)
+            let now = list.contentView.bounds.origin.y
+            worstDown = max(worstDown, now - previous)
+            previous = now
+        }
+        center.post(name: NSScrollView.didEndLiveScrollNotification, object: list)
+        XCTAssertLessThanOrEqual(worstDown, 2, "a follow pulled the scrolling reader \(worstDown) pt back down")
+    }
     func testAReaderWhoScrolledUpIsNeverMovedByArrivingRows() throws {
         let session = try InventedSession.make(sections: 3)
         let rig = Rig(Streaming(session: session), size: NSSize(width: 560, height: 700))

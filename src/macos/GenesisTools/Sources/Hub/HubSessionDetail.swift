@@ -19,12 +19,10 @@ struct HubSessionDetailHost: View {
     /// transcript's query for `tools ai sessions tail` (its file or worker name), not a session of its own,
     /// so the per-session extras (spend, sub-agent list, terminal, insights, resume) stay off.
     var agentChild = false
-    static let pageSize = 150
-    /// Viewport first: the newest turns only, so the first layout (which scrolls to the last row and so
-    /// measures every row above it) handles a screenful instead of `pageSize` turns. A 172 MB session
-    /// stalled the main thread 0.9–1.5 s at open with the whole window in one go.
-    /// `GENESIS_HUB_FIRST_PAGE=150` restores the old one-shot window, for A/B measurements.
-    static let firstPage = ProcessInfo.processInfo.environment["GENESIS_HUB_FIRST_PAGE"].flatMap(Int.init) ?? 12
+    /// Paging (GenesisKit `TranscriptPaging`): 150 turns per earlier page, a first page of 12 (viewport
+    /// first). `GENESIS_HUB_FIRST_PAGE=150` restores the old one-shot window, for A/B measurements.
+    static let pageSize = TranscriptPaging.pageSize
+    static let firstPage = TranscriptPaging.firstPage
     /// With `GENESIS_HUB_FILL=1` only: the rest of the window arrives in chunks of this many turns while
     /// the reader is idle. Off by default: each prepend made the List measure every row again, 1 to 3.6 s
     /// of main thread per step on a big session (6 steps, app-perf.log 2026-10-01 01:10), which read as
@@ -36,6 +34,9 @@ struct HubSessionDetailHost: View {
     static let firstPageDone = Notification.Name("hub.transcript.firstPageDone")
 
     @State private var nativeLog: SessionNativeLog?
+    @State private var nativeSummary: SessionNativeSummary?
+    @State private var builder = TranscriptBuildQueue()
+    @State private var earlierSearchTurns: [TranscriptTurn] = []
     @State private var services = TranscriptServices.none
     @State private var changeSource: ToolChangeSource?
     @State private var spend: HubSpend.Estimate?
@@ -48,6 +49,12 @@ struct HubSessionDetailHost: View {
     @State private var envelope: TranscriptEnvelope?
     @State private var turns: [TranscriptTurn] = []
     @State private var windowStart = 0
+    /// The reader is at the latest turn (the list's anchor says so): only then may the follow trim the oldest turns.
+    @State private var readerAtEnd = true
+    /// A live window grows by every followed turn. Past this, while the reader is at the end, the oldest turns go
+    /// (back to `pageSize`; "Load earlier turns" brings them back). A 336-turn window made one scroll re-measure all
+    /// of its rows: a 5.7 s main-thread stall, 41% in AppKit keeping the top row stable (2026-10-07).
+    static let liveWindowLimit = TranscriptPaging.pageSize * 2
     @State private var document = TranscriptDocument.empty
     @State private var digest = SessionActivityDigest.empty
     @State private var loadState: TranscriptLoadState = .loading
@@ -63,8 +70,8 @@ struct HubSessionDetailHost: View {
     @State private var searchNote: String?
     @State private var searchID = 0
     /// Live tail: one `tools ai sessions tail --live` process per open detail sends each new or changed
-    /// turn (Hub/HubTranscriptTail.swift). Stopped while the window is hidden or minimized.
-    @State private var tail: HubTranscriptTail?
+    /// turn (GenesisKit `TranscriptLiveTail`). Stopped while the window is hidden or minimized.
+    @State private var tail: TranscriptLiveTail?
     /// The window this detail is in, for the hide and minimize pauses.
     @State private var host = HostWindow()
     /// Every sub-agent of the session from `tools ai sessions subagents` (its `subagents/` directory),
@@ -85,6 +92,7 @@ struct HubSessionDetailHost: View {
             banner: banner,
             onLoadEarlier: { Task { await loadEarlier() } },
             onDismissBanner: { banner = nil },
+            onReaderAtEnd: { readerAtEnd = $0 },
             preset: TranscriptPreset(query: transcriptQuery ?? ""),
             leadingInset: 16,
             services: services,
@@ -110,6 +118,8 @@ struct HubSessionDetailHost: View {
         }
         .onDisappear {
             onScreen = false
+            buildID += 1
+            builder.cancel()
             stopTail()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in stopTail() }
@@ -132,9 +142,12 @@ struct HubSessionDetailHost: View {
             envelope = nil
             turns = []
             windowStart = 0
+            readerAtEnd = true
             document = .empty
             digest = .empty
             nativeLog = nil
+            nativeSummary = nil
+            earlierSearchTurns = []
             services = .none
             subagents = nil
             subagentsReadAt = .distantPast
@@ -151,10 +164,10 @@ struct HubSessionDetailHost: View {
             if Self.autoFill {
                 await fillWindow()
             }
-            guard !agentChild else { return }
+            guard !agentChild, !Task.isCancelled else { return }
             let row = session
             let fresh = await Task.detached(priority: .utility) { HubSpend.fetch(row) }.value
-            if let fresh, row.id == session.id {
+            if !Task.isCancelled, row.id == session.id {
                 spend = fresh
             }
             // A working sub-agent writes its own file, not the session's: nothing else wakes the view.
@@ -232,7 +245,7 @@ struct HubSessionDetailHost: View {
         info.lastActivityAt = lastActivity
         info.contextTokens = session.displayContextTokens
         info.compacted = session.compacted ?? false
-        var usage = nativeLog.map(\.summary.total).flatMap { $0.isEmpty ? nil : $0 } ?? SessionUsage(envelope?.totals)
+        var usage = nativeSummary.map(\.total).flatMap { $0.isEmpty ? nil : $0 } ?? SessionUsage(envelope?.totals)
         if let spend, usage?.costUsd == nil {
             var priced = usage ?? SessionUsage()
             priced.costUsd = spend.usd
@@ -299,7 +312,13 @@ struct HubSessionDetailHost: View {
         actions.refresh = {
             // An established window keeps its start, 0 included: a nil offset asks for the latest turns, which
             // drops the earlier ones on screen once more turns arrived than the limit leaves room for.
-            Task { await load(offset: turns.isEmpty ? nil : windowStart, limit: max(Self.pageSize, turns.count + Self.pageSize), throughEnd: true) }
+            Task {
+                let row = session
+                await load(offset: turns.isEmpty ? nil : windowStart, limit: TranscriptPaging.refreshLimit(loaded: turns.count), throughEnd: true)
+                guard !agentChild, !Task.isCancelled, row.id == session.id else { return }
+                let fresh = await Task.detached(priority: .utility) { HubSpend.fetch(row, force: true) }.value
+                if !Task.isCancelled, row.id == session.id { spend = fresh }
+            }
         }
         actions.copy = { text in PathOpener.copy(text) }
         actions.openSubagent = agentChild ? nil : onOpenSubagent
@@ -374,6 +393,10 @@ struct HubSessionDetailHost: View {
     /// unlike a jump's window around one turn.
     private func load(offset: Int?, limit: Int, throughEnd: Bool = false) async {
         loadID += 1
+        searchID += 1
+        earlierSearchTurns = []
+        searchDocument = nil
+        searchNote = nil
         let id = loadID
         // A new window (another session, a refresh): an earlier page or a tail still on its way
         // belongs to the old one and is dropped on arrival, so its flags must not stop this one.
@@ -381,18 +404,16 @@ struct HubSessionDetailHost: View {
         let span = HubPerf.begin("transcript.page", "limit=\(limit) offset=\(offset.map(String.init) ?? "-")", awaits: true)
         defer { span.end("\(turns.count) turns") }
         do {
-            var limit = limit
-            var fetched = try await SessionTranscriptClient.fetch(using: HubSource.bridge, sessionId: session.sessionId, limit: limit, offset: offset)
             // A window that stopped short of the latest turn (more turns arrived than the limit left
-            // room for) is fetched again from the same offset with exactly the room the transcript's
-            // turn count asks for. Bounded: a live session can grow between two fetches.
-            var tries = 0
-            while throughEnd, let start = offset, let count = fetched.turnCount, fetched.nextOffset < count, tries < 3 {
-                guard id == loadID else { return }
-                tries += 1
-                limit = count - start
-                fetched = try await SessionTranscriptClient.fetch(using: HubSource.bridge, sessionId: session.sessionId, limit: limit, offset: start)
-            }
+            // room for) is fetched again from the same offset (GenesisKit `TranscriptPaging.fetchWindow`).
+            let fetched = try await TranscriptPaging.fetchWindow(
+                using: HubSource.bridge,
+                sessionId: session.sessionId,
+                offset: offset,
+                limit: limit,
+                throughEnd: throughEnd,
+                isCurrent: { id == loadID }
+            )
             guard id == loadID else { return }
             envelope = fetched
             turns = fetched.turns
@@ -416,7 +437,7 @@ struct HubSessionDetailHost: View {
             // Second pass: the session file adds per-call usage, models and full tool inputs.
             let path = fetched.filePath
             let scan = HubPerf.begin("transcript.nativeScan", awaits: true)
-            let log = await Task.detached(priority: .utility) { SessionNativeLog.scan(path: path) }.value
+            let log = await Task.detached(priority: .utility) { SessionNativeLogStore.shared.load(path: path) }.value
             scan.end()
             guard id == loadID else { return }
             nativeLog = log
@@ -424,7 +445,10 @@ struct HubSessionDetailHost: View {
                 // `GENESIS_HUB_TOOL_CHANGES=per-row` brings back one process per row, for A/B measurements.
                 changeSource = ProcessInfo.processInfo.environment["GENESIS_HUB_TOOL_CHANGES"] == "per-row"
                     ? CLIToolChangeSource(toolsBinary: HubSource.bridge.binaryPath)
-                    : HubToolChangeSource(toolsBinary: HubSource.bridge.binaryPath)
+                    : BatchedToolChangeSource(toolsBinary: HubSource.bridge.binaryPath, trace: { calls in
+                        let span = HubPerf.begin("toolChanges.batch", "\(calls) calls", awaits: true)
+                        return { note in span.end(note) }
+                    })
             }
             let fresh = TranscriptServices(
                 sessionId: fetched.sessionId,
@@ -508,7 +532,13 @@ struct HubSessionDetailHost: View {
         tail = nil
         guard onScreen, let current = envelope, loadState == .loaded, !isPaused else { return }
         let owner = session.id
-        tail = HubTranscriptTail(query: session.sessionId, offset: max(windowStart, current.nextOffset - 1)) { batch in
+        tail = TranscriptLiveTail(
+            query: session.sessionId,
+            offset: max(windowStart, current.nextOffset - 1),
+            bridge: HubSource.bridge,
+            server: HubSource.server,
+            log: { HubPerf.log($0) }
+        ) { batch in
             guard owner == session.id else { return }
             applyTail(batch)
         }
@@ -532,10 +562,11 @@ struct HubSessionDetailHost: View {
     /// One chunk of the follow: a turn at a known index replaces that row (a streaming reply, a tool
     /// result), the next index appends. Only those rows change, at the bottom, so existing rows keep
     /// their frames (a moved focusable frame rebuilds the key view loop over every row).
-    private func applyTail(_ batch: HubTranscriptTail.Batch) {
+    private func applyTail(_ batch: TranscriptLiveTail.Batch) {
         guard var current = envelope, loadState == .loaded else { return }
         let before = turns.count
         var replaced = 0
+        var searchReplaced = false
         var skipped = 0
         for var turn in batch.turns {
             guard let index = turn.index else { continue }
@@ -549,12 +580,24 @@ struct HubSessionDetailHost: View {
                 }
             } else if position == turns.count {
                 turns.append(turn)
+            } else if let hit = earlierSearchTurns.firstIndex(where: { $0.index == index }) {
+                turn.index = index
+                if earlierSearchTurns[hit] != turn {
+                    earlierSearchTurns[hit] = turn
+                    searchReplaced = true
+                }
             } else {
                 skipped += 1
             }
         }
         let appended = turns.count - before
-        let changed = appended > 0 || replaced > 0
+        var trimmed = 0
+        if appended > 0, readerAtEnd, searchDocument == nil, turns.count > Self.liveWindowLimit {
+            trimmed = turns.count - Self.pageSize
+            turns.removeFirst(trimmed)
+            windowStart += trimmed
+        }
+        let changed = appended > 0 || replaced > 0 || searchReplaced
         current.turns = turns
         current.nextOffset = windowStart + turns.count
         if let totals = batch.totals {
@@ -564,8 +607,7 @@ struct HubSessionDetailHost: View {
         }
         guard changed || current != envelope else { return }
         envelope = current
-        HubPerf.log("transcript.follow +\(appended) turns, \(replaced) replaced\(skipped > 0 ? ", \(skipped) outside the window" : ""), \(turns.count) in window")
-        guard changed else { return }
+        HubPerf.log("transcript.follow +\(appended) turns, \(replaced) replaced\(skipped > 0 ? ", \(skipped) outside the window" : "")\(trimmed > 0 ? ", \(trimmed) oldest trimmed" : ""), \(turns.count) in window")
         Task {
             await rebuild()
             await refreshSubagents()
@@ -581,30 +623,28 @@ struct HubSessionDetailHost: View {
         searchID += 1
         let id = searchID
         let text = query.trimmingCharacters(in: .whitespaces)
+        earlierSearchTurns = []
+        searchDocument = nil
         guard text.count >= 2 else {
             searchDocument = nil
             searchNote = nil
+            await rebuild()
             return
         }
         let start = windowStart
-        let window = turns
+
         let span = HubPerf.begin("transcript.search", "\(text.count) chars", awaits: true)
-        let result = await Task.detached(priority: .userInitiated) { () -> Result<(TranscriptDocument?, String), Error> in
+        let result = await Task.detached(priority: .userInitiated) { () -> Result<([TranscriptTurn], String), Error> in
             Result {
                 let hits = try HubSessionSearch.grep(sessionId: sessionId, query: text)
                 let earlier = hits.turns.filter { $0 < start }
                 guard !earlier.isEmpty else {
-                    return (nil, hits.total == 0 ? "No turn in this session matches" : "All \(hits.total) matching turns are in this window")
+                    return ([], hits.total == 0 ? "No turn in this session matches" : "All \(hits.total) matching turns are in this window")
                 }
                 let fetched = try HubSessionSearch.turns(sessionId: sessionId, indices: Array(earlier.suffix(HubSessionSearch.maxEarlier)))
-                let numbered = window.enumerated().map { offset, turn -> TranscriptTurn in
-                    var copy = turn
-                    copy.index = start + offset
-                    return copy
-                }
-                let document = TranscriptDocument.build(fetched + numbered)
+
                 let more = earlier.count > HubSessionSearch.maxEarlier ? " (the latest \(HubSessionSearch.maxEarlier) of them)" : ""
-                return (document, "Whole session: \(hits.total)\(hits.truncated ? "+" : "") matching turns, \(earlier.count) before this window\(more)")
+                return (fetched, "Whole session: \(hits.total)\(hits.truncated ? "+" : "") matching turns, \(earlier.count) before this window\(more)")
             }
         }.value
         guard id == searchID else {
@@ -612,14 +652,23 @@ struct HubSessionDetailHost: View {
             return
         }
         switch result {
-        case .success(let (document, note)):
+        case .success(let (fetched, note)):
             span.end(note)
-            searchDocument = document
+            earlierSearchTurns = fetched
             searchNote = note
+            await rebuild()
         case .failure(let error):
             span.end("failed")
             searchDocument = nil
             searchNote = "Whole-session search failed: \(error.localizedDescription)"
+        }
+    }
+
+    static func searchTurns(earlier: [TranscriptTurn], window: [TranscriptTurn], start: Int) -> [TranscriptTurn] {
+        earlier.filter { ($0.index ?? Int.max) < start } + window.enumerated().map { offset, turn in
+            var copy = turn
+            copy.index = start + offset
+            return copy
         }
     }
 
@@ -662,17 +711,30 @@ struct HubSessionDetailHost: View {
     private func rebuild() async {
         buildID += 1
         let id = buildID
-        let snapshot = turns
-        let offset = windowStart
-        let native = nativeLog?.summary
-        let built = await Task.detached(priority: .userInitiated) {
-            HubPerf.measure("transcript.document", "\(snapshot.count) turns") {
-                (TranscriptDocument.build(snapshot, turnOffset: offset, native: native), SessionActivityDigest.build(snapshot))
-            }
-        }.value
-        guard id == buildID else { return }
-        document = built.0
-        digest = built.1
+        await builder.submit {
+            let snapshot = turns
+            let offset = windowStart
+            let log = nativeLog
+            let earlier = earlierSearchTurns
+            let search = searchID
+            let owner = loadID
+            let built = await Task.detached(priority: .userInitiated) {
+                let native = log?.refreshSummarySnapshot()
+                return HubPerf.measure("transcript.document", "\(snapshot.count) turns") {
+                    (
+                        TranscriptDocument.build(snapshot, turnOffset: offset, native: native),
+                        SessionActivityDigest.build(snapshot),
+                        native,
+                        earlier.isEmpty ? nil : TranscriptDocument.build(Self.searchTurns(earlier: earlier, window: snapshot, start: offset), native: native)
+                    )
+                }
+            }.value
+            guard id == buildID, owner == loadID, search == searchID, !Task.isCancelled else { return }
+            document = built.0
+            digest = built.1
+            nativeSummary = built.2
+            searchDocument = built.3
+        }
     }
 }
 
@@ -755,35 +817,5 @@ enum HubSessionSearch {
         let list = indices.map(String.init).joined(separator: ",")
         let data = try ToolsCLIRunner.run(["ai", "sessions", "tail", sessionId, "--json", "--turns", list])
         return try SessionTranscriptClient.decode(data).turns
-    }
-}
-
-
-/// The window a view is in, held without SwiftUI state: setting it re-renders nothing.
-final class HostWindow {
-    weak var window: NSWindow?
-}
-
-/// Records the window its view moves into, once per move (not per update, as `HubWindowReader` does).
-private struct HostWindowReader: NSViewRepresentable {
-    let host: HostWindow
-
-    final class Probe: NSView {
-        var host: HostWindow?
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            host?.window = window
-        }
-    }
-
-    func makeNSView(context: Context) -> Probe {
-        let probe = Probe()
-        probe.host = host
-        return probe
-    }
-
-    func updateNSView(_ view: Probe, context: Context) {
-        view.host = host
     }
 }

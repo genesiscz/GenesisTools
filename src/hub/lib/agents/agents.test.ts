@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CodexSessionMeta } from "@app/codex/lib/store";
@@ -9,7 +9,7 @@ import { Command } from "commander";
 import { registerAgentsCommand } from "../../commands/agents";
 import { hubArgs, hubUrl } from "../open";
 import { agentCounts } from "./counts";
-import { parentsOfRecentAgents } from "./index";
+import { freshMtime, parentsOfRecentAgents } from "./index";
 import { readAgentMail } from "./mail";
 import { readParent } from "./parent";
 import { unreadInbox } from "./team";
@@ -578,5 +578,18 @@ describe("tools hub agents counts", () => {
             from: "user",
         });
         expect(asked).toEqual([{ session: "5e551011", ids: ["a1", "a2"] }]);
+    });
+});
+
+describe("freshMtime", () => {
+    test("takes the file's mtime when the index row lags it, and the row's when the file is gone", () => {
+        const dir = mkdtempSync(join(tmpdir(), "agents-mtime-"));
+        const file = join(dir, "session.jsonl");
+        writeFileSync(file, "{}\n");
+        const onDisk = statSync(file).mtimeMs;
+
+        expect(freshMtime({ filePath: file, mtime: onDisk - 18 * 60_000 })).toBe(onDisk);
+        expect(freshMtime({ filePath: file, mtime: onDisk + 5_000 })).toBe(onDisk + 5_000);
+        expect(freshMtime({ filePath: join(dir, "missing.jsonl"), mtime: 42 })).toBe(42);
     });
 });
