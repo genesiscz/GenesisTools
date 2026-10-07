@@ -335,6 +335,10 @@ export function secretGeneration(): string {
     const path = fileStore().vaultFilePath();
     try {
         const stat = statSync(path);
+        // A projection made while no rung had the key cached its secrets as missing. Asking for the
+        // key here (a read; a found key is cached) moves the generation once it becomes readable,
+        // so that projection is not reused forever.
+        masterKeySync();
         return [path, stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs, masterKeyGeneration()].join(":");
     } catch (error) {
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
