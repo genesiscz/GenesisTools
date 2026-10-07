@@ -117,13 +117,16 @@ describe("Storage GENESIS_TOOLS_HOME override", () => {
 
 describe("Storage configFileMode", () => {
     let home: string;
+    let saved: ReturnType<typeof env.testing.snapshot>;
 
     beforeEach(() => {
+        saved = env.testing.snapshot();
         home = mkdtempSync(join(tmpdir(), "storage-mode-"));
         env.testing.set("GENESIS_TOOLS_HOME", home);
     });
 
     afterEach(() => {
+        env.testing.restore(saved);
         rmSync(home, { recursive: true, force: true });
     });
 

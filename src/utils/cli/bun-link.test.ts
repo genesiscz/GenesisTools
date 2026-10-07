@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,12 +10,18 @@ const isWindows = process.platform === "win32";
 describe.skipIf(isWindows)("namedBunExecPath", () => {
     let home: string;
     let fakeBun: string;
+    let saved: ReturnType<typeof env.testing.snapshot>;
 
     beforeEach(() => {
+        saved = env.testing.snapshot();
         home = mkdtempSync(join(tmpdir(), "bun-link-test-"));
         env.testing.set("GENESIS_TOOLS_HOME", home);
         fakeBun = join(home, "bun");
         writeFileSync(fakeBun, "#!/bin/sh\n");
+    });
+
+    afterEach(() => {
+        env.testing.restore(saved);
     });
 
     it("creates a hardlink named after the tool", () => {
