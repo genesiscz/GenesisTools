@@ -3,9 +3,10 @@ import { resolve } from "node:path";
 import { type ProjectApi, projectBase, restGet, restGetPaginated, restGetText } from "@app/gitlab/lib/client";
 import { classifyDivergence, type Divergence } from "@app/gitlab/lib/divergence";
 import { fileLink } from "@app/gitlab/lib/file-link";
-import { gitResult, gitShowFile } from "@app/gitlab/lib/git";
+import { gitRawResult, gitResult, gitShowFile } from "@app/gitlab/lib/git";
 import { errorMessage, HttpError } from "@app/gitlab/lib/http";
 import { fenceLanguage } from "@app/gitlab/lib/markdown";
+import { parseNameStatusZ } from "@genesiscz/utils/git/porcelain";
 import { type Block, type BlockInput, json2md } from "@genesiscz/utils/json2md";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -581,13 +582,12 @@ export async function fetchTipViews(options: {
             continue;
         }
 
-        const listed = gitResult(options.cwd, ["diff", "-M", "--name-status", sha, mr.sha]);
+        // NUL-separated: a path with a tab, a newline or a non-ASCII letter is C-quoted otherwise.
+        const listed = gitRawResult(options.cwd, ["diff", "-M", "--name-status", "-z", sha, mr.sha]);
 
-        for (const row of listed.stdout.split("\n")) {
-            const [status, from, to] = row.split("\t");
-
-            if (status?.startsWith("R") && from && to) {
-                renames.set(`${sha}:${from}`, to);
+        for (const entry of parseNameStatusZ(listed.stdout)) {
+            if (entry.status === "R" && entry.origPath) {
+                renames.set(`${sha}:${entry.origPath}`, entry.path);
             }
         }
     }

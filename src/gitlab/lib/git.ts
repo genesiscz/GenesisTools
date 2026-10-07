@@ -16,9 +16,14 @@ export function gitResult(cwd: string, args: string[]): GitResult {
  * line number below it. Null when git cannot show it.
  */
 export function gitShowFile(cwd: string, spec: string): string | null {
-    const result = runGit({ cwd, args: ["show", spec], trim: false });
+    const result = gitRawResult(cwd, ["show", spec]);
 
     return result.exitCode === 0 ? result.stdout : null;
+}
+
+/** `gitResult` without the trim, for output whose edges carry data (`-z` lists, file blobs). */
+export function gitRawResult(cwd: string, args: string[]): GitResult {
+    return runGit({ cwd, args, trim: false });
 }
 
 function runGit(options: { cwd: string; args: string[]; trim: boolean }): GitResult {
