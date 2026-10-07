@@ -62,6 +62,31 @@ export function mergeQaRows({ live, persisted }: MergeQaArgs): QaRow[] {
     return out;
 }
 
+/**
+ * Which read toggle of a row is the current one. Tokens come from one counter that only grows, so a
+ * settled toggle's token is never handed out again and an old response can never pass as current.
+ */
+export class ReadIntentTracker {
+    private counter = 0;
+    private readonly latest = new Map<string, number>();
+
+    begin(id: string): number {
+        this.counter += 1;
+        this.latest.set(id, this.counter);
+        return this.counter;
+    }
+
+    isCurrent(id: string, token: number): boolean {
+        return this.latest.get(id) === token;
+    }
+
+    settle(id: string, token: number): void {
+        if (this.isCurrent(id, token)) {
+            this.latest.delete(id);
+        }
+    }
+}
+
 export interface PersistQaReadToggleOptions {
     persist: () => Promise<unknown>;
     refetch: () => Promise<unknown>;

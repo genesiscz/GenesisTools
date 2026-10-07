@@ -5,7 +5,14 @@ import { QaFeed } from "@/features/qa/components/QaFeed";
 import { QaFilterBar } from "@/features/qa/components/QaFilterBar";
 import { QaLiveDot } from "@/features/qa/components/QaLiveDot";
 import { useMarkRead, useQaLog, useQaStream } from "@/features/qa/hooks";
-import { filterQa, mergeQaRows, persistQaReadToggle, projectsOf, tagsOf } from "@/features/qa/live-feed";
+import {
+    filterQa,
+    mergeQaRows,
+    persistQaReadToggle,
+    projectsOf,
+    ReadIntentTracker,
+    tagsOf,
+} from "@/features/qa/live-feed";
 import { Loading } from "@/ui/Loading";
 import { MockBadge } from "@/ui/MockBadge";
 import { useThemeColors } from "@/theme/colors";
@@ -33,7 +40,7 @@ export default function QaScreen() {
     const [locallyRead, setLocallyRead] = useState<Set<string>>(() => new Set());
     const [locallyUnread, setLocallyUnread] = useState<Set<string>>(() => new Set());
     const [readError, setReadError] = useState<string | null>(null);
-    const readGeneration = useRef(new Map<string, number>());
+    const readIntents = useRef(new ReadIntentTracker());
 
     const merged = useMemo(
         () => mergeQaRows({ live, persisted: logQuery.data ?? [] }),
@@ -85,8 +92,7 @@ export default function QaScreen() {
                 return;
             }
 
-            const generation = (readGeneration.current.get(id) ?? 0) + 1;
-            readGeneration.current.set(id, generation);
+            const generation = readIntents.current.begin(id);
             setReadError(null);
             setLocallyRead((prev) => {
                 const next = new Set(prev);
@@ -111,7 +117,7 @@ export default function QaScreen() {
             void persistQaReadToggle({
                 persist: () => markRead.mutateAsync({ ids: [id], unread: nextUnread }),
                 refetch: () => logQuery.refetch(),
-                isCurrent: () => readGeneration.current.get(id) === generation,
+                isCurrent: () => readIntents.current.isCurrent(id, generation),
                 onRejected: (error) => {
                     setLocallyRead((prev) => {
                         const next = new Set(prev);
@@ -126,7 +132,7 @@ export default function QaScreen() {
                     setReadError(error instanceof Error ? error.message : "Could not update read state.");
                 },
                 onAcknowledged: () => {
-                    readGeneration.current.delete(id);
+                    readIntents.current.settle(id, generation);
                     setLocallyRead((prev) => {
                         const next = new Set(prev);
                         next.delete(id);

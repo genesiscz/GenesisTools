@@ -1,6 +1,28 @@
 import { describe, expect, it } from "bun:test";
 import type { QaRow } from "@dd/contract";
-import { filterQa, mergeQaRows, persistQaReadToggle, projectsOf, tagsOf } from "@/features/qa/live-feed";
+import {
+    filterQa,
+    mergeQaRows,
+    persistQaReadToggle,
+    projectsOf,
+    ReadIntentTracker,
+    tagsOf,
+} from "@/features/qa/live-feed";
+
+describe("ReadIntentTracker", () => {
+    it("never lets an old toggle become current again after a newer one settled", () => {
+        const intents = new ReadIntentTracker();
+        const a = intents.begin("row");
+        const b = intents.begin("row");
+        intents.settle("row", b);
+        const c = intents.begin("row");
+
+        expect(intents.isCurrent("row", a)).toBe(false);
+        expect(intents.isCurrent("row", c)).toBe(true);
+        intents.settle("row", a);
+        expect(intents.isCurrent("row", c)).toBe(true);
+    });
+});
 
 /**
  * Pure QA feed logic (no React, no I/O). `filterQa` is multi-select: each facet (projects / tags)
