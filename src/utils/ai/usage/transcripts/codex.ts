@@ -135,6 +135,8 @@ export function createCodexUsageParser(options: CreateParserOptions): DriverLine
                 return;
             }
             if (raw.type === "turn_context") {
+                // Both copies of one call sit inside one turn, so a new turn ends any pairing.
+                state.lastUsage = undefined;
                 if (Object.hasOwn(payload, "service_tier")) {
                     state.serviceTier = typeof payload.service_tier === "string" ? payload.service_tier : undefined;
                 }

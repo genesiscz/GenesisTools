@@ -75,6 +75,17 @@ describe("codex driver", () => {
         const distinct = tokenCount("2026-08-27T09:00:09.846Z", other, other);
         const twoCalls = collectEvents(codexDriver, [turnContext("gpt-5"), distinct, currentUsage("fixture-one")]);
         expect(twoCalls).toHaveLength(2);
+        // Equal counts in a later turn are a new call, also across a restored parser state.
+        const nextTurn = [turnContext("gpt-5"), earlier, turnContext("gpt-5"), currentUsage("fixture-one")];
+        expect(collectEvents(codexDriver, nextTurn)).toHaveLength(2);
+        const first = codexDriver.createParser({ file: "/fixture/rollout.jsonl", state: undefined });
+        const seen: DriverUsageEvent[] = [];
+        first.parseLine(turnContext("gpt-5"), (event) => seen.push(event));
+        first.parseLine(earlier, (event) => seen.push(event));
+        const resumed = codexDriver.createParser({ file: "/fixture/rollout.jsonl", state: first.snapshot() });
+        resumed.parseLine(turnContext("gpt-5"), (event) => seen.push(event));
+        resumed.parseLine(currentUsage("fixture-one"), (event) => seen.push(event));
+        expect(seen).toHaveLength(2);
     });
 
     test("a rollout with per-response records counts each call once although its token_count lands later", () => {
