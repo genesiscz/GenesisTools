@@ -88,6 +88,18 @@ const CTX: RenderContext = {
     ]),
     threadOpts: null,
     drafts: [{ id: 900, discussionId: null, path: "src/lock.ts", line: 2, side: "new", note: "Is this still needed?" }],
+    discussions: [
+        {
+            id: "aaaa1111",
+            author: "reviewer",
+            path: "src/lock.ts",
+            line: 3,
+            body: "The lock stays off",
+            resolved: false,
+            noteCount: 2,
+        },
+        { id: "cccc3333", author: "carol", path: null, line: null, body: "Looks fine", resolved: true, noteCount: 3 },
+    ],
     files: FILES,
     agent: "Opus",
 };
@@ -217,6 +229,21 @@ describe("judgements render", () => {
             confidence: 95,
             suggestedReply: "Opravím to.\n\nDíky.",
         });
+    });
+
+    test("the proposal carries every thread with its real state, judged or not", () => {
+        const proposal = proposalFromJudgements(parseJudgements(FILLED), CTX);
+
+        expect(proposal.threads).toEqual([
+            expect.objectContaining({ threadId: "aaaa1111", noteCount: 2, resolved: false, verdict: "valid" }),
+            {
+                threadId: "cccc3333",
+                author: "carol",
+                body: "Looks fine",
+                noteCount: 3,
+                resolved: true,
+            },
+        ]);
     });
 
     test("a path:line becomes a link only when the file exists in the checkout", () => {

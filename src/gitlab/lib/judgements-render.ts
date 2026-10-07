@@ -20,6 +20,7 @@ import { fileLink } from "@app/gitlab/lib/file-link";
 import {
     actionTextField,
     badgeOf,
+    isJudged,
     type JudgementItem,
     type Judgements,
     parseAnchor,
@@ -29,7 +30,7 @@ import type { KnownItem } from "@app/gitlab/lib/judgements-check";
 import { fenceLanguage } from "@app/gitlab/lib/markdown";
 import type { DiffFile } from "@app/gitlab/lib/pr-review";
 import { draftExcerpt } from "@app/gitlab/lib/pr-review-output";
-import type { DraftSummary } from "@app/gitlab/lib/review-drafts";
+import type { DiscussionSummary, DraftSummary } from "@app/gitlab/lib/review-drafts";
 import {
     type Discussion,
     type RenderMarkdownOpts,
@@ -59,6 +60,8 @@ export interface RenderContext {
     /** Tip views, reviewer views and refs for the threads; null renders threads without code. */
     threadOpts: RenderMarkdownOpts | null;
     drafts: DraftSummary[];
+    /** Every discussion on the MR, resolved ones too: the proposal carries each with its real state. */
+    discussions: DiscussionSummary[];
     /** The MR diff, for draft and finding excerpts; null leaves them out. */
     files: DiffFile[] | null;
     /** Who signs an answer in my own thread: `[90%] <agent>: …`. */
@@ -117,10 +120,6 @@ export function signedAnswer(item: JudgementItem, text: string, agent: string): 
     const badge = badgeOf(item.fields.get("Answer to the comment")) ?? badgeOf(verdictOf(item));
 
     return `${badge === null ? "" : `[${badge}%] `}${agent}: ${text}`;
-}
-
-function judged(item: JudgementItem): boolean {
-    return verdictOf(item).trim() !== "";
 }
 
 // ─── item parts ────────────────────────────────────────────────────────────────
@@ -332,7 +331,7 @@ function sectionBlocks(judgements: Judgements, ctx: RenderContext): BlockInput {
 function ordered(judgements: Judgements): JudgementItem[] {
     const rank = { T: 0, D: 1, Y: 2, N: 3 } as const;
 
-    return judgements.items.filter(judged).sort((a, b) => rank[a.kind] - rank[b.kind] || a.id.localeCompare(b.id));
+    return judgements.items.filter(isJudged).sort((a, b) => rank[a.kind] - rank[b.kind] || a.id.localeCompare(b.id));
 }
 
 export function renderFull(judgements: Judgements, ctx: RenderContext): string {
@@ -357,7 +356,7 @@ export function renderFull(judgements: Judgements, ctx: RenderContext): string {
 
 export function renderDigest(judgements: Judgements, ctx: RenderContext): string {
     const items = ordered(judgements);
-    const skipped = judgements.items.filter((item) => !judged(item)).map((item) => item.id);
+    const skipped = judgements.items.filter((item) => !isJudged(item)).map((item) => item.id);
 
     return json2md([
         headerBlocks(judgements, ctx, "Digest"),
@@ -439,29 +438,38 @@ export function proposalFromJudgements(judgements: Judgements, ctx: RenderContex
             },
         ];
     });
-    const threads = items
-        .filter((item) => item.kind === "T")
-        .flatMap((item) => {
-            const known = knownOf(ctx, item);
+    // Every thread with its real state, as the review-proposal skill asks; a judged one adds its verdict.
+    const judgedThreads = new Map<string, JudgementItem>();
 
-            if (!known) {
-                return [];
-            }
+    for (const item of items) {
+        const known = knownOf(ctx, item);
 
-            return [
-                {
-                    threadId: known.pair.value,
-                    ...(known.path ? { path: known.path } : {}),
-                    ...(known.line ? { line: known.line } : {}),
-                    author: known.author,
-                    body: known.body,
-                    verdict: pick(THREAD_VERDICT, verdictOf(item)),
-                    confidence: badgeOf(verdictOf(item)) ?? undefined,
-                    reasoning: reasoning(item),
-                    suggestedReply: postedText(item, ctx.agent) ?? undefined,
-                },
-            ];
-        });
+        if (known?.pair.kind === "discussion" && isJudged(item)) {
+            judgedThreads.set(known.pair.value, item);
+        }
+    }
+
+    const threads = ctx.discussions.map((d) => {
+        const item = judgedThreads.get(d.id);
+
+        return {
+            threadId: d.id,
+            ...(d.path ? { path: d.path } : {}),
+            ...(d.line && d.line > 0 ? { line: d.line } : {}),
+            author: d.author,
+            ...(d.body.trim() ? { body: d.body } : {}),
+            noteCount: d.noteCount,
+            resolved: d.resolved,
+            ...(item
+                ? {
+                      verdict: pick(THREAD_VERDICT, verdictOf(item)),
+                      confidence: badgeOf(verdictOf(item)) ?? undefined,
+                      reasoning: reasoning(item),
+                      suggestedReply: postedText(item, ctx.agent) ?? undefined,
+                  }
+                : {}),
+        };
+    });
     const topLevel = items.filter(
         (item) => item.kind === "N" && !drafts.some((draft) => draft.id === item.id) && postedText(item, ctx.agent)
     );

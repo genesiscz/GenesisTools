@@ -27,6 +27,7 @@ import {
     ledgerPath,
     loadLedger,
     type PostStep,
+    pendingDraftFor,
     planPost,
     readBack,
     saveLedger,
@@ -160,7 +161,7 @@ async function runSkeleton(iid: string, opts: JudgementOptions): Promise<void> {
         throw new Error(`${file} exists; pass --force to start over, or edit it.`);
     }
 
-    const items = await reviewItems(api, Number(iid), mode);
+    const items = await reviewItems(api, Number(iid), { mode, persist: true });
     const input = { iid: Number(iid), mode, headSha: items.headSha, items: items.known };
     const body = format === "json" ? `${SafeJSON.stringify(skeletonJson(input), null, 2)}\n` : skeletonText(input);
 
@@ -184,7 +185,7 @@ async function runCheck(iid: string, opts: JudgementOptions): Promise<void> {
     }
 
     const [items, files, config] = await Promise.all([
-        reviewItems(api, Number(iid), mode),
+        reviewItems(api, Number(iid), { mode, persist: false }),
         mode === "give" ? fetchMrDiffs(api, Number(iid)) : Promise.resolve(null),
         loadConfig(),
     ]);
@@ -237,7 +238,7 @@ async function renderContext(
     const config = await loadConfig();
     const parsedContext = Number.parseInt(opts.contextLines ?? "", 10);
     const contextLines = Number.isNaN(parsedContext) ? config.review.fetch.contextLines : Math.max(0, parsedContext);
-    const items = await reviewItems(api, Number(iid), mode);
+    const items = await reviewItems(api, Number(iid), { mode, persist: false });
     const threadIds = new Set(
         items.known.flatMap((item) => (item.pair.kind === "discussion" ? [item.pair.value] : []))
     );
@@ -281,6 +282,7 @@ async function renderContext(
             refs: new Map(items.known.map((item) => [item.pair.value, item.id])),
         },
         drafts: items.drafts,
+        discussions: items.discussions,
         files,
         agent: opts.agent,
         // The review layouts show at least 10 lines on each side of an anchor.
@@ -346,6 +348,18 @@ export async function runStep(
         anchor: Extract<PostStep, { kind: "comment" }>["anchor"],
         body: string
     ): Promise<DraftWriteResult> => {
+        // A create that landed before a failed run is pending already: reuse it, never post a second copy.
+        const pending = pendingDraftFor({
+            drafts: context.drafts,
+            anchor,
+            body,
+            except: step.kind === "move" ? step.draftId : undefined,
+        });
+
+        if (pending) {
+            return { ok: true, action: "updated", draftId: pending.id, discussionId: null };
+        }
+
         if (anchor.top) {
             return writeTopLevelDraft(api, iid, body);
         }
@@ -428,7 +442,7 @@ async function runPost(iid: string, opts: PostOptions): Promise<void> {
 
     const judgements = parseJudgementsFile(readFileSync(file, "utf-8"), file);
     const [items, files, config] = await Promise.all([
-        reviewItems(api, Number(iid), mode),
+        reviewItems(api, Number(iid), { mode, persist: Boolean(opts.apply) }),
         fetchMrDiffs(api, Number(iid)),
         loadConfig(),
     ]);

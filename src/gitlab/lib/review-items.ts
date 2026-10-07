@@ -35,7 +35,17 @@ export function judgementsPath(mr: { host: string; project: string; iid: number 
     return join(tmpdir(), `gitlab-review-${key}-${mr.iid}-judgements.md`);
 }
 
-export async function reviewItems(api: ProjectApi, iid: number, mode: "receive" | "give"): Promise<ReviewItems> {
+/**
+ * `persist` saves ids given to new items. Only a command that hands ids out (`review skeleton`) or acts on
+ * them (`comments post --apply`) saves; `check`, `render` and a dry run read the map and leave it as it was.
+ * The ids they compute are the same: assignment is deterministic for the same map and the same MR.
+ */
+export async function reviewItems(
+    api: ProjectApi,
+    iid: number,
+    options: { mode: "receive" | "give"; persist: boolean }
+): Promise<ReviewItems> {
+    const { mode } = options;
     const [mr, me, discussions, drafts] = await Promise.all([
         fetchMr(api, iid),
         currentUser(api),
@@ -50,7 +60,9 @@ export async function reviewItems(api: ProjectApi, iid: number, mode: "receive" 
         "D",
         drafts.map((draft) => String(draft.id))
     );
-    saveIdMap(path, map);
+    if (options.persist) {
+        saveIdMap(path, map);
+    }
 
     const threadItem = (d: DiscussionSummary): KnownItem => ({
         id: threadRefs.get(d.id) ?? "",
