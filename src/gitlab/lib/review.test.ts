@@ -13,6 +13,7 @@ import {
     findUnanchoredDrafts,
     renderDiscussionTable,
     renderDraftTable,
+    resolveAnchor,
     writeAnchoredDraft,
 } from "@app/gitlab/lib/review-drafts";
 import {
@@ -219,6 +220,12 @@ describe("writeAnchoredDraft", () => {
             expect(result.ok).toBe(false);
             expect(result.error).toContain("cannot anchor a comment there");
             expect(calls).toEqual(["GET"]);
+            // The check alone, as `draft-reply` runs it before uploading any image: one read, no write.
+            expect(await resolveAnchor(api, { iid: "1", path: "a.ts", line: 40 })).toContain(
+                "cannot anchor a comment there"
+            );
+            expect(await resolveAnchor(api, { iid: "1", path: "nope.ts", line: 1 })).toContain("not in the MR diff");
+            expect(calls).toEqual(["GET", "GET", "GET"]);
         } finally {
             server.stop(true);
         }
@@ -809,6 +816,32 @@ describe("local images in a draft", () => {
         await expect(rewriteLocalImages(`![a](${secret})`, dir, never)).rejects.toThrow("is not an image");
         await expect(rewriteLocalImages("![a](folder.png)", dir, never)).rejects.toThrow("is not a file");
         await expect(rewriteLocalImages(`![a](${shot})`, dir, never, 2)).rejects.toThrow("over the 2 byte limit");
+    });
+
+    test("an image inside a code block or an inline code span is neither uploaded nor rewritten", async () => {
+        const calls: string[] = [];
+        const uploader = async (path: string): Promise<string> => {
+            calls.push(path);
+            return "/uploads/hash/shot.png";
+        };
+        const body = [
+            "real ![one](shot.png) and `![inline](shot.png)` stay apart",
+            "```md",
+            "![fenced](/tmp/private.png)",
+            "```",
+            "~~~",
+            "![tilde](/tmp/private.png)",
+            "~~~",
+            "after ![two](shot.png)",
+        ].join("\n");
+        const result = await rewriteLocalImages(body, dir, uploader);
+
+        expect(result.body).toBe(
+            body
+                .replace("real ![one](shot.png)", "real ![one](/uploads/hash/shot.png)")
+                .replace("after ![two](shot.png)", "after ![two](/uploads/hash/shot.png)")
+        );
+        expect(calls).toEqual([shot]);
     });
 
     test("returns the body unchanged when it has no local images", async () => {

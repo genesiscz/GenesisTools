@@ -27,9 +27,10 @@ import {
     publishAllDrafts,
     renderDiscussionTable,
     renderDraftTable,
+    resolveAnchor,
     resolveDiscussion,
-    writeAnchoredDraft,
     writeDraftReply,
+    writePositionedDraft,
     writeTopLevelDraft,
 } from "@app/gitlab/lib/review-drafts";
 import { rewriteLocalImages, uploadToProject } from "@app/gitlab/lib/uploads";
@@ -178,6 +179,18 @@ async function runDraftReply(iid: string, opts: DraftReplyOptions): Promise<void
     }
 
     const api = await resolveProjectApi({ host: opts.host, project: opts.project });
+    // The destination is checked before any image is uploaded: an upload cannot be taken back, so a
+    // wrong line or thread must fail while nothing has left the machine.
+    const position = anchored
+        ? await resolveAnchor(api, { iid, path: opts.file ?? "", line: Number(opts.line) })
+        : null;
+
+    if (typeof position === "string") {
+        throw new Error(position);
+    }
+
+    const discussionId =
+        anchored || opts.topLevel || !opts.discussion ? null : await resolveDiscussionId(api, iid, opts.discussion);
     const baseDir = opts.bodyFile ? dirname(resolve(opts.bodyFile)) : process.cwd();
     const images = await rewriteLocalImages(readBody(opts), baseDir, (path) => uploadToProject(api, path));
     const body = images.body;
@@ -186,8 +199,8 @@ async function runDraftReply(iid: string, opts: DraftReplyOptions): Promise<void
         out.println(`📎 uploaded ${file.localPath} → ${file.url}`);
     }
 
-    if (opts.file && opts.line) {
-        const result = await writeAnchoredDraft(api, { iid, path: opts.file, line: Number(opts.line), body });
+    if (position) {
+        const result = await writePositionedDraft(api, { iid, body, position });
         if (!result.ok) {
             throw new Error(result.error);
         }
@@ -197,7 +210,7 @@ async function runDraftReply(iid: string, opts: DraftReplyOptions): Promise<void
         return;
     }
 
-    if (opts.topLevel || !opts.discussion) {
+    if (discussionId === null) {
         const result = await writeTopLevelDraft(api, iid, body);
         if (!result.ok) {
             throw new Error(result.error);
@@ -207,8 +220,6 @@ async function runDraftReply(iid: string, opts: DraftReplyOptions): Promise<void
 
         return;
     }
-
-    const discussionId = await resolveDiscussionId(api, iid, opts.discussion);
 
     if (opts.now) {
         const posted = await postReplyNow(api, { iid, discussionId, body });

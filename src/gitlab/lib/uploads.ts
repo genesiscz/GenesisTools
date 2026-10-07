@@ -8,6 +8,8 @@ const IMAGE_LINK = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
 // A scheme has two or more letters: "C:" is a Windows drive, not a URL.
 const REMOTE = /^(?:[a-z][a-z0-9+.-]+:|\/uploads\/|\/-\/)/i;
 const WINDOWS_ABSOLUTE = /^[a-z]:[\\/]/i;
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+const INLINE_CODE = /(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/g;
 
 export const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".avif", ".svg"];
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -46,6 +48,51 @@ export function localImagePath(target: string, baseDir: string): string | null {
     return isAbsolute(path) || WINDOWS_ABSOLUTE.test(path) ? path : resolve(baseDir, path);
 }
 
+/**
+ * Where fenced code blocks and inline code spans sit in `body`, as [start, end) offsets. An image
+ * written there is a markdown example, not an image, so its file is never uploaded.
+ */
+export function codeRanges(body: string): Array<[number, number]> {
+    const ranges: Array<[number, number]> = [];
+    let open: { marker: string; start: number } | null = null;
+    let offset = 0;
+
+    for (const line of body.split("\n")) {
+        const marker = FENCE.exec(line)?.[1];
+
+        if (open === null && marker) {
+            open = { marker, start: offset };
+        } else if (
+            open &&
+            marker &&
+            marker[0] === open.marker[0] &&
+            marker.length >= open.marker.length &&
+            line.trim() === marker
+        ) {
+            ranges.push([open.start, offset + line.length]);
+            open = null;
+        }
+
+        offset += line.length + 1;
+    }
+
+    if (open) {
+        ranges.push([open.start, body.length]);
+    }
+
+    // Blank the fences first, so a backtick inside one never pairs with one outside it.
+    const masked = ranges.reduce(
+        (text, [start, end]) => text.slice(0, start) + " ".repeat(end - start) + text.slice(end),
+        body
+    );
+
+    for (const match of masked.matchAll(INLINE_CODE)) {
+        ranges.push([match.index, match.index + match[0].length]);
+    }
+
+    return ranges;
+}
+
 /** Why a local file must not be uploaded, or null when it is an image of an acceptable size. */
 export function uploadRefusal(localPath: string, maxBytes = MAX_IMAGE_BYTES): string | null {
     if (!IMAGE_EXTENSIONS.includes(extname(localPath).toLowerCase())) {
@@ -72,7 +119,8 @@ export function uploadRefusal(localPath: string, maxBytes = MAX_IMAGE_BYTES): st
 /**
  * Replaces every `![alt](<local file>)` in `body` with the URL the uploader returns. Each file is
  * uploaded once, however often it appears. Every file is checked before the first upload, so a
- * missing, oversized or non-image file uploads nothing.
+ * missing, oversized or non-image file uploads nothing. An image inside a code block or an inline
+ * code span is left alone: it shows markdown, and its file is not the author's to publish.
  */
 export async function rewriteLocalImages(
     body: string,
@@ -81,8 +129,14 @@ export async function rewriteLocalImages(
     maxBytes = MAX_IMAGE_BYTES
 ): Promise<{ body: string; uploaded: UploadedFile[] }> {
     const targets = new Map<string, string>();
+    const code = codeRanges(body);
+    const inCode = (index: number): boolean => code.some(([start, end]) => index >= start && index < end);
 
     for (const match of body.matchAll(IMAGE_LINK)) {
+        if (inCode(match.index)) {
+            continue;
+        }
+
         const target = match[2] ?? "";
         const localPath = localImagePath(target, baseDir);
 
@@ -115,8 +169,8 @@ export async function rewriteLocalImages(
         urls.set(target, url);
     }
 
-    const rewritten = body.replace(IMAGE_LINK, (whole, alt: string, target: string) => {
-        const url = urls.get(target);
+    const rewritten = body.replace(IMAGE_LINK, (whole, alt: string, target: string, index: number) => {
+        const url = inCode(index) ? undefined : urls.get(target);
 
         return url ? `![${alt}](${url})` : whole;
     });

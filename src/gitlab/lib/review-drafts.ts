@@ -367,6 +367,19 @@ export function anchoredPosition(files: DiffFile[], path: string, line: number):
 }
 
 /**
+ * The diff position of `path:line` in the MR, or why GitLab cannot anchor a comment there. Asks
+ * GitLab for the diff and writes nothing, so a caller can check the anchor before an upload.
+ */
+export async function resolveAnchor(
+    api: ProjectApi,
+    anchor: { iid: string; path: string; line: number }
+): Promise<LinePosition | string> {
+    const position = anchoredPosition(await fetchMrDiffs(api, Number(anchor.iid)), anchor.path, anchor.line);
+
+    return typeof position === "string" ? `${position}, so GitLab cannot anchor a comment there.` : position;
+}
+
+/**
  * A draft anchored to a line of the diff.
  *
  * The position must go in a JSON body. GitLab accepts `position[...]` form pairs on `/discussions`
@@ -385,10 +398,10 @@ export async function writeAnchoredDraft(
     }
 
     try {
-        const position = anchoredPosition(await fetchMrDiffs(api, Number(draft.iid)), draft.path, draft.line);
+        const position = await resolveAnchor(api, draft);
 
         if (typeof position === "string") {
-            return { ok: false, action: "failed", error: `${position}, so GitLab cannot anchor a comment there.` };
+            return { ok: false, action: "failed", error: position };
         }
 
         return await writePositionedDraft(api, { iid: draft.iid, body: draft.body, position });
