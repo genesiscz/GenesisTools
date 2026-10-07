@@ -27,7 +27,7 @@ public enum ToolsBridgeError: Error, LocalizedError, Equatable {
         case .binaryNotFound(let path):
             return "tools binary not found at \(path) — run `tools --version` in a terminal first"
         case .timeout(let seconds):
-            return "tools call exceeded \(seconds)s and was killed"
+            return "tools call exceeded \(seconds)s"
         case .refused(let reason):
             return reason
         }
@@ -46,6 +46,7 @@ public struct ToolsBridge: Sendable {
     public static let envAllowlist: Set<String> = [
         "HOME", "PATH", "SHELL", "LANG", "USER", "LOGNAME", "TERM",
         "SSH_AUTH_SOCK", "GITHUB_TOKEN", "ANTHROPIC_API_KEY", "TZ",
+        "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR",
         "PROFILE", "GENESIS_TOOLS_APP_BUNDLE_ID", "GENESIS_TOOLS_APP_INODE",
         ToolsCallTrace.environmentKey,
     ]
@@ -272,25 +273,38 @@ public struct ToolsBridge: Sendable {
             "tool_call exec turn=\(turnId, privacy: .public) sub=\(subcommand, privacy: .public) args=\(args.joined(separator: " "), privacy: .private)"
         )
 
-        try process.run()
+        let stdout = try ToolsPipeCollector(outPipe)
+        let stderr = try ToolsPipeCollector(errPipe)
+        let exit = ToolsProcessExit()
+        process.terminationHandler = { _ in exit.finish() }
+        do {
+            try process.run()
+        } catch {
+            stdout.stop(error)
+            stderr.stop(error)
+            throw error
+        }
 
         // A caller that goes away (Session Details closed mid-fetch) cancels
         // its task; without this the child ran on until the watchdog.
         return try await withTaskCancellationHandler {
             try await finish(
-                process: process, outPipe: outPipe, errPipe: errPipe, started: started,
+                process: process, stdout: stdout, stderr: stderr, exit: exit, started: started,
                 subcommand: subcommand, args: args, argv: argv, timeoutSeconds: timeoutSeconds,
                 turnId: turnId, callId: callId, traceId: traceId
             )
         } onCancel: {
-            if process.isRunning { process.terminate() }
+            stdout.stop(CancellationError())
+            stderr.stop(CancellationError())
+            ToolsProcessExit.terminate(process)
         }
     }
 
     private func finish(
         process: Process,
-        outPipe: Pipe,
-        errPipe: Pipe,
+        stdout outReader: ToolsPipeCollector,
+        stderr errReader: ToolsPipeCollector,
+        exit: ToolsProcessExit,
         started: Date,
         subcommand: String,
         args: [String],
@@ -301,26 +315,31 @@ public struct ToolsBridge: Sendable {
         traceId: String
     ) async throws -> ToolsRunResult {
         let timedOutFlag = TimeoutFlag()
+        let remaining = max(0, Double(timeoutSeconds) - Date().timeIntervalSince(started))
         let watchdog = Task.detached {
-            try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds) * 1_000_000_000)
-            if process.isRunning {
-                timedOutFlag.fired = true
-                process.terminate()
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-            }
+            do { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) }
+            catch { return }
+            timedOutFlag.fired = true
+            let error = ToolsBridgeError.timeout(seconds: timeoutSeconds)
+            outReader.stop(error)
+            errReader.stop(error)
+            ToolsProcessExit.terminate(process)
         }
+        defer { watchdog.cancel() }
 
-        async let outData = Task.detached { outPipe.fileHandleForReading.readDataToEndOfFile() }.value
-        async let errData = Task.detached { errPipe.fileHandleForReading.readDataToEndOfFile() }.value
-
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            process.terminationHandler = { _ in cont.resume() }
+        await exit.waitForExit()
+        async let outData = outReader.value()
+        async let errData = errReader.value()
+        let captured: (Data, Data)
+        do {
+            captured = try await (outData, errData)
+            try Task.checkCancellation()
+        } catch {
+            MonitorPerf.mark("tools.\(subcommand) incomplete output: \(error.localizedDescription)")
+            throw error
         }
-        watchdog.cancel()
-
-        let stdout = String(decoding: await outData, as: UTF8.self)
-        let stderr = String(decoding: await errData, as: UTF8.self)
+        let stdout = String(decoding: captured.0, as: UTF8.self)
+        let stderr = String(decoding: captured.1, as: UTF8.self)
         let wallMs = Int(Date().timeIntervalSince(started) * 1000)
         let exitCode = process.terminationStatus
 
@@ -380,4 +399,114 @@ private final class TimeoutFlag: @unchecked Sendable {
             _fired = newValue
         }
     }
+}
+
+/// The handler is installed before launch, so even an immediate child exit is retained.
+private final class ToolsProcessExit: @unchecked Sendable {
+    private let lock = NSLock()
+    private var exited = false
+    private var waiter: CheckedContinuation<Void, Never>?
+
+    func finish() {
+        lock.lock()
+        exited = true
+        let pending = waiter
+        waiter = nil
+        lock.unlock()
+        pending?.resume()
+    }
+
+    func waitForExit() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if exited {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                waiter = continuation
+                lock.unlock()
+            }
+        }
+    }
+
+    static func terminate(_ process: Process) {
+        guard process.isRunning else { return }
+        process.terminate()
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        }
+    }
+}
+
+/// Nonblocking reads and closure share one queue. Cancellation cannot close an active read,
+/// and a descendant holding a pipe never occupies a blocked thread.
+private final class ToolsPipeCollector: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "genesis.tools.pipe", qos: .userInitiated)
+    private let source: DispatchSourceRead
+    private let descriptor: Int32
+    private var data = Data()
+    private var result: Result<Data, Error>?
+    private var waiter: CheckedContinuation<Data, Error>?
+
+    init(_ pipe: Pipe) throws {
+        descriptor = dup(pipe.fileHandleForReading.fileDescriptor)
+        guard descriptor >= 0 else { throw POSIXError(.EMFILE) }
+        guard fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL) | O_NONBLOCK) >= 0 else {
+            close(descriptor)
+            throw POSIXError(.EIO)
+        }
+        source = DispatchSource.makeReadSource(fileDescriptor: descriptor, queue: queue)
+        let fd = descriptor
+        source.setCancelHandler { close(fd) }
+        source.setEventHandler { [weak self] in self?.receive() }
+        source.resume()
+    }
+
+    func value() async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                if let result = self.result {
+                    continuation.resume(with: result)
+                } else {
+                    self.waiter = continuation
+                }
+            }
+        }
+    }
+
+    func stop(_ error: Error) {
+        queue.async { self.complete(.failure(error)) }
+    }
+
+    private func receive() {
+        var buffer = [UInt8](repeating: 0, count: 65536)
+        // Yield between bounded bursts so a continuously writing child cannot
+        // keep the deadline/cancellation operation behind this callback forever.
+        for _ in 0..<16 {
+            guard result == nil else { return }
+            let count = read(descriptor, &buffer, buffer.count)
+            if count > 0 {
+                data.append(contentsOf: buffer.prefix(count))
+            } else if count == 0 {
+                complete(.success(data))
+            } else if errno == EINTR {
+                continue
+            } else if errno == EAGAIN || errno == EWOULDBLOCK {
+                return
+            } else {
+                complete(.failure(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)))
+            }
+        }
+    }
+
+    private func complete(_ value: Result<Data, Error>) {
+        guard result == nil else { return }
+        result = value
+        source.cancel()
+        let pending = waiter
+        waiter = nil
+        pending?.resume(with: value)
+    }
+
+    deinit { source.cancel() }
 }

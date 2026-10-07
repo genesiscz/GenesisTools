@@ -119,6 +119,54 @@ final class ToolsBridgeTests: XCTestCase {
         XCTAssertEqual(bun, "/opt/custom/bin/bun")
     }
 
+    func testCustomCertificateEnvironmentReachesTheChild() async throws {
+        let values = [
+            "NODE_EXTRA_CA_CERTS": "/fixture/extra.pem",
+            "SSL_CERT_FILE": "/fixture/cert.pem",
+            "SSL_CERT_DIR": "/fixture/certs",
+        ]
+        let scrubbed = ToolsBridge.scrubbedEnvironment(from: values.merging(["UNRELATED_SECRET": "hidden"]) { old, _ in old })
+        for (key, value) in values { XCTAssertEqual(scrubbed[key], value) }
+        XCTAssertNil(scrubbed["UNRELATED_SECRET"])
+        let result = try await ToolsBridge(binaryPath: "/bin/sh").run(
+            subcommand: "-c",
+            args: ["printf '%s\\n' \"$NODE_EXTRA_CA_CERTS\" \"$SSL_CERT_FILE\" \"$SSL_CERT_DIR\""],
+            extraEnv: values
+        )
+        XCTAssertEqual(result.stdout, "/fixture/extra.pem\n/fixture/cert.pem\n/fixture/certs\n")
+    }
+
+    func testInheritedPipesRespectTheWholeCallDeadline() async throws {
+        for redirect in ["", "1>/dev/null", "2>/dev/null"] {
+            let started = Date()
+            do {
+                _ = try await ToolsBridge(binaryPath: "/bin/sh").run(
+                    subcommand: "-c", args: ["/bin/sleep 2 \(redirect) & printf held"], timeoutSeconds: 1
+                )
+                XCTFail("an inherited pipe must not produce partial success")
+            } catch let error as ToolsBridgeError {
+                XCTAssertEqual(error, .timeout(seconds: 1))
+            }
+            XCTAssertLessThan(Date().timeIntervalSince(started), 1.8)
+        }
+    }
+
+    func testCancellationAfterImmediateChildExitStopsPipeCollectors() async throws {
+        let task = Task {
+            try await ToolsBridge(binaryPath: "/bin/sh").run(
+                subcommand: "-c", args: ["/bin/sleep 2 & printf held"], timeoutSeconds: 30
+            )
+        }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let started = Date()
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("expected cancellation")
+        } catch is CancellationError {}
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.8)
+    }
+
     func testEnvAllowlistScrubsSecrets() {
         let scrubbed = ToolsBridge.scrubbedEnvironment(from: [
             "HOME": "/Users/x",
@@ -200,6 +248,22 @@ final class ToolsBridgeTests: XCTestCase {
         task.cancel()
         _ = try? await task.value
         XCTAssertLessThan(Date().timeIntervalSince(started), 5, "cancelled run should return promptly")
+    }
+
+    func testCancellationEscalatesWhenTheDirectChildIgnoresSIGTERM() async throws {
+        let task = Task {
+            try await ToolsBridge(binaryPath: "/bin/sh").run(
+                subcommand: "-c", args: ["trap '' TERM; exec /bin/sleep 30"], timeoutSeconds: 60
+            )
+        }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let started = Date()
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("expected cancellation")
+        } catch is CancellationError {}
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1.5)
     }
 
     func testTimeoutKillsProcess() async {

@@ -178,9 +178,18 @@ public struct SessionNativeSummary: Equatable, Sendable {
         } else {
             end = Int.max
         }
-        var seen = Set<String>()
+        guard end >= start else { return SessionUsage() }
+        func lowerBound(_ ordinal: Int) -> Int {
+            var low = 0, high = calls.count
+            while low < high {
+                let middle = low + (high - low) / 2
+                if calls[middle].ordinal < ordinal { low = middle + 1 }
+                else { high = middle }
+            }
+            return low
+        }
         var sum = SessionUsage()
-        for call in calls where call.ordinal >= start && call.ordinal < end && seen.insert(call.messageId).inserted {
+        for call in calls[lowerBound(start)..<lowerBound(end)] {
             if let usage = usageByMessage[call.messageId] { sum.add(usage) }
         }
         return sum
@@ -191,11 +200,41 @@ public struct SessionNativeSummary: Equatable, Sendable {
 
 public final class SessionNativeLog: @unchecked Sendable {
     public let path: String
-    public let summary: SessionNativeSummary
+    private var currentSummary: SessionNativeSummary
+    public var summary: SessionNativeSummary {
+        appendLock.lock()
+        defer { appendLock.unlock() }
+        return currentSummary
+    }
+
+    /// Call off-main after coalesced tail updates. Only the appended region is indexed.
+    public func refreshSummarySnapshot() -> SessionNativeSummary {
+        indexAppended()
+        return summary
+    }
     private let toolUse: [String: Range<Int>]
     private let toolResult: [String: Range<Int>]
     private let lock = NSLock()
     private var cache: [String: ToolCallDetail] = [:]
+    private var detailBytes = 0
+
+    public var retainedBytes: Int {
+        appendLock.lock()
+        let indexBytes = (currentSummary.models.count + currentSummary.ordinals.count + currentSummary.calls.count
+            + currentSummary.usageByMessage.count + toolUse.count + toolResult.count
+            + appendedUse.count + appendedResult.count) * 256
+        let keyBytes = currentSummary.models.reduce(0) { $0 + $1.key.utf8.count + $1.value.utf8.count }
+            + currentSummary.ordinals.keys.reduce(0) { $0 + $1.utf8.count }
+            + currentSummary.calls.reduce(0) { $0 + $1.messageId.utf8.count }
+            + currentSummary.usageByMessage.keys.reduce(0) { $0 + $1.utf8.count }
+            + [toolUse, toolResult, appendedUse, appendedResult].reduce(0) { sum, ranges in
+                sum + ranges.keys.reduce(0) { $0 + $1.utf8.count }
+            }
+        appendLock.unlock()
+        lock.lock()
+        defer { lock.unlock() }
+        return indexBytes + keyBytes + detailBytes
+    }
     // A call written after the scan (the hub's live tail appends turns to an
     // open transcript, the scan runs once) is found in the lines written since (`indexAppended`); it
     // used to have no detail at all, so its output stayed clipped. `appendedEnd` is where that index
@@ -203,13 +242,15 @@ public final class SessionNativeLog: @unchecked Sendable {
     // scan is read once (PR #429 t21: every look used to scan the whole appended part again).
     private let appendLock = NSLock()
     private var appendedEnd: Int
+    private var appendedOrdinal: Int
     private var appendedRead = 0
     private var appendedUse: [String: Range<Int>] = [:]
     private var appendedResult: [String: Range<Int>] = [:]
 
-    private init(path: String, summary: SessionNativeSummary, toolUse: [String: Range<Int>], toolResult: [String: Range<Int>], appendedStart: Int) {
+    private init(path: String, summary: SessionNativeSummary, toolUse: [String: Range<Int>], toolResult: [String: Range<Int>], appendedStart: Int, ordinal: Int) {
         self.path = path
-        self.summary = summary
+        self.currentSummary = summary
+        self.appendedOrdinal = ordinal
         self.toolUse = toolUse
         self.toolResult = toolResult
         appendedEnd = appendedStart
@@ -232,6 +273,7 @@ public final class SessionNativeLog: @unchecked Sendable {
         var toolUse: [String: Range<Int>] = [:]
         var toolResult: [String: Range<Int>] = [:]
         var ordinal = 0
+        var completeOrdinal = 0
 
         data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             guard let base = raw.baseAddress else { return }
@@ -248,6 +290,7 @@ public final class SessionNativeLog: @unchecked Sendable {
                 guard kind != .other else { continue }
                 guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { continue }
                 ordinal += 1
+                if newline != nil { completeOrdinal = ordinal }
                 let range = start..<end
                 switch kind {
                 case .claude:
@@ -260,13 +303,11 @@ public final class SessionNativeLog: @unchecked Sendable {
             }
         }
 
-        for call in summary.calls {
-            if let usage = summary.usageByMessage[call.messageId] { summary.total.add(usage) }
-        }
+
         // A last line with no newline may still be being written; the index of
         // appended lines reads it again once it is whole.
         let appendedStart = data.last == 0x0A ? data.count : (data.lastIndex(of: 0x0A).map { $0 + 1 } ?? 0)
-        return SessionNativeLog(path: path, summary: summary, toolUse: toolUse, toolResult: toolResult, appendedStart: appendedStart)
+        return SessionNativeLog(path: path, summary: summary, toolUse: toolUse, toolResult: toolResult, appendedStart: appendedStart, ordinal: completeOrdinal)
     }
 
     /// The input and full result of one tool call, read from disk on first use and cached.
@@ -301,8 +342,17 @@ public final class SessionNativeLog: @unchecked Sendable {
         guard result != nil else { return detail }
 
         lock.lock()
-        if cache.count > 400 { cache.removeAll() }
-        cache[toolId] = detail
+        let bytes = [detail.filePath, detail.content, detail.patch, detail.command, detail.fullResult, detail.arguments]
+            .compactMap { $0 }.reduce(0) { $0 + $1.utf8.count }
+            + detail.edits.reduce(0) { $0 + $1.old.utf8.count + $1.new.utf8.count }
+        if cache.count >= 400 || detailBytes + bytes > 4 * 1024 * 1024 {
+            cache.removeAll()
+            detailBytes = 0
+        }
+        if bytes <= 4 * 1024 * 1024 {
+            cache[toolId] = detail
+            detailBytes += bytes
+        }
         lock.unlock()
         return detail
     }
@@ -314,17 +364,19 @@ public final class SessionNativeLog: @unchecked Sendable {
         appendLock.lock()
         defer { appendLock.unlock() }
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .alwaysMapped), data.count > appendedEnd else { return }
-        var summary = SessionNativeSummary()
+        var summary = currentSummary
+        var ordinal = appendedOrdinal
         var uses: [String: Range<Int>] = [:]
         var results: [String: Range<Int>] = [:]
         func index(_ line: UnsafeRawBufferPointer, _ range: Range<Int>) {
             let kind = LineKind.of(line)
             guard kind != .other, let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { return }
             if kind == .claude {
-                Self.indexClaude(object, range: range, ordinal: 0, summary: &summary, toolUse: &uses, toolResult: &results)
+                Self.indexClaude(object, range: range, ordinal: ordinal + 1, summary: &summary, toolUse: &uses, toolResult: &results)
             } else {
                 Self.indexCodex(object, range: range, toolUse: &uses, toolResult: &results)
             }
+            ordinal += 1
         }
         var end = appendedEnd
         data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
@@ -339,10 +391,12 @@ public final class SessionNativeLog: @unchecked Sendable {
                 start = lineEnd + 1
                 end = start
             }
+            appendedOrdinal = ordinal
             if start < count {
                 index(UnsafeRawBufferPointer(start: base + start, count: count - start), start..<count)
             }
         }
+        currentSummary = summary
         appendedRead += end - appendedEnd
         appendedEnd = end
         lock.lock()
@@ -431,21 +485,32 @@ public final class SessionNativeLog: @unchecked Sendable {
         }
         if object["isSidechain"] as? Bool == true { return }
         let uuid = object["uuid"] as? String
-        if let uuid { summary.ordinals[uuid] = ordinal }
+        if let uuid, summary.ordinals[uuid] == nil { summary.ordinals[uuid] = ordinal }
 
         if type == "assistant" {
             if let uuid, let model = message["model"] as? String { summary.models[uuid] = shortModel(model) }
-            if let id = message["id"] as? String, summary.usageByMessage[id] == nil {
-                var usage = SessionUsage(modelCalls: 1)
+            if let id = message["id"] as? String {
+                let previous = summary.usageByMessage[id]
+                var usage = previous ?? SessionUsage(modelCalls: 1)
                 if let raw = message["usage"] as? [String: Any] {
-                    usage.inputTokens = int(raw["input_tokens"])
-                    usage.outputTokens = int(raw["output_tokens"])
-                    usage.cacheReadTokens = int(raw["cache_read_input_tokens"])
-                    usage.cacheWriteTokens = int(raw["cache_creation_input_tokens"])
+                    if raw["input_tokens"] != nil { usage.inputTokens = int(raw["input_tokens"]) }
+                    if raw["output_tokens"] != nil { usage.outputTokens = int(raw["output_tokens"]) }
+                    if raw["cache_read_input_tokens"] != nil { usage.cacheReadTokens = int(raw["cache_read_input_tokens"]) }
+                    if raw["cache_creation_input_tokens"] != nil { usage.cacheWriteTokens = int(raw["cache_creation_input_tokens"]) }
                 }
                 if let cost = object["costUSD"] as? Double { usage.costUsd = cost }
+                if let previous {
+                    summary.total.add(SessionUsage(
+                        inputTokens: -previous.inputTokens, outputTokens: -previous.outputTokens,
+                        cacheReadTokens: -previous.cacheReadTokens, cacheWriteTokens: -previous.cacheWriteTokens,
+                        reasoningTokens: -previous.reasoningTokens, modelCalls: -previous.modelCalls,
+                        costUsd: previous.costUsd.map { -$0 }
+                    ))
+                } else {
+                    summary.calls.append(.init(ordinal: ordinal, messageId: id))
+                }
                 summary.usageByMessage[id] = usage
-                summary.calls.append(.init(ordinal: ordinal, messageId: id))
+                summary.total.add(usage)
             }
         }
     }
@@ -620,6 +685,96 @@ public final class SessionNativeLog: @unchecked Sendable {
             return text.isEmpty ? item["error"] as? String ?? "" : text
         default:
             return streams
+        }
+    }
+}
+
+/// Bounded, process-local reuse. Its synchronous reads belong off the main thread.
+public final class SessionNativeLogStore: @unchecked Sendable {
+    public static let shared = SessionNativeLogStore()
+    private struct Stamp: Equatable {
+        let device: UInt64
+        let inode: UInt64
+        let size: Int
+        let modified: Date
+    }
+    private struct Entry {
+        var stamp: Stamp
+        var head: Data
+        var tail: Data
+        let log: SessionNativeLog
+        var used: UInt64
+    }
+    private let lock = NSLock()
+    private var entries: [String: Entry] = [:]
+    private var clock: UInt64 = 0
+    private let byteLimit: Int
+    private let countLimit: Int
+
+    public init(byteLimit: Int = 32 * 1024 * 1024, countLimit: Int = 6) {
+        self.byteLimit = byteLimit
+        self.countLimit = countLimit
+    }
+
+    public func load(path: String) -> SessionNativeLog? {
+        let path = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        lock.lock()
+        defer { lock.unlock() }
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              let inode = attrs[.systemFileNumber] as? NSNumber,
+              let device = attrs[.systemNumber] as? NSNumber,
+              let size = attrs[.size] as? NSNumber,
+              let modified = attrs[.modificationDate] as? Date,
+              let handle = FileHandle(forReadingAtPath: path) else {
+            entries.removeValue(forKey: path)
+            return nil
+        }
+        defer { try? handle.close() }
+        let stamp = Stamp(device: device.uint64Value, inode: inode.uint64Value, size: size.intValue, modified: modified)
+        func checkpoint(_ size: Int) -> (Data, Data)? {
+            do {
+                try handle.seek(toOffset: 0)
+                let head = try handle.read(upToCount: min(size, 256)) ?? Data()
+                try handle.seek(toOffset: UInt64(max(0, size - 256)))
+                let tail = try handle.read(upToCount: min(size, 256)) ?? Data()
+                return (head, tail)
+            } catch { return nil }
+        }
+        clock &+= 1
+        if var entry = entries[path] {
+            let unchanged = entry.stamp == stamp
+            let grew = entry.stamp.device == stamp.device && entry.stamp.inode == stamp.inode && stamp.size > entry.stamp.size
+            let previous = grew ? checkpoint(entry.stamp.size) : nil
+            if unchanged || (grew && previous?.0 == entry.head && previous?.1 == entry.tail) {
+                if grew {
+                    _ = entry.log.refreshSummarySnapshot()
+                    guard let next = checkpoint(stamp.size) else {
+                        entries.removeValue(forKey: path)
+                        return nil
+                    }
+                    entry.head = next.0
+                    entry.tail = next.1
+                    entry.stamp = stamp
+                }
+                entry.used = clock
+                entries[path] = entry
+                trim()
+                return entry.log
+            }
+        }
+        guard let log = SessionNativeLog.scan(path: path), let checkpoint = checkpoint(stamp.size) else {
+            entries.removeValue(forKey: path)
+            return nil
+        }
+        entries[path] = Entry(stamp: stamp, head: checkpoint.0, tail: checkpoint.1, log: log, used: clock)
+        trim()
+        return log
+    }
+
+    private func trim() {
+        while entries.count > countLimit || entries.values.reduce(0, { $0 + $1.log.retainedBytes }) > byteLimit {
+            guard let oldest = entries.min(by: { $0.value.used < $1.value.used })?.key else { return }
+            entries.removeValue(forKey: oldest)
         }
     }
 }

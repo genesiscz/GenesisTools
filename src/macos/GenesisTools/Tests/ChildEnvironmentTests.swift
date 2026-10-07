@@ -5,6 +5,12 @@ import XCTest
 final class ChildEnvironmentTests: XCTestCase {
     private let user = ["/Users/someone/.local/bin", "/Users/someone/.bun/bin", "/opt/homebrew/bin", "/usr/local/bin"]
 
+    func testCapturedEnvironmentSurvivesTheSharedRunnerPolicy() {
+        for key in ChildEnvironment.capturedKeys {
+            XCTAssertTrue(ToolsBridge.envAllowlist.contains(key), "captured \(key) must reach child tools")
+        }
+    }
+
     func testAddedDirectoriesComeAfterTheBase() {
         let path = ChildEnvironment.path(ChildEnvironment.launchdPath, adding: user)
 

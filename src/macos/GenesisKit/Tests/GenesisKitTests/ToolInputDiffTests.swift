@@ -4,6 +4,49 @@ import XCTest
 /// Martin, 2026-10-01: Edit and Write calls must show their input as the diff, as Claude Code does,
 /// not the tool's "has been updated successfully" output.
 final class ToolInputDiffTests: XCTestCase {
+    func testNativeUsageRefreshAndCacheReuseTrackAppendAndReplacement() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("native-store-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("session.jsonl")
+        func message(_ id: Int, input: Int) -> String {
+            #"{"type":"assistant","uuid":"a\#(id)","message":{"id":"m\#(id)","model":"claude-opus","usage":{"input_tokens":\#(input)},"content":[]}}"# + "\n"
+        }
+        try message(1, input: 10).write(to: file, atomically: true, encoding: .utf8)
+        let store = SessionNativeLogStore()
+        let first = try XCTUnwrap(store.load(path: file.path))
+        XCTAssertTrue(first === store.load(path: file.path))
+        let writer = try FileHandle(forWritingTo: file)
+        try writer.seekToEnd()
+        try writer.write(contentsOf: Data(message(2, input: 100).utf8))
+        let same = try XCTUnwrap(store.load(path: file.path))
+        XCTAssertTrue(first === same)
+        XCTAssertEqual(same.summary.total.inputTokens, 110)
+        XCTAssertEqual(same.summary.total.modelCalls, 2)
+        let bytes = same.appendedBytesRead
+        XCTAssertEqual(same.refreshSummarySnapshot().total.inputTokens, 110)
+        XCTAssertEqual(same.appendedBytesRead, bytes)
+
+        let update = message(2, input: 120)
+        let split = update.utf8.count / 2
+        try writer.write(contentsOf: Data(update.utf8.prefix(split)))
+        XCTAssertEqual(same.refreshSummarySnapshot().total.inputTokens, 110)
+        try writer.write(contentsOf: Data(update.utf8.dropFirst(split)))
+        let summary = same.refreshSummarySnapshot()
+        XCTAssertEqual(summary.total.inputTokens, 130)
+        XCTAssertEqual(summary.total.modelCalls, 2)
+        XCTAssertEqual(summary.usage(fromTurn: "a2", untilTurn: nil)?.inputTokens, 120)
+        XCTAssertEqual(summary, SessionNativeLog.scan(path: file.path)?.summary)
+        try writer.close()
+
+        try message(3, input: 7).write(to: file, atomically: true, encoding: .utf8)
+        let replaced = try XCTUnwrap(store.load(path: file.path))
+        XCTAssertFalse(replaced === same)
+        XCTAssertEqual(replaced.summary.total.inputTokens, 7)
+        let tiny = SessionNativeLogStore(byteLimit: 1)
+        XCTAssertFalse(tiny.load(path: file.path) === tiny.load(path: file.path))
+    }
+
     private func line(_ name: String, input: String, result: String) -> TranscriptToolLine {
         TranscriptToolLine(
             toolId: "toolu_1", name: name, displayName: name, symbol: "pencil", keyArgument: input, input: input,
