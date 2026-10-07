@@ -560,4 +560,31 @@ final class PRThreadsTests: XCTestCase {
         XCTAssertEqual(live.notes.map(\.avatarUrl), ["https://example.com/a.png"])
         XCTAssertEqual(PRAvatar.tint(for: "alice"), PRAvatar.tint(for: "alice"), "one tint per person, run after run")
     }
+
+    // MARK: code blocks in notes
+
+    func testAFencesLanguageComesFromItsFirstWord() {
+        XCTAssertEqual(MarkdownContentView.fenceLanguage("ts"), .typescript)
+        XCTAssertEqual(MarkdownContentView.fenceLanguage("TSX"), .typescript)
+        XCTAssertEqual(MarkdownContentView.fenceLanguage("tsx title=\"Button.tsx\""), .typescript)
+        XCTAssertEqual(MarkdownContentView.fenceLanguage("js"), .javascript)
+        XCTAssertEqual(MarkdownContentView.fenceLanguage("json"), .json)
+        XCTAssertEqual(MarkdownContentView.fenceLanguage("swift"), .swift)
+        XCTAssertEqual(MarkdownContentView.fenceLanguage("bash"), .shell)
+        XCTAssertEqual(MarkdownContentView.fenceLanguage("Shell"), .shell)
+        XCTAssertEqual(MarkdownContentView.fenceLanguage("yml"), .yaml)
+        XCTAssertEqual(MarkdownContentView.fenceLanguage(""), .plain, "an unlabelled fence gets no colour")
+        XCTAssertEqual(MarkdownContentView.fenceLanguage("text"), .plain)
+    }
+
+    func testATypeScriptBlockIsColouredAndKeepsItsText() {
+        let code = "const total = sum(items) // why\nreturn \"done\""
+        let styled = MarkdownContentView.highlighted(code, info: "ts")
+        XCTAssertEqual(String(styled.characters), code, "colour only: the text and its lines are the same")
+        let coloured = styled.runs.filter { $0.foregroundColor != nil }.map { String(styled[$0.range].characters) }
+        XCTAssertTrue(coloured.contains("const"), "the keyword is coloured: \(coloured)")
+        XCTAssertTrue(coloured.contains("// why"), "the comment is coloured: \(coloured)")
+        XCTAssertTrue(coloured.contains("\"done\""), "the string is coloured: \(coloured)")
+        XCTAssertTrue(MarkdownContentView.highlighted(code, info: "").runs.allSatisfy { $0.foregroundColor == nil }, "plain stays plain")
+    }
 }

@@ -371,6 +371,7 @@ struct PRThreadsList: View {
     @State private var seenSince: Date?
     @State private var seenFor: String?
     @State private var clicks = PRCardClicks()
+    @State private var anchor = PRListAnchor()
     /// Whether each thread's file is still there at the PR's head (one `git ls-tree` per head).
     @ObservedObject private var headFiles = PRHeadFiles.shared
     /// A narrow side panel (the review window's Context panel, 320 pt at its minimum): the toolbar
@@ -452,10 +453,14 @@ struct PRThreadsList: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
+                    // A plain VStack: every row has its real height after one layout, so a width change (a panel
+                    // drag's release) can put the reader back exactly (PRListAnchor). A lazy stack estimated the rows
+                    // above the viewport and moved the visible ones again as it measured them. A PR has tens of threads.
+                    VStack(alignment: .leading, spacing: 12) {
                         ForEach(groups) { group in
                             VStack(alignment: .leading, spacing: 6) {
                                 fileHeader(group, placed: placed, fresh: fresh)
+                                    .modifier(PRListAnchorRow(anchor: anchor, id: "file:\(group.path)"))
                                 if !folded.contains(group.path) {
                                     VStack(alignment: .leading, spacing: 6) {
                                         ForEach(group.threads) { thread in
@@ -468,6 +473,7 @@ struct PRThreadsList: View {
                                                 toggle(thread: thread.id)
                                             }
                                             .findRow(thread.id, cornerRadius: 8)
+                                            .modifier(PRListAnchorRow(anchor: anchor, id: thread.id))
                                         }
                                     }
                                     // The file's rail: a click folds the whole file, as its header's chevron does.
@@ -481,6 +487,9 @@ struct PRThreadsList: View {
                     .padding(.horizontal, compact ? 8 : 12)
                     .padding(.top, 4)
                     .padding(.bottom, 12)
+                    .coordinateSpace(name: PRListAnchor.space)
+                    // The reader's place survives a width change (a panel drag's release, a window resize).
+                    .background(PRScrollViewFinder { anchor.attach($0) })
                 }
             }
         }
@@ -803,6 +812,35 @@ final class PRCardClicks {
     }
 }
 
+/// A thread's placement tag ("this commit · removed at head", "newer push"): GenesisKit's `Badge` look,
+/// but it shortens with "…" when the row is narrow. A fixed-size badge set the row's minimum width, and
+/// the narrow panel's list then ran past its edge, cut on the left (snapshot 2026-10-07).
+private struct PRShrinkBadge: View {
+    let text: String
+    let color: Color
+    var symbol: String?
+    let tooltip: String
+
+    var body: some View {
+        HStack(spacing: 3) {
+            if let symbol {
+                Image(systemName: symbol).font(.system(size: 8.5, weight: .semibold))
+            }
+            Text(verbatim: text)
+                .font(.system(size: 10.5, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .foregroundColor(color)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 1)
+        .background(Capsule().fill(Color.white.opacity(0.06)))
+        .layoutPriority(-1)
+        .instantTooltip("\(text)\n\n\(tooltip)")
+        .accessibilityLabel(Text(verbatim: "\(text): \(tooltip)"))
+    }
+}
+
 /// "Open 13" / "All 23" / "This file": a capsule that is filled while on.
 private struct PRFilterChip: View {
     let title: String
@@ -878,6 +916,7 @@ private struct PRThreadRow: View {
         style.textColor = Color.white.opacity(0.86)
         style.codeBackground = Color.black.opacity(0.3)
         style.inlineCodeBackground = Color.white.opacity(0.1)
+        style.highlightsCode = true
         style.lineSpacing = 2
         style.blockSpacing = 6
         return style
@@ -1067,17 +1106,17 @@ private struct PRThreadRow: View {
         let head = headNote
         switch placement {
         case .onDiff(outdatedOnHost: true):
-            Badge(head.map { "this commit · \($0.label)" } ?? "this commit", color: ReviewPalette.renamed, look: .tag, symbol: "clock.arrow.circlepath",
+            PRShrinkBadge(text: head.map { "this commit · \($0.label)" } ?? "this commit", color: ReviewPalette.renamed, symbol: "clock.arrow.circlepath",
                   tooltip: "The host marks it outdated because a later push changed these lines. The diff shows \(short.isEmpty ? "the commit it was written on" : short), the commit it was written on, so here it sits on its line."
                       + (head.map { "\n\n\($0.tooltip)" } ?? ""))
         case .onDiff:
             headBadge(head)
         case .outdated:
-            Badge("Outdated", color: ReviewPalette.dim, look: .tag,
+            PRShrinkBadge(text: "Outdated", color: ReviewPalette.dim,
                   tooltip: "A later push changed these lines\(short.isEmpty ? "" : " (written on \(short))"). The diff shows another commit, so the thread has no line in it; its notes stay here.")
             headBadge(head)
         case .newerHead:
-            Badge("newer push", color: ReviewPalette.dim, look: .tag, symbol: "arrow.up.circle",
+            PRShrinkBadge(text: "newer push", color: ReviewPalette.dim, symbol: "arrow.up.circle",
                   tooltip: "Current on the PR's newest commit, which this diff does not show, so it has no line here.")
         }
     }
@@ -1098,7 +1137,7 @@ private struct PRThreadRow: View {
     @ViewBuilder
     private func headBadge(_ note: (label: String, tooltip: String)?) -> some View {
         if let note {
-            Badge(note.label, color: ReviewPalette.modified, look: .tag, symbol: "doc.badge.ellipsis", tooltip: note.tooltip)
+            PRShrinkBadge(text: note.label, color: ReviewPalette.modified, symbol: "doc.badge.ellipsis", tooltip: note.tooltip)
         }
     }
 
@@ -1395,5 +1434,188 @@ private struct SubmitReviewForm: View {
         alert.addButton(withTitle: "Submit review")
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn
+    }
+}
+
+// MARK: - The reader's place across a width change
+
+/// Keeps the threads list where the reader was when its width changes: a side panel drag's release,
+/// a window resize. The rows re-wrap at the new width and every card's height changes; NSScrollView
+/// keeps its pixel offset, so the text under the reader slid to another thread (recording 2026-10-07:
+/// "L63–73 qkleblmat" at the top before the release, the thread above it after). The top-most visible
+/// row and its distance from the viewport's top are kept while the width is settled; when the rows
+/// report a new width, that row goes back to the same distance, once, after the one reflow.
+@MainActor
+final class PRListAnchor {
+    static let space = "prThreads.content"
+    /// The list on screen, for the `--drag-context` snapshot demo.
+    static weak var current: PRListAnchor?
+
+    private weak var scrollView: NSScrollView?
+    private var frames: [String: CGRect] = [:]
+    func rowFrame(_ id: String) -> CGRect? { frames[id] }
+    /// The row at the viewport's top and its y in the content, with the scroll offset it was read at.
+    private(set) var held: (id: String, contentY: CGFloat, offset: CGFloat)?
+    private var restorePending = false
+    private var observer: NSObjectProtocol?
+
+    var offset: CGFloat { scrollView?.contentView.bounds.origin.y ?? 0 }
+
+    func attach(_ scrollView: NSScrollView) {
+        guard self.scrollView !== scrollView else { return }
+        self.scrollView = scrollView
+        Self.current = self
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        if let observer {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        observer = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scrollView.contentView,
+                                                          queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.restorePending else { return }
+                self.capture()
+            }
+        }
+    }
+
+    deinit {
+        if let observer {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    /// A row's frame in the content. A new width means the list re-wrapped: put the reader back.
+    func update(_ id: String, _ frame: CGRect) {
+        let old = frames[id]
+        frames[id] = frame
+        if let old, abs(old.width - frame.width) > 0.5 {
+            scheduleRestore()
+            return
+        }
+        if !restorePending {
+            capture()
+        }
+    }
+
+    func remove(_ id: String) {
+        frames[id] = nil
+    }
+
+    /// The top-most row still visible, with its distance from the viewport's top.
+    private func capture() {
+        let top = offset
+        guard let found = PRListAnchorMath.topRow(frames, viewportTop: top) else { return }
+        held = (found.id, found.frame.minY, top)
+    }
+
+    private func scheduleRestore() {
+        guard !restorePending else { return }
+        restorePending = true
+        // After this layout pass: every visible row has reported its new frame by then.
+        DispatchQueue.main.async { [weak self] in
+            self?.restore()
+        }
+    }
+
+    private func restore() {
+        restorePending = false
+        guard let held, let now = frames[held.id], let scrollView, let document = scrollView.documentView else { return }
+        let target = PRListAnchorMath.offset(heldY: held.contentY, heldOffset: held.offset, newY: now.minY,
+                                             contentHeight: document.frame.height, viewportHeight: scrollView.contentView.bounds.height)
+        // x back to 0 too: the list scrolls only vertically, but after a frozen (wider) layout the clip view
+        // kept a horizontal offset and the rows showed cut on the left ("…rrorHandling/", snapshot 2026-10-07).
+        if abs(target - offset) > 0.5 || scrollView.contentView.bounds.origin.x != 0 {
+            scrollView.contentView.scroll(to: NSPoint(x: 0, y: target))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+        HubPerf.log("review.prThreads anchor \(held.id.prefix(12)) kept: y \(Int(held.contentY - held.offset)) → \(Int(now.minY - target)) (offset \(Int(held.offset)) → \(Int(target)))")
+        capture()
+    }
+
+    /// The top row now and its y in the viewport: what the `--drag-context` demo logs before and after.
+    func topRowLine() -> String {
+        guard let found = PRListAnchorMath.topRow(frames, viewportTop: offset) else { return "none" }
+        let clip = scrollView?.contentView.bounds ?? .zero
+        return "\(found.id.prefix(16)) y=\(Int((found.frame.minY - offset).rounded())) x=\(Int(found.frame.minX)) w=\(Int(found.frame.width)) "
+            + "(viewport x=\(Int(clip.minX)) w=\(Int(clip.width)), content w=\(Int(scrollView?.documentView?.frame.width ?? 0)))"
+    }
+
+    func scroll(to y: CGFloat) {
+        guard let scrollView else { return }
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+}
+
+enum PRListAnchorMath {
+    /// The row that holds the viewport's top line (or the first one below it).
+    static func topRow(_ frames: [String: CGRect], viewportTop: CGFloat) -> (id: String, frame: CGRect)? {
+        frames.filter { $0.value.maxY > viewportTop + 1 }
+            .min { ($0.value.minY, $0.key) < ($1.value.minY, $1.key) }
+            .map { ($0.key, $0.value) }
+    }
+
+    /// The scroll offset that puts the held row at the distance from the viewport's top it had, clamped
+    /// to the content.
+    static func offset(heldY: CGFloat, heldOffset: CGFloat, newY: CGFloat, contentHeight: CGFloat, viewportHeight: CGFloat) -> CGFloat {
+        let wanted = heldOffset + (newY - heldY)
+        return max(0, min(wanted, max(0, contentHeight - viewportHeight)))
+    }
+}
+
+/// Reports each row's frame in the list's content to the anchor.
+struct PRListAnchorRow: ViewModifier {
+    let anchor: PRListAnchor
+    let id: String
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(PRListAnchor.space)) }) { anchor.update(id, $0) }
+            .onDisappear { anchor.remove(id) }
+    }
+}
+
+/// Finds the NSScrollView a SwiftUI ScrollView is drawn in, once it is in a window.
+struct PRScrollViewFinder: NSViewRepresentable {
+    let found: (NSScrollView) -> Void
+
+    func makeNSView(context: Context) -> FinderView {
+        let view = FinderView()
+        view.found = found
+        return view
+    }
+
+    func updateNSView(_ nsView: FinderView, context: Context) {
+        nsView.found = found
+    }
+
+    /// Whatever it is offered: an AppKit view without an intrinsic size answers with its current frame,
+    /// which would hold the list at its old width after a drag.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: FinderView, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
+    }
+
+    final class FinderView: NSView {
+        var found: ((NSScrollView) -> Void)?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let scrollView = enclosingScrollView {
+                found?(scrollView)
+            }
+        }
+    }
+}
+
+extension PRListAnchor {
+    /// The held row (the one a width change keeps in place) and its y in the viewport now.
+    func heldRowLine() -> (id: String, line: String)? {
+        guard let held, let frame = rowFrame(held.id) else { return nil }
+        return (held.id, "\(held.id.prefix(16)) y=\(Int((frame.minY - offset).rounded()))")
+    }
+
+    func rowLine(_ id: String) -> String {
+        guard let frame = rowFrame(id) else { return "\(id.prefix(16)) not on screen" }
+        return "\(id.prefix(16)) y=\(Int((frame.minY - offset).rounded()))"
     }
 }

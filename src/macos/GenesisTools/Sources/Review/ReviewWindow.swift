@@ -41,6 +41,8 @@ func runReview(_ args: [String]) -> Never {
         case "--loading": demo.loading = true
         case "--fix-form": demo.fixForm = true
         case "--agent-send": demo.agentSend = true
+        case "--drag-context": demo.dragContext = Double(value ?? "").map { CGFloat($0) }; index += 1
+        case "--drag-scroll": demo.dragScroll = Double(value ?? "").map { CGFloat($0) } ?? 0; index += 1
         case "--blame": demo.blame = ReviewSnapshotDemo.blameTarget(value); index += 1
         case "--session": session = value; index += 1
         case "--scope": scope = DiffScope(argument: value ?? "") ?? .uncommitted; index += 1

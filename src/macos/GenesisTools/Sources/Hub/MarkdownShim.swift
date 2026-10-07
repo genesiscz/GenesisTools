@@ -18,6 +18,8 @@ struct MarkdownStyle {
     var taskDoneColor: Color = .green
     /// A fill behind `inline code`, as the host pages draw it; nil (the transcript) keeps only the monospace.
     var inlineCodeBackground: Color? = nil
+    /// Fenced blocks in syntax colours by their language (```tsx); off (the transcript) keeps them one colour.
+    var highlightsCode = false
     var lineSpacing: CGFloat = 3
     var blockSpacing: CGFloat = 10
     var headingScale: CGFloat = 1
@@ -69,7 +71,8 @@ struct MarkdownContentView: View {
 
     private enum Block: Hashable {
         case text(String)
-        case code(String)
+        /// `info`: what follows the opening fence (```tsx → "tsx"), the block's language.
+        case code(String, info: String)
         case heading(String, level: Int)
         case quote(String)
         case table(String)
@@ -115,6 +118,7 @@ struct MarkdownContentView: View {
         var code: [String]?
         // The open fence's character and length: only the same character, at least as many, closes it.
         var fence: (mark: Character, count: Int)?
+        var fenceInfo = ""
         var inComment = false
 
         func flushQuote() {
@@ -144,7 +148,7 @@ struct MarkdownContentView: View {
             if let open = fence {
                 // ```swift inside a block, or a shorter fence inside a longer one, is code, not the end.
                 if let marker, marker.mark == open.mark, marker.count >= open.count, marker.info.isEmpty {
-                    blocks.append(.code((code ?? []).joined(separator: "\n")))
+                    blocks.append(.code((code ?? []).joined(separator: "\n"), info: fenceInfo))
                     code = nil
                     fence = nil
                 } else {
@@ -156,6 +160,7 @@ struct MarkdownContentView: View {
                 flush()
                 code = []
                 fence = (marker.mark, marker.count)
+                fenceInfo = marker.info
                 continue
             }
 
@@ -205,7 +210,7 @@ struct MarkdownContentView: View {
         }
 
         if let open = code {
-            blocks.append(.code(open.joined(separator: "\n")))
+            blocks.append(.code(open.joined(separator: "\n"), info: fenceInfo))
         }
         flush()
         return blocks
@@ -264,7 +269,7 @@ struct MarkdownContentView: View {
         blocks(markdown).map { block in
             switch block {
             case .text(let text), .heading(let text, _), .quote(let text): return String(inline(text).characters)
-            case .code(let text), .table(let text): return text
+            case .code(let text, _), .table(let text): return text
             case .rule: return ""
             }
         }
@@ -299,7 +304,16 @@ struct MarkdownContentView: View {
                     }
                     .fixedSize(horizontal: false, vertical: true)
                     .panelFindAnchor(anchor(block: index))
-                case .code(let text), .table(let text):
+                case .code(let text, let info):
+                    Text(found(style.highlightsCode ? Self.highlighted(text, info: info) : AttributedString(text), block: index))
+                        .font(.system(size: style.bodySize - 1.5, design: .monospaced))
+                        .foregroundColor(style.codeColor)
+                        .selectable(style.selectable)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(style.codeBackground))
+                        .panelFindAnchor(anchor(block: index))
+                case .table(let text):
                     Text(found(AttributedString(text), block: index))
                         .font(.system(size: style.bodySize - 1.5, design: .monospaced))
                         .foregroundColor(style.codeColor)
@@ -313,6 +327,71 @@ struct MarkdownContentView: View {
                 }
             }
         }
+    }
+
+    /// A fence's language from its info string (```tsx title="x" → TypeScript), as GenesisKit's token
+    /// highlighter knows them; `.plain` (no colour) for an unlabelled fence or an unknown name. The web
+    /// cards map the same names (web/diff-viewer/code-lang.ts).
+    nonisolated static func fenceLanguage(_ info: String) -> SyntaxLanguage {
+        let word = info.trimmingCharacters(in: .whitespaces)
+            .split(whereSeparator: { $0 == " " || $0 == "{" || $0 == "," }).first.map { $0.lowercased() } ?? ""
+        switch word {
+        case "": return .plain
+        case "typescript", "tsx", "ts": return .typescript
+        case "javascript", "jsx", "js": return .javascript
+        case "shell", "console", "shellscript", "sh", "bash", "zsh": return .shell
+        case "python": return .python
+        case "kotlin": return .kotlin
+        case "ruby": return .ruby
+        case "rust": return .rust
+        case "c", "cpp", "objc", "objective-c": return .cLike
+        case "patch": return .plain
+        default: return SyntaxLanguage.forPath("block.\(word)")
+        }
+    }
+
+    nonisolated(unsafe) private static let codeCache: NSCache<NSString, Parsed<AttributedString>> = {
+        let cache = NSCache<NSString, Parsed<AttributedString>>()
+        cache.countLimit = 500
+        return cache
+    }()
+
+    /// A fenced block in GenesisKit's token colours (`SyntaxHighlighter`, the transcript's), cached per
+    /// language and text. Long blocks keep their first 400 lines coloured and the rest plain.
+    nonisolated static func highlighted(_ text: String, info: String) -> AttributedString {
+        let language = fenceLanguage(info)
+        guard language != .plain else { return AttributedString(text) }
+        let key = "\(language.rawValue)\u{0}\(text)" as NSString
+        if let hit = codeCache.object(forKey: key) {
+            return hit.value
+        }
+
+        var highlighter = SyntaxHighlighter(language: language)
+        var out = AttributedString()
+        let lines = text.components(separatedBy: "\n")
+        for (index, line) in lines.enumerated() {
+            if index > 0 {
+                out += AttributedString("\n")
+            }
+            guard index < 400 else {
+                out += AttributedString(line)
+                continue
+            }
+
+            let scalars = Array(line.unicodeScalars)
+            var at = 0
+            for (token, length) in highlighter.runs(line) {
+                let end = min(scalars.count, at + length)
+                var piece = AttributedString(String(String.UnicodeScalarView(scalars[at..<end])))
+                if token != .plain {
+                    piece.foregroundColor = token.color
+                }
+                out += piece
+                at = end
+            }
+        }
+        codeCache.setObject(Parsed(out), forKey: key)
+        return out
     }
 
     /// The paragraph's inline markdown, with the code spans filled when the style asks for it.

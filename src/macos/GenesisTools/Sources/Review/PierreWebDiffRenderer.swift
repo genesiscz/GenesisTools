@@ -48,6 +48,46 @@ final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandle
         MainActor.assumeIsolated {
             PanelFindRouter.shared.registerNative(webView, scope: "diff") { [weak self] in self?.find() }
         }
+        keepContentStillWhenTopMoves()
+    }
+
+
+    // MARK: Content still when the header above changes height
+
+    /// The web view's distance from the window's top and its width, the last time its frame changed.
+    private var topInset: CGFloat?
+    private var lastWidth: CGFloat?
+    private var frameObserver: NSObjectProtocol?
+
+    /// The rows above the diff (header, PR bar, notices) change height when the diff column changes width:
+    /// a side panel's release re-wraps the header, and the diff's top edge moved by that much, so the code
+    /// under the reader slid with it (recording 2026-10-07). When the top edge moves inside an unchanged
+    /// window, the page scrolls by the same amount and the code stays where it was on screen.
+    private func keepContentStillWhenTopMoves() {
+        webView.postsFrameChangedNotifications = true
+        frameObserver = NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: webView,
+                                                               queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.frameChanged() }
+        }
+    }
+
+    @MainActor
+    private func frameChanged() {
+        guard let window = webView.window, let content = window.contentView else {
+            topInset = nil
+            return
+        }
+
+        let inset = content.bounds.height - webView.convert(webView.bounds, to: nil).maxY
+        let width = webView.bounds.width
+        defer {
+            topInset = inset
+            lastWidth = width
+        }
+        guard let previous = topInset, let delta = DiffTopShift.scrollBy(previous: previous, now: inset, widthChanged: lastWidth.map { abs($0 - width) >= 1 } ?? false,
+                                                                         windowResizing: window.inLiveResize) else { return }
+        HubPerf.log("review.diff top moved \(Int(delta)) pt: the page scrolls with it")
+        webView.evaluateJavaScript("(() => { const host = document.getElementById('review'); if (host) host.scrollTop += \(delta); })()")
     }
 
     func show(_ files: [DiffFile], fresh: Bool) {
@@ -404,5 +444,17 @@ private final class DiffViewerSchemeHandler: NSObject, WKURLSchemeHandler {
         case "wasm": return "application/wasm"
         default: return "application/octet-stream"
         }
+    }
+}
+
+/// How far the diff page scrolls when the web view's top edge moved: by the same amount, so the code
+/// stays still on screen. Only when the diff also changed width (the header above re-wrapped at the new
+/// width): a notice or banner that appears above the diff keeps the page where it is, or the first lines
+/// would hide behind it. Not during a window resize, and not for a move under a point (rounding).
+enum DiffTopShift {
+    static func scrollBy(previous: CGFloat, now: CGFloat, widthChanged: Bool, windowResizing: Bool) -> CGFloat? {
+        let delta = now - previous
+        guard widthChanged, !windowResizing, abs(delta) >= 1 else { return nil }
+        return delta
     }
 }

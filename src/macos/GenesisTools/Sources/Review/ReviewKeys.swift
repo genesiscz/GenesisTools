@@ -29,6 +29,10 @@ struct ReviewSnapshotDemo {
     var fixForm = false
     /// `--agent-send`: the header's "Send N…" form, open, with its message preview.
     var agentSend = false
+    /// `--drag-context <dx> [--drag-scroll <y>]`: the Context panel's edge dragged by dx and released, the threads
+    /// list scrolled to y first; logs the list's top row and the diff's scroll before and after the release.
+    var dragContext: CGFloat?
+    var dragScroll: CGFloat = 0
     /// `--blame <path>:<line>`: that line's agent blame tip, as a hover would show it.
     var blame: (path: String, line: Int)?
     /// `--loading`: the header as it looks while the diff loads (the spinner beside the totals).
@@ -49,6 +53,9 @@ struct ReviewSnapshotDemo {
                 apply(to: model, waited: waited + 0.5, done: done)
             }
             return
+        }
+        if let dragContext {
+            return MainActor.assumeIsolated { applyDrag(dragContext, to: model, done: done) }
         }
         guard needsPR else { return applyBlame(to: model, done: done) }
         // A standalone window attaches its branch's PR once the repo facts load, after the first render.
@@ -145,5 +152,65 @@ enum ReviewKeyNav {
             return String(id.dropFirst(prefix.count))
         }
         return id
+    }
+}
+
+extension ReviewSnapshotDemo {
+    /// The Context panel's drag, scripted as HubBench does: the list scrolled to `dragScroll`, then the edge
+    /// moved by `dx` in steps and released. Before and after: the list's top row and its y, and the diff's
+    /// scroll position and frame, on stderr and in app-perf.log.
+    @MainActor
+    fileprivate func applyDrag(_ dx: CGFloat, to model: ReviewModel, waited: Double = 0, done: @escaping () -> Void) {
+        guard model.pr?.settled == true, PRListAnchor.current != nil || waited >= 20 else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { applyDrag(dx, to: model, waited: waited + 0.5, done: done) }
+            return
+        }
+
+        var heldID: String?
+        func report(_ label: String, then next: @escaping () -> Void) {
+            let anchor = PRListAnchor.current
+            if label == "dragging" {
+                heldID = anchor?.heldRowLine()?.id
+            }
+            let held = heldID.map { "held \(anchor?.rowLine($0) ?? "?")" } ?? "held none"
+            let list = "\(anchor?.topRowLine() ?? "no list"); \(held)"
+            let web = (model.renderer as? PierreWebDiffRenderer)?.webView
+            let frame = web.map { $0.convert($0.bounds, to: nil) } ?? .zero
+            let windowHeight = web?.window?.contentView?.bounds.height ?? 0
+            let finish = { (scroll: String) in
+                // Where the page's first pixel sits under the window's top: constant while the code stands still.
+                let origin = Int(windowHeight - frame.maxY) - (Int(scroll) ?? 0)
+                let line = "review drag \(label): list top \(list); diff top \(Int(windowHeight - frame.maxY)) scrollTop=\(scroll) page origin \(origin)"
+                HubPerf.log(line)
+                FileHandle.standardError.write(Data((line + "\n").utf8))
+                next()
+            }
+            guard let web else { return finish("none") }
+            web.evaluateJavaScript("String(Math.round(document.getElementById('review')?.scrollTop ?? -1))") { value, _ in
+                finish(value as? String ?? "?")
+            }
+        }
+
+        PRListAnchor.current?.scroll(to: dragScroll)
+        (model.renderer as? PierreWebDiffRenderer)?.webView.evaluateJavaScript("document.getElementById('review').scrollTop = 2400")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            report("before") {
+                let steps = 10
+                for step in 1...steps {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Double(step) * 0.05) {
+                        NotificationCenter.default.post(name: HubBench.panelDrag, object: HubBench.PanelDrag(
+                            key: ReviewContextPanel.key, phase: .change(dx * CGFloat(step) / CGFloat(steps))))
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(steps) * 0.05 + 0.3) {
+                    report("dragging") {
+                        NotificationCenter.default.post(name: HubBench.panelDrag, object: HubBench.PanelDrag(key: ReviewContextPanel.key, phase: .end))
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                            report("after", then: done)
+                        }
+                    }
+                }
+            }
+        }
     }
 }

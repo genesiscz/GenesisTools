@@ -6,14 +6,17 @@ import {
     type CodeViewOptions,
     type DiffLineAnnotation,
     type FileDiffMetadata,
+    getSharedHighlighter,
     type LineAnnotation,
     type OnDiffLineClickProps,
     type OnDiffLineEnterLeaveProps,
     type OnLineClickProps,
     type OnLineEnterLeaveProps,
     type SelectedLineRange,
+    type SupportedLanguages,
 } from "@pierre/diffs";
 import { WorkerPoolManager } from "@pierre/diffs/worker";
+import { fenceInfo, fenceLanguage } from "./code-lang";
 import { parseFileDiff } from "./file-diff";
 import { installReviewState } from "./review-state";
 
@@ -715,24 +718,114 @@ function renderMeta(meta: NonNullable<BridgeComment["meta"]>): HTMLElement {
 /** Markdown with ``` fences: fenced parts become code blocks, the rest stays rich text. */
 function fencedText(text: string): HTMLElement {
     const box = element("div", "");
-    text.split(/```[a-zA-Z]*\n?/).forEach((part, index) => {
-        if (!part.trim()) {
-            return;
+    const parts = text.split(/```([a-zA-Z0-9_+-]*)[^\n]*\n?/);
+    // split with one capture group: text, language, code, text, language, code, …
+    for (let index = 0; index < parts.length; index += 3) {
+        const prose = parts[index];
+
+        if (prose?.trim()) {
+            box.appendChild(richText(prose.trim()));
         }
 
-        if (index % 2 === 1) {
-            box.appendChild(
-                element(
-                    "pre",
-                    "margin:4px 0;padding:8px 10px;border-radius:7px;background:#0e0f11;border:1px solid rgba(255,255,255,.08);font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;color:#d6e2ff",
-                    part.replace(/\n$/, "")
-                )
-            );
-        } else {
-            box.appendChild(richText(part.trim()));
+        const code = parts[index + 2];
+
+        if (code?.trim()) {
+            box.appendChild(codeBlock(code.replace(/\n$/, ""), parts[index + 1] ?? ""));
+        }
+    }
+    return box;
+}
+
+// MARK: code blocks in notes (shiki through @pierre/diffs' shared highlighter, the diff's dark theme)
+
+const codeStyle =
+    "margin:4px 0;padding:8px 10px;border-radius:7px;background:#0e0f11;border:1px solid rgba(255,255,255,.08);font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;color:#d6e2ff";
+const codeTheme = "pierre-dark";
+
+interface CodeToken {
+    content: string;
+    color?: string;
+    fontStyle?: number;
+}
+
+/** Highlighted lines per language and text: a card drawn again (any refresh) paints them at once. */
+const highlightedCode = new Map<string, CodeToken[][] | "failed">();
+
+/**
+ * A fenced block. It paints as plain monospace text first; the colours arrive once its language is
+ * loaded (shiki through the shared highlighter, only the languages notes use), into the same text, so
+ * nothing moves. An unlabelled fence or an unknown language stays plain.
+ */
+function codeBlock(code: string, info: string): HTMLElement {
+    const pre = element("pre", codeStyle);
+    const lang = fenceLanguage(info);
+    const key = `${lang}\u0000${code}`;
+    const cached = lang ? highlightedCode.get(key) : undefined;
+
+    if (cached && cached !== "failed") {
+        paintTokens(pre, cached);
+        return pre;
+    }
+
+    pre.textContent = code;
+
+    if (!lang || cached === "failed") {
+        return pre;
+    }
+
+    highlightCode(code, lang).then(
+        (lines) => {
+            highlightedCode.set(key, lines);
+
+            if (pre.isConnected && pre.textContent === code) {
+                paintTokens(pre, lines);
+            }
+        },
+        (error: unknown) => {
+            highlightedCode.set(key, "failed");
+            console.warn(`code block (${lang}) stays plain: ${String(error)}`);
+        }
+    );
+    return pre;
+}
+
+async function highlightCode(code: string, lang: string): Promise<CodeToken[][]> {
+    const highlighter = await getSharedHighlighter({
+        themes: [codeTheme],
+        langs: [lang as SupportedLanguages],
+    });
+    const { tokens } = highlighter.codeToTokens(code, { lang: lang as SupportedLanguages, theme: codeTheme });
+    return tokens;
+}
+
+/** Spans built from DOM nodes, never innerHTML: a note is untrusted text. */
+function paintTokens(pre: HTMLElement, lines: CodeToken[][]): void {
+    pre.textContent = "";
+    lines.forEach((tokens, index) => {
+        if (index > 0) {
+            pre.appendChild(document.createTextNode("\n"));
+        }
+
+        for (const token of tokens) {
+            const span = document.createElement("span");
+            span.textContent = token.content;
+
+            if (token.color) {
+                span.style.color = token.color;
+            }
+
+            // shiki's FontStyle bits: 1 italic, 2 bold, 4 underline.
+            if (token.fontStyle && token.fontStyle & 1) {
+                span.style.fontStyle = "italic";
+            }
+
+            if (token.fontStyle && token.fontStyle & 2) {
+                span.style.fontWeight = "600";
+            }
+
+            pre.appendChild(span);
         }
     });
-    return box;
 }
 
 function renderDraft(comment: BridgeComment): HTMLElement {
@@ -1754,24 +1847,20 @@ function markdown(text: string): HTMLElement {
     for (let index = 0; index < lines.length; index++) {
         const raw = lines[index];
 
-        if (/^\s*```/.test(raw)) {
+        const opened = fenceInfo(raw);
+
+        if (opened !== null) {
             flush();
             list = null;
             const code: string[] = [];
             index++;
 
-            while (index < lines.length && !/^\s*```/.test(lines[index])) {
+            while (index < lines.length && fenceInfo(lines[index]) === null) {
                 code.push(lines[index]);
                 index++;
             }
 
-            root.appendChild(
-                element(
-                    "pre",
-                    "margin:4px 0;padding:8px 10px;border-radius:7px;background:#0e0f11;border:1px solid rgba(255,255,255,.08);font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;color:#d6e2ff",
-                    code.join("\n")
-                )
-            );
+            root.appendChild(codeBlock(code.join("\n"), opened));
             continue;
         }
 

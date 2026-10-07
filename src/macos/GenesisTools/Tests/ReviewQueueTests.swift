@@ -232,6 +232,39 @@ final class ReviewQueueTests: XCTestCase {
         XCTAssertNil(reloaded.comments.first { $0.id == a.id }?.heldFromAgent)
     }
 
+    // MARK: the reader's place across a width change
+
+    func testTheTopRowIsTheOneThatHoldsTheViewportsTopLine() {
+        let frames: [String: CGRect] = [
+            "file:a": CGRect(x: 0, y: 0, width: 300, height: 40),
+            "t1": CGRect(x: 0, y: 46, width: 300, height: 400),
+            "t2": CGRect(x: 0, y: 452, width: 300, height: 200),
+        ]
+        XCTAssertEqual(PRListAnchorMath.topRow(frames, viewportTop: 0)?.id, "file:a")
+        XCTAssertEqual(PRListAnchorMath.topRow(frames, viewportTop: 300)?.id, "t1", "the row cut by the top line, not the next one")
+        XCTAssertEqual(PRListAnchorMath.topRow(frames, viewportTop: 445.5)?.id, "t2", "a row with under a point left on screen is gone")
+    }
+
+    func testTheHeldRowGoesBackToItsDistanceFromTheTop() {
+        // Read at offset 300 with the row's top at 46 (246 above the viewport). The list re-wrapped
+        // narrower and the row now starts at 90: the offset moves by 44, the row is 246 above again.
+        XCTAssertEqual(PRListAnchorMath.offset(heldY: 46, heldOffset: 300, newY: 90, contentHeight: 5000, viewportHeight: 800), 344)
+        XCTAssertEqual(PRListAnchorMath.offset(heldY: 46, heldOffset: 300, newY: 46, contentHeight: 5000, viewportHeight: 800), 300)
+        XCTAssertEqual(PRListAnchorMath.offset(heldY: 900, heldOffset: 1000, newY: 600, contentHeight: 5000, viewportHeight: 800), 700)
+        XCTAssertEqual(PRListAnchorMath.offset(heldY: 46, heldOffset: 10, newY: 0, contentHeight: 5000, viewportHeight: 800), 0, "never above the content")
+        XCTAssertEqual(PRListAnchorMath.offset(heldY: 46, heldOffset: 4000, newY: 900, contentHeight: 4500, viewportHeight: 800), 3700, "never past its end")
+    }
+
+    func testTheDiffScrollsByAsMuchAsItsTopMovedOutsideAWindowResize() {
+        XCTAssertEqual(DiffTopShift.scrollBy(previous: 140, now: 125, widthChanged: true, windowResizing: false), -15,
+                       "the header lost a row at the new width: the page scrolls up as far")
+        XCTAssertEqual(DiffTopShift.scrollBy(previous: 125, now: 140, widthChanged: true, windowResizing: false), 15)
+        XCTAssertNil(DiffTopShift.scrollBy(previous: 0, now: 147, widthChanged: false, windowResizing: false),
+                     "a banner that appeared above the diff leaves the page alone")
+        XCTAssertNil(DiffTopShift.scrollBy(previous: 140, now: 125, widthChanged: true, windowResizing: true), "the reader is resizing the window itself")
+        XCTAssertNil(DiffTopShift.scrollBy(previous: 140, now: 140.4, widthChanged: true, windowResizing: false))
+    }
+
     // MARK: folding
 
     func testFoldsToggleAndAFoldedThreadShowsItsFirstLine() {
