@@ -499,3 +499,88 @@ test("the deadline also bounds a headerless response stalled during inspection",
     await Promise.resolve();
     expect(cancelled).toBe(true);
 });
+
+function stalledRequest(signal?: AbortSignal): Request {
+    return new Request(URL, { method: "POST", body: new ReadableStream<Uint8Array>({ pull() {} }), signal });
+}
+
+test("the deadline covers reading a stalled Request body, and fetch is never reached", async () => {
+    let calls = 0;
+    await expect(
+        fetchWhamResponse({
+            input: stalledRequest(),
+            timeoutMs: 10,
+            fetch: async () => {
+                calls++;
+                return new Response();
+            },
+        })
+    ).rejects.toThrow("deadline exceeded");
+    expect(calls).toBe(0);
+});
+
+test("a caller abort ends a stalled Request body read with the caller's reason", async () => {
+    const controller = new AbortController();
+    const reason = new Error("fixture cancelled during upload");
+    const pending = fetchWhamResponse({
+        input: stalledRequest(controller.signal),
+        fetch: async () => new Response(),
+    });
+    await Promise.resolve();
+    controller.abort(reason);
+    await expect(pending).rejects.toBe(reason);
+});
+
+test("the deadline is idle, so a stream that keeps sending outlives one timeout window", async () => {
+    const chunks = [
+        ...Array.from({ length: 6 }, () => ": heartbeat\n\n"),
+        `data: ${SafeJSON.stringify({ type: "response.output_item.done", output_index: 0, item: completedMessage })}\n\n`,
+        `data: ${SafeJSON.stringify({ type: "response.completed", response: completedResponse })}\n\n`,
+    ].map((chunk) => new TextEncoder().encode(chunk));
+    const response = await fetchWhamResponse({
+        input: URL,
+        init: { body: "{}" },
+        timeoutMs: 40,
+        fetch: async () =>
+            new Response(
+                new ReadableStream<Uint8Array>({
+                    async pull(controller) {
+                        const next = chunks.shift();
+
+                        if (!next) {
+                            controller.close();
+                            return;
+                        }
+
+                        await Bun.sleep(15);
+                        controller.enqueue(next);
+                    },
+                }),
+                { headers: { "content-type": "text/event-stream" } }
+            ),
+    });
+    expect((await response.json()).output).toEqual([completedMessage]);
+});
+
+test("id-less items get one stable synthetic id, and a terminal copy keeps the streamed id", async () => {
+    const { id: _messageId, ...idlessMessage } = completedMessage;
+    const reasoning = { type: "reasoning", id: "rs_streamed", summary: [], encrypted_content: "fixture-cipher" };
+    const { id: _reasoningId, ...idlessReasoning } = reasoning;
+    const response = await collectFixture([
+        { type: "response.output_item.done", output_index: 0, item: reasoning },
+        { type: "response.output_item.done", output_index: 1, item: idlessMessage },
+        { type: "response.completed", response: { ...completedResponse, output: [idlessReasoning, idlessMessage] } },
+    ]);
+    const output = (await response.json()).output;
+    expect(output[0]).toEqual(reasoning);
+    expect(output[1]).toEqual({ ...idlessMessage, id: expect.stringMatching(/^msg_[0-9a-f]{32}$/) });
+});
+
+test("an id that is present but not a string is still rejected", async () => {
+    await expect(
+        collectFixture([
+            { type: "response.output_item.done", output_index: 0, item: { ...completedMessage, id: 7 } },
+            { type: "response.completed", response: completedResponse },
+        ])
+    ).rejects.toThrow("invalid completed output item");
+});

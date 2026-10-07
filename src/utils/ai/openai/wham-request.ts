@@ -28,12 +28,46 @@ export async function toWhamRequest(input: RequestInfo | URL, init?: RequestInit
     return (await prepareWhamRequest({ input, init })).init;
 }
 
+/** Read a Request body under the caller's budget, so a stalled upload cannot outlive it. */
+async function readRequestText({ request, signal }: { request: Request; signal?: AbortSignal }): Promise<string> {
+    if (!signal) {
+        return request.clone().text();
+    }
+
+    const body = request.clone().body;
+
+    if (!body) {
+        return "";
+    }
+
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+
+    try {
+        while (true) {
+            const next = await awaitWhamOperation({ operation: reader.read(), signal });
+
+            if (next.done) {
+                return text + decoder.decode();
+            }
+
+            text += decoder.decode(next.value, { stream: true });
+        }
+    } finally {
+        void reader.cancel().catch(() => logger.debug("Subscription request body reader cancellation failed"));
+        reader.releaseLock();
+    }
+}
+
 async function prepareWhamRequest({
     input,
     init,
+    signal,
 }: {
     input: RequestInfo | URL;
     init?: RequestInit;
+    signal?: AbortSignal;
 }): Promise<{ init: RequestInit; collect: boolean }> {
     const request = input instanceof Request ? input : null;
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -42,7 +76,7 @@ async function prepareWhamRequest({
     headers.set("originator", "codex_cli_rs");
     headers.set("session_id", randomUUID());
     headers.set("Accept", "text/event-stream");
-    const rawBody = init?.body === undefined && request?.body ? await request.clone().text() : init?.body;
+    const rawBody = init?.body === undefined && request?.body ? await readRequestText({ request, signal }) : init?.body;
     const passthrough: RequestInit = { ...init, headers, ...(rawBody === undefined ? {} : { body: rawBody }) };
 
     if (!url.endsWith("/responses") || typeof rawBody !== "string") {
@@ -78,7 +112,11 @@ async function prepareWhamRequest({
     };
 }
 
-/** Preserve the SDK's original response mode even though WHAM requires streaming on the wire. */
+/**
+ * Preserve the SDK's original response mode even though WHAM requires streaming on the wire.
+ * `timeoutMs` is an idle deadline: every received chunk restarts it, so a long generation that
+ * keeps streaming is never cut off, while a stalled body, fetch or stream still ends (PR #470 review).
+ */
 export async function fetchWhamResponse({
     input,
     init,
@@ -92,12 +130,6 @@ export async function fetchWhamResponse({
 }): Promise<Response> {
     const callerSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
     callerSignal?.throwIfAborted();
-    const prepared = await prepareWhamRequest({ input, init });
-    callerSignal?.throwIfAborted();
-
-    if (!prepared.collect) {
-        return fetchImpl(input, prepared.init);
-    }
 
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
         throw new RangeError("Subscription response timeout must be positive and finite");
@@ -105,12 +137,24 @@ export async function fetchWhamResponse({
 
     const deadline = new AbortController();
     const signal = callerSignal ? AbortSignal.any([callerSignal, deadline.signal]) : deadline.signal;
-    const timer = setTimeout(
-        () => deadline.abort(new DOMException("Subscription response deadline exceeded", "TimeoutError")),
-        timeoutMs
-    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const touch = () => {
+        clearTimeout(timer);
+        timer = setTimeout(
+            () => deadline.abort(new DOMException("Subscription response idle deadline exceeded", "TimeoutError")),
+            timeoutMs
+        );
+    };
+    touch();
 
     try {
+        const prepared = await prepareWhamRequest({ input, init, signal });
+        signal.throwIfAborted();
+
+        if (!prepared.collect) {
+            return fetchImpl(input, prepared.init);
+        }
+
         const pendingResponse = fetchImpl(input, { ...prepared.init, signal });
         // A custom fetch may ignore abort and resolve later. Do not leave its body open.
         void pendingResponse.then(
@@ -136,7 +180,7 @@ export async function fetchWhamResponse({
             return response;
         }
 
-        return await collectWhamResponse({ response, signal });
+        return await collectWhamResponse({ response, signal, onProgress: touch });
     } finally {
         clearTimeout(timer);
     }

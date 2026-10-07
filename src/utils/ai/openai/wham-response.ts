@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { jsonSchema, parseJsonEventStream } from "ai";
@@ -7,6 +8,25 @@ const MAX_OUTPUT_ITEMS = 1024;
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** WHAM may omit item ids; an id, when present, must still be a string. */
+function isOutputItem(value: unknown): value is Record<string, unknown> {
+    return (
+        isObject(value) && typeof value.type === "string" && (value.id === undefined || typeof value.id === "string")
+    );
+}
+
+const SYNTHETIC_ID_PREFIX: Record<string, string> = { message: "msg", reasoning: "rs", function_call: "fc" };
+
+/** Responses clients (the Vercel AI SDK) require an id on every output item; WHAM omits some. */
+function withItemId(item: Record<string, unknown>): Record<string, unknown> {
+    if (typeof item.id === "string") {
+        return item;
+    }
+
+    const prefix = SYNTHETIC_ID_PREFIX[String(item.type)] ?? "item";
+    return { ...item, id: `${prefix}_${randomUUID().replace(/-/g, "")}` };
 }
 
 /** A custom fetch or stream must not turn a caller's cancellation into an unbounded wait. */
@@ -41,9 +61,12 @@ export async function awaitWhamOperation<T>({
 export async function collectWhamResponse({
     response,
     signal,
+    onProgress,
 }: {
     response: Response;
     signal: AbortSignal;
+    /** Called for every received chunk; the caller's idle deadline restarts on it. */
+    onProgress?: () => void;
 }): Promise<Response> {
     if (!response.body) {
         throw new Error("OpenAI subscription returned an empty event stream");
@@ -55,6 +78,7 @@ export async function collectWhamResponse({
         new TransformStream<Uint8Array, Uint8Array>({
             transform(chunk, controller) {
                 bytes += chunk.byteLength;
+                onProgress?.();
 
                 if (bytes > MAX_RESPONSE_BYTES) {
                     throw new Error("OpenAI subscription event stream exceeds the 16 MiB limit");
@@ -110,7 +134,7 @@ export async function collectWhamResponse({
                 if (event.type === "response.output_item.done") {
                     const item = event.item;
 
-                    if (!isObject(item) || typeof item.id !== "string" || typeof item.type !== "string") {
+                    if (!isOutputItem(item)) {
                         throw new Error("OpenAI subscription returned an invalid completed output item");
                     }
 
@@ -143,17 +167,23 @@ export async function collectWhamResponse({
             }
 
             for (const [index, item] of terminalOutput.entries()) {
-                if (!isObject(item) || typeof item.id !== "string" || typeof item.type !== "string") {
+                if (!isOutputItem(item)) {
                     throw new Error("OpenAI subscription returned an invalid terminal output item");
                 }
 
                 const previous = items.get(index);
+                const bothIds = typeof previous?.id === "string" && typeof item.id === "string";
 
-                if (previous && (previous.id !== item.id || previous.type !== item.type)) {
+                if (previous && (previous.type !== item.type || (bothIds && previous.id !== item.id))) {
                     throw new Error("OpenAI subscription terminal output changed item identity");
                 }
 
-                items.set(index, item);
+                items.set(
+                    index,
+                    typeof item.id !== "string" && typeof previous?.id === "string"
+                        ? { ...item, id: previous.id }
+                        : item
+                );
             }
 
             const output: Record<string, unknown>[] = [];
@@ -167,7 +197,7 @@ export async function collectWhamResponse({
                     throw new Error("OpenAI subscription response is missing a completed output item");
                 }
 
-                output.push(item);
+                output.push(withItemId(item));
             }
 
             const headers = new Headers(response.headers);
