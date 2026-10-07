@@ -10,7 +10,7 @@ import { PR_LIST_STATES, type PrListState, parsePrRef } from "@genesiscz/utils/g
 import { fetchPrHead, PR_FETCH_PROVIDERS, PrFetchError } from "@genesiscz/utils/git/origins/pr-fetch";
 import { repoFactsMany } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { profiler } from "@genesiscz/utils/profile";
 import { maxCacheAgeOption, resolveMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
@@ -831,14 +831,24 @@ async function prVerb<T>({
     }
 }
 
-/** The branch's PR/MR and its backend, then one write; the thread cache is dropped after it. */
+/**
+ * The branch's PR/MR and its backend, then one write; the thread cache is dropped after it. Every
+ * step that can fail runs before the write, and a failed cache drop after it is only logged: a
+ * write that reached the remote must never be reported as failed, or a retry posts it twice.
+ */
 async function prWrite<T>(
     target: { repo: string; pr?: string },
     write: (backend: PrBackend, found: FoundPr) => Promise<T>
 ): Promise<T> {
     const found = await resolvePr(target);
+    const cacheIdentity = await reviewCacheIdentity(found);
     const result = await write(await backendFor(found), found);
-    await forgetThreads({ pr: found, cacheIdentity: await reviewCacheIdentity(found) });
+    try {
+        await forgetThreads({ pr: found, cacheIdentity });
+    } catch (error) {
+        logger.warn({ error, pr: found.url }, "hub: the write succeeded but the thread cache could not be dropped");
+    }
+
     return result;
 }
 
