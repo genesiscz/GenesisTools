@@ -132,12 +132,53 @@ final class BrowserURLForwarder: NSObject {
 }
 
 func runBrowserLink(_ raw: String) -> Never {
+    keepRouterDocumentFree()
     let app = NSApplication.shared
+    app.delegate = browserLinkApp
     app.setActivationPolicy(.accessory)
+    installBrowserURLForwarder()
+    armBrowserRouterDeadline()
     handleBrowserLink(raw)
     if !browserLinkFinished {
         app.run()
     }
+    exit(0)
+}
+
+/// A router is never a document app. When the Info.plist declares document types (Recast), AppKit opens the
+/// link in argv as a file ("The document 'genesis-md%3A…' could not be opened", a modal alert, 2026-10-06 02:44)
+/// and reopens saved documents. Registered defaults apply to this process only, so the Recast face keeps its own.
+private func keepRouterDocumentFree() {
+    UserDefaults.standard.register(defaults: ["NSTreatUnknownArgumentsAsOpen": "NO"])
+}
+
+private let browserLinkApp = BrowserLinkApp()
+
+private final class BrowserLinkApp: NSObject, NSApplicationDelegate {
+    func application(_ sender: NSApplication, openFile filename: String) -> Bool { true }
+
+    func application(_ app: NSApplication, shouldRestoreSecureApplicationState coder: NSCoder) -> Bool { false }
+
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply { .terminateNow }
+}
+
+/// A router that outlives its link answers every later link by dropping it, so it gets a hard end. A background
+/// queue keeps it from depending on the main thread, which is where a stuck router is stuck.
+private let browserRouterDeadlineSeconds = 600.0
+
+private func armBrowserRouterDeadline() {
+    DispatchQueue.global().asyncAfter(deadline: .now() + browserRouterDeadlineSeconds) {
+        FileHandle.standardError.write(Data("router: still running after \(Int(browserRouterDeadlineSeconds)) s, exiting\n".utf8))
+        exit(0)
+    }
+}
+
+/// Ends a router for good. `NSApp.terminate` first asks every open document to close and can be cancelled
+/// ("NSDocumentController canceling termination - not all documents were closed", 2026-10-05 21:18): that left
+/// a router with no URL handler alive for 5 h, and macOS handed it every link.
+func quitBrowserLink() -> Never {
     exit(0)
 }
 
@@ -169,7 +210,7 @@ func handleBrowserLink(_ raw: String) {
             done: {
                 browserLinkFinished = true
                 if !browserCommandRunning {
-                    NSApp.terminate(nil)
+                    quitBrowserLink()
                 }
             }
         )
@@ -187,8 +228,7 @@ func handleBrowserLink(_ raw: String) {
         browserCommandRunning = false
         if browserLinkFinished {
             // The toast was clicked away while the command ran; its quit waited for the command.
-            NSApp.terminate(nil)
-            return
+            quitBrowserLink()
         }
 
         switch outcome {
@@ -211,7 +251,7 @@ func handleBrowserLink(_ raw: String) {
         if let card {
             card.holdThenFade()
         } else {
-            NSApp.terminate(nil)
+            quitBrowserLink()
         }
     }
 }
@@ -225,8 +265,7 @@ private func finishBrowserLink(message: String, failedURL: String?, toast: Route
     browserLinkFinished = true
     notifyBrowser(message)
     guard let failedURL, !message.contains("link used up") else {
-        NSApp.terminate(nil)
-        return
+        quitBrowserLink()
     }
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
@@ -237,7 +276,7 @@ private func finishBrowserLink(message: String, failedURL: String?, toast: Route
     } catch {
         FileHandle.standardError.write(Data("router: could not open \(failedURL) in a fallback browser: \(error)\n".utf8))
     }
-    NSApp.terminate(nil)
+    quitBrowserLink()
 }
 
 /// Where a link goes when routing failed: the browser recorded before GenesisTools took http(s), else

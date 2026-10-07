@@ -8,7 +8,7 @@ import { requestFullDiskAccess } from "@genesiscz/utils/macos/full-disk-access";
 import { genesisAppBundlePath, genesisAppDisabledMarkerPath } from "@genesiscz/utils/macos/genesis-app";
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { Command } from "commander";
-import { buildApp } from "../../lib/permissions/app";
+import { buildApp, describeSource } from "../../lib/permissions/app";
 import { type PermissionsReport, permissionsReport, SETTINGS_PANES, settingsUrl } from "../../lib/permissions/report";
 
 const PANES = Object.keys(SETTINGS_PANES);
@@ -34,6 +34,7 @@ function printReport(report: PermissionsReport): void {
             `${report.app.manifest?.builtAt ?? "unknown"}${report.app.stale ? " (stale: sources changed)" : ""}`,
             11
         );
+        ui.kv("source", describeSource(report.app.manifest) ?? "unknown (built before the commit was recorded)", 11);
     } else {
         ui.err(`not built (${report.app.bundlePath})`);
     }

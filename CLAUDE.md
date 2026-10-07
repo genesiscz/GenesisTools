@@ -356,9 +356,23 @@ path gets it; it is proven to catch by planting a `--window` instance and rebuil
 `GenesisTools <program> [args...]`, which is the launcher running the user's real work — dev servers,
 editor sessions, long builds all run under it.
 
+**Which commit is installed? One command: `bun run app:status`.** Its `source` line reads
+`<branch> @ <12-char sha>[+dirty] (<checkout>)`, written into `~/.genesis-tools/app/manifest.json` by every build
+(`sourceRoot`, `sourceBranch`, `sourceCommit`, `sourceDirty`). `+dirty` means the Swift sources had uncommitted changes,
+so the sha alone does not name the code. A build from before 2026-10-06 shows "unknown": its manifest only has
+`sourceToolsPath` (the worktree) and `builtAt`; match the time against that worktree's `git log`. `built … (stale: sources
+changed)` compares file contents of THIS checkout with the install, so a stale flag from another worktree's build is expected.
+
 **Before believing an app-face bug report, check what is actually running:**
 `ps -Ao pid,lstart,command | rg "MacOS/GenesisTools" | rg -v "gt-cc|gt-claude|bun "`. A bare entry
 with no program argument is a window instance, and its start time tells you which build it is.
+An entry whose only argument is an `https://…` link and that is older than a minute is a STUCK LINK ROUTER:
+macOS hands every later click to it, it has no URL handler, and the click vanishes ("Raycast quicklink opens nothing",
+2026-10-06: one lived 5 h 27 m). Cause that day: an install whose Info.plist declares document types (Recast) made
+AppKit open the link in argv as a file (modal "document could not be opened") and cancel `terminate` ("not all
+documents were closed"; find it with `command log show --predicate 'processID == <pid>' | rg -i terminat`). A router
+now quits with `exit(0)`, never `NSApp.terminate`, and a build is not done until one `open -a ~/Applications/GenesisTools.app
+https://example.org/` leaves no router running after ~8 s.
 
 **Notifications specifically** (`src/macos/GenesisTools/Sources/Notify.swift`, reached from
 `src/utils/macos/notifications.ts` via `genesis-app-rpc.ts`): `tools macos permissions build`, then

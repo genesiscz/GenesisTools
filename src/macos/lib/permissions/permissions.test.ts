@@ -3,7 +3,16 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { skip } from "@genesiscz/utils/test/skip";
-import { parseCodesignInfo, pickCodesignIdentity, staleAppFacePids, stampInfoPlist } from "./app";
+import {
+    describeSource,
+    parseCodesignInfo,
+    pickCodesignIdentity,
+    readSourceInfo,
+    staleAppFacePids,
+    staleRegistrations,
+    stampInfoPlist,
+    timedSteps,
+} from "./app";
 import { collectProblems, grantsFor, launchdJobsOutsideApp } from "./report";
 import { readTccRows, TCC_SERVICES, type TccReadResult, tccAuthLabel } from "./tcc";
 
@@ -122,6 +131,17 @@ describe("staleAppFacePids", () => {
         ].join("\n");
 
         expect(staleAppFacePids(stdout, launcher)).toEqual(["111", "222", "333", "666"]);
+    });
+
+    it("kills a link router that outlived its link, but not a launcher whose program takes a URL", () => {
+        const stdout = [
+            `  111 ${launcher} https://example.com/a%20b`,
+            `  222 ${launcher} http://example.com/`,
+            `  333 ${launcher} /opt/homebrew/bin/bun tools open https://example.com/`,
+            `  444 ${launcher} genesis-tools://hub?mode=prs`,
+        ].join("\n");
+
+        expect(staleAppFacePids(stdout, launcher)).toEqual(["111", "222"]);
     });
 
     it("ignores unrelated processes and empty listings", () => {
@@ -334,5 +354,86 @@ describe("tccAuthLabel with a reason", () => {
         expect(tccAuthLabel("kTCCServiceAppleEvents", 0, 9)).toBe("prompt timed out (never answered)");
         expect(tccAuthLabel("kTCCServiceAppleEvents", 0, 3)).toBe("denied");
         expect(tccAuthLabel("kTCCServiceAppleEvents", 0)).toBe("denied");
+    });
+});
+
+describe("build source record", () => {
+    it("names the branch, the commit and a dirty tree in one line", () => {
+        const line = describeSource({
+            sourceRoot: "/work/checkout",
+            sourceBranch: "feat/x",
+            sourceCommit: "1a2b3c4d5e6f7a8b9c0d",
+            sourceDirty: true,
+        });
+
+        expect(line).toBe("feat/x @ 1a2b3c4d5e6f+dirty (/work/checkout)");
+        expect(describeSource({ sourceRoot: "/r", sourceBranch: "main", sourceCommit: "abcdef0123456789" })).toBe(
+            "main @ abcdef012345 (/r)"
+        );
+    });
+
+    it("answers undefined for a build that predates the record", () => {
+        expect(describeSource(undefined)).toBeUndefined();
+        expect(describeSource({ sourceRoot: "/r" })).toBeUndefined();
+    });
+
+    it("reads this checkout's commit, and nothing for a folder outside git", () => {
+        const info = readSourceInfo();
+        expect(info.sourceCommit).toMatch(/^[0-9a-f]{40}$/);
+        expect(info.sourceRoot).toBeTruthy();
+        expect(readSourceInfo(mkdtempSync(join(tmpdir(), "no-git-")))).toEqual({});
+    });
+});
+
+describe("staleRegistrations", () => {
+    const block = (path: string, id: string, extra = "") =>
+        `bundle id:                  GenesisTools (0x19e08)\n${extra}path:                       ${path} (0x1f4d8)\nname:                       GenesisTools\nidentifier:                 ${id}\nversion:                    1.0\n`;
+    const dump = [
+        block(
+            "/apps/old/retired.noindex/1790969791633/GenesisTools.app",
+            "com.example.tools",
+            "Bundle node not found on disk: fnfErr\n"
+        ),
+        block("/apps/GenesisTools.app", "com.example.tools"),
+        block("/apps/Other.app", "com.example.other"),
+        block("/apps/old/retired.noindex/1791133057805/GenesisTools.app", "com.example.tools"),
+    ].join("\n--------------------------------------------------------------------------------\n");
+
+    it("lists every record of the bundle id except the installed path, missing bundles included", () => {
+        expect(staleRegistrations(dump, "com.example.tools", "/apps/GenesisTools.app")).toEqual([
+            "/apps/old/retired.noindex/1790969791633/GenesisTools.app",
+            "/apps/old/retired.noindex/1791133057805/GenesisTools.app",
+        ]);
+    });
+
+    it("keeps the installed record and other apps", () => {
+        expect(
+            staleRegistrations(
+                block("/apps/GenesisTools.app", "com.example.tools"),
+                "com.example.tools",
+                "/apps/GenesisTools.app"
+            )
+        ).toEqual([]);
+        expect(staleRegistrations(dump, "com.example.other", "/apps/Other.app")).toEqual([]);
+    });
+});
+
+describe("timedSteps", () => {
+    it("times each step until the next one and lists them slowest first", () => {
+        let clock = 0;
+        const reported: string[] = [];
+        const timer = timedSteps(
+            (message) => reported.push(message),
+            () => clock
+        );
+        timer.step("swift build -c release");
+        clock = 58_700;
+        timer.step("codesign");
+        clock = 60_700;
+        timer.step("install bundle");
+        clock = 61_000;
+
+        expect(reported).toEqual(["swift build -c release", "codesign", "install bundle"]);
+        expect(timer.summary()).toBe("build 61.0s: swift build -c release 58.7s, codesign 2.0s, install bundle 0.3s");
     });
 });

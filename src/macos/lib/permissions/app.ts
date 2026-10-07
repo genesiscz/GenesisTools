@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -18,6 +18,8 @@ import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { withFileLock } from "@genesiscz/utils/storage";
 
 export const APP_SOURCE_DIR = resolve(import.meta.dirname, "../../GenesisTools");
+/** The app build's own SwiftPM scratch folder, apart from `.build/debug` (tests, benches) so the two never rebuild each other. */
+const APP_SCRATCH_PATH = join(APP_SOURCE_DIR, ".build", "opt");
 /** The shared SwiftUI package the app links (src/macos/GenesisKit), so an edit there marks the build stale too. */
 const SOURCE_ROOTS = [
     "Package.swift",
@@ -41,7 +43,17 @@ const PLIST_BUILD_MARKER = "<key>CFBundleVersion</key>\n\t<string>1</string>";
 const LSREGISTER =
     "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 
-export interface AppManifest {
+/** Which checkout and commit an install was built from, so "what is running?" is one `bun run app:status`. */
+export interface AppSourceInfo {
+    /** The checkout or worktree the Swift sources were read from. */
+    sourceRoot?: string;
+    sourceBranch?: string;
+    sourceCommit?: string;
+    /** True when the Swift sources had uncommitted changes at build time, so the commit alone does not name the code. */
+    sourceDirty?: boolean;
+}
+
+export interface AppManifest extends AppSourceInfo {
     builtAt: string;
     sourceHash: string;
     signedWith: string;
@@ -80,6 +92,39 @@ function run(cmd: string[], cwd?: string): { code: number; stdout: string; stder
         stdout: new TextDecoder().decode(proc.stdout),
         stderr: new TextDecoder().decode(proc.stderr),
     };
+}
+
+export function readSourceInfo(sourceDir = APP_SOURCE_DIR): AppSourceInfo {
+    const git = (...args: string[]) => run(["git", "-C", sourceDir, ...args]);
+    const root = git("rev-parse", "--show-toplevel");
+    const commit = git("rev-parse", "HEAD");
+
+    if (root.code !== 0 || commit.code !== 0) {
+        logger.warn(
+            { sourceDir, stderr: root.stderr || commit.stderr },
+            "permissions app: build source is not a git checkout"
+        );
+        return {};
+    }
+
+    const branch = git("branch", "--show-current").stdout.trim();
+    const dirty = git("status", "--porcelain", "--", sourceDir).stdout.trim() !== "";
+
+    return {
+        sourceRoot: root.stdout.trim(),
+        sourceBranch: branch || "(detached)",
+        sourceCommit: commit.stdout.trim(),
+        sourceDirty: dirty,
+    };
+}
+
+/** `feat/x @ 1a2b3c4d5e6f+dirty (/path/to/checkout)`, or undefined for a build that predates the record. */
+export function describeSource(manifest: AppSourceInfo | undefined): string | undefined {
+    if (!manifest?.sourceCommit) {
+        return undefined;
+    }
+
+    return `${manifest.sourceBranch ?? "?"} @ ${manifest.sourceCommit.slice(0, 12)}${manifest.sourceDirty ? "+dirty" : ""} (${manifest.sourceRoot ?? "?"})`;
 }
 
 function sourceFiles(root: string): string[] {
@@ -272,9 +317,46 @@ export function assertFullXcodeToolchain(toolchain: XcodeToolchain): void {
     }
 }
 
-async function buildAppLocked(options?: { onStep?: (message: string) => void }): Promise<BuildResult> {
-    const step = options?.onStep ?? (() => {});
+/** Wraps a step reporter so each step's duration is kept; `summary()` names them all, slowest first. */
+export function timedSteps(report: (message: string) => void, now: () => number = () => performance.now()) {
+    const spans: { name: string; ms: number }[] = [];
+    let current: { name: string; start: number } | null = null;
+    const close = () => {
+        if (current) {
+            spans.push({ name: current.name, ms: now() - current.start });
+            current = null;
+        }
+    };
 
+    return {
+        step(message: string) {
+            close();
+            current = { name: message, start: now() };
+            report(message);
+        },
+        summary(): string {
+            close();
+            const total = spans.reduce((sum, span) => sum + span.ms, 0);
+            const parts = [...spans]
+                .sort((a, b) => b.ms - a.ms)
+                .map((span) => `${span.name} ${(span.ms / 1000).toFixed(1)}s`);
+            return `build ${(total / 1000).toFixed(1)}s: ${parts.join(", ")}`;
+        },
+    };
+}
+
+async function buildAppLocked(options?: { onStep?: (message: string) => void }): Promise<BuildResult> {
+    const timer = timedSteps(options?.onStep ?? (() => {}));
+    try {
+        return await buildAppSteps(timer.step);
+    } finally {
+        const summary = timer.summary();
+        logger.info({ summary }, "GenesisTools.app build timings");
+        options?.onStep?.(summary);
+    }
+}
+
+async function buildAppSteps(step: (message: string) => void): Promise<BuildResult> {
     if (process.platform !== "darwin") {
         throw new Error("GenesisTools.app can only be built on macOS.");
     }
@@ -285,14 +367,22 @@ async function buildAppLocked(options?: { onStep?: (message: string) => void }):
 
     assertFullXcodeToolchain(detectXcodeToolchain());
 
-    step("swift build -c release");
-    const build = run(["swift", "build", "-c", "release"], APP_SOURCE_DIR);
+    // SwiftPM's debug configuration with `-O`, in its own scratch folder: release mode is never incremental, so one
+    // changed line recompiled all 91 files of the app (58.7 s with whole-module optimization, 18.3 s without), while
+    // this rebuilds the changed files only (5.1 s). `-O` is what the compile line carries (no `-Onone`), and no source
+    // uses `#if DEBUG`. Hub resize bench, interleaved 3+3 runs (2026-10-07): sidebar p50 8.6/8.1/9.1 vs release
+    // 8.6/9.5/8.8 ms, split 10.3/10.1/10.1 vs 10.3/10.0/10.2, window 17.0-17.2 vs 16.6-17.4.
+    step("swift build (optimized, incremental)");
+    const build = run(
+        ["swift", "build", "-c", "debug", "-Xswiftc", "-O", "--scratch-path", APP_SCRATCH_PATH],
+        APP_SOURCE_DIR
+    );
 
     if (build.code !== 0) {
         throw new Error(`swift build failed (exit ${build.code}):\n${build.stderr || build.stdout}`);
     }
 
-    const builtBinary = join(APP_SOURCE_DIR, ".build", "release", GENESIS_APP_NAME);
+    const builtBinary = join(APP_SCRATCH_PATH, "debug", GENESIS_APP_NAME);
 
     if (!existsSync(builtBinary)) {
         throw new Error(`swift build produced no binary at ${builtBinary}`);
@@ -433,6 +523,7 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     const manifest: AppManifest = {
         builtAt: new Date().toISOString(),
         sourceHash: sourceHash(),
+        ...readSourceInfo(),
         signedWith: signature.authority,
         teamId: signature.teamId,
     };
@@ -478,6 +569,7 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
         // Launch Services must know the bundle, or every permission dialog falls back to the file
         // name and says "GenesisTools.app" instead of the CFBundleDisplayName "GenesisTools".
         step("register with Launch Services");
+        unregisterStaleCopies(bundlePath);
         const lsregister = run([LSREGISTER, "-f", bundlePath]);
 
         if (lsregister.code !== 0) {
@@ -545,9 +637,9 @@ function retirePreviousBundle(previous: string, appDir: string): void {
     mkdirSync(dirname(target), { recursive: true });
     renameSync(previous, target);
     adoptLegacyRetired(appDir, retiredRoot);
-    pruneRetiredBundles(retiredRoot);
     // Launch Services must never offer a retired copy: not in the Full Disk Access picker, and not
-    // to `open -b`. Every build unregisters all of them, since a copy may have been registered again.
+    // to `open -b`. Unregistered BEFORE the prune: a copy deleted while still registered left a record
+    // pointing at a missing path, which the notification center then tried to launch for every click.
     for (const entry of readdirSync(retiredRoot, { withFileTypes: true })) {
         const bundle = join(retiredRoot, entry.name, `${GENESIS_APP_NAME}.app`);
 
@@ -555,6 +647,67 @@ function retirePreviousBundle(previous: string, appDir: string): void {
             run([LSREGISTER, "-u", bundle]);
         }
     }
+
+    pruneRetiredBundles(retiredRoot);
+}
+
+/**
+ * Every Launch Services record of this bundle id at another path, from `lsregister -dump`. Its blocks are
+ * separated by dashed lines; a record keeps its `path:` after the bundle is gone ("Bundle node not found").
+ */
+export function staleRegistrations(dump: string, bundleId: string, keepPath: string): string[] {
+    const stale = new Set<string>();
+
+    for (const block of dump.split(/\n-{20,}\n/)) {
+        const identifier = block.match(/^identifier:\s+(\S+)\s*$/m)?.[1];
+        const path = block.match(/^path:\s+(.+?)\s+\(0x[0-9a-f]+\)\s*$/m)?.[1];
+
+        if (identifier === bundleId && path && resolve(path) !== resolve(keepPath)) {
+            stale.add(path);
+        }
+    }
+
+    return [...stale];
+}
+
+/**
+ * usernoted launches the REGISTERED copy to deliver a banner click. With the only record pointing at a deleted
+ * retired copy, the launch failed and every click on a running hub was dropped (2026-10-06: "Foreground launch of
+ * com.genesiscz.genesistools failed", no response delivered). So every record but the installed bundle goes.
+ */
+const STALE_COPY_CHECK_EVERY_MS = 24 * 3_600_000;
+
+function unregisterStaleCopies(bundlePath: string): void {
+    // The dump costs about 6 s of a build. A dead record only appears when a still-registered copy is deleted, which
+    // the build itself no longer does (retired copies are unregistered before the prune), so once a day is enough.
+    const stampPath = join(genesisAppDir(), "ls-stale-check.stamp");
+    try {
+        if (Date.now() - statSync(stampPath).mtimeMs < STALE_COPY_CHECK_EVERY_MS) {
+            logger.debug({ stampPath }, "stale LaunchServices copies checked within a day; skipping the dump");
+            return;
+        }
+    } catch (error) {
+        logger.debug({ error, stampPath }, "no stale-copy check stamp yet; running the dump");
+    }
+
+    const dump = run([LSREGISTER, "-dump"]);
+
+    if (dump.code !== 0) {
+        logger.warn(
+            { code: dump.code, stderr: dump.stderr.slice(0, 400) },
+            "lsregister -dump failed; stale copies stay"
+        );
+        return;
+    }
+
+    const stale = staleRegistrations(dump.stdout, GENESIS_APP_BUNDLE_ID, bundlePath);
+
+    for (const path of stale) {
+        run([LSREGISTER, "-u", path]);
+    }
+
+    logger.info({ stale }, "unregistered stale GenesisTools.app copies");
+    writeFileSync(stampPath, `${new Date().toISOString()}\n`);
 }
 
 /** Copies retired before `retired.noindex` existed move in; a move keeps the path tccd resolves live. */
@@ -680,9 +833,11 @@ export function staleAppFacePids(psStdout: string, launcherPath: string): string
 
         const rest = command.slice(launcherPath.length).trim();
 
-        // "" is the settings window; a leading dash is --rpc / --window / --notify. Anything else
-        // starts with a program path, which means it is the launcher and must be left alone.
-        if (rest === "" || rest.startsWith("-")) {
+        // "" is the settings window; a leading dash is --rpc / --window / --notify; an http(s) link is a link
+        // router, which ends within seconds, so one that is still there holds every later link and drops it
+        // (2026-10-06: 5 h). Anything else starts with a program path, which means it is the launcher and
+        // must be left alone.
+        if (rest === "" || rest.startsWith("-") || /^https?:\/\//.test(rest)) {
             stale.push(match[1]);
         }
     }
@@ -700,7 +855,7 @@ export function staleAppFacePids(psStdout: string, launcherPath: string): string
  * two hours on 2026-09-16: a window instance from 13:48 swallowed every click for the rest of the
  * session, and a hung `--rpc` process spun at 60% CPU for an hour doing the same.
  *
- * ⚠️ Only argument-less and flag-argument faces are killed. `GenesisTools <program> [args...]` is
+ * ⚠️ Only argument-less, flag-argument and link-router (`GenesisTools https://…`) faces are killed. `GenesisTools <program> [args...]` is
  * the LAUNCHER running somebody's actual work (a dev server, an editor session, a long build), and
  * killing those would take the user's tools down with the rebuild.
  *
