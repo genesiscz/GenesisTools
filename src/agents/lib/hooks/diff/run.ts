@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import {
     type ChangeBytes,
@@ -14,7 +14,7 @@ import {
 } from "../../changes/log";
 import { gitObjectSink } from "../../changes/objects";
 import { type DiffConfig, diffFor, type HooksConfig } from "../config";
-import { committedPaths, gitOut, objectId, statusOf } from "../git";
+import { committedPaths, gitOut, lastHistoryMove, objectId, statusOf } from "../git";
 import { hookDiag } from "../log";
 import { callDir, safeSegment } from "../paths";
 import type { HookPayload } from "../payload";
@@ -456,6 +456,7 @@ export function runDiffPost(
     const suppressed = new Map<DiffCategory, number>();
     const attribution = attributionContext(payload, since);
     const touches: Touch[] = [];
+    const historyNotes: string[] = [];
     const unattributed: Array<{ path: string; root: string }> = [];
     const uncapturedFiles: Array<{ path: string; root: string }> = [];
     const touch = (path: string, kind: Attribution) =>
@@ -476,8 +477,22 @@ export function runDiffPost(
         const startedOn = objectId(heads[index]?.trim());
         const nowOn = objectId(summary.branch?.oid);
         const moved = startedOn !== null && nowOn !== null && startedOn !== nowOn;
-        const base = moved && startedOn ? startedOn : "HEAD";
-        const committed = moved && startedOn && nowOn ? committedPaths(root, startedOn, nowOn) : [];
+        // A commit is the command's own edit; a rebase, pull, merge, checkout or reset is HEAD
+        // walking through other people's work, so the files it brought are named in one line and
+        // never rendered. Only commits made AFTER the last such move belong to the command.
+        const move = moved && startedOn ? lastHistoryMove(root, since, startedOn) : null;
+        const from = move ? move.head : startedOn;
+        const base = moved && from ? from : "HEAD";
+        const committed = moved && from && nowOn && from !== nowOn ? committedPaths(root, from, nowOn) : [];
+
+        if (move && startedOn && nowOn) {
+            const carried = committedPaths(root, startedOn, nowOn).length;
+
+            historyNotes.push(
+                `git ${move.verb} moved HEAD in ${basename(root)} (${startedOn.slice(0, 7)} to ${nowOn.slice(0, 7)}): ${carried} file(s) came with it, no diff shown`
+            );
+        }
+
         for (const file of changedFiles(root, since, diff, { entries: summary.entries, committed })) {
             if (full() && !logsEdits) {
                 break;
@@ -660,6 +675,7 @@ export function runDiffPost(
     }
 
     const notes = [
+        ...historyNotes,
         ...(uncapturedFiles.length > 0
             ? [summaryLine("dirty file(s) changed with no captured before-state", uncapturedFiles)]
             : []),

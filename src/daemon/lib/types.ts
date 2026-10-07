@@ -54,6 +54,8 @@ export interface TaskState {
     nextRunAt: Date;
     attemptCount: number;
     running: boolean;
+    /** Runs that failed one after another, and when the last banner for the streak went up. */
+    failureStreak?: { count: number; notifiedAt: number };
 }
 
 export interface RunResult {

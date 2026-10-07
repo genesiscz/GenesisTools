@@ -61,6 +61,62 @@ export function objectId(value: string | undefined): string | null {
 }
 
 /**
+ * What HEAD's reflog says moved it through history instead of adding a commit of the caller's own:
+ * a rebase, pull, merge, checkout, switch, reset, cherry-pick or am. `commit`, `commit (amend)` and
+ * `revert` are the command's own work and are not listed here.
+ */
+const HISTORY_MOVE = /^(checkout|rebase|pull|merge|reset|cherry-pick|am|clone)\b/;
+/** Entries are read newest first and stop at the first one older than the command. */
+const REFLOG_ENTRIES = 200;
+
+export interface HistoryMove {
+    /** The command word, for the note: `rebase`, `checkout`, `pull`... */
+    verb: string;
+    /** Where HEAD stood right after that move; commits past it are the command's own. */
+    head: string;
+}
+
+/**
+ * The NEWEST history move HEAD made since `sinceMs`, or null when every move was a plain commit
+ * (or the reflog says nothing, which then reads as the old behaviour). Only called when HEAD
+ * actually moved during the command, so the ordinary call pays nothing for it.
+ *
+ * The walk also stops at the entry where HEAD stood at `startedOn`: that entry and everything
+ * older happened before the command. The clock alone cannot say so, because the reflog and the
+ * command stamp both have whole-second resolution, and a checkout made in the second before the
+ * command began would read as the command's own.
+ */
+export function lastHistoryMove(root: string, sinceMs: number, startedOn: string): HistoryMove | null {
+    const sinceSeconds = Math.floor(sinceMs / 1000);
+    const lines = gitOut(
+        root,
+        ["reflog", "show", "--date=unix", "--format=%H%x09%gd%x09%gs", "-n", String(REFLOG_ENTRIES), "HEAD"],
+        { quiet: true }
+    ).split("\n");
+
+    for (const line of lines) {
+        const [head, selector, subject] = line.split("\t");
+        const at = Number(/\{(\d+)\}/.exec(selector ?? "")?.[1]);
+
+        if (!objectId(head) || !subject || !Number.isFinite(at)) {
+            continue;
+        }
+
+        if (at < sinceSeconds || head === startedOn) {
+            return null;
+        }
+
+        const verb = HISTORY_MOVE.exec(subject)?.[1];
+
+        if (verb && head) {
+            return { verb, head };
+        }
+    }
+
+    return null;
+}
+
+/**
  * Paths a commit range touched. Only called when HEAD actually moved during the command, so
  * the ordinary call pays nothing for it.
  */

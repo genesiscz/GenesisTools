@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
     existsSync,
@@ -1676,6 +1676,111 @@ describe("a command that edits AND commits in the same call", () => {
         expect(decision.message).toContain("brand");
 
         rmSync(empty, { recursive: true, force: true });
+    });
+});
+
+describe("a command that moves HEAD through history", () => {
+    // Observed 2026-10-05 in a live session: `git rebase origin/master` printed 15 diffs and
+    // "149 more files changed" for files that other people committed. The hook treats everything
+    // between the old and the new HEAD as the command's edit, which is right for `git commit` and
+    // wrong for a rebase, a pull, a merge, a checkout or a reset: those carry other people's work.
+    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    let repo3: string;
+
+    const run = (args: string[]) => spawnSync("git", ["-C", repo3, ...args], { encoding: "utf8", env: process.env });
+    const commitFile = (name: string, body: string, message: string) => {
+        writeFileSync(join(repo3, name), body);
+        run(["add", "-A"]);
+        run(["commit", "-qm", message]);
+    };
+
+    beforeEach(() => {
+        repo3 = realpathSync(mkdtempSync(join(tmpdir(), "gt-history-")));
+        run(["init", "-q", "-b", "master"]);
+        run(["config", "user.email", "probe@local"]);
+        run(["config", "user.name", "probe"]);
+        commitFile("base.md", "base\n", "init");
+        run(["checkout", "-qb", "topic"]);
+        commitFile("topic.md", "topic work\n", "topic");
+        run(["checkout", "-q", "master"]);
+        commitFile("upstream-1.md", "UPSTREAM-ONE\n", "upstream one");
+        commitFile("upstream-2.md", "UPSTREAM-TWO\n", "upstream two");
+    });
+
+    afterEach(() => {
+        rmSync(repo3, { recursive: true, force: true });
+    });
+
+    it("a rebase names the files that came with it and renders none of them", () => {
+        run(["checkout", "-q", "topic"]);
+
+        const current = begin({ cwd: repo3, toolUseId: "history-rebase", command: "git rebase master" });
+
+        run(["rebase", "-q", "master"]);
+
+        const decision = runDiffPost(current, plain);
+
+        expect(decision.files).toEqual([]);
+        expect(decision.message ?? "").not.toContain("UPSTREAM-ONE");
+        expect(decision.message ?? "").toContain("git rebase moved HEAD");
+        expect(decision.message ?? "").toContain("2 file(s) came with it");
+    });
+
+    it("a checkout of another branch is not the command's edit either, deletions included", () => {
+        const current = begin({ cwd: repo3, toolUseId: "history-checkout", command: "git checkout topic" });
+
+        run(["checkout", "-q", "topic"]);
+
+        const decision = runDiffPost(current, plain);
+
+        // topic.md arrives, and both upstream files leave: three files differ between the two tips.
+        expect(decision.files).toEqual([]);
+        expect(decision.message ?? "").toContain("git checkout moved HEAD");
+        expect(decision.message ?? "").toContain("3 file(s) came with it");
+    });
+
+    it("a fast-forward pull is a history move", () => {
+        run(["checkout", "-q", "topic"]);
+        run(["merge", "-q", "--ff-only", "master"]);
+        run(["checkout", "-q", "master"]);
+        run(["reset", "-q", "--hard", "HEAD~2"]);
+
+        const current = begin({ cwd: repo3, toolUseId: "history-ff", command: "git merge topic" });
+
+        run(["merge", "-q", "--ff-only", "topic"]);
+
+        const decision = runDiffPost(current, plain);
+
+        expect(decision.files).toEqual([]);
+        expect(decision.message ?? "").toContain("git merge moved HEAD");
+    });
+
+    it("a commit the command makes AFTER the rebase still renders, and the upstream files still do not", () => {
+        run(["checkout", "-q", "topic"]);
+
+        const current = begin({ cwd: repo3, toolUseId: "history-then-commit", command: "git rebase master && commit" });
+
+        run(["rebase", "-q", "master"]);
+        commitFile("own.md", "OWN-WORK-AFTER-REBASE\n", "own work");
+
+        const decision = runDiffPost(current, plain);
+
+        expect(decision.files).toEqual([join(repo3, "own.md")]);
+        expect(decision.message).toContain("OWN-WORK-AFTER-REBASE");
+        expect(decision.message ?? "").not.toContain("UPSTREAM-ONE");
+        expect(decision.message ?? "").toContain("git rebase moved HEAD");
+    });
+
+    it("negative control: a plain commit is still the command's own edit", () => {
+        const current = begin({ cwd: repo3, toolUseId: "history-plain-commit", command: "edit and commit" });
+
+        commitFile("mine.md", "PLAIN-COMMIT-WORK\n", "mine");
+
+        const decision = runDiffPost(current, plain);
+
+        expect(decision.files).toEqual([join(repo3, "mine.md")]);
+        expect(decision.message).toContain("PLAIN-COMMIT-WORK");
+        expect(decision.message ?? "").not.toContain("moved HEAD");
     });
 });
 

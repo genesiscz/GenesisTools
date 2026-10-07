@@ -354,3 +354,62 @@ describe('notify: "failure"', () => {
         expect(await messagesFor(0, undefined)).toEqual(["Task started", "Completed in 1ms"]);
     });
 });
+
+describe("a task that keeps failing", () => {
+    // Observed 2026-10-05: `services-idle-reap` failed on 38 of 79 runs in one day, every 15 minutes, and
+    // each failure put the same banner on screen. One banner per streak says it; the rest is noise.
+    const HOUR = 3_600_000;
+
+    /** Runs the task once per entry of `outcomes`, `gapMs` apart, on ONE task state, and returns the banners. */
+    async function bannersFor(outcomes: number[], gapMs: number): Promise<string[]> {
+        const messages: string[] = [];
+        const start = new Date("2026-10-05T10:00:00Z");
+        const state: TaskState = { nextRunAt: start, attemptCount: 0, running: false };
+        const taskStates = new Map<string, TaskState>([["flaky", state]]);
+        const activeRuns = new Set<string>();
+        const tasks: DaemonTask[] = [
+            { name: "flaky", command: "true", every: "every 15 minutes", retries: 0, enabled: true, notify: "failure" },
+        ];
+
+        for (const [index, exitCode] of outcomes.entries()) {
+            const now = new Date(start.getTime() + index * gapMs);
+
+            state.nextRunAt = new Date(now.getTime() - 1_000);
+            dispatchDueTasks({
+                tasks,
+                taskStates,
+                activeRuns,
+                logsBaseDir,
+                now,
+                notify: async (options) => {
+                    messages.push(options.message);
+                    return true;
+                },
+                runTask: async () => ({ exitCode, duration_ms: 1, logFile: "/tmp/test.jsonl" }),
+            });
+            await drainActiveRuns(activeRuns);
+        }
+
+        return messages;
+    }
+
+    test("three failures in a row put up one banner", async () => {
+        expect(await bannersFor([1, 1, 1], 15 * 60_000)).toEqual(["Failed after 1 attempt, retries exhausted"]);
+    });
+
+    test("a success ends the streak, so the next failure is a new banner", async () => {
+        expect(await bannersFor([1, 0, 1], 15 * 60_000)).toEqual([
+            "Failed after 1 attempt, retries exhausted",
+            "Failed after 1 attempt, retries exhausted",
+        ]);
+    });
+
+    test("a streak that lasts past the reminder interval says how long it has run", async () => {
+        const messages = await bannersFor([1, 1, 1], 4 * HOUR);
+
+        expect(messages).toEqual([
+            "Failed after 1 attempt, retries exhausted",
+            "Still failing: 3 runs in a row, retries exhausted",
+        ]);
+    });
+});

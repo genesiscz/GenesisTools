@@ -2,6 +2,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { type CaptureResult, captureSync } from "@genesiscz/utils/process/ps";
 import { Storage } from "@genesiscz/utils/storage";
 import type { ServiceRow } from "./inventory";
+import { netstatIsUsable, parseNetstatClientPorts, runNetstat } from "./netstat";
 
 /** Last time each running service had a client, keyed by `<id>@<startedAt>` so a new process starts fresh. */
 export type IdleState = Record<string, number>;
@@ -92,6 +93,23 @@ export function clientPortsFrom(run: CaptureResult): Set<number> | null {
 }
 
 export function readClientPorts(): Set<number> | null {
+    if (netstatIsUsable()) {
+        // netstat reads the kernel's socket list in milliseconds; lsof took 9 s under load and was killed
+        // at its 10 s deadline on 38 of 79 daemon runs on 2026-10-05, each one a banner.
+        const run = runNetstat();
+
+        if (run.status === 0) {
+            const ports = parseNetstatClientPorts(run.stdout);
+            logger.debug({ ports: [...ports], via: "netstat" }, "services: client check");
+            return ports;
+        }
+
+        logger.warn(
+            { status: run.status, stderr: run.stderr.trim().slice(0, 500) },
+            "services: netstat could not list connections; falling back to lsof"
+        );
+    }
+
     // lsof can hang on an unresponsive mount: past the deadline it is killed (status null), which
     // `clientPortsFrom` reads as unknown, never as idle.
     const ports = clientPortsFrom(

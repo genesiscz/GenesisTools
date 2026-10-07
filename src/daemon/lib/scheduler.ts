@@ -22,6 +22,8 @@ export const WATCHDOG_INTERVAL_MS = 60_000;
 export const WEDGE_THRESHOLD_MS = 5 * 60_000;
 /** Bound on config loading so a stuck Storage lock surfaces as a loop failure, not an eternal await. */
 export const LOAD_CONFIG_TIMEOUT_MS = 15_000;
+/** A task that keeps failing gets one banner, then a reminder this often while the streak lasts. */
+export const FAILURE_REMINDER_MS = 6 * 3_600_000;
 
 /** Notification dispatch seam — tests inject a no-op so `bun test` never fires real banners. */
 export type NotifyFn = typeof dispatchNotification;
@@ -283,7 +285,7 @@ export function dispatchDueTasks(options: {
         state.running = true;
         const scheduledAt = state.nextRunAt;
 
-        executeTask(task, logsBaseDir, notify, runTaskImpl)
+        executeTask(task, logsBaseDir, notify, runTaskImpl, { state, at: now.getTime() })
             .catch((err) => {
                 log.error({ err, task: task.name }, "[daemon] task execution error");
             })
@@ -314,10 +316,11 @@ async function executeTask(
     task: DaemonTask,
     logsBaseDir: string,
     notify: NotifyFn,
-    runTaskImpl: RunTaskFn
+    runTaskImpl: RunTaskFn,
+    streak: StreakContext
 ): Promise<void> {
     try {
-        await runAttempts(task, logsBaseDir, notify, runTaskImpl);
+        await runAttempts(task, logsBaseDir, notify, runTaskImpl, streak);
     } finally {
         if (task.retention) {
             try {
@@ -329,11 +332,18 @@ async function executeTask(
     }
 }
 
+interface StreakContext {
+    state: TaskState;
+    /** When this run was dispatched, epoch ms. */
+    at: number;
+}
+
 async function runAttempts(
     task: DaemonTask,
     logsBaseDir: string,
     notify: NotifyFn,
-    runTaskImpl: RunTaskFn
+    runTaskImpl: RunTaskFn,
+    { state, at }: StreakContext
 ): Promise<void> {
     const maxAttempts = task.retries + 1;
 
@@ -363,6 +373,8 @@ async function runAttempts(
                 "[daemon] task completed"
             );
 
+            state.failureStreak = undefined;
+
             if (notifyProgress) {
                 notify({
                     app: "daemon",
@@ -387,13 +399,29 @@ async function runAttempts(
         }
     }
 
-    if (notifyFailure) {
+    const streak = state.failureStreak ?? { count: 0, notifiedAt: 0 };
+    streak.count += 1;
+    state.failureStreak = streak;
+
+    // One banner per streak, then a reminder: a task that fails every 15 minutes for a day is one
+    // problem, and 38 identical banners (observed 2026-10-05) hide every other message.
+    const first = streak.count === 1;
+
+    if (notifyFailure && (first || at - streak.notifiedAt >= FAILURE_REMINDER_MS)) {
+        streak.notifiedAt = at;
         notify({
             app: "daemon",
             title: "Daemon",
             subtitle: task.name,
-            message: `Failed after ${maxAttempts} attempt${maxAttempts > 1 ? "s" : ""}, retries exhausted`,
+            message: first
+                ? `Failed after ${maxAttempts} attempt${maxAttempts > 1 ? "s" : ""}, retries exhausted`
+                : `Still failing: ${streak.count} runs in a row, retries exhausted`,
         });
+    } else if (notifyFailure) {
+        log.info(
+            { task: task.name, streak: streak.count },
+            "[daemon] failure banner skipped, the streak was announced"
+        );
     }
 }
 

@@ -3,6 +3,7 @@ import { classifyCommand } from "@genesiscz/utils/process/classify";
 import { readProcessCwd } from "@genesiscz/utils/process/cwd";
 import { captureSync, PS_COLUMNS_SPEC, type PsRow, parsePsLine } from "@genesiscz/utils/process/ps";
 import { listPortRegistry, type RegistryEntry } from "@genesiscz/utils/ui/dashboards";
+import { netstatIsUsable, parseNetstatListeners, runNetstat } from "./netstat";
 
 /** Every GenesisTools launchd job carries this prefix (`src/utils/DashboardApp/launchd.ts`, `src/daemon`). */
 export const LAUNCHD_PREFIX = "com.genesis-tools.";
@@ -146,6 +147,30 @@ function probeRun(name: string, command: string, args: string[]): string {
     return run.stdout;
 }
 
+/**
+ * The pid and ports of every listening socket. On macOS `netstat` answers in milliseconds where `lsof`
+ * takes 9 s under load (see `netstat.ts`); a netstat that fails, or lists nothing at all, falls back to lsof
+ * so a changed output format reads as a slow answer and never as "no servers".
+ */
+function liveListeners(): Map<number, number[]> {
+    if (netstatIsUsable()) {
+        const run = runNetstat();
+        const listeners = run.status === 0 ? parseNetstatListeners(run.stdout) : null;
+
+        if (listeners && listeners.size > 0) {
+            logger.debug({ probe: "listeners", via: "netstat", pids: listeners.size }, "services: probe");
+            return listeners;
+        }
+
+        logger.warn(
+            { status: run.status, bytes: run.stdout.length, stderr: run.stderr.trim() || undefined },
+            "services: netstat listed no listeners; falling back to lsof"
+        );
+    }
+
+    return parseLsofListeners(probeRun("listeners", "lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"]));
+}
+
 export function liveProbe(): ServiceProbe {
     return {
         processes: () => {
@@ -153,7 +178,7 @@ export function liveProbe(): ServiceProbe {
             const stdout = probeRun("processes", "env", ["LC_ALL=C", "ps", "-axo", PS_COLUMNS_SPEC]);
             return stdout.split("\n").flatMap((line) => parsePsLine(line) ?? []);
         },
-        listeners: () => parseLsofListeners(probeRun("listeners", "lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"])),
+        listeners: liveListeners,
         launchdJobs: () => parseLaunchctlList(probeRun("launchd", "launchctl", ["list"])),
         cwd: readProcessCwd,
     };

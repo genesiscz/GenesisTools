@@ -17,6 +17,7 @@ import {
     verifiedRegistryPorts,
 } from "./inventory";
 import { stopService } from "./lifecycle";
+import { parseNetstatClientPorts, parseNetstatListeners } from "./netstat";
 import { sourceRoots, staleFiles } from "./stale";
 
 const APP = "/Users/example/Applications/GenesisTools.app/Contents/MacOS/GenesisTools";
@@ -71,6 +72,36 @@ describe("parsers", () => {
 
         const ports = connectedPorts(stdout);
         expect([3074, 3075, 3076].map((port) => ports.has(port))).toEqual([true, true, false]);
+    });
+
+    // The rows are real `netstat -anv -p tcp` output (macOS). The process column is `name:pid` and the name
+    // may hold spaces and parentheses, so the pid is read from the right, behind the five-digit state field.
+    const NETSTAT = [
+        "Active Internet connections (including servers)",
+        "Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)          rxbytes      txbytes  rhiwat  shiwat          process:pid    state  options           gencnt    flags   flags1 usecnt rtncnt fltrs",
+        "tcp4       0      0  127.0.0.1.4242         *.*                    LISTEN                 0            0  131072  131072              bun:2415   00100 00000006 000000000bf559ba 00000000 00000800      1      0 000000",
+        "tcp4       0      0  127.0.0.1.4242         127.0.0.1.55910        ESTABLISHED         1108         1454  407808  146988              bun:2415   00102 00000004 000000000bf559bb 00000081 01000800      2      0 000000",
+        "tcp4       0      0  127.0.0.1.55910        127.0.0.1.4242         ESTABLISHED         2960          528  406912  146988  Codex (Service):56664  00102 00000008 000000000bf559ba 00000080 04000800      2      0 000000",
+        "tcp46      0      0  *.55047                *.*                    LISTEN                 0            0  131072  131072         rapportd:742    00100 00000006 000000000bd8cdb0 00000000 00080800      1      0 000000",
+        "tcp6       0      0  ::1.3000               *.*                    LISTEN                 0            0  131072  131072  Google Chrome:66713    00100 00000006 000000000bee84ca 00000000 00000800      1      0 000000",
+        "tcp6       0      0  fe80::1%lo0.5000       fe80::2%lo0.61000      ESTABLISHED            5            6  131072  131072        node:900     00102 00000008 000000000bee84cb 00000000 00000800      1      0 000000",
+        "tcp4       0      0  10.0.0.5.51976         93.184.216.34.443      TIME_WAIT              0            0  131072  131072         kernel:0    00100 00000006 000000000bee84cc 00000000 00000800      1      0 000000",
+    ].join("\n");
+
+    test("netstat listeners map a pid to every port, wildcard and IPv6, whatever the process is called", () => {
+        expect(parseNetstatListeners(NETSTAT)).toEqual(
+            new Map([
+                [2415, [4242]],
+                [742, [55047]],
+                [66713, [3000]],
+            ])
+        );
+    });
+
+    test("netstat established rows give the local port of both ends, and no listener or closing row counts", () => {
+        const ports = parseNetstatClientPorts(NETSTAT);
+
+        expect([...ports].sort((a, b) => a - b)).toEqual([4242, 5000, 55910]);
     });
 
     test("an lsof that failed is unknown, not idle; one with nothing to list is no clients", () => {
