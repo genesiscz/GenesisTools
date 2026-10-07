@@ -1,5 +1,5 @@
 /**
- * `gitlab user commits` — a user's contribution history across every project they pushed to,
+ * `gitlab activity user commits` — a user's contribution history across every project they pushed to,
  * since a date, as a day-by-day Markdown report or a JSON dump.
  *
  * Strategy: walk `/users/<id>/events` (which paginates reliably) to find every push, then

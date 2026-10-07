@@ -15,8 +15,8 @@ Talks to the GitLab REST and GraphQL APIs directly. Nothing about the instance i
 | **Any instance** | `--host`, `GITLAB_HOST`, or glab's default host; self-hosted and relative-root installs work |
 | **Zero-config auth** | Reuses the token glab stores for that host; `GITLAB_TOKEN` overrides |
 | **Project from origin** | Project-scoped commands read the `origin` remote when it points at the resolved host |
-| **Per-day activity** | `user activity` groups one user's events per local day, with links; the window is widened so late-evening events land on the right day |
-| **Activity reports** | `user commits` and `project activity` avoid the GitLab `?all=true` pagination bug |
+| **Per-day activity** | `activity user` groups one user's events per local day, with links; the window is widened so late-evening events land on the right day |
+| **Activity reports** | `activity user commits` and `activity project` avoid the GitLab `?all=true` pagination bug |
 | **Pagination that does not lie** | Follows `X-Next-Page`; GitLab can return a short page while more pages exist, and some endpoints ignore `page` entirely |
 | **One MR first** | `gitlab pr <iid> <verb>`: the MR comes first, then what to do with it. `<iid>` is `42`, `!42`, a comma list, or the MR URL (which also gives the host and project) |
 | **Receiving a review** | `pr <iid> review --receive` returns the MR's discussions as JSON; `--md` renders unresolved threads with the local code and the reviewer's frozen view |
@@ -31,14 +31,14 @@ Talks to the GitLab REST and GraphQL APIs directly. Nothing about the instance i
 
 ```bash
 # What you did on GitLab last week, per local day (comments, pushes, approvals, merges)
-tools gitlab user activity --days 7
-tools gitlab user activity --from 2026-09-01 --to 2026-09-30 --format md --detail --output september.md
+tools gitlab activity user --days 7
+tools gitlab activity user --from 2026-09-01 --to 2026-09-30 --format md --detail --output september.md
 
 # Who did what since a date, across every project they pushed to
-tools gitlab user commits --user alice --since 2026-09-01 --out alice.md
+tools gitlab activity user commits --user alice --since 2026-09-01 --out alice.md
 
 # One project, grouped by month, with a maintainer leaderboard
-tools gitlab project activity --project acme/web-app --since 2026-01-01
+tools gitlab activity project --project acme/web-app --since 2026-01-01
 
 # Open MRs that touch a file (exact path or path suffix)
 tools gitlab pr touching bun.lock package.json
@@ -119,9 +119,9 @@ Tests assert against `NEUTRAL_DEFAULTS` and `NEUTRAL_CONFIG`, never the seam.
 | `pr <iids> labels --add/--remove <label>` | Change labels on one MR or a comma list; refuses unknown labels unless `--create-missing` |
 | `pr touching <file…>` | Open MRs whose diff touches the files |
 | `pr stale <step>` | The stale-MR workflow below |
-| `user activity [--from/--to/--days]` | One user's events per local day: counts per action, commit totals, links; `--tz`, `--project` filter, `--format text\|md\|json`, `--detail` timeline |
-| `user commits --user <u> --since <date>` | Day-by-day report of a user's commits across projects (Markdown or `--json`) |
-| `project activity --since <date>` | Monthly commit report and maintainer leaderboard for one project |
+| `activity user [--from/--to/--days]` | One user's events per local day: counts per action, commit totals, links; `--tz`, `--project` filter, `--format text\|md\|json`, `--detail` timeline |
+| `activity user commits --user <u> --since <date>` | Day-by-day report of a user's commits across projects (Markdown or `--json`) |
+| `activity project --since <date>` | Monthly commit report and maintainer leaderboard for one project |
 
 ### `pr stale`
 

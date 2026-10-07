@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { prCommandTree } from "@app/gitlab/commands/pr";
+import { commandTree } from "@app/gitlab/commands/pr";
 import { buildProgram } from "@app/gitlab/commands/program";
-import { rewritePrArgv } from "@app/gitlab/lib/pr-argv";
+import { rewriteArgv } from "@app/gitlab/lib/pr-argv";
 import { markRequiredOptionsDeep } from "@genesiscz/utils/cli";
 import type { Command } from "commander";
 
@@ -22,8 +22,8 @@ describe("the gitlab command tree", () => {
     const all = leaves(program);
     const mrLeaves = leaves(pr, ["pr"]).filter(({ cmd }) => cmd.registeredArguments[0]?.name() === "iid");
 
-    test("the top level has only pr, user and project", () => {
-        expect(program.commands.map((cmd) => cmd.name()).sort()).toEqual(["pr", "project", "user"]);
+    test("the top level has only pr and activity", () => {
+        expect(program.commands.map((cmd) => cmd.name()).sort()).toEqual(["activity", "pr"]);
     });
 
     test("every leaf prints its own usage, and an MR leaf prints the MR first", () => {
@@ -39,10 +39,10 @@ describe("the gitlab command tree", () => {
     });
 
     test("`gitlab pr <iid> <path>` reaches every MR leaf with the MR as its first argument", () => {
-        const tree = prCommandTree(pr);
+        const tree = commandTree(program);
 
         for (const { path } of mrLeaves) {
-            expect(rewritePrArgv(["pr", "42", ...path.slice(1), "--json"], tree)).toEqual([
+            expect(rewriteArgv(["pr", "42", ...path.slice(1), "--json"], tree)).toEqual([
                 "pr",
                 ...path.slice(1),
                 "42",
@@ -50,8 +50,24 @@ describe("the gitlab command tree", () => {
             ]);
         }
 
-        expect(rewritePrArgv(["pr", "42"], tree)).toEqual(["pr", "show", "42"]);
-        expect(rewritePrArgv(["pr", "42", "comments"], tree)).toEqual(["pr", "comments", "list", "42"]);
+        expect(rewriteArgv(["pr", "42"], tree)).toEqual(["pr", "show", "42"]);
+        expect(rewriteArgv(["pr", "42", "comments"], tree)).toEqual(["pr", "comments", "list", "42"]);
+        expect(rewriteArgv(["pr"], tree)).toEqual(["pr"]);
+        expect(rewriteArgv(["activity", "user", "--days", "7"], tree)).toEqual([
+            "activity",
+            "user",
+            "events",
+            "--days",
+            "7",
+        ]);
+        expect(rewriteArgv(["activity", "user", "commits", "--user", "a"], tree)).toEqual([
+            "activity",
+            "user",
+            "commits",
+            "--user",
+            "a",
+        ]);
+        expect(rewriteArgv(["activity", "user", "--help"], tree)).toEqual(["activity", "user", "--help"]);
     });
 
     test("the old command names are gone", () => {

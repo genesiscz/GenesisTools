@@ -1,5 +1,5 @@
 /**
- * `gitlab project activity` — per-project activity report grouped by month, plus a maintainer
+ * `gitlab activity project` — per-project activity report grouped by month, plus a maintainer
  * leaderboard. Terser than `analyze-user`.
  *
  * Strategy: walk every branch with `?ref_name=<branch>&since=<date>&with_stats=true` and
@@ -37,7 +37,7 @@ interface Options extends TargetOptions {
 export function registerAnalyzeProject(parent: Command): Command {
     return withProject(
         parent
-            .command("activity")
+            .command("project")
             .description("Per-project commit activity grouped by month + maintainer leaderboard")
             .requiredOption("--since <YYYY-MM-DD>", "Inclusive start date")
             .option("--until <YYYY-MM-DD>", "Exclusive end date (default: now)")

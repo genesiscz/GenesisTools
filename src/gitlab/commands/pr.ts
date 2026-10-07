@@ -27,8 +27,8 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
-/** The leaf a bare group runs: `pr 42` → `show`, `pr 42 comments` → `comments list`. */
-const DEFAULT_LEAF: Record<string, string> = { pr: "show", "pr comments": "list" };
+/** The leaf a bare group runs: `pr 42` → `show`, `pr 42 comments` → `comments list`, `activity user` → `events`. */
+const DEFAULT_LEAF: Record<string, string> = { pr: "show", "pr comments": "list", "activity user": "events" };
 
 interface ShowOptions extends TargetOptions {
     json?: boolean;
@@ -56,14 +56,16 @@ export function registerPr(program: Command): Command {
     return pr;
 }
 
-/** The `pr` subtree as the argv rewrite walks it. */
-export function prCommandTree(pr: Command): CommandNode {
+/** The command tree as the argv rewrite walks it (the root's own name is left out of the paths). */
+export function commandTree(root: Command): CommandNode {
     const walk = (cmd: Command, path: string): CommandNode => ({
-        children: new Map(cmd.commands.map((child) => [child.name(), walk(child, `${path} ${child.name()}`)])),
+        children: new Map(
+            cmd.commands.map((child) => [child.name(), walk(child, path ? `${path} ${child.name()}` : child.name())])
+        ),
         defaultChild: DEFAULT_LEAF[path],
     });
 
-    return walk(pr, "pr");
+    return walk(root, "");
 }
 
 /**

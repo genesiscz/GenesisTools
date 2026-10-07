@@ -53,6 +53,56 @@ function firstWord(args: string[]): number {
     return args.findIndex((arg) => !arg.startsWith("-"));
 }
 
+/** A group run without a verb runs its default leaf: `activity user --days 7` → `activity user events --days 7`. */
+function withDefaultLeaves(args: string[], root: CommandNode): string[] {
+    const at = firstWord(args);
+
+    if (at === -1) {
+        return args;
+    }
+
+    let node = root;
+    let index = at;
+
+    while (index < args.length) {
+        const child = node.children.get(args[index]);
+
+        if (!child) {
+            break;
+        }
+
+        node = child;
+        index++;
+    }
+
+    const inserted: string[] = [];
+
+    while (node.defaultChild && !(args[index] && node.children.has(args[index]))) {
+        const child = node.children.get(node.defaultChild);
+
+        if (!child || args.slice(index).some((arg) => arg === "--help" || arg === "-h")) {
+            break;
+        }
+
+        inserted.push(node.defaultChild);
+        node = child;
+    }
+
+    return [...args.slice(0, index), ...inserted, ...args.slice(index)];
+}
+
+/** The whole rewrite: the MR moves behind the path under `pr`, and every bare group gets its default leaf. */
+export function rewriteArgv(args: string[], root: CommandNode): string[] {
+    const pr = root.children.get("pr");
+
+    // Under `pr` only an MR selects the default leaf: a bare `gitlab pr` prints its help.
+    if (args[firstWord(args)] === "pr") {
+        return pr ? rewritePrArgv(args, pr) : args;
+    }
+
+    return withDefaultLeaves(args, root);
+}
+
 export function rewritePrArgv(args: string[], pr: CommandNode): string[] {
     const at = firstWord(args);
 

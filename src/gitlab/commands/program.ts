@@ -12,7 +12,7 @@ export function buildProgram(): { program: Command; pr: Command } {
     program
         .name("gitlab")
         .description(
-            "GitLab for any instance: one MR (gitlab pr <iid> review|comments|labels), many MRs (gitlab pr stale|touching), and user and project activity"
+            "GitLab for any instance: one MR (gitlab pr <iid> review|comments|labels), many MRs (gitlab pr stale|touching), and activity per user or project"
         );
 
     // Set before any subcommand exists: Commander copies help settings into each one at creation.
@@ -20,11 +20,13 @@ export function buildProgram(): { program: Command; pr: Command } {
     program.configureHelp({ commandUsage: (cmd) => publicUsage(cmd) ?? defaultHelp.commandUsage(cmd) });
 
     const pr = registerPr(program);
-    const user = program.command("user").description("A GitLab user: per-day activity, commit history");
+    const activity = program.command("activity").description("What happened on GitLab: per user, per project");
+    const user = activity
+        .command("user")
+        .description("One user: events per local day (default), or their commits across projects (`commits`)");
     registerActivity(user);
     registerAnalyzeUser(user);
-    const project = program.command("project").description("A GitLab project: commit activity per month");
-    registerAnalyzeProject(project);
+    registerAnalyzeProject(activity);
 
     // Every renderer reads the configured date style, so the config loads before any command runs.
     program.hook("preAction", async () => {
