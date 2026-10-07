@@ -1,7 +1,7 @@
 import type { ClarityMapping } from "@app/clarity/config";
 import { getMappingForWorkItem } from "@app/clarity/config";
 import type { ApiDebugInfo, TimeSegment } from "@genesiscz/utils/clarity";
-import { buildDailyValues, minutesToSeconds } from "@genesiscz/utils/date";
+import { buildDailyValues, isDateInHalfOpenRange, minutesToSeconds } from "@genesiscz/utils/date";
 
 // -- Shared types --
 
@@ -57,6 +57,55 @@ export function buildTimeSegments(
         finish: d.iso,
         value: minutesToSeconds(d.value),
     }));
+}
+
+/**
+ * Fill minutes that fall inside one timesheet period. Zero means ADO has nothing for this task
+ * there; the week is then written only to clear requested-month actuals Clarity still holds
+ * (see requestedMonthActualSeconds), never because of adjacent-month data.
+ */
+export function fillMinutesInPeriod(
+    dayMinutes: Record<string, number>,
+    periodStart: string,
+    periodFinishExclusive: string
+): number {
+    return Object.entries(dayMinutes)
+        .filter(([date]) => isDateInHalfOpenRange(date, periodStart, periodFinishExclusive))
+        .reduce((sum, [, minutes]) => sum + minutes, 0);
+}
+
+/** Seconds this row already holds on days of the requested month: what a zero-minute week must clear. */
+export function requestedMonthActualSeconds(
+    segments: TimeSegment[] | undefined,
+    options: { year: number; month: number }
+): number {
+    const requestedMonth = `${options.year}-${String(options.month).padStart(2, "0")}-`;
+
+    return (segments ?? [])
+        .filter((segment) => segment.start.startsWith(requestedMonth))
+        .reduce((sum, segment) => sum + segment.value, 0);
+}
+
+/** True when the replacement would change any day's value: an unchanged week is not written. */
+export function replacementChangesActuals(segments: TimeSegment[], existing: TimeSegment[] | undefined): boolean {
+    const perDay = (list: TimeSegment[]) => {
+        const days = new Map<string, number>();
+        for (const segment of list) {
+            const date = segment.start.split("T")[0];
+            days.set(date, (days.get(date) ?? 0) + segment.value);
+        }
+        return days;
+    };
+    const before = perDay(existing ?? []);
+    const after = perDay(segments);
+
+    for (const date of new Set([...before.keys(), ...after.keys()])) {
+        if ((before.get(date) ?? 0) !== (after.get(date) ?? 0)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /**

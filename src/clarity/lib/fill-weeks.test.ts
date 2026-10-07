@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { buildMonthAwareTimeSegments } from "@app/clarity/lib/fill-utils";
+import {
+    buildMonthAwareTimeSegments,
+    fillMinutesInPeriod,
+    replacementChangesActuals,
+    requestedMonthActualSeconds,
+} from "@app/clarity/lib/fill-utils";
 import { resolveFillWeeks } from "@app/clarity/lib/fill-weeks";
 
 function carouselEntry({
@@ -187,5 +192,53 @@ describe("buildMonthAwareTimeSegments", () => {
 
         expect(segments.find((segment) => segment.start.startsWith("2028-02-29"))?.value).toBe(1_800);
         expect(segments.find((segment) => segment.start.startsWith("2028-03-01"))?.value).toBe(900);
+    });
+});
+
+describe("fillMinutesInPeriod", () => {
+    test("counts only fill minutes inside the period, so neighbour-month actuals never open a week", () => {
+        const dayMinutes = { "2026-10-01": 60, "2026-10-12": 30 };
+
+        expect(fillMinutesInPeriod(dayMinutes, "2026-09-28T00:00:00", "2026-10-05T00:00:00")).toBe(60);
+        expect(fillMinutesInPeriod(dayMinutes, "2026-10-05T00:00:00", "2026-10-12T00:00:00")).toBe(0);
+        expect(fillMinutesInPeriod(dayMinutes, "2026-10-12T00:00:00", "2026-10-19T00:00:00")).toBe(30);
+    });
+});
+
+describe("zero-minute weeks", () => {
+    const existing = [
+        { start: "2026-09-30T00:00:00", finish: "2026-09-30T00:00:00", value: 7_200 },
+        { start: "2026-10-02T00:00:00", finish: "2026-10-02T00:00:00", value: 1_800 },
+    ];
+
+    test("a week with requested-month actuals and no ADO minutes is a clearing write", () => {
+        expect(requestedMonthActualSeconds(existing, { year: 2026, month: 10 })).toBe(1_800);
+        const segments = buildMonthAwareTimeSegments({
+            periodStart: "2026-09-28T00:00:00",
+            periodFinishExclusive: "2026-10-05T00:00:00",
+            year: 2026,
+            month: 10,
+            dayMinutes: {},
+            existingSegments: existing,
+        });
+
+        expect(segments.find((segment) => segment.start.startsWith("2026-10-02"))?.value).toBe(0);
+        expect(segments.find((segment) => segment.start.startsWith("2026-09-30"))?.value).toBe(7_200);
+        expect(replacementChangesActuals(segments, existing)).toBe(true);
+    });
+
+    test("neighbour-month actuals alone never make a week worth writing", () => {
+        const neighbourOnly = [existing[0]];
+        expect(requestedMonthActualSeconds(neighbourOnly, { year: 2026, month: 10 })).toBe(0);
+        const segments = buildMonthAwareTimeSegments({
+            periodStart: "2026-09-28T00:00:00",
+            periodFinishExclusive: "2026-10-05T00:00:00",
+            year: 2026,
+            month: 10,
+            dayMinutes: {},
+            existingSegments: neighbourOnly,
+        });
+
+        expect(replacementChangesActuals(segments, neighbourOnly)).toBe(false);
     });
 });

@@ -14,7 +14,14 @@ import pc from "picocolors";
 import { requireConfig } from "../config.js";
 import { buildPeriodComment } from "../lib/comment-builder.js";
 import { checkUnmapped } from "../lib/fill-guard.js";
-import { buildFillMap, buildMonthAwareTimeSegments, type FillEntry } from "../lib/fill-utils.js";
+import {
+    buildFillMap,
+    buildMonthAwareTimeSegments,
+    type FillEntry,
+    fillMinutesInPeriod,
+    replacementChangesActuals,
+    requestedMonthActualSeconds,
+} from "../lib/fill-utils.js";
 import { resolveFillWeeks } from "../lib/fill-weeks.js";
 
 type TimesheetRecordLike = Awaited<ReturnType<ClarityApi["getTimesheet"]>>["timesheets"]["_results"][number];
@@ -311,23 +318,26 @@ export function registerFillCommand(program: Command): void {
                 };
 
                 for (const fill of fillMap.values()) {
-                    const weekMinutes = Object.entries(fill.dayMinutes)
-                        .filter(([date]) =>
-                            isDateInHalfOpenRange(
-                                date,
-                                ts.timePeriodStart,
-                                `${addDay(ts.timePeriodFinish.split("T")[0])}T00:00:00`
-                            )
-                        )
-                        .reduce((sum, [, minutes]) => sum + minutes, 0);
-
-                    if (weekMinutes === 0) {
-                        continue;
-                    }
+                    const weekMinutes = fillMinutesInPeriod(
+                        fill.dayMinutes,
+                        ts.timePeriodStart,
+                        `${addDay(ts.timePeriodFinish.split("T")[0])}T00:00:00`
+                    );
 
                     const timeEntry = ts.timeentries._results.find(
                         (e: TimeEntryRecord) => e.taskId === fill.mapping.clarityTaskId
                     );
+                    // A row with no actuals yet comes back without the series.
+                    const existingSegments = timeEntry?.actuals?.segmentList?.segments ?? [];
+
+                    // A week with no ADO minutes is written only to clear requested-month hours
+                    // Clarity still holds for this task; otherwise there is nothing to replace.
+                    if (
+                        weekMinutes === 0 &&
+                        requestedMonthActualSeconds(existingSegments, { year, month: options.month }) === 0
+                    ) {
+                        continue;
+                    }
 
                     if (!timeEntry) {
                         out.error(
@@ -343,7 +353,7 @@ export function registerFillCommand(program: Command): void {
                         fill,
                         timeEntryId: timeEntry._internalId,
                         taskId: timeEntry.taskId,
-                        existingSegments: timeEntry.actuals.segmentList.segments,
+                        existingSegments,
                     });
                 }
 
@@ -384,7 +394,7 @@ export function registerFillCommand(program: Command): void {
                     });
                     const totalSeconds = segments.reduce((sum, s) => sum + s.value, 0);
 
-                    if (totalSeconds === 0) {
+                    if (!replacementChangesActuals(segments, entry.existingSegments)) {
                         continue;
                     }
 

@@ -7,6 +7,9 @@ import {
     buildMonthAwareTimeSegments,
     type ExecuteFillResult,
     type FillEntryResult,
+    fillMinutesInPeriod,
+    replacementChangesActuals,
+    requestedMonthActualSeconds,
 } from "@app/clarity/lib/fill-utils";
 import {
     findWeekForDate,
@@ -434,18 +437,25 @@ export async function executeFill(
             // timePeriodFinish is inclusive (last day e.g. Sunday "2026-02-08T00:00:00")
             // buildTimeSegments needs exclusive end for its loop
             const exclusiveEnd = `${addDay(ts.timePeriodFinish.split("T")[0])}T00:00:00`;
+            // A row with no actuals yet comes back without the series.
+            const existingSegments = timeEntry.actuals?.segmentList?.segments ?? [];
             const segments = buildMonthAwareTimeSegments({
                 periodStart: ts.timePeriodStart,
                 periodFinishExclusive: exclusiveEnd,
                 year,
                 month,
                 dayMinutes: fill.dayMinutes,
-                existingSegments: timeEntry.actuals.segmentList.segments,
+                existingSegments,
             });
             const totalSeconds = segments.reduce((sum, s) => sum + s.value, 0);
+            // Same rule as the CLI: a week with no ADO minutes is written only to clear
+            // requested-month hours Clarity still holds, and an unchanged week is never written.
+            // Gating on the fill, not on totalSeconds, keeps adjacent-month actuals out of it.
+            const nothingToClear =
+                fillMinutesInPeriod(fill.dayMinutes, ts.timePeriodStart, exclusiveEnd) === 0 &&
+                requestedMonthActualSeconds(existingSegments, { year, month }) === 0;
 
-            // Skip zero-minute updates to avoid wiping existing Clarity entries
-            if (totalSeconds === 0) {
+            if (nothingToClear || !replacementChangesActuals(segments, existingSegments)) {
                 resultEntries.push({
                     clarityTaskName: fill.mapping.clarityTaskName,
                     clarityTaskCode: fill.mapping.clarityTaskCode,
@@ -454,7 +464,9 @@ export async function executeFill(
                     totalHours: 0,
                     segments: [],
                     status: "skipped",
-                    error: "No minutes for this task in this week",
+                    error: nothingToClear
+                        ? "No minutes for this task in this week"
+                        : "Clarity already holds these hours",
                 });
                 skipped++;
                 continue;
