@@ -507,7 +507,9 @@ export async function executeUnapplyDecisions(args: {
                     stats.failedFiles.push(r.filePath);
                 }
             } else {
+                // Persisted at once: if a later region throws, a retry must still skip this one.
                 r.executed = true;
+                await args.walk.persist();
             }
         }
     }
@@ -520,6 +522,7 @@ export async function executeUnapplyDecisions(args: {
             capturedRegions,
         });
         extension.capturedVersion = stats.newVersion;
+        await args.walk.persist();
     } else if (extension.capturedVersion !== undefined) {
         stats.newVersion = extension.capturedVersion;
     }

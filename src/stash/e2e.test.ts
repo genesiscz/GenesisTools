@@ -316,6 +316,37 @@ describe.serial("stash e2e", () => {
         expect(state).toBe("unapplied");
     });
 
+    test("a region restored before a later region threw is not replayed by continue", async () => {
+        for (const repo of [projectA, projectB]) {
+            await writeFile(join(repo, "a.ts"), "export const a = 1;\n");
+            await writeFile(join(repo, "b.ts"), "export const b = 1;\n");
+            await runGitIn(repo, ["add", "a.ts", "b.ts"]);
+            await runGitIn(repo, ["commit", "-qm", "two files"]);
+        }
+        process.chdir(projectA);
+        await writeFile(join(projectA, "a.ts"), "export const a = 2;\n");
+        await writeFile(join(projectA, "b.ts"), "export const b = 2;\n");
+        await saveCommand({ name: "two-regions", mode: "all", tags: [], description: undefined });
+
+        process.chdir(projectB);
+        await applyCommand({ name: "two-regions", verboseMarkers: false });
+        for (const file of ["a.ts", "b.ts"]) {
+            const applied = await readFile(join(projectB, file), "utf8");
+            await writeFile(join(projectB, file), applied.replace("= 2;", "= 3;"));
+        }
+        await chmod(join(projectB, "b.ts"), 0o444);
+        await expect(
+            unapplyCommand({ name: "two-regions", action: "start", decision: "discard-all-dangerous" })
+        ).rejects.toThrow();
+        expect(await readFile(join(projectB, "a.ts"), "utf8")).toBe("export const a = 1;\n");
+
+        await chmod(join(projectB, "b.ts"), 0o644);
+        await unapplyCommand({ name: "two-regions", action: "continue", decision: undefined });
+
+        expect(await readFile(join(projectB, "a.ts"), "utf8")).toBe("export const a = 1;\n");
+        expect(await readFile(join(projectB, "b.ts"), "utf8")).toBe("export const b = 1;\n");
+    });
+
     test("a patch git rejects outright leaves no session behind, so a retry is not blocked", async () => {
         process.chdir(projectA);
         await writeFile(join(projectA, "main.ts"), "export function main() { return 2; }\n");
