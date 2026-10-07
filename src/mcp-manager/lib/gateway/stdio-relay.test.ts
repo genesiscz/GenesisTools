@@ -59,6 +59,26 @@ describe("jsonRpcBodiesFromHttp", () => {
         ]);
     });
 
+    test("bounds an SSE line with no newline, an event with no separator, and a plain body", async () => {
+        const collect = async (response: Response) => {
+            const bodies: string[] = [];
+            for await (const body of jsonRpcBodiesFromHttpStream(response, 64)) {
+                bodies.push(body);
+            }
+            return bodies;
+        };
+        const sse = (text: string) => new Response(text, { headers: { "Content-Type": "text/event-stream" } });
+
+        await expect(collect(sse(`data: ${"x".repeat(200)}`))).rejects.toThrow("gateway response exceeds 64 bytes");
+        await expect(collect(sse(`${"data: xxxxxxxxxxxxxxxxxxxx\n".repeat(10)}\n`))).rejects.toThrow(
+            "gateway response exceeds 64 bytes"
+        );
+        await expect(
+            collect(new Response("y".repeat(200), { headers: { "Content-Type": "application/json" } }))
+        ).rejects.toThrow("gateway response exceeds 64 bytes");
+        expect(await collect(sse('data: {"id":1}\n\n'))).toEqual(['{"id":1}']);
+    });
+
     test("emits a chunk-split multi-line SSE event before EOF", async () => {
         let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
         const body = new ReadableStream<Uint8Array>({

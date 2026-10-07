@@ -44,11 +44,51 @@ export function compactJsonRpc(text: string): string {
     }
 }
 
-export async function* jsonRpcBodiesFromHttpStream(response: Response): AsyncGenerator<string> {
+const DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+
+function responseTooLarge(maxBytes: number): RelayRequestError {
+    return new RelayRequestError(`gateway response exceeds ${maxBytes} bytes`, undefined);
+}
+
+/** Read a whole response body, cancelling it once it passes `maxBytes`. */
+async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
+    if (!response.body) {
+        return "";
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+            break;
+        }
+
+        total += value.byteLength;
+        if (total > maxBytes) {
+            await reader.cancel();
+            throw responseTooLarge(maxBytes);
+        }
+
+        chunks.push(value);
+    }
+
+    return Buffer.concat(chunks, total).toString("utf8");
+}
+
+/**
+ * Every upstream body is bounded: a plain response as a whole, an SSE stream per line and per event,
+ * so an upstream that never sends a newline or an event separator cannot grow the relay's memory.
+ */
+export async function* jsonRpcBodiesFromHttpStream(
+    response: Response,
+    maxBytes = DEFAULT_MAX_RESPONSE_BYTES
+): AsyncGenerator<string> {
     const type = response.headers.get("content-type") ?? "";
 
     if (!type.includes("text/event-stream")) {
-        const trimmed = (await response.text()).trim();
+        const trimmed = (await readBoundedText(response, maxBytes)).trim();
 
         if (trimmed.length > 0) {
             yield compactJsonRpc(trimmed);
@@ -65,6 +105,7 @@ export async function* jsonRpcBodiesFromHttpStream(response: Response): AsyncGen
     const decoder = new TextDecoder();
     let pending = "";
     let data: string[] = [];
+    let dataLength = 0;
 
     const finishEvent = (): string | null => {
         if (data.length === 0) {
@@ -73,12 +114,27 @@ export async function* jsonRpcBodiesFromHttpStream(response: Response): AsyncGen
 
         const body = compactJsonRpc(data.join("\n"));
         data = [];
+        dataLength = 0;
         return body.length > 0 ? body : null;
+    };
+
+    const pushData = async (value: string): Promise<void> => {
+        dataLength += value.length + 1;
+        if (dataLength > maxBytes) {
+            await reader.cancel();
+            throw responseTooLarge(maxBytes);
+        }
+
+        data.push(value);
     };
 
     while (true) {
         const { done, value } = await reader.read();
         pending += decoder.decode(value, { stream: !done });
+        if (pending.length > maxBytes && pending.indexOf("\n") < 0) {
+            await reader.cancel();
+            throw responseTooLarge(maxBytes);
+        }
 
         let newline = pending.indexOf("\n");
         while (newline >= 0) {
@@ -93,7 +149,7 @@ export async function* jsonRpcBodiesFromHttpStream(response: Response): AsyncGen
                 }
             } else if (line.startsWith("data:")) {
                 const value = line.slice(5);
-                data.push(value.startsWith(" ") ? value.slice(1) : value);
+                await pushData(value.startsWith(" ") ? value.slice(1) : value);
             }
 
             newline = pending.indexOf("\n");
@@ -102,7 +158,7 @@ export async function* jsonRpcBodiesFromHttpStream(response: Response): AsyncGen
         if (done) {
             if (pending.startsWith("data:")) {
                 const value = pending.slice(5);
-                data.push(value.startsWith(" ") ? value.slice(1) : value);
+                await pushData(value.startsWith(" ") ? value.slice(1) : value);
             }
 
             const body = finishEvent();
@@ -310,14 +366,14 @@ export async function runStdioHttpRelay(opts: {
             }
 
             if (response.status === 202 || response.status === 204) {
-                await response.arrayBuffer();
+                await response.body?.cancel();
 
                 return;
             }
 
             if (!response.ok) {
                 const status = response.status;
-                const text = await response.text();
+                const text = await readBoundedText(response, maxMessageBytes);
                 logger.warn({ status, url: opts.url }, "stdio relay upstream HTTP error");
 
                 if (looksLikeJsonRpc(text)) {
@@ -333,7 +389,7 @@ export async function runStdioHttpRelay(opts: {
                 return;
             }
 
-            for await (const body of jsonRpcBodiesFromHttpStream(response)) {
+            for await (const body of jsonRpcBodiesFromHttpStream(response, maxMessageBytes)) {
                 await writeOutput(encodeStdioMessage(body));
             }
         } catch (error) {
