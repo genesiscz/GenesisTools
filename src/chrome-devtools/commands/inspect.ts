@@ -103,6 +103,8 @@ export function registerInspect(program: Command): void {
             process.exit(0);
         });
 
+    type EvalOptions = { port?: string; match?: string; file?: string; timeout?: string };
+
     withPage(program.command("eval"))
         .description("run JS in the page and print the result as JSON")
         .argument(
@@ -113,7 +115,9 @@ export function registerInspect(program: Command): void {
             "--file <path>",
             "read the function/expression from a file — dodges shell quoting (and hooks that block inline eval strings)"
         )
-        .action(async (fnOrExpr: string | undefined, opts: { port?: string; match?: string; file?: string }) => {
+        .option("--timeout <seconds>", "how long the expression (and a promise it returns) may run", "30")
+        .action(async (fnOrExpr: string | undefined, opts: EvalOptions) => {
+            const timeoutMs = positiveNumber(opts.timeout, 30, "--timeout") * 1000;
             let source = fnOrExpr;
             if (opts.file) {
                 const f = Bun.file(opts.file);
@@ -135,7 +139,7 @@ export function registerInspect(program: Command): void {
             const page = await attachTab(opts);
 
             try {
-                const value = await page.evaluate(source);
+                const value = await page.evaluate(source, { timeoutMs });
 
                 // undefined is a normal result (location.reload(), a void call).
                 // Say so on stderr; stdout still gets valid JSON.
