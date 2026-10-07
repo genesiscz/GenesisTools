@@ -11,6 +11,7 @@ import {
     describeStep,
     ledgerPath,
     loadLedger,
+    pendingDraftFor,
     planPost,
     readBack,
     saveLedger,
@@ -203,6 +204,37 @@ describe("comments post plan", () => {
 
         expect(alreadyPosted(ledger, reply)).not.toBeNull();
         expect(unverifiedSteps(ledger, [reply, reword]).map((step) => step.id)).toEqual(["T01"]);
+    });
+
+    test("a verdict left as the skeleton's choices or a hint is not judged, for post as for check", () => {
+        const unfilled = FILE.replace("- Verdict: Valid [90%]", "- Verdict: Valid | Invalid | Unclear");
+        const hint = FILE.replace("- Verdict: Valid [90%]", "- Verdict: <Valid [NN%]>");
+
+        for (const text of [unfilled, hint]) {
+            const result = planPost({
+                judgements: parseJudgements(text),
+                known: KNOWN,
+                ids: ["T01"],
+                answers: [],
+                agent: "Opus",
+            });
+
+            expect(result.steps).toEqual([]);
+            expect(result.errors).toEqual([{ id: "T01", message: "not judged (no verdict)" }]);
+        }
+    });
+
+    test("a pending draft with the same text at the same anchor is reused, not posted again", () => {
+        const anchor = { path: "src/a.ts", line: 4, side: "old" as const, text: null, top: false };
+        const drafts = [
+            { id: 5, discussionId: null, path: "src/a.ts", line: 4, side: "old" as const, note: "Here." },
+            { id: 6, discussionId: "aaaa1111", path: "src/a.ts", line: 4, side: "old" as const, note: "Here." },
+        ];
+
+        expect(pendingDraftFor({ drafts, anchor, body: "Here." })?.id).toBe(5);
+        expect(pendingDraftFor({ drafts, anchor, body: "Elsewhere." })).toBeUndefined();
+        expect(pendingDraftFor({ drafts, anchor: { ...anchor, line: 5 }, body: "Here." })).toBeUndefined();
+        expect(pendingDraftFor({ drafts, anchor, body: "Here.", except: 5 })).toBeUndefined();
     });
 
     test("an error of no item blocks every post, an item's error only that item", () => {

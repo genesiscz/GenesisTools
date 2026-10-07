@@ -195,6 +195,21 @@ describe("judgements", () => {
         expect(result.warnings.map((w) => w.message)).toContain(ownThread);
     });
 
+    test("a move may keep the draft's text: no rewording needed", () => {
+        const move = [
+            "# D01 Is this still needed · draft 22970 · src/lock.ts:2",
+            "- Verdict on the comment: Misplaced [80%]",
+            "- Action: move",
+            "- Move to: src/lock.ts:4 (new) `    return;`",
+            "- Proposed rewording:",
+            "",
+            "```markdown",
+            "```",
+        ].join("\n");
+
+        expect(check(move).errors).toEqual([]);
+    });
+
     test("a reply whose text holds a table row or an `a | b` is not an unfilled placeholder", () => {
         const table = GOOD.replace("Dobrej catch, opravím to.", "| před | po |\n| --- | --- |\n| a | b |");
 

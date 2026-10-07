@@ -10,6 +10,7 @@ import {
     ACTIONS,
     actionTextField,
     badgeOf,
+    isUnfilled as isBlank,
     type JudgementItem,
     type Judgements,
     type JudgementsJson,
@@ -183,12 +184,6 @@ export interface CheckInput {
     /** The MR diff, for new findings' anchors; null in receive mode. */
     files: DiffFile[] | null;
     rules: DraftRules;
-}
-
-const PLACEHOLDER = /^<.*>$|\s\|\s/;
-
-function isBlank(value: string | undefined): boolean {
-    return value === undefined || value.trim() === "" || PLACEHOLDER.test(value.trim());
 }
 
 /** A text to be posted is empty only when it has no text: a ` | ` in it is a table or prose, not a placeholder. */
@@ -426,7 +421,8 @@ export function checkJudgements(input: CheckInput): CheckResult {
 
         const textField = actionTextField(item.kind, action);
 
-        if (textField && isEmptyText(item.fences.get(textField))) {
+        // A move without a rewording keeps the draft's text, so only the other actions need theirs.
+        if (textField && action !== "move" && isEmptyText(item.fences.get(textField))) {
             errors.push({
                 id: item.id,
                 line: item.line,

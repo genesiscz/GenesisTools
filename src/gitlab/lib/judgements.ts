@@ -331,6 +331,18 @@ export function verdictOf(item: JudgementItem): string {
     return item.fields.get("Verdict on the comment") ?? item.fields.get("Verdict") ?? "";
 }
 
+const PLACEHOLDER = /^<.*>$|\s\|\s/;
+
+/** A one-line field nobody filled in: empty, a `<hint>`, or the skeleton's `a | b | c` choices left as they are. */
+export function isUnfilled(value: string | undefined): boolean {
+    return value === undefined || value.trim() === "" || PLACEHOLDER.test(value.trim());
+}
+
+/** The item carries a verdict. `check`, `render` and `comments post` all ask this one question. */
+export function isJudged(item: JudgementItem): boolean {
+    return !isUnfilled(verdictOf(item));
+}
+
 // ─── JSON form ─────────────────────────────────────────────────────────────────
 
 /** The JSON form of a judgements file: the same items, keyed by the same field names. */

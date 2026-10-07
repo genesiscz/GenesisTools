@@ -14,11 +14,11 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { storage } from "@app/gitlab/lib/config";
 import {
+    isJudged,
     type JudgementItem,
     type Judgements,
     type ParsedAnchor,
     parseAnchor,
-    verdictOf,
 } from "@app/gitlab/lib/judgements";
 import type { KnownItem } from "@app/gitlab/lib/judgements-check";
 import { postedText, signedAnswer } from "@app/gitlab/lib/judgements-render";
@@ -189,7 +189,8 @@ export function planPost(input: PlanInput): PostPlan {
             return;
         }
 
-        if (!verdictOf(item).trim()) {
+        // The same test `review check` uses: a `<hint>` or `a | b` verdict is not a judgement.
+        if (!isJudged(item)) {
             plan.errors.push({ id, message: "not judged (no verdict)" });
             return;
         }
@@ -275,6 +276,27 @@ export function alreadyPosted(ledger: Ledger, step: PostStep): LedgerEntry | nul
     const entry = ledger[step.id];
 
     return entry && entry.kind === step.kind && entry.bodyHash === stepHash(step) ? entry : null;
+}
+
+/**
+ * A pending draft that already says `body` at `anchor`: a create that landed before the run failed.
+ * A re-run reuses it instead of posting a second copy. `except` is the draft a move replaces.
+ */
+export function pendingDraftFor(input: {
+    drafts: DraftSummary[];
+    anchor: ParsedAnchor;
+    body: string;
+    except?: number;
+}): DraftSummary | undefined {
+    return input.drafts.find(
+        (draft) =>
+            draft.id !== input.except &&
+            draft.discussionId === null &&
+            same(draft.note, input.body) &&
+            (input.anchor.top
+                ? draft.path === null
+                : draft.path === input.anchor.path && draft.line === input.anchor.line)
+    );
 }
 
 /** Steps that landed but whose read-back has not passed yet: read back again, not posted again. */
