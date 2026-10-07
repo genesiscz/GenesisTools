@@ -4,12 +4,17 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
-import { applicationRestorePatch, captureApplySnapshot, rewriteConfinedText } from "../lib/apply-recovery";
+import {
+    applicationRestorePatch,
+    captureApplySnapshot,
+    rewriteConfinedText,
+    sameApplySnapshot,
+} from "../lib/apply-recovery";
 import { ApplySession } from "../lib/apply-session";
 import { newStashId, shortId } from "../lib/ids";
 import { commentSyntaxForFile } from "../lib/languages";
 import { emitCloseMarker, emitOpenMarker } from "../lib/markers";
-import { applyPatch, listFilesInPatch, runGitIn } from "../lib/patch";
+import { applyPatch, listFilesInPatch, listPatchPaths, runGitIn } from "../lib/patch";
 import { detectProject } from "../lib/projects";
 import { openStashDb } from "../lib/stash-db";
 import { StashStorage } from "../lib/storage";
@@ -128,6 +133,19 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
                 return;
             }
 
+            const outcome = session.snapshot().outcome;
+            if (outcome === "failed" || outcome === "applied") {
+                ui.err(
+                    outcome === "failed"
+                        ? "the last apply failed without conflicts, so there is nothing to resume"
+                        : "the last apply landed but did not finish recording itself, so it cannot be resumed"
+                );
+                ui.info(`  ${toolCommand("stash apply", opts.name, "--abort")}    (restores the files and the index)`);
+
+                process.exitCode = 1;
+                return;
+            }
+
             const remaining = await session.remainingConflicts();
             if (remaining.length > 0) {
                 ui.err(`${remaining.length} file(s) still have conflict markers:`);
@@ -144,7 +162,10 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
             if (!before) {
                 throw new Error("Cannot safely resume a legacy apply without its original file snapshots");
             }
-            const restorePatch = await applicationRestorePatch({ root: project.rootPath, before });
+            const { patch: restorePatch, unsupportedFiles } = await applicationRestorePatch({
+                root: project.rootPath,
+                before,
+            });
             const affectedFiles = await listFilesInPatch({ repoDir: project.rootPath, patch });
             await decorateAppliedRegions({
                 projectRoot: project.rootPath,
@@ -165,7 +186,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
                 [newStashId(), stash.id, version.id, project.rootPath, project.origin, project.sha, now]
             );
 
-            await session.archiveApplication(restorePatch);
+            await session.archiveApplication({ restorePatch, unsupportedFiles });
             ui.ok(`applied "${opts.name}" v${version.version} (after conflict resolution)`);
             ui.info(`  ${affectedFiles.length} files affected`);
 
@@ -193,6 +214,8 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
 
         // List affected files BEFORE applying so we can scan them for conflict markers in the catch block.
         const affectedFiles = await listFilesInPatch({ repoDir: project.rootPath, patch });
+        // The snapshot covers both sides of a rename, so --abort can bring a moved source back.
+        const snapshotFiles = await listPatchPaths({ repoDir: project.rootPath, patch });
         const session = await ApplySession.start({
             stashId: stash.id,
             stashName: opts.name,
@@ -202,7 +225,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
             projectHash,
             conflictedFiles: [],
             stateDir: storage.stateDir(),
-            before: await captureApplySnapshot({ root: project.rootPath, files: affectedFiles }),
+            before: await captureApplySnapshot({ root: project.rootPath, files: snapshotFiles }),
         });
 
         try {
@@ -238,7 +261,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
                 }
             }
 
-            await session.captureResult(conflictedFiles);
+            await session.captureResult(conflictedFiles, conflictedFiles.length > 0 ? "conflict" : "failed");
             if (conflictedFiles.length > 0) {
                 ui.err(`apply conflict: ${conflictedFiles.length} file(s) need manual resolution`);
                 for (const f of conflictedFiles) {
@@ -268,26 +291,47 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
             })();
             ui.err(`apply failed: ${friendly}`);
 
+            const { before, after } = session.snapshot();
+            if (before && after && sameApplySnapshot(before, after)) {
+                // git left the files and the index untouched, so there is nothing to recover.
+                await session.abort();
+            } else {
+                ui.info("the failed apply changed files; restore them with:");
+                ui.info(`  ${toolCommand("stash apply", opts.name, "--abort")}`);
+            }
+
             process.exitCode = 1;
             return;
         }
+
+        // Record the applied state at once: if decoration or the applications row throws below,
+        // --abort can still restore the files and the index instead of refusing an incomplete session.
+        await session.captureResult([], "applied");
 
         const before = session.snapshot().before;
         if (!before) {
             throw new Error("Apply recovery snapshot missing");
         }
-        const restorePatch = await applicationRestorePatch({ root: project.rootPath, before });
-        await decorateAppliedRegions({
-            projectRoot: project.rootPath,
-            files: affectedFiles,
-            patch: restorePatch,
-            stashName: opts.name,
-            stashId: stash.id,
-            version: version.version,
-            verbose: opts.verboseMarkers,
-            sourceRepo: version.source_repo_path,
-            sourceSha: version.source_sha,
+        const { patch: restorePatch, unsupportedFiles } = await applicationRestorePatch({
+            root: project.rootPath,
+            before,
         });
+        try {
+            await decorateAppliedRegions({
+                projectRoot: project.rootPath,
+                files: affectedFiles,
+                patch: restorePatch,
+                stashName: opts.name,
+                stashId: stash.id,
+                version: version.version,
+                verbose: opts.verboseMarkers,
+                sourceRepo: version.source_repo_path,
+                sourceSha: version.source_sha,
+            });
+        } finally {
+            // Markers changed the files; the recovery "after" state must match what is on disk.
+            await session.captureResult([], "applied");
+        }
 
         const now = new Date().toISOString();
         db.run(
@@ -296,7 +340,7 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
             [newStashId(), stash.id, version.id, project.rootPath, project.origin, project.sha, now]
         );
 
-        await session.archiveApplication(restorePatch);
+        await session.archiveApplication({ restorePatch, unsupportedFiles });
 
         // Drop the fetched baseline ref — it was only needed to seed 3-way merge blobs into objects/.
         // Failure is harmless: git's GC will reap unreachable objects eventually.

@@ -33,7 +33,8 @@ export class StashStorage {
     async ensureDirs(): Promise<void> {
         await Promise.all([
             mkdir(this.storeRepoDir(), { recursive: true }),
-            mkdir(this.stateDir(), { recursive: true }),
+            // Apply sessions in here hold copies of working-tree files and the Git index.
+            mkdir(this.stateDir(), { recursive: true, mode: 0o700 }),
             mkdir(this.cacheDir(), { recursive: true }),
         ]);
     }

@@ -67,27 +67,52 @@ export async function reversePatch(args: { repoDir: string; patch: string; three
     await runGitIn(args.repoDir, gitArgs, { stdin: args.patch });
 }
 
-export async function listFilesInPatch(args: { repoDir: string; patch: string }): Promise<string[]> {
-    // First try `git apply --numstat` (handles renames/deletes correctly). Falls back to grepping
-    // `+++ b/<path>` headers when git can't parse the patch (e.g. apply-target files are missing).
-    const numstat = await runGitIn(args.repoDir, ["apply", "--numstat"], { stdin: args.patch }).catch(() => "");
-    const fromNumstat = numstat
-        .split("\n")
-        .map((l) => l.trim())
+/**
+ * Paths `git apply --numstat -z` reports, decoded (no C-quoting) because `-z` turns quoting off.
+ * A rename reports only its destination, so callers that need the source too read the reversed
+ * patch as well: its "destination" is the original path.
+ */
+async function numstatPaths(args: { repoDir: string; patch: string; reverse: boolean }): Promise<string[]> {
+    const gitArgs = args.reverse ? ["apply", "-R", "--numstat", "-z"] : ["apply", "--numstat", "-z"];
+    const numstat = await runGitIn(args.repoDir, gitArgs, { stdin: args.patch }).catch((err) => {
+        log.debug({ err, reverse: args.reverse }, "git apply --numstat could not parse the patch");
+        return "";
+    });
+    return numstat
+        .split("\0")
         .filter(Boolean)
-        .map((l) => l.split("\t").slice(2).join("\t"))
+        .map((entry) => entry.split("\t").slice(2).join("\t"))
         .filter(Boolean);
-    if (fromNumstat.length) {
-        return fromNumstat;
-    }
-    // Fallback: parse the unified-diff "+++ b/<path>" lines directly.
+}
+
+function patchHeaderPaths(patch: string, sides: "after" | "both"): string[] {
     const paths = new Set<string>();
-    for (const line of args.patch.split("\n")) {
-        // Match the "after" file header of every hunk: `+++ b/path/to/file`.
-        const m = /^\+\+\+ b\/(.+)$/.exec(line);
+    const header = sides === "both" ? /^(?:\+\+\+ b|--- a)\/(.+)$/ : /^\+\+\+ b\/(.+)$/;
+    for (const line of patch.split("\n")) {
+        const m = header.exec(line);
         if (m?.[1]) {
             paths.add(m[1]);
         }
     }
     return [...paths];
+}
+
+export async function listFilesInPatch(args: { repoDir: string; patch: string }): Promise<string[]> {
+    // First try `git apply --numstat -z` (handles renames/deletes and unquotes odd names). Falls back
+    // to grepping `+++ b/<path>` headers when git can't parse the patch (e.g. apply-target files are missing).
+    const fromNumstat = await numstatPaths({ ...args, reverse: false });
+    if (fromNumstat.length) {
+        return fromNumstat;
+    }
+    return patchHeaderPaths(args.patch, "after");
+}
+
+/** Every path the patch touches, both sides of a rename included: what a recovery snapshot must cover. */
+export async function listPatchPaths(args: { repoDir: string; patch: string }): Promise<string[]> {
+    const forward = await numstatPaths({ ...args, reverse: false });
+    if (!forward.length) {
+        return patchHeaderPaths(args.patch, "both");
+    }
+    const reverse = await numstatPaths({ ...args, reverse: true });
+    return [...new Set([...forward, ...reverse])];
 }

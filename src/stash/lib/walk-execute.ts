@@ -5,14 +5,14 @@ import { suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { ApplicationRow, StashRow, VersionRow } from "../types";
-import { rewriteConfinedText } from "./apply-recovery";
+import { changedFromSnapshot, rewriteConfinedText } from "./apply-recovery";
 import { ApplySession } from "./apply-session";
 import { classifyRegion } from "./classify";
 import { applyDecisionToCode } from "./decisions";
 import { renderDiff } from "./diff-render";
 import { newStashId } from "./ids";
 import { parseMarkers } from "./markers";
-import { patchHunks } from "./patch-regions";
+import { type PatchHunk, patchHunks } from "./patch-regions";
 import type { DetectedProject } from "./projects";
 import { splitHunksAtMarkers } from "./region-split";
 import { extractRegionContentByHunk } from "./regions";
@@ -45,6 +45,8 @@ export interface ExecStats {
     failedToFind: number;
     /** Files where a marker lookup failed — surfaced to the user for audit. */
     failedFiles: string[];
+    /** Changed symlinks and binary files unapply cannot restore; any of these keeps the application active. */
+    unsupportedFiles: string[];
 }
 
 // v1 Decision string union defined locally so walk-execute.ts does not import from
@@ -193,6 +195,16 @@ export function extractFilePathsFromPatch(patch: string): string[] {
     return [...paths];
 }
 
+/** One region per hunk, numbered per file in patch order, keeping the pre-image unapply restores. */
+function hunkRegions(patch: string) {
+    const counts = new Map<string, number>();
+    return patchHunks(patch).map((hunk) => {
+        const hunkIndex = (counts.get(hunk.filePath) ?? 0) + 1;
+        counts.set(hunk.filePath, hunkIndex);
+        return { ...hunk, hunkIndex, name: null, content: hunk.postImage.join("\n") };
+    });
+}
+
 // ─── Region grouping (D-23) ───────────────────────────────────────────────────
 
 /**
@@ -247,18 +259,13 @@ export async function bootstrapUnapplyWalk(args: {
     }
     const repo = new StoreRepo(args.storage.storeRepoDir());
     const storedPatch = (await repo.readFileAt(version.patch_ref, "PATCH.diff")) ?? "";
-    const applicationPatch = await ApplySession.applicationPatch({
+    const application = await ApplySession.applicationRecord({
         stashId: args.stash.id,
         projectHash: args.projectHash,
         versionId: version.id,
         stateDir: args.storage.stateDir(),
     });
-    const counts = new Map<string, number>();
-    const regionMap = patchHunks(applicationPatch ?? storedPatch).map((hunk) => {
-        const hunkIndex = (counts.get(hunk.filePath) ?? 0) + 1;
-        counts.set(hunk.filePath, hunkIndex);
-        return { ...hunk, hunkIndex, name: null, content: hunk.postImage.join("\n") };
-    });
+    const regionMap = hunkRegions(application?.restorePatch ?? storedPatch);
 
     const walkRegions: WalkRegion[] = [];
     for (const r of regionMap) {
@@ -295,7 +302,7 @@ export async function bootstrapUnapplyWalk(args: {
         projectHash: args.projectHash,
         regions: walkRegions,
         stateDir: args.storage.stateDir(),
-        extension: {},
+        extension: { unsupportedFiles: application?.unsupportedFiles ?? [] },
     });
     log.debug(
         {
@@ -426,6 +433,7 @@ export async function executeUnapplyDecisions(args: {
         newVersion: null,
         failedToFind: 0,
         failedFiles: [],
+        unsupportedFiles: await pendingUnsupportedFiles(args),
     };
     const createdFiles = await deriveCreatedFilesFromBaseline({
         db: args.db,
@@ -483,6 +491,29 @@ export async function executeUnapplyDecisions(args: {
     }
     await unlinkEmptyCreatedFiles({ projectRoot: args.projectRoot, createdFiles });
     return stats;
+}
+
+/**
+ * Symlink and binary changes the apply recorded, minus those already back in their pre-apply
+ * state, so restoring one by hand and running unapply again finishes the job.
+ */
+async function pendingUnsupportedFiles(args: { walk: Walk; projectRoot: string; storage: StashStorage }) {
+    const snap = args.walk.snapshot();
+    const candidates = (snap.extension as { unsupportedFiles?: string[] }).unsupportedFiles ?? [];
+    if (candidates.length === 0) {
+        return [];
+    }
+
+    const before = await ApplySession.archivedBefore({
+        stashId: snap.stashId,
+        projectHash: snap.projectHash,
+        stateDir: args.storage.stateDir(),
+    });
+    if (!before) {
+        return candidates;
+    }
+
+    return changedFromSnapshot({ root: args.projectRoot, before, files: candidates });
 }
 
 // ─── Created-files tracking ───────────────────────────────────────────────────
@@ -665,7 +696,17 @@ export async function bootstrapUpdateWalk(args: {
 
     const repo = new StoreRepo(args.storage.storeRepoDir());
     const storedPatch = (await repo.readFileAt(version.patch_ref, "PATCH.diff")) ?? "";
-    const regionMap = collectRegionsFromPatch(storedPatch);
+    // The application archive carries each hunk's original pre-image, the same inventory unapply
+    // reads, so a captured version stays anchored to the target's real baseline. A legacy
+    // application without an archive keeps the stored-patch regions.
+    const applicationPatch = await ApplySession.applicationPatch({
+        stashId: args.stash.id,
+        projectHash: args.projectHash,
+        versionId: version.id,
+        stateDir: args.storage.stateDir(),
+    });
+    const regionMap: Array<PatchRegion & Partial<Pick<PatchHunk, "preImage" | "oldNoNewline" | "deletedFile">>> =
+        applicationPatch ? hunkRegions(applicationPatch) : collectRegionsFromPatch(storedPatch);
 
     const walkRegions: WalkRegion[] = [];
 
@@ -689,6 +730,9 @@ export async function bootstrapUpdateWalk(args: {
             decision: klass === "unchanged" ? "auto-capture" : null,
             storedContent: r.content,
             currentContent,
+            preImage: r.preImage,
+            oldNoNewline: r.oldNoNewline,
+            deletedFile: r.deletedFile,
         });
     }
 
@@ -764,8 +808,9 @@ export async function executeUpdateDecisions(args: {
             .map((r) =>
                 buildUnifiedDiff({
                     path: r.filePath,
-                    before: r.storedContent ?? "",
+                    before: r.preImage?.join("\n") ?? r.storedContent ?? "",
                     after: r.currentContent ?? "",
+                    oldNoNewline: r.oldNoNewline,
                 })
             )
             .join("");
@@ -824,6 +869,7 @@ export async function executeUpdateDecisions(args: {
             [newVersionId, args.stash.id, args.walk.snapshot().projectPath]
         );
         args.db.run("UPDATE stashes SET updated_at = ? WHERE id = ?", [now, args.stash.id]);
+        await rebindApplicationArchive({ walk: args.walk, storage: args.storage, newVersionId, newV });
         log.debug({ patchRef, baselineRef, regions: captureRegions.length, newV }, "update: v_next written");
         ui.ok(`captured ${captureRegions.length} region(s) to v${newV}; application now pinned to v${newV}`);
     } else {
@@ -839,15 +885,71 @@ export async function executeUpdateDecisions(args: {
     }
 }
 
+/**
+ * Point the application archive at the version update just wrote. Its restore patch keeps every
+ * region whose markers are still on disk, in file order so unapply's per-file hunk numbering still
+ * matches the markers: a captured region's post-image is its current code, any other region keeps
+ * its stored post-image. Each pre-image is the original target baseline, so unapply after update
+ * restores the code from before the first apply, not the previous overlay.
+ */
+async function rebindApplicationArchive(args: {
+    walk: Walk;
+    storage: StashStorage;
+    newVersionId: string;
+    newV: number;
+}): Promise<void> {
+    const snap = args.walk.snapshot();
+    const ext = snap.extension as { currentVersionId: string };
+    const regions = args.walk.regions();
+    if (regions.some((r) => !r.preImage)) {
+        log.debug({ stashId: snap.stashId }, "update: legacy regions without pre-images; archive not rebound");
+        return;
+    }
+
+    const restorePatch = regions
+        .filter((r) => r.klass !== "missing")
+        .map((r) => {
+            const captured = r.decision === "capture" || r.decision === "auto-capture";
+            return buildUnifiedDiff({
+                path: r.filePath,
+                before: r.preImage?.join("\n") ?? "",
+                after: (captured ? r.currentContent : r.storedContent) ?? "",
+                oldNoNewline: r.oldNoNewline,
+                deletedFile: r.deletedFile,
+            });
+        })
+        .join("");
+    const rebound = await ApplySession.rebindApplication({
+        stashId: snap.stashId,
+        projectHash: snap.projectHash,
+        stateDir: args.storage.stateDir(),
+        fromVersionId: ext.currentVersionId,
+        toVersionId: args.newVersionId,
+        toVersion: args.newV,
+        restorePatch,
+    });
+    log.debug({ stashId: snap.stashId, rebound, newV: args.newV }, "update: application archive rebound");
+}
+
 /** Minimal single-file unified diff between `before` and `after` content. */
-export function buildUnifiedDiff(args: { path: string; before: string; after: string }): string {
+export function buildUnifiedDiff(args: {
+    path: string;
+    before: string;
+    after: string;
+    oldNoNewline?: boolean;
+    deletedFile?: boolean;
+}): string {
     const beforeLines = args.before === "" ? [] : args.before.split("\n");
     const afterLines = args.after === "" ? [] : args.after.split("\n");
     const header = [
         `--- a/${args.path}`,
-        `+++ b/${args.path}`,
+        args.deletedFile ? "+++ /dev/null" : `+++ b/${args.path}`,
         `@@ -1,${beforeLines.length} +1,${afterLines.length} @@`,
     ].join("\n");
-    const body = [...beforeLines.map((l) => `-${l}`), ...afterLines.map((l) => `+${l}`)].join("\n");
+    const removed = beforeLines.map((l) => `-${l}`);
+    if (args.oldNoNewline && removed.length > 0) {
+        removed.push("\\ No newline at end of file");
+    }
+    const body = [...removed, ...afterLines.map((l) => `+${l}`)].join("\n");
     return `${header}\n${body}\n`;
 }

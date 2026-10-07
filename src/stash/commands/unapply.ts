@@ -126,7 +126,7 @@ export async function unapplyCommand(opts: UnapplyOptions): Promise<void> {
         // D-25: only mark the application 'unapplied' when every region was cleaned up. A
         // marker-missing outcome means the user's file may still carry wrapped code; keeping the
         // application 'active' preserves the retry path.
-        if (stats.failedToFind === 0) {
+        if (stats.failedToFind === 0 && stats.unsupportedFiles.length === 0) {
             const now = new Date().toISOString();
             db.run(
                 "UPDATE applications SET state = 'unapplied', unapplied_at = ? WHERE stash_id = ? AND project_path = ? AND state = 'active'",
@@ -138,13 +138,26 @@ export async function unapplyCommand(opts: UnapplyOptions): Promise<void> {
             );
         } else {
             await walk.persist();
-            ui.err(`partial unapply: ${stats.failedToFind} region(s) had no matching marker; application kept ACTIVE`);
-            for (const f of stats.failedFiles) {
-                ui.warn(`  marker missing in: ${f}`);
+            if (stats.failedToFind > 0) {
+                ui.err(
+                    `partial unapply: ${stats.failedToFind} region(s) had no matching marker; application kept ACTIVE`
+                );
+                for (const f of stats.failedFiles) {
+                    ui.warn(`  marker missing in: ${f}`);
+                }
+                ui.info(
+                    "either restore the missing markers manually and re-run 'unapply --continue', or 'unapply --abort' to discard the session"
+                );
             }
-            ui.info(
-                "either restore the missing markers manually and re-run 'unapply --continue', or 'unapply --abort' to discard the session"
-            );
+            if (stats.unsupportedFiles.length > 0) {
+                ui.err(
+                    `partial unapply: ${stats.unsupportedFiles.length} symlink or binary change(s) cannot be undone automatically; application kept ACTIVE`
+                );
+                for (const f of stats.unsupportedFiles) {
+                    ui.warn(`  restore by hand: ${f}`);
+                }
+                ui.info("put each one back as it was before the apply, then re-run 'unapply --continue'");
+            }
         }
 
         log.debug({ stashId: stash.id, stats }, "stash unapplied");

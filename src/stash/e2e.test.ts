@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyCommand } from "./commands/apply";
@@ -100,6 +100,106 @@ describe.serial("stash e2e", () => {
         expect(existsSync(join(projectB, "main.ts"))).toBe(false);
         await unapplyCommand({ name: "deleted-file", action: "start", decision: "discard-all-dangerous" });
         expect(await readFile(join(projectB, "main.ts"), "utf8")).toBe("export function main() { return 1; }\n");
+    });
+
+    test("apply → edit → update capture → unapply restores the target's original baseline", async () => {
+        process.chdir(projectA);
+        await writeFile(join(projectA, "main.ts"), "export function main() { return 2; }\n");
+        await saveCommand({ name: "edit-then-update", mode: "all", tags: [], description: undefined });
+
+        process.chdir(projectB);
+        await applyCommand({ name: "edit-then-update", verboseMarkers: false });
+        const applied = await readFile(join(projectB, "main.ts"), "utf8");
+        await writeFile(join(projectB, "main.ts"), applied.replace("return 2;", "return 3;"));
+
+        await updateCommand({ name: "edit-then-update", decision: "capture-all-dangerous", action: "start" });
+        await unapplyCommand({ name: "edit-then-update", action: "start", decision: "discard-all-dangerous" });
+
+        expect(await readFile(join(projectB, "main.ts"), "utf8")).toBe("export function main() { return 1; }\n");
+    });
+
+    test("abort after a conflicting rename brings the renamed source back", async () => {
+        for (const repo of [projectA, projectB]) {
+            await writeFile(join(repo, "old name.ts"), "export const moved = 1;\nexport const kept = 1;\n");
+            await runGitIn(repo, ["add", "old name.ts"]);
+            await runGitIn(repo, ["commit", "-m", "add rename source"]);
+        }
+        // The rename applies cleanly while main.ts conflicts, so the session holds a moved file.
+        process.chdir(projectA);
+        await runGitIn(projectA, ["mv", "old name.ts", "new\tname.ts"]);
+        await writeFile(join(projectA, "main.ts"), "export function main() { return 2; }\n");
+        await runGitIn(projectA, ["add", "-A"]);
+        await saveCommand({ name: "renamer", mode: "staged", tags: [], description: undefined });
+
+        process.chdir(projectB);
+        await writeFile(join(projectB, "main.ts"), "export function main() { return 9; }\n");
+        await runGitIn(projectB, ["commit", "-am", "diverge"]);
+        await applyCommand({ name: "renamer", verboseMarkers: false });
+        expect(process.exitCode).toBe(1);
+        expect(await readFile(join(projectB, "main.ts"), "utf8")).toContain("<<<<<<<");
+        expect(existsSync(join(projectB, "old name.ts"))).toBe(false);
+        process.exitCode = 0;
+
+        await applyCommand({ name: "renamer", verboseMarkers: false, action: "abort" });
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(await readFile(join(projectB, "old name.ts"), "utf8")).toBe(
+            "export const moved = 1;\nexport const kept = 1;\n"
+        );
+        expect(existsSync(join(projectB, "new\tname.ts"))).toBe(false);
+        expect(await readFile(join(projectB, "main.ts"), "utf8")).toBe("export function main() { return 9; }\n");
+    });
+
+    test("unapply keeps the application active when it cannot undo a symlink change", async () => {
+        process.chdir(projectA);
+        await symlink("main.ts", join(projectA, "alias.ts"));
+        await runGitIn(projectA, ["add", "alias.ts"]);
+        await saveCommand({ name: "linker", mode: "staged", tags: [], description: undefined });
+
+        process.chdir(projectB);
+        await applyCommand({ name: "linker", verboseMarkers: false });
+        expect((await lstat(join(projectB, "alias.ts"))).isSymbolicLink()).toBe(true);
+
+        const { Database } = await import("bun:sqlite");
+        const { openStashDb } = await import("./lib/stash-db");
+        const { StashStorage } = await import("./lib/storage");
+        const applicationState = () => {
+            const db = openStashDb(new Database(new StashStorage().dbPath()));
+            try {
+                return db
+                    .query<{ state: string }, []>(
+                        "SELECT state FROM applications WHERE stash_id = (SELECT id FROM stashes WHERE name = 'linker')"
+                    )
+                    .get()?.state;
+            } finally {
+                db.close();
+            }
+        };
+
+        await unapplyCommand({ name: "linker", action: "start", decision: "discard-all-dangerous" });
+        expect(applicationState()).toBe("active");
+
+        // Restored by hand: the next pass finds nothing left to undo and records the unapply.
+        await unlink(join(projectB, "alias.ts"));
+        await unapplyCommand({ name: "linker", action: "continue", decision: undefined });
+        expect(applicationState()).toBe("unapplied");
+    });
+
+    test("a patch git rejects outright leaves no session behind, so a retry is not blocked", async () => {
+        process.chdir(projectA);
+        await writeFile(join(projectA, "main.ts"), "export function main() { return 2; }\n");
+        await saveCommand({ name: "rejected", mode: "all", tags: [], description: undefined });
+
+        process.chdir(projectB);
+        await unlink(join(projectB, "main.ts"));
+        await runGitIn(projectB, ["commit", "-am", "remove target"]);
+        await applyCommand({ name: "rejected", verboseMarkers: false });
+        expect(process.exitCode).toBe(1);
+        process.exitCode = 0;
+
+        const { StashStorage } = await import("./lib/storage");
+        const { readdir } = await import("node:fs/promises");
+        const sessions = (await readdir(new StashStorage().stateDir())).filter((f) => f.includes("--apply--"));
+        expect(sessions).toEqual([]);
     });
 
     test("new-file save --mode staged → apply → unapply removes the file (no empty husk)", async () => {

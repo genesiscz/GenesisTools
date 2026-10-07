@@ -1,10 +1,31 @@
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type ApplyRecoverySnapshot, captureApplySnapshot, restoreApplySnapshot } from "./apply-recovery";
 
 const { log } = logger.scoped("stash:apply-session");
+
+/**
+ * Session files hold base64 copies of every affected file and of the Git index, so they get the
+ * same protection as a private file: 0600 in a 0700 directory, whatever the umask says.
+ */
+async function writePrivate(file: string, content: string): Promise<void> {
+    await writeFile(file, content, { mode: 0o600 });
+    await chmod(file, 0o600);
+}
+
+async function ensurePrivateDir(dir: string): Promise<void> {
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    await chmod(dir, 0o700);
+}
+
+/**
+ * Where an apply attempt stopped. `conflict` is the only resumable state: `failed` means git
+ * rejected the patch but the tree still changed, `applied` means the patch landed and a later
+ * step (decoration, the applications row) threw. Both of those can only be aborted.
+ */
+export type ApplyOutcome = "conflict" | "failed" | "applied";
 
 export interface ApplySessionSnapshot {
     stashId: string;
@@ -18,6 +39,9 @@ export interface ApplySessionSnapshot {
     before?: ApplyRecoverySnapshot;
     after?: ApplyRecoverySnapshot;
     restorePatch?: string;
+    /** Changed symlinks and binary files: no hunk can restore them, so unapply must refuse them. */
+    unsupportedFiles?: string[];
+    outcome?: ApplyOutcome;
 }
 
 export interface StartArgs {
@@ -39,7 +63,7 @@ export class ApplySession {
     ) {}
 
     static async start(args: StartArgs): Promise<ApplySession> {
-        await mkdir(args.stateDir, { recursive: true });
+        await ensurePrivateDir(args.stateDir);
         const snap: ApplySessionSnapshot = {
             stashId: args.stashId,
             stashName: args.stashName,
@@ -97,8 +121,9 @@ export class ApplySession {
         return stillConflicted;
     }
 
-    async captureResult(conflictedFiles: string[]): Promise<void> {
+    async captureResult(conflictedFiles: string[], outcome: ApplyOutcome): Promise<void> {
         this.snap.conflictedFiles = conflictedFiles;
+        this.snap.outcome = outcome;
         if (this.snap.before) {
             this.snap.after = await captureApplySnapshot({
                 root: this.snap.projectPath,
@@ -117,16 +142,60 @@ export class ApplySession {
 
     async persist(): Promise<void> {
         const file = this.stateFile();
-        await writeFile(file, SafeJSON.stringify(this.snap, undefined, 2));
+        await writePrivate(file, SafeJSON.stringify(this.snap, undefined, 2));
     }
 
-    async archiveApplication(restorePatch: string): Promise<void> {
-        this.snap.restorePatch = restorePatch;
-        await writeFile(
+    async archiveApplication(args: { restorePatch: string; unsupportedFiles: string[] }): Promise<void> {
+        this.snap.restorePatch = args.restorePatch;
+        this.snap.unsupportedFiles = args.unsupportedFiles;
+        await writePrivate(
             join(this.stateDir, `${this.snap.projectHash}--applied--${this.snap.stashId}.json`),
             SafeJSON.stringify(this.snap)
         );
         await this.complete();
+    }
+
+    /**
+     * Move the archived application record to a version written by `update`, with the restore
+     * patch rebuilt against the original pre-images. Returns false when there is no archive for
+     * `fromVersionId` (a legacy application), which leaves unapply on its stored-patch fallback.
+     */
+    static async rebindApplication(args: {
+        stashId: string;
+        projectHash: string;
+        stateDir: string;
+        fromVersionId: string;
+        toVersionId: string;
+        toVersion: number;
+        restorePatch: string;
+    }): Promise<boolean> {
+        const file = join(args.stateDir, `${args.projectHash}--applied--${args.stashId}.json`);
+        let snap: ApplySessionSnapshot;
+        try {
+            snap = SafeJSON.parse(await readFile(file, "utf8")) as ApplySessionSnapshot;
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+                throw error;
+            }
+            return false;
+        }
+        if (snap.versionId !== args.fromVersionId) {
+            log.warn(
+                { file, archived: snap.versionId, expected: args.fromVersionId },
+                "application archive names another version; not rebinding"
+            );
+            return false;
+        }
+        await writePrivate(
+            file,
+            SafeJSON.stringify({
+                ...snap,
+                versionId: args.toVersionId,
+                version: args.toVersion,
+                restorePatch: args.restorePatch,
+            })
+        );
+        return true;
     }
 
     static async applicationPatch(args: {
@@ -135,13 +204,46 @@ export class ApplySession {
         versionId: string;
         stateDir: string;
     }): Promise<string | null> {
+        return (await ApplySession.applicationRecord(args))?.restorePatch ?? null;
+    }
+
+    /** The pre-apply snapshot of the archived application, whatever version it now names. */
+    static async archivedBefore(args: {
+        stashId: string;
+        projectHash: string;
+        stateDir: string;
+    }): Promise<ApplyRecoverySnapshot | null> {
+        try {
+            const raw = await readFile(
+                join(args.stateDir, `${args.projectHash}--applied--${args.stashId}.json`),
+                "utf8"
+            );
+            return (SafeJSON.parse(raw) as ApplySessionSnapshot).before ?? null;
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+                throw error;
+            }
+            return null;
+        }
+    }
+
+    /** The archived application of `versionId`, or null for none (or one recorded for another version). */
+    static async applicationRecord(args: {
+        stashId: string;
+        projectHash: string;
+        versionId: string;
+        stateDir: string;
+    }): Promise<{ restorePatch: string | null; unsupportedFiles: string[] } | null> {
         try {
             const raw = await readFile(
                 join(args.stateDir, `${args.projectHash}--applied--${args.stashId}.json`),
                 "utf8"
             );
             const snap = SafeJSON.parse(raw) as ApplySessionSnapshot;
-            return snap.versionId === args.versionId ? (snap.restorePatch ?? null) : null;
+            if (snap.versionId !== args.versionId) {
+                return null;
+            }
+            return { restorePatch: snap.restorePatch ?? null, unsupportedFiles: snap.unsupportedFiles ?? [] };
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
                 throw error;

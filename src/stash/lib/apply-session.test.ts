@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { confinedPath } from "./apply-recovery";
+import { captureApplySnapshot, confinedPath, restoreApplySnapshot } from "./apply-recovery";
 import { ApplySession } from "./apply-session";
+import { runGitIn } from "./patch";
 
 let stateDir: string;
 let projectDir: string;
@@ -136,5 +137,57 @@ describe("ApplySession", () => {
         // Second call on already-deleted file should not throw
         await expect(session.complete()).resolves.toBeUndefined();
         await expect(session.abort()).resolves.toBeUndefined();
+    });
+});
+
+describe("apply recovery files", () => {
+    test("session state is written 0600 inside a 0700 directory, whatever the umask", async () => {
+        const previous = process.umask(0o022);
+        try {
+            const nested = join(stateDir, "state");
+            await ApplySession.start({ ...BASE_ARGS, stateDir: nested });
+            const file = join(nested, `${BASE_ARGS.projectHash}--apply--${BASE_ARGS.stashId}.json`);
+            expect((await stat(file)).mode & 0o777).toBe(0o600);
+            expect((await stat(nested)).mode & 0o777).toBe(0o700);
+        } finally {
+            process.umask(previous);
+        }
+    });
+
+    test("restore brings back the saved mode exactly under a restrictive umask", async () => {
+        await runGitIn(projectDir, ["init", "-q"]);
+        const script = join(projectDir, "run.sh");
+        await writeFile(script, "echo before\n");
+        await chmod(script, 0o755);
+        const before = await captureApplySnapshot({ root: projectDir, files: ["run.sh"] });
+        await writeFile(script, "echo after\n");
+        const after = await captureApplySnapshot({ root: projectDir, files: ["run.sh"] });
+
+        const previous = process.umask(0o077);
+        try {
+            await restoreApplySnapshot({ root: projectDir, before, after });
+        } finally {
+            process.umask(previous);
+        }
+        expect(await readFile(script, "utf8")).toBe("echo before\n");
+        expect((await stat(script)).mode & 0o777).toBe(0o755);
+    });
+
+    test("an applied session whose finalization failed can still be restored", async () => {
+        await runGitIn(projectDir, ["init", "-q"]);
+        await writeFile(join(projectDir, "a.ts"), "original\n");
+        const session = await ApplySession.start({
+            ...BASE_ARGS,
+            projectPath: projectDir,
+            conflictedFiles: [],
+            stateDir,
+            before: await captureApplySnapshot({ root: projectDir, files: ["a.ts"] }),
+        });
+        await writeFile(join(projectDir, "a.ts"), "applied\n");
+        await session.captureResult([], "applied");
+
+        await session.restore();
+        expect(await readFile(join(projectDir, "a.ts"), "utf8")).toBe("original\n");
+        expect(session.snapshot().outcome).toBe("applied");
     });
 });

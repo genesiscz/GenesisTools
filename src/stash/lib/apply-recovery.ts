@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readFile, readlink, rename, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, readlink, rename, symlink, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { createTwoFilesPatch } from "diff";
@@ -77,6 +77,26 @@ export async function captureApplySnapshot(args: { root: string; files: string[]
     return { files, index: index?.toString("base64") ?? null, indexPath };
 }
 
+/** The files among `files` whose current state differs from their state in `before`. */
+export async function changedFromSnapshot(args: {
+    root: string;
+    before: ApplyRecoverySnapshot;
+    files: string[];
+}): Promise<string[]> {
+    const known = args.files.filter((file) => args.before.files[file]);
+    const now = await captureApplySnapshot({ root: args.root, files: known });
+    return args.files.filter(
+        (file) =>
+            !args.before.files[file] ||
+            SafeJSON.stringify(now.files[file]) !== SafeJSON.stringify(args.before.files[file])
+    );
+}
+
+/** True when the files and the index match: a failed `git apply` that left the tree untouched. */
+export function sameApplySnapshot(a: ApplyRecoverySnapshot, b: ApplyRecoverySnapshot): boolean {
+    return a.index === b.index && SafeJSON.stringify(a.files) === SafeJSON.stringify(b.files);
+}
+
 export async function restoreApplySnapshot(args: {
     root: string;
     before: ApplyRecoverySnapshot;
@@ -112,6 +132,11 @@ export async function restoreApplySnapshot(args: {
             }
             const absolute = await confinedPath(args.root, file);
             if (before.kind === "missing") {
+                // Same guard as the rename below: an edit made since the scan must survive.
+                const latest = await snapshotFile(args.root, file);
+                if (!equal(latest, current.files[file])) {
+                    throw new Error(`File changed while preparing stash recovery: ${file}`);
+                }
                 await unlink(absolute);
                 continue;
             }
@@ -120,7 +145,9 @@ export async function restoreApplySnapshot(args: {
             if (before.kind === "symlink") {
                 await symlink(before.data, temporary);
             } else {
-                await writeFile(temporary, Buffer.from(before.data, "base64"), { flag: "wx", mode: before.mode });
+                await writeFile(temporary, Buffer.from(before.data, "base64"), { flag: "wx", mode: 0o600 });
+                // The create mode is filtered by the umask; chmod is not, so the saved mode lands exactly.
+                await chmod(temporary, before.mode);
             }
             const latest = await snapshotFile(args.root, file);
             if (!equal(latest, current.files[file])) {
@@ -152,17 +179,31 @@ export async function restoreApplySnapshot(args: {
     }
 }
 
-export async function applicationRestorePatch(args: { root: string; before: ApplyRecoverySnapshot }): Promise<string> {
+/**
+ * The text patch unapply walks, plus every changed path it cannot express: a symlink or a
+ * binary file has no hunk and no marker, so unapply must name it and keep the application
+ * active rather than report a complete removal while the change stays on disk.
+ */
+export async function applicationRestorePatch(args: {
+    root: string;
+    before: ApplyRecoverySnapshot;
+}): Promise<{ patch: string; unsupportedFiles: string[] }> {
     const after = await captureApplySnapshot({ root: args.root, files: Object.keys(args.before.files) });
     const patches: string[] = [];
+    const unsupportedFiles: string[] = [];
     for (const [file, before] of Object.entries(args.before.files)) {
         const current = after.files[file];
+        if (SafeJSON.stringify(before) === SafeJSON.stringify(current)) {
+            continue;
+        }
         if (before.kind === "symlink" || current.kind === "symlink") {
+            unsupportedFiles.push(file);
             continue;
         }
         const oldText = before.kind === "file" ? Buffer.from(before.data, "base64").toString("utf8") : "";
         const newText = current.kind === "file" ? Buffer.from(current.data, "base64").toString("utf8") : "";
         if (oldText.includes("\0") || newText.includes("\0")) {
+            unsupportedFiles.push(file);
             continue;
         }
         patches.push(
@@ -174,7 +215,7 @@ export async function applicationRestorePatch(args: { root: string; before: Appl
             )
         );
     }
-    return patches.join("\n");
+    return { patch: patches.join("\n"), unsupportedFiles };
 }
 
 /** Rewrite only the opened regular inode, after validating its root, parents and leaf identity. */

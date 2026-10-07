@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyPatch, diffWorkingTree, reversePatch, runGitIn } from "./patch";
+import { patchHunks } from "./patch-regions";
 
 let dir: string;
 beforeEach(async () => {
@@ -43,5 +44,28 @@ describe("patch", () => {
         await reversePatch({ repoDir: dir, patch: diff, threeWay: true });
         const after = await readFile(join(dir, "a.ts"), "utf8");
         expect(after).toBe("line1\nline2\nline3\n");
+    });
+});
+
+describe("patchHunks", () => {
+    test("content lines that look like file headers stay inside their hunk", () => {
+        const patch = [
+            "diff --git a/notes.md b/notes.md",
+            "--- a/notes.md",
+            "+++ b/notes.md",
+            "@@ -1,3 +1,3 @@",
+            " intro",
+            "--- removed rule",
+            "+++ added rule",
+            " outro",
+            "",
+        ].join("\n");
+
+        const hunks = patchHunks(patch);
+
+        expect(hunks).toHaveLength(1);
+        expect(hunks[0].filePath).toBe("notes.md");
+        expect(hunks[0].preImage).toEqual(["intro", "-- removed rule", "outro"]);
+        expect(hunks[0].postImage).toEqual(["intro", "++ added rule", "outro"]);
     });
 });
