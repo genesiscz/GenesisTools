@@ -224,6 +224,7 @@ export async function startGatewayServer(
                 accessToken = await accessTokenForRequest(name, {
                     tokenEndpoint,
                     resource,
+                    trustBaseline: upstreamUrl,
                     allowRefresh: !diagnostic,
                 });
             } catch (error) {

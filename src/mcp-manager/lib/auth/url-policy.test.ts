@@ -381,3 +381,11 @@ describe("DNS resolution is validated, not just the hostname text", () => {
         }
     });
 });
+
+describe("bounded endpoint validation", () => {
+    test("a stalled DNS lookup ends the check at its deadline instead of hanging", async () => {
+        _setLookupForTest(() => new Promise(() => undefined));
+
+        await expect(assertDiscoveryTarget("https://stalled.example/token", PUBLIC_MCP, 20)).rejects.toThrow();
+    });
+});

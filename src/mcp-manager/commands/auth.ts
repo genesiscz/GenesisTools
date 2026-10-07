@@ -245,9 +245,11 @@ export async function authRefresh(serverName: string | undefined): Promise<void>
     }
 
     const config = await readUnifiedConfig();
-    const auth = serverAuth(config.mcpServers[serverName]);
+    const server = config.mcpServers[serverName];
+    const auth = serverAuth(server);
+    const configuredUrl = server?.url ?? server?.httpUrl;
 
-    if (!auth?.tokenEndpoint || !auth.resource) {
+    if (!auth?.tokenEndpoint || !auth.resource || !configuredUrl) {
         logger.error(`Run ${toolCommand("mcp-manager auth login", serverName)} first`);
         process.exitCode = 1;
 
@@ -257,6 +259,7 @@ export async function authRefresh(serverName: string | undefined): Promise<void>
     await accessTokenForRequest(serverName, {
         tokenEndpoint: auth.tokenEndpoint,
         resource: auth.resource,
+        trustBaseline: configuredUrl,
         allowRefresh: true,
     });
     ui.ok(`refreshed ${serverName}`);

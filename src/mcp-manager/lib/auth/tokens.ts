@@ -42,7 +42,10 @@ export async function accessTokenForRequest(
     server: string,
     opts: {
         tokenEndpoint: string;
+        /** The OAuth audience only. It came from the server's own metadata, so it is never trusted. */
         resource: string;
+        /** The configured MCP URL: what decides whether the token endpoint may be private. */
+        trustBaseline: string;
         allowRefresh: boolean;
     }
 ): Promise<string> {
@@ -85,7 +88,7 @@ export async function accessTokenForRequest(
             body.set("client_secret", clientSecret);
         }
 
-        const response = await mcpFetchChecked(opts.tokenEndpoint, opts.resource, {
+        const response = await mcpFetchChecked(opts.tokenEndpoint, opts.trustBaseline, {
             method: "POST",
             headers: {
                 Accept: "application/json",

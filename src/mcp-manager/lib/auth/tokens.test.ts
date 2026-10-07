@@ -118,6 +118,7 @@ describe("accessTokenForRequest", () => {
         const token = await accessTokenForRequest("rohlik", {
             tokenEndpoint: "https://identity.example/token",
             resource: "https://mcp.example/mcp",
+            trustBaseline: "https://mcp.example/mcp",
             allowRefresh: true,
         });
 
@@ -140,6 +141,7 @@ describe("accessTokenForRequest", () => {
             accessTokenForRequest("rohlik", {
                 tokenEndpoint: "https://identity.example/token",
                 resource: "https://mcp.example/mcp",
+                trustBaseline: "https://mcp.example/mcp",
                 allowRefresh: false,
             })
         ).rejects.toBeInstanceOf(DiagnosticRefreshError);
@@ -161,6 +163,30 @@ describe("accessTokenForRequest", () => {
             accessTokenForRequest("work", {
                 tokenEndpoint: "http://127.0.0.1:3042/token",
                 resource: "https://mcp.example/mcp",
+                trustBaseline: "https://mcp.example/mcp",
+                allowRefresh: true,
+            })
+        ).rejects.toThrow(/private address 127\.0\.0\.1/);
+        expect(tokenPosts).toBe(0);
+    });
+
+    test("a loopback resource advertised by a public server does not lift the private-address rule", async () => {
+        await writeServerTokens("work", {
+            accessToken: "stale",
+            refreshToken: "synthetic-refresh",
+            expiresAt: Date.now() - ACCESS_SKEW_MS,
+        });
+        _setLookupForTest(async () => [{ address: "127.0.0.1" }]);
+        _setMcpFetchForTest(async () => {
+            tokenPosts += 1;
+            throw new Error("credential POST reached a rebound loopback address");
+        });
+
+        await expect(
+            accessTokenForRequest("work", {
+                tokenEndpoint: "https://identity.example/token",
+                resource: "http://127.0.0.1:9331/mcp",
+                trustBaseline: "https://mcp.example/mcp",
                 allowRefresh: true,
             })
         ).rejects.toThrow(/private address 127\.0\.0\.1/);
@@ -197,6 +223,7 @@ describe("accessTokenForRequest", () => {
         const refresh = accessTokenForRequest("rohlik", {
             tokenEndpoint: "https://identity.example/token",
             resource: "https://mcp.example/mcp",
+            trustBaseline: "https://mcp.example/mcp",
             allowRefresh: true,
         });
         await postStarted;
@@ -242,6 +269,7 @@ describe("accessTokenForRequest", () => {
         const refresh = accessTokenForRequest("rohlik", {
             tokenEndpoint: "https://identity.example/token",
             resource: "https://mcp.example/mcp",
+            trustBaseline: "https://mcp.example/mcp",
             allowRefresh: true,
         });
         await postStarted;
@@ -270,6 +298,7 @@ describe("accessTokenForRequest", () => {
         const token = await accessTokenForRequest("rohlik", {
             tokenEndpoint: "https://identity.example/token",
             resource: "https://mcp.example/mcp",
+            trustBaseline: "https://mcp.example/mcp",
             allowRefresh: true,
         });
 
@@ -299,6 +328,7 @@ describe("accessTokenForRequest", () => {
         const token = await accessTokenForRequest("rohlik", {
             tokenEndpoint: "https://identity.example/token",
             resource: "https://mcp.example/mcp",
+            trustBaseline: "https://mcp.example/mcp",
             allowRefresh: true,
         });
 
@@ -322,6 +352,7 @@ describe("accessTokenForRequest", () => {
         await accessTokenForRequest("rohlik", {
             tokenEndpoint: "http://127.0.0.1:9331/token",
             resource: "http://127.0.0.1:9331/mcp",
+            trustBaseline: "http://127.0.0.1:9331/mcp",
             allowRefresh: true,
         });
 
@@ -349,6 +380,7 @@ describe("accessTokenForRequest", () => {
         const opts = {
             tokenEndpoint: "https://identity.example/token",
             resource: "https://mcp.example/mcp",
+            trustBaseline: "https://mcp.example/mcp",
             allowRefresh: true as const,
         };
 
@@ -372,6 +404,7 @@ describe("accessTokenForRequest", () => {
         const token = await accessTokenForRequest("figma", {
             tokenEndpoint: "https://identity.example/token",
             resource: "https://mcp.example/mcp",
+            trustBaseline: "https://mcp.example/mcp",
             allowRefresh: true,
         });
 
@@ -401,6 +434,7 @@ describe("refresh failures never persist provider text", () => {
             accessTokenForRequest("rohlik", {
                 tokenEndpoint: "https://identity.example/token",
                 resource: "https://mcp.example/mcp",
+                trustBaseline: "https://mcp.example/mcp",
                 allowRefresh: true,
             })
         ).rejects.toThrow(/HTTP 500/);
@@ -429,6 +463,7 @@ describe("refresh failures never persist provider text", () => {
             accessTokenForRequest("rohlik", {
                 tokenEndpoint: "https://identity.example/token",
                 resource: "https://mcp.example/mcp",
+                trustBaseline: "https://mcp.example/mcp",
                 allowRefresh: true,
             })
         ).rejects.toThrow(/invalid_scope/);
@@ -569,6 +604,7 @@ describe("the refusal log line carries bounded values only", () => {
                 accessTokenForRequest("rohlik", {
                     tokenEndpoint: "https://identity.example/token",
                     resource: "https://mcp.example/mcp",
+                    trustBaseline: "https://mcp.example/mcp",
                     allowRefresh: true,
                 })
             ).rejects.toThrow(/HTTP 400/);

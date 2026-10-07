@@ -8,6 +8,7 @@ import {
     OutboundUrlPolicyError,
     resolveNoOutboundEscalation,
 } from "@genesiscz/utils/net/outbound-policy";
+import { untilAborted } from "@genesiscz/utils/net/pinned-fetch";
 
 export { isPrivateHost, OutboundUrlPolicyError };
 
@@ -38,8 +39,19 @@ export function assertDiscoveryTargetSyntax(target: string, origin: string): URL
     return assertNoOutboundEscalationSyntax(target, origin);
 }
 
-export async function assertDiscoveryTarget(target: string, origin: string): Promise<URL> {
-    return assertNoOutboundEscalation(target, origin);
+/** A DNS answer for a policy check, like every credential request here, gets 15 s. */
+const DISCOVERY_DNS_TIMEOUT_MS = 15_000;
+
+/**
+ * The check alone, for an endpoint that is validated now and fetched later. Its lookup is bounded
+ * so a stalled resolver ends the login with an error instead of holding it forever.
+ */
+export async function assertDiscoveryTarget(
+    target: string,
+    origin: string,
+    timeoutMs: number = DISCOVERY_DNS_TIMEOUT_MS
+): Promise<URL> {
+    return untilAborted(assertNoOutboundEscalation(target, origin), AbortSignal.timeout(timeoutMs));
 }
 
 /** The checked URL plus the addresses a request to it must be pinned to (null: no pin needed). */
