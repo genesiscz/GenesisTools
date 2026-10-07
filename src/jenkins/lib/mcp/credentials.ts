@@ -1,12 +1,13 @@
 /**
  * Where Jenkins credentials come from: the environment, then the single object
- * written into the secret store by `tools jenkins-mcp login`.
+ * written into the secret store by `tools jenkins login`.
  *
  * That object holds the URL alongside the username and token, so a stored login
  * is self-contained. Nothing needs JENKINS_URL to be exported, and nothing is
  * written to the repo or to a config file. The URL is the one the user typed at
  * the login prompt, never one inferred from the environment at read time.
  */
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -32,7 +33,7 @@ export interface ResolvedAuth extends JenkinsAuth {
     source: AuthSource;
 }
 
-export const SETUP_COMMAND = "tools jenkins-mcp login";
+export const SETUP_COMMAND = toolCommand("jenkins login");
 
 /**
  * Thrown instead of a bare "missing env var", so an MCP client shows a user the

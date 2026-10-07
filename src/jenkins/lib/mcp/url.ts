@@ -2,6 +2,8 @@ export interface JenkinsRef {
     jobPath: string;
     buildNumber?: string;
     nodeId?: string;
+    /** The page the URL pointed at inside the build, such as `console` or `pipeline-overview`. */
+    page?: string;
 }
 
 const TRAILING_SEGMENTS = new Set([
@@ -45,9 +47,10 @@ export function parseJenkinsInput(input: string): JenkinsRef {
     }
     segments = filtered;
 
-    // Trim trailing meta segments
+    let page: string | undefined;
+
     while (segments.length > 0 && TRAILING_SEGMENTS.has(segments[segments.length - 1])) {
-        segments.pop();
+        page = segments.pop();
     }
 
     // Extract trailing build number
@@ -61,7 +64,7 @@ export function parseJenkinsInput(input: string): JenkinsRef {
 
     const jobPath = segments.join("/");
     const nodeId = url.searchParams.get("selected-node") ?? undefined;
-    return { jobPath, buildNumber, nodeId };
+    return { jobPath, buildNumber, nodeId, ...(page ? { page } : {}) };
 }
 
 export interface ResolveRefOpts {

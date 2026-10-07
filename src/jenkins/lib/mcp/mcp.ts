@@ -12,13 +12,13 @@ import {
 } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import axios, { type AxiosInstance } from "axios";
-import { createClient } from "./lib/client";
-import { JenkinsAuthMissingError, resolveAuth } from "./lib/credentials";
-import { axiosLogFields, extractErrors } from "./lib/errors";
-import { formatDuration, formatStageLine, statusBody } from "./lib/format";
-import { fetchLog, grepLog } from "./lib/log";
-import { type BuildMeta, findFailingLeaf, flattenBuildMeta, getStages } from "./lib/pipeline";
-import { resolveRef } from "./lib/url";
+import { createClient } from "./client";
+import { JenkinsAuthMissingError, resolveAuth } from "./credentials";
+import { axiosLogFields, extractErrors } from "./errors";
+import { formatDuration, formatStageLine, statusBody } from "./format";
+import { fetchLog, grepLog } from "./log";
+import { type BuildMeta, findFailingLeaf, flattenBuildMeta, getStages } from "./pipeline";
+import { resolveRef } from "./url";
 
 const JOB_PATH_DESC =
     'Jenkins job path (e.g. "job/X/job/Y") or full Jenkins URL — build number and selected-node are auto-extracted from the URL.';
@@ -156,7 +156,7 @@ class JenkinsServer {
         try {
             await this.authReady;
         } catch (error) {
-            // Drop the rejected promise so a `tools jenkins-mcp login` in another
+            // Drop the rejected promise so a `tools jenkins login` in another
             // terminal takes effect on the next call instead of this session
             // caching the failure forever.
             this.authReady = null;
@@ -357,7 +357,7 @@ class JenkinsServer {
                     {
                         name: "wait_for_build",
                         description:
-                            "Snapshot current build state with full stage list + durations, then suggest the CLI 'monitor' command to background via Bash for live JSONL events and click-to-Brave notifications. Does NOT poll itself.",
+                            "Snapshot current build state with full stage list + durations, then suggest the CLI 'monitor' command to background via Bash for live stage lines and click-to-Brave notifications. Does NOT poll itself.",
                         inputSchema: {
                             type: "object" as const,
                             properties: {
@@ -809,7 +809,7 @@ class JenkinsServer {
             }
         }
 
-        const cmd = `${toolCommand("jenkins-mcp monitor")} "${ref.jobPath}" --build ${ref.buildNumber} --timeout 30m`;
+        const cmd = `${toolCommand("jenkins mcp monitor")} "${ref.jobPath}" --build ${ref.buildNumber} --timeout 30m`;
         const isDone = snap.status !== "IN_PROGRESS";
         const elapsed = snap.startTimeMillis ? formatDuration(now - snap.startTimeMillis) : "?";
         const status = isDone
@@ -826,7 +826,7 @@ class JenkinsServer {
                       bashBackground:
                           "Bash with run_in_background: true — single completion notification when the monitor exits. Click any stage notification to open the build in your default browser.",
                       monitorTool:
-                          "Pass the command to the Monitor tool — every JSONL line on stdout becomes a notification. Add a grep filter for selectivity (see monitorFilterExamples).",
+                          "Pass the command to the Monitor tool — every line on stdout becomes a notification. The command prints one line per stage result, error and the end; add --detail for every JSONL event, the ones in emitsEvents (see monitorFilterExamples).",
                   },
             emitsEvents: isDone
                 ? undefined
@@ -848,11 +848,12 @@ class JenkinsServer {
             monitorFilterExamples: isDone
                 ? undefined
                 : {
-                      stagesAndTerminal:
-                          'grep -E --line-buffered \'"event":"(stage|error|end)"\' — stage transitions + errors + final result (skips per-step branch noise)',
+                      default:
+                          "no flag — one text line per stage result, error and the end ([stage] …, [error] …, [end] …)",
                       terminalOnly:
-                          'grep -E --line-buffered \'"event":"end"\' — single notification when the build finishes',
-                      everything: "no filter — every event line becomes a notification (chatty; can be auto-stopped)",
+                          'add --detail, then grep -E --line-buffered \'"event":"end"\' — single notification when the build finishes',
+                      everything:
+                          "add --detail — every JSONL event line becomes a notification (chatty; can be auto-stopped)",
                   },
         });
     }

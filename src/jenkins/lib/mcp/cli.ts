@@ -5,15 +5,15 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { AxiosInstance } from "axios";
 import { Command } from "commander";
-import { createClient } from "./lib/client";
-import { type JenkinsAuth, JenkinsAuthMissingError, resolveAuth } from "./lib/credentials";
-import { formatStageLine } from "./lib/format";
-import { fetchLog, grepLog } from "./lib/log";
-import { runAuthStatus, runLogin, runLogout } from "./lib/login";
-import { exitCodeFor, runMonitor } from "./lib/monitor";
-import { MonitorNotifier } from "./lib/notify";
-import { getStages } from "./lib/pipeline";
-import { resolveRef } from "./lib/url";
+import { createClient } from "./client";
+import { type JenkinsAuth, JenkinsAuthMissingError, resolveAuth } from "./credentials";
+import { formatStageLine } from "./format";
+import { fetchLog, grepLog } from "./log";
+import { runAuthStatus, runLogin, runLogout } from "./login";
+import { exitCodeFor, runMonitor } from "./monitor";
+import { MonitorNotifier } from "./notify";
+import { getStages } from "./pipeline";
+import { resolveRef } from "./url";
 
 let cachedAuth: JenkinsAuth | null = null;
 let cachedClient: AxiosInstance | null = null;
@@ -40,7 +40,7 @@ function parseDuration(s: string): number {
 
 export async function runCli(argv: string[]): Promise<void> {
     const program = new Command()
-        .name(toolCommand("jenkins-mcp"))
+        .name(toolCommand("jenkins mcp"))
         .description("Jenkins CLI — paste a job path or full Jenkins URL");
 
     program
@@ -175,12 +175,16 @@ export async function runCli(argv: string[]): Promise<void> {
 
     program
         .command("monitor <input>")
-        .description("Stream pipeline stage events to stdout (JSONL), notify on transitions")
+        .description("Stream the build to stdout, one line per stage result, error and the end; notify on transitions")
         .option("--build <n>", "Build number (or use URL with /<build>/)")
         .option("--timeout <duration>", "Max wait (30s, 10m, 2h)", "30m")
         .option("--poll <duration>", "Poll interval (default 5s)", "5s")
         .option("--no-notify", "Disable terminal notifications")
-        .option("--quiet", "Suppress JSONL output (exit code only)")
+        .option("--quiet", "Suppress output (exit code only)")
+        .option(
+            "--detail",
+            "Every event as JSONL, in-progress stages and inner steps included (about 300 lines for a 6 minute build)"
+        )
         .action(
             async (
                 input: string,
@@ -190,6 +194,7 @@ export async function runCli(argv: string[]): Promise<void> {
                     poll: string;
                     notify: boolean;
                     quiet?: boolean;
+                    detail?: boolean;
                 }
             ) => {
                 const ref = resolveRef({ input, buildOverride: opts.build });
@@ -209,6 +214,7 @@ export async function runCli(argv: string[]): Promise<void> {
                     pollMs: parseDuration(opts.poll),
                     notifier,
                     out,
+                    format: opts.detail ? "detail" : "summary",
                 });
                 process.exit(exitCodeFor(result.result, result.timedOut));
             }
@@ -217,20 +223,23 @@ export async function runCli(argv: string[]): Promise<void> {
     program
         .command("login")
         .description("Create and store a Jenkins API token (opens <jenkins>/me/security/)")
+        .argument("[url]", "Jenkins URL — any page of it works (same as --url)")
         .option("--url <url>", "Jenkins base URL — skips the prompt")
         .option("--user <name>", "Jenkins username — skips the prompt")
         .option("--token <token>", "API token — skips the prompt and the browser")
         .option("--no-open", "Print the token page URL instead of opening a browser")
-        .action(async (opts: { url?: string; user?: string; token?: string; open?: boolean }) => {
-            process.exit(
-                await runLogin({
-                    url: opts.url,
-                    user: opts.user,
-                    token: opts.token,
-                    noOpen: opts.open === false,
-                })
-            );
-        });
+        .action(
+            async (url: string | undefined, opts: { url?: string; user?: string; token?: string; open?: boolean }) => {
+                process.exit(
+                    await runLogin({
+                        url: opts.url ?? url,
+                        user: opts.user,
+                        token: opts.token,
+                        noOpen: opts.open === false,
+                    })
+                );
+            }
+        );
 
     program
         .command("logout")

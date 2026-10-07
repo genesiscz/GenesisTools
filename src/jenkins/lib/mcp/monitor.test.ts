@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
 import axios from "axios";
-import { runMonitor } from "./monitor";
+import { runMonitor, summaryLines } from "./monitor";
 
 function fakeClient(snapshots: unknown[], blueNodes?: unknown[]) {
     let i = 0;
@@ -648,5 +648,129 @@ describe("runMonitor", () => {
         // First poll seeds SUCCESS into snapshot — no live stage event for already-complete.
         expect(stage108).toHaveLength(0);
         expect(events.filter((e) => e.event === "snapshot")).toHaveLength(1);
+    });
+});
+
+describe("monitor summary format", () => {
+    const snapshots = [
+        {
+            name: "build",
+            status: "IN_PROGRESS",
+            startTimeMillis: 0,
+            durationMillis: 30_000,
+            stages: [
+                { id: "1", name: "Clone", status: "SUCCESS", durationMillis: 20_000 },
+                {
+                    id: "2",
+                    name: "Build",
+                    status: "IN_PROGRESS",
+                    durationMillis: 10_000,
+                    stageFlowNodes: [{ id: "21", name: "Shell Script", status: "IN_PROGRESS", durationMillis: 5_000 }],
+                },
+            ],
+        },
+        {
+            name: "build",
+            status: "SUCCESS",
+            startTimeMillis: 0,
+            durationMillis: 50_000,
+            stages: [
+                { id: "1", name: "Clone", status: "SUCCESS", durationMillis: 20_000 },
+                {
+                    id: "2",
+                    name: "Build",
+                    status: "SUCCESS",
+                    durationMillis: 30_000,
+                    stageFlowNodes: [{ id: "21", name: "Shell Script", status: "SUCCESS", durationMillis: 29_000 }],
+                },
+            ],
+        },
+    ];
+
+    async function run(format: "summary" | "detail"): Promise<string[]> {
+        const lines: string[] = [];
+
+        await runMonitor({
+            client: fakeClient(snapshots),
+            jobPath: "job/X",
+            build: "7",
+            baseUrl: "https://j.example",
+            timeoutMs: 5_000,
+            pollMs: 10,
+            out: (line) => lines.push(line.trim()),
+            format,
+        });
+
+        return lines;
+    }
+
+    it("prints one text line per stage result and the end, and none for in-progress stages or inner steps", async () => {
+        const lines = await run("summary");
+
+        expect(lines).toEqual([
+            "[start] job/X #7 https://j.example/job/X/7/",
+            "[snapshot] 1 stage(s) finished before monitoring started",
+            "[stage] Build: SUCCESS (30s)",
+            "[end] SUCCESS after 50.0s",
+        ]);
+    });
+
+    it("is much shorter than the detail stream of the same build", async () => {
+        const detail = await run("detail");
+        const summary = await run("summary");
+
+        expect(detail.some((line) => line.includes('"event":"branch"'))).toBe(true);
+        expect(summary.length).toBeLessThan(detail.length);
+    });
+
+    it("names the failing log line of an error and the stages that were not successful before attaching", () => {
+        expect(
+            summaryLines({
+                event: "error",
+                ts: "t",
+                stage: "web-app · Tests",
+                stageId: "9",
+                line: 120,
+                matched: "  Error:   something\n\tbroke  ",
+                window: [],
+            })
+        ).toEqual(["[error] web-app · Tests (log line 120): Error: something broke"]);
+
+        expect(
+            summaryLines({
+                event: "snapshot",
+                ts: "t",
+                stages: [
+                    { id: "1", name: "Clone", status: "SUCCESS" },
+                    { id: "2", name: "Tests", status: "FAILED", label: "web-app · Tests" },
+                ],
+            })
+        ).toEqual(["[snapshot] 2 stage(s) finished before monitoring started, not successful: web-app · Tests"]);
+    });
+
+    it("says nothing for run events and inner steps, and reports a paused stage", () => {
+        expect(summaryLines({ event: "run", ts: "t", status: "IN_PROGRESS" })).toEqual([]);
+        expect(
+            summaryLines({
+                event: "branch",
+                ts: "t",
+                stage: "Build",
+                stageId: "2",
+                id: "21",
+                name: "sh",
+                status: "SUCCESS",
+                url: "u",
+            })
+        ).toEqual([]);
+        expect(
+            summaryLines({
+                event: "stage",
+                ts: "t",
+                id: "3",
+                name: "Approve",
+                status: "PAUSED_PENDING_INPUT",
+                url: "u",
+            })
+        ).toEqual(["[stage] Approve: PAUSED_PENDING_INPUT"]);
     });
 });

@@ -66,6 +66,13 @@ function stageLabel(stage: Stage): string {
     return stage.label ?? stage.name;
 }
 
+/**
+ * `summary` is one text line per stage result, error and the end, for a reader that treats each line as
+ * a message (a Monitor tool, a chat): no in-progress stages and none of the inner steps, which are most
+ * of the lines of a build. `detail` is every event as one JSON line.
+ */
+export type MonitorFormat = "summary" | "detail";
+
 export interface MonitorOpts {
     client: AxiosInstance;
     jobPath: string;
@@ -75,6 +82,7 @@ export interface MonitorOpts {
     pollMs: number;
     notifier?: MonitorNotifier;
     out: (line: string) => void;
+    format?: MonitorFormat;
 }
 
 export interface MonitorResult {
@@ -121,14 +129,15 @@ function mapJenkinsResult(result: string): RunStatus {
 }
 
 export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
-    const { client, jobPath, build, baseUrl, timeoutMs, pollMs, notifier, out } = opts;
+    const { client, jobPath, build, baseUrl, timeoutMs, pollMs, notifier, out, format = "detail" } = opts;
+    const emit = (event: MonitorEvent): void => writeEvent(out, event, format);
     const group = `jenkins-${jobPath.replace(/\//g, "_")}-${build}`;
     const baseRef = { jobPath, buildNumber: build };
     const buildHref = buildUrl(baseUrl, baseRef);
     const titleBase = `${jobPath.split("/").pop()} #${build}`;
     const ctx: NotifyContext = { notifier, group, titleBase };
 
-    emit(out, { event: "start", ts: new Date().toISOString(), jobPath, build, url: buildHref });
+    emit({ event: "start", ts: new Date().toISOString(), jobPath, build, url: buildHref });
 
     const seenStages = new Map<string, StageStatus>();
     const seenBranches = new Map<string, StageStatus>();
@@ -151,7 +160,7 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
         const isFirstPoll = seenStages.size === 0;
 
         if (isFirstPoll) {
-            seedSnapshotState(snap, seenStages, seenBranches, out);
+            seedSnapshotState(snap, seenStages, seenBranches, emit);
         }
 
         let stageDelta = false;
@@ -173,7 +182,7 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
                 seenStages.set(stage.id, stage.status);
 
                 if (!isSilentStatus(stage.status)) {
-                    emit(out, {
+                    emit({
                         event: "stage",
                         ts: new Date().toISOString(),
                         id: stage.id,
@@ -226,7 +235,7 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
 
                 const branchUrl = buildUrl(baseUrl, { ...baseRef, nodeId: branch.id });
                 const parentLabel = stageLabel(stage);
-                emit(out, {
+                emit({
                     event: "branch",
                     ts: new Date().toISOString(),
                     stage: stage.name,
@@ -256,11 +265,11 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
 
         if (snap.status !== lastRunStatus) {
             lastRunStatus = snap.status;
-            emit(out, { event: "run", ts: new Date().toISOString(), status: snap.status });
+            emit({ event: "run", ts: new Date().toISOString(), status: snap.status });
         }
 
         if (isTerminalRun(snap.status)) {
-            emit(out, {
+            emit({
                 event: "end",
                 ts: new Date().toISOString(),
                 result: snap.status,
@@ -297,7 +306,7 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
                     await emitErrorsForFailedStages(opts, snap, reportedErrors);
                 }
 
-                emit(out, {
+                emit({
                     event: "end",
                     ts: new Date().toISOString(),
                     result: final,
@@ -317,7 +326,7 @@ export async function runMonitor(opts: MonitorOpts): Promise<MonitorResult> {
         await sleep(pollMs);
     }
 
-    emit(out, {
+    emit({
         event: "end",
         ts: new Date().toISOString(),
         result: "ABORTED",
@@ -361,7 +370,7 @@ function seedSnapshotState(
     snap: PipelineSnapshot,
     seenStages: Map<string, StageStatus>,
     seenBranches: Map<string, StageStatus>,
-    out: (line: string) => void
+    emit: (event: MonitorEvent) => void
 ): void {
     // Pre-seed NOT_EXECUTED so first-poll doesn't treat declared-but-idle
     // parallel shells as transitions (and we never emit them anyway).
@@ -383,7 +392,7 @@ function seedSnapshotState(
         return;
     }
 
-    emit(out, {
+    emit({
         event: "snapshot",
         ts: new Date().toISOString(),
         stages: completed.map((s) => ({
@@ -463,24 +472,62 @@ async function emitErrorsForStage(opts: MonitorOpts, stage: Stage): Promise<void
     }
 
     for (const block of blocks) {
-        opts.out(
-            `${SafeJSON.stringify(
-                {
-                    event: "error",
-                    ts: new Date().toISOString(),
-                    stage: stageLabel(stage),
-                    stageId: stage.id,
-                    line: block.line,
-                    matched: block.matched,
-                    window: block.window,
-                },
-                { jsonl: true }
-            )}\n`
+        writeEvent(
+            opts.out,
+            {
+                event: "error",
+                ts: new Date().toISOString(),
+                stage: stageLabel(stage),
+                stageId: stage.id,
+                line: block.line,
+                matched: block.matched,
+                window: block.window,
+            },
+            opts.format ?? "detail"
         );
     }
 }
 
-function emit(out: (line: string) => void, ev: MonitorEvent): void {
+function stageSeconds(durationMillis: number | undefined): string {
+    return durationMillis === undefined ? "" : ` (${Math.round(durationMillis / 1000)}s)`;
+}
+
+/** The text lines of one event in `summary` format; none for events that carry no news by themselves. */
+export function summaryLines(ev: MonitorEvent): string[] {
+    switch (ev.event) {
+        case "start":
+            return [`[start] ${ev.jobPath} #${ev.build} ${ev.url}`];
+        case "snapshot": {
+            const failed = ev.stages.filter((s) => s.status !== "SUCCESS");
+            const failedNote =
+                failed.length > 0 ? `, not successful: ${failed.map((s) => s.label ?? s.name).join(", ")}` : "";
+
+            return [`[snapshot] ${ev.stages.length} stage(s) finished before monitoring started${failedNote}`];
+        }
+        case "stage":
+            return ev.status === "IN_PROGRESS"
+                ? []
+                : [`[stage] ${ev.label ?? ev.name}: ${ev.status}${stageSeconds(ev.durationMillis)}`];
+        case "error":
+            return [
+                `[error] ${ev.stage} (log line ${ev.line}): ${ev.matched.replace(/\s+/g, " ").trim().slice(0, 240)}`,
+            ];
+        case "end":
+            return [`[end] ${ev.result} after ${formatDuration(ev.durationMillis)}`];
+        default:
+            return [];
+    }
+}
+
+function writeEvent(out: (line: string) => void, ev: MonitorEvent, format: MonitorFormat): void {
+    if (format === "summary") {
+        for (const line of summaryLines(ev)) {
+            out(`${line}\n`);
+        }
+
+        return;
+    }
+
     out(`${SafeJSON.stringify(ev, { jsonl: true })}\n`);
 }
 

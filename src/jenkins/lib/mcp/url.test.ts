@@ -44,6 +44,15 @@ describe("parseJenkinsInput", () => {
         expect(parseJenkinsInput("https://j.example/job/X/7948/pipeline-overview/").buildNumber).toBe("7948");
     });
 
+    it("names the page a trailing segment pointed at, and nothing for a plain build URL", () => {
+        expect(parseJenkinsInput("https://j.example/job/X/7948/console").page).toBe("console");
+        expect(parseJenkinsInput("https://j.example/job/X/7948/pipeline-overview/?selected-node=4").page).toBe(
+            "pipeline-overview"
+        );
+        expect(parseJenkinsInput("https://j.example/job/X/7948/").page).toBeUndefined();
+        expect(parseJenkinsInput("job/X/7948")).toEqual({ jobPath: "job/X/7948" });
+    });
+
     it("handles URL with no build number", () => {
         const r = parseJenkinsInput("https://jenkins.example.com/job/X/job/Y/");
         expect(r.jobPath).toBe("job/X/job/Y");

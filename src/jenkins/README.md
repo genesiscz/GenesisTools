@@ -1,0 +1,274 @@
+# Jenkins
+
+![Status](https://img.shields.io/badge/Status-Active-success?style=flat-square)
+![Type](https://img.shields.io/badge/Type-MCP%20Server%20%2B%20CLI-purple?style=flat-square)
+
+> **Model Context Protocol server + CLI for Jenkins — daily ops without the token blowup.**
+
+Inspect Jenkins from an AI assistant (MCP) *or* from your shell (CLI). Same backing library either way. Token-efficient: logs spill to `$TMPDIR/jenkins-mcp/`, the MCP response is just a path + summary.
+
+`tools jenkins` has two layers: the REST commands below (`tools jenkins stages|monitor|logs|rebuild|...`) and the MCP server with its own CLI (`tools jenkins mcp ...`). Both use one login, one HTTP client and the same URL parser.
+
+---
+
+## Quick Start
+
+```bash
+# Log in once. Opens <jenkins>/me/security/, which is the API-token page for
+# whoever the browser is signed in as, so it works before it knows your username.
+tools jenkins login
+tools jenkins status          # which credentials are in use, and who they are
+tools jenkins logout          # forget the stored token
+
+# Scripted alternative, and what CI uses. The environment always wins.
+export JENKINS_URL=https://jenkins.example.com
+export JENKINS_USER=myuser
+export JENKINS_TOKEN=xxxxxxxxxxxx
+
+# CLI: paste any Jenkins URL — buildNumber and selected-node are auto-extracted
+tools jenkins mcp stages "https://jenkins.example.com/job/X/job/Y/123/pipeline-overview/?selected-node=41"
+tools jenkins mcp log    "https://jenkins.example.com/job/X/job/Y/123/" --node 41
+tools jenkins mcp info   "https://jenkins.example.com/job/X/job/Y/123/"
+
+# Watch a build: one text line per stage result, error and the end, plus click-to-browser
+# notifications. Made for a reader that treats every line as a message (a Monitor tool, a chat).
+tools jenkins mcp monitor "https://.../job/X/123/" --timeout 30m
+
+# Every event as JSONL (~300 lines for a 6 minute build: in-progress stages, every inner step)
+tools jenkins mcp monitor "https://.../job/X/123/" --timeout 30m --detail | tee /tmp/build.jsonl
+```
+
+Without args (no CLI subcommand), the binary launches as a stdio MCP server — that's what your assistant config uses.
+
+## REST commands
+
+`tools jenkins <command>`. The first argument is a job path (`job/<folder>/job/<job>`) or any build URL; an optional build argument wins over the number in the URL, and the default is the last build.
+
+| Command | Behavior |
+|---|---|
+| `<url>` (no command) | Smart mode: parses the URL, fetches the build when logged in, and prints the next commands to run (monitor, rebuild, logs, track). |
+| `stages <job-or-url> [build]` | Stage timings. Same view as `mcp stages`; `lastBuild` is pinned to its number first. `--expand` shows parallel branches. |
+| `compare <job-or-url> <b1> <b2>` | Side-by-side stage durations of two builds with the difference. |
+| `monitor <job-or-url> [build]` | Same stream as `mcp monitor` (one line per stage result and error, a notification per change, exit code by result). Takes `--timeout`, `--poll`, `--no-notify`, `--quiet`, `--detail`. |
+| `logs <job-or-url> [build]` | `mcp log` with `--tail 100` by default; `--head`, `--node`. A `selected-node` URL fetches that node. |
+| `search-logs <job-or-url> [build]` | `mcp log --grep`; `-p, --pattern` (default `ERROR\|FAILURE\|Exception`), `--node`. |
+| `rebuild <target> [build]` | Reruns a build with its own parameters (`buildWithParameters`), then waits for the queue item to become a build. `--dry-run` prints the parameters only; `--no-wait`. |
+| `triggers <job-or-url> [-n N]` | Triggers N builds one after another. Jenkins merges identical queue items, so each waits for its build number first. |
+| `stop-range <job-or-url> <from> <to>` | POSTs `stop` to every build in the range. |
+| `track <job-or-url> [build]` | Follows a build to its end, then the downstream builds it triggers (found from `Triggering <job> #<n>` log lines, else by start time), and notifies once. Which jobs are masters comes from `lib/rest/catalog.ts`. |
+| `pods` | Agents grouped by template (`<template>-<5 chars>`): online, busy, offline; then the queue grouped by wait reason. |
+| `executors` | Queue backlog diagnosis: the starved label, who holds the heavyweight executors longest, and builds running past `--zombie-mins` (default 120). `--label`, `--urls`, `--no-queue`. |
+| `ping` | One GET; prints `UP <time>` or `DOWN <time> (<reason>)` and never fails. |
+
+Every REST request is appended to `$TMPDIR/<local date>-jenkins.log` (UTC time, method, status, latency, URL).
+
+### Seams for a deployment
+
+Two files exist so a deployment can ship its own copy without touching the rest:
+
+- `lib/rest/catalog.ts`: `JOB_CATALOG` (known jobs with a type), `SUB_JOB_BY_DISPLAY` (orchestrator display name to job name) and `PIPELINE_RULES` (`masters`, `downstream`, `typeHints`), used by smart mode and `track`. Empty here.
+- `commands/extra.ts`: `registerExtraCommands(jenkins)`, called last by `index.ts`, for commands that only make sense on one Jenkins. A no-op here.
+
+## Credentials
+
+Resolution order is the environment first (all three of `JENKINS_URL`, `JENKINS_USER` and `JENKINS_TOKEN`), then the stored login. `JENKINS_URL` on its own is config, not a credential: it selects which stored host to use and never counts as "partly logged in", because a repo `.env` routinely sets it alone.
+
+`tools jenkins login` writes **one** entry, `jenkins/credentials`, into the GenesisTools vault (`~/.genesis-tools/security/vault.json`, AES-256-GCM). That entry holds the URL, username and token together for every host you log into, so a stored login is self-contained and nothing needs `JENKINS_URL` exported. The newest login becomes the default host.
+
+A token alone is not a login: Jenkins accepts `Authorization: Bearer <token>` with HTTP 200 and resolves it to `anonymous`, and the same token with a wrong username answers 401. `login` and `status` therefore check `/me/api/json` and reject a resolved id of `anonymous` rather than trusting the status code.
+
+**A Jenkins behind a private certificate authority.** A server that sends only its own certificate, without the intermediate, fails verification (`unable to verify the first certificate`), because bun does not fetch a missing intermediate the way a browser or curl does. Put the intermediate and root as `.pem` files in `src/jenkins/lib/mcp/`: every `*.pem` there is trusted on top of the public store. No `.pem` file means the default behaviour. As a last resort, `--tls-accept-unauthorized` (anywhere after `tools jenkins mcp`) or `JENKINS_TLS_ACCEPT_UNAUTHORIZED=1` skips certificate verification for a Jenkins whose chain cannot be verified; a warning says so on every run.
+
+**The MCP server starts without credentials.** It resolves them on the first tool call, so `tools/list` works and a `tools/call` answers JSON-RPC `-32600` with the login instructions. Exiting at startup instead would show the assistant only "server failed to connect".
+
+---
+
+## CLI Subcommands
+
+`tools jenkins mcp <subcommand>` (`tools jenkins-mcp` is the same command) — the first positional arg is a job path OR a full Jenkins URL. URLs auto-parse `buildNumber` and `selected-node`. Explicit flags win over URL contents.
+
+| Subcommand | Flags | Behavior |
+|---|---|---|
+| `stages <input>` | `--build`, `--expand` | Stage tree (`wfapi/describe`). `--expand` drills into parallel branches. |
+| `log <input>` | `--build`, `--node`, `--tail`, `--head`, `--grep` | Save full log to `$TMPDIR/jenkins-mcp/<slug>-<build>[-node<id>].log` after stripping HTML timestamp wrappers. Print path + head/grep/tail per the flags (default: tail 20; no tail with `--grep` or `--head` unless `--tail` is set). |
+| `info <input>` | `--build` | Build params, causes (who/what triggered), agent, executor, estimated duration. |
+| `changes <input>` | `--build` | SCM changeSet (commits/authors) + trigger causes. |
+| `jobs` | `--folder`, `--limit` | List jobs in a folder. |
+| `monitor <input>` | `--build` (req), `--timeout`, `--poll`, `--no-notify`, `--quiet`, `--detail` | One text line per stage result, error and the end (`[stage] web-app · Tests: SUCCESS (72s)`, `[end] SUCCESS after 5m 58s`) + notifications. Click any notification to open the build URL (or the stage's deep-link) in your browser. `--detail` prints every event as JSONL instead. |
+
+### `monitor --detail` JSONL schema
+
+One JSON object per line. All records carry an ISO `ts`. Example shapes (`durationMillis` is optional on in-progress transitions):
+
+```json
+{"event": "start",    "ts": "2026-05-13T10:00:00.000Z", "jobPath": "job/X/job/main", "build": "42", "url": "https://j/.../42/"}
+{"event": "snapshot", "ts": "2026-05-13T10:00:00.000Z", "stages": [{"id": "7", "name": "Checkout", "status": "SUCCESS", "durationMillis": 1234}]}
+{"event": "stage",    "ts": "2026-05-13T10:00:05.000Z", "id": "12", "name": "Build", "status": "IN_PROGRESS", "url": "https://j/.../42/pipeline-overview/?selected-node=12"}
+{"event": "branch",   "ts": "2026-05-13T10:00:06.000Z", "stage": "Build", "stageId": "12", "id": "15", "name": "Building libfoo", "status": "SUCCESS", "durationMillis": 7000, "url": "https://j/.../42/pipeline-overview/?selected-node=15"}
+{"event": "error",    "ts": "2026-05-13T10:01:00.000Z", "stage": "Test", "stageId": "30", "line": 412, "matched": "FAILED: 3 of 100 tests", "window": ["...", "...", "..."]}
+{"event": "end",      "ts": "2026-05-13T10:02:00.000Z", "result": "SUCCESS", "durationMillis": 120000}
+```
+
+Snapshot fires once on first poll with completed stages (no notifications). `end.result` is one of `SUCCESS`, `FAILED`, `UNSTABLE`, `ABORTED`, `NOT_EXECUTED`.
+
+Process exits with the result mapped to a code:
+
+| Result | Exit |
+|---|---|
+| SUCCESS | 0 |
+| FAILED | 1 |
+| UNSTABLE | 2 |
+| ABORTED | 3 |
+| NOT_EXECUTED | 4 |
+| timeout (`--timeout` exceeded) | 124 |
+
+### `monitor` notifications
+
+- Backed by `@genesiscz/utils/macos/notifications.sendNotification`: GenesisTools.app first, then `terminal-notifier`, then `osascript`.
+- One notification per stage transition (not for historical snapshot). Subtitle = stage name. Body = `✓ SUCCESS  27s` style with duration.
+- `thread_identifier` is `jenkins-<jobPath>-<build>` so stage notifications for one build collapse instead of stacking.
+- Click handler routes through `Browser.open(url, { browser: "brave" })` — opens the stage's deep-linked URL in Brave (or your preferred browser via `Browser.setPreferred()`).
+
+---
+
+## MCP Tools
+
+| Tool | Behavior |
+|---|---|
+| `get_build_status` | `building` / `result` / `timestamp` / `duration` / `url` |
+| `trigger_build` | POST `/build` or `/buildWithParameters` |
+| `get_build_log` | **Saves to `$TMPDIR/jenkins-mcp/`**, returns `{path, sizeBytes, lineCount, nodeStatus?, truncated}` — bytes never enter the response. Pass `grep` to also get `matches: string[]` formatted `"L<n>: <text>"` (caps at 200). Pass `nodeId` for a single-node log. |
+| `list_jobs` | Folder listing. Supports `limit`. |
+| `get_build_history` | Last N builds (`limit`, default 10). |
+| `stop_build` | POST `/<build>/stop` |
+| `get_queue` | Current queue (supports `limit`). |
+| `get_job_config` | Selected fields from the job's `api/json`. |
+| `get_pipeline_stages` | `wfapi/describe`, optional `expand` for parallel branches. |
+| `get_failing_node` | Finds first FAILED stage + innermost failing node, fetches its log, runs regex error extraction. One-shot "what failed and why". |
+| `get_build_info` | params / causes / `builtOn` (agent) / executor / estimated duration. |
+| `get_build_changes` | SCM `changeSet[items[*]]` + causes. |
+| `wait_for_build` | Snapshots current state + emits a `tools jenkins mcp monitor ...` command via `suggestCommand`. Does NOT poll; routes the LLM to the CLI for backgrounded waiting. |
+
+Every tool that takes a `jobPath` also accepts a full Jenkins URL — the build number and `selected-node` are auto-extracted (explicit args win over URL).
+
+---
+
+## Environment Variables
+
+| Var | Description |
+|---|---|
+| `JENKINS_URL` | Base URL of your Jenkins instance |
+| `JENKINS_USER` | Jenkins username |
+| `JENKINS_TOKEN` | Jenkins API token (Manage Jenkins → Users → API Token) |
+
+All required at startup. MCP server exits non-zero with a clear error if any are missing.
+
+---
+
+## Configuration (Claude Desktop / Cursor)
+
+```json
+{
+  "mcpServers": {
+    "jenkins": {
+      "command": "tools",
+      "args": ["jenkins-mcp"],
+      "env": {
+        "JENKINS_URL": "https://jenkins.example.com",
+        "JENKINS_USER": "myuser",
+        "JENKINS_TOKEN": "xxxxxxxxxxxx"
+      }
+    }
+  }
+}
+```
+
+---
+
+## URL Parsing
+
+`parseJenkinsInput()` accepts any of:
+
+```text
+job/Org/job/Project/job/Team/job/my-build                                   → { jobPath }
+/job/Org/.../my-build/123/                                                  → { jobPath, buildNumber: "123" }
+https://j.example/job/.../123/pipeline-overview/?selected-node=41           → { jobPath, buildNumber, nodeId: "41" }
+https://j.example/job/X/job/Y/view/change-requests/job/PR-42/6/             → { jobPath: "job/X/job/Y/job/PR-42", buildNumber: "6" }
+```
+
+Strips trailing `pipeline-overview`, `console`, `consoleText`, `wfapi`, etc. Strips `view/<name>/` filters from multibranch URLs.
+
+---
+
+## Architecture
+
+```text
+src/jenkins/
+├── index.ts          # `tools jenkins`: REST commands, smart URL mode, login / logout / status and `mcp`
+├── commands/         # thin doors: one file per REST command, auth.ts, mcp.ts (hands argv to lib/mcp/entry),
+│                     #   extra.ts (seam: registerExtraCommands)
+├── lib/rest/
+│   ├── client.ts     # JenkinsBackend over the shared axios client + audit log
+│   ├── catalog.ts    # seam: JOB_CATALOG, SUB_JOB_BY_DISPLAY, PIPELINE_RULES
+│   ├── jobs.ts       # job name, type, master and downstream lookups over the catalog
+│   ├── wfapi.ts      # wfapi/describe reader, flow-node search, column summaries
+│   ├── rebuild.ts    # same-parameter rebuild + queue resolution
+│   ├── track-pipeline.ts  # master + downstream tracking
+│   ├── url-analyzer.ts    # smart mode: context + suggested commands
+│   └── buildLog.ts   # logs / search-logs onto `mcp log`
+└── lib/mcp/
+    ├── entry.ts      # any argv → cli.ts, else → mcp.ts
+    ├── mcp.ts        # MCP server (13 tools)
+    ├── cli.ts        # commander CLI (6 subcommands)
+    ├── url.ts        # parseJenkinsInput / buildUrl
+    ├── client.ts     # axios with retry (3 attempts, exp backoff on 5xx/net)
+    ├── pipeline.ts   # wfapi/describe + findFailingLeaf
+    ├── log.ts        # fetchLog (consoleFull for node, consoleText for
+    │                 #   whole-build) + HTML/entity strip + cache write
+    ├── storage.ts    # JenkinsMcpStorage: log blobs in $TMPDIR/jenkins-mcp/,
+    │                 #   complete markers in ~/.genesis-tools/jenkins-mcp/cache/
+    ├── format.ts     # slug / status icons / stage line / notify body
+    ├── errors.ts     # regex-windowed error extraction (±5 / ±3 lines)
+    ├── notify.ts     # MonitorNotifier — sendNotification + click-to-default-browser
+    └── monitor.ts    # diff engine + summary/JSONL emitter + exitCodeFor
+```
+
+Pure-function modules are unit-tested under `bun:test`. I/O wrappers are smoke-tested against real Jenkins.
+
+---
+
+## Log Fetching & Caching
+
+Two endpoints, two strategies — each chosen because the alternative is broken on stock Jenkins:
+
+| Scope | Endpoint | Why |
+|---|---|---|
+| **Per-node** (`--node N`, MCP `nodeId`) | `/execution/node/{id}/log/?consoleFull` — single GET | The wfapi `/wfapi/log` paginator returns 10KB chunks but **ignores the `start` query parameter** on the Jenkins versions we tested, so looping until `hasMore=false` appends duplicate content forever. `consoleFull` returns the full node log in one response. |
+| **Whole-build** (no `--node`) | `/consoleText` — single GET | `progressiveText` is not usable as a cursor: on a running build it returned 986 KB of text while `X-Text-Size` reported 3.41 MB (measured 2026-09-23 on a large pipeline build), so continuing from `X-Text-Size` silently skipped most of the log. `consoleText` returns the whole current log. |
+
+**Cache layout** — split by lifecycle:
+
+```text
+$TMPDIR/jenkins-mcp/                      ← log blobs (large, regenerable)
+  └── <slug>-<build>[-node<id>].log
+
+~/.genesis-tools/jenkins-mcp/cache/       ← persistent metadata
+  └── <slug>-<build>[-node<id>].log.complete   (log fetched after the build finished)
+```
+
+A `/tmp` wipe is harmless: `fetchLog` notices the log file is missing and refetches it.
+
+**A cached log is reused only when complete.** `fetchLog` probes `/api/json?tree=building,result`
+first. It returns the cached file only when the build is final **and** the `.complete` marker exists,
+which a fetch writes only when the build had already finished before the fetch started. A log saved
+while the build ran is fetched again once the build ends. Cold call on a 600KB node log: ~300ms.
+Warm cache hit: ~50ms.
+
+---
+
+## Notes
+
+- Logs cap at 50MB raw before HTML strip: a longer whole-build log is cut there and reported as `truncated`, not failed (a 13MB stripped log is normal — timestamp spans are ~4× the content size).
+- If a build has been pruned by Jenkins retention, the MCP returns a clear "build may have been pruned" error.
+- Multibranch sub-build recursion is out of scope — `monitor` shows the parent stage status; drill into sub-jobs with their own `monitor` invocation if needed.
+- Notification clicks open in Brave by default. Configure via `Browser.setPreferred("safari")` (or chrome/firefox/edge/arc) in `~/.genesis-tools/genesis-tools/config.json`.

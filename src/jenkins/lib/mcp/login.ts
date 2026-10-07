@@ -1,5 +1,5 @@
 /**
- * `jenkins-mcp login` — get an API token into the secret store without the user
+ * `jenkins login` — get an API token into the secret store without the user
  * hunting for the page that issues one.
  *
  * Jenkins aliases the signed-in user to `/me/`, so `<jenkins>/me/security/` is
@@ -14,11 +14,13 @@
 import { spawn } from "node:child_process";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
+import { normalizeBaseUrl } from "@genesiscz/utils/jenkins/url";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { createClient } from "./client";
 import { secretStoreAvailable, secretStoreName } from "./credentialStore";
 import { forgetAuth, type JenkinsAuth, readStoredAuth, resolveAuth, saveAuth, tokenPageUrl } from "./credentials";
+import { DEFAULT_JENKINS_URL, TOKEN_NAME } from "./defaults";
 
 export interface LoginOptions {
     url?: string;
@@ -31,11 +33,6 @@ export interface LoginOptions {
 export interface WhoAmI {
     id: string;
     fullName: string;
-}
-
-function normalizeBaseUrl(raw: string): string {
-    const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-    return withScheme.replace(/\/+$/, "");
 }
 
 function openInBrowser(url: string): void {
@@ -94,15 +91,12 @@ export async function runLogin(opts: LoginOptions): Promise<number> {
     }
 
     const existing = await readStoredAuth(opts.url);
-    // No default URL baked in. The upstream copy of this file carries a specific
-    // company Jenkins here; this repo is public, and a wrong default is worse
-    // than an empty prompt.
     const typedUrl =
         opts.url ??
         (await p.text({
             message: "Jenkins URL",
-            initialValue: existing?.url ?? env.jenkins.getUrl(),
-            placeholder: "https://jenkins.example.com",
+            initialValue: existing?.url ?? env.jenkins.getUrl() ?? DEFAULT_JENKINS_URL,
+            placeholder: DEFAULT_JENKINS_URL ?? "https://jenkins.example.com",
         }));
 
     // isCancel BEFORE normalizing: p.text answers with a cancel SYMBOL, and
@@ -121,7 +115,7 @@ export async function runLogin(opts: LoginOptions): Promise<number> {
             [
                 tokenPage,
                 "",
-                "On that page: Add new token, name it (genesis-tools), Generate, then copy the value.",
+                `On that page: Add new token, name it (${TOKEN_NAME}), Generate, then copy the value.`,
                 "Jenkins shows the token once. /me/ is Jenkins' alias for whoever is signed in,",
                 "so this link works without knowing your username.",
             ].join("\n"),
@@ -162,8 +156,13 @@ export async function runLogin(opts: LoginOptions): Promise<number> {
     try {
         who = await verifyAuth(auth);
     } catch (error) {
-        spin?.stop("Token rejected");
         const message = error instanceof Error ? error.message : String(error);
+        // Jenkins answering 401/403 is a rejected token; anything else (TLS, DNS, timeout) never reached it.
+        spin?.stop(
+            /rejected|anonymous/i.test(message)
+                ? "Token rejected"
+                : `Could not reach ${auth.url}; the token was not checked`
+        );
         scripted ? out.error(message) : p.log.error(message);
         return 1;
     }
@@ -188,7 +187,7 @@ export async function runLogin(opts: LoginOptions): Promise<number> {
         return 1;
     }
 
-    const done = `Saved ${auth.url} for ${auth.user} in ${secretStoreName()}. Remove it with: ${toolCommand("jenkins-mcp logout")}`;
+    const done = `Saved ${auth.url} for ${auth.user} in ${secretStoreName()}. Remove it with: ${toolCommand("jenkins logout")}`;
 
     if (scripted) {
         out.info(done);

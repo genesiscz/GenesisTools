@@ -375,7 +375,7 @@ that tool's own `README.md`, which you can also print in the terminal with
 |------|--------------|-----------------|
 | [`github`](src/github/README.md) | Token-efficient GitHub client: issues, PRs, review threads, code search, notifications, activity, raw files, release notes as one Markdown document, stack-safe merges. | `issue` `pr` `merge` `comments` `search` `code` `get` `review` `notifications` `activity` `releases` `status` |
 | [`gitlab`](src/gitlab/README.md) | GitLab client for any instance (host, token and project from flags, env, glab or the origin remote): per-day activity, user and project reports, MR review threads and drafts, batch comments and labels, open MRs by file, two-phase stale-MR cleanup. | `activity` `analyze-user` `analyze-project` `fetch-review` `discussions` `draft-reply` `drafts` `batch-comment` `batch-label` `search-by-file` `stale-branches` |
-| [`jenkins-mcp`](src/jenkins-mcp/README.md) | Jenkins CLI and MCP server: paste a job path or full Jenkins URL, read stages, logs, changes, and monitor the queue. | `stages` `log` `info` `changes` `jobs` `monitor` |
+| [`jenkins`](src/jenkins/README.md) | Jenkins CLI and MCP server: paste a job path or full Jenkins URL, read stages, logs, changes, and monitor the queue. | `stages` `log` `info` `changes` `jobs` `monitor` |
 
 `tools github merge` exists specifically because `gh pr merge --delete-branch` closes the
 children of a PR stack instead of retargeting them (`cli/cli#1168`). It retargets dependents
