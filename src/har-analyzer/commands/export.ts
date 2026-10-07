@@ -1,15 +1,21 @@
 import { resolve } from "node:path";
 import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { filterEntries } from "@app/har-analyzer/core/query-engine";
-import { redactEntry } from "@app/har-analyzer/core/redactor";
+import { type RedactorOptions, redactEntry } from "@app/har-analyzer/core/redactor";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { EntryFilter, HarEntry, HarFile, OutputOptions } from "@app/har-analyzer/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
-function sanitizeEntry(entry: HarEntry, index: number): HarEntry {
-    return redactEntry(entry, index).entry;
+// A sanitized export is meant to be shared, so credentials keep no head or tail (the redact command's
+// default "partial" style keeps both for correlation).
+const SANITIZE_OPTIONS: RedactorOptions = {
+    styles: { token: "label", session: "label", cookie: "label", jwt: "label" },
+};
+
+export function sanitizeEntry(entry: HarEntry, index: number): HarEntry {
+    return redactEntry(entry, index, SANITIZE_OPTIONS).entry;
 }
 
 function stripBodies(entry: HarEntry): HarEntry {
