@@ -15,6 +15,7 @@ import { newStashId, shortId } from "../lib/ids";
 import { commentSyntaxForFile } from "../lib/languages";
 import { emitCloseMarker, emitOpenMarker } from "../lib/markers";
 import { applyPatch, listFilesInPatch, listPatchPaths, runGitIn } from "../lib/patch";
+import { type PatchHunk, patchHunks } from "../lib/patch-regions";
 import { type DetectedProject, detectProject } from "../lib/projects";
 import { openStashDb } from "../lib/stash-db";
 import { StashStorage } from "../lib/storage";
@@ -383,7 +384,7 @@ async function decorateAppliedRegions(args: {
     sourceRepo: string | null;
     sourceSha: string | null;
 }): Promise<void> {
-    const hunks = parseDiffHunks(args.patch);
+    const hunks = hunksByFile(args.patch);
     for (const [filePath, fileHunks] of Object.entries(hunks)) {
         const syntax = commentSyntaxForFile(filePath);
         await rewriteConfinedText({
@@ -422,46 +423,20 @@ async function decorateAppliedRegions(args: {
     }
 }
 
-interface DiffHunk {
-    newStart: number;
-    newLines: number;
-    addedCount: number;
-}
+/**
+ * The patch's hunks per post-image file. patchHunks counts each hunk's lines from its header, so a
+ * content line that reads like a file header ("+++ b/x" from an added "++ b/x") stays content.
+ */
+function hunksByFile(patch: string): Record<string, PatchHunk[]> {
+    const result: Record<string, PatchHunk[]> = {};
+    for (const hunk of patchHunks(patch)) {
+        // A deleted file has no post-image to wrap; unapply restores its saved pre-image.
+        if (hunk.deletedFile) {
+            continue;
+        }
 
-function parseDiffHunks(patch: string): Record<string, DiffHunk[]> {
-    const result: Record<string, DiffHunk[]> = {};
-    const lines = patch.split("\n");
-    let currentFile: string | null = null;
-    let currentHunk: DiffHunk | null = null;
-    // Unified-diff hunk header `@@ -orig +newStart,newLines @@` — capture newStart + newLines for marker placement.
-    const HUNK_RE = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;
-    // Post-image file header from `git diff --dst-prefix=b/` — captures relative path.
-    const FILE_RE = /^\+\+\+ b\/(.+)$/;
-    for (const line of lines) {
-        const fm = FILE_RE.exec(line);
-        if (fm) {
-            currentFile = fm[1] ?? null;
-            currentHunk = null;
-            continue;
-        }
-        const hm = HUNK_RE.exec(line);
-        if (hm && currentFile) {
-            currentHunk = {
-                newStart: Number(hm[1]),
-                newLines: Number(hm[2] ?? "1"),
-                addedCount: 0,
-            };
-            if (!result[currentFile]) {
-                result[currentFile] = [];
-            }
-            result[currentFile].push(currentHunk);
-            continue;
-        }
-        // `+++ b/path` file headers always appear BEFORE the first `@@`, so currentHunk is null
-        // there and we never reach this branch — no startsWith("+++") guard needed.
-        if (currentHunk && line.startsWith("+")) {
-            currentHunk.addedCount++;
-        }
+        result[hunk.filePath] ??= [];
+        result[hunk.filePath].push(hunk);
     }
     return result;
 }

@@ -347,6 +347,29 @@ describe.serial("stash e2e", () => {
         expect(await readFile(join(projectB, "b.ts"), "utf8")).toBe("export const b = 1;\n");
     });
 
+    test("an added line that reads like a file header is decorated as content of its own file", async () => {
+        // Two hunks far apart; the first adds "++ b/other.ts", which the patch spells "+++ b/other.ts".
+        const baseline = `${Array.from({ length: 20 }, (_, index) => `line${index}();`).join("\n")}\n`;
+        for (const repo of [projectA, projectB]) {
+            await writeFile(join(repo, "main.ts"), baseline);
+            await runGitIn(repo, ["commit", "-qam", "long baseline"]);
+        }
+        process.chdir(projectA);
+        await writeFile(
+            join(projectA, "main.ts"),
+            baseline.replace("line1();", "++ b/other.ts").replace("line18();", "changed18();")
+        );
+        await saveCommand({ name: "header-like", mode: "all", tags: [], description: undefined });
+
+        process.chdir(projectB);
+        await applyCommand({ name: "header-like", verboseMarkers: false });
+
+        const applied = await readFile(join(projectB, "main.ts"), "utf8");
+        expect(applied.match(/#region @stash:header-like/g)?.length).toBe(2);
+        expect(applied).toContain("changed18();");
+        expect(existsSync(join(projectB, "other.ts"))).toBe(false);
+    });
+
     test("a patch git rejects outright leaves no session behind, so a retry is not blocked", async () => {
         process.chdir(projectA);
         await writeFile(join(projectA, "main.ts"), "export function main() { return 2; }\n");
