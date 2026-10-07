@@ -442,4 +442,53 @@ final class PRThreadsTests: XCTestCase {
         let identity = try proposal(["provider": "gitlab", "host": "gitlab.example.com", "project": "group/shop", "number": 12]).identity
         XCTAssertEqual(identity, PRIdentity(provider: "gitlab", host: "gitlab.example.com", project: "group/shop", number: 12))
     }
+
+    // MARK: threads list
+
+    func testTheListExplainsAnOutdatedThreadByTheCommitOnScreen() throws {
+        let onShown = try thread("A", line: 5, outdated: true, commit: "aaa1111")
+        let moved = try thread("B", line: 40, outdated: false, commit: "bbb2222")
+        let gone = try thread("C", line: 9, outdated: true, commit: "ccc3333")
+        XCTAssertEqual(PRThreadPlacement.of(onShown, shownHead: "aaa1111", prHead: "bbb2222"), .onDiff(outdatedOnHost: true),
+                       "outdated on the host, but written on the commit the diff shows: current here")
+        XCTAssertEqual(PRThreadPlacement.of(moved, shownHead: "aaa1111", prHead: "bbb2222"), .newerHead)
+        XCTAssertEqual(PRThreadPlacement.of(gone, shownHead: "aaa1111", prHead: "bbb2222"), .outdated)
+        XCTAssertEqual(PRThreadPlacement.of(moved, shownHead: nil, prHead: "bbb2222"), .onDiff(outdatedOnHost: false))
+        XCTAssertEqual(PRThreadPlacement.of(onShown, shownHead: nil, prHead: "bbb2222"), .outdated,
+                       "the working tree is not the commit it was written on")
+    }
+
+    private func thread(_ id: String, path: String, line: Int, startLine: Int? = nil) throws -> PRThread {
+        let start = startLine.map { "\"startLine\":\($0)," } ?? ""
+        let json = """
+        {"id":"\(id)","path":"\(path)","side":"additions","line":\(line),\(start)"outdated":false,"resolved":false,"resolvable":true,
+         "comments":[{"id":"N\(id)","author":{"name":"Alice","username":"alice","avatarUrl":"https://example.com/a.png"},
+         "bodyMarkdown":"Point","createdAt":"2026-09-20T10:00:00Z","isDraft":false}]}
+        """
+        return try JSONDecoder().decode(PRThread.self, from: Data(json.utf8))
+    }
+
+    func testThreadsGroupByFileInTheDiffsOrderAndByLine() throws {
+        let threads = [
+            try thread("1", path: "src/b.ts", line: 30),
+            try thread("2", path: "src/a.ts", line: 12),
+            try thread("3", path: "docs/z.md", line: 1),
+            try thread("4", path: "src/b.ts", line: 4, startLine: 2),
+        ]
+        let groups = PRThreadFileGroup.groups(threads, order: ["src/b.ts": 0, "src/a.ts": 1])
+        XCTAssertEqual(groups.map(\.path), ["src/b.ts", "src/a.ts", "docs/z.md"], "diff order first, files outside the diff after")
+        XCTAssertEqual(groups[0].threads.map(\.id), ["4", "1"], "by line inside a file")
+        XCTAssertEqual(groups[0].name, "b.ts")
+        XCTAssertEqual(groups[0].folder, "src")
+        XCTAssertEqual(PRThreadFileGroup.lineLabel(groups[0].threads[0]), "L2–4")
+        XCTAssertEqual(PRThreadFileGroup.lineLabel(groups[0].threads[1]), "L30")
+        XCTAssertEqual(PRThreadFileGroup.wrappable("packages/col/src").replacingOccurrences(of: "\u{200B}", with: ""), "packages/col/src",
+                       "the wrap points add no visible text")
+    }
+
+    func testTheAuthorsPictureReachesTheDiffCard() throws {
+        let live = PRThreadRendering.live(try thread("1", path: "src/a.ts", line: 3))
+        XCTAssertEqual(live.notes.map(\.avatarUrl), ["https://example.com/a.png"])
+        XCTAssertEqual(PRAvatar.tint(for: "alice"), PRAvatar.tint(for: "alice"), "one tint per person, run after run")
+    }
 }

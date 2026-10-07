@@ -5,6 +5,9 @@ import WebKit
 
 // GenesisTools --review [--repo <path>] [--session <id>] [--scope uncommitted|unstaged|staged|branch]
 //                       [--style split|unified] [--snapshot <png>]
+//                       [--pr <url|repo#n>] [--range <base>..<head>] [--label <text>] [--proposal <file>]
+// `--pr` attaches the PR's live threads; `--range` (with `--label`) pins the diff to two commits and wins
+// over a proposal's own range. The hub's "Open in a review window" passes all three.
 //
 // The per-session review window. v1 shows a repository's working tree against HEAD; the session
 // change log (handoff h_p38uwgeo) becomes a second source behind the same model. `--snapshot`
@@ -16,6 +19,9 @@ func runReview(_ args: [String]) -> Never {
     var session: String?
     var scope = DiffScope.uncommitted
     var proposalPath: String?
+    var prRef: String?
+    var range: (base: String, head: String)?
+    var rangeLabel: String?
     var options = DiffViewOptions()
     var activate = true
     var demo = ReviewSnapshotDemo()
@@ -37,6 +43,12 @@ func runReview(_ args: [String]) -> Never {
         case "--session": session = value; index += 1
         case "--scope": scope = DiffScope(argument: value ?? "") ?? .uncommitted; index += 1
         case "--proposal": proposalPath = value; index += 1
+        case "--pr": prRef = value; index += 1
+        case "--label": rangeLabel = value; index += 1
+        case "--range":
+            let ends = (value ?? "").components(separatedBy: "..")
+            if ends.count == 2, !ends[0].isEmpty, !ends[1].isEmpty { range = (ends[0], ends[1]) }
+            index += 1
         case "--no-activate": activate = false
         case "--style": options.diffStyle = DiffViewOptions.Style(rawValue: value ?? "") ?? .split; index += 1
         case "--set":
@@ -81,11 +93,21 @@ func runReview(_ args: [String]) -> Never {
         }
     }
 
+    if let range {
+        scope = .range(base: range.base, head: range.head, label: rangeLabel ?? "\(range.base.prefix(7))..\(range.head.prefix(7))")
+    }
     let model = ReviewModel(repo: URL(fileURLWithPath: repoPath).standardizedFileURL, options: options, session: session)
     model.scope = scope
     model.proposal = proposal
-    if let target = proposal?.prTarget {
+    if let prRef {
+        model.attachPR(.ref(prRef))
+    } else if let target = proposal?.prTarget {
         model.attachPR(target)
+    }
+    if snapshotPath == nil {
+        // The window opens where this review was left: scope, file, scroll line, unsent text (Review/ReviewSessionState.swift).
+        let stateKey = ReviewSessionKey.key(proposalPath: proposalPath, prTarget: prRef, repo: model.repo.path, launchScope: scope, session: session)
+        ReviewSessionPersistence.attach(model: model, key: stateKey, launchScope: scope)
     }
     let window = NSWindow(
         contentRect: NSRect(x: 0, y: 0, width: 1320, height: 860),
@@ -199,6 +221,14 @@ final class ReviewModel: ObservableObject {
     @Published var proposal: ProposalDocument?
     /// The PR/MR this diff belongs to, with its live review threads; nil for a plain working-tree diff.
     @Published private(set) var pr: PRThreadsStore?
+    /// The PR's pushes (`tools hub pr versions`): loaded when the threads name a head the diff does not
+    /// show, and when the Compare picker opens.
+    @Published private(set) var versions: PRVersionsStore?
+    /// A push after the diff on screen: the notice above the diff and the orange Reload in the header.
+    @Published private(set) var pushNews: PRPushNews?
+    /// The newest head whose notice the reader closed: the Reload stays, the notice does not come back.
+    @Published var dismissedNewsHead: String?
+    @Published var showsComparePicker = false
     /// Inside the hub the header is not next to the traffic lights, so it needs no leading inset.
     var embedded = false
     /// Set when no checkout on disk holds the diff's head (a PR without a worktree, its head fetched
@@ -487,7 +517,11 @@ final class ReviewModel: ObservableObject {
         guard pr !== store else { return }
         store.onChange = { [weak self] in
             self?.pushComments()
+            self?.checkForPush()
         }
+        let pushes = PRVersionsStore(target: store.target)
+        pushes.onChange = { [weak self] in self?.updateNews() }
+        versions = pushes
         store.onSubmitted = { [weak self] identity, ids in
             guard let self else { return }
             for (_, comments) in self.commentRoots {
@@ -539,7 +573,7 @@ final class ReviewModel: ObservableObject {
     /// against a base (the PR's range, or the branch); the threads list shows them in every scope.
     var showsLiveThreadsInline: Bool {
         switch scope {
-        case .branch, .range: return true
+        case .branch, .range, .compare: return true
         default: return false
         }
     }
@@ -577,7 +611,7 @@ final class ReviewModel: ObservableObject {
         let commitRange = remoteHead?.commitRange
         let onlyPrimary: Bool
         switch scope {
-        case .commit, .range: onlyPrimary = true
+        case .commit, .range, .compare: onlyPrimary = true
         default: onlyPrimary = false
         }
         let loadsPrimary = jobs.contains { $0.repo.path == primary.path }
@@ -724,6 +758,10 @@ final class ReviewModel: ObservableObject {
                     branch = snapshot.branch
                     base = snapshot.base
                     displayedHead = snapshot.head
+                    if !snapshot.compareConflicts.isEmpty {
+                        let names = snapshot.compareConflicts.prefix(3).map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")
+                        notice = "\(snapshot.compareConflicts.count) files changed upstream in the same places (\(names)); their left side is the older push as it was."
+                    }
                 }
                 commentStore(for: next[index])?.reanchor(files: snapshot.files)
             case .failure(let failure):
@@ -811,9 +849,83 @@ final class ReviewModel: ObservableObject {
         renderer.find()
     }
 
+    // MARK: pushes after the diff on screen
+
+    /// The threads name the PR's head; when the diff shows another one, ask the host what came.
+    func checkForPush() {
+        guard let head = pr?.payload?.pr.headSha, let shown = scope.pinnedHead else { return }
+        if PRThreadRendering.sameCommit(head, shown) {
+            pushNews = nil
+            return
+        }
+        versions?.load(forHead: head)
+    }
+
+    func updateNews() {
+        guard let shown = scope.pinnedHead, let list = versions?.payload?.versions else {
+            pushNews = nil
+            return
+        }
+        pushNews = PRPushNews.between(shownHead: shown, versions: list)
+    }
+
+    /// The target branch as a ref here, for an end whose base the host did not record (GitHub).
+    private var targetRef: String? {
+        pr?.payload?.pr.targetBranch.map { "origin/\($0)" }
+    }
+
+    /// The diff moves to the PR's newest push; the base follows the push's own (a rebase moves it).
+    func reloadToNewest() {
+        guard let newest = pushNews?.newest else { return }
+        switch scope {
+        case .range(let base, _, let label, let fallback):
+            setScope(.range(base: newest.baseSha ?? base, head: newest.headSha, label: label, fallbackBase: fallback))
+        case .compare(let from, _, let label, let targetRef):
+            setScope(.compare(from: from, to: CompareEnd(base: newest.baseSha, head: newest.headSha), label: label, targetRef: targetRef))
+        default:
+            break
+        }
+    }
+
+    /// Only what the author changed between the push on screen and the newest one; a rebase between
+    /// them is left out (Review/ReviewVersions.swift).
+    func showChangesSinceShown() {
+        guard let news = pushNews, let shownHead = scope.pinnedHead else { return }
+        var shownBase = news.shown?.baseSha
+        if shownBase == nil, case .range(let base, _, _, _) = scope { shownBase = base }
+        compare(from: CompareEnd(base: shownBase, head: shownHead), to: CompareEnd(base: news.newest.baseSha, head: news.newest.headSha))
+    }
+
+    /// The compare diff between two ends; labelled by their short ids.
+    func compare(from: CompareEnd, to: CompareEnd) {
+        let label = "\(prLabel) \(from.head.prefix(7)) → \(to.head.prefix(7))"
+        setScope(.compare(from: from, to: to, label: label, targetRef: targetRef))
+    }
+
+    /// The hub, at this PR and the file on screen: a second `--hub` hands its flags to the running hub
+    /// and exits (Hub/HubSingleInstance.swift). Not a `genesis-tools://` link: Launch Services may hand
+    /// that to this very process, which has no hub.
+    func showInHub() {
+        guard let info = pr?.payload?.pr, let executable = Bundle.main.executableURL else { return }
+        var args = ["--hub", "--pr", info.webUrl ?? info.url]
+        if let id = selectedID, let file = files.first(where: { $0.id == id }), !file.path.isEmpty {
+            args += ["--reveal", file.path]
+        }
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = args
+        do {
+            try process.run()
+            HubPerf.log("review.showInHub \(args.joined(separator: " "))")
+        } catch {
+            notice = "Could not open the hub: \(error.localizedDescription)"
+        }
+    }
+
     func setScope(_ next: DiffScope) {
         guard next != scope else { return }
         scope = next
+        defer { updateNews() }
         files = []
         for index in roots.indices {
             roots[index].files = []
@@ -1643,12 +1755,18 @@ struct ReviewRootView: View {
             if showsContext {
                 ResizableSidePanel(key: ReviewContextPanel.key, edge: .leading, title: "Context", defaultWidth: 420,
                                    minWidth: Self.contextMinWidth, maxWidth: max(Self.contextMinWidth, width * Self.contextFraction),
-                                   autoCollapse: contextSqueezed) {
+                                   autoCollapse: contextSqueezed,
+                                   // The diff and the file list move with the edge on every step and keep
+                                   // their size until release: held, the panel drew over the diff and the
+                                   // diff jumped sideways on release. The panel's own rows hold their width
+                                   // too (ReviewContextPanelView), so they stop re-wrapping per step.
+                                   holdsLayout: false) {
                     ReviewContextPanelView(model: model)
                 }
             }
             filesSplit
                 .onGeometryChange(for: CGFloat.self, of: \.size.width) { innerWidth = $0 }
+                .freezesWidthWhileDragging(panel: ReviewContextPanel.key)
         }
         .hubSurface(.content)
         .preferredColorScheme(.dark)
@@ -1709,6 +1827,12 @@ struct ReviewRootView: View {
                     PRReviewBar(model: model, store: pr, maxListHeight: height - 240)
                         .zIndex(1)
                 }
+                if let news = model.pushNews, model.dismissedNewsHead != news.newest.headSha {
+                    PushNewsBanner(model: model, news: news)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
                 if let notice = model.notice {
                     NoticePill(text: notice, isError: notice.lowercased().contains("could not") || notice.contains("failed")) {
                         model.notice = nil
@@ -1750,6 +1874,11 @@ struct ReviewRootView: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity)
             .clipped()
+            .sheet(isPresented: $model.showsComparePicker) {
+                if let store = model.versions {
+                    ComparePushesSheet(model: model, store: store)
+                }
+            }
     }
 }
 
@@ -1764,6 +1893,11 @@ private struct ReviewHeader: View {
         // narrow pane: 44 pt ↔ 61 pt, and a drag across that width moved the whole diff up and
         // down (9 flips in one sweep, measured with --bench). Now only the controls condense.
         HStack(spacing: 10) {
+            if !model.embedded, model.pr != nil {
+                IconButton(systemName: "rectangle.3.group", tooltip: "Show this PR in the hub: its review, threads, commits and the sessions on it") {
+                    model.showInHub()
+                }
+            }
             // The summary gives way too, least useful part first: in a 1100 pt PRs window its fixed
             // labels were wider than the column, and the row overflowed on both sides (audit gap 6).
             ViewThatFits(in: .horizontal) {
@@ -1771,6 +1905,9 @@ private struct ReviewHeader: View {
                 HStack(spacing: 8) { summary(.noCompare) }
                 HStack(spacing: 8) { summary(.totals) }
                 HStack(spacing: 6) { summary(.scope) }
+            }
+            if let news = model.pushNews {
+                ReloadPill(news: news) { model.reloadToNewest() }
             }
             Spacer(minLength: 8)
             ViewThatFits(in: .horizontal) {
@@ -2014,6 +2151,10 @@ private struct ScopeLink: View {
             return forge.commit(sha).map { (String(sha.prefix(8)), $0, "Commit \(sha.prefix(8)): \(title)") }
         case .range(let base, let head, _, _):
             return forge.compare(base: base, head: head).map { ("compare", $0, "Compare \(base.prefix(8))...\(head.prefix(8))") }
+        case .compare(let from, let to, _, _):
+            return forge.compare(base: from.head, head: to.head).map {
+                ("compare", $0, "The host's compare of \(from.head.prefix(8))...\(to.head.prefix(8)); after a rebase it also shows upstream commits, which this diff leaves out")
+            }
         case .branch:
             // A branch with a PR/MR already has CompareLink in the standalone header.
             if !model.embedded, facts?.pr != nil { return nil }
@@ -2065,6 +2206,10 @@ struct ScopeMenu: View {
                     model.setScope(.commit(sha: commit.sha, title: commit.subject))
                 }
             }
+        let versions: [MenuButtonItem] = model.pr == nil ? [] : [
+            .divider,
+            .action("Compare pushes…") { model.showsComparePicker = true },
+        ]
         return [
             scopeItem(.lastTurns(1), model: model, enabled: turns),
             .action("Last Turns…", enabled: turns) { model.setScope(.lastTurns(3)) },
@@ -2075,7 +2220,7 @@ struct ScopeMenu: View {
             .divider,
             .submenu("Committed", committed),
             scopeItem(.branch, model: model),
-        ]
+        ] + versions
     }
 
     private var label: String {

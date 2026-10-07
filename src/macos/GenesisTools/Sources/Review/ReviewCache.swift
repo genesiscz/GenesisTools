@@ -47,6 +47,7 @@ enum ReviewCache {
         case .branch: return "branch"
         case .commit(let sha, _): return "commit:\(sha)"
         case .range(let base, let head, _, _): return "range:\(base)-\(head)"
+        case .compare(let from, let to, _, _): return "compare:\(from.base ?? "-")-\(from.head)-\(to.base ?? "-")-\(to.head)"
         }
     }
 
@@ -56,6 +57,7 @@ enum ReviewCache {
         switch scope {
         case .commit: return "\(repo)|commit"
         case .range(_, _, let label, _): return "\(repo)|range:\(label)"
+        case .compare: return "\(repo)|compare"
         default: return "\(repo)|\(scopeKey(scope, session: session))"
         }
     }

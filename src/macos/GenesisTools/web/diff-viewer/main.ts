@@ -15,6 +15,7 @@ import {
 } from "@pierre/diffs";
 import { WorkerPoolManager } from "@pierre/diffs/worker";
 import { parseFileDiff } from "./file-diff";
+import { installReviewState } from "./review-state";
 
 /**
  * The web half of GenesisTools.app's diff renderer (PierreWebDiffRenderer.swift). Swift owns the
@@ -102,6 +103,8 @@ interface LiveNote {
     authorUrl?: string;
     /** The comment on the host; the time links there when set. */
     url?: string;
+    /** The author's picture on the host; the initial stays when it does not load. */
+    avatarUrl?: string;
 }
 
 interface LiveThread {
@@ -859,12 +862,57 @@ function richText(text: string): HTMLElement {
     return body;
 }
 
-function avatar(author: string, remote: boolean): HTMLElement {
-    return element(
+/** Picture URLs that failed once: their cards keep the initial instead of asking again on every redraw. */
+const failedAvatars = new Set<string>();
+const avatarTints = ["#8ab4ff", "#faa840", "#5ccb78", "#cc99fa", "#f5808c", "#66d1d9"];
+
+/** The same tint for the same person on every card (and in the Swift threads list, `PRAvatar.tint`). */
+function avatarTint(username: string): string {
+    let sum = 0;
+
+    for (const char of username) {
+        sum = (sum * 31 + (char.codePointAt(0) ?? 0)) & 0xffff;
+    }
+
+    return avatarTints[sum % avatarTints.length];
+}
+
+/**
+ * A round author picture over the author's initial: the initial shows until the picture loads, and
+ * stays when it never does (a private host, no network). `remote` false: a local note, always orange.
+ */
+function avatar(
+    author: string,
+    remote: boolean,
+    options: { url?: string; size?: number; username?: string } = {}
+): HTMLElement {
+    const size = options.size ?? 26;
+    const tint = remote ? avatarTint(options.username ?? author) : "#ffa11f";
+    const box = element(
         "div",
-        `${css.avatar};background:${remote ? "#8ab4ff" : "#ffa11f"}`,
+        `${css.avatar};width:${size}px;height:${size}px;font-size:${Math.round(size * 0.46)}px;position:relative;overflow:hidden;background:${tint};box-shadow:0 0 0 1px rgba(255,255,255,.10)`,
         author.slice(0, 1).toUpperCase()
     );
+    const url = options.url;
+
+    if (url && /^https?:\/\//.test(url) && !failedAvatars.has(url)) {
+        const image = document.createElement("img");
+        image.alt = "";
+        image.decoding = "async";
+        image.referrerPolicy = "no-referrer";
+        image.setAttribute(
+            "style",
+            "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:50%"
+        );
+        image.addEventListener("error", () => {
+            failedAvatars.add(url);
+            image.remove();
+        });
+        image.src = url;
+        box.appendChild(image);
+    }
+
+    return box;
 }
 
 /** A thread already on the PR: who opened it, open or resolved, its first note; resolved ones recede. */
@@ -1266,12 +1314,21 @@ function renderLiveThread(comment: BridgeComment, live: LiveThread): HTMLElement
         comment.startLine === comment.endLine ? `L${comment.endLine}` : `L${comment.startLine}–${comment.endLine}`;
     const first = live.notes[0];
     const count = live.notes.length === 1 ? "1 comment" : `${live.notes.length} comments`;
+
+    if (folded) {
+        // Who talked in the folded thread, as overlapping faces, before its one-line summary.
+        top.appendChild(participants(live.notes));
+    }
+
     top.appendChild(element("span", css.dim, folded && first ? `${range} · ${count} · @${first.username}` : range));
 
     // A thread that is still my draft does not exist for anyone yet: there is nothing to fix.
     if (!draftThread) {
         top.appendChild(fixToggle(id));
     }
+
+    // The thread's state as a thin bar on the card's left edge, so open and resolved read at a glance.
+    wrap.style.boxShadow = `inset 2px 0 0 ${stateColor}`;
 
     if (focusedCard === id) {
         // The thread j / k moved to: a bar on its left edge, as a selected row has.
@@ -1309,9 +1366,9 @@ function renderLiveThread(comment: BridgeComment, live: LiveThread): HTMLElement
         return wrap;
     }
 
-    for (const note of live.notes) {
-        wrap.appendChild(renderNote(id, note, busy));
-    }
+    live.notes.forEach((note, index) => {
+        wrap.appendChild(renderNote(id, note, busy, index > 0));
+    });
 
     if (comment.meta) {
         wrap.appendChild(renderMeta(comment.meta));
@@ -1328,9 +1385,58 @@ function renderLiveThread(comment: BridgeComment, live: LiveThread): HTMLElement
     return wrap;
 }
 
-function renderNote(threadId: string, note: LiveNote, busy: boolean): HTMLElement {
-    const row = element("div", `${css.row};padding:9px 12px`);
-    row.appendChild(avatar(note.author || note.username, !note.isDraft));
+/** Up to three authors of a thread as overlapping faces, in the order they first spoke. */
+function participants(notes: LiveNote[]): HTMLElement {
+    const box = element("span", "display:inline-flex;align-items:center;padding-left:4px");
+    const seen = new Set<string>();
+
+    for (const note of notes) {
+        if (seen.has(note.username) || seen.size >= 3) {
+            continue;
+        }
+
+        seen.add(note.username);
+        const face = avatar(note.author || note.username, !note.isDraft, {
+            url: note.avatarUrl,
+            size: 18,
+            username: note.username,
+        });
+        face.style.marginLeft = "-4px";
+        face.style.boxShadow = "0 0 0 2px #16171a";
+        face.title =
+            note.author && note.author !== note.username ? `${note.author} (@${note.username})` : `@${note.username}`;
+        box.appendChild(face);
+    }
+
+    return box;
+}
+
+/**
+ * One note of a live thread. Replies hang under the first note on a thin rail, as the host pages draw a
+ * discussion; my pending drafts get a faint orange tint.
+ */
+function renderNote(threadId: string, note: LiveNote, busy: boolean, reply = false): HTMLElement {
+    const row = element(
+        "div",
+        `${css.row};position:relative;padding:${reply ? "6px 12px 8px 46px" : "10px 12px 8px 12px"}${note.isDraft ? ";background:rgba(255,161,31,.06)" : ""}`
+    );
+
+    if (reply) {
+        row.appendChild(
+            element(
+                "div",
+                "position:absolute;left:24px;top:0;bottom:0;width:2px;border-radius:1px;background:rgba(255,255,255,.08)"
+            )
+        );
+    }
+
+    row.appendChild(
+        avatar(note.author || note.username, !note.isDraft, {
+            url: note.avatarUrl,
+            size: reply ? 22 : 26,
+            username: note.username,
+        })
+    );
     const main = element("div", "flex:1;min-width:0");
     const head = element("div", css.head);
     const name = note.author || note.username;
@@ -2599,10 +2705,25 @@ function addFiles(batch: FilesBatch): void {
 
 // MARK: bridge
 
+/** The review window's saved place and unsent text (review-state.ts, Sources/Review/ReviewSessionState.swift). */
+const reviewState = installReviewState({
+    host,
+    viewer,
+    files: () => files,
+    comments: () => comments,
+    threadBoxes,
+    composer: () => composer,
+    setComposer: (next) => {
+        composer = next;
+    },
+    refresh: refreshAnnotations,
+});
+
 window.genesisDiff = {
     addFiles(batch) {
         try {
             addFiles(batch);
+            reviewState.afterFiles(batch.last);
         } catch (error) {
             post({ type: "error", message: error instanceof Error ? error.message : String(error) });
         }
@@ -2624,6 +2745,7 @@ window.genesisDiff = {
 
         const shown = new Set(files.map((file) => file.id));
         refreshAnnotations([...touched].filter((id) => shown.has(id)));
+        reviewState.afterComments();
     },
     threadDone({ id, ok }) {
         busyThreads.delete(id);
@@ -2638,6 +2760,7 @@ window.genesisDiff = {
         }
 
         refreshCard(id);
+        reviewState.changed();
     },
     setOptions(next) {
         options = { ...options, ...next };

@@ -21,6 +21,7 @@ import {
     HubPrError,
     type PrBackend,
     type PrThread,
+    type PrVersion,
     type PublishEvent,
     type ThreadComment,
 } from "./types";
@@ -78,6 +79,24 @@ interface RawDraft {
     discussion_id?: string | null;
     position?: RawPosition | null;
 }
+
+interface RawVersion {
+    id: number;
+    head_commit_sha?: string | null;
+    base_commit_sha?: string | null;
+    created_at?: string | null;
+}
+
+interface RawVersionCommit {
+    id?: string;
+    title?: string;
+    author_name?: string | null;
+}
+
+/** A system note this close to a version's time names its pusher ("added 3 commits"). */
+const PUSH_NOTE_WINDOW_MS = 3 * 60_000;
+/** Commit lists are read for the newest versions only: one request each. */
+const VERSIONS_WITH_COMMITS = 8;
 
 interface GitLabPosition {
     path: string;
@@ -208,6 +227,49 @@ export function gitlabThreads({
     }
 
     return threads;
+}
+
+/**
+ * GitLab's MR diff versions, newest first, each with the pusher taken from the nearest "added N
+ * commits" system note (versions themselves name nobody) and the commits GitLab listed for it.
+ */
+export function gitlabVersions({
+    versions,
+    notes,
+    commits,
+    pr,
+}: {
+    versions: RawVersion[];
+    notes: RawNote[];
+    /** Per version id; a version without an entry gets no commits. */
+    commits: Map<number, RawVersionCommit[]>;
+    pr: FoundPr;
+}): PrVersion[] {
+    const pushes = notes.filter((note) => note.system && /^added \d+ (new )?commits?/i.test(note.body ?? ""));
+
+    return versions
+        .filter((version) => version.head_commit_sha)
+        .map((version) => {
+            const at = Date.parse(version.created_at ?? "");
+            const push = Number.isNaN(at)
+                ? undefined
+                : pushes
+                      .map((note) => ({ note, gap: Math.abs(Date.parse(note.created_at ?? "") - at) }))
+                      .filter((candidate) => candidate.gap <= PUSH_NOTE_WINDOW_MS)
+                      .sort((a, b) => a.gap - b.gap)[0]?.note;
+            return {
+                id: String(version.id),
+                headSha: version.head_commit_sha ?? "",
+                baseSha: version.base_commit_sha ?? null,
+                createdAt: version.created_at ?? null,
+                pushedBy: push?.author ? author(push.author, pr.author) : null,
+                commits: (commits.get(version.id) ?? []).map((commit) => ({
+                    sha: commit.id ?? "",
+                    title: commit.title ?? "",
+                    author: commit.author_name ?? null,
+                })),
+            };
+        });
 }
 
 function draftNumber(draftId: string): number {
@@ -345,6 +407,25 @@ export function gitlabBackend({ pr, api }: { pr: FoundPr; api: ProjectApi }): Pr
             return { threadId, resolved };
         },
 
+        async versions() {
+            const [versions, notes] = await Promise.all([
+                restGetPaginated<RawVersion>(api, `${mrPath}/versions`),
+                restGetPaginated<RawNote>(api, `${mrPath}/notes?sort=desc&order_by=created_at`),
+            ]);
+            const newest = [...versions].sort((a, b) => b.id - a.id);
+            const details = await Promise.all(
+                newest.slice(0, VERSIONS_WITH_COMMITS).map(async (version) => {
+                    const detail = await restGet<{ commits?: RawVersionCommit[] }>(
+                        api,
+                        `${mrPath}/versions/${version.id}`
+                    );
+                    return [version.id, detail.commits ?? []] as const;
+                })
+            );
+            const result = gitlabVersions({ versions: newest, notes, commits: new Map(details), pr });
+            log.debug({ iid, versions: result.length }, "gitlab: diff versions");
+            return { versions: result, history: true };
+        },
         async publish({ event, body }: { event: PublishEvent; body?: string }) {
             if (event === "REQUEST_CHANGES") {
                 throw new HubPrError("unsupported", "GitLab has no request-changes review; publish, then comment");

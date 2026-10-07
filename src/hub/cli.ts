@@ -926,6 +926,32 @@ pr.command("threads")
         });
     });
 
+pr.command("versions")
+    .description(
+        "Every push of the PR/MR, newest first: head, merge base, time, pusher and commits (GitLab diff versions, GitHub force pushes); read-only"
+    )
+    .option("--repo <path>", REPO_HELP, ".")
+    .option("--pr <ref>", PR_HELP)
+    .option("--json", "machine-readable output")
+    .action(async (opts: { repo: string; pr?: string; json?: boolean }) => {
+        await prVerb({
+            json: opts.json,
+            run: async () => {
+                const found = await resolvePr({ repo: opts.repo, pr: opts.pr });
+                const backend = await backendFor(found);
+                return { pr: found, ...(await backend.versions()) };
+            },
+            human: (result) =>
+                [
+                    `${result.pr.project}#${result.pr.number}: ${result.versions.length} versions${result.history ? "" : " (no push history)"}`,
+                    ...result.versions.map(
+                        (version) =>
+                            `  ${version.headSha.slice(0, 10)} base ${version.baseSha?.slice(0, 10) ?? "?"}  ${version.createdAt ?? ""}  ${version.pushedBy?.username ?? ""}  ${version.commits.length} commits`
+                    ),
+                ].join("\n"),
+        });
+    });
+
 pr.command("reply")
     .description("Reply in a review thread: published at once, or a draft in my pending review with --draft")
     .requiredOption("--thread <id>", "thread id from `threads` (GitHub PRRT_…, GitLab discussion id)")

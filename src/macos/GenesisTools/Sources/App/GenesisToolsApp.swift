@@ -107,7 +107,10 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         self.window = window
 
-        NSApp.activate(ignoringOtherApps: true)
+        // A rebuild reopens a window that was behind another app with `--window --no-activate`.
+        if !CommandLine.arguments.contains("--no-activate") {
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 }
 

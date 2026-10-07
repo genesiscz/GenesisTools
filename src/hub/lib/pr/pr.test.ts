@@ -10,8 +10,8 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage";
 import { draftDatesFor, stampDraftDates } from "./draft-dates";
 import { findBranchPr, findPrByRef } from "./find";
-import { githubBackend, githubThread } from "./github";
-import { gitlabBackend, gitlabPosition, gitlabThreads } from "./gitlab";
+import { githubBackend, githubThread, githubVersions } from "./github";
+import { gitlabBackend, gitlabPosition, gitlabThreads, gitlabVersions } from "./gitlab";
 import { type FoundPr, forgetThreads, gitlabBaseUrl, type PrBackend, prThreads, readPrThreads } from "./index";
 
 // ─── find ─────────────────────────────────────────────────────────────────────
@@ -1071,6 +1071,7 @@ describe("prThreads cache", () => {
             draftDelete: unused,
             resolve: unused,
             publish: unused,
+            versions: unused,
         };
         const storage = new Storage("hub-pr-test");
         await forgetThreads({ pr: ghPr, storage });
@@ -1169,5 +1170,80 @@ describe("GitLab draft dates", () => {
         writeFileSync(file, "{ not json");
         const broken = await draftDatesFor({ mr, draftIds: ["50"], now: later, file });
         expect(broken.get("50")).toBe(later.toISOString());
+    });
+});
+
+// ─── versions ─────────────────────────────────────────────────────────────────
+
+describe("PR versions", () => {
+    test("GitLab: newest first, the pusher from the nearest 'added N commits' note, commits per version", () => {
+        const versions = gitlabVersions({
+            versions: [
+                { id: 12, head_commit_sha: "new", base_commit_sha: "base2", created_at: "2026-10-07T15:53:12Z" },
+                { id: 11, head_commit_sha: "old", base_commit_sha: "base1", created_at: "2026-10-02T03:07:20Z" },
+                { id: 10, head_commit_sha: null, created_at: "2026-10-01T00:00:00Z" },
+            ],
+            notes: [
+                {
+                    id: 1,
+                    system: true,
+                    body: "added 6 commits\n\n<ul><li>…</li></ul>",
+                    created_at: "2026-10-07T15:53:40Z",
+                    author: { username: "alice", name: "Alice Example", avatar_url: "https://example.com/a.png" },
+                },
+                {
+                    id: 2,
+                    system: true,
+                    body: "changed the description",
+                    created_at: "2026-10-07T15:53:13Z",
+                    author: { username: "bob" },
+                },
+                {
+                    id: 3,
+                    system: false,
+                    body: "added 2 commits, said a human",
+                    created_at: "2026-10-02T03:07:21Z",
+                    author: { username: "eve" },
+                },
+            ],
+            commits: new Map([[12, [{ id: "c2", title: "second", author_name: "Alice Example" }]]]),
+            pr: glPr,
+        });
+
+        expect(versions.map((version) => version.headSha)).toEqual(["new", "old"]);
+        expect(versions[0]).toMatchObject({
+            id: "12",
+            baseSha: "base2",
+            pushedBy: { username: "alice", avatarUrl: "https://example.com/a.png" },
+        });
+        expect(versions[0].commits).toEqual([{ sha: "c2", title: "second", author: "Alice Example" }]);
+        // A human note that happens to say "added" is not a push; no system note near it: nobody.
+        expect(versions[1].pushedBy).toBeNull();
+        expect(versions[1].commits).toEqual([]);
+    });
+
+    test("GitHub: the head, then each force push's after-commit, then the oldest before-commit", () => {
+        const versions = githubVersions({
+            headSha: "h3",
+            pushes: [
+                {
+                    createdAt: "2026-10-01T10:00:00Z",
+                    actor: { login: "alice", name: "Alice" },
+                    beforeCommit: { oid: "h0" },
+                    afterCommit: { oid: "h1" },
+                },
+                {
+                    createdAt: "2026-10-02T10:00:00Z",
+                    actor: { login: "bob" },
+                    beforeCommit: { oid: "h1b" },
+                    afterCommit: { oid: "h2" },
+                },
+            ],
+        });
+
+        expect(versions.map((version) => version.headSha)).toEqual(["h3", "h2", "h1", "h0"]);
+        expect(versions[1].pushedBy).toMatchObject({ username: "bob", name: "bob" });
+        expect(versions.every((version) => version.baseSha === null)).toBe(true);
+        expect(githubVersions({ headSha: "h9", pushes: [] }).map((version) => version.id)).toEqual(["head"]);
     });
 });

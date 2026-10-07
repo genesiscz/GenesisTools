@@ -6,6 +6,7 @@ import {
     HubPrError,
     type PrBackend,
     type PrThread,
+    type PrVersion,
     type PublishEvent,
     type ThreadComment,
 } from "./types";
@@ -63,6 +64,80 @@ query($owner: String!, $repo: String!, $number: Int!) {
     }
   }
 }`;
+
+const FORCE_PUSH_QUERY = `
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      headRefOid
+      timelineItems(last: 50, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
+        nodes { ... on HeadRefForcePushedEvent {
+          createdAt
+          actor { login avatarUrl ... on User { name } }
+          beforeCommit { oid }
+          afterCommit { oid }
+        } }
+      }
+    }
+  }
+}`;
+
+interface ForcePush {
+    createdAt?: string;
+    actor?: { login?: string; avatarUrl?: string; name?: string | null } | null;
+    beforeCommit?: { oid?: string } | null;
+    afterCommit?: { oid?: string } | null;
+}
+
+/**
+ * GitHub keeps no diff versions; its force pushes are the versions a rebase replaced. Newest first:
+ * the current head, then each force push's after-commit, then the oldest push's before-commit. A
+ * base is not known here: the window takes the merge base with the target branch.
+ */
+export function githubVersions({ headSha, pushes }: { headSha: string | null; pushes: ForcePush[] }): PrVersion[] {
+    const newest = [...pushes]
+        .filter((push) => push.afterCommit?.oid)
+        .sort((a, b) => Date.parse(b.createdAt ?? "") - Date.parse(a.createdAt ?? ""));
+    const versions: PrVersion[] = [];
+    const seen = new Set<string>();
+    const add = (version: PrVersion) => {
+        if (version.headSha && !seen.has(version.headSha)) {
+            seen.add(version.headSha);
+            versions.push(version);
+        }
+    };
+
+    for (const [index, push] of newest.entries()) {
+        const actor = push.actor?.login
+            ? { name: push.actor.name || push.actor.login, username: push.actor.login, avatarUrl: push.actor.avatarUrl }
+            : null;
+
+        if (index === 0 && headSha && headSha !== push.afterCommit?.oid) {
+            add({ id: "head", headSha, baseSha: null, createdAt: null, pushedBy: null, commits: [] });
+        }
+
+        add({
+            id: push.afterCommit?.oid ?? "",
+            headSha: push.afterCommit?.oid ?? "",
+            baseSha: null,
+            createdAt: push.createdAt ?? null,
+            pushedBy: actor,
+            commits: [],
+        });
+    }
+
+    if (versions.length === 0 && headSha) {
+        add({ id: "head", headSha, baseSha: null, createdAt: null, pushedBy: null, commits: [] });
+    }
+
+    const oldest = newest.at(-1)?.beforeCommit?.oid;
+
+    if (oldest) {
+        add({ id: oldest, headSha: oldest, baseSha: null, createdAt: null, pushedBy: null, commits: [] });
+    }
+
+    return versions;
+}
 
 const COMMENT_QUERY = `
 query($id: ID!) {
@@ -292,6 +367,22 @@ export function githubBackend({ pr, client }: { pr: FoundPr; client: ReviewComme
     });
 
     return {
+        async versions() {
+            const found = await client.graphql<{
+                repository: { pullRequest: { headRefOid?: string; timelineItems: { nodes: ForcePush[] } } | null };
+            }>(FORCE_PUSH_QUERY, vars);
+            const pull = found.repository.pullRequest;
+
+            if (!pull) {
+                throw new HubPrError("not-found", `${pr.project}#${pr.number} is not a pull request`);
+            }
+
+            const pushes = pull.timelineItems.nodes;
+            return {
+                versions: githubVersions({ headSha: pull.headRefOid ?? pr.headSha, pushes }),
+                history: pushes.length > 0,
+            };
+        },
         async threads() {
             const threads: PrThread[] = [];
             let cursor: string | null = null;

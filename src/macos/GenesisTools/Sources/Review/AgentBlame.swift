@@ -73,7 +73,7 @@ extension DiffScope {
     var newSideIsWorkingTree: Bool {
         switch self {
         case .lastTurns, .uncommitted, .unstaged, .branch: return true
-        case .staged, .commit, .range: return false
+        case .staged, .commit, .range, .compare: return false
         }
     }
 }

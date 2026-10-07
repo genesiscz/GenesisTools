@@ -177,6 +177,8 @@ struct HubRequest {
 
 func runHub(_ args: [String]) -> Never {
     PerfLog.phase("hub.launch")
+    // `--resume` (a rebuild's relaunch) opens the place the hub last showed (Hub/HubPlace.swift).
+    let args = HubPlace.expand(args)
     let request = HubRequest(args)
     let snapshotPath = request.snapshotPath
     let wantedSession = request.session
@@ -668,6 +670,7 @@ final class HubModel: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.navRecordPending = false
+            MainActor.assumeIsolated { HubPlace.record(self.navEntry, tab: self.tab) }
             guard !self.navRestoring else { return }
             MainActor.assumeIsolated { self.history.visit(self.navEntry) }
         }

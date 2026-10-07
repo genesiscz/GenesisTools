@@ -95,6 +95,11 @@ struct ReviewContextPanelView: View {
             }
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // The rows keep the width the drag began with and wrap once, on release: laid out per step,
+        // every thread re-wrapped its text, so the rows below slid up and down under the pointer for the
+        // whole drag (a row moved 391 → 372 → 353 pt in one sweep, PROBE run 2026-10-07). The surface
+        // outside still fills the panel's live width.
+        .freezesWidthWhileDragging(panel: ReviewContextPanel.key)
         .hubSurface(.chrome)
     }
 }

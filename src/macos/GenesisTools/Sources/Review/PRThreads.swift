@@ -178,6 +178,8 @@ struct PRThreadComment: Decodable, Identifiable, Equatable {
         let name: String
         let username: String
         let role: String?
+        /// The author's picture on the host (GitHub `avatarUrl`, GitLab `avatar_url`); nil from an older `tools`.
+        var avatarUrl: String? = nil
     }
 
     let id: String
@@ -326,7 +328,8 @@ enum PRThreadRendering {
                     isDraft: comment.isDraft,
                     edited: comment.editedAt != nil,
                     authorUrl: forge?.user(comment.author.username)?.absoluteString,
-                    url: comment.url
+                    url: comment.url,
+                    avatarUrl: comment.author.avatarUrl
                 )
             },
             resolved: thread.resolved,

@@ -856,6 +856,31 @@ final class PRsModel: ObservableObject {
         revealPending()
     }
 
+    /// The review on screen in its own window (`GenesisTools --review`): the same folder, commit range,
+    /// live threads and proposal. The hub keeps its own copy.
+    func openInReviewWindow(_ pr: HubPR) {
+        guard let review, let executable = Bundle.main.executableURL else { return }
+        var args = ["--review", "--repo", review.repo.path]
+        if case .ref(let ref) = Self.threadsTarget(pr, path: review.repo.path) {
+            args += ["--pr", ref]
+        }
+        if let proposal = pr.proposal {
+            args += ["--proposal", proposal.path]
+        }
+        if case .range(let base, let head, let label, _) = review.scope {
+            args += ["--range", "\(base)..\(head)", "--label", label]
+        }
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = args
+        do {
+            try process.run()
+            HubPerf.log("prs.openReviewWindow \(pr.label) \(args.joined(separator: " "))")
+        } catch {
+            HubPerf.log("prs.openReviewWindow failed: \(error)")
+        }
+    }
+
     /// Back or Forward to a PR that left the list (merged, closed, another state picked): nothing is
     /// shown under its id, so the detail and the history agree instead of the last PR staying on screen.
     func showUnavailable(_ id: String) {
@@ -1643,6 +1668,9 @@ struct PRDetailView: View {
                     NoticePill(text: notice, isError: notice.contains("failed") || notice.hasPrefix("cmux:")) { model.notice = nil }
                 }
                 if prs.review != nil {
+                    IconButton(systemName: "arrow.up.right.square", tooltip: "Open this review in its own window: the same diff, threads and proposal") {
+                        prs.openInReviewWindow(pr)
+                    }
                     Toggle("Diff", isOn: $showDiff)
                         .toggleStyle(.button)
                         .instantTooltip(pr.localWorktree == nil

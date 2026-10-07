@@ -285,98 +285,177 @@ private struct PRBarLinks: View {
     }
 }
 
-/// Every thread of the PR, open ones first; a row's path opens that file in the diff.
+/// Where a thread stands against the diff on screen (`PRThreadRendering.belongs`).
+enum PRThreadPlacement: Equatable {
+    /// On its line in this diff. `outdatedOnHost`: the host calls it outdated (a later push moved its
+    /// lines), but the diff shows the commit it was written on, so here it is current.
+    case onDiff(outdatedOnHost: Bool)
+    /// A later push changed its lines, and the diff is not the commit it was written on.
+    case outdated
+    /// Current on the PR's newest commit, which this diff does not show.
+    case newerHead
+
+    static func of(_ thread: PRThread, shownHead: String?, prHead: String?) -> PRThreadPlacement {
+        if PRThreadRendering.belongs(thread, shownHead: shownHead, prHead: prHead) {
+            return .onDiff(outdatedOnHost: thread.outdated)
+        }
+
+        return thread.outdated ? .outdated : .newerHead
+    }
+
+    var onDiff: Bool {
+        if case .onDiff = self {
+            return true
+        }
+
+        return false
+    }
+}
+
+/// The threads of one file, by line.
+struct PRThreadFileGroup: Identifiable, Equatable {
+    let path: String
+    let threads: [PRThread]
+
+    var id: String { path }
+    var name: String { (path as NSString).lastPathComponent }
+    var folder: String { (path as NSString).deletingLastPathComponent }
+
+    /// Files in the diff's order (`order`: path → position), the others after them by path; each
+    /// file's threads by line.
+    static func groups(_ threads: [PRThread], order: [String: Int]) -> [PRThreadFileGroup] {
+        let byPath = Dictionary(grouping: threads, by: \.path)
+        let paths = byPath.keys.sorted { a, b in
+            let left = order[a] ?? Int.max
+            let right = order[b] ?? Int.max
+            return left != right ? left < right : a < b
+        }
+        return paths.map { path in
+            PRThreadFileGroup(path: path, threads: (byPath[path] ?? []).sorted { ($0.line, $0.id) < ($1.line, $1.id) })
+        }
+    }
+
+    /// A folder that wraps at its slashes, never inside a folder name.
+    static func wrappable(_ folder: String) -> String {
+        folder.replacingOccurrences(of: "/", with: "/\u{200B}")
+    }
+
+    /// "L12" or "L10–12".
+    static func lineLabel(_ thread: PRThread) -> String {
+        if let start = thread.startLine, start != thread.line {
+            return "L\(min(start, thread.line))–\(max(start, thread.line))"
+        }
+
+        return "L\(thread.line)"
+    }
+}
+
+/// Every thread of the PR, one group per file in the diff's order, each file's threads by line. A
+/// file's header shows its whole path (name, then the folder on wrapping dim lines); a click opens the
+/// file in the diff, a thread's line chip opens that thread's card.
 struct PRThreadsList: View {
     @ObservedObject var model: ReviewModel
     @ObservedObject var store: PRThreadsStore
     @AppStorage("review.prThreads.thisFile", store: HubDefaults.store) private var onlyThisFile = false
     @AppStorage("review.prThreads.closed", store: HubDefaults.store) private var showClosed = false
     @State private var find = PanelFindModel(scope: "pr.threads", title: "the threads")
-    /// A narrow side panel (the review window's Context panel, 320 pt at its minimum): shorter filter
-    /// labels, and the actions on a second row, so nothing runs past the panel's edge.
+    @State private var folded: Set<String> = []
+    /// The previous visit to this PR's threads: notes by others written after it are marked new.
+    @State private var seenSince: Date?
+    @State private var seenFor: String?
+    /// A narrow side panel (the review window's Context panel, 320 pt at its minimum): the toolbar
+    /// takes two rows, so nothing runs past the panel's edge.
     var compact = false
 
-    @ViewBuilder
-    private var filters: some View {
-        Toggle(compact ? "This file" : "Only the selected file", isOn: $onlyThisFile)
-            .toggleStyle(.checkbox)
-            .fixedSize()
-            .instantTooltip("Show only the threads on the file open in the diff")
-        Toggle(compact ? "Closed too" : "Resolved and outdated", isOn: $showClosed)
-            .toggleStyle(.checkbox)
-            .fixedSize()
-            .instantTooltip("Also show threads that are resolved, or whose lines changed since")
+    private var shownHead: String? { model.scope.pinnedHead ?? model.remoteHead?.sha }
+
+    private func placements(_ threads: [PRThread]) -> [String: PRThreadPlacement] {
+        let prHead = store.payload?.pr.headSha
+        let head = shownHead
+        return Dictionary(threads.map { ($0.id, PRThreadPlacement.of($0, shownHead: head, prHead: prHead)) },
+                          uniquingKeysWith: { first, _ in first })
     }
 
-    @ViewBuilder
-    private func actions(_ threads: [PRThread]) -> some View {
-        Spacer(minLength: 0)
-        let fixable = threads.filter { !$0.resolved && !$0.isMyDraft }.map(\.id)
-        if !fixable.isEmpty {
-            Button("Select open for Fix") {
-                model.selectedThreads.formUnion(fixable)
-            }
-            .buttonStyle(.genHoverPlain())
-            .fixedSize()
-            .instantTooltip("Pick every open thread shown here for Fix threads")
-        }
-        Text(verbatim: "\(threads.count) shown")
-            .foregroundColor(ReviewPalette.dim)
-            .fixedSize()
+    /// "Open": not resolved and not outdated for this diff, plus every thread holding my draft.
+    private static func isOpen(_ thread: PRThread, _ placement: PRThreadPlacement?) -> Bool {
+        thread.comments.contains(where: \.isDraft) || (!thread.resolved && placement != .outdated)
     }
 
-    private var visible: [PRThread] {
+    private func visible(_ threads: [PRThread], _ placements: [String: PRThreadPlacement]) -> [PRThread] {
         let selectedPath = model.repoPath(of: model.selectedID)
-        return (store.payload?.threads ?? [])
-            .filter { showClosed || (!$0.resolved && !$0.outdated) || $0.comments.contains(where: \.isDraft) }
+        return threads
+            .filter { showClosed || Self.isOpen($0, placements[$0.id]) }
             .filter { !onlyThisFile || $0.path == selectedPath }
-            .sorted { ($0.resolved ? 1 : 0, $0.path, $0.line) < ($1.resolved ? 1 : 0, $1.path, $1.line) }
+    }
+
+    private var fileOrder: [String: Int] {
+        var order: [String: Int] = [:]
+        for (index, file) in model.files.enumerated() where order[file.path] == nil {
+            order[file.path] = index
+        }
+        return order
+    }
+
+    /// Notes by someone else, written after the previous visit; none on the first visit.
+    private func newNotes(_ threads: [PRThread]) -> Set<String> {
+        guard let seenSince else { return [] }
+        let viewer = store.payload?.viewer
+        var ids = Set<String>()
+        for thread in threads {
+            for comment in thread.comments where !comment.isDraft && comment.author.username != viewer {
+                if let created = HubFormat.date(comment.createdAt), created > seenSince {
+                    ids.insert(comment.id)
+                }
+            }
+        }
+        return ids
     }
 
     var body: some View {
-        let threads = visible
+        let all = store.payload?.threads ?? []
+        let placed = placements(all)
+        let threads = visible(all, placed)
+        let groups = PRThreadFileGroup.groups(threads, order: fileOrder)
+        let fresh = newNotes(all)
         VStack(spacing: 0) {
-            Group {
-                if compact {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 12) {
-                            filters
-                        }
-                        HStack(spacing: 12) {
-                            actions(threads)
-                        }
-                    }
-                } else {
-                    HStack(spacing: 12) {
-                        filters
-                        actions(threads)
-                    }
-                }
-            }
-            .font(.system(size: 11.5))
-            .padding(.horizontal, compact ? 10 : 14)
-            .padding(.vertical, 6)
+            toolbar(all: all, placed: placed, shown: threads, files: groups.count)
             PanelFindBar(find: find)
             if threads.isEmpty {
-                Text(store.payload == nil ? "No threads loaded yet." : "No thread matches these filters.")
-                    .font(.system(size: 12))
-                    .foregroundColor(ReviewPalette.dim)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(spacing: 6) {
+                    Image(systemName: store.payload == nil ? "bubble.left.and.bubble.right" : "checkmark.bubble")
+                        .font(.system(size: 20))
+                        .foregroundColor(ReviewPalette.dim)
+                    Text(store.payload == nil ? "No threads loaded yet." : showClosed || onlyThisFile ? "No thread matches these filters." : "No open threads.")
+                        .font(.system(size: 12))
+                        .foregroundColor(ReviewPalette.dim)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(threads) { thread in
-                            PRThreadRow(model: model, store: store, thread: thread, selected: model.selectedThreads.contains(thread.id))
-                                .findRow(thread.id, cornerRadius: 8)
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        ForEach(groups) { group in
+                            VStack(alignment: .leading, spacing: 6) {
+                                fileHeader(group, placed: placed, fresh: fresh)
+                                if !folded.contains(group.path) {
+                                    ForEach(group.threads) { thread in
+                                        PRThreadRow(model: model, store: store, thread: thread,
+                                                    selected: model.selectedThreads.contains(thread.id),
+                                                    placement: placed[thread.id] ?? .onDiff(outdatedOnHost: false),
+                                                    fresh: fresh, compact: compact)
+                                            .findRow(thread.id, cornerRadius: 8)
+                                    }
+                                }
+                            }
                         }
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 10)
+                    .padding(.horizontal, compact ? 8 : 12)
+                    .padding(.top, 4)
+                    .padding(.bottom, 12)
                 }
             }
         }
-        .panelFind(find, revision: threads.map(\.id) + threads.flatMap { $0.comments.map(\.bodyMarkdown) }) {
-            threads.map { thread in
+        .panelFind(find, revision: threads.map(\.id) + threads.flatMap { $0.comments.map(\.bodyMarkdown) } + folded.sorted()) {
+            threads.filter { !folded.contains($0.path) }.map { thread in
                 PanelFindRow(id: thread.id, fields: [PanelFindField("path", "\(thread.path):\(thread.line)")]
                     + thread.comments.flatMap { comment in
                         [PanelFindField("author:\(comment.id)", comment.author.name),
@@ -384,6 +463,176 @@ struct PRThreadsList: View {
                     })
             }
         }
+        .onChange(of: store.payload?.pr.url, initial: true) { _, _ in markSeen() }
+    }
+
+    /// Reads the previous visit once per PR and records this one.
+    private func markSeen() {
+        guard let pr = store.pr, seenFor != pr.url else { return }
+        let key = "review.prThreads.seen.\(pr.url)"
+        let previous = HubDefaults.store.double(forKey: key)
+        seenSince = previous > 0 ? Date(timeIntervalSince1970: previous) : nil
+        seenFor = pr.url
+        HubDefaults.store.set(Date().timeIntervalSince1970, forKey: key)
+    }
+
+    // MARK: Toolbar
+
+    @ViewBuilder
+    private func toolbar(all: [PRThread], placed: [String: PRThreadPlacement], shown: [PRThread], files: Int) -> some View {
+        let openCount = all.filter { Self.isOpen($0, placed[$0.id]) }.count
+        let fixable = shown.filter { !$0.resolved && !$0.isMyDraft && !model.selectedThreads.contains($0.id) }.map(\.id)
+        let summary = "\(shown.count) \(shown.count == 1 ? "thread" : "threads") in \(files) \(files == 1 ? "file" : "files")"
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                PRFilterChip(title: "Open", count: openCount, on: !showClosed,
+                             tooltip: "Open threads, your drafts, and the threads on a newer push") { showClosed = false }
+                PRFilterChip(title: "All", count: all.count, on: showClosed,
+                             tooltip: "Also the resolved threads and the outdated ones") { showClosed = true }
+                Rectangle().fill(ReviewPalette.hairline).frame(width: 1, height: 14)
+                PRFilterChip(title: "This file", symbol: "doc.text", on: onlyThisFile,
+                             tooltip: "Show only the threads on the file open in the diff") { onlyThisFile.toggle() }
+                Spacer(minLength: 0)
+                if !compact {
+                    selectForFix(fixable)
+                    Text(verbatim: summary).foregroundColor(ReviewPalette.dim).fixedSize()
+                }
+            }
+            if compact {
+                HStack(spacing: 8) {
+                    selectForFix(fixable)
+                    Spacer(minLength: 0)
+                    Text(verbatim: summary).foregroundColor(ReviewPalette.dim).lineLimit(1)
+                }
+            }
+        }
+        .font(.system(size: 11.5))
+        .padding(.horizontal, compact ? 10 : 14)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private func selectForFix(_ fixable: [String]) -> some View {
+        if !fixable.isEmpty {
+            GhostButton("Select \(fixable.count) open for Fix", symbol: "checklist",
+                        tooltip: "Pick every open thread shown here for Fix threads", height: 22) {
+                model.selectedThreads.formUnion(fixable)
+            }
+            .fixedSize()
+            .disabled(store.stale)
+        }
+    }
+
+    // MARK: File header
+
+    private func fileHeader(_ group: PRThreadFileGroup, placed: [String: PRThreadPlacement], fresh: Set<String>) -> some View {
+        let open = group.threads.filter { Self.isOpen($0, placed[$0.id]) }.count
+        let newCount = group.threads.filter { $0.comments.contains { fresh.contains($0.id) } }.count
+        let isFolded = folded.contains(group.path)
+        let absolute = model.file(atPath: group.path).flatMap { model.absolutePath(of: $0) }
+        return HStack(alignment: .top, spacing: 6) {
+            IconButton(systemName: "chevron.right", tooltip: isFolded ? "Show the threads on this file" : "Fold the threads on this file") {
+                withAnimation(.snappy(duration: 0.2)) {
+                    if isFolded {
+                        folded.remove(group.path)
+                    } else {
+                        folded.insert(group.path)
+                    }
+                }
+            }
+            .rotationEffect(.degrees(isFolded ? 0 : 90))
+            .frame(width: 16, height: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(verbatim: group.name)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundColor(Color.white.opacity(0.92))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if !group.folder.isEmpty {
+                    Text(verbatim: PRThreadFileGroup.wrappable(group.folder) + "/")
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundColor(ReviewPalette.dim)
+                        .lineLimit(3)
+                        .truncationMode(.middle)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.top, 1)
+            Spacer(minLength: 4)
+            HStack(spacing: 4) {
+                if newCount > 0 {
+                    Badge("\(newCount) new", color: ReviewPalette.renamed, look: .filled,
+                          tooltip: "Threads with notes from others since you last opened this PR's threads")
+                }
+                if open > 0 {
+                    Badge("\(open) open", color: ReviewPalette.modified, look: .tone)
+                } else {
+                    Badge("done", color: ReviewPalette.added, look: .tone, symbol: "checkmark")
+                }
+            }
+            .padding(.top, 2)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .rowButton(cornerRadius: 6) {
+            model.reveal(path: group.path)
+        }
+        .instantTooltip("\(group.path)\nClick to open it in the diff; right-click for Copy path, Finder and Cursor")
+        .contextMenu {
+            Button("Open in the diff") { model.reveal(path: group.path) }
+            Button("Copy path") { Clipboard.copy(group.path, what: "path") }
+            if let absolute {
+                Button("Copy absolute path") { Clipboard.copy(absolute, what: "path") }
+                Divider()
+                PathActionsMenu(path: absolute, line: group.threads.first?.line)
+            }
+        }
+    }
+}
+
+/// "Open 13" / "All 23" / "This file": a capsule that is filled while on.
+private struct PRFilterChip: View {
+    let title: String
+    var count: Int?
+    var symbol: String?
+    let on: Bool
+    let tooltip: String
+    let action: () -> Void
+
+    init(title: String, count: Int? = nil, symbol: String? = nil, on: Bool, tooltip: String, action: @escaping () -> Void) {
+        self.title = title
+        self.count = count
+        self.symbol = symbol
+        self.on = on
+        self.tooltip = tooltip
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                if let symbol {
+                    Image(systemName: symbol).font(.system(size: 10))
+                }
+                Text(title).fontWeight(on ? .semibold : .regular)
+                if let count {
+                    Text(verbatim: "\(count)")
+                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                        .foregroundColor(on ? Color.white.opacity(0.85) : ReviewPalette.dim)
+                }
+            }
+            .foregroundColor(on ? Color.white.opacity(0.95) : ReviewPalette.dim)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(on ? ReviewPalette.renamed.opacity(0.24) : Color.white.opacity(0.04)))
+            .overlay(Capsule().stroke(on ? ReviewPalette.renamed.opacity(0.55) : Color.white.opacity(0.08), lineWidth: 0.5))
+            .fixedSize()
+        }
+        .buttonStyle(.genHoverPlain())
+        .instantTooltip(tooltip)
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 
@@ -393,155 +642,274 @@ private struct PRThreadRow: View {
     let thread: PRThread
     /// In the Fix selection (the same set as the diff cards' Fix checkboxes).
     let selected: Bool
+    let placement: PRThreadPlacement
+    /// Note ids written by others since the previous visit.
+    let fresh: Set<String>
+    var compact = false
     @State private var replying = false
     @State private var replyText = ""
     @State private var editingID: String?
     @State private var editText = ""
 
+    private var dimmed: Bool { thread.resolved || placement == .outdated }
+
+    private var accent: Color {
+        if thread.isMyDraft { return ReviewPalette.modified }
+        if thread.resolved { return ReviewPalette.added.opacity(0.7) }
+        if placement == .outdated { return Color.white.opacity(0.22) }
+        return ReviewPalette.modified
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                if !thread.isMyDraft {
-                    Toggle("", isOn: Binding(get: { selected }, set: { _ in model.toggleThreadSelection(thread.id) }))
-                        .toggleStyle(.checkbox)
-                        .labelsHidden()
-                        .instantTooltip("Select this thread for Fix threads: the selected threads go as one task to the agent that owns the branch")
-                }
-                Button {
-                    model.reveal(path: thread.path)
-                } label: {
-                    FindText("\(thread.path):\(thread.line)", field: "path")
-                        .font(.system(size: 11.5, design: .monospaced))
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                }
-                .buttonStyle(.genHoverPlain())
-                .instantTooltip("Open \(thread.path) in the diff")
-                if thread.isMyDraft {
-                    PRBadge(text: "Your draft", color: ReviewPalette.modified)
-                } else {
-                    PRBadge(text: thread.resolved ? "Resolved" : "Open", color: thread.resolved ? ReviewPalette.added : ReviewPalette.modified)
-                }
-                if thread.outdated {
-                    PRBadge(text: "Outdated", color: ReviewPalette.dim)
-                }
-                Spacer(minLength: 6)
-                if !thread.isMyDraft {
-                    if thread.resolvable {
-                        Button(thread.resolved ? "Unresolve" : "Resolve") {
-                            store.resolve(thread: thread.id, resolved: !thread.resolved)
-                        }
-                        .instantTooltip(thread.resolved ? "Reopen this thread on the PR" : "Mark this thread resolved on the PR")
-                    } else {
-                        // Said, not hidden: a missing button read as a feature the hub lacks.
-                        Button(thread.resolved ? "Unresolve" : "Resolve") {}
-                            .disabled(true)
-                            .instantTooltip("The host does not let your account \(thread.resolved ? "reopen" : "resolve") this thread (usually only its author, the PR's author or someone with write access can)")
-                    }
-                    Button("Reply") {
-                        replying = true
-                    }
-                    .disabled(replying)
-                    .instantTooltip("Write a reply: save it as a draft in your pending review, or post it now")
-                }
-            }
-            // Cached threads: Resolve, Reply and the Fix pick wait for the host's fresh answer.
-            .disabled(store.stale)
-            ForEach(thread.comments) { comment in
-                commentView(comment)
+            header
+            ForEach(Array(thread.comments.enumerated()), id: \.element.id) { index, comment in
+                commentView(comment, reply: index > 0)
             }
             if replying {
                 replyComposer
+            } else if compact, !thread.isMyDraft {
+                HStack(spacing: 10) {
+                    Spacer(minLength: 0)
+                    threadActions
+                }
+                .font(.system(size: 11.5))
+                .disabled(store.stale)
             }
         }
         .font(.system(size: 12))
         .buttonStyle(.genHoverPlain())
         .disabled(store.busy != nil)
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(store.changed.contains(thread.id) ? ReviewPalette.renamed.opacity(0.16) : Color.white.opacity(0.03)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(ReviewPalette.hairline))
-        .opacity(thread.resolved || thread.outdated ? 0.72 : 1)
+        .padding(.vertical, 9)
+        .padding(.leading, 12)
+        .padding(.trailing, 10)
+        .background(store.changed.contains(thread.id) ? ReviewPalette.renamed.opacity(0.16) : Color.white.opacity(thread.resolved ? 0.02 : 0.035))
+        .background(alignment: .leading) {
+            Rectangle().fill(accent).frame(width: 2.5)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected ? ReviewPalette.renamed.opacity(0.7) : ReviewPalette.hairline))
+        .opacity(dimmed ? 0.72 : 1)
+        .padding(.leading, 6)
+    }
+
+    private var header: some View {
+        HStack(spacing: 6) {
+            if !thread.isMyDraft {
+                Toggle("", isOn: Binding(get: { selected }, set: { _ in model.toggleThreadSelection(thread.id) }))
+                    .toggleStyle(.checkbox)
+                    .labelsHidden()
+                    .instantTooltip("Select this thread for Fix threads: the selected threads go as one task to the agent that owns the branch")
+            }
+            Button {
+                if placement.onDiff {
+                    model.reveal(path: thread.path, thread: thread.id)
+                } else {
+                    model.reveal(path: thread.path)
+                }
+            } label: {
+                Text(verbatim: PRThreadFileGroup.lineLabel(thread))
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundColor(ReviewPalette.renamed)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(ReviewPalette.renamed.opacity(0.14)))
+                    .fixedSize()
+            }
+            .instantTooltip(placement.onDiff
+                ? "Show this thread on its line in the diff"
+                : "Open \((thread.path as NSString).lastPathComponent) in the diff; this thread has no line there")
+            if thread.isMyDraft {
+                Badge("Your draft", color: ReviewPalette.modified, look: .tone,
+                      tooltip: "Only you see it until you submit the review")
+            } else if thread.resolved {
+                Badge("Resolved", color: ReviewPalette.added, look: .tone, symbol: "checkmark")
+            } else {
+                Badge("Open", color: ReviewPalette.modified, look: .tone)
+            }
+            placementBadge
+            if thread.comments.contains(where: { fresh.contains($0.id) }) {
+                Circle().fill(ReviewPalette.renamed).frame(width: 6, height: 6)
+                    .instantTooltip("New notes since you last opened this PR's threads")
+            }
+            Spacer(minLength: 4)
+            // A narrow panel puts them under the notes instead: beside the badges they were cut to "Re… R…".
+            if !compact {
+                threadActions
+            }
+        }
+        .font(.system(size: 11.5))
+        .lineLimit(1)
+        // Cached threads: Resolve, Reply and the Fix pick wait for the host's fresh answer.
+        .disabled(store.stale)
     }
 
     @ViewBuilder
-    private func commentView(_ comment: PRThreadComment) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                ExternalLink(text: comment.author.name, url: store.pr?.forge?.user(comment.author.username),
-                             font: .system(size: 12, weight: .semibold), color: Color.white.opacity(0.92), glyph: .onHover,
-                             tooltip: "@\(comment.author.username) on the host", findField: "author:\(comment.id)")
-                if comment.author.name != comment.author.username {
-                    Text(verbatim: "@\(comment.author.username)").foregroundColor(ReviewPalette.dim)
-                }
-                if let url = comment.url.flatMap(URL.init(string:)) {
-                    Button {
-                        ExternalOpener.open(url)
-                    } label: {
-                        LiveAgo(date: HubFormat.date(comment.createdAt), fallback: comment.createdAt)
-                            .foregroundColor(ReviewPalette.dim)
+    private var threadActions: some View {
+        if !thread.isMyDraft {
+            Group {
+                if thread.resolvable {
+                    Button(thread.resolved ? "Unresolve" : "Resolve") {
+                        store.resolve(thread: thread.id, resolved: !thread.resolved)
                     }
-                    .hoverCursor(.pointingHand)
-                    .instantTooltip("\(comment.createdAt)\nOpen this comment on the host\n\(url.absoluteString)")
-                    .accessibilityRemoveTraits(.isButton)
-                    .accessibilityAddTraits(.isLink)
+                    .instantTooltip(thread.resolved ? "Reopen this thread on the PR" : "Mark this thread resolved on the PR")
                 } else {
-                    LiveAgo(date: HubFormat.date(comment.createdAt), fallback: comment.createdAt)
-                        .foregroundColor(ReviewPalette.dim)
-                        .instantTooltip(comment.createdAt)
+                    // Said, not hidden: a missing button read as a feature the hub lacks.
+                    Button(thread.resolved ? "Unresolve" : "Resolve") {}
+                        .disabled(true)
+                        .instantTooltip("The host does not let your account \(thread.resolved ? "reopen" : "resolve") this thread (usually only its author, the PR's author or someone with write access can)")
                 }
-                if comment.editedAt != nil {
-                    Text("edited").foregroundColor(ReviewPalette.dim)
+                Button("Reply") {
+                    replying = true
                 }
-                if comment.isDraft {
-                    PRBadge(text: "Draft", color: ReviewPalette.modified)
-                        .instantTooltip("Only you see it until you submit the review")
-                }
-                Spacer(minLength: 6)
-                if comment.isDraft, editingID != comment.id {
-                    Button("Edit") {
-                        editText = comment.bodyMarkdown
-                        editingID = comment.id
-                    }
-                    .instantTooltip("Change the text of this draft")
-                    Button("Delete") {
-                        if confirmDelete() {
-                            store.deleteDraft(thread: thread.id, note: comment.id)
-                        }
-                    }
-                    .disabled(store.stale)
-                    .instantTooltip("Delete this draft from your pending review (asks first)")
-                }
+                .disabled(replying)
+                .instantTooltip("Write a reply: save it as a draft in your pending review, or post it now")
             }
-            .font(.system(size: 11.5))
-            if editingID == comment.id {
-                editor(text: $editText)
-                HStack(spacing: 8) {
-                    Spacer()
-                    Button("Cancel") { editingID = nil }
-                    Button("Save draft") {
-                        // The editor stays open with its text until the host took the write, as the diff
-                        // cards do: a failed or refused write must not lose what was typed.
-                        store.updateDraft(thread: thread.id, note: comment.id, body: editText) { ok in
-                            if ok {
-                                editingID = nil
+            .fixedSize()
+        }
+    }
+
+    @ViewBuilder
+    private var placementBadge: some View {
+        let short = String((thread.commitSha ?? "").prefix(8))
+        switch placement {
+        case .onDiff(outdatedOnHost: true):
+            Badge("this commit", color: ReviewPalette.renamed, look: .tag, symbol: "clock.arrow.circlepath",
+                  tooltip: "The host marks it outdated because a later push changed these lines. The diff shows \(short.isEmpty ? "the commit it was written on" : short), the commit it was written on, so here it sits on its line.")
+        case .onDiff:
+            EmptyView()
+        case .outdated:
+            Badge("Outdated", color: ReviewPalette.dim, look: .tag,
+                  tooltip: "A later push changed these lines\(short.isEmpty ? "" : " (written on \(short))"). The diff shows another commit, so the thread has no line in it; its notes stay here.")
+        case .newerHead:
+            Badge("newer push", color: ReviewPalette.dim, look: .tag, symbol: "arrow.up.circle",
+                  tooltip: "Current on the PR's newest commit, which this diff does not show, so it has no line here.")
+        }
+    }
+
+    @ViewBuilder
+    private func commentView(_ comment: PRThreadComment, reply: Bool) -> some View {
+        let isNew = fresh.contains(comment.id)
+        HStack(alignment: .top, spacing: 8) {
+            PRAvatar(name: comment.author.name, username: comment.author.username, url: comment.author.avatarUrl, size: reply ? 18 : 22)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 5) {
+                    ExternalLink(text: comment.author.name, url: store.pr?.forge?.user(comment.author.username),
+                                 font: .system(size: 12, weight: .semibold), color: Color.white.opacity(0.92), glyph: .onHover,
+                                 tooltip: "@\(comment.author.username) on the host", findField: "author:\(comment.id)")
+                        .layoutPriority(1)
+                    if !compact, comment.author.name != comment.author.username {
+                        Text(verbatim: "@\(comment.author.username)").foregroundColor(ReviewPalette.dim).lineLimit(1)
+                    }
+                    time(comment)
+                    if comment.editedAt != nil {
+                        Text("edited").foregroundColor(ReviewPalette.dim).fixedSize()
+                    }
+                    if comment.isDraft {
+                        Badge("Draft", color: ReviewPalette.modified, look: .tone,
+                              tooltip: "Only you see it until you submit the review")
+                    }
+                    if isNew {
+                        Badge("new", color: ReviewPalette.renamed, look: .filled,
+                              tooltip: "Written after you last opened this PR's threads")
+                    }
+                    Spacer(minLength: 4)
+                    // A narrow panel shows them under the text: here they cut the author's name to "q…r".
+                    if !compact {
+                        draftActions(comment)
+                    }
+                }
+                .font(.system(size: 11.5))
+                .lineLimit(1)
+                if editingID == comment.id {
+                    editor(text: $editText)
+                    HStack(spacing: 8) {
+                        Spacer()
+                        Button("Cancel") { editingID = nil }
+                        Button("Save draft") {
+                            // The editor stays open with its text until the host took the write, as the diff
+                            // cards do: a failed or refused write must not lose what was typed.
+                            store.updateDraft(thread: thread.id, note: comment.id, body: editText) { ok in
+                                if ok {
+                                    editingID = nil
+                                }
                             }
                         }
+                        .disabled(editText.trimmed.isEmpty || store.stale)
+                        .instantTooltip("Replace the draft's text; it stays a draft")
                     }
-                    .disabled(editText.trimmed.isEmpty || store.stale)
-                    .instantTooltip("Replace the draft's text; it stays a draft")
+                } else {
+                    MarkdownContentView(markdown: comment.bodyMarkdown)
+                        .findField("comment:\(comment.id)")
+                        .font(.system(size: 12))
+                        .foregroundColor(Color.white.opacity(0.86))
+                        .textSelection(.enabled)
+                        // A code block keeps its lines whole and asks for more width than a narrow panel
+                        // has: pin the body to the row, from the left, and cut the long lines at the right.
+                        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                        .clipped()
+                    if compact, comment.isDraft {
+                        HStack(spacing: 10) {
+                            Spacer(minLength: 0)
+                            draftActions(comment)
+                        }
+                        .font(.system(size: 11.5))
+                    }
                 }
-            } else {
-                MarkdownContentView(markdown: comment.bodyMarkdown)
-                    .findField("comment:\(comment.id)")
-                    .font(.system(size: 12))
-                    .textSelection(.enabled)
-                    // A code block keeps its lines whole and asks for more width than a narrow panel
-                    // has: pin the body to the row, from the left, and cut the long lines at the right.
-                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                    .clipped()
             }
         }
-        .padding(.leading, comment.id == thread.comments.first?.id ? 0 : 12)
+        .padding(comment.isDraft ? 6 : 0)
+        .background(RoundedRectangle(cornerRadius: 6).fill(comment.isDraft ? ReviewPalette.modified.opacity(0.07) : Color.clear))
+        // Replies hang under the first note on a thin rail, as the host pages draw a discussion.
+        .padding(.leading, reply ? 14 : 0)
+        .overlay(alignment: .leading) {
+            if reply {
+                Rectangle().fill(Color.white.opacity(0.1)).frame(width: 1.5).padding(.leading, 4)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func draftActions(_ comment: PRThreadComment) -> some View {
+        if comment.isDraft, editingID != comment.id {
+            Button("Edit") {
+                editText = comment.bodyMarkdown
+                editingID = comment.id
+            }
+            .fixedSize()
+            .instantTooltip("Change the text of this draft")
+            Button("Delete") {
+                if confirmDelete() {
+                    store.deleteDraft(thread: thread.id, note: comment.id)
+                }
+            }
+            .fixedSize()
+            .disabled(store.stale)
+            .instantTooltip("Delete this draft from your pending review (asks first)")
+        }
+    }
+
+    @ViewBuilder
+    private func time(_ comment: PRThreadComment) -> some View {
+        if let url = comment.url.flatMap(URL.init(string:)) {
+            Button {
+                ExternalOpener.open(url)
+            } label: {
+                LiveAgo(date: HubFormat.date(comment.createdAt), fallback: comment.createdAt)
+                    .foregroundColor(ReviewPalette.dim)
+            }
+            .fixedSize()
+            .hoverCursor(.pointingHand)
+            .instantTooltip("\(comment.createdAt)\nOpen this comment on the host\n\(url.absoluteString)")
+            .accessibilityRemoveTraits(.isButton)
+            .accessibilityAddTraits(.isLink)
+        } else {
+            LiveAgo(date: HubFormat.date(comment.createdAt), fallback: comment.createdAt)
+                .foregroundColor(ReviewPalette.dim)
+                .fixedSize()
+                .instantTooltip(comment.createdAt)
+        }
     }
 
     private var replyComposer: some View {

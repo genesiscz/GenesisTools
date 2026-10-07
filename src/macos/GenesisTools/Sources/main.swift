@@ -28,6 +28,8 @@ if wantsWindow || firstArgument.hasPrefix("-") || firstArgument.contains("://") 
     // A face that is (or runs under) this bundle's responsible process tells its `tools` children to
     // skip the launcher; one started from a plain terminal clears the markers (App/FaceMarker.swift).
     FaceMarker.install()
+    // A rebuild reopens the hub, review and settings windows with these exact arguments (App/FaceRecord.swift).
+    FaceRecord.write(arguments)
 }
 
 if wantsWindow {

@@ -91,6 +91,8 @@ struct RenderedLiveThread: Encodable, Equatable {
         var authorUrl: String?
         /// The comment on the host; the time links there when set.
         var url: String?
+        /// The author's picture on the host; the card keeps the initial when it does not load.
+        var avatarUrl: String? = nil
     }
 
     var notes: [Note]

@@ -29,7 +29,7 @@ extension DiffScope {
     var readsTheCheckout: Bool {
         switch self {
         case .lastTurns, .uncommitted, .unstaged, .staged, .branch: return true
-        case .commit, .range: return false
+        case .commit, .range, .compare: return false
         }
     }
 }

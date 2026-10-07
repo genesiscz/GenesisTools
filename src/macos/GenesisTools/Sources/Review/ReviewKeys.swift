@@ -41,6 +41,13 @@ struct ReviewSnapshotDemo {
 
     /// Waits for the PR threads (a half-second check, 20 s at most), acts, then calls `done`.
     func apply(to model: ReviewModel, waited: Double = 0, done: @escaping () -> Void) {
+        // A push notice the snapshot should show arrives with the versions answer, after the threads.
+        if model.versions?.loading == true, waited < 20 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                apply(to: model, waited: waited + 0.5, done: done)
+            }
+            return
+        }
         guard needsPR else { return applyBlame(to: model, done: done) }
         // A standalone window attaches its branch's PR once the repo facts load, after the first render.
         if !(model.pr?.settled ?? false), waited < 20 {

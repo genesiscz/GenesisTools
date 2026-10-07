@@ -19,6 +19,10 @@ enum DiffScope: Hashable {
     /// Two commits, e.g. a PR's base..head from a review proposal. `fallbackBase` is used when
     /// `base` is not in the repo (a PR's recorded base commit that was never fetched).
     case range(base: String, head: String, label: String, fallbackBase: String? = nil)
+    /// Two pushes of a PR: `from`'s change replayed onto `to`'s base, against `to`'s head, so a rebase
+    /// between them shows only what the author changed (Review/ReviewVersions.swift). `targetRef` gives
+    /// an end without a recorded base its merge base (`origin/<target>`).
+    case compare(from: CompareEnd, to: CompareEnd, label: String, targetRef: String? = nil)
 
     /// The commit the new side of the diff is pinned to: a commit, or a range whose head is not a
     /// name that moves (`HEAD`, a branch). nil for the working-tree scopes.
@@ -28,6 +32,7 @@ enum DiffScope: Hashable {
         case .range(_, let head, _, _):
             let isCommitID = head.count >= 7 && head.allSatisfy(\.isHexDigit)
             return isCommitID ? head : nil
+        case .compare(_, let to, _, _): return to.head
         default: return nil
         }
     }
@@ -41,6 +46,7 @@ enum DiffScope: Hashable {
         case .commit(let sha, _): return String(sha.prefix(8))
         case .branch: return "Branch"
         case .range(_, _, let label, _): return label
+        case .compare(_, _, let label, _): return label
         }
     }
 
@@ -50,7 +56,7 @@ enum DiffScope: Hashable {
     /// A range on a name (`HEAD`, `origin/main`, a fallback base) moves with a commit or a fetch.
     var followsWorkingTree: Bool {
         switch self {
-        case .commit: return false
+        case .commit, .compare: return false
         case .range(let base, let head, _, let fallbackBase):
             return !(Self.isObjectID(base) && Self.isObjectID(head) && (fallbackBase.map(Self.isObjectID) ?? true))
         default: return true
@@ -113,6 +119,8 @@ struct GitWorkingTreeSource {
         var files: [DiffFile]
         var repository: ReviewRepositoryLayout? = nil
         var head: String? = nil
+        /// A compare diff: paths the change and the upstream both touched; they show the older head's copy.
+        var compareConflicts: [String] = []
     }
 
     static let maxBytes = 1_000_000
@@ -133,6 +141,8 @@ struct GitWorkingTreeSource {
             let parent = (try? git(["rev-parse", "--verify", "--quiet", "\(sha)^"]).trimmed).flatMap { $0.isEmpty ? nil : $0 } ?? Self.emptyTree
             return (parent, sha, [parent, sha], false, nil)
         case .range(let preferred, let head, _, let fallback):
+            // A newer push of a PR (the window's Reload) is fetched by id when no ref brought it yet.
+            if Self.isFullObjectID(head) { try? ensureCommit(head) }
             let base = [preferred, fallback].compactMap { $0 }.first { (try? git(["cat-file", "-e", "\($0)^{commit}"])) != nil } ?? preferred
             for sha in [base, head] where (try? git(["cat-file", "-e", "\(sha)^{commit}"])) == nil {
                 throw ReviewError.git("commit \(sha.prefix(10)) is not in \(repo.path); fetch the PR branch first (git fetch origin <branch>)")
@@ -147,6 +157,9 @@ struct GitWorkingTreeSource {
             }
             let from = mergeBase ?? base
             return (from, head, [from, head], false, nil)
+        case .compare(let from, let to, _, let targetRef):
+            let replayed = try compareTree(from: from, to: to, targetRef: targetRef)
+            return (replayed.tree, to.head, [replayed.tree, to.head], false, nil)
         case .branch:
             let base = baseBranch()
             let mergeBase = (try? git(["merge-base", base, "HEAD"]).trimmed) ?? "HEAD"
@@ -176,6 +189,9 @@ struct GitWorkingTreeSource {
         switch scope {
         case .range(_, let head, _, _), .commit(let head, _):
             snapshot.head = try source.git(["rev-parse", "--verify", head]).trimmed
+        case .compare(let from, let to, _, let targetRef):
+            snapshot.head = try source.git(["rev-parse", "--verify", to.head]).trimmed
+            snapshot.compareConflicts = try source.compareTree(from: from, to: to, targetRef: targetRef).conflicted
         default: break
         }
         return snapshot
@@ -418,6 +434,68 @@ struct GitWorkingTreeSource {
 
     private func git(_ args: [String]) throws -> String {
         String(decoding: try gitData(args), as: UTF8.self)
+    }
+
+    static func isFullObjectID(_ revision: String) -> Bool {
+        (40...64).contains(revision.count) && revision.allSatisfy(\.isHexDigit)
+    }
+
+    /// `git` that reports a non-zero exit instead of throwing on it (`allowFailure`), with extra environment.
+    private func gitResult(_ args: [String], environment: [String: String]?, allowFailure: Bool) throws -> (status: Int32, stdout: String) {
+        let span = HubPerf.begin("git.\(args.first ?? "")", repo.lastPathComponent)
+        defer { span.end() }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["-C", repo.path, "-c", "core.quotepath=off"] + args
+        if let environment {
+            process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
+        }
+        process.standardInput = FileHandle.nullDevice
+        let result = try process.runCapturing()
+        if result.status != 0 && !allowFailure {
+            let message = String(decoding: result.stderr, as: UTF8.self)
+            throw ReviewError.git("git \(args.joined(separator: " ")): \(message.trimmed)")
+        }
+        return (result.status, String(decoding: result.stdout, as: UTF8.self))
+    }
+
+    /// The commit is here, or one fetch of it by id brings it (GitLab keeps every MR version's head).
+    private func ensureCommit(_ sha: String) throws {
+        if (try? git(["cat-file", "-e", "\(sha)^{commit}"])) != nil { return }
+        _ = try? git(["fetch", "--no-tags", "--quiet", "origin", sha])
+        guard (try? git(["cat-file", "-e", "\(sha)^{commit}"])) != nil else {
+            throw ReviewError.git("commit \(sha.prefix(10)) is not in \(repo.path), and fetching it from origin failed")
+        }
+    }
+
+    /// The merge base an end's change starts from: its recorded base, else the merge base with `targetRef`.
+    private func base(of end: CompareEnd, targetRef: String?) throws -> String {
+        if let base = end.base {
+            try ensureCommit(base)
+            return base
+        }
+        guard let targetRef, let found = try? git(["merge-base", end.head, targetRef]).trimmed, !found.isEmpty else {
+            throw ReviewError.git("no base for \(end.head.prefix(10)): the host named none and there is no target branch to take it from")
+        }
+        return found
+    }
+
+    /// `from`'s change on `to`'s base, cached per pair: the merge-tree runs once however often the diff loads.
+    func compareTree(from: CompareEnd, to: CompareEnd, targetRef: String?) throws -> (tree: String, conflicted: [String]) {
+        let key = "\(repo.path)|\(from.base ?? "-")|\(from.head)|\(to.base ?? "-")|\(to.head)|\(targetRef ?? "-")"
+        if let cached = CompareTreeCache.shared.value(key) { return cached }
+        try ensureCommit(from.head)
+        try ensureCommit(to.head)
+        let fromEnd = CompareEnd(base: try base(of: from, targetRef: targetRef), head: from.head)
+        let toBase = try base(of: to, targetRef: targetRef)
+        let replayed = try Self.replayedTree(from: fromEnd, toBase: toBase) { args, environment, allowFailure in
+            try gitResult(args, environment: environment, allowFailure: allowFailure)
+        }
+        if !replayed.conflicted.isEmpty {
+            HubPerf.log("review.compare \(from.head.prefix(8))→\(to.head.prefix(8)): \(replayed.conflicted.count) paths changed upstream too; they show the older head")
+        }
+        CompareTreeCache.shared.store(key, replayed)
+        return replayed
     }
 
     // MARK: parsing

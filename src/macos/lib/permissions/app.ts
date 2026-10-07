@@ -17,6 +17,7 @@ import { detectXcodeToolchain, genesisAppBuildHint, type XcodeToolchain } from "
 import { clearPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { withFileLock } from "@genesiscz/utils/storage";
+import { captureRelaunch, type RelaunchStep, runRelaunch } from "./relaunch";
 
 export const APP_SOURCE_DIR = resolve(import.meta.dirname, "../../GenesisTools");
 /** The app build's own SwiftPM scratch folder, apart from `.build/debug` (tests, benches) so the two never rebuild each other. */
@@ -311,7 +312,13 @@ export function stampAppToolsPath(template: string, toolsPath: string): string {
  * failed swap with nothing to restore. The timeout covers a cold `swift build`. This lock only
  * orders builds; native commands wait on the install marker, which covers the swap alone.
  */
-export async function buildApp(options?: { onStep?: (message: string) => void }): Promise<BuildResult> {
+export interface BuildAppOptions {
+    onStep?: (message: string) => void;
+    /** false leaves the reaped hub, review and settings windows closed (`--no-relaunch`); default true. */
+    relaunch?: boolean;
+}
+
+export async function buildApp(options?: BuildAppOptions): Promise<BuildResult> {
     mkdirSync(genesisAppDir(), { recursive: true });
     const lockPath = join(genesisAppDir(), "build.lock");
     const requestedAt = Date.now();
@@ -379,10 +386,10 @@ export function timedSteps(report: (message: string) => void, now: () => number 
     };
 }
 
-async function buildAppLocked(options?: { onStep?: (message: string) => void }): Promise<BuildResult> {
+async function buildAppLocked(options?: BuildAppOptions): Promise<BuildResult> {
     const timer = timedSteps(options?.onStep ?? (() => {}));
     try {
-        return await buildAppSteps(timer.step);
+        return await buildAppSteps(timer.step, options?.relaunch !== false);
     } finally {
         const summary = timer.summary();
         logger.info({ summary }, "GenesisTools.app build timings");
@@ -390,7 +397,7 @@ async function buildAppLocked(options?: { onStep?: (message: string) => void }):
     }
 }
 
-async function buildAppSteps(step: (message: string) => void): Promise<BuildResult> {
+async function buildAppSteps(step: (message: string) => void, relaunch: boolean): Promise<BuildResult> {
     if (process.platform !== "darwin") {
         throw new Error("GenesisTools.app can only be built on macOS.");
     }
@@ -447,7 +454,17 @@ async function buildAppSteps(step: (message: string) => void): Promise<BuildResu
     mkdirSync(join(contents, "MacOS"), { recursive: true });
 
     try {
-        return await stageAndInstall({ appDir, bundlePath, staging, contents, builtBinary, plist, iconPath, step });
+        return await stageAndInstall({
+            appDir,
+            bundlePath,
+            staging,
+            contents,
+            builtBinary,
+            plist,
+            iconPath,
+            step,
+            relaunch,
+        });
     } finally {
         // Every failure between here and the swap (codesign, verify, rename) used to leave a
         // half-built bundle under ~/.genesis-tools/app; one finally covers them all.
@@ -495,10 +512,12 @@ interface StageAndInstallOptions {
     plist: string;
     iconPath: string;
     step: (message: string) => void;
+    /** Reopen the window faces the reap kills, from the new bundle (relaunch.ts). */
+    relaunch: boolean;
 }
 
 async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildResult> {
-    const { appDir, bundlePath, staging, contents, builtBinary, plist, iconPath, step } = options;
+    const { appDir, bundlePath, staging, contents, builtBinary, plist, iconPath, step, relaunch } = options;
     await Bun.write(join(contents, "MacOS", GENESIS_APP_NAME), Bun.file(builtBinary));
     run(["chmod", "755", join(contents, "MacOS", GENESIS_APP_NAME)]);
     await Bun.write(join(contents, "PkgInfo"), "APPL????");
@@ -616,7 +635,7 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     });
 
     step("reap stale app-face processes");
-    await reapStaleAppFaces(step);
+    await reapStaleAppFaces(step, relaunch);
 
     logger.info({ bundlePath, signedWith: signature.authority }, "GenesisTools.app built");
 
@@ -895,8 +914,11 @@ export function staleAppFacePids(psStdout: string, launcherPath: string): string
  * killing those would take the user's tools down with the rebuild.
  *
  * SIGTERM first, then SIGKILL for anyone still alive after {@link STALE_FACE_TERM_GRACE_MS}.
+ *
+ * The hub, review and settings windows among them start again from the new bundle with the argv they
+ * had (relaunch.ts), unless `relaunch` is false (`tools macos permissions build --no-relaunch`).
  */
-async function reapStaleAppFaces(step: (message: string) => void): Promise<void> {
+async function reapStaleAppFaces(step: (message: string) => void, relaunch: boolean): Promise<void> {
     const launcher = genesisAppLauncherPath();
     const listing = run(["ps", "-Ao", "pid=,args="]);
 
@@ -911,6 +933,25 @@ async function reapStaleAppFaces(step: (message: string) => void): Promise<void>
         return;
     }
 
+    // The window faces among them, with their exact argv, recorded before anything is killed.
+    let reopen: RelaunchStep[] = [];
+
+    if (relaunch) {
+        reopen = captureRelaunch({ psStdout: listing.stdout, launcherPath: launcher, stalePids: stale });
+    } else {
+        logger.info("relaunch: off (--no-relaunch); reaped windows stay closed");
+    }
+
+    try {
+        await killStaleFaces(stale, launcher, step);
+    } finally {
+        if (relaunch) {
+            runRelaunch(reopen, step);
+        }
+    }
+}
+
+async function killStaleFaces(stale: string[], launcher: string, step: (message: string) => void): Promise<void> {
     step(`killing ${stale.length} stale app-face process(es): ${stale.join(" ")}`);
 
     for (const pid of stale) {

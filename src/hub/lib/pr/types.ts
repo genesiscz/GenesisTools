@@ -136,6 +136,39 @@ export interface PublishResult {
 }
 
 /** Everything the hub's review window does to a PR/MR. Only `publish` submits the pending drafts. */
+/** One commit of a version, as the host lists it. */
+export interface PrVersionCommit {
+    sha: string;
+    title: string;
+    author: string | null;
+}
+
+/**
+ * One push of a PR/MR: what its diff was at that moment. Comparing two versions across a rebase
+ * replays the older one's change onto the newer one's base (`git merge-tree`), so upstream commits
+ * the rebase brought in never show as the author's change.
+ */
+export interface PrVersion {
+    /** GitLab's diff version id; the after-commit id for a GitHub force push; "head" for the current head. */
+    id: string;
+    headSha: string;
+    /** The merge base this version's diff starts from; null when the host did not say (GitHub). */
+    baseSha: string | null;
+    createdAt: string | null;
+    /** Who pushed it: the "added N commits" note (GitLab), the force-push actor (GitHub); null when unknown. */
+    pushedBy: ThreadAuthor | null;
+    /** Newest first, as the hosts list them; empty when the host did not list them. */
+    commits: PrVersionCommit[];
+}
+
+export interface VersionsResult {
+    pr: FoundPr;
+    /** Newest first. */
+    versions: PrVersion[];
+    /** False when the host keeps no push history (a GitHub PR without force pushes still lists its head). */
+    history: boolean;
+}
+
 export interface PrBackend {
     threads(): Promise<Omit<ThreadsResult, "pr" | "cached" | "fetchedAt">>;
     reply(input: { threadId: string; body: string; draft: boolean }): Promise<ReplyResult>;
@@ -146,6 +179,8 @@ export interface PrBackend {
     draftDelete(draftId: string): Promise<{ draftId: string; deleted: true }>;
     resolve(input: { threadId: string; resolved: boolean }): Promise<{ threadId: string; resolved: boolean }>;
     publish(input: { event: PublishEvent; body?: string }): Promise<PublishResult>;
+    /** Every push the host remembers, newest first; read-only. */
+    versions(): Promise<Omit<VersionsResult, "pr">>;
 }
 
 export type HubPrErrorCode = "no-pr" | "bad-input" | "not-found" | "not-a-draft" | "unsupported" | "provider";
