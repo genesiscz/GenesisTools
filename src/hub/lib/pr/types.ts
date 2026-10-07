@@ -128,6 +128,9 @@ export interface PublishResult {
     event: PublishEvent;
     /** Drafts that went out with this review. */
     published: number;
+    submittedIds?: string[];
+    pr?: Pick<FoundPr, "provider" | "host" | "project" | "number">;
+    warning?: string;
     reviewId?: string;
     url?: string;
 }

@@ -69,9 +69,16 @@ enum ReviewCache {
     /// Encodes `snapshot` for its slot; the contents go when the whole would pass `maxDiffBytes`.
     static func encodeDiff(_ snapshot: GitWorkingTreeSource.Snapshot, scope: DiffScope, session: String?) -> Data? {
         let key = scopeKey(scope, session: session)
-        let full = Diff(scope: key, branch: snapshot.branch, base: snapshot.base, files: snapshot.files, stripped: false)
-        guard let data = try? JSONEncoder().encode(full) else { return nil }
-        guard data.count > maxDiffBytes else { return data }
+        var contentBytes = 0
+        for file in snapshot.files {
+            contentBytes += (file.oldContents?.utf8.count ?? 0) + (file.newContents?.utf8.count ?? 0)
+            if contentBytes > maxDiffBytes { break }
+        }
+        if contentBytes <= maxDiffBytes {
+            let full = Diff(scope: key, branch: snapshot.branch, base: snapshot.base, files: snapshot.files, stripped: false)
+            guard let data = try? JSONEncoder().encode(full) else { return nil }
+            if data.count <= maxDiffBytes { return data }
+        }
         let files = snapshot.files.map { file -> DiffFile in
             var copy = file
             copy.oldContents = nil

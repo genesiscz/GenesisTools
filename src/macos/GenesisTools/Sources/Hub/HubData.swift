@@ -14,13 +14,15 @@ extension MonitorSessionRow {
 
     /// A warm prompt cache means the agent talked to the model within its TTL: the best "someone
     /// is working here" signal the providers give us.
-    var isLive: Bool {
+    var isLive: Bool { isLive(at: Date()) }
+
+    func isLive(at now: Date) -> Bool {
         if cacheStatus == .HOT {
             return true
         }
 
         guard let lastActivity else { return false }
-        return Date().timeIntervalSince(lastActivity) < 10 * 60
+        return now.timeIntervalSince(lastActivity) < 10 * 60
     }
 }
 
@@ -119,18 +121,84 @@ enum HubFormat {
 /// A session's price from `tools ai-spend session --id <id> --json`: list prices over every model
 /// call, subagents included. It is an estimate, and the UI says so; the session file has no price.
 enum HubSpend {
-    struct Estimate: Equatable {
+    struct Estimate: Equatable, Sendable {
         let usd: Double
         let note: String
     }
 
-    private static let lock = NSLock()
-    private static var cache: [String: Estimate] = [:]
+    final class Cache: @unchecked Sendable {
+        private struct Entry {
+            let revision: Double
+            let expires: Date
+            let value: Estimate?
+            let used: Date
+        }
+        private let condition = NSCondition()
+        private var entries: [String: Entry] = [:]
+        private var pending = Set<String>()
+        let ttl: TimeInterval
+        init(ttl: TimeInterval = 30) { self.ttl = ttl }
 
-    static func cached(_ sessionId: String) -> Estimate? {
-        lock.lock()
-        defer { lock.unlock() }
-        return cache[sessionId]
+        func cached(_ key: String) -> Estimate? {
+            condition.lock()
+            defer { condition.unlock() }
+            guard let entry = entries[key], entry.expires > Date() else { return nil }
+            return entry.value
+        }
+
+        func fetch(key: String, revision: Double, force: Bool = false, now: () -> Date = Date.init, run: () throws -> Data) throws -> Estimate? {
+            condition.lock()
+            let deadline = Date().addingTimeInterval(65)
+            var waited = false
+            while pending.contains(key) {
+                waited = true
+                guard condition.wait(until: deadline) else {
+                    condition.unlock()
+                    throw NSError(domain: "HubSpend", code: 1, userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for a spend estimate"])
+                }
+            }
+            if let entry = entries[key], (!force || waited), entry.revision == revision, entry.expires > now() {
+                condition.unlock()
+                return entry.value
+            }
+            pending.insert(key)
+            condition.unlock()
+            do {
+                let data = try run()
+                guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let totals = object["totals"] as? [String: Any],
+                      let usd = totals["totalCost"] as? Double, usd.isFinite, usd >= 0 else {
+                    throw NSError(domain: "HubSpend", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid spend estimate"])
+                }
+                let at = now()
+                let value = estimate(from: data).map {
+                    Estimate(usd: $0.usd, note: $0.note + " · as of " + at.formatted(date: .omitted, time: .shortened))
+                }
+                condition.lock()
+                entries[key] = Entry(revision: revision, expires: at.addingTimeInterval(ttl), value: value, used: at)
+                if entries.count > 64, let oldest = entries.min(by: { $0.value.used < $1.value.used })?.key {
+                    entries.removeValue(forKey: oldest)
+                }
+                pending.remove(key)
+                condition.broadcast()
+                condition.unlock()
+                return value
+            } catch {
+                condition.lock()
+                pending.remove(key)
+                condition.broadcast()
+                condition.unlock()
+                throw error
+            }
+        }
+    }
+
+    private static let cache = Cache()
+
+    private static func key(_ session: HubSession) -> String { session.provider + ":" + session.sessionId }
+
+    static func cached(_ session: HubSession) -> Estimate? {
+        cache.cached(key(session))
     }
 
     /// `tools ai-spend session --json` stdout (src/ai-spend/lib/reports/session.ts); nil for no spend.
@@ -150,22 +218,19 @@ enum HubSpend {
     }
 
     /// Blocking (a `tools` run of several seconds): call it off the main thread only.
-    static func fetch(_ session: HubSession) -> Estimate? {
+    static func fetch(_ session: HubSession, force: Bool = false) -> Estimate? {
         let since = Date(timeIntervalSince1970: session.mtime / 1000 - 14 * 86_400)
         let day = DateFormatter()
         day.locale = Locale(identifier: "en_US_POSIX")
         day.dateFormat = "yyyyMMdd"
-        guard let data = try? ToolsCLIRunner.run(["ai-spend", "session", "--id", session.sessionId, "--json", "--since", day.string(from: since)]),
-              let estimate = estimate(from: data)
-        else {
-            HubPerf.log("spend.session none for \(session.sessionId.prefix(8))")
+        do {
+            return try cache.fetch(key: key(session), revision: session.mtime, force: force) {
+                try ToolsCLIRunner.run(["ai-spend", "session", "--id", session.sessionId, "--json", "--since", day.string(from: since)])
+            }
+        } catch {
+            HubPerf.log("spend.session failed for \(session.sessionId.prefix(8)): \(error)")
             return nil
         }
-
-        lock.lock()
-        cache[session.sessionId] = estimate
-        lock.unlock()
-        return estimate
     }
 }
 

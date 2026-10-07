@@ -26,6 +26,7 @@ struct ReviewComment: Codable, Identifiable, Equatable {
     var outdated = false
     var sentAt: Date?
     var remoteDraftID: String?
+    var remoteOwner: PRDraftOwnership?
 }
 
 /// `~/.genesis-tools/review/<repo key>/comments.json`, written atomically on every change.
@@ -37,9 +38,9 @@ final class ReviewCommentStore {
 
     private var file: URL { directory.appendingPathComponent("comments.json") }
 
-    init(repo: URL) {
+    init(repo: URL, directory override: URL? = nil) {
         let key = repo.path.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
-        directory = FileManager.default.homeDirectoryForCurrentUser
+        directory = override ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".genesis-tools/review", isDirectory: true)
             .appendingPathComponent(key, isDirectory: true)
         load()
@@ -97,13 +98,24 @@ final class ReviewCommentStore {
     }
 
     /// A comment that went to the PR: a pending review draft, or published.
-    func mark(_ id: String, _ state: ReviewComment.State, remoteID: String? = nil) {
+    func mark(_ id: String, _ state: ReviewComment.State, remoteID: String? = nil, owner: PRDraftOwnership? = nil) {
         guard let index = comments.firstIndex(where: { $0.id == id }) else { return }
         comments[index].state = state
+        if let owner { comments[index].remoteOwner = owner }
         if let remoteID {
             comments[index].remoteDraftID = remoteID
         }
         comments[index].updatedAt = Date()
+        save()
+    }
+
+    func reconcileSubmitted(pr: PRIdentity, ids: Set<String>) {
+        for index in comments.indices {
+            guard comments[index].state == .draft, let owner = comments[index].remoteOwner,
+                  owner.pr == pr, owner.draftID == comments[index].remoteDraftID, ids.contains(owner.draftID) else { continue }
+            comments[index].state = .posted
+            comments[index].updatedAt = Date()
+        }
         save()
     }
 
@@ -115,10 +127,18 @@ final class ReviewCommentStore {
     @discardableResult
     func reanchor(files: [DiffFile]) -> Bool {
         var changed = false
+        let byPath = Self.filesByPath(files)
+        var split: [String: [String]] = [:]
         for index in comments.indices {
             let comment = comments[index]
-            guard let file = files.first(where: { $0.path == comment.path }) else { continue }
-            let lines = Self.lines(of: file, side: comment.side)
+            guard let file = byPath[comment.path] else { continue }
+            let key = file.id + ":" + comment.side.rawValue
+            let lines = split[key] ?? Self.lines(of: file, side: comment.side)
+            split[key] = lines
+            if comment.path != file.path {
+                comments[index].path = file.path
+                changed = true
+            }
             if let start = Self.locate(comment, in: lines) {
                 let end = start + comment.anchor.count - 1
                 if start != comment.startLine || end != comment.endLine || comment.outdated {
@@ -146,9 +166,6 @@ final class ReviewCommentStore {
         guard count > 0, lines.count >= count else { return nil }
 
         let original = comment.startLine - 1
-        if original >= 0, original + count <= lines.count, Array(lines[original..<(original + count)]) == comment.anchor {
-            return comment.startLine
-        }
 
         var best: (index: Int, score: Int, distance: Int)?
         for index in 0...(lines.count - count) where lines[index] == comment.anchor[0] {
@@ -166,6 +183,14 @@ final class ReviewCommentStore {
         return best.map { $0.index + 1 }
     }
 
+    private static func filesByPath(_ files: [DiffFile]) -> [String: DiffFile] {
+        var result = Dictionary(files.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+        for file in files {
+            if let old = file.oldPath, result[old] == nil { result[old] = file }
+        }
+        return result
+    }
+
     static func lines(of file: DiffFile, side: DiffSide) -> [String] {
         let text = (side == .additions ? file.newContents : file.oldContents) ?? ""
         var lines = text.components(separatedBy: "\n")
@@ -181,8 +206,9 @@ final class ReviewCommentStore {
     func rendered(for files: [DiffFile], now: Date = Date()) -> [RenderedComment] {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
+        let byPath = Self.filesByPath(files)
         return comments.compactMap { comment in
-            guard !comment.outdated, let file = files.first(where: { $0.path == comment.path }) else { return nil }
+            guard !comment.outdated, let file = byPath[comment.path] else { return nil }
             return RenderedComment(
                 id: comment.id,
                 fileId: file.id,
@@ -200,8 +226,11 @@ final class ReviewCommentStore {
 
     /// One markdown message for the agent: every comment with the code it points at.
     func agentMessage(repo: URL, branch: String, files: [DiffFile], ids: [String]) -> String {
+        let selected = Set(ids)
+        let byPath = Self.filesByPath(files)
+        var split: [String: [String]] = [:]
         let chosen = comments
-            .filter { ids.contains($0.id) }
+            .filter { selected.contains($0.id) }
             .sorted { ($0.path, $0.startLine) < ($1.path, $1.startLine) }
         // The folder too: a review of several repositories sends one section per repository, and each
         // file path below is relative to its own.
@@ -214,7 +243,9 @@ final class ReviewCommentStore {
             out += "File: \(comment.path)\n"
             out += "Lines: \(lineRange) (\(sideLabel) side)\(comment.outdated ? " [outdated: the code moved or is gone]" : "")\n"
             out += "User comment: \"\(comment.body.replacingOccurrences(of: "\"", with: "\\\""))\"\n"
-            let lines = files.first(where: { $0.path == comment.path }).map { Self.lines(of: $0, side: comment.side) } ?? []
+            let key = comment.path + ":" + comment.side.rawValue
+            let lines = split[key] ?? byPath[comment.path].map { Self.lines(of: $0, side: comment.side) } ?? []
+            split[key] = lines
             let ext = (comment.path as NSString).pathExtension
             out += "Code:\n```\(ext)\n"
             if !lines.isEmpty && !comment.outdated {
@@ -235,39 +266,123 @@ final class ReviewCommentStore {
 
     // MARK: persistence
 
-    private func load() {
-        guard let data = try? Data(contentsOf: file) else { return }
+
+    private struct Patch {
+        let before: ReviewComment?
+        let after: ReviewComment?
+
+        func apply(to rows: inout [ReviewComment]) {
+            guard let before else {
+                if let after, !rows.contains(where: { $0.id == after.id }) { rows.append(after) }
+                return
+            }
+            guard let after else {
+                rows.removeAll { $0.id == before.id }
+                return
+            }
+            guard let index = rows.firstIndex(where: { $0.id == before.id }) else { return }
+            func changed<T: Equatable>(_ key: WritableKeyPath<ReviewComment, T>) {
+                if before[keyPath: key] != after[keyPath: key] { rows[index][keyPath: key] = after[keyPath: key] }
+            }
+            changed(\.path); changed(\.side); changed(\.startLine); changed(\.endLine)
+            changed(\.body); changed(\.updatedAt); changed(\.state)
+            changed(\.anchor); changed(\.before); changed(\.after); changed(\.outdated)
+            changed(\.sentAt); changed(\.remoteDraftID); changed(\.remoteOwner)
+        }
+    }
+
+    private struct Pending {
+        let id: UUID
+        let patches: [Patch]
+    }
+    private static let writer = DispatchQueue(label: "review.comments.writer", qos: .utility)
+    private static let registryLock = NSLock()
+    private static let registry = NSHashTable<ReviewCommentStore>.weakObjects()
+    static let changed = Notification.Name("ReviewCommentStore.changed")
+    private var projection: [ReviewComment] = []
+    private var pending: [Pending] = []
+    private(set) var saveError: String?
+
+    private static func read(_ file: URL) throws -> [ReviewComment] {
+        guard FileManager.default.fileExists(atPath: file.path) else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode([ReviewComment].self, from: Data(contentsOf: file))
+    }
+
+    private func load() {
         do {
-            comments = try decoder.decode([ReviewComment].self, from: data)
+            comments = try Self.read(file)
+            projection = comments
         } catch {
-            // The next save would replace the file with only the new comments, so keep the unreadable
-            // one under another name first: one bad record (a newer build's state) must not erase the rest.
-            let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-            let backup = directory.appendingPathComponent("comments.unreadable-\(stamp).json")
-            let moved = (try? FileManager.default.moveItem(at: file, to: backup)) != nil
-            saveBlocked = !moved
-            FileHandle.standardError.write(Data("review comments: \(file.path) unreadable (\(moved ? "kept as \(backup.path)" : "could not move it aside")): \(error)\n".utf8))
+            saveBlocked = true
+            saveError = "Comments could not be read; the original file was preserved."
+            FileHandle.standardError.write(Data("review comments: could not read \(file.path): \(error)\n".utf8))
         }
+        Self.registryLock.lock()
+        Self.registry.add(self)
+        Self.registryLock.unlock()
     }
 
     private func save() {
-        if saveBlocked {
-            FileHandle.standardError.write(Data("review comments: not saving over the unreadable \(file.path)\n".utf8))
+        guard !saveBlocked else {
+            comments = projection
+            NotificationCenter.default.post(name: Self.changed, object: self)
             return
         }
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try encoder.encode(comments).write(to: file, options: .atomic)
-        } catch {
-            FileHandle.standardError.write(Data("review comments: could not write \(file.path): \(error)\n".utf8))
+        let old = Dictionary(projection.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let new = Dictionary(comments.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let patches = comments.compactMap { row -> Patch? in
+            old[row.id] == row ? nil : Patch(before: old[row.id], after: row)
+        } + projection.filter { new[$0.id] == nil }.map { Patch(before: $0, after: nil) }
+        guard !patches.isEmpty else { return }
+        let change = Pending(id: UUID(), patches: patches)
+        pending.append(change)
+        projection = comments
+        let target = file
+        Self.writer.async {
+            let result = Result { () throws -> [ReviewComment] in
+                try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                return try FileLock.withLock(target) {
+                    var rows = try Self.read(target)
+                    change.patches.forEach { $0.apply(to: &rows) }
+                    let encoder = JSONEncoder()
+                    encoder.dateEncodingStrategy = .iso8601
+                    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                    try encoder.encode(rows).write(to: target, options: .atomic)
+                    return rows
+                }
+            }
+            DispatchQueue.main.async {
+                self.pending.removeAll { $0.id == change.id }
+                switch result {
+                case .success(let rows):
+                    Self.registryLock.lock()
+                    let stores = Self.registry.allObjects.filter { $0.file == target }
+                    Self.registryLock.unlock()
+                    for store in stores {
+                        var visible = rows
+                        store.pending.flatMap(\.patches).forEach { $0.apply(to: &visible) }
+                        store.comments = visible
+                        store.projection = visible
+                        store.saveError = nil
+                        NotificationCenter.default.post(name: Self.changed, object: store)
+                    }
+                case .failure(let error):
+                    self.saveError = "Comment changes could not be saved: \(error.localizedDescription)"
+                    FileHandle.standardError.write(Data("review comments: could not write \(target.path): \(error)\n".utf8))
+                    NotificationCenter.default.post(name: Self.changed, object: self)
+                }
+            }
         }
     }
+
+    func flush() async {
+        await withCheckedContinuation { continuation in
+            Self.writer.async { DispatchQueue.main.async { continuation.resume() } }
+        }
+    }
+
 }
 
 private extension String {

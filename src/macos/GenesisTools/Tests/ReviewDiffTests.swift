@@ -6,6 +6,95 @@ import XCTest
 final class ReviewDiffTests: XCTestCase {
     private let kb = 1024
 
+    @MainActor
+    func testIndependentCommentStoresMergeMutationsAndDoNotResurrectDeletes() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("comments-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = ReviewCommentStore(repo: directory, directory: directory)
+        let second = ReviewCommentStore(repo: directory, directory: directory)
+        let file = DiffFile(id: "a", path: "a", status: .modified, additions: 1, deletions: 0,
+                            oldContents: "", newContents: "first\nsecond\n")
+        func add(_ store: ReviewCommentStore, _ body: String) throws -> ReviewComment {
+            try XCTUnwrap(store.add(CommentInput(editingID: nil, fileID: "a", side: .additions,
+                                                 startLine: 1, endLine: 1, body: body), files: [file]))
+        }
+        let a = try add(first, "A")
+        let b = try add(second, "B")
+        await first.flush()
+        XCTAssertEqual(Set(first.comments.map(\.id)), [a.id, b.id])
+        XCTAssertEqual(first.comments, second.comments)
+
+        first.edit(id: a.id, body: "updated")
+        let identity = PRIdentity(provider: "github", host: "github.com", project: "example/app", number: 7)
+        second.mark(a.id, .draft, remoteID: "fixture-draft",
+                    owner: PRDraftOwnership(pr: identity, headSha: "head", draftID: "fixture-draft"))
+        await second.flush()
+        XCTAssertEqual(first.comments.first { $0.id == a.id }?.body, "updated")
+        XCTAssertEqual(first.comments.first { $0.id == a.id }?.state, .draft)
+        first.reconcileSubmitted(pr: identity, ids: ["unrelated"])
+        XCTAssertEqual(first.comments.first { $0.id == a.id }?.state, .draft)
+        first.reconcileSubmitted(pr: identity, ids: ["fixture-draft"])
+        await first.flush()
+        XCTAssertEqual(first.comments.first { $0.id == a.id }?.state, .posted)
+
+        first.delete(id: a.id)
+        var moved = file
+        moved.newContents = "inserted\nfirst\nsecond\n"
+        XCTAssertTrue(second.reanchor(files: [moved]))
+        await first.flush()
+        XCTAssertEqual(first.comments.map(\.id), [b.id])
+        XCTAssertEqual(second.comments.map(\.id), [b.id])
+        XCTAssertEqual(first.comments.first?.startLine, 2)
+
+        let reloaded = ReviewCommentStore(repo: directory, directory: directory)
+        XCTAssertEqual(reloaded.comments, first.comments)
+    }
+
+    @MainActor
+    func testUnreadableCommentFileIsPreservedWithoutApplyingChanges() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("comments-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("comments.json")
+        let original = Data("unreadable fixture".utf8)
+        try original.write(to: file)
+        let store = ReviewCommentStore(repo: directory, directory: directory)
+        store.delete(id: "unknown")
+        await store.flush()
+        XCTAssertEqual(try Data(contentsOf: file), original)
+        XCTAssertNotNil(store.saveError)
+    }
+
+    func testRemoteDraftOwnershipIncludesHostProjectNumberAndProvider() throws {
+        let identity = PRIdentity(provider: "github", host: "github.com", project: "example/app", number: 7)
+        let owner = PRDraftOwnership(pr: identity, headSha: "reviewed-head", draftID: "draft-1")
+        XCTAssertTrue(owner.permits(pr: identity, draftID: "draft-1"))
+        XCTAssertFalse(owner.permits(pr: identity, draftID: "draft-2"))
+        XCTAssertFalse(owner.permits(pr: nil, draftID: "draft-1"))
+        for altered in [
+            PRIdentity(provider: "gitlab", host: identity.host, project: identity.project, number: identity.number),
+            PRIdentity(provider: identity.provider, host: "other.example.com", project: identity.project, number: identity.number),
+            PRIdentity(provider: identity.provider, host: identity.host, project: "example/other", number: identity.number),
+            PRIdentity(provider: identity.provider, host: identity.host, project: identity.project, number: 8)
+        ] {
+            XCTAssertFalse(owner.permits(pr: altered, draftID: "draft-1"))
+        }
+        XCTAssertEqual(try JSONDecoder().decode(PRDraftOwnership.self, from: JSONEncoder().encode(owner)), owner)
+    }
+
+    func testRepeatedAnchorChoosesContextBeforeOriginalLineAndThenDistance() {
+        let comment = ReviewComment(id: "fixture", path: "a", side: .additions, startLine: 2, endLine: 2,
+                                    body: "Check this", createdAt: Date(), updatedAt: Date(), state: .local,
+                                    anchor: ["return value"], before: ["right context"], after: ["right end"])
+        XCTAssertEqual(ReviewCommentStore.locate(comment, in: [
+            "wrong context", "return value", "wrong end", "right context", "return value", "right end"
+        ]), 5)
+        XCTAssertEqual(ReviewCommentStore.locate(comment, in: [
+            "right context", "return value", "right end", "right context", "return value", "right end"
+        ]), 2)
+        XCTAssertNil(ReviewCommentStore.locate(comment, in: ["right context", "different", "right end"]))
+    }
+
     func testNoFilesIsOneEmptyBatchSoThePageStillClearsItsList() {
         XCTAssertEqual(DiffBatchPlan.ranges(sizes: []), [0..<0])
     }

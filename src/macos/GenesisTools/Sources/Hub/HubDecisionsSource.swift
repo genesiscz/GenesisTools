@@ -20,10 +20,11 @@ extension HubModel {
         loadingDecisions = true
         decisionsRequest += 1
         let request = decisionsRequest
+        let read = readDecisions
         DispatchQueue.global(qos: .userInitiated).async {
             let span = HubPerf.begin("decisions.load")
             let result = Result {
-                try JSONDecoder().decode(SessionDecisionsEnvelope.self, from: ToolsCLIRunner.run(["question", "inbox", "--session", sessionId, "--json"]))
+                try read(sessionId)
             }
             span.end((try? result.get()).map { "\($0.decisions.count) decisions" } ?? "failed")
             DispatchQueue.main.async { [weak self] in

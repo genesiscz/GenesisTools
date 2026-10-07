@@ -186,19 +186,49 @@ final class ProposalDocument {
         }
     }
 
+    func reconcileSubmitted(pr: PRIdentity, ids: Set<String>) throws {
+        guard identity == pr, !ids.isEmpty else { return }
+        try FileLock.withLock(url) {
+            root = try Self.read(url)
+            guard identity == pr else { return }
+            var changed = false
+            for key in ["drafts", "threads"] {
+                guard var rows = root[key] as? [[String: Any]] else { continue }
+                let status = key == "drafts" ? "status" : "replyStatus"
+                for index in rows.indices {
+                    guard let providerID = rows[index]["providerId"] as? String, ids.contains(providerID),
+                          ["draft", "drafted"].contains(rows[index][status] as? String ?? "") else { continue }
+                    rows[index][status] = "posted"
+                    changed = true
+                }
+                root[key] = rows
+            }
+            if changed { try write() }
+        }
+    }
+
     /// The draft's own thread on the PR, when the agent wrote it as a reply instead of a new thread.
     func replyToThread(draftID: String) -> String? {
         (root["drafts"] as? [[String: Any]])?.first { $0["id"] as? String == draftID }?["replyToThread"] as? String
     }
 
-    func rendered(for files: [DiffFile]) -> [RenderedComment] {
-        renderedThreads(for: files) + renderedDrafts(for: files)
+    func permitsDraftSend(displayedHead: String, pr: PRIdentity?) -> Bool {
+        !headSha.isEmpty && headSha == displayedHead && identity == pr
+    }
+
+    func rendered(for files: [DiffFile], liveThreads: [PRThread]? = nil) -> [RenderedComment] {
+        renderedThreads(for: files, liveThreads: liveThreads) + renderedDrafts(for: files)
     }
 
     /// Existing PR threads, read-only: blue avatar, open / resolved, the agent's verdict below.
-    private func renderedThreads(for files: [DiffFile]) -> [RenderedComment] {
-        threads.compactMap { thread in
-            guard thread.line > 0, let file = files.first(where: { $0.path == thread.path }) else { return nil }
+    private func renderedThreads(for files: [DiffFile], liveThreads: [PRThread]?) -> [RenderedComment] {
+        let live = Dictionary((liveThreads ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return threads.compactMap { thread in
+            let current = live[thread.id]
+            if liveThreads != nil && (current == nil || current?.outdated == true) { return nil }
+            let path = current?.path ?? thread.path
+            let line = current?.line ?? thread.line
+            guard line > 0, let file = files.first(where: { $0.path == path || (current?.oldPath != nil && $0.oldPath == current?.oldPath) }) else { return nil }
             let notes = thread.noteCount > 1 ? " · \(thread.noteCount) notes" : ""
             let meta = thread.verdict.map { verdict in
                 RenderedMeta(verdict: Self.threadVerdictLabel(verdict), proof: thread.proof, confidence: thread.confidence,
@@ -207,9 +237,9 @@ final class ProposalDocument {
             return RenderedComment(
                 id: "thread:\(thread.id)",
                 fileId: file.id,
-                side: .additions,
-                startLine: thread.line,
-                endLine: thread.line,
+                side: current?.side ?? .additions,
+                startLine: min(current?.startLine ?? line, line),
+                endLine: line,
                 body: thread.body,
                 author: "@\(thread.author)",
                 when: notes,

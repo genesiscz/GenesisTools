@@ -278,8 +278,13 @@ final class PRThreadsTests: XCTestCase {
                                     author: "@bob", when: "", state: "open", remote: true, kind: "thread")
         let other = RenderedComment(id: "draft:01", fileId: "f1", side: .additions, startLine: 1, endLine: 1, body: "y",
                                     author: "claude", when: "", state: "proposed", remote: false, kind: "draft")
-        let refreshed = PRThreadRendering.refresh([stale, other], with: try payload().threads)
-        XCTAssertEqual(refreshed[0].state, "resolved")
+        let refreshed = PRThreadRendering.refresh([stale, other], with: try payload().threads, files: files)
+        XCTAssertEqual(refreshed[0].state, "draft")
+        XCTAssertEqual(refreshed[0].side, .deletions)
+        XCTAssertEqual(refreshed[0].fileId, "f2")
+        XCTAssertEqual(refreshed[0].startLine, 2)
+        XCTAssertEqual(PRThreadRendering.refresh([stale, other], with: [], files: files), [other])
+        XCTAssertEqual(PRThreadRendering.refresh([stale, other], with: try payload().threads, files: []), [other])
         XCTAssertEqual(refreshed[0].live?.notes.first?.id, "C5", "the proposal's card gets the live notes and buttons")
         XCTAssertEqual(refreshed[1], other, "a draft card is left alone")
     }
@@ -330,6 +335,47 @@ final class PRThreadsTests: XCTestCase {
         let failure = try JSONDecoder().decode(PRCLIError.self, from: Data(#"{"error":"not a draft","code":"not-a-draft"}"#.utf8))
         XCTAssertEqual(failure.code, "not-a-draft")
         XCTAssertEqual("\(failure)", "not a draft")
+    }
+
+    func testSubmissionReceiptReconcilesOnlyConfirmedOwnedProposalIDs() throws {
+        let doc = try proposal([
+            "provider": "github", "host": "github.com", "project": "acme/shop", "number": 7,
+            "drafts": [
+                ["id": "d1", "path": "a", "line": 1, "status": "drafted", "providerId": "remote1"],
+                ["id": "d2", "path": "a", "line": 2, "status": "drafted", "providerId": "remote2"]
+            ],
+            "threads": [["threadId": "t1", "path": "a", "line": 1, "replyStatus": "drafted", "providerId": "remote3"]]
+        ])
+        var other = doc.identity
+        other.number += 1
+        try doc.reconcileSubmitted(pr: other, ids: ["remote1", "remote3"])
+        XCTAssertEqual(doc.drafts.map(\.status), ["drafted", "drafted"])
+        try doc.reconcileSubmitted(pr: doc.identity, ids: ["remote1", "remote3"])
+        XCTAssertEqual(doc.drafts.map(\.status), ["posted", "drafted"])
+        XCTAssertEqual(doc.threads.first?.replyStatus, "posted")
+    }
+
+    func testProposalLineDraftRequiresTheReviewedHeadAndPR() throws {
+        let doc = try proposal(["provider": "github", "host": "github.com", "project": "acme/shop", "number": 7, "headSha": "reviewed"])
+        XCTAssertTrue(doc.permitsDraftSend(displayedHead: "reviewed", pr: doc.identity))
+        XCTAssertFalse(doc.permitsDraftSend(displayedHead: "new-head", pr: doc.identity))
+        XCTAssertFalse(doc.permitsDraftSend(displayedHead: "", pr: doc.identity))
+        XCTAssertFalse(doc.permitsDraftSend(displayedHead: "reviewed", pr: nil))
+    }
+
+    func testProposalMovedThreadKeepsAnalysisAtTheLiveAnchor() throws {
+        let doc = try proposal(["threads": [[
+            "threadId": "T4", "path": "gone.ts", "line": 90, "body": "Original point", "author": "bob",
+            "meta": ["verdict": "valid", "proof": "fixture proof"], "suggestedReply": "Edited wording"
+        ]]])
+        let rows = doc.rendered(for: files, liveThreads: try payload().threads)
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?.fileId, "f2")
+        XCTAssertEqual(rows.first?.side, .deletions)
+        XCTAssertEqual(rows.first?.endLine, 2)
+        XCTAssertEqual(rows.first?.body, "Original point")
+        XCTAssertEqual(rows.first?.reply, "Edited wording")
+        XCTAssertTrue(doc.rendered(for: files, liveThreads: []).isEmpty)
     }
 
     // MARK: proposal → target

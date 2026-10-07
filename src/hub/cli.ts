@@ -38,8 +38,9 @@ import {
     HubPrError,
     type PrBackend,
     type PublishEvent,
-    prThreads,
+    readPrThreads,
     resolvePr,
+    reviewCacheIdentity,
     THREAD_SIDES,
     type ThreadSide,
 } from "./lib/pr";
@@ -837,7 +838,7 @@ async function prWrite<T>(
 ): Promise<T> {
     const found = await resolvePr(target);
     const result = await write(await backendFor(found), found);
-    await forgetThreads({ pr: found });
+    await forgetThreads({ pr: found, cacheIdentity: await reviewCacheIdentity(found) });
     return result;
 }
 
@@ -898,10 +899,9 @@ pr.command("threads")
         await prVerb({
             json: opts.json,
             run: async () => {
-                const found = await resolvePr({ repo: opts.repo, pr: opts.pr });
-                return prThreads({
-                    pr: found,
-                    backend: await backendFor(found),
+                return readPrThreads({
+                    repo: opts.repo,
+                    pr: opts.pr,
                     maxCacheAgeSeconds: resolveMaxCacheAge({ ...opts, fresh: !opts.cache }),
                 });
             },

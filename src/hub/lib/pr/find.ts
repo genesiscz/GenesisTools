@@ -307,3 +307,47 @@ export async function findPrByRef({
         repoPath,
     };
 }
+
+type ExplicitTarget = Pick<FoundPr, "provider" | "host" | "project" | "number" | "url">;
+
+export async function explicitPrTarget({
+    ref,
+    readFacts = repoFacts,
+}: {
+    ref: string;
+    readFacts?: FactsReader;
+}): Promise<ExplicitTarget | null> {
+    const parsed = parsePrRef(ref);
+
+    if (!parsed) {
+        return null;
+    }
+
+    if ("url" in parsed) {
+        const target = parsePrUrl(parsed.url);
+        return target
+            ? {
+                  provider: target.project.kind,
+                  host: target.project.host,
+                  project: target.project.path,
+                  number: target.number,
+                  url: parsed.url,
+              }
+            : null;
+    }
+
+    const facts = await readFacts({ path: resolve(parsed.path) });
+    const project = facts.origin ? projectRefFromRemote(facts.origin.url) : null;
+
+    if (!project) {
+        return null;
+    }
+
+    return {
+        provider: project.kind,
+        host: project.host,
+        project: project.path,
+        number: parsed.number,
+        url: `${project.web}/${project.kind === "github" ? "pull" : "-/merge_requests"}/${parsed.number}`,
+    };
+}

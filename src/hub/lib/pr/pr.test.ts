@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ReviewCommentClient } from "@app/github/lib/review-comments";
+import { defaultReviewCommentClient, type ReviewCommentClient } from "@app/github/lib/review-comments";
 import type { CommandRunner } from "@genesiscz/utils/git/origins";
 import type { RepoFacts } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -11,7 +11,7 @@ import { Storage } from "@genesiscz/utils/storage";
 import { findBranchPr, findPrByRef } from "./find";
 import { githubBackend, githubThread } from "./github";
 import { gitlabBackend, gitlabPosition, gitlabThreads } from "./gitlab";
-import { type FoundPr, forgetThreads, gitlabBaseUrl, type PrBackend, prThreads } from "./index";
+import { type FoundPr, forgetThreads, gitlabBaseUrl, type PrBackend, prThreads, readPrThreads } from "./index";
 
 // ─── find ─────────────────────────────────────────────────────────────────────
 
@@ -486,7 +486,13 @@ interface GqlCall {
  * mutations that publish a review THROW, so any path that reaches them fails loudly.
  */
 function fakeGithub(
-    options: { pending?: boolean; commentState?: string; allowPublish?: boolean; allowComment?: boolean } = {}
+    options: {
+        pending?: boolean;
+        commentState?: string;
+        allowPublish?: boolean;
+        allowComment?: boolean;
+        commentPr?: number;
+    } = {}
 ) {
     const calls: GqlCall[] = [];
     const client: ReviewCommentClient = {
@@ -539,7 +545,10 @@ function fakeGithub(
                         id: vars.id,
                         state: options.commentState ?? "PENDING",
                         // A reply first checks that its thread belongs to this PR.
-                        pullRequest: { number: ghPr.number, repository: { nameWithOwner: ghPr.project } },
+                        pullRequest: {
+                            number: options.commentPr ?? ghPr.number,
+                            repository: { nameWithOwner: ghPr.project },
+                        },
                     },
                 },
                 updatePullRequestReviewComment: {
@@ -549,7 +558,16 @@ function fakeGithub(
                 resolveReviewThread: { resolveReviewThread: { thread: { id: vars.threadId, isResolved: true } } },
                 unresolveReviewThread: { unresolveReviewThread: { thread: { id: vars.threadId, isResolved: false } } },
                 submitPullRequestReview: {
-                    submitPullRequestReview: { pullRequestReview: { id: "REV_mine", url: "https://example.com/r" } },
+                    submitPullRequestReview: {
+                        pullRequestReview: {
+                            id: "REV_mine",
+                            url: "https://example.com/r",
+                            comments: {
+                                nodes: [{ id: "C_1" }, { id: "C_2" }, { id: "C_3" }],
+                                pageInfo: { hasNextPage: false, endCursor: null },
+                            },
+                        },
+                    },
                 },
             };
             return answers[op] as T;
@@ -632,6 +650,19 @@ describe("GitHub verbs", () => {
         expect(calls.some((call) => call.op === "addPullRequestReviewThread")).toBe(false);
     });
 
+    test("draft update and delete refuse a pending comment owned by another PR before mutation", async () => {
+        const other = fakeGithub({ commentPr: ghPr.number + 1 });
+        await expect(other.backend.draftUpdate({ draftId: "C_other", body: "edited" })).rejects.toThrow(
+            "selected pull request"
+        );
+        await expect(other.backend.draftDelete("C_other")).rejects.toThrow("selected pull request");
+        expect(other.calls.map((call) => call.op)).toEqual(["node(id", "node(id"]);
+    });
+
+    test("unsupported GitHub review hosts are rejected before selecting credentials", () => {
+        expect(() => defaultReviewCommentClient({ host: "git.example.com" })).toThrow("no request was sent");
+    });
+
     test("draft update and delete change pending comments only; a published comment is refused", async () => {
         const pending = fakeGithub();
         expect(await pending.backend.draftUpdate({ draftId: "C_9", body: TRICKY_BODY })).toEqual({ draftId: "C_9" });
@@ -662,7 +693,12 @@ describe("GitHub verbs", () => {
 
     test("publish submits my pending review as COMMENT by default, or with the given event", async () => {
         const { backend, calls } = fakeGithub({ pending: true, allowPublish: true });
-        expect(await backend.publish({ event: "COMMENT" })).toMatchObject({ event: "COMMENT", published: 3 });
+        expect(await backend.publish({ event: "COMMENT" })).toMatchObject({
+            event: "COMMENT",
+            published: 3,
+            submittedIds: ["C_1", "C_2", "C_3"],
+            pr: { provider: "github", host: ghPr.host, project: ghPr.project, number: ghPr.number },
+        });
         await backend.publish({ event: "REQUEST_CHANGES", body: "Needs tests." });
         const submits = calls.filter((call) => call.op === "submitPullRequestReview").map((call) => call.vars);
         expect(submits).toEqual([
@@ -698,7 +734,7 @@ const GITLAB_DIFF = [
  * `allowPublish`, bulk publish and approve answer 500 and are recorded, so a leak fails the test.
  */
 async function withFakeGitLab(
-    options: { allowPublish?: boolean; drafts?: unknown[]; failSinglePublish?: boolean },
+    options: { allowPublish?: boolean; drafts?: unknown[]; failSinglePublish?: boolean; failApproval?: boolean },
     run: (backend: PrBackend, calls: GitLabCall[]) => Promise<void>
 ): Promise<void> {
     const calls: GitLabCall[] = [];
@@ -712,6 +748,10 @@ async function withFakeGitLab(
 
             if (/bulk_publish$|\/approve$/.test(path) && !options.allowPublish) {
                 return new Response("🛑 publish reached outside publish", { status: 500 });
+            }
+
+            if (path.endsWith("/approve") && options.failApproval) {
+                return new Response("approval refused", { status: 403 });
             }
 
             if (/^\/draft_notes\/\d+\/publish$/.test(path) && options.failSinglePublish) {
@@ -864,9 +904,26 @@ describe("GitLab verbs", () => {
         });
     });
 
+    test("an approval failure preserves confirmed draft publication and identities", async () => {
+        await withFakeGitLab(
+            { allowPublish: true, failApproval: true, drafts: [{ id: 60, note: "x" }] },
+            async (backend) => {
+                const result = await backend.publish({ event: "APPROVE" });
+                expect(result.submittedIds).toEqual(["60"]);
+                expect(result.published).toBe(1);
+                expect(result.warning).toContain("approval failed");
+                expect(result.pr?.number).toBe(glPr.number);
+            }
+        );
+    });
+
     test("publish bulk-publishes my drafts; approve also approves; request-changes is refused before any call", async () => {
         await withFakeGitLab({ allowPublish: true, drafts: [{ id: 60, note: "x" }] }, async (backend, calls) => {
-            expect(await backend.publish({ event: "COMMENT" })).toEqual({ event: "COMMENT", published: 1 });
+            expect(await backend.publish({ event: "COMMENT" })).toMatchObject({
+                event: "COMMENT",
+                published: 1,
+                submittedIds: ["60"],
+            });
             await backend.publish({ event: "APPROVE" });
             expect(writes(calls).map((call) => call.path)).toEqual([
                 "/draft_notes/bulk_publish",
@@ -932,6 +989,59 @@ describe("only publish publishes", () => {
 // ─── cache ────────────────────────────────────────────────────────────────────
 
 describe("prThreads cache", () => {
+    test("explicit reads share one resolution, partition accounts, and refresh on demand or invalidation", async () => {
+        for (const base of [ghPr, { ...glPr, url: "https://gitlab.example.com/gitlab/group/app/-/merge_requests/7" }]) {
+            const storage = new Storage(`hub-pr-explicit-${randomUUID()}`);
+            let resolutions = 0;
+            let threads = 0;
+            let viewer = "fixture-work";
+            let headSha = "head-one";
+            const backend = fakeGithub().backend;
+            const options = {
+                repo: "/invented/app",
+                pr: base.url,
+                maxCacheAgeSeconds: 30,
+                storage,
+                identityFor: async () => viewer,
+                resolve: async () => {
+                    resolutions++;
+                    return { ...base, headSha };
+                },
+                makeBackend: async () => ({
+                    ...backend,
+                    threads: async () => {
+                        threads++;
+                        return { threads: [], draftCount: 0, viewer };
+                    },
+                }),
+            };
+            const concurrent = await Promise.all(Array.from({ length: 10 }, () => readPrThreads(options)));
+            expect(concurrent.every((result) => result.pr.headSha === "head-one")).toBe(true);
+            expect([resolutions, threads]).toEqual([1, 1]);
+            const warm = await Promise.all(Array.from({ length: 10 }, () => readPrThreads(options)));
+            expect(warm.every((result) => result.cached)).toBe(true);
+            expect([resolutions, threads]).toEqual([1, 1]);
+
+            viewer = "fixture-personal";
+            expect((await readPrThreads(options)).viewer).toBe(viewer);
+            expect([resolutions, threads]).toEqual([2, 2]);
+            headSha = "head-two";
+            expect((await readPrThreads({ ...options, maxCacheAgeSeconds: 0 })).pr.headSha).toBe(headSha);
+            expect([resolutions, threads]).toEqual([3, 3]);
+            await forgetThreads({ pr: base, storage, cacheIdentity: viewer });
+            expect((await readPrThreads(options)).cached).toBe(false);
+            expect([resolutions, threads]).toEqual([4, 4]);
+
+            await readPrThreads({ ...options, pr: undefined });
+            await readPrThreads({ ...options, pr: undefined });
+            expect(resolutions).toBe(6);
+            expect(threads).toBe(5);
+            headSha = "branch-moved";
+            expect((await readPrThreads({ ...options, pr: undefined })).pr.headSha).toBe(headSha);
+            expect([resolutions, threads]).toEqual([7, 6]);
+        }
+    });
+
     test("30 s cache per PR, bypassed by a max age of 0, dropped by forgetThreads and by a new head", async () => {
         let reads = 0;
         const unused = async (): Promise<never> => {

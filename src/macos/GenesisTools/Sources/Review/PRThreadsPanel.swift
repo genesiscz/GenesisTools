@@ -56,7 +56,7 @@ struct PRReviewBar: View {
                         .fixedSize()
                         .instantTooltip(store.loading
                             ? "These threads are the last answer on disk. Reply, Resolve and Submit review wait for the host's fresh answer."
-                            : "The host did not answer, so these are the last known threads. Writes stay off until a reload succeeds.")
+                            : "Showing a cached thread list. Refresh from the host to enable replies, resolve and submission.")
                 }
                 if let busy = store.busy {
                     Text(busy).foregroundColor(ReviewPalette.dim).fixedSize()

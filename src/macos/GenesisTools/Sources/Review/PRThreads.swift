@@ -20,7 +20,7 @@ enum PRTarget: Equatable {
 }
 
 /// The PR's host, project and number: its label, and whether GitLab's words apply.
-struct PRIdentity: Equatable {
+struct PRIdentity: Codable, Equatable {
     var provider: String
     var host: String
     var project: String
@@ -28,6 +28,16 @@ struct PRIdentity: Equatable {
 
     var isGitLab: Bool { provider == "gitlab" }
     var label: String { isGitLab ? "!\(number)" : "#\(number)" }
+}
+
+struct PRDraftOwnership: Codable, Equatable {
+    let pr: PRIdentity
+    let headSha: String
+    let draftID: String
+
+    func permits(pr selected: PRIdentity?, draftID selectedID: String?) -> Bool {
+        pr == selected && draftID == selectedID
+    }
 }
 
 enum PRReviewEvent: String, CaseIterable, Identifiable {
@@ -147,6 +157,7 @@ struct PRInfo: Decodable, Equatable {
     /// nil from a `tools` that does not send them: the links then read the PR's own project.
     let crossRepository: Bool?
     let headRepo: String?
+    var headSha: String? = nil
 
     var identity: PRIdentity { PRIdentity(provider: provider, host: host, project: project, number: number) }
     /// The PR's project on the host, for user and branch pages; nil for a host that is not GitHub or GitLab.
@@ -220,6 +231,9 @@ struct PRPublishResult: Decodable {
     let event: String
     let published: Int
     let url: String?
+    let submittedIds: [String]?
+    let pr: PRIdentity?
+    let warning: String?
 }
 
 /// `{error, code}`: what a `tools hub pr … --json` failure prints on stdout.
@@ -306,14 +320,20 @@ enum PRThreadRendering {
 
     /// The proposal's copy of a thread was read when the agent pushed; the live thread wins its
     /// state, and the card gets the live notes and buttons beside the agent's read.
-    static func refresh(_ proposalComments: [RenderedComment], with threads: [PRThread], forge: ForgeWeb? = nil, now: Date = Date()) -> [RenderedComment] {
-        guard !threads.isEmpty else { return proposalComments }
-        let byID = Dictionary(threads.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return proposalComments.map { comment in
-            guard comment.id.hasPrefix("thread:"), let thread = byID[String(comment.id.dropFirst(7))] else { return comment }
+    static func refresh(_ proposalComments: [RenderedComment], with threads: [PRThread], files: [DiffFile], forge: ForgeWeb? = nil, now: Date = Date()) -> [RenderedComment] {
+        let anchors = Dictionary(rendered(threads, files: files, forge: forge, now: now).map {
+            (String($0.id.dropFirst(5)), $0)
+        }, uniquingKeysWith: { first, _ in first })
+        return proposalComments.compactMap { comment in
+            guard comment.id.hasPrefix("thread:") else { return comment }
+            guard let anchor = anchors[String(comment.id.dropFirst(7))] else { return nil }
             var copy = comment
-            copy.state = thread.resolved ? "resolved" : "open"
-            copy.live = live(thread, forge: forge, now: now)
+            copy.fileId = anchor.fileId
+            copy.side = anchor.side
+            copy.startLine = anchor.startLine
+            copy.endLine = anchor.endLine
+            copy.state = anchor.state
+            copy.live = anchor.live
             return copy
         }
     }
@@ -356,6 +376,7 @@ final class PRThreadsStore: ObservableObject {
     @Published private(set) var error: String?
     /// Called on the main thread after new threads land (the model re-renders the diff's cards).
     var onChange: (() -> Void)?
+    var onSubmitted: ((PRIdentity, Set<String>) -> Void)?
 
     private var lastLoad: Date?
     private var loadAgain = false
@@ -415,7 +436,7 @@ final class PRThreadsStore: ObservableObject {
                 case .success(let payload):
                     self.error = nil
                     let wasStale = self.stale
-                    self.stale = false
+                    self.stale = payload.cached == true
                     if payload != self.payload {
                         self.show(payload)
                         self.onChange?()
@@ -527,12 +548,16 @@ final class PRThreadsStore: ObservableObject {
     /// after its NSAlert confirmation named the PR and the draft count.
     func submitReview(event: PRReviewEvent, summary: String) {
         let summary = summary.trimmed
+        let identity = payload?.pr.identity
         write("Submitting the review…", body: summary.isEmpty ? nil : summary, args: { [target] in
             PRCommand.publish(target, event: event, bodyFile: summary.isEmpty ? nil : $0)
         }) { [weak self] result in
             guard let self else { return }
             if case .success(let data) = result, let published = try? JSONDecoder().decode(PRPublishResult.self, from: data) {
-                self.notice = "Review submitted on \(self.label) (\(event.title.lowercased()), \(published.published) comments)."
+                if let owner = published.pr, owner == identity, let ids = published.submittedIds {
+                    self.onSubmitted?(owner, Set(ids))
+                }
+                self.notice = published.warning ?? "Review submitted on \(self.label) (\(event.title.lowercased()), \(published.published) comments)."
             } else {
                 self.report(result, done: "Review submitted on \(self.label).")
             }
@@ -596,7 +621,7 @@ final class PRThreadsStore: ObservableObject {
 }
 
 private struct PRThreadsStale: Error, CustomStringConvertible {
-    var description: String { "the threads are still refreshing from the host; try again when they are in." }
+    var description: String { "refresh the thread list from the host before writing." }
 }
 
 private struct PRWriteBusy: Error, CustomStringConvertible {

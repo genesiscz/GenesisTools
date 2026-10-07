@@ -179,17 +179,21 @@ enum ReviewPalette {
 // MARK: - Model
 
 final class ReviewModel: ObservableObject {
-    let repo: URL
+    private(set) var repo: URL
     private let makeRenderer: () -> DiffRenderer
     private var builtRenderer: DiffRenderer?
-    let comments: ReviewCommentStore
+    private(set) var comments: ReviewCommentStore
+    private var repositoryLayouts: [String: ReviewRepositoryLayout] = [:]
+    private var displayedHead: String?
     /// The agent session this review is for; "Send to agent" types into its cmux pane.
     let session: String?
     var onFirstRender: (() -> Void)?
 
     @Published var branch = ""
     @Published var base: String?
-    @Published var scope = DiffScope.uncommitted
+    @Published var scope = DiffScope.uncommitted {
+        didSet { if scope != oldValue { displayedHead = nil } }
+    }
     @Published var commits: [RepoCommit] = []
     /// An agent's review proposal shown on this diff (drafts + meta), when opened with --proposal.
     @Published var proposal: ProposalDocument?
@@ -275,6 +279,7 @@ final class ReviewModel: ObservableObject {
     /// When the last file set went to the renderer; `.rendered` closes the span.
     private var renderStart: CFAbsoluteTime?
     private let createdAt = CFAbsoluteTimeGetCurrent()
+    private var commentsObserver: NSObjectProtocol?
 
     init(repo: URL, options: DiffViewOptions, session: String? = nil, renderer: @autoclosure @escaping () -> DiffRenderer = PierreWebDiffRenderer()) {
         self.repo = repo
@@ -283,6 +288,17 @@ final class ReviewModel: ObservableObject {
         makeRenderer = renderer
         comments = ReviewCommentStore(repo: repo)
         roots = [ReviewRoot(folder: repo.path, repo: repo)]
+        commentsObserver = NotificationCenter.default.addObserver(forName: ReviewCommentStore.changed, object: nil, queue: .main) { [weak self] note in
+            guard let self, let store = note.object as? ReviewCommentStore,
+                  store === self.comments || self.rootComments.values.contains(where: { $0 === store }) else { return }
+            self.objectWillChange.send()
+            if let error = store.saveError { self.notice = error }
+            if self.builtRenderer != nil { self.pushComments() }
+        }
+    }
+
+    deinit {
+        if let commentsObserver { NotificationCenter.default.removeObserver(commentsObserver) }
     }
 
     /// Built on first use, not in `init`: the hub makes a review for every session it selects, even
@@ -347,7 +363,9 @@ final class ReviewModel: ObservableObject {
     private func watchRoots() {
         watchers = roots.filter(\.shown).compactMap { root in
             root.repo.map { repo in
-                RepoWatcher(root: repo) { [weak self] in
+                let layout = repositoryLayouts[root.folder] ?? ReviewRepositoryLayout(root: repo,
+                    gitDirectory: repo.appendingPathComponent(".git"), commonDirectory: repo.appendingPathComponent(".git"))
+                return RepoWatcher(layout: layout) { [weak self] in
                     guard let self, self.scope.followsWorkingTree else { return }
                     self.reload(folders: [root.folder])
                 }
@@ -367,7 +385,7 @@ final class ReviewModel: ObservableObject {
             next[index].prefix = next.count > 1 ? names[index] : ""
             if next[index].repo == nil {
                 next[index].error = next[index].error ?? "Not inside a git repository, so its changes cannot be listed."
-            } else if let old = roots.first(where: { $0.folder == next[index].folder && $0.repo == next[index].repo }), next[index].shown {
+            } else if let old = roots.first(where: { $0.folder == next[index].folder && $0.repo?.path == next[index].repo?.path }), next[index].shown {
                 next[index].files = old.files
                 next[index].branch = old.branch
                 next[index].error = old.error
@@ -452,7 +470,8 @@ final class ReviewModel: ObservableObject {
 
     /// A file by an absolute path inside any root, or by a path relative to this repository.
     func file(atPath path: String) -> DiffFile? {
-        let wanted = ReviewRoots.global(path: path, in: roots)
+        let normalized = path.hasPrefix("/") ? URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path : path
+        let wanted = ReviewRoots.global(path: normalized, in: roots)
         return files.first { $0.path == wanted || $0.oldPath == wanted }
     }
 
@@ -468,6 +487,19 @@ final class ReviewModel: ObservableObject {
         guard pr !== store else { return }
         store.onChange = { [weak self] in
             self?.pushComments()
+        }
+        store.onSubmitted = { [weak self] identity, ids in
+            guard let self else { return }
+            for (_, comments) in self.commentRoots {
+                comments.reconcileSubmitted(pr: identity, ids: ids)
+            }
+            do {
+                try self.proposal?.reconcileSubmitted(pr: identity, ids: ids)
+            } catch {
+                self.notice = "The review was submitted, but proposal status could not be saved: \(error.localizedDescription)"
+            }
+            self.objectWillChange.send()
+            if self.builtRenderer != nil { self.pushComments() }
         }
         pr = store
         // Only into a renderer that exists: building one here would start WebKit on the PR-selection
@@ -500,6 +532,8 @@ final class ReviewModel: ObservableObject {
         }
         return pr?.payload?.pr.identity
     }
+
+    private var reviewedHead: String { displayedHead ?? "" }
 
     /// Live threads sit on the lines of the PR's head, so they go on the diff only when it compares
     /// against a base (the PR's range, or the branch); the threads list shows them in every scope.
@@ -597,7 +631,7 @@ final class ReviewModel: ObservableObject {
             // After the answer is on its way to the screen, so encoding a large diff never delays it.
             let loaded = jobs.compactMap { job -> (repo: URL, snapshot: GitWorkingTreeSource.Snapshot)? in
                 guard !onlyPrimary || job.repo.path == primary.path, case .success(let snapshot)? = results[job.folder] else { return nil }
-                return (job.repo, snapshot)
+                return (snapshot.repository?.root ?? job.repo, snapshot)
             }
             ReviewCache.writer.async {
                 for item in loaded {
@@ -613,12 +647,13 @@ final class ReviewModel: ObservableObject {
     /// off the main thread; a root whose fresh answer landed first keeps it.
     private func seedFromCache(_ jobs: [(folder: String, repo: URL)], scope: DiffScope, session: String?) {
         DispatchQueue.global(qos: .userInitiated).async {
-            var found: [String: ReviewCache.Diff] = [:]
+            var found: [String: (ReviewCache.Diff, ReviewRepositoryLayout)] = [:]
             for job in jobs {
+                guard let layout = try? GitWorkingTreeSource(repo: job.repo).repositoryLayout() else { continue }
                 let span = HubPerf.begin("review.cache.read", "\(scope)")
-                let diff = ReviewCache.readDiff(repo: job.repo.path, scope: scope, session: session)
+                let diff = ReviewCache.readDiff(repo: layout.root.path, scope: scope, session: session)
                 span.end(diff.map { "\($0.files.count) files\($0.stripped ? " (list only)" : "")" } ?? "miss")
-                found[job.folder] = diff
+                found[job.folder] = diff.map { ($0, layout) }
             }
             guard !found.isEmpty else { return }
             DispatchQueue.main.async { [weak self] in
@@ -628,13 +663,14 @@ final class ReviewModel: ObservableObject {
     }
 
     @MainActor
-    private func applyCached(_ found: [String: ReviewCache.Diff], scope: DiffScope) {
+    private func applyCached(_ found: [String: (ReviewCache.Diff, ReviewRepositoryLayout)], scope: DiffScope) {
         guard scope == self.scope, loading else { return }
         var next = roots
         var seeded: Set<String> = []
         for index in next.indices {
             let folder = next[index].folder
-            guard let diff = found[folder], next[index].shown, next[index].files.isEmpty, !freshFolders.contains(folder) else { continue }
+            guard let (diff, layout) = found[folder], next[index].shown, next[index].files.isEmpty, !freshFolders.contains(folder) else { continue }
+            applyLayout(layout, to: &next[index])
             next[index].files = diff.files
             next[index].branch = diff.branch
             if next[index].repo?.path == repo.path {
@@ -657,6 +693,15 @@ final class ReviewModel: ObservableObject {
         resetBlame()
     }
 
+    private func applyLayout(_ layout: ReviewRepositoryLayout, to root: inout ReviewRoot) {
+        if root.folder == roots.first?.folder, repo.path != layout.root.path {
+            repo = layout.root
+            comments = ReviewCommentStore(repo: layout.root)
+        }
+        root.repo = layout.root
+        repositoryLayouts[root.folder] = layout
+    }
+
     /// One load's answers, per root folder. A failed root keeps its last files and shows the error on
     /// its folder row; only a single-root diff shows it over the whole pane.
     @MainActor
@@ -666,6 +711,7 @@ final class ReviewModel: ObservableObject {
             guard let result = results[next[index].folder] else { continue }
             switch result {
             case .success(let snapshot):
+                if let layout = snapshot.repository { applyLayout(layout, to: &next[index]) }
                 freshFolders.insert(next[index].folder)
                 cachedFolders.remove(next[index].folder)
                 next[index].error = nil
@@ -677,6 +723,7 @@ final class ReviewModel: ObservableObject {
                     }
                     branch = snapshot.branch
                     base = snapshot.base
+                    displayedHead = snapshot.head
                 }
                 commentStore(for: next[index])?.reanchor(files: snapshot.files)
             case .failure(let failure):
@@ -691,6 +738,7 @@ final class ReviewModel: ObservableObject {
             roots = next
         }
         error = roots.count == 1 ? roots[0].error : nil
+        if started { watchRoots() }
 
         let merged = ReviewRoots.merge(roots)
         let changed = merged != files
@@ -813,8 +861,9 @@ final class ReviewModel: ObservableObject {
         let primary = primaryRoot
         let prFiles = primary.shown ? primary.files : []
         let live = pr?.payload?.threads ?? []
-        let proposalComments = PRThreadRendering.refresh(proposal?.rendered(for: prFiles) ?? [], with: live, forge: pr?.payload?.pr.forge)
-        let shown = Set(proposal?.threads.map(\.id) ?? [])
+        let proposalBase = proposal?.rendered(for: prFiles, liveThreads: pr?.payload?.threads) ?? []
+        let proposalComments = pr?.payload == nil ? proposalBase : PRThreadRendering.refresh(proposalBase, with: live, files: prFiles, forge: pr?.payload?.pr.forge)
+        let shown = Set(proposalComments.filter { $0.id.hasPrefix("thread:") }.map { String($0.id.dropFirst(7)) })
         let liveComments = showsLiveThreadsInline ? PRThreadRendering.rendered(live, files: prFiles, skip: shown, forge: pr?.payload?.pr.forge) : []
         if !live.isEmpty {
             HubPerf.log("review.prThreads \(live.count) live, \(liveComments.count) on this diff (\(files.count) files, scope \(scope.title))")
@@ -1319,9 +1368,10 @@ final class ReviewModel: ObservableObject {
                               thread: proposal.replyToThread(draftID: draft.id), kind: "draft", state: draft.status)
         }
         if id.hasPrefix("thread:"), let thread = proposal.threads.first(where: { $0.id == String(id.dropFirst(7)) }),
-           let text = thread.reply, let file = primary.files.first(where: { $0.path == thread.path }) {
-            return Suggestion(text: text, path: thread.path, fileID: primary.global(file.id), side: .additions,
-                              startLine: thread.line, line: thread.line, thread: thread.id, kind: "thread", state: thread.replyStatus)
+           let live = pr?.payload?.threads.first(where: { $0.id == thread.id && !$0.outdated }),
+           let text = thread.reply, let file = primary.files.first(where: { $0.path == live.path || (live.oldPath != nil && $0.oldPath == live.oldPath) }) {
+            return Suggestion(text: text, path: live.path, fileID: primary.global(file.id), side: live.side,
+                              startLine: min(live.startLine ?? live.line, live.line), line: live.line, thread: live.id, kind: "thread", state: thread.replyStatus)
         }
         return nil
     }
@@ -1341,13 +1391,18 @@ final class ReviewModel: ObservableObject {
         }
         let owner = commentOwner(id)
         let isLocal = owner != nil
+        let selectedPR = pr?.payload?.pr.identity
+        let selectedHead = reviewedHead
         let markSent: (String, String?) -> Void = { [weak self] status, providerId in
             if id.hasPrefix("draft:") {
                 self?.updateDraft(id, status: status, providerId: providerId)
             } else if id.hasPrefix("thread:") {
                 self?.updateThread(id, replyStatus: status, providerId: providerId)
             } else {
-                owner?.store.mark(id, status == "posted" ? .posted : .draft, remoteID: providerId)
+                let ownership = providerId.flatMap { draftID in
+                    selectedPR.map { PRDraftOwnership(pr: $0, headSha: selectedHead, draftID: draftID) }
+                }
+                owner?.store.mark(id, status == "posted" ? .posted : .draft, remoteID: providerId, owner: ownership)
                 self?.pushComments()
             }
         }
@@ -1372,6 +1427,16 @@ final class ReviewModel: ObservableObject {
         case .prDraft, .prComment:
             guard let store = pr else {
                 notice = "This diff is not a PR: open the PR in the hub's PRs mode to post there."
+                return
+            }
+            if owner == nil, let proposal,
+               proposal.identity != selectedPR || (id.hasPrefix("draft:") && !proposal.permitsDraftSend(displayedHead: reviewedHead, pr: selectedPR)) {
+                notice = "This proposal was reviewed at another PR or revision. Refresh the proposal before sending its line comments."
+                return
+            }
+            if let comment = owner?.store.comments.first(where: { $0.id == id }), comment.state == .draft,
+               comment.remoteOwner?.permits(pr: selectedPR, draftID: comment.remoteDraftID) != true {
+                notice = "This draft belongs to another PR or has unknown ownership. Its remote draft was left unchanged."
                 return
             }
             if let other = item.otherRoot {
@@ -1473,6 +1538,12 @@ final class ReviewModel: ObservableObject {
             return
         }
 
+        guard comment.remoteOwner?.permits(pr: store.payload?.pr.identity, draftID: draftId) == true else {
+            comments.delete(id: id)
+            notice = "Local comment deleted. The remote draft has different or unknown ownership and was left unchanged."
+            pushComments()
+            return
+        }
         let alert = NSAlert()
         alert.messageText = "Delete this comment and its draft on \(prLabel)?"
         alert.informativeText = "It is also a draft in your pending review. Nobody else saw the draft.\n\n\(comment.body.prefix(300))"
@@ -1485,7 +1556,7 @@ final class ReviewModel: ObservableObject {
                 guard let self else { return }
                 switch result {
                 case .success:
-                    self.comments.delete(id: id)
+                    comments.delete(id: id)
                     self.notice = "Comment and its PR draft deleted."
                 case .failure(let error):
                     self.notice = "Could not delete the PR draft (\(error)); the comment stays."
@@ -1505,6 +1576,10 @@ final class ReviewModel: ObservableObject {
     private func syncEditedDraft(_ id: String) {
         guard let comment = comments.comments.first(where: { $0.id == id }), comment.state == .draft,
               let draftId = comment.remoteDraftID, let store = pr else { return }
+        guard comment.remoteOwner?.permits(pr: store.payload?.pr.identity, draftID: draftId) == true else {
+            notice = "The edit was saved locally. The remote draft has different or unknown ownership and was left unchanged."
+            return
+        }
         store.write("Updating the draft…", body: comment.body, args: { PRCommand.draftUpdate(store.target, draftId: draftId, bodyFile: $0) }) { [weak self] result in
             if case .failure(let error) = result {
                 self?.notice = "The comment changed here, but its PR draft kept the old text: \(error)"
@@ -1950,7 +2025,7 @@ struct ScopeMenu: View {
     var body: some View {
         // Its own width when that fits, so the totals sit beside it; it shrinks in a narrow pane instead
         // of pushing the header past both edges: a PR range label
-        // ("feature/next…chore/col-302921-repo-cleanup") is wider than the whole diff pane at 1000 pt.
+        // ("feature/next…chore/abc-123456-repo-cleanup") is wider than the whole diff pane at 1000 pt.
         // A drawn `MenuButton` shrinks like the text in it. The `Menu` it replaces needed a ViewThatFits of
         // its own for that, and both ViewThatFits built new pop-up buttons on every measurement of the header.
         MenuButton(items: { ScopeMenu.items(model: model) }) {
@@ -2013,7 +2088,7 @@ struct ScopeMenu: View {
 
 /// The agent's overall verdict above the diff, with a tally of what Martin decided so far.
 /// Chip, then three lines: who reviewed what (one line), the counts (one line, or two short ones in a
-/// narrow pane), the summary. The counts used to share the title's row and broke "!7455" in two.
+/// narrow pane), the summary. The counts used to share the title's row and broke "!1234" in two.
 private struct ProposalBanner: View {
     @ObservedObject var model: ReviewModel
     let proposal: ProposalDocument
@@ -2622,8 +2697,8 @@ private struct RendererHost: NSViewRepresentable {
 
 // MARK: - Live reload
 
-/// FSEvents on the repository with the stream's own latency as the debounce; `.git/` noise is
-/// ignored except the index and HEAD, which move on commit, checkout and stage.
+/// FSEvents on the checkout and its actual Git directories, including shared refs of linked worktrees.
+/// The stream's latency coalesces writes; object database and build output noise is ignored.
 /// The stream holds this box (retained, released by the stream), never the watcher itself, so an
 /// event queued after the watcher is gone finds a nil reference instead of freed memory.
 private final class RepoWatcherBox {
@@ -2637,10 +2712,10 @@ private final class RepoWatcherBox {
 private final class RepoWatcher {
     private var stream: FSEventStreamRef?
     private let onChange: () -> Void
-    private let root: String
+    private let layout: ReviewRepositoryLayout
 
-    init(root: URL, onChange: @escaping () -> Void) {
-        self.root = root.path
+    init(layout: ReviewRepositoryLayout, onChange: @escaping () -> Void) {
+        self.layout = layout
         self.onChange = onChange
         var context = FSEventStreamContext(
             version: 0,
@@ -2664,7 +2739,7 @@ private final class RepoWatcher {
             nil,
             callback,
             &context,
-            [root.path] as CFArray,
+            layout.watchPaths as CFArray,
             FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
             0.35,
             FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents)
@@ -2684,15 +2759,7 @@ private final class RepoWatcher {
     }
 
     private func matters(_ path: String) -> Bool {
-        if path.contains("/node_modules/") || path.contains("/.build/") {
-            return false
-        }
-
-        if path.contains("/.git/") {
-            return path.hasSuffix("/.git/index") || path.hasSuffix("/.git/HEAD")
-        }
-
-        return true
+        layout.matters(path)
     }
 }
 

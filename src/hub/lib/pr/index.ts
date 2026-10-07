@@ -1,11 +1,13 @@
+import { createHash } from "node:crypto";
 import { defaultReviewCommentClient } from "@app/github/lib/review-comments";
 import { resolveProjectApi } from "@app/gitlab/lib/client";
 import type { CommandRunner } from "@genesiscz/utils/git/origins";
+import { getOctokitForWrite } from "@genesiscz/utils/github/octokit";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { Storage } from "@genesiscz/utils/storage";
 import { cached } from "@genesiscz/utils/storage/cache-flag";
-import { type FactsReader, findBranchPr, findPrByRef } from "./find";
+import { explicitPrTarget, type FactsReader, findBranchPr, findPrByRef } from "./find";
 import { githubBackend } from "./github";
 import { gitlabBackend } from "./gitlab";
 import { type FoundPr, HubPrError, type PrBackend, type ThreadsResult } from "./types";
@@ -47,7 +49,7 @@ export async function resolvePr(options: {
 /** The provider backend with the logged-in identity: octokit for GitHub, the GitLab HTTP client otherwise. */
 export async function backendFor(pr: FoundPr): Promise<PrBackend> {
     if (pr.provider === "github") {
-        return githubBackend({ pr, client: defaultReviewCommentClient() });
+        return githubBackend({ pr, client: defaultReviewCommentClient({ host: pr.host }) });
     }
 
     const api = await prof.measureAsync("backend.gitlab", () =>
@@ -71,9 +73,124 @@ function cacheStorage(): Storage {
     return new Storage("hub");
 }
 
-function cacheKey(pr: FoundPr): string {
-    const slug = `${pr.provider}-${pr.host}-${pr.project}-${pr.number}`.replace(/[^A-Za-z0-9._-]+/g, "_");
-    return `pr-threads/${slug}.json`;
+function cacheKey(pr: Pick<FoundPr, "provider" | "host" | "project" | "number">, identity = "unscoped"): string {
+    const fingerprint = createHash("sha256")
+        .update([pr.provider, pr.host, pr.project, pr.number, identity].join("\0"))
+        .digest("hex");
+    return `pr-threads/${fingerprint}.json`;
+}
+
+function explicitCacheKey(pr: Pick<FoundPr, "url">, identity: string): string {
+    const url = new URL(pr.url);
+    url.hash = "";
+    url.search = "";
+    const fingerprint = createHash("sha256")
+        .update(`${url.href.replace(/\/$/, "")}\0${identity}`)
+        .digest("hex");
+    return `pr-threads/explicit-${fingerprint}.json`;
+}
+
+type ExplicitTarget = NonNullable<Awaited<ReturnType<typeof explicitPrTarget>>>;
+
+export async function reviewCacheIdentity(pr: ExplicitTarget): Promise<string> {
+    let token: string;
+
+    if (pr.provider === "github") {
+        if (pr.host.toLowerCase() !== "github.com") {
+            throw new HubPrError("unsupported", "GitHub review operations support github.com only");
+        }
+
+        const auth: unknown = await getOctokitForWrite().auth();
+
+        if (typeof auth !== "object" || auth === null || !("token" in auth) || typeof auth.token !== "string") {
+            throw new HubPrError("provider", "GitHub review identity is unavailable");
+        }
+
+        token = auth.token;
+    } else {
+        token = (await resolveProjectApi({ host: gitlabBaseUrl(pr), project: pr.project })).token;
+    }
+
+    return createHash("sha256").update(token).digest("hex");
+}
+
+const threadReads = new Map<string, Promise<ThreadsResult>>();
+
+export async function readPrThreads({
+    repo,
+    pr,
+    maxCacheAgeSeconds = 0,
+    storage = cacheStorage(),
+    readFacts,
+    runner,
+    identityFor = reviewCacheIdentity,
+    resolve = resolvePr,
+    makeBackend = backendFor,
+}: {
+    repo: string;
+    pr?: string;
+    maxCacheAgeSeconds?: number;
+    storage?: Storage;
+    readFacts?: FactsReader;
+    runner?: CommandRunner;
+    identityFor?: typeof reviewCacheIdentity;
+    resolve?: typeof resolvePr;
+    makeBackend?: typeof backendFor;
+}): Promise<ThreadsResult> {
+    const target = pr ? await explicitPrTarget({ ref: pr, readFacts }) : null;
+
+    if (!target) {
+        const found = await resolve({ repo, pr, readFacts, runner });
+        const identity = await identityFor(found);
+        return prThreads({
+            pr: found,
+            backend: await makeBackend(found),
+            maxCacheAgeSeconds,
+            storage,
+            cacheIdentity: identity,
+        });
+    }
+
+    const identity = await identityFor(target);
+    const key = explicitCacheKey(target, identity);
+    const flightKey = `${storage.getCacheDir()}/${key}`;
+    const read = async (): Promise<ThreadsResult> => {
+        if (maxCacheAgeSeconds > 0) {
+            const stored = await storage.getCacheFile<ThreadsResult>(key, `${Math.ceil(maxCacheAgeSeconds)} seconds`);
+
+            if (stored) {
+                return { ...stored, cached: true };
+            }
+        }
+
+        const found = await resolve({ repo, pr, readFacts, runner });
+        return prThreads({
+            pr: found,
+            backend: await makeBackend(found),
+            maxCacheAgeSeconds: 0,
+            storage,
+            cacheIdentity: identity,
+            cacheKeyOverride: key,
+        });
+    };
+
+    if (maxCacheAgeSeconds <= 0) {
+        return read();
+    }
+
+    const existing = threadReads.get(flightKey);
+
+    if (existing) {
+        return existing;
+    }
+
+    const pending = read().finally(() => {
+        if (threadReads.get(flightKey) === pending) {
+            threadReads.delete(flightKey);
+        }
+    });
+    threadReads.set(flightKey, pending);
+    return pending;
 }
 
 /**
@@ -85,13 +202,17 @@ export async function prThreads({
     backend,
     maxCacheAgeSeconds = THREADS_MAX_AGE_SECONDS,
     storage = cacheStorage(),
+    cacheIdentity = "unscoped",
+    cacheKeyOverride,
 }: {
     pr: FoundPr;
     backend: PrBackend;
     maxCacheAgeSeconds?: number;
     storage?: Storage;
+    cacheIdentity?: string;
+    cacheKeyOverride?: string;
 }): Promise<ThreadsResult> {
-    const key = cacheKey(pr);
+    const key = cacheKeyOverride ?? cacheKey(pr, cacheIdentity);
     const { value, hit } = await cached<ThreadsResult>({
         storage,
         key,
@@ -115,6 +236,24 @@ export async function prThreads({
 }
 
 /** A write changed what `threads` returns; the next read must not serve the old answer. */
-export async function forgetThreads({ pr, storage = cacheStorage() }: { pr: FoundPr; storage?: Storage }) {
-    await storage.deleteCacheFile(cacheKey(pr));
+export async function forgetThreads({
+    pr,
+    storage = cacheStorage(),
+    cacheIdentity = "unscoped",
+}: {
+    pr: FoundPr;
+    storage?: Storage;
+    cacheIdentity?: string;
+}) {
+    for (const key of [cacheKey(pr, cacheIdentity), explicitCacheKey(pr, cacheIdentity)]) {
+        const pending = threadReads.get(`${storage.getCacheDir()}/${key}`);
+
+        if (pending) {
+            await pending.catch((error: unknown) =>
+                log.debug({ error }, "preceding thread read failed during invalidation")
+            );
+        }
+
+        await storage.deleteCacheFile(key);
+    }
 }

@@ -462,8 +462,12 @@ final class HubModel: ObservableObject {
     static let pageSize = 80
 
     @Published var sessions: [HubSession] = [] {
-        didSet { worktreeSessions = nil }
+        didSet {
+            worktreeSessions = nil
+            sessionSearchText = Dictionary(sessions.map { ($0.id, Self.searchText($0)) }, uniquingKeysWith: { first, _ in first })
+        }
     }
+    private var sessionSearchText: [String: String] = [:]
     @Published var loadingSessions = false
     /// The list on screen is the last run's, from disk, and the fresh one is loading (Hub/HubSWR.swift).
     @Published private(set) var showingCachedSessions = false
@@ -591,6 +595,15 @@ final class HubModel: ObservableObject {
     var initialMode = HubMode.sessions
     private let wantedSession: String?
     private var transcriptGeneration = 0
+    private var sessionsGeneration = 0
+    private var didSettleLaunch = false
+    var readSessions: (Int) async throws -> [HubSession] = { try await HubSource.sessions(hours: $0) }
+    var readSessionCache: (Int) async -> [HubSession]? = { await HubSessionListCache.read(hours: $0) }
+    var writeSessionCache: ([HubSession], Int) -> Void = { HubSessionListCache.write($0, hours: $1) }
+    var readTranscript: (HubSession, Int) async throws -> TranscriptEnvelope = { try await HubSource.transcript($0, limit: $1) }
+    var readDecisions: (String) throws -> SessionDecisionsEnvelope = {
+        try JSONDecoder().decode(SessionDecisionsEnvelope.self, from: ToolsCLIRunner.run(["question", "inbox", "--session", $0, "--json"]))
+    }
     /// The session `select` last set up (review, decisions, folders).
     private var selectedSetUp: String?
     private var firstPageObserver: NSObjectProtocol?
@@ -772,13 +785,27 @@ final class HubModel: ObservableObject {
     var filtered: [HubSession] {
         let needle = filter.trimmed.lowercased()
         guard !needle.isEmpty else { return sessions }
-        return sessions.filter {
-            [$0.displayTitle, $0.project ?? "", $0.account ?? "", $0.provider, $0.sessionId, $0.cwd]
-                .joined(separator: " ").lowercased().contains(needle)
+        return sessions.filter { sessionSearchText[$0.id]?.contains(needle) == true }
+    }
+
+    static func searchText(_ row: HubSession) -> String {
+        [row.displayTitle, row.project ?? "", row.account ?? "", row.provider, row.sessionId, row.cwd]
+            .joined(separator: " ").lowercased()
+    }
+
+    static func timeGroups(_ rows: [HubSession], now: Date) -> [(title: String, rows: [HubSession], managed: Bool)] {
+        var live: [HubSession] = [], today: [HubSession] = [], earlier: [HubSession] = []
+        let calendar = Calendar.current
+        for row in rows {
+            if row.isLive(at: now) { live.append(row) }
+            else if calendar.isDate(row.lastActivity ?? .distantPast, inSameDayAs: now) { today.append(row) }
+            else { earlier.append(row) }
         }
+        return [("Live", live, false), ("Today", today, false), ("Earlier", earlier, false)].filter { !$0.1.isEmpty }
     }
 
     func setMode(_ next: HubMode) {
+        didSettleLaunch = true
         // A switch costs the renders after it: the old mode's views go and the new mode's arrive.
         MainActor.assumeIsolated { HubMainBusy.measure("mode.\(next.rawValue)") }
         let previous = mode
@@ -918,12 +945,17 @@ final class HubModel: ObservableObject {
     @MainActor
     func exportSession(_ session: HubSession) async -> String {
         // With the transcript pane open, `select` fetched no list: the export reads its recent turns now.
-        if transcript.isEmpty, session.id == selectedID, let envelope = try? await HubSource.transcript(session, limit: Self.pageSize) {
-            transcript = TranscriptTimeline.build(envelope.turns)
-            transcriptTotals = envelope.totals?.summary
+        let owned = session.id == selectedID
+        var capturedTranscript = owned ? transcript : []
+        var capturedTotals = owned ? transcriptTotals : nil
+        let capturedFiles = owned && review?.session == session.sessionId ? review?.files ?? [] : []
+        let capturedDecisions = owned ? decisions : []
+        if capturedTranscript.isEmpty, let envelope = try? await readTranscript(session, Self.pageSize) {
+            capturedTranscript = TranscriptTimeline.build(envelope.turns)
+            capturedTotals = envelope.totals?.summary
         }
         var turns: [[String: Any]] = []
-        for item in transcript.suffix(12) {
+        for item in capturedTranscript.suffix(12) {
             switch item {
             case .user(let turn): turns.append(["who": "You", "text": String(turn.text.prefix(600))])
             case .assistant(let turn): turns.append(["who": "Agent", "text": String(turn.text.prefix(600))])
@@ -934,24 +966,26 @@ final class HubModel: ObservableObject {
             "session": [
                 "title": session.displayTitle, "provider": session.provider, "account": session.account ?? "",
                 "model": session.model ?? "", "folder": session.cwd, "id": session.sessionId,
-                "last activity": HubFormat.ago(session.lastActivity), "tokens": transcriptTotals ?? "",
+                "last activity": HubFormat.ago(session.lastActivity), "tokens": capturedTotals ?? "",
             ],
-            "changed files": (review?.files ?? []).map { ["path": $0.path, "added": $0.additions, "removed": $0.deletions] as [String: Any] },
-            "decisions": decisions.map { ["number": $0.number, "title": $0.title, "status": $0.status, "answer": $0.draftOption ?? ""] as [String: Any] },
+            "changed files": capturedFiles.map { ["path": $0.path, "added": $0.additions, "removed": $0.deletions] as [String: Any] },
+            "decisions": capturedDecisions.map { ["number": $0.number, "title": $0.title, "status": $0.status, "answer": $0.draftOption ?? ""] as [String: Any] },
             "recent turns": turns,
         ]
         return await HubMarkdownExport.export(title: session.displayTitle, payload: payload, fileStem: "session-\(session.sessionId.prefix(8))")
     }
 
     func loadSessions() {
+        sessionsGeneration += 1
+        let generation = sessionsGeneration
         loadingSessions = true
         let hours = Self.recentHours
         Task { @MainActor in
-            let fetch = Task { try await HubSource.sessions(hours: hours) }
+            let fetch = Task { try await readSessions(hours) }
             // The last run's list paints at once and the window settles on it, unless a scripted
             // `--session` names one it does not hold; the fresh list then slides in behind it.
-            var settled = false
-            if sessions.isEmpty, let cached = await HubSessionListCache.read(hours: hours), !cached.isEmpty, sessions.isEmpty, loadingSessions {
+            if sessions.isEmpty, let cached = await readSessionCache(hours), !cached.isEmpty,
+               sessions.isEmpty, generation == sessionsGeneration {
                 HubSWR.painted("sessions.list", "\(cached.count) sessions")
                 showingCachedSessions = true
                 applySessions(cached)
@@ -959,25 +993,24 @@ final class HubModel: ObservableObject {
                 if initialMode != .worktrees,
                    wantedSession == nil || wantedSession == AgentProcs.selectionID || wantedSessionRow != nil {
                     settleSessions()
-                    settled = true
                 }
             }
             do {
                 let rows = try await fetch.value
+                guard generation == sessionsGeneration else { return }
                 PerfLog.markOnce("hub.sessions.first-loaded")
                 loadingSessions = false
                 showingCachedSessions = false
-                HubSessionListCache.write(rows, hours: hours)
+                writeSessionCache(rows, hours)
                 applySessions(rows)
-                if !settled {
-                    settleSessions()
-                }
+                settleSessions()
                 resolvePendingSession(fresh: true)
             } catch {
+                guard generation == sessionsGeneration else { return }
                 loadingSessions = false
                 showingCachedSessions = false
                 self.error = "\(error)"
-                if !settled {
+                if !didSettleLaunch {
                     onSettled?()
                 }
             }
@@ -1094,6 +1127,8 @@ final class HubModel: ObservableObject {
 
     /// The first selection after a load: the scripted mode or session, else the newest session.
     private func settleSessions() {
+        guard !didSettleLaunch else { return }
+        didSettleLaunch = true
         if initialMode == .worktrees {
             if let first = sessions.first {
                 selectedID = first.id
@@ -1413,6 +1448,9 @@ final class HubModel: ObservableObject {
         // Again for the same session only after a failed load: the transcript list stays empty while the
         // transcript pane is open, so it can no longer tell whether this session was set up.
         guard id != selectedSetUp || transcriptError != nil else { return }
+        didSettleLaunch = true
+        transcriptGeneration += 1
+        loadingTranscript = false
         selectedSetUp = id
         selectedID = id
         transcript = []
@@ -1564,8 +1602,8 @@ final class HubModel: ObservableObject {
         let limit = transcriptLimit
         Task { @MainActor in
             do {
-                let envelope = try await HubSource.transcript(session, limit: limit)
-                guard generation == transcriptGeneration else { return }
+                let envelope = try await readTranscript(session, limit)
+                guard generation == transcriptGeneration, selectedID == session.id else { return }
                 transcript = HubPerf.measure("transcript.timeline", "\(envelope.turns.count) turns") {
                     TranscriptTimeline.build(envelope.turns)
                 }
@@ -1574,7 +1612,7 @@ final class HubModel: ObservableObject {
                 transcriptEnded = envelope.terminated
                 transcriptError = nil
             } catch {
-                guard generation == transcriptGeneration else { return }
+                guard generation == transcriptGeneration, selectedID == session.id else { return }
                 transcriptError = "\(error)"
             }
             loadingTranscript = false
@@ -1919,10 +1957,7 @@ private struct SessionListView: View {
         let rows = model.filtered
         switch mode {
         case .time:
-            let live = rows.filter(\.isLive)
-            let today = rows.filter { !$0.isLive && Calendar.current.isDateInToday($0.lastActivity ?? .distantPast) }
-            let earlier = rows.filter { !$0.isLive && !Calendar.current.isDateInToday($0.lastActivity ?? .distantPast) }
-            return [("Live", live, false), ("Today", today, false), ("Earlier", earlier, false)].filter { !$0.rows.isEmpty }
+            return HubModel.timeGroups(rows, now: Date())
         case .project, .harness, .projectHarness:
             let key: (HubSession) -> String = { session in
                 switch mode {

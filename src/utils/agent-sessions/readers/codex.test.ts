@@ -931,7 +931,7 @@ test("the operations factory binds compact metadata, scan, and selected reads", 
     }
     const selected = await operations.readRecords(source, { locators: ["jsonl:2"] });
 
-    expect(operations.parserVersion).toBe("6");
+    expect(operations.parserVersion).toBe("7");
     expect(metadata.metadata?.firstPrompt).toBe("factory prompt");
     expect(records.map((record) => record.locator)).toEqual(["jsonl:1", "jsonl:2"]);
     expect(selected.records.map((record) => record.original)).toEqual([message]);

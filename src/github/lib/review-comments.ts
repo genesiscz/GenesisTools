@@ -1,4 +1,4 @@
-import { getOctokit } from "@genesiscz/utils/github/octokit";
+import { getOctokitForWrite } from "@genesiscz/utils/github/octokit";
 import { logger } from "@genesiscz/utils/logger";
 
 /**
@@ -24,8 +24,12 @@ export interface ReviewCommentClient {
     }): Promise<{ id: number; html_url: string }>;
 }
 
-export function defaultReviewCommentClient(): ReviewCommentClient {
-    const octokit = getOctokit();
+export function defaultReviewCommentClient({ host = "github.com" }: { host?: string } = {}): ReviewCommentClient {
+    if (host.toLowerCase() !== "github.com") {
+        throw new Error(`GitHub review operations do not support host ${host}; no request was sent`);
+    }
+
+    const octokit = getOctokitForWrite();
     return {
         graphql: (query, variables) => octokit.graphql(query, variables),
         async createReviewComment(input) {

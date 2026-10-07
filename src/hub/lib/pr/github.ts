@@ -66,7 +66,10 @@ query($owner: String!, $repo: String!, $number: Int!) {
 
 const COMMENT_QUERY = `
 query($id: ID!) {
-  node(id: $id) { ... on PullRequestReviewComment { id state viewerCanUpdate viewerCanDelete } }
+  node(id: $id) { ... on PullRequestReviewComment {
+    id state viewerCanUpdate viewerCanDelete
+    pullRequest { number repository { nameWithOwner } }
+  } }
 }`;
 
 const UPDATE_COMMENT = `
@@ -95,8 +98,23 @@ mutation($threadId: ID!) {
 export const SUBMIT_REVIEW = `
 mutation($reviewId: ID!, $event: PullRequestReviewEvent!, $body: String) {
   submitPullRequestReview(input: {pullRequestReviewId: $reviewId, event: $event, body: $body}) {
-    pullRequestReview { id url }
+    pullRequestReview {
+      id url
+      comments(first: 100) { nodes { id } pageInfo { hasNextPage endCursor } }
+    }
   }
+}`;
+
+interface SubmittedComments {
+    nodes: Array<{ id: string }>;
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+}
+
+const SUBMITTED_COMMENTS_QUERY = `
+query($id: ID!, $cursor: String!) {
+  node(id: $id) { ... on PullRequestReview {
+    comments(first: 100, after: $cursor) { nodes { id } pageInfo { hasNextPage endCursor } }
+  } }
 }`;
 
 /** 🛑 A review created WITH an event is published at once. Only `publish` sends it (no drafts, verdict only). */
@@ -238,11 +256,23 @@ export function githubBackend({ pr, client }: { pr: FoundPr; client: ReviewComme
     /** Refuses an id that is not one of my pending review comments: a published comment is not a draft. */
     async function assertDraft(draftId: string): Promise<void> {
         const found = await client.graphql<{
-            node: { id?: string; state?: string; viewerCanUpdate?: boolean; viewerCanDelete?: boolean } | null;
+            node: {
+                id?: string;
+                state?: string;
+                viewerCanUpdate?: boolean;
+                viewerCanDelete?: boolean;
+                pullRequest?: { number: number; repository: { nameWithOwner: string } };
+            } | null;
         }>(COMMENT_QUERY, { id: draftId });
 
         if (!found.node?.id) {
             throw new HubPrError("not-found", `no review comment ${draftId}`);
+        }
+
+        const owner = found.node.pullRequest;
+
+        if (owner?.number !== pr.number || owner.repository.nameWithOwner.toLowerCase() !== pr.project.toLowerCase()) {
+            throw new HubPrError("bad-input", "the draft does not belong to the selected pull request");
         }
 
         if (found.node.state !== "PENDING") {
@@ -333,14 +363,45 @@ export function githubBackend({ pr, client }: { pr: FoundPr; client: ReviewComme
 
             if (mine) {
                 const submitted = await client.graphql<{
-                    submitPullRequestReview: { pullRequestReview: { id: string; url: string } };
+                    submitPullRequestReview: {
+                        pullRequestReview: { id: string; url: string; comments: SubmittedComments };
+                    };
                 }>(SUBMIT_REVIEW, { reviewId: mine.id, event, body: body ?? null });
-                log.info({ pr: pr.number, event, drafts: mine.comments.totalCount }, "github: review submitted");
+                const review = submitted.submitPullRequestReview.pullRequestReview;
+                const submittedIds = review.comments.nodes.map((comment) => comment.id);
+                let page = review.comments.pageInfo;
+                let warning: string | undefined;
+                const cursors = new Set<string>();
+
+                try {
+                    while (page.hasNextPage) {
+                        if (!page.endCursor || cursors.has(page.endCursor)) {
+                            throw new Error("Submitted comment pagination did not advance");
+                        }
+
+                        cursors.add(page.endCursor);
+                        const more = await client.graphql<{ node: { comments: SubmittedComments } }>(
+                            SUBMITTED_COMMENTS_QUERY,
+                            { id: review.id, cursor: page.endCursor }
+                        );
+                        submittedIds.push(...more.node.comments.nodes.map((comment) => comment.id));
+                        page = more.node.comments.pageInfo;
+                    }
+                } catch (error) {
+                    warning =
+                        "Review submitted, but some submitted comment identities could not be read; refresh before sending more.";
+                    log.warn({ error, reviewId: review.id }, warning);
+                }
+
+                log.info({ pr: pr.number, event, drafts: submittedIds.length }, "github: review submitted");
                 return {
                     event,
                     published: mine.comments.totalCount,
-                    reviewId: submitted.submitPullRequestReview.pullRequestReview.id,
-                    url: submitted.submitPullRequestReview.pullRequestReview.url,
+                    submittedIds,
+                    pr: { provider: pr.provider, host: pr.host, project: pr.project, number: pr.number },
+                    warning,
+                    reviewId: review.id,
+                    url: review.url,
                 };
             }
 
@@ -360,6 +421,8 @@ export function githubBackend({ pr, client }: { pr: FoundPr; client: ReviewComme
             return {
                 event,
                 published: 0,
+                submittedIds: [],
+                pr: { provider: pr.provider, host: pr.host, project: pr.project, number: pr.number },
                 reviewId: created.addPullRequestReview.pullRequestReview.id,
                 url: created.addPullRequestReview.pullRequestReview.url,
             };

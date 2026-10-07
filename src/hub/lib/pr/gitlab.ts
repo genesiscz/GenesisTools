@@ -352,16 +352,25 @@ export function gitlabBackend({ pr, api }: { pr: FoundPr; api: ProjectApi }): Pr
                 mustSucceed(await publishAllDrafts(api, iid), "bulk publish");
             }
 
+            let warning: string | undefined;
+
             if (event === "APPROVE") {
                 try {
                     await restWrite<void>(api, { method: "POST", path: `${mrPath}/approve` });
                 } catch (error) {
-                    throw new HubPrError("provider", `drafts published, approve failed: ${errorMessage(error)}`);
+                    warning = `Drafts published, but approval failed: ${errorMessage(error)}`;
+                    log.warn({ error, iid }, warning);
                 }
             }
 
             log.info({ iid, event, drafts: drafts.length }, "gitlab: review published");
-            return { event, published: drafts.length };
+            return {
+                event,
+                published: drafts.length,
+                submittedIds: drafts.map((draft) => String(draft.id)),
+                pr: { provider: pr.provider, host: pr.host, project: pr.project, number: pr.number },
+                warning,
+            };
         },
     };
 }

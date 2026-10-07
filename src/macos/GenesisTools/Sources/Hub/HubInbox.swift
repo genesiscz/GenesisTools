@@ -1761,11 +1761,11 @@ private struct SessionInfoPopover: View {
     }
 
     private func loadSpend() {
-        if let cached = session.sessionId.flatMap({ HubSpend.cached($0) }) {
+        guard let hubSession else { return }
+        if let cached = HubSpend.cached(hubSession) {
             spend = cached
             return
         }
-        guard let hubSession else { return }
         DispatchQueue.global(qos: .utility).async {
             let estimate = HubSpend.fetch(hubSession)
             DispatchQueue.main.async { spend = estimate }

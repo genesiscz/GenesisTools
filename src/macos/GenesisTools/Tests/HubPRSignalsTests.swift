@@ -36,7 +36,10 @@ final class HubPRSignalsTests: XCTestCase {
         XCTAssertEqual(status.config.repos["/work/web"]?.events?["merged"], false)
         XCTAssertEqual(status.repos["github.com/acme/web"]?.path, "/work/web")
         XCTAssertEqual(status.recent.first?.ref, "group/app!3")
-        XCTAssertEqual(HubPRRef(status.recent[0].ref), HubPRRef(project: "group/app", number: 3))
+        let ref = try XCTUnwrap(HubPRRef(status.recent[0].ref))
+        XCTAssertEqual(ref.project, "group/app")
+        XCTAssertEqual(ref.number, 3)
+        XCTAssertTrue(ref.isMergeRequest)
         XCTAssertEqual(status.daemonTask, false)
     }
 }

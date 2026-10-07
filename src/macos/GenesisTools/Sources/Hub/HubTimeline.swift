@@ -558,11 +558,11 @@ final class HubTimelineModel: ObservableObject {
     /// The list-price estimate the session pane shows, from `tools ai-spend session` (seconds; off the main thread).
     private func loadSpend(sessionId: String, at: Date) {
         spend[sessionId] = .some(nil)
-        if let cached = HubSpend.cached(sessionId) {
+        let row = HubSession(sessionId: sessionId, mtime: at.timeIntervalSince1970 * 1000)
+        if let cached = HubSpend.cached(row) {
             spend[sessionId] = cached
             return
         }
-        let row = HubSession(sessionId: sessionId, mtime: at.timeIntervalSince1970 * 1000)
         DispatchQueue.global(qos: .utility).async {
             let span = HubPerf.begin("timeline.detail.spend", String(sessionId.prefix(8)))
             let estimate = HubSpend.fetch(row)

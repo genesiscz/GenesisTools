@@ -11,7 +11,7 @@ struct ReviewRoot: Equatable {
     /// The folder as the hub stores it: the session's own folder, or one added in Files.
     let folder: String
     /// The git repository that holds `folder`; nil when the folder is not inside one.
-    let repo: URL?
+    var repo: URL?
     /// Whether Changes shows this root. An unticked root keeps its folder row and loads nothing.
     var shown = true
     /// An added folder: its row offers Remove. The session's own folder cannot be removed.
@@ -58,7 +58,7 @@ struct ReviewRoot: Equatable {
 
     /// The same roots, ignoring what the last load found: a change here needs a new load.
     func sameSetup(as other: ReviewRoot) -> Bool {
-        folder == other.folder && repo == other.repo && shown == other.shown && removable == other.removable && prefix == other.prefix
+        folder == other.folder && repo?.path == other.repo?.path && shown == other.shown && removable == other.removable && prefix == other.prefix
     }
 }
 

@@ -222,6 +222,59 @@ final class ReviewRootsTests: XCTestCase {
         XCTAssertEqual(model.files.map(\.path), ["tools/README.md"])
     }
 
+    func testNestedFolderUsesRepositoryRootAndSkipsOversizedHistoricalBlobs() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("nested-review-\(UUID())").resolvingSymlinksInPath()
+        let nested = root.appendingPathComponent("packages/app")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try git(root, ["init", "-q"])
+        try "before\n".write(to: root.appendingPathComponent("root.txt"), atomically: true, encoding: .utf8)
+        try "nested before\n".write(to: nested.appendingPathComponent("nested.txt"), atomically: true, encoding: .utf8)
+        try String(repeating: "x", count: GitWorkingTreeSource.maxBytes + 100).write(to: root.appendingPathComponent("huge.txt"), atomically: true, encoding: .utf8)
+        try git(root, ["add", "."])
+        try git(root, ["-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "fixture"])
+        try "after\n".write(to: root.appendingPathComponent("root.txt"), atomically: true, encoding: .utf8)
+        try "nested after\n".write(to: nested.appendingPathComponent("nested.txt"), atomically: true, encoding: .utf8)
+        try "new\n".write(to: nested.appendingPathComponent("untracked.txt"), atomically: true, encoding: .utf8)
+        try "small now\n".write(to: root.appendingPathComponent("huge.txt"), atomically: true, encoding: .utf8)
+
+        let snapshot = try GitWorkingTreeSource(repo: nested).load()
+        XCTAssertEqual(snapshot.repository?.root.path, root.path)
+        XCTAssertEqual(Set(snapshot.files.map(\.path)), ["root.txt", "huge.txt", "packages/app/nested.txt", "packages/app/untracked.txt"])
+        XCTAssertEqual(snapshot.files.first { $0.path == "root.txt" }?.newContents, "after\n")
+        XCTAssertEqual(snapshot.files.first { $0.path == "packages/app/nested.txt" }?.newContents, "nested after\n")
+        XCTAssertEqual(snapshot.files.first { $0.path == "huge.txt" }?.skipped, "large file, 976 KB")
+        XCTAssertNil(snapshot.files.first { $0.path == "huge.txt" }?.oldContents)
+
+        let model = ReviewModel(repo: nested, options: DiffViewOptions(), renderer: NullRenderer())
+        model.reload()
+        let deadline = Date().addingTimeInterval(10)
+        while model.loading && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertFalse(model.loading)
+        XCTAssertEqual(model.repo.path, root.path)
+        XCTAssertEqual(model.roots.first?.folder, nested.path)
+        XCTAssertEqual(model.comments.directory, ReviewCommentStore(repo: root).directory)
+        let rootFile = try XCTUnwrap(model.files.first { $0.path == "root.txt" })
+        XCTAssertEqual(model.absolutePath(of: rootFile), root.appendingPathComponent("root.txt").path)
+
+        let linked = root.appendingPathComponent("linked")
+        try git(root, ["worktree", "add", "--detach", linked.path, "HEAD"])
+        let layout = try GitWorkingTreeSource(repo: linked.appendingPathComponent("packages/app")).repositoryLayout()
+        XCTAssertEqual(layout.root.path, linked.path)
+        XCTAssertNotEqual(layout.gitDirectory, layout.commonDirectory)
+        for path in [layout.gitDirectory.appendingPathComponent("index").path,
+                     layout.gitDirectory.appendingPathComponent("HEAD").path,
+                     layout.commonDirectory.appendingPathComponent("packed-refs").path,
+                     layout.commonDirectory.appendingPathComponent("refs/remotes/origin/main").path] {
+            XCTAssertTrue(layout.matters(path), path)
+        }
+        XCTAssertFalse(layout.matters(layout.commonDirectory.appendingPathComponent("objects/aa/blob").path))
+        XCTAssertFalse(layout.matters(linked.appendingPathComponent("node_modules/pkg/index.js").path))
+        XCTAssertTrue(layout.matters(linked.appendingPathComponent("packages/app/nested.txt").path))
+    }
+
     @discardableResult
     private func git(_ repo: URL, _ args: [String]) throws -> Int32 {
         let process = Process()

@@ -273,6 +273,7 @@ function watchRoot(root: ParentNode & Node): void {
 watchRoot(host);
 let files: ShownFile[] = [];
 let comments: BridgeComment[] = [];
+const commentsByFile = new Map<string, BridgeComment[]>();
 let composer: Composer | null = null;
 /** Per thread card id: the reply box or note edit in progress. */
 const threadBoxes = new Map<string, ThreadBox>();
@@ -528,13 +529,19 @@ host.addEventListener("contextmenu", (event) => {
 function annotationsFor(fileId: string): DiffLineAnnotation<AnnotationMeta>[] {
     const grouped = new Map<string, BridgeComment[]>();
 
-    for (const comment of comments) {
-        if (comment.fileId !== fileId || composer?.editingId === comment.id) {
+    for (const comment of commentsByFile.get(fileId) ?? []) {
+        if (composer?.editingId === comment.id) {
             continue;
         }
 
         const key = `${comment.side}:${comment.endLine}`;
-        grouped.set(key, [...(grouped.get(key) ?? []), comment]);
+        const group = grouped.get(key);
+
+        if (group) {
+            group.push(comment);
+        } else {
+            grouped.set(key, [comment]);
+        }
     }
 
     const annotations: DiffLineAnnotation<AnnotationMeta>[] = [...grouped.values()].map((group) => ({
@@ -2523,7 +2530,11 @@ function addFiles(batch: FilesBatch): void {
     const shown = batch.files.map((file) => ({ id: file.id, path: file.path }));
 
     if (loadProgressive) {
-        files = batch.first ? shown : [...files, ...shown];
+        if (batch.first) {
+            files = shown;
+        } else {
+            files.push(...shown);
+        }
 
         if (batch.first) {
             viewer.setItems(items);
@@ -2597,9 +2608,22 @@ window.genesisDiff = {
         }
     },
     setComments(next) {
-        const touched = [...comments, ...next].map((comment) => comment.fileId);
+        const touched = new Set([...commentsByFile.keys(), ...next.map((comment) => comment.fileId)]);
         comments = next;
-        refreshAnnotations(touched.filter((id) => files.some((file) => file.id === id)));
+        commentsByFile.clear();
+
+        for (const comment of next) {
+            const group = commentsByFile.get(comment.fileId);
+
+            if (group) {
+                group.push(comment);
+            } else {
+                commentsByFile.set(comment.fileId, [comment]);
+            }
+        }
+
+        const shown = new Set(files.map((file) => file.id));
+        refreshAnnotations([...touched].filter((id) => shown.has(id)));
     },
     threadDone({ id, ok }) {
         busyThreads.delete(id);

@@ -70,14 +70,36 @@ struct RepoCommit: Identifiable, Hashable {
     var when: String
 }
 
-/// A repository's changes for one `DiffScope`. Three or four git processes per load whatever the
-/// file count: name-status, numstat, one `cat-file --batch` for every blob, plus untracked files
-/// where the working tree is the new side.
+/// A repository's changes for one scope. Blob metadata is checked in batches before eligible
+/// immutable objects are read, so excluded large blobs never enter the captured output.
+struct ReviewRepositoryLayout: Equatable {
+    let root: URL
+    let gitDirectory: URL
+    let commonDirectory: URL
+
+    var watchPaths: [String] { Array(Set([root.path, gitDirectory.path, commonDirectory.path])).sorted() }
+
+    func matters(_ event: String) -> Bool {
+        let path = URL(fileURLWithPath: event).standardizedFileURL.path
+        for directory in [gitDirectory.path, commonDirectory.path] {
+            if path == directory { return true }
+            if path.hasPrefix(directory + "/") {
+                let relative = String(path.dropFirst(directory.count + 1))
+                return ["HEAD", "index", "packed-refs", "refs"].contains(relative) || relative.hasPrefix("refs/")
+            }
+        }
+        guard path == root.path || path.hasPrefix(root.path + "/") else { return false }
+        return !path.contains("/node_modules/") && !path.contains("/.build/")
+    }
+}
+
 struct GitWorkingTreeSource {
     struct Snapshot {
         var branch: String
         var base: String?
         var files: [DiffFile]
+        var repository: ReviewRepositoryLayout? = nil
+        var head: String? = nil
     }
 
     static let maxBytes = 1_000_000
@@ -119,7 +141,34 @@ struct GitWorkingTreeSource {
         }
     }
 
+    func repositoryLayout() throws -> ReviewRepositoryLayout {
+        let output: String
+        do {
+            output = try git(["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"])
+        } catch {
+            if "\(error)".lowercased().contains("not a git repository") { throw ReviewError.notRepository(repo.path) }
+            throw error
+        }
+        let paths = output.split(separator: "\n")
+            .map { URL(fileURLWithPath: String($0)).resolvingSymlinksInPath().standardizedFileURL }
+        guard paths.count == 3 else { throw ReviewError.notRepository(repo.path) }
+        return ReviewRepositoryLayout(root: paths[0], gitDirectory: paths[1], commonDirectory: paths[2])
+    }
+
     func load(scope: DiffScope = .uncommitted, session: String? = nil) throws -> Snapshot {
+        let layout = try repositoryLayout()
+        let source = GitWorkingTreeSource(repo: layout.root)
+        var snapshot = try source.loadCanonical(scope: scope, session: session)
+        snapshot.repository = layout
+        switch scope {
+        case .range(_, let head, _, _), .commit(let head, _):
+            snapshot.head = try source.git(["rev-parse", "--verify", head]).trimmed
+        default: break
+        }
+        return snapshot
+    }
+
+    private func loadCanonical(scope: DiffScope, session: String?) throws -> Snapshot {
         let branch: String
         do {
             branch = try git(["rev-parse", "--abbrev-ref", "HEAD"]).trimmed
@@ -140,7 +189,7 @@ struct GitWorkingTreeSource {
         let plan = try sides(scope)
         var entries = parseNameStatus(try gitData(["diff", "--name-status", "-z", "--find-renames"] + plan.diffArgs))
         if plan.untracked {
-            let untracked = (try? gitData(["ls-files", "--others", "--exclude-standard", "-z"])) ?? Data()
+            let untracked = (try? gitData(["ls-files", "--full-name", "--others", "--exclude-standard", "-z"])) ?? Data()
             let known = Set(entries.map(\.path))
             entries += untracked.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
                 .filter { !known.contains($0) }
@@ -434,16 +483,30 @@ struct GitWorkingTreeSource {
     private func catFileBatch(_ names: [String], gitDir: String? = nil) -> [String: Content] {
         guard !names.isEmpty else { return [:] }
         let request = names.map { "\($0)\n" }.joined()
-        guard let data = try? gitData(["cat-file", "--batch"], input: Data(request.utf8), gitDir: gitDir) else { return [:] }
-
+        guard let metadata = try? gitData(["cat-file", "--batch-check"], input: Data(request.utf8), gitDir: gitDir) else { return [:] }
         var result: [String: Content] = [:]
+        var eligible: [(name: String, oid: String)] = []
+        for (name, line) in zip(names, String(decoding: metadata, as: UTF8.self).split(separator: "\n")) {
+            let fields = line.split(separator: " ")
+            guard fields.count == 3, fields[1] == "blob", let size = Int(fields[2]), size >= 0 else { continue }
+            if size > Self.maxBytes {
+                result[name] = .skipped("large file, \(size / 1024) KB")
+            } else {
+                eligible.append((name, String(fields[0])))
+            }
+        }
+        guard !eligible.isEmpty else { return result }
+        let objects = eligible.map { "\($0.oid)\n" }.joined()
+        guard let data = try? gitData(["cat-file", "--batch"], input: Data(objects.utf8), gitDir: gitDir) else { return result }
+
         var cursor = data.startIndex
-        for name in names {
+        for (name, _) in eligible {
             guard let newline = data[cursor...].firstIndex(of: 0x0A) else { break }
             let header = String(decoding: data[cursor..<newline], as: UTF8.self)
             cursor = data.index(after: newline)
             let fields = header.split(separator: " ")
-            guard fields.count == 3, fields[1] == "blob", let size = Int(fields[2]) else { continue }
+            guard fields.count == 3, fields[1] == "blob", let size = Int(fields[2]), size >= 0,
+                  size < data.distance(from: cursor, to: data.endIndex) else { break }
             let end = data.index(cursor, offsetBy: size)
             result[name] = decode(data[cursor..<end], size: size)
             cursor = data.index(after: end)
