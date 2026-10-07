@@ -26,11 +26,13 @@ interface CdpIncoming {
 export class CdpDeadlineError extends Error {}
 
 export interface CdpCallOptions {
+    /** A positive deadline; a long call raises it. There is no "no deadline": a wait without one is a bug. */
     timeoutMs?: number;
     signal?: AbortSignal;
 }
 
 const COMMAND_TIMEOUT_MS = 30_000;
+const MAX_TIMER_MS = 2_147_483_647;
 const HANDSHAKE_TIMEOUT_MS = 10_000;
 
 export interface ConnOpts {
@@ -136,8 +138,12 @@ export class Conn {
         sessionId?: string,
         options: CdpCallOptions = {}
     ): Promise<unknown> {
-        const id = ++this.id;
         const timeoutMs = options.timeoutMs ?? COMMAND_TIMEOUT_MS;
+        if (!(timeoutMs > 0)) {
+            throw new RangeError(`${method}: timeoutMs must be a positive number, got ${timeoutMs}`);
+        }
+
+        const id = ++this.id;
         return new Promise((resolve, reject) => {
             let finished = false;
             const finish = (error?: Error, value?: unknown) => {
@@ -158,7 +164,8 @@ export class Conn {
             const abort = () => finish(options.signal?.reason ?? new Error(`${method} aborted`));
             const timer = setTimeout(
                 () => finish(new CdpDeadlineError(`${method} did not answer within ${timeoutMs} ms`)),
-                timeoutMs
+                // setTimeout fires at once past 2^31-1 ms; cap a huge deadline instead.
+                Math.min(timeoutMs, MAX_TIMER_MS)
             );
             options.signal?.addEventListener("abort", abort, { once: true });
             if (options.signal?.aborted) {
@@ -315,11 +322,12 @@ export class Page {
         return r.result?.value;
     }
 
-    async screenshot(path: string, fullPage = false): Promise<string> {
-        const r = (await this.conn.send("Page.captureScreenshot", {
-            format: "png",
-            captureBeyondViewport: fullPage,
-        })) as { data: string };
+    async screenshot(path: string, fullPage = false, options: CdpCallOptions = {}): Promise<string> {
+        const r = (await this.send(
+            "Page.captureScreenshot",
+            { format: "png", captureBeyondViewport: fullPage },
+            options
+        )) as { data: string };
         await Bun.write(path, Buffer.from(r.data, "base64"));
 
         return path;
@@ -420,8 +428,11 @@ export class Page {
         return events;
     }
 
-    async responseBody(requestId: string): Promise<{ body?: string; base64Encoded?: boolean }> {
-        return (await this.conn.send("Network.getResponseBody", { requestId })) as {
+    async responseBody(
+        requestId: string,
+        options: CdpCallOptions = {}
+    ): Promise<{ body?: string; base64Encoded?: boolean }> {
+        return (await this.send("Network.getResponseBody", { requestId }, options)) as {
             body?: string;
             base64Encoded?: boolean;
         };
