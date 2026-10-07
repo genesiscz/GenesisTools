@@ -113,6 +113,15 @@ export class UsageDatabase {
         return id;
     }
 
+    /**
+     * `getTotalUsage` and `getTopModels` have always read 0 days as "no date filter"; the other
+     * aggregates read it as "today". Each keeps its own meaning.
+     */
+    private static zeroDaysMeansAll(scope: number | UsageScope | undefined): UsageScope | undefined {
+        const filters = typeof scope === "number" ? { days: scope } : scope;
+        return filters?.days === 0 ? { ...filters, days: undefined } : filters;
+    }
+
     private usageQuery(scope: number | UsageScope | undefined) {
         const filters = typeof scope === "number" ? { days: scope } : (scope ?? {});
         let query = this.client.kysely.selectFrom("usage_records");
@@ -246,7 +255,7 @@ export class UsageDatabase {
         messageCount: number;
         sessionCount: number;
     }> {
-        const query = this.usageQuery(scope).select([
+        const query = this.usageQuery(UsageDatabase.zeroDaysMeansAll(scope)).select([
             sql<number | null>`SUM(cost)`.as("total_cost"),
             sql<number | null>`SUM(total_tokens)`.as("total_tokens"),
             sql<number>`COUNT(*)`.as("message_count"),
@@ -275,7 +284,7 @@ export class UsageDatabase {
     }
 
     async getTopModels(limit = 10, scope?: number | UsageScope): Promise<ModelUsage[]> {
-        const query = this.usageQuery(scope).select([
+        const query = this.usageQuery(UsageDatabase.zeroDaysMeansAll(scope)).select([
             "provider",
             "model",
             sql<number>`SUM(cost)`.as("total_cost"),

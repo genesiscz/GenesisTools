@@ -43,9 +43,33 @@ describe("UsageDatabase", () => {
                 })
                 .execute();
         }
+        // An older row: only a call with no date limit counts it.
+        await writer.kysely
+            .insertInto("usage_records")
+            .values({
+                session_id: "old",
+                provider: "local",
+                model: "fixture-old",
+                cost: 0,
+                total_tokens: 5,
+                input_tokens: 5,
+                output_tokens: 0,
+                cached_input_tokens: 0,
+                timestamp: new Date(Date.now() - 30 * 86_400_000).toISOString(),
+                message_index: null,
+            })
+            .execute();
         writer.close();
         const db = new UsageDatabase(path);
         try {
+            // Both filters must match: a provider with another provider's model selects nothing.
+            const mismatched = { days: 7, provider: "openai", model: "fixture-large" };
+            expect(await db.getTotalUsage(mismatched)).toMatchObject({ totalCost: 0, messageCount: 0 });
+            expect(await db.getDailyUsage(mismatched)).toEqual([]);
+            expect(await db.getProviderUsage(mismatched)).toEqual([]);
+            expect(await db.getModelUsage(mismatched)).toEqual([]);
+            expect(await db.getCostTrend(mismatched)).toEqual([]);
+            expect(await db.getTopModels(10, mismatched)).toEqual([]);
             for (const scope of [
                 { days: 7, provider: "openai" },
                 { days: 7, model: "fixture-small" },
@@ -65,7 +89,14 @@ describe("UsageDatabase", () => {
             for (const days of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
                 await expect(db.getTotalUsage({ days })).rejects.toThrow("Usage days");
             }
-            expect(await db.getTotalUsage({ days: 0 })).toMatchObject({ messageCount: 2 });
+            // 0 days: no date filter for the total and the top models, as before; today for the rest.
+            expect(await db.getTotalUsage(0)).toMatchObject({ messageCount: 3 });
+            expect(await db.getTotalUsage({ days: 0 })).toMatchObject({ messageCount: 3 });
+            expect(await db.getTopModels(10, 0)).toHaveLength(3);
+            expect((await db.getModelUsage(0)).map((row) => row.model).sort()).toEqual([
+                "fixture-large",
+                "fixture-small",
+            ]);
         } finally {
             db.close();
         }
