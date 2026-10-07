@@ -27,6 +27,7 @@ import {
     type MrSummary,
 } from "@app/gitlab/lib/merge-requests";
 import { pool } from "@app/gitlab/lib/pool";
+import { projectPathOf } from "@app/gitlab/lib/pr-review";
 import {
     collectShipped,
     environmentRefs,
@@ -235,7 +236,8 @@ export interface StaleReport {
 const DEFAULT_DRAFT_COMMENT_GUIDE =
     "draftComment: a short comment to the MR author, ready to paste: one line of context; the work item with its type, state, creation date and last activity (who, and what the last comment said); the branch; the code state (the shipped verdict in words); related MRs; then what should happen: that the stale label is being added, the ask with a `[<confidence>%]` badge, and the date of the next cleanup pass. The first pass never says the MR is being closed now. Never post it yourself.";
 
-function instructions(config: GitLabToolConfig): string {
+/** The `_instructions` of a new sweep, for the agent that fills the reviews. */
+export function staleInstructions(config: GitLabToolConfig): string {
     return [
         "Fill `review` on every MR where `needsReview` is true. Leave every other field untouched.",
         "recommendation: one of CLOSE, ASK AUTHOR, REBASE-NEEDED, KEEP. confidence: 0-100.",
@@ -247,6 +249,7 @@ function instructions(config: GitLabToolConfig): string {
         config.stale.draftCommentGuide ?? DEFAULT_DRAFT_COMMENT_GUIDE,
         "labels: array of {type: add | remove, label: <existing project label>} to apply with `stale-branches apply-labels`; [] when the labels should stay. Use only labels already present on other MRs of this report.",
         "evidence: array of the read-only commands you ran beyond this JSON (for example `git show origin/main:<path>`), one string each; [] when you used only this file.",
+        ...(config.stale.instructionsExtra ? [config.stale.instructionsExtra] : []),
         `Then run: ${toolCommand("gitlab stale-branches render")} <this file> --out <note.md>`,
     ].join(" ");
 }
@@ -347,13 +350,33 @@ async function lastGitlabEvent(
     }
 }
 
+/**
+ * A sweep written before it recorded `host` and `project` still names its target in every MR URL
+ * it holds, so later steps write to the project the sweep read.
+ */
+export function withReportTarget<T extends Pick<StaleReport, "host" | "project" | "mrs">>(report: T): T {
+    const url = report.mrs.find((mr) => mr.webUrl)?.webUrl;
+
+    if ((report.host && report.project) || !url) {
+        return report;
+    }
+
+    return {
+        ...report,
+        host: report.host || new URL(url).origin,
+        project: report.project || projectPathOf(url, ""),
+    };
+}
+
 /** What `closed-bug` and the closed-bug facts need from a report and the config. */
 export function closedBugContextOf(
-    report: Pick<StaleReport, "shippedRoles" | "project">,
+    report: Pick<StaleReport, "shippedRoles" | "project"> & Partial<Pick<StaleReport, "host" | "mrs">>,
     config: GitLabToolConfig,
     types?: string[]
 ): ClosedBugContext {
-    return { roles: report.shippedRoles, messages: messagesOf(config), projectPath: report.project, types };
+    const { project } = withReportTarget({ host: report.host ?? "", project: report.project, mrs: report.mrs ?? [] });
+
+    return { roles: report.shippedRoles, messages: messagesOf(config), projectPath: project, types };
 }
 
 export interface CollectOptions {
@@ -547,7 +570,7 @@ export async function collectStaleReport(options: CollectOptions): Promise<Stale
     const mrApi = `GET ${api.host}/api/v4/projects/:id/merge_requests`;
 
     return {
-        _instructions: instructions(config),
+        _instructions: staleInstructions(config),
         generatedAt: now.toISOString(),
         asOfDate,
         host: api.host,
@@ -1138,6 +1161,10 @@ export interface RenderOptions {
     title?: string;
     /** `workItems.urlTemplate`, to link work items that could not be read. */
     workItemUrlTemplate?: string | null;
+    /** `stale.noteTags`: front-matter tags after the built-in ones. */
+    noteTags?: string[];
+    /** `stale.contentCheckNote`: appended to the explanation of the content check. */
+    contentCheckNote?: string | null;
 }
 
 export function renderStaleReport(report: StaleReport, options: RenderOptions): string {
@@ -1186,13 +1213,14 @@ export function renderStaleReport(report: StaleReport, options: RenderOptions): 
     const mid = mrs.filter((m) => m.ageDays > 90 && m.ageDays <= 180);
     const young = mrs.filter((m) => m.ageDays <= 90);
     const reviewed = mrs.filter((m) => m.needsReview);
-    const title = options.title ?? `Open merge requests in ${report.project}`;
+    const { project } = withReportTarget(report);
+    const title = options.title ?? `Open merge requests in ${project}`;
     const sections: string[] = [];
     sections.push(
-        `---\ntitle: ${title}\ncreated: ${options.createdAt}\ntags:\n  - gitlab\n  - merge-requests\n  - cleanup\nado: [${options.adoTags.join(", ")}]\n---`
+        `---\ntitle: ${title}\ncreated: ${options.createdAt}\ntags:\n${["gitlab", "merge-requests", "cleanup", ...(options.noteTags ?? [])].map((tag) => `  - ${tag}\n`).join("")}ado: [${options.adoTags.join(", ")}]\n---`
     );
     sections.push(
-        `# ${title}\n\nState as of ${options.createdAt}. Read-only sweep of every open MR in \`${report.project}\`, generated by \`${toolCommand("gitlab stale-branches")}\` from \`${report.repoRoot}\`. Nothing was closed, commented or pushed. Dates are ${getDateStyle() === "dmy" ? "d.m.YYYY" : "YYYY-MM-DD"}.`
+        `# ${title}\n\nState as of ${options.createdAt}. Read-only sweep of every open MR in \`${project}\`, generated by \`${toolCommand("gitlab stale-branches")}\` from \`${report.repoRoot}\`. Nothing was closed, commented or pushed. Dates are ${getDateStyle() === "dmy" ? "d.m.YYYY" : "YYYY-MM-DD"}.`
     );
     sections.push(
         `## Summary\n\n| Metric | Count |\n|---|---:|\n${summary.map(([k, v]) => `| ${k} | ${v} |`).join("\n")}`
@@ -1204,7 +1232,7 @@ export function renderStaleReport(report: StaleReport, options: RenderOptions): 
             `- Age counts from the MR creation date to ${formatDate(report.asOfDate)}.`,
             "- ADO state: the work item found by its id in the MR title, then the branch name, then the description. When that item is a Task, the parent story, bug or feature is shown too, because the parent carries the business state.",
             `- Author activity: last commit in this repo across every identity seen on the author's MR branches, plus the newest GitLab event of the account. An account without an event for ${report.inactiveAfterDays} days, or not in state active, counts as inactive.`,
-            `- Shipped: a content check, not a history check. The lines the branch adds are sampled and searched in ${(report.shippedRefs ?? []).map((r) => `\`${r}\``).join(", ")}. \`present\` means more than 80 % of the sampled lines are in that ref, \`absent\` means none is. Ancestry is not used, because squash merges, rebases and rewritten history defeat it. A Closed work item with \`absent\` everywhere means the fix is gone, not shipped.`,
+            `- Shipped: a content check, not a history check. The lines the branch adds are sampled and searched in ${(report.shippedRefs ?? []).map((r) => `\`${r}\``).join(", ")}. \`present\` means more than 80 % of the sampled lines are in that ref, \`absent\` means none is. Ancestry is not used, because squash merges, rebases and rewritten history defeat it. A Closed work item with \`absent\` everywhere means the fix is gone, not shipped.${options.contentCheckNote ? ` ${options.contentCheckNote}` : ""}`,
             "- Labels on an MR are claims by people. A label conflict line means the content check says the opposite.",
             "- Closed bug, open MR: the work item is a Closed Bug and the line says where the MR content is (`released` on UAT or production, `unreleased` on the test environment only, `partial`, `nowhere`, `unknown`). `unreleased` means the bug was closed after a test and the fix never reached UAT or production; the `closed-bug` comment reports it.",
             `- Recommendation, confidence, reason, comment summary and drafted comment come from the review pass over the filled JSON, one MR at a time, for every MR older than ${report.reviewMinAgeDays} days. CLOSE, ASK AUTHOR, REBASE-NEEDED and KEEP are the only values.`,

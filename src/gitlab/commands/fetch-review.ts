@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type TargetOptions, withProject } from "@app/gitlab/commands/shared";
 import { projectBase, resolveProjectApi, restGetPaginated } from "@app/gitlab/lib/client";
+import { FETCH_FORMATS, loadConfig } from "@app/gitlab/lib/config";
 import {
     collectUnresolvedAnchorPairs,
     type Discussion,
@@ -27,7 +28,7 @@ import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 
-const FORMATS = ["md", "json", "both"] as const;
+const FORMATS = FETCH_FORMATS;
 const SCHEMA_FORMATS = ["schema", "skeleton", "typescript", "none"] as const;
 
 interface Options extends TargetOptions {
@@ -67,10 +68,13 @@ export function registerFetchReview(parent: Command): Command {
             .option("--out <file>", "Save JSON here (default: $TMPDIR/gitlab-review-<iid>.json)")
             .option(
                 "--format <fmt>",
-                "stdout: json = the discussions JSON (default), md = the Markdown report, both = Markdown on stdout plus the JSON file"
+                "stdout: json = the discussions JSON, md = the Markdown report, both = Markdown on stdout plus the JSON file (default: review.fetch.format in the config, else json)"
             )
             .option("--md", "Same as --format md")
-            .option("--context-lines <n>", "Lines of code excerpt around each anchor", "3")
+            .option(
+                "--context-lines <n>",
+                "Lines of code excerpt around each anchor (default: review.fetch.contextLines in the config, else 3)"
+            )
             .option(
                 "--no-anchors",
                 "Skip the API fallback for the reviewer's frozen view; views whose sha is in local history still come from git"
@@ -100,7 +104,8 @@ async function runFetchReview(mrIid: string, opts: Options): Promise<void> {
         throw new Error(`--md conflicts with --format ${opts.format}; pass one of them.`);
     }
 
-    const format = opts.md ? "md" : (opts.format ?? "json");
+    const config = await loadConfig();
+    const format = opts.md ? "md" : (opts.format ?? config.review.fetch.format);
     if (!FORMATS.includes(format as (typeof FORMATS)[number])) {
         throw new Error(`Invalid --format ${format}; expected ${FORMATS.join(" | ")}`);
     }
@@ -111,8 +116,9 @@ async function runFetchReview(mrIid: string, opts: Options): Promise<void> {
     }
 
     // `|| 3` turned an explicit `--context-lines 0` into 3; only an unparseable value falls back.
-    const parsedContext = Number.parseInt(opts.contextLines ?? "3", 10);
-    const contextLines = Number.isNaN(parsedContext) ? 3 : Math.max(0, parsedContext);
+    const fallbackContext = config.review.fetch.contextLines;
+    const parsedContext = Number.parseInt(opts.contextLines ?? String(fallbackContext), 10);
+    const contextLines = Number.isNaN(parsedContext) ? fallbackContext : Math.max(0, parsedContext);
     const cwd = resolve(opts.cwd ?? process.cwd());
     if (!existsSync(cwd)) {
         throw new Error(`--cwd ${cwd} does not exist`);
@@ -171,6 +177,7 @@ async function runFetchReview(mrIid: string, opts: Options): Promise<void> {
             cwd,
             contextLines,
             anchorViews: views,
+            nextSteps: config.review.nextSteps,
         });
         if (opts.mdSidecar !== false) {
             const mdPath = `${outPath.replace(/\.json$/, "")}.md`;
@@ -195,14 +202,21 @@ async function runFetchReview(mrIid: string, opts: Options): Promise<void> {
 
     if (schemaFormat !== "none") {
         status.info(`Schema (${schemaFormat}):`);
-        for (const line of formatSchema(discussions, schemaFormat as OutputMode, { pretty: true }).split("\n")) {
+        const shape = formatSchema(discussions, schemaFormat as OutputMode, {
+            pretty: true,
+            rootName: "GitLabDiscussions",
+            exported: true,
+            schemaHeader: true,
+        });
+
+        for (const line of shape.split("\n")) {
             status.message(`  ${line}`);
         }
     }
 
     if (opts.schemaSidecar !== false) {
         const sidecarPath = `${outPath.replace(/\.json$/, "")}.schema.json`;
-        writeFileSync(sidecarPath, formatSchema(discussions, "schema", { pretty: true }));
+        writeFileSync(sidecarPath, formatSchema(discussions, "schema", { pretty: true, schemaHeader: true }));
         status.success(`Schema sidecar written → ${sidecarPath}`);
     }
 

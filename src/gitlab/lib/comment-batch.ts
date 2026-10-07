@@ -1,7 +1,8 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type ProjectApi, projectBase, restGet, restGetPaginated, restWrite } from "@app/gitlab/lib/client";
 import { storage } from "@app/gitlab/lib/config";
+import { defaults } from "@app/gitlab/lib/defaults";
 import { HttpError } from "@app/gitlab/lib/http";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -31,15 +32,12 @@ const asResult = (iid: string, e: unknown): PostResult =>
         ? { iid, ok: false, status: e.status, error: (e.body ?? "").slice(0, 200) }
         : { iid, ok: false, status: 0, error: String(e).slice(0, 200) };
 
-export function ledgerPath(): string {
-    const dir = storage.getBaseDir();
-    mkdirSync(dir, { recursive: true });
-
+/** Where the ledger is. Naming it creates nothing, so a dry run leaves no folder behind. */
+export function ledgerPath(dir: string = storage.getBaseDir()): string {
     return join(dir, "comment-batch.jsonl");
 }
 
-export function readLedger(): LedgerEntry[] {
-    const path = ledgerPath();
+export function readLedger(path: string = ledgerPath()): LedgerEntry[] {
     if (!existsSync(path)) {
         return [];
     }
@@ -57,6 +55,7 @@ export function readLedger(): LedgerEntry[] {
             continue;
         }
 
+        entry = withLegacyProject(entry);
         const key = `${entry.project}:${entry.pr}:${entry.message}:${entry.comment_id}`;
         if (!seen.has(key)) {
             seen.add(key);
@@ -65,6 +64,17 @@ export function readLedger(): LedgerEntry[] {
     }
 
     return entries;
+}
+
+/**
+ * A line written before entries carried `project` belongs to `legacyProject`, so dedup and the
+ * stale-branches history still see it. Without a legacy project it stays as it is.
+ */
+export function withLegacyProject<T extends { project?: string }>(
+    entry: T,
+    legacyProject: string | null = defaults.legacyLedgerProject
+): T {
+    return entry.project || !legacyProject ? entry : { ...entry, project: legacyProject };
 }
 
 /** Ledger entries of one MR of one project. */
@@ -76,8 +86,9 @@ export function isDuplicate(ledger: LedgerEntry[], ref: { project: string; iid: 
     return ledgerFor(ledger, ref.project, ref.iid).some((e) => e.message === ref.message);
 }
 
-export function appendLedger(entry: LedgerEntry): void {
-    appendFileSync(ledgerPath(), `${SafeJSON.stringify(entry)}\n`);
+export function appendLedger(entry: LedgerEntry, path: string = ledgerPath()): void {
+    mkdirSync(dirname(path), { recursive: true });
+    appendFileSync(path, `${SafeJSON.stringify(entry)}\n`);
 }
 
 export async function postComment(api: ProjectApi, iid: string, body: string): Promise<PostResult> {

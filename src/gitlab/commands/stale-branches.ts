@@ -41,7 +41,7 @@ import {
     updateDraftNote,
     updateNote,
 } from "@app/gitlab/lib/comment-batch";
-import { type GitLabToolConfig, loadConfig } from "@app/gitlab/lib/config";
+import { type GitLabToolConfig, loadConfig, storage } from "@app/gitlab/lib/config";
 import { gitRepoRoot, gitResult } from "@app/gitlab/lib/git";
 import { errorMessage } from "@app/gitlab/lib/http";
 import {
@@ -74,6 +74,7 @@ import {
     type StaleMr,
     type StaleReport,
     unfilledReviews,
+    withReportTarget,
 } from "@app/gitlab/lib/stale-branches";
 import {
     buildManifest,
@@ -103,7 +104,7 @@ import {
 import { type AdoWorkItem, extractWorkItemIds, resolveAdo } from "@app/gitlab/lib/work-items";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import type { Command } from "commander";
+import { type Command, Option } from "commander";
 
 interface PreflightOptions extends TargetOptions {
     out: string;
@@ -148,7 +149,7 @@ function requireIid(value: string): number {
 }
 
 async function loadReport(json: string): Promise<StaleReport> {
-    return (await Bun.file(json).json()) as StaleReport;
+    return withReportTarget((await Bun.file(json).json()) as StaleReport);
 }
 
 function saveReport(json: string, report: StaleReport): void {
@@ -293,6 +294,11 @@ async function shippedRefsOf(
 
 function checkoutOf(report: StaleReport, flag: string | undefined): string {
     return gitRepoRoot(flag ? resolve(flag) : report.repoRoot);
+}
+
+/** `--missing-work-item`, or its older hidden name `--no-ado` (Commander reads that one as `ado: false`). */
+export function missingWorkItemSelected(opts: { missingWorkItem?: boolean; ado?: boolean }): boolean {
+    return Boolean(opts.missingWorkItem) || opts.ado === false;
 }
 
 export function registerStaleBranches(parent: Command): Command {
@@ -616,6 +622,7 @@ export function registerStaleBranches(parent: Command): Command {
             "--missing-work-item",
             "Select MRs without a work-item id (workItems.idPattern) in the title or the description"
         )
+        .addOption(new Option("--no-ado", "Same as --missing-work-item").hideHelp())
         .option("--iid <n>", "Select this MR (repeatable)", collect, [])
         .option("--skip-author <username>", "Never select MRs of this author (repeatable)", collect, [])
         .option(
@@ -630,6 +637,7 @@ export function registerStaleBranches(parent: Command): Command {
                     key: string;
                     template: string;
                     missingWorkItem?: boolean;
+                    ado?: boolean;
                     iid: string[];
                     skipAuthor: string[];
                     draft?: boolean;
@@ -638,10 +646,9 @@ export function registerStaleBranches(parent: Command): Command {
             ) => {
                 const report = await loadReport(json);
                 const config = await loadConfig();
-                if (opts.missingWorkItem && !config.workItems.idPattern) {
-                    throw new Error(
-                        "--missing-work-item needs workItems.idPattern in ~/.genesis-tools/gitlab/config.json"
-                    );
+                const missingWorkItem = missingWorkItemSelected(opts);
+                if (missingWorkItem && !config.workItems.idPattern) {
+                    throw new Error(`--missing-work-item needs workItems.idPattern in ${storage.getConfigPath()}`);
                 }
 
                 const wanted = new Set(opts.iid.map(requireIid));
@@ -656,7 +663,7 @@ export function registerStaleBranches(parent: Command): Command {
 
                     const noId = extractWorkItemIds(config.workItems.idPattern, mr.title, mr.description).length === 0;
 
-                    return wanted.has(mr.iid) || (Boolean(opts.missingWorkItem) && noId);
+                    return wanted.has(mr.iid) || (missingWorkItem && noId);
                 });
                 if (!targets.length) {
                     progress("No MR matches (or every match already carries this key).");
@@ -901,6 +908,8 @@ export function registerStaleBranches(parent: Command): Command {
                 adoTags: opts.ado.map(Number),
                 title: opts.title,
                 workItemUrlTemplate: config.workItems.urlTemplate,
+                noteTags: config.stale.noteTags,
+                contentCheckNote: config.stale.contentCheckNote,
             });
             if (opts.out) {
                 writeFileSync(opts.out, markdown);

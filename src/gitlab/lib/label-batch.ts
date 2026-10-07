@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type ProjectApi, projectBase, restGet, restGetPaginated, restWrite } from "@app/gitlab/lib/client";
+import { withLegacyProject } from "@app/gitlab/lib/comment-batch";
 import { storage } from "@app/gitlab/lib/config";
 import { HttpError } from "@app/gitlab/lib/http";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -39,19 +40,17 @@ interface MrLabels {
     labels: string[];
 }
 
-export function ledgerPath(): string {
-    const dir = storage.getBaseDir();
-    mkdirSync(dir, { recursive: true });
-
+/** Where the ledger is. Naming it creates nothing, so a dry run leaves no folder behind. */
+export function ledgerPath(dir: string = storage.getBaseDir()): string {
     return join(dir, "label-batch.jsonl");
 }
 
-export function appendLabelLedger(entry: LabelLedgerEntry): void {
-    appendFileSync(ledgerPath(), `${SafeJSON.stringify(entry)}\n`);
+export function appendLabelLedger(entry: LabelLedgerEntry, path: string = ledgerPath()): void {
+    mkdirSync(dirname(path), { recursive: true });
+    appendFileSync(path, `${SafeJSON.stringify(entry)}\n`);
 }
 
-export function readLabelLedger(): LabelLedgerEntry[] {
-    const path = ledgerPath();
+export function readLabelLedger(path: string = ledgerPath()): LabelLedgerEntry[] {
     if (!existsSync(path)) {
         return [];
     }
@@ -60,7 +59,7 @@ export function readLabelLedger(): LabelLedgerEntry[] {
 
     for (const line of readFileSync(path, "utf8").split("\n").filter(Boolean)) {
         try {
-            entries.push(SafeJSON.parse(line, { strict: true }) as LabelLedgerEntry);
+            entries.push(withLegacyProject(SafeJSON.parse(line, { strict: true }) as LabelLedgerEntry));
         } catch (error) {
             logger.debug({ error, path }, "gitlab: skipping unparsable label ledger line");
         }

@@ -64,7 +64,35 @@ interface RawWorkItem {
     changedBy?: string | null;
     url: string;
     rawFields?: Record<string, unknown>;
+    relations?: Array<{ rel?: string; url?: string }>;
     comments?: Array<{ id: number; author: string; date: string; text: string }>;
+}
+
+function parentIdFromWorkItem(
+    fields: Record<string, unknown>,
+    relations?: Array<{ rel?: string; url?: string }>
+): number | null {
+    const parent = fields["System.Parent"];
+    if (typeof parent === "number" && Number.isInteger(parent)) {
+        return parent;
+    }
+
+    if (typeof parent === "string" && /^\d+$/.test(parent)) {
+        return Number(parent);
+    }
+
+    for (const rel of relations ?? []) {
+        if (rel.rel !== "System.LinkTypes.Hierarchy-Reverse") {
+            continue;
+        }
+
+        const match = rel.url?.match(/workItems\/(\d+)/i);
+        if (match) {
+            return Number(match[1]);
+        }
+    }
+
+    return null;
 }
 
 /** The configured id pattern as a global regex; the first capture group (or the whole match) is the id. */
@@ -131,7 +159,7 @@ function stringField(value: unknown): string | null {
 
 export function toWorkItem(raw: RawWorkItem, config: WorkItemConfig): AdoWorkItem {
     const fields = raw.rawFields ?? {};
-    const parent = fields["System.Parent"];
+    const parentId = parentIdFromWorkItem(fields, raw.relations);
     const comments = (raw.comments ?? []).map((c) => ({
         id: c.id,
         author: c.author,
@@ -160,7 +188,7 @@ export function toWorkItem(raw: RawWorkItem, config: WorkItemConfig): AdoWorkIte
         changed: raw.changed,
         changedBy: raw.changedBy ?? null,
         description: stripHtml(raw.description),
-        parentId: typeof parent === "number" ? parent : null,
+        parentId,
         comments,
         lastCommentDate: lastComment,
         closedDate: stringField(fields["Microsoft.VSTS.Common.ClosedDate"]),

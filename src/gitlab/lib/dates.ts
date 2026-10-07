@@ -1,7 +1,10 @@
+import { defaults } from "@app/gitlab/lib/defaults";
+
 export const DATE_STYLES = ["iso", "dmy"] as const;
 export type DateStyle = (typeof DATE_STYLES)[number];
 
-let currentStyle: DateStyle = "iso";
+// From the defaults at import, so a script that skips the config hook still renders the fork's style.
+let currentStyle: DateStyle = defaults.config.dateStyle ?? "iso";
 
 /** Set once per process from the tool config; every report and comment renders dates in this style. */
 export function setDateStyle(style: DateStyle): void {

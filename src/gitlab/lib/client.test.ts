@@ -1,6 +1,11 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { missingWorkItemSelected, registerStaleBranches } from "@app/gitlab/commands/stale-branches";
 import {
     assertSecureHost,
+    buildNewTokenUrl,
     getCommitDiff,
     getToken,
     HOST_HELP,
@@ -12,16 +17,27 @@ import {
     pickHost,
     pickProject,
     restWrite,
+    tokenCommands,
     tokenSetupHelp,
 } from "@app/gitlab/lib/client";
-import { DEFAULT_CONFIG, mergeConfig } from "@app/gitlab/lib/config";
-import { formatDate } from "@app/gitlab/lib/dates";
+import {
+    appendLedger,
+    ledgerPath as commentLedgerPath,
+    readLedger,
+    withLegacyProject,
+} from "@app/gitlab/lib/comment-batch";
+import { DEFAULT_CONFIG, mergeConfig, NEUTRAL_CONFIG } from "@app/gitlab/lib/config";
+import { formatDate, setDateStyle } from "@app/gitlab/lib/dates";
+import { defaults } from "@app/gitlab/lib/defaults";
+import { ledgerPath as labelLedgerPath, readLabelLedger } from "@app/gitlab/lib/label-batch";
 import { createMessages, fillTemplate } from "@app/gitlab/lib/messages";
+import { NEUTRAL_DEFAULTS } from "@app/gitlab/lib/neutral-defaults";
 import { fetchAllPages, type Page, parseNextPage } from "@app/gitlab/lib/paginate";
 import { pool } from "@app/gitlab/lib/pool";
 import { extractWorkItemIds, toWorkItem, workItemLink, workItemUrl } from "@app/gitlab/lib/work-items";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { Command } from "commander";
 
 const HOST = "https://gitlab.example.com";
 
@@ -47,19 +63,46 @@ describe("looksLikeToken", () => {
 
 describe("tokenSetupHelp", () => {
     test("links the token page of the resolved host with the scope already filled in", () => {
-        expect(newTokenUrl(HOST)).toBe(
+        expect(newTokenUrl(HOST, NEUTRAL_DEFAULTS.token)).toBe(
             "https://gitlab.example.com/-/user_settings/personal_access_tokens?name=genesis-tools&scopes=api"
         );
-        expect(tokenSetupHelp(HOST, [])).toContain(newTokenUrl(HOST));
+        expect(buildNewTokenUrl(HOST, "my tool")).toContain("?name=my%20tool&scopes=api");
+        expect(tokenSetupHelp(HOST, [], NEUTRAL_DEFAULTS.token)).toContain(newTokenUrl(HOST, NEUTRAL_DEFAULTS.token));
     });
 
     test("offers a way to store it for that host and repeats what was tried", () => {
-        const help = tokenSetupHelp(HOST, ["glab auth token --hostname gitlab.example.com — no token in the output"]);
+        const help = tokenSetupHelp(
+            HOST,
+            ["glab auth token --hostname gitlab.example.com — no token in the output"],
+            NEUTRAL_DEFAULTS.token
+        );
 
         expect(help).toContain("No GitLab token found for gitlab.example.com.");
         expect(help).toContain("glab auth login --hostname gitlab.example.com");
         expect(help).toContain("export GITLAB_TOKEN=");
         expect(help).toContain("glab auth token --hostname gitlab.example.com — no token in the output");
+    });
+
+    test("a fork's token defaults add a creation URL, sources after glab's, and store hints", () => {
+        const token = {
+            name: "fork-tool",
+            newTokenUrl: (host: string) => `${host}/-/user_settings/personal_access_tokens/legacy/new?name=fork-tool`,
+            extraCommands: (hostname: string) => [["secret-tool", "lookup", "gitlab", hostname]],
+            extraStoreHints: [["secret-tool store gitlab <token>", "kept in the keyring"]] as const,
+        };
+
+        expect(tokenCommands("gitlab.example.com", NEUTRAL_DEFAULTS.token)).toHaveLength(2);
+        expect(tokenCommands("gitlab.example.com", token).at(-1)).toEqual([
+            "secret-tool",
+            "lookup",
+            "gitlab",
+            "gitlab.example.com",
+        ]);
+        expect(tokenCommands("gitlab.example.com", token)[0]?.[0]).toBe("glab");
+
+        const help = tokenSetupHelp(HOST, [], token);
+        expect(help).toContain("/personal_access_tokens/legacy/new?name=fork-tool");
+        expect(help).toContain("secret-tool store gitlab <token>");
     });
 
     test("GITLAB_TOKEN wins without asking glab", async () => {
@@ -166,6 +209,21 @@ describe("host resolution", () => {
         });
     });
 
+    test("a default host comes after GITLAB_HOST and before glab's default host", () => {
+        let asked = false;
+        const glab = () => {
+            asked = true;
+
+            return "https://glab-default.example.com";
+        };
+        const fallback = "https://gitlab.fork.example";
+
+        expect(pickHost({ env: "env.example.com", fallback, glabDefault: glab }).host).toBe("https://env.example.com");
+        expect(pickHost({ fallback, glabDefault: glab })).toEqual({ host: fallback, source: "default host" });
+        expect(asked).toBe(false);
+        expect(pickHost({ fallback: null, glabDefault: glab }).host).toBe("https://glab-default.example.com");
+    });
+
     test("no source at all is an error that says how to set one", () => {
         expect(() => pickHost({ glabDefault: () => null })).toThrow(HOST_HELP);
         expect(HOST_HELP).toContain("GITLAB_HOST");
@@ -194,6 +252,24 @@ describe("project resolution", () => {
         expect(pickProject({ flag: "1234", host: HOST }).project).toBe("1234");
     });
 
+    test("a default project beats origin when no checkout is named, and follows it when one is", () => {
+        const remote = "git@gitlab.example.com:acme/web-app.git";
+        const fallback = "acme/default-app";
+
+        expect(pickProject({ env: "acme/cli", fallback, fallbackFirst: true, remote, host: HOST }).project).toBe(
+            "acme/cli"
+        );
+        expect(pickProject({ fallback, fallbackFirst: true, remote, host: HOST })).toEqual({
+            project: fallback,
+            source: "default project",
+        });
+        expect(pickProject({ fallback, fallbackFirst: false, remote, host: HOST }).project).toBe("acme/web-app");
+        expect(pickProject({ fallback, fallbackFirst: false, remote: null, host: HOST }).project).toBe(fallback);
+        expect(
+            pickProject({ fallback, remote: "https://git.other.example/acme/web-app.git", host: HOST }).project
+        ).toBe(fallback);
+    });
+
     test("an origin on another host is not used, and the error says why", () => {
         expect(() => pickProject({ remote: "https://git.other.example/acme/web-app.git", host: HOST })).toThrow(
             "The origin remote points at git.other.example, not gitlab.example.com."
@@ -204,9 +280,11 @@ describe("project resolution", () => {
 
 describe("config", () => {
     test("a missing file is the neutral defaults", () => {
+        expect(mergeConfig(null, NEUTRAL_CONFIG)).toEqual(NEUTRAL_CONFIG);
         expect(mergeConfig(null)).toEqual(DEFAULT_CONFIG);
-        expect(DEFAULT_CONFIG.workItems.idPattern).toBeNull();
-        expect(DEFAULT_CONFIG.stale.environments).toEqual({
+        expect(DEFAULT_CONFIG).toEqual(mergeConfig(defaults.config, NEUTRAL_CONFIG));
+        expect(NEUTRAL_CONFIG.workItems.idPattern).toBeNull();
+        expect(NEUTRAL_CONFIG.stale.environments).toEqual({
             uat: null,
             production: null,
             releasePrefix: null,
@@ -215,13 +293,16 @@ describe("config", () => {
     });
 
     test("the file overrides field by field and keeps the rest", () => {
-        const config = mergeConfig({
-            language: "cs",
-            dateStyle: "dmy",
-            messages: { "closedBug.askUnknown": "- Where is the fix?" },
-            workItems: { idPattern: "(?<!\\d)(\\d{6})(?!\\d)" },
-            stale: { label: "Dormant", environments: { uat: "staging", releasePrefix: "release/" } },
-        });
+        const config = mergeConfig(
+            {
+                language: "cs",
+                dateStyle: "dmy",
+                messages: { "closedBug.askUnknown": "- Where is the fix?" },
+                workItems: { idPattern: "(?<!\\d)(\\d{6})(?!\\d)" },
+                stale: { label: "Dormant", environments: { uat: "staging", releasePrefix: "release/" } },
+            },
+            NEUTRAL_CONFIG
+        );
 
         expect(config.language).toBe("cs");
         expect(config.workItems.urlTemplate).toBeNull();
@@ -232,7 +313,22 @@ describe("config", () => {
             releasePrefix: "release/",
             test: null,
         });
-        expect(config.stale.mergeLabelPattern).toBe(DEFAULT_CONFIG.stale.mergeLabelPattern);
+        expect(config.stale.mergeLabelPattern).toBe(NEUTRAL_CONFIG.stale.mergeLabelPattern);
+    });
+
+    test("a base's gates and messages survive a file that does not set them", () => {
+        const base = mergeConfig(
+            {
+                messages: { "closedBug.askUnknown": "- Where is the fix?" },
+                review: { gates: [{ label: "types", command: "tsc --noEmit" }] },
+            },
+            NEUTRAL_CONFIG
+        );
+        const merged = mergeConfig({ language: "cs" }, base);
+
+        expect(merged.review.gates).toEqual([{ label: "types", command: "tsc --noEmit", when: null, exclude: null }]);
+        expect(merged.messages["closedBug.askUnknown"]).toBe("- Where is the fix?");
+        expect(mergeConfig({ review: { gates: [] } }, base).review.gates).toEqual([]);
     });
 
     test("a section of the wrong type fails loudly instead of falling back to the defaults", () => {
@@ -248,6 +344,32 @@ describe("config", () => {
         );
         expect(() => mergeConfig({ workItems: { idPattern: "(" } })).toThrow("not a valid regular expression");
         expect(() => mergeConfig({ stale: { label: 7 } })).toThrow("stale.label must be a string or null");
+    });
+
+    test("fetch-review defaults and extra next steps come from review.fetch and review.nextSteps", () => {
+        expect(NEUTRAL_CONFIG.review.fetch).toEqual({ format: "json", contextLines: 3 });
+        expect(NEUTRAL_CONFIG.review.nextSteps).toEqual([]);
+
+        const config = mergeConfig(
+            { review: { fetch: { format: "md", contextLines: 10 }, nextSteps: ["Reply with the review skill."] } },
+            NEUTRAL_CONFIG
+        );
+
+        expect(config.review.fetch).toEqual({ format: "md", contextLines: 10 });
+        expect(config.review.nextSteps).toEqual(["Reply with the review skill."]);
+        expect(mergeConfig({ review: { fetch: { contextLines: 0 } } }, NEUTRAL_CONFIG).review.fetch).toEqual({
+            format: "json",
+            contextLines: 0,
+        });
+        expect(() => mergeConfig({ review: { fetch: { format: "html" } } })).toThrow(
+            "review.fetch.format must be one of json, md, both"
+        );
+        expect(() => mergeConfig({ review: { fetch: { contextLines: -1 } } })).toThrow(
+            "review.fetch.contextLines must be a whole number"
+        );
+        expect(() => mergeConfig({ review: { nextSteps: "x" } })).toThrow(
+            "review.nextSteps must be an array of strings"
+        );
     });
 });
 
@@ -289,14 +411,14 @@ describe("work items", () => {
                 "Custom.Environment": "TEST",
             },
         };
-        const configured = toWorkItem(raw, { ...DEFAULT_CONFIG.workItems, environmentField: "Custom.Environment" });
+        const configured = toWorkItem(raw, { ...NEUTRAL_CONFIG.workItems, environmentField: "Custom.Environment" });
 
         expect(configured.environment).toBe("TEST");
         expect(configured.closedBy).toBe("Alice Example");
         expect(configured.parentId).toBe(7);
         expect(configured.comments[0]?.text).toBe("Fixed on test");
         expect(configured.url).toBe(raw.url);
-        expect(toWorkItem(raw, DEFAULT_CONFIG.workItems).environment).toBeNull();
+        expect(toWorkItem(raw, NEUTRAL_CONFIG.workItems).environment).toBeNull();
     });
 });
 
@@ -313,6 +435,7 @@ describe("small helpers", () => {
     });
 
     test("dates render as ISO by default and d.m.YYYY on request", () => {
+        setDateStyle("iso");
         expect(formatDate("2026-09-08T12:19:00Z")).toBe("2026-09-08");
         expect(formatDate("2026-09-08T12:19:00Z", "dmy")).toBe("8.9.2026");
         expect(formatDate("2025-11-30", "dmy")).toBe("30.11.2025");
@@ -418,5 +541,48 @@ describe("parseNextPage", () => {
         expect(parseNextPage("3")).toBe(3);
         expect(parseNextPage("")).toBeNull();
         expect(parseNextPage(null)).toBeUndefined();
+    });
+});
+
+describe("ledger lines from before entries carried a project", () => {
+    test("belong to the legacy project when one is set, and stay as they are otherwise", () => {
+        const old = { pr: "7", message: "m" } as { pr: string; message: string; project?: string };
+
+        expect(withLegacyProject(old, "acme/web-app").project).toBe("acme/web-app");
+        expect(withLegacyProject({ ...old, project: "acme/api" }, "acme/web-app").project).toBe("acme/api");
+        expect(withLegacyProject(old, null)).toBe(old);
+    });
+});
+
+describe("ledger reads", () => {
+    test("reading or naming a ledger creates no folder; the first write does", () => {
+        const root = join(mkdtempSync(join(tmpdir(), "gt-ledger-")), "not-yet");
+        const comments = commentLedgerPath(root);
+
+        expect(comments).toBe(join(root, "comment-batch.jsonl"));
+        expect(labelLedgerPath(root)).toBe(join(root, "label-batch.jsonl"));
+        expect(readLedger(comments)).toEqual([]);
+        expect(readLabelLedger(labelLedgerPath(root))).toEqual([]);
+        expect(existsSync(root)).toBe(false);
+
+        appendLedger({ project: "acme/web-app", pr: "7", message: "m", comment_id: 1, ts: "t" }, comments);
+        expect(readLedger(comments).map((entry) => entry.pr)).toEqual(["7"]);
+    });
+});
+
+describe("stale-branches side-comment", () => {
+    test("--no-ado is a hidden alias of --missing-work-item", () => {
+        const program = new Command();
+        registerStaleBranches(program);
+        const side = program.commands
+            .find((command) => command.name() === "stale-branches")
+            ?.commands.find((command) => command.name() === "side-comment");
+
+        expect(side?.helpInformation()).toContain("--missing-work-item");
+        expect(side?.helpInformation()).not.toContain("--no-ado");
+        side?.parseOptions(["--no-ado"]);
+        expect(missingWorkItemSelected(side?.opts() ?? {})).toBe(true);
+        expect(missingWorkItemSelected({})).toBe(false);
+        expect(missingWorkItemSelected({ missingWorkItem: true })).toBe(true);
     });
 });

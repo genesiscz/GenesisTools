@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { type ProjectApi, projectBase, restGetText } from "@app/gitlab/lib/client";
+import { type ProjectApi, projectBase, restGetPaginated, restGetText } from "@app/gitlab/lib/client";
+import { fileLink } from "@app/gitlab/lib/file-link";
 import { gitResult } from "@app/gitlab/lib/git";
 import { errorMessage } from "@app/gitlab/lib/http";
 import { type Block, type BlockInput, json2md } from "@genesiscz/utils/json2md";
@@ -105,6 +106,8 @@ export interface RenderMarkdownOpts {
     contextLines: number;
     /** `<head_sha>:<path>` → file lines at that sha. */
     anchorViews?: Map<string, string[]>;
+    /** Extra bullets under "Next steps"; `{iid}` becomes the MR iid. */
+    nextSteps?: string[];
 }
 
 export interface RenderMarkdownResult {
@@ -184,7 +187,8 @@ function threadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts): Blo
     const isDeletedLine = pos?.new_line == null && pos?.old_line != null;
     const lo = Math.max(1, line - opts.contextLines);
     const hi = line + opts.contextLines;
-    const window = readLocalWindow(resolve(opts.cwd, file), lo, hi);
+    const localPath = resolve(opts.cwd, file);
+    const window = readLocalWindow(localPath, lo, hi);
     const noteCount = d.notes?.length ?? 0;
 
     return [
@@ -193,6 +197,7 @@ function threadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts): Blo
         },
         {
             ul: [
+                `**File**: ${fileLink(localPath, line || null)}`,
                 `**Anchored at**: \`${shortSha(pos?.head_sha)}\` _(per-thread head_sha; **NOT** necessarily MR HEAD)_`,
                 `**Base sha**: \`${shortSha(pos?.base_sha)}\``,
                 `**Local state**: ${window ? `file is ${window.total} lines locally` : "file not in cwd"}`,
@@ -207,6 +212,34 @@ function threadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts): Blo
         (d.notes ?? []).map(noteBlock),
         { hr: true },
     ];
+}
+
+/** One section per unresolved diff-attached thread: every note, the local window and the frozen view. */
+export function threadSections(discussions: Discussion[], opts: RenderMarkdownOpts): BlockInput {
+    return unresolvedThreads(discussions).map((d, idx) => threadBlocks(d, idx, opts));
+}
+
+/** Raw discussions plus the reviewer's frozen views, which `threadSections` renders. */
+export async function collectThreadContext(options: {
+    api: ProjectApi;
+    iid: string;
+    cwd: string;
+    fetchRemote: boolean;
+    onWarn: (msg: string) => void;
+}): Promise<{ discussions: Discussion[]; anchorViews: Map<string, string[]> }> {
+    const discussions = await restGetPaginated<Discussion>(
+        options.api,
+        `${projectBase(options.api)}/merge_requests/${options.iid}/discussions`
+    );
+    const { views } = await fetchAnchorViews({
+        pairs: collectUnresolvedAnchorPairs(discussions),
+        api: options.api,
+        fetchRemote: options.fetchRemote,
+        onWarn: options.onWarn,
+        cwd: options.cwd,
+    });
+
+    return { discussions, anchorViews: views };
 }
 
 /** The fetch-review report as json2md blocks: header facts, one section per unresolved thread, next steps. */
@@ -234,6 +267,7 @@ export function reviewBlocks(discussions: Discussion[], opts: RenderMarkdownOpts
             ul: [
                 "Apply the fixes to the current working tree (not to the reviewer's frozen view).",
                 "Resolve threads in the GitLab UI after verifying.",
+                ...(opts.nextSteps ?? []).map((step) => step.replaceAll("{iid}", opts.mrIid)),
             ],
         },
     ];

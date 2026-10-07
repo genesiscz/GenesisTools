@@ -100,6 +100,11 @@
             "types": "./cli/current-command.ts",
             "default": "./cli/current-command.ts"
         },
+        "./cli/genesis-tools": {
+            "bun": "./cli/genesis-tools.ts",
+            "types": "./cli/genesis-tools.ts",
+            "default": "./cli/genesis-tools.ts"
+        },
         "./cli/interrupt": {
             "bun": "./cli/interrupt.ts",
             "types": "./cli/interrupt.ts",

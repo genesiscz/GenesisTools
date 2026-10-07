@@ -1,12 +1,13 @@
 /**
  * Renderers for `tools gitlab pr review`: the markdown report (json2md blocks, never concatenated
- * strings), the compact `--llm` view with f/t/d/m refs, the `--expand` drill-down, and the
- * `gt:review-proposal` skeleton that `tools hub proposal push` accepts once an agent adds a verdict
- * and drafts.
+ * strings), the compact `--llm` view with f/t/d/m refs, the `--expand` drill-down, and the review
+ * proposal skeleton (`--proposal-skeleton`).
+ * The `gt:review-proposal` skill says how to fill the proposal and push it with `tools hub proposal push`.
  */
 
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { hostnameOf } from "@app/gitlab/lib/client";
+import { fileLink } from "@app/gitlab/lib/file-link";
 import {
     type DiffFile,
     firstChangedLine,
@@ -14,6 +15,10 @@ import {
     type PrReviewFacts,
     type PrReviewGate,
 } from "@app/gitlab/lib/pr-review";
+import type { DraftSummary } from "@app/gitlab/lib/review-drafts";
+import { type Discussion, type RenderMarkdownOpts, threadSections } from "@app/gitlab/lib/review-render";
+import { detectGenesisTools } from "@genesiscz/utils/cli/genesis-tools";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type BlockInput, json2md } from "@genesiscz/utils/json2md";
 
 const pad = (n: number): string => String(n).padStart(2, "0");
@@ -23,14 +28,6 @@ function flat(text: string, max = 120): string {
     const oneLine = text.replace(/\s+/g, " ").trim();
 
     return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;
-}
-
-/** `[File.ts:91](file:///abs/File.ts#L91)`, the link form a terminal renders as clickable. Line 1 when unknown. */
-export function fileLink(absPath: string, line?: number | null): string {
-    const at = line && line > 0 ? line : 1;
-    const target = encodeURI(absPath).replace(/#/g, "%23");
-
-    return `[${basename(absPath)}:${at}](file://${target}#L${at})`;
 }
 
 /** A clickable local link when a checkout is known, else `path:line` in code. */
@@ -66,6 +63,45 @@ function worktreeLine(facts: PrReviewFacts): string {
     }
 
     return `Worktree: \`${facts.worktree}\` (HEAD is the MR head)`;
+}
+
+const FENCE_LANGUAGE: Record<string, string> = {
+    ts: "ts",
+    mts: "ts",
+    cts: "ts",
+    tsx: "tsx",
+    js: "js",
+    mjs: "js",
+    cjs: "js",
+    jsx: "jsx",
+    json: "json",
+    groovy: "groovy",
+    md: "markdown",
+    patch: "diff",
+    diff: "diff",
+    podspec: "ruby",
+    rb: "ruby",
+    py: "python",
+    go: "go",
+    rs: "rust",
+    java: "java",
+    kt: "kotlin",
+    m: "objectivec",
+    swift: "swift",
+    sh: "bash",
+    yml: "yaml",
+    yaml: "yaml",
+    css: "css",
+    scss: "scss",
+    html: "html",
+    php: "php",
+};
+
+/** Fence language from the file extension, so a terminal or viewer can colour the excerpt. */
+export function fenceLanguage(path: string): string {
+    const extension = path.split(".").pop()?.toLowerCase() ?? "";
+
+    return FENCE_LANGUAGE[extension] ?? "text";
 }
 
 /** The hunks of one file as numbered text: new-side numbers, removed lines unnumbered, `⋯` between hunks. */
@@ -109,7 +145,9 @@ function fileBlocks(facts: PrReviewFacts, file: DiffFile, index: number): BlockI
         heading,
         renamed,
         anchor(facts, file.path, firstChangedLine(file)),
-        file.hunks.length > 0 ? { code: { content: numberedHunks(file), language: "text" } } : "No content change.",
+        file.hunks.length > 0
+            ? { code: { content: numberedHunks(file), language: fenceLanguage(file.path) } }
+            : "No content change.",
     ];
 }
 
@@ -167,26 +205,224 @@ function impactBlocks(facts: PrReviewFacts): BlockInput {
     ];
 }
 
+/** A `tools task` session name per gate label, unique within the block. */
+function sessionNames(gates: PrReviewGate[]): string[] {
+    const seen = new Map<string, number>();
+
+    return gates.map((gate) => {
+        const base =
+            gate.label
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/^-+|-+$/g, "") || "gate";
+        const count = (seen.get(base) ?? 0) + 1;
+        seen.set(base, count);
+
+        return count === 1 ? base : `${base}-${count}`;
+    });
+}
+
+function doubleQuoted(command: string): string {
+    return `"${command.replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
+function listedGates(root: string, gates: PrReviewGate[]): string {
+    return [`cd ${root}`, ...gates.flatMap((gate) => [`# ${gate.label}`, gate.command])].join("\n");
+}
+
+/**
+ * Each gate as a background session of the GenesisTools `tools task` runner, a wait, then every
+ * exit code. When no install is found, the same gates are listed as plain commands.
+ * Named literally: a fork's own `task` command is a different tool.
+ */
+function parallelRunner(root: string, gates: PrReviewGate[]): string {
+    const bin = detectGenesisTools()?.binPath ?? null;
+    if (bin === null) {
+        return listedGates(root, gates);
+    }
+
+    const sessions = sessionNames(gates);
+    const lines = [`cd ${root}`, 'P=$(basename "$PWD"); pids=()'];
+    const cmd = doubleQuoted(bin);
+
+    gates.forEach((gate, i) => {
+        lines.push(
+            `${cmd} task run --session "$P-${sessions[i]}" --no-tty -- bash -c ${doubleQuoted(gate.command)} >/dev/null 2>&1 & pids+=($!)`
+        );
+    });
+
+    lines.push(
+        'wait "${pids[@]}"',
+        `for s in ${sessions.map((s) => `"$P-${s}"`).join(" ")}; do printf '%-24s: ' "$s"; ${cmd} task get --session "$s" 2>&1 | grep -oE 'exited \\(code [0-9]+' | head -1; done`
+    );
+
+    return lines.join("\n");
+}
+
 function gateBlocks(facts: PrReviewFacts): BlockInput {
     if (facts.gates.length === 0) {
         return [];
     }
 
-    const lines = [`cd ${linkBase(facts) ?? "<checkout>"}`];
-
-    for (const gate of facts.gates) {
-        lines.push(`# ${gate.label}`, gate.command);
-    }
+    const root = linkBase(facts) ?? "<checkout>";
+    const runnable = facts.gates.filter((gate) => gate.note === null);
+    const noted = facts.gates.filter((gate) => gate.note !== null).map((gate) => `${gate.label}: ${gate.note}`);
+    const listed = listedGates(root, runnable);
+    const script = facts.gateRunner === "parallel" ? parallelRunner(root, runnable) : listed;
 
     return [
         { h2: "Gates" },
         "Run them in the MR checkout. All must exit 0 before a verdict says the MR is clean.",
-        { code: { content: lines.join("\n"), language: "bash" } },
+        runnable.length > 0 ? { code: { content: script, language: "bash" } } : [],
+        noted,
     ];
 }
 
+export type DraftPlacement =
+    | "added line"
+    | "context line"
+    | "removed line"
+    | "outside the diff"
+    | "file not in the diff"
+    | "top-level";
+
+export interface DraftExcerpt {
+    placement: DraftPlacement;
+    lines: string[];
+}
+
+/** Where a draft sits in the MR diff, with the hunk lines around it. `▶` marks the anchored line. */
+export function draftExcerpt(files: DiffFile[], draft: DraftSummary, radius = 6): DraftExcerpt {
+    if (!draft.path || draft.line === null) {
+        return { placement: "top-level", lines: [] };
+    }
+
+    const file = files.find((f) => f.path === draft.path || f.oldPath === draft.path);
+
+    if (!file) {
+        return { placement: "file not in the diff", lines: [] };
+    }
+
+    const onOldSide = draft.side === "old";
+
+    for (const hunk of file.hunks) {
+        const index = hunk.lines.findIndex((l) =>
+            onOldSide ? l.kind === "-" && l.oldLine === draft.line : l.kind !== "-" && l.newLine === draft.line
+        );
+        const target = hunk.lines[index];
+
+        if (!target) {
+            continue;
+        }
+
+        const slice = hunk.lines.slice(Math.max(0, index - radius), index + radius + 1);
+        const width = String(Math.max(...slice.map((l) => Math.max(l.newLine ?? 0, l.oldLine ?? 0)), 1)).length;
+        const num = (n: number | null): string => (n === null ? " ".repeat(width) : String(n).padStart(width));
+        const placement: DraftPlacement =
+            target.kind === "+" ? "added line" : target.kind === "-" ? "removed line" : "context line";
+
+        return {
+            placement,
+            lines: slice.map(
+                (l) => `${l === target ? "▶" : " "} ${num(l.oldLine)} ${num(l.newLine)} ${l.kind} ${l.text}`
+            ),
+        };
+    }
+
+    return { placement: "outside the diff", lines: [] };
+}
+
+function draftTarget(draft: DraftSummary): string {
+    if (draft.discussionId) {
+        return `reply in existing thread \`${draft.discussionId}\``;
+    }
+
+    return draft.path ? "new thread on a line" : "new top-level note";
+}
+
+/** Every pending draft in full: body, reply target, placement in the diff, and the code around it. */
+export function draftBlocks(facts: PrReviewFacts): BlockInput {
+    if (facts.drafts.length === 0) {
+        return "None.";
+    }
+
+    const iid = String(facts.iid);
+    const sorted = [...facts.drafts].sort(
+        (a, b) => (a.path ?? "").localeCompare(b.path ?? "") || (a.line ?? 0) - (b.line ?? 0) || a.id - b.id
+    );
+
+    return [
+        `${facts.drafts.length} unpublished draft(s). They are visible only to their author.`,
+        {
+            blockquote: `🛑 A draft that opens a new thread has no discussion yet. Nobody can reply to it, you included, until the review is published with \`${toolCommand("gitlab drafts", iid, "--publish")}\`. After publishing, \`${toolCommand("gitlab discussions", iid, "--author", "<you>", "--json")}\` gives the new discussion ids; match them by path and line.`,
+        },
+        sorted.map((draft, i): BlockInput => {
+            const excerpt = draftExcerpt(facts.files, draft);
+            const where = draft.path
+                ? anchor(facts, draft.path, draft.line)
+                : draft.discussionId
+                  ? "reply"
+                  : "top-level";
+
+            return [
+                { h3: `D${pad(i + 1)} · draft ${draft.id} · ${where}` },
+                {
+                    ul: [
+                        `Target: ${draftTarget(draft)}`,
+                        `Placement: ${excerpt.placement}${draft.side === "old" ? " (old side)" : ""}`,
+                    ],
+                },
+                { code: { content: draft.note, language: "markdown" } },
+                excerpt.lines.length > 0
+                    ? [
+                          "Code at the anchor (old · new · kind):",
+                          { code: { content: excerpt.lines.join("\n"), language: fenceLanguage(draft.path ?? "") } },
+                      ]
+                    : excerpt.placement === "outside the diff"
+                      ? `⚠️ Line ${draft.line} is outside every hunk shown with the current context. Read it in the checkout.`
+                      : [],
+            ];
+        }),
+    ];
+}
+
+/** Extra sections a report can carry beside the facts. */
+export interface ReportExtras {
+    /** `--threads`: every unresolved diff thread in full, as `fetch-review` renders it. */
+    threads?: { discussions: Discussion[]; opts: RenderMarkdownOpts };
+}
+
+function threadBlocksOf(extras: ReportExtras): BlockInput {
+    if (!extras.threads) {
+        return [];
+    }
+
+    const sections = threadSections(extras.threads.discussions, extras.threads.opts);
+
+    return [
+        { h2: "Unresolved threads in full" },
+        Array.isArray(sections) && sections.length === 0 ? "None." : sections,
+    ];
+}
+
+/** The drafts-only report: the header plus every pending draft in full, for a pass over one's own review. */
+export function renderDraftsOnlyMarkdown(facts: PrReviewFacts, extras: ReportExtras = {}): string {
+    return json2md([
+        { h1: `Pending drafts: !${facts.iid} ${facts.title}` },
+        {
+            ul: [
+                `Author: @${facts.author} · \`${facts.sourceBranch}\` → \`${facts.targetBranch}\` · head \`${facts.headSha.slice(0, 10)}\``,
+                `MR: ${facts.webUrl}`,
+                worktreeLine(facts),
+            ],
+        },
+        draftBlocks(facts),
+        threadBlocksOf(extras),
+    ]);
+}
+
 /** The review report as json2md blocks. */
-export function prReviewBlocks(facts: PrReviewFacts): BlockInput {
+export function prReviewBlocks(facts: PrReviewFacts, extras: ReportExtras = {}): BlockInput {
     const { additions, deletions, unresolved } = totals(facts);
 
     return [
@@ -210,16 +446,11 @@ export function prReviewBlocks(facts: PrReviewFacts): BlockInput {
                 checked: false,
             })),
         },
+        threadBlocksOf(extras),
         { h2: "Existing threads" },
         threadRows(facts),
         { h2: "Your pending drafts" },
-        facts.drafts.length === 0
-            ? "None."
-            : {
-                  ul: facts.drafts.map(
-                      (draft) => `${draft.id} · ${anchor(facts, draft.path, draft.line)} · ${flat(draft.note)}`
-                  ),
-              },
+        draftBlocks(facts),
         { h2: "Open MRs this one affects" },
         impactBlocks(facts),
         gateBlocks(facts),
@@ -229,8 +460,8 @@ export function prReviewBlocks(facts: PrReviewFacts): BlockInput {
     ];
 }
 
-export function renderPrReviewMarkdown(facts: PrReviewFacts): string {
-    return json2md(prReviewBlocks(facts));
+export function renderPrReviewMarkdown(facts: PrReviewFacts, extras: ReportExtras = {}): string {
+    return json2md(prReviewBlocks(facts, extras));
 }
 
 // ─── --llm ─────────────────────────────────────────────────────────────────────
@@ -244,7 +475,7 @@ function lineRef(path: string | null, line: number | null): string {
 }
 
 function gateLine(gate: PrReviewGate, index: number): string {
-    return `  g${index + 1}  ${gate.label}: ${gate.command}`;
+    return `  g${index + 1}  ${gate.label}: ${gate.note ?? gate.command}`;
 }
 
 /** Compact first-level view with refs (f1 files, t1 threads, d1 drafts, m1 affected MRs) for `--expand`. */
@@ -402,9 +633,9 @@ export function expandRefs(facts: PrReviewFacts, refs: string[]): string {
 // ─── --proposal-skeleton ───────────────────────────────────────────────────────
 
 /**
- * A `gt:review-proposal` document pre-filled from the facts. The agent replaces the verdict, sets
- * author.agent and adds drafts; `tools hub proposal push` validates it. Unresolved threads are
- * listed so the agent can judge each one.
+ * A review proposal pre-filled from the facts. The agent replaces the verdict, sets author.agent and
+ * adds drafts. Unresolved threads are listed so the agent can judge each one.
+ * The `gt:review-proposal` skill says how to fill the proposal and push it with `tools hub proposal push`.
  */
 export function proposalSkeleton(facts: PrReviewFacts, agent = "agent"): Record<string, unknown> {
     return {

@@ -1,4 +1,5 @@
 import { writeFileSync } from "node:fs";
+import { defaults } from "@app/gitlab/lib/defaults";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
@@ -8,13 +9,19 @@ export interface TargetOptions {
 }
 
 export function withHost(cmd: Command): Command {
-    return cmd.option("--host <url>", "GitLab instance (default: $GITLAB_HOST, then glab's default host)");
+    const fallback = defaults.host ? defaults.host : "glab's default host";
+
+    return cmd.option("--host <url>", `GitLab instance (default: $GITLAB_HOST, then ${fallback})`);
 }
 
 export function withProject(cmd: Command): Command {
+    const fallback = defaults.project
+        ? `${defaults.project}, or the origin remote when a checkout is named`
+        : "the origin remote of the current checkout";
+
     return withHost(cmd).option(
         "--project <path-or-id>",
-        "Project as group/name or numeric id (default: $GITLAB_PROJECT, then the origin remote of the current checkout)"
+        `Project as group/name or numeric id (default: $GITLAB_PROJECT, then ${fallback})`
     );
 }
 

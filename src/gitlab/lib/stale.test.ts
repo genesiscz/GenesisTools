@@ -1,7 +1,9 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mergeConfig, NEUTRAL_CONFIG } from "@app/gitlab/lib/config";
 import { setDateStyle } from "@app/gitlab/lib/dates";
 import type { MrNote, MrSummary, MrWithNotes } from "@app/gitlab/lib/merge-requests";
 import {
+    closedBugContextOf,
     findReviewedMr,
     freshness,
     markLabelsApplied,
@@ -12,7 +14,9 @@ import {
     renderStaleReport,
     type StaleMr,
     type StaleReport,
+    staleInstructions,
     unfilledReviews,
+    withReportTarget,
 } from "@app/gitlab/lib/stale-branches";
 import {
     buildManifest,
@@ -40,6 +44,11 @@ import {
     renderFollowupTable,
 } from "@app/gitlab/lib/stale-phases";
 import type { AdoWorkItem } from "@app/gitlab/lib/work-items";
+
+// The date style starts from defaults.ts; these expectations are written in the neutral ISO style.
+beforeEach(() => {
+    setDateStyle("iso");
+});
 
 const MR_URL = "https://gitlab.example.com/acme/web-app/-/merge_requests";
 const STALE = "Stale";
@@ -968,5 +977,58 @@ describe("stale-manifest", () => {
         expect(renderManifestTable(rows)).toContain(`| [!1](${MR_URL}/1)`);
         expect(renderManifestTable(rows)).toContain("answered-label-kept");
         expect(manifestSummary(rows)).toContain("| silent | 1 |");
+    });
+});
+
+describe("a sweep written before it recorded the host and project", () => {
+    const old = (): StaleReport => ({ ...report([reviewed(1)]), host: "", project: "" });
+
+    test("the target comes from the MR URLs it holds", () => {
+        expect(withReportTarget(old())).toMatchObject({ host: "https://gitlab.example.com", project: "acme/web-app" });
+        expect(withReportTarget({ ...old(), project: "acme/api" }).project).toBe("acme/api");
+        expect(withReportTarget({ ...old(), mrs: [] })).toMatchObject({ host: "", project: "" });
+    });
+
+    test("render and the closed-bug context never print or use an empty project", () => {
+        const md = renderStaleReport(old(), { createdAt: "2026-09-08 15:00", adoTags: [] });
+
+        expect(md).toContain("# Open merge requests in acme/web-app");
+        expect(md).toContain("every open MR in `acme/web-app`");
+        expect(md).not.toContain("undefined");
+        expect(closedBugContextOf(old(), mergeConfig({}, NEUTRAL_CONFIG)).projectPath).toBe("acme/web-app");
+    });
+});
+
+describe("company-specific note and instruction text", () => {
+    test("stale.noteTags, stale.contentCheckNote and stale.instructionsExtra default to nothing", () => {
+        expect(NEUTRAL_CONFIG.stale).toMatchObject({ instructionsExtra: null, noteTags: [], contentCheckNote: null });
+        expect(() => mergeConfig({ stale: { noteTags: "x" } }, NEUTRAL_CONFIG)).toThrow(
+            "stale.noteTags must be an array of strings"
+        );
+    });
+
+    test("render adds the configured tags and the content-check note", () => {
+        const md = renderStaleReport(report([reviewed(1)]), {
+            createdAt: "2026-09-08 15:00",
+            adoTags: [],
+            noteTags: ["web-app"],
+            contentCheckNote: "The test branch lost its history before 2026-06-01.",
+        });
+
+        expect(md).toContain("  - cleanup\n  - web-app\nado: []");
+        expect(md).toContain(
+            "defeat it. A Closed work item with `absent` everywhere means the fix is gone, not shipped. The test branch lost its history before 2026-06-01."
+        );
+    });
+
+    test("the preflight instructions carry stale.instructionsExtra before the render step", () => {
+        const config = mergeConfig(
+            { stale: { instructionsExtra: "Write the comment in the team voice." } },
+            NEUTRAL_CONFIG
+        );
+        const text = staleInstructions(config);
+
+        expect(text).toContain("Write the comment in the team voice. Then run:");
+        expect(staleInstructions(mergeConfig({}, NEUTRAL_CONFIG))).not.toContain("team voice");
     });
 });

@@ -2,15 +2,16 @@
  * The reviewer's side of an MR: every fact a review of someone else's merge request needs, so the
  * reviewer reads code instead of assembling context. The MR, its diff with new-side (and old-side)
  * line numbers, the threads that already exist, my pending drafts, the other open MRs that break or
- * conflict when this one lands, and the configured gates. Read-only on GitLab and on git.
+ * conflict when this one lands, and the configured gates. Read-only on GitLab. Read-only on git
+ * too, except the `git` impact source, which fetches the open branches into `refs/remotes/origin/*`.
  *
  * `fetch-review` is the other direction (threads someone left on MY MR).
  */
 
 import { existsSync } from "node:fs";
-import { dirname, posix, resolve } from "node:path";
+import { dirname, join, posix, resolve } from "node:path";
 import { type ProjectApi, projectBase, restGet, restGetPaginated } from "@app/gitlab/lib/client";
-import type { ReviewGate } from "@app/gitlab/lib/config";
+import type { GateRunner, ReviewGate } from "@app/gitlab/lib/config";
 import { gitResult } from "@app/gitlab/lib/git";
 import { errorMessage, HttpError } from "@app/gitlab/lib/http";
 import { pool } from "@app/gitlab/lib/pool";
@@ -73,11 +74,18 @@ export interface ImpactEntry {
 
 export interface PrReviewGate {
     label: string;
-    /** The configured command with `{files}` filled in. */
+    /** The configured command with `{files}` and `{tests}` filled in. */
     command: string;
     /** The changed files the gate applies to (all changed files when the gate has no `when`). */
     files: string[];
+    /** The test files `{tests}` stands for. */
+    tests: string[];
+    /** Set when the gate cannot run as configured (a `{tests}` gate with no test file); the command is then not listed. */
+    note: string | null;
 }
+
+export const NO_TESTS_NOTE =
+    "No test file sits next to a changed file. Pick the test paths by hand, or state that none apply.";
 
 export interface PrReviewFacts {
     provider: "gitlab";
@@ -109,6 +117,9 @@ export interface PrReviewFacts {
     impact: ImpactEntry[] | null;
     impactScanned: number;
     gates: PrReviewGate[];
+    gateRunner: GateRunner;
+    /** Changed test files plus the test next to each changed source file (found only with a checkout). */
+    testPaths: string[];
     /** Partial failures: the facts are real, a part is missing. */
     warnings: string[];
 }
@@ -262,7 +273,9 @@ export function removedModules(files: DiffFile[]): string[] {
     return [...new Set(gone.flatMap((file) => moduleSpecifiers(file.oldPath)))].sort();
 }
 
-const IMPORT_HINT = /\b(import|from|require|export)\b/;
+/** An import, a re-export, or a test runner's module call: `jest.mock("x")` of a deleted module fails too. */
+const IMPORT_HINT =
+    /\b(import|from|require|export)\b|\b(?:jest|vi)\.(?:mock|doMock|unmock|requireActual|requireMock|importActual|importMock)\(/;
 const QUOTED = /(['"`])([^'"`\n]+)\1/g;
 
 /**
@@ -342,23 +355,73 @@ export function impactOf({
     };
 }
 
-/** Configured gates that apply to this diff; a gate with `when` appears only when a changed file matches it. */
-export function selectGates(gates: ReviewGate[], files: DiffFile[]): PrReviewGate[] {
+const TEST_FILE = /\.(?:test|spec)\.(tsx?|jsx?|mts|cts|mjs|cjs)$/;
+
+/** Changed test files, plus the test that sits next to each changed source file. */
+export function testCandidates(files: DiffFile[], exists: (path: string) => boolean): string[] {
+    const found = new Set<string>();
+
+    for (const file of files) {
+        if (file.status === "deleted") {
+            continue;
+        }
+
+        if (TEST_FILE.test(file.path)) {
+            found.add(file.path);
+            continue;
+        }
+
+        if (!MODULE_EXTENSION.test(file.path) || file.path.endsWith(".d.ts")) {
+            continue;
+        }
+
+        const stem = file.path.replace(MODULE_EXTENSION, "");
+
+        for (const suffix of [".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx", ".test.js", ".spec.js"]) {
+            if (exists(`${stem}${suffix}`)) {
+                found.add(`${stem}${suffix}`);
+            }
+        }
+    }
+
+    return [...found].sort();
+}
+
+/**
+ * Configured gates that apply to this diff; a gate with `when` appears only when a changed file
+ * matches it. `exists` answers whether a repository path is a file in the checkout, for `{tests}`.
+ */
+export function selectGates(
+    gates: ReviewGate[],
+    files: DiffFile[],
+    exists: (path: string) => boolean = () => false
+): PrReviewGate[] {
     const changed = files.filter((file) => file.status !== "deleted").map((file) => file.path);
+    const allTests = testCandidates(files, exists);
     const selected: PrReviewGate[] = [];
 
     for (const gate of gates) {
+        const exclude = gate.exclude ? new Bun.Glob(gate.exclude) : null;
+        const kept = (path: string): boolean => !exclude?.match(path);
         const when = gate.when ? new Bun.Glob(gate.when) : null;
-        const matching = when ? changed.filter((path) => when.match(path)) : changed;
+        const candidates = changed.filter(kept);
+        const matching = when ? candidates.filter((path) => when.match(path)) : candidates;
 
         if (when && matching.length === 0) {
             continue;
         }
 
+        const usesTests = gate.command.includes("{tests}");
+        const tests = usesTests ? allTests.filter((path) => kept(path) && (!when || when.match(path))) : [];
+
         selected.push({
             label: gate.label,
-            command: gate.command.replaceAll("{files}", matching.map(shellQuote).join(" ")),
+            command: gate.command
+                .replaceAll("{files}", matching.map(shellQuote).join(" "))
+                .replaceAll("{tests}", tests.map(shellQuote).join(" ")),
             files: matching,
+            tests,
+            note: usesTests && tests.length === 0 ? NO_TESTS_NOTE : null,
         });
     }
 
@@ -477,13 +540,61 @@ function localDiff({
     return parseUnifiedDiff(diff.stdout);
 }
 
+const FETCH_CHUNK = 40;
+
+/** `git fetch origin` of these branches into `refs/remotes/origin/*`, in chunks; returns the ones that failed. */
+export function fetchBranches(repoPath: string, branches: string[]): string[] {
+    const refspec = (branch: string): string => `+refs/heads/${branch}:refs/remotes/origin/${branch}`;
+    const failed: string[] = [];
+
+    for (let i = 0; i < branches.length; i += FETCH_CHUNK) {
+        const chunk = branches.slice(i, i + FETCH_CHUNK);
+
+        if (gitResult(repoPath, ["fetch", "origin", "--quiet", ...chunk.map(refspec)]).exitCode === 0) {
+            continue;
+        }
+
+        for (const branch of chunk) {
+            if (gitResult(repoPath, ["fetch", "origin", "--quiet", refspec(branch)]).exitCode !== 0) {
+                failed.push(branch);
+            }
+        }
+    }
+
+    return failed;
+}
+
+/** The diff an MR branch adds over its target, from the fetched remote refs, without context lines. */
+export function branchDiff(repoPath: string, target: string, source: string): DiffFile[] | null {
+    const diff = gitRaw(repoPath, [
+        "-c",
+        "core.quotePath=false",
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "--find-renames",
+        "-U0",
+        `origin/${target}...origin/${source}`,
+    ]);
+
+    return diff.ok ? parseUnifiedDiff(diff.stdout) : null;
+}
+
 // ─── collect ───────────────────────────────────────────────────────────────────
+
+export const IMPACT_SOURCES = ["api", "git"] as const;
+/** `api`: one diffs request per other MR, capped. `git`: fetch every open branch and diff locally, no cap. */
+export type ImpactSource = (typeof IMPACT_SOURCES)[number];
 
 export interface CollectOptions {
     api: ProjectApi;
     iid: number;
     /** Local checkout for file links and the git diff; null reads everything from the API. */
     repoPath: string | null;
+    /** Use this directory as the MR worktree even when its HEAD is on another branch. */
+    worktree?: string | null;
+    /** Where the impact scan reads other MRs' diffs; `git` needs a checkout. Default `api`. */
+    impactSource?: ImpactSource;
     /** Unchanged lines around each hunk when the diff comes from local git. */
     contextLines?: number;
     /** Scan other open MRs for imports of removed modules and shared files. */
@@ -491,6 +602,7 @@ export interface CollectOptions {
     /** At most this many other open MRs get their diff read, the most recently updated first. */
     impactLimit?: number;
     gates?: ReviewGate[];
+    gateRunner?: GateRunner;
     concurrency?: number;
     onProgress?: (message: string) => void;
 }
@@ -537,7 +649,15 @@ async function scanOpenMrs({
     const results = await pool(others, concurrency, async (other) => {
         try {
             const otherFiles = await fetchMrDiffs(api, other.iid);
+            const collapsed = otherFiles.filter((file) => file.truncated).map((file) => file.path);
             scanned++;
+
+            if (collapsed.length > 0) {
+                const files = collapsed.length === 1 ? "file" : "files";
+                warnings.push(
+                    `impact: !${other.iid} has ${collapsed.length} ${files} GitLab collapsed (${collapsed.slice(0, 3).join(", ")}${collapsed.length > 3 ? ", …" : ""}); an import there is not seen (--impact-source git reads it)`
+                );
+            }
 
             return impactOf({ other, otherFiles, specifiers, changedPaths });
         } catch (error) {
@@ -555,7 +675,75 @@ async function scanOpenMrs({
     return { entries, scanned };
 }
 
-/** Everything a reviewer needs for one MR. Only GETs on GitLab; git is read (`diff`, `cat-file`, `worktree list`). */
+/**
+ * The git impact source: every other open MR's branches fetched, then a local `-U0` diff each. No
+ * cap and no collapsed diffs, at the cost of a `git fetch` of every open branch.
+ */
+async function scanOpenMrsGit({
+    api,
+    repoPath,
+    self,
+    files,
+    warnings,
+}: {
+    api: ProjectApi;
+    repoPath: string;
+    self: RawMergeRequest;
+    files: DiffFile[];
+    warnings: string[];
+}): Promise<{ entries: ImpactEntry[]; scanned: number }> {
+    if (files.length === 0) {
+        return { entries: [], scanned: 0 };
+    }
+
+    const open = await restGetPaginated<RawMergeRequest>(api, `${projectBase(api)}/merge_requests?state=opened`);
+    const others = open.filter((mr) => mr.iid !== self.iid && mr.source_branch !== self.target_branch);
+    const failed = new Set(
+        fetchBranches(repoPath, [...new Set(others.flatMap((mr) => [mr.source_branch, mr.target_branch]))])
+    );
+    const specifiers = removedModules(files);
+    const changedPaths = new Set(files.map((file) => file.path));
+    const entries: ImpactEntry[] = [];
+    let scanned = 0;
+
+    if (failed.size > 0) {
+        warnings.push(
+            `impact: could not fetch ${failed.size} branch(es), their MRs are skipped: ${[...failed].slice(0, 5).join(", ")}`
+        );
+    }
+
+    for (const other of others) {
+        if (failed.has(other.source_branch) || failed.has(other.target_branch)) {
+            continue;
+        }
+
+        const otherFiles = branchDiff(repoPath, other.target_branch, other.source_branch);
+
+        if (!otherFiles) {
+            warnings.push(`impact: !${other.iid} git diff failed, skipped`);
+            continue;
+        }
+
+        scanned++;
+        const entry = impactOf({ other, otherFiles, specifiers, changedPaths });
+
+        if (entry) {
+            entries.push(entry);
+        }
+    }
+
+    entries.sort(
+        (a, b) => b.imports.length - a.imports.length || b.sharedFiles.length - a.sharedFiles.length || b.iid - a.iid
+    );
+    log.debug({ open: open.length, scanned, affected: entries.length }, "open MRs scanned with git");
+
+    return { entries, scanned };
+}
+
+/**
+ * Everything a reviewer needs for one MR. Only GETs on GitLab; git is read (`diff`, `cat-file`,
+ * `worktree list`), and fetched only by the `git` impact source.
+ */
 export async function collectPrReviewFacts(options: CollectOptions): Promise<PrReviewFacts> {
     const { api, iid } = options;
     const progress = options.onProgress ?? (() => undefined);
@@ -565,9 +753,20 @@ export async function collectPrReviewFacts(options: CollectOptions): Promise<PrR
     const headSha = mr.diff_refs?.head_sha ?? mr.sha;
     progress(`!${iid} ${mr.title} (${mr.source_branch} → ${mr.target_branch}, head ${headSha.slice(0, 10)})`);
 
-    const repoPath = options.repoPath && existsSync(options.repoPath) ? resolve(options.repoPath) : null;
-    const worktree = repoPath ? findWorktree(repoPath, mr.source_branch) : null;
+    const pinned = options.worktree && existsSync(options.worktree) ? resolve(options.worktree) : null;
+    const given = options.repoPath && existsSync(options.repoPath) ? resolve(options.repoPath) : null;
+    const repoPath = given ?? (pinned ? checkoutOf(pinned) : null);
+    const worktree = pinned ?? (repoPath ? findWorktree(repoPath, mr.source_branch) : null);
     const worktreeHead = worktree ? gitResult(worktree, ["rev-parse", "HEAD"]).stdout || null : null;
+    const impactSource = options.impactSource ?? "api";
+
+    if (repoPath && impactSource === "git" && options.impact !== false) {
+        const failed = fetchBranches(repoPath, [mr.source_branch, mr.target_branch]);
+
+        if (failed.length > 0) {
+            warnings.push(`git fetch failed for ${failed.join(", ")}; using the refs already on disk`);
+        }
+    }
 
     if (repoPath && !worktree) {
         warnings.push(
@@ -587,6 +786,8 @@ export async function collectPrReviewFacts(options: CollectOptions): Promise<PrR
         fetchDrafts(api, String(iid)),
     ]);
 
+    const checkout = worktree ?? repoPath;
+    const exists = (path: string): boolean => (checkout ? existsSync(join(checkout, path)) : false);
     let impact: ImpactEntry[] | null = null;
     let impactScanned = 0;
 
@@ -594,16 +795,23 @@ export async function collectPrReviewFacts(options: CollectOptions): Promise<PrR
         progress("scanning other open MRs for imports of removed modules and shared files");
 
         try {
-            const scan = await scanOpenMrs({
-                api,
-                self: mr,
-                files,
-                concurrency: options.concurrency ?? 4,
-                limit: options.impactLimit ?? DEFAULT_IMPACT_LIMIT,
-                warnings,
-            });
-            impact = scan.entries;
-            impactScanned = scan.scanned;
+            if (impactSource === "git" && !repoPath) {
+                warnings.push("impact: --impact-source git needs a checkout (--repo); not scanned");
+            } else {
+                const scan =
+                    impactSource === "git" && repoPath
+                        ? await scanOpenMrsGit({ api, repoPath, self: mr, files, warnings })
+                        : await scanOpenMrs({
+                              api,
+                              self: mr,
+                              files,
+                              concurrency: options.concurrency ?? 4,
+                              limit: options.impactLimit ?? DEFAULT_IMPACT_LIMIT,
+                              warnings,
+                          });
+                impact = scan.entries;
+                impactScanned = scan.scanned;
+            }
         } catch (error) {
             warnings.push(`impact: open-MR scan failed (${errorMessage(error)})`);
         }
@@ -632,7 +840,9 @@ export async function collectPrReviewFacts(options: CollectOptions): Promise<PrR
         removedModules: removedModules(files),
         impact,
         impactScanned,
-        gates: selectGates(options.gates ?? [], files),
+        gates: selectGates(options.gates ?? [], files, exists),
+        gateRunner: options.gateRunner ?? "list",
+        testPaths: testCandidates(files, exists),
         warnings,
     };
     log.debug(

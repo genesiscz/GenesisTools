@@ -3,29 +3,39 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { factsBaseName } from "@app/gitlab/commands/pr-review";
+import { factsBaseName, factsPathOf } from "@app/gitlab/commands/pr-review";
 import type { ProjectApi } from "@app/gitlab/lib/client";
-import { mergeConfig } from "@app/gitlab/lib/config";
+import { mergeConfig, NEUTRAL_CONFIG } from "@app/gitlab/lib/config";
 import {
     type ApiDiff,
     collectPrReviewFacts,
     findAddedImports,
     findWorktree,
     impactOf,
+    NO_TESTS_NOTE,
     type PrReviewFacts,
     parseApiDiffs,
     parseUnifiedDiff,
     type RawMergeRequest,
     removedModules,
     selectGates,
+    testCandidates,
 } from "@app/gitlab/lib/pr-review";
 import {
+    draftBlocks,
+    draftExcerpt,
     expandRefs,
+    fenceLanguage,
     formatPrReviewLLM,
     proposalSkeleton,
+    renderDraftsOnlyMarkdown,
     renderPrReviewMarkdown,
 } from "@app/gitlab/lib/pr-review-output";
+import type { DraftSummary } from "@app/gitlab/lib/review-drafts";
+import { collectThreadContext, type Discussion } from "@app/gitlab/lib/review-render";
 import { parseProposal } from "@app/hub/lib/proposal";
+import { type DetectProbes, detectGenesisTools, resetGenesisToolsCache } from "@genesiscz/utils/cli/genesis-tools";
+import { json2md } from "@genesiscz/utils/json2md";
 
 const GIT_DIFF = [
     "diff --git a/src/app.ts b/src/app.ts",
@@ -151,6 +161,19 @@ describe("impact scan", () => {
         ]);
     });
 
+    test("a test runner's module call of a removed module is found", () => {
+        const files = otherDiff([
+            '+jest.mock("src/gone/index", () => ({}));',
+            "+const real = vi.importActual('../lib/old-name');",
+            '+const label = "jest mocks src/gone";',
+        ]);
+
+        expect(findAddedImports(files, removedModules(mine)).map((hit) => [hit.newLine, hit.specifier])).toEqual([
+            [1, "src/gone/index"],
+            [2, "src/lib/old-name"],
+        ]);
+    });
+
     test("an MR that shares a file is affected; one that neither imports nor shares is not", () => {
         const changedPaths = new Set(mine.map((file) => file.path));
         const shared = impactOf({
@@ -169,7 +192,7 @@ describe("gates", () => {
     const files = parseUnifiedDiff(GIT_DIFF);
 
     test("no gates configured means no gates, and the config default is empty", () => {
-        expect(mergeConfig({}).review.gates).toEqual([]);
+        expect(mergeConfig({}, NEUTRAL_CONFIG).review.gates).toEqual([]);
         expect(selectGates([], files)).toEqual([]);
     });
 
@@ -189,13 +212,55 @@ describe("gates", () => {
                 label: "types",
                 command: "bunx tsgo --noEmit",
                 files: ["src/app.ts", "src/lib/new-name.ts", "assets/logo.png"],
+                tests: [],
+                note: null,
             },
             {
                 label: "unit",
                 command: "bun test src/app.ts src/lib/new-name.ts",
                 files: ["src/app.ts", "src/lib/new-name.ts"],
+                tests: [],
+                note: null,
             },
         ]);
+    });
+
+    test("testCandidates keeps changed tests and finds the test next to a changed source file", () => {
+        const withTest = parseUnifiedDiff(
+            `${GIT_DIFF}\ndiff --git a/src/b.test.ts b/src/b.test.ts\n--- a/src/b.test.ts\n+++ b/src/b.test.ts\n@@ -1,1 +1,1 @@\n-x\n+y\n`
+        );
+        const onDisk = new Set(["src/app.test.ts", "src/lib/new-name.spec.tsx"]);
+
+        expect(testCandidates(withTest, (path) => onDisk.has(path))).toEqual([
+            "src/app.test.ts",
+            "src/b.test.ts",
+            "src/lib/new-name.spec.tsx",
+        ]);
+    });
+
+    test("{tests} fills in the neighbour tests minus `exclude`, and a gate with none gets the note instead", () => {
+        const gates = mergeConfig({
+            review: {
+                gates: [
+                    { label: "unit", command: "bun test {tests}", exclude: "src/lib/**" },
+                    { label: "lib", command: "bun test {tests}", when: "src/lib/**", exclude: "src/lib/**/*.spec.tsx" },
+                ],
+            },
+        }).review.gates;
+        const onDisk = new Set(["src/app.test.ts", "src/lib/new-name.spec.tsx"]);
+        const [unit, lib] = selectGates(gates, files, (path) => onDisk.has(path));
+
+        expect(unit).toMatchObject({ command: "bun test src/app.test.ts", tests: ["src/app.test.ts"], note: null });
+        expect(unit?.files).not.toContain("src/lib/new-name.ts");
+        expect(lib).toMatchObject({ tests: [], note: NO_TESTS_NOTE });
+    });
+
+    test("review.runner is list by default and refuses an unknown value", () => {
+        expect(mergeConfig({}, NEUTRAL_CONFIG).review.runner).toBe("list");
+        expect(mergeConfig({ review: { runner: "parallel" } }).review.runner).toBe("parallel");
+        expect(() => mergeConfig({ review: { runner: "fast" } })).toThrow(
+            "review.runner must be one of list, parallel"
+        );
     });
 
     test("a malformed gate fails loudly", () => {
@@ -322,7 +387,7 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
             api,
             iid: 42,
             repoPath: null,
-            gates: [{ label: "types", command: "bunx tsgo --noEmit", when: null }],
+            gates: [{ label: "types", command: "bunx tsgo --noEmit", when: null, exclude: null }],
         });
     });
 
@@ -349,7 +414,14 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
         ]);
         expect(facts.impact?.map((entry) => [entry.iid, entry.imports[0]?.specifier])).toEqual([[51, "src/old"]]);
         expect(facts.drafts).toEqual([
-            { id: 900, discussionId: null, path: "src/lib/util.ts", line: 3, note: "Consider a constant." },
+            {
+                id: 900,
+                discussionId: null,
+                path: "src/lib/util.ts",
+                line: 3,
+                side: "new",
+                note: "Consider a constant.",
+            },
         ]);
     });
 
@@ -389,7 +461,27 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
 
           ## Your pending drafts
 
-          - 900 · \`src/lib/util.ts:3\` · Consider a constant.
+          1 unpublished draft(s). They are visible only to their author.
+
+          > 🛑 A draft that opens a new thread has no discussion yet. Nobody can reply to it, you included, until the review is published with \`tools gitlab drafts 42 --publish\`. After publishing, \`tools gitlab discussions 42 --author <you> --json\` gives the new discussion ids; match them by path and line.
+
+          ### D01 · draft 900 · \`src/lib/util.ts:3\`
+
+          - Target: new thread on a line
+          - Placement: added line
+
+          \`\`\`markdown
+          Consider a constant.
+          \`\`\`
+
+          Code at the anchor (old · new · kind):
+
+          \`\`\`ts
+            1 1   const a = 1;
+            2   - const b = 2;
+              2 + const b = 3;
+          ▶   3 + const c = b | a;
+          \`\`\`
 
           ## Open MRs this one affects
 
@@ -417,7 +509,7 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
 
           \`src/lib/util.ts:2\`
 
-          \`\`\`text
+          \`\`\`ts
           1   const a = 1;
             - const b = 2;
           2 + const b = 3;
@@ -433,6 +525,49 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
 
     test("no gates configured means no gates section", () => {
         expect(renderPrReviewMarkdown({ ...facts, gates: [] })).not.toContain("## Gates");
+    });
+
+    describe("the parallel gate runner", () => {
+        const parallelFacts = () => ({
+            ...facts,
+            repoPath: "/work/app",
+            gateRunner: "parallel" as const,
+            gates: [
+                { label: "Type check", command: 'tsgo --noEmit "$X"', files: [], tests: [], note: null },
+                { label: "unit", command: "bun test {tests}", files: [], tests: [], note: NO_TESTS_NOTE },
+            ],
+        });
+        // The runner asks detectGenesisTools(), which caches per process: priming the cache with fake
+        // probes decides what it finds, whatever is installed on the machine running the test.
+        const primeDetection = (which: string | null): void => {
+            const probes: DetectProbes = { which: () => which, roots: () => [], exists: () => false };
+            resetGenesisToolsCache();
+            detectGenesisTools(probes);
+        };
+
+        afterAll(() => {
+            resetGenesisToolsCache();
+        });
+
+        test("with an install, every gate starts as a task session through that binary and each exit code is read", () => {
+            primeDetection("/opt/gt/tools");
+            const md = renderPrReviewMarkdown(parallelFacts());
+
+            expect(md).toContain(
+                '"/opt/gt/tools" task run --session "$P-type-check" --no-tty -- bash -c "tsgo --noEmit \\"\\$X\\"" >/dev/null 2>&1 & pids+=($!)'
+            );
+            expect(md).toContain('for s in "$P-type-check"; do');
+            expect(md).not.toContain("$P-unit");
+            expect(md).toContain(`unit: ${NO_TESTS_NOTE}`);
+        });
+
+        test("without an install, the gates are listed as plain commands", () => {
+            primeDetection(null);
+            const md = renderPrReviewMarkdown(parallelFacts());
+
+            expect(md).toContain('cd /work/app\n# Type check\ntsgo --noEmit "$X"');
+            expect(md).not.toContain("task run");
+        });
     });
 
     test("with a checkout, anchors are file links into the MR worktree", () => {
@@ -485,5 +620,276 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
             ],
         });
         expect(proposal.drafts).toHaveLength(1);
+    });
+});
+
+describe("pending drafts in full", () => {
+    const files = parseUnifiedDiff(GIT_DIFF);
+    const draft = (path: string | null, line: number | null, side: DraftSummary["side"] = "new"): DraftSummary => ({
+        id: 1,
+        discussionId: null,
+        path,
+        line,
+        side,
+        note: "x",
+    });
+    const facts = (drafts: DraftSummary[]): PrReviewFacts => ({
+        provider: "gitlab",
+        host: "https://gitlab.example.com",
+        project: "group/app",
+        iid: 7,
+        title: "Tidy",
+        author: "alice",
+        webUrl: "https://gitlab.example.com/group/app/-/merge_requests/7",
+        sourceBranch: "feature/tidy",
+        targetBranch: "main",
+        baseSha: "a".repeat(40),
+        startSha: "a".repeat(40),
+        headSha: "b".repeat(40),
+        repoPath: null,
+        worktree: null,
+        worktreeHead: null,
+        diffSource: "git",
+        files,
+        discussions: [],
+        drafts,
+        removedModules: [],
+        impact: null,
+        impactScanned: 0,
+        gates: [],
+        gateRunner: "list",
+        testPaths: [],
+        warnings: [],
+    });
+
+    test("places a draft on an added, a context and a removed line, marking the anchor", () => {
+        const added = draftExcerpt(files, draft("src/app.ts", 12));
+        const context = draftExcerpt(files, draft("src/app.ts", 13));
+        const removed = draftExcerpt(files, draft("src/app.ts", 11, "old"));
+
+        expect(added.placement).toBe("added line");
+        expect(added.lines.filter((l) => l.startsWith("▶"))).toEqual(["▶    12 + const c = 4;"]);
+        expect(context.placement).toBe("context line");
+        expect(removed.placement).toBe("removed line");
+        expect(removed.lines.filter((l) => l.startsWith("▶"))).toEqual(["▶ 11    - const b = 2;"]);
+    });
+
+    test("reports top-level, outside-the-diff and unknown-file drafts without an excerpt", () => {
+        expect(draftExcerpt(files, draft(null, null, null)).placement).toBe("top-level");
+        expect(draftExcerpt(files, draft("src/app.ts", 30)).placement).toBe("outside the diff");
+        expect(draftExcerpt(files, draft("nope.ts", 1)).placement).toBe("file not in the diff");
+    });
+
+    test("renders the full body inside a fence longer than any backtick run in it", () => {
+        const md = json2md(draftBlocks(facts([{ ...draft("src/app.ts", 12), note: "look:\n```ts\nx\n```" }])));
+
+        expect(md).toContain("````markdown\nlook:\n```ts\nx\n```\n````");
+        expect(md).toContain("- Placement: added line");
+        expect(md).toContain("- Target: new thread on a line");
+        expect(md).toContain("🛑 A draft that opens a new thread has no discussion yet");
+    });
+
+    test("a reply draft names its thread, and the drafts-only report has no impact section", () => {
+        const reply = { ...draft(null, null, null), id: 2, discussionId: "d".repeat(40), note: "agreed" };
+        const md = renderDraftsOnlyMarkdown(facts([reply]));
+
+        expect(md).toContain("# Pending drafts: !7 Tidy");
+        expect(md).toContain("### D01 · draft 2 · reply");
+        expect(md).toContain(`- Target: reply in existing thread \`${"d".repeat(40)}\``);
+        expect(md).not.toContain("Open MRs this one affects");
+    });
+
+    test("--threads puts every unresolved thread in full right after the checklist", async () => {
+        const discussions: Discussion[] = [
+            {
+                id: "d1",
+                notes: [
+                    {
+                        resolvable: true,
+                        resolved: false,
+                        author: { username: "bob" },
+                        body: "Why this?",
+                        position: { head_sha: "c".repeat(40), new_path: "src/app.ts", new_line: 11 },
+                    },
+                    { resolvable: true, resolved: false, author: { username: "alice" }, body: "Because." },
+                ],
+            },
+            { id: "d2", notes: [{ resolvable: true, resolved: true, body: "done", position: { new_path: "a.ts" } }] },
+        ];
+        const server = Bun.serve({
+            port: 0,
+            fetch(request) {
+                const path = new URL(request.url).pathname;
+
+                return path.endsWith("/discussions") ? Response.json(discussions) : new Response("x\ny\nz\n");
+            },
+        });
+
+        try {
+            const api: ProjectApi = { host: `http://127.0.0.1:${server.port}`, token: "t", project: "group/app" };
+            const context = await collectThreadContext({
+                api,
+                iid: "7",
+                cwd: mkdtempSync(join(tmpdir(), "gt-threads-")),
+                fetchRemote: true,
+                onWarn: () => {},
+            });
+            const opts = { mrIid: "7", project: "group/app", cwd: "/nowhere", contextLines: 1, ...context };
+            const md = renderPrReviewMarkdown(facts([]), { threads: { discussions: context.discussions, opts } });
+            const order = ["## Checklist", "## Unresolved threads in full", "## Thread 1", "## Existing threads"];
+
+            expect(order.map((heading) => md.indexOf(heading))).toEqual(
+                [...order.map((heading) => md.indexOf(heading))].sort((a, b) => a - b)
+            );
+            expect(md).not.toContain("## Thread 2");
+            expect(md).toContain("**@alice**:\n> Because.");
+            expect(md).toContain("Reviewer's frozen view");
+            expect(renderDraftsOnlyMarkdown(facts([]), { threads: { discussions: [], opts } })).toContain(
+                "## Unresolved threads in full\n\nNone."
+            );
+        } finally {
+            server.stop(true);
+        }
+    });
+
+    test("maps extensions to fence languages and falls back to text", () => {
+        expect(fenceLanguage("a/B.tsx")).toBe("tsx");
+        expect(fenceLanguage("ci/Build.groovy")).toBe("groovy");
+        expect(fenceLanguage("patches/x+1.0.patch")).toBe("diff");
+        expect(fenceLanguage("bun.lock")).toBe("text");
+    });
+});
+
+describe("the git impact source", () => {
+    test("fetches the open branches and finds an import of a removed module in a local diff", async () => {
+        const root = realpathSync(mkdtempSync(join(tmpdir(), "gt-impact-git-")));
+        const origin = join(root, "origin");
+        const repo = join(root, "clone");
+        const run = (cwd: string, ...args: string[]) =>
+            spawnSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", ...args], {
+                cwd,
+                env: process.env,
+            });
+        const write = (path: string, text: string) => Bun.write(join(origin, path), text);
+
+        spawnSync("git", ["init", "-q", "-b", "main", origin], { env: process.env });
+        await write("src/old.ts", "export const x = 1;\n");
+        run(origin, "add", ".");
+        run(origin, "commit", "-q", "-m", "base");
+        run(origin, "checkout", "-q", "-b", "feature/other");
+        await write("src/feature.ts", 'import { x } from "./old";\nexport const y = x;\n');
+        run(origin, "add", ".");
+        run(origin, "commit", "-q", "-m", "other");
+        run(origin, "checkout", "-q", "main");
+        spawnSync("git", ["clone", "-q", origin, repo], { env: process.env });
+
+        const mr = (iid: number, source: string): RawMergeRequest => ({
+            iid,
+            title: `MR ${iid}`,
+            web_url: `https://gitlab.example.com/group/app/-/merge_requests/${iid}`,
+            source_branch: source,
+            target_branch: "main",
+            sha: `head${iid}`,
+            author: { username: "alice" },
+        });
+        const routes: Record<string, unknown> = {
+            "/api/v4/projects/group%2Fapp/merge_requests/42": mr(42, "feature/tidy"),
+            "/api/v4/projects/group%2Fapp/merge_requests/42/diffs": [
+                { old_path: "src/old.ts", new_path: "src/old.ts", deleted_file: true, diff: "@@ -1 +0,0 @@\n-x\n" },
+            ],
+            "/api/v4/projects/group%2Fapp/merge_requests/42/discussions": [],
+            "/api/v4/projects/group%2Fapp/merge_requests/42/draft_notes": [],
+            "/api/v4/projects/group%2Fapp/merge_requests": [mr(42, "feature/tidy"), mr(51, "feature/other")],
+        };
+        const requested: string[] = [];
+        const server = Bun.serve({
+            port: 0,
+            fetch(request) {
+                const url = new URL(request.url);
+                requested.push(url.pathname);
+                const body = routes[url.pathname];
+
+                if (body === undefined || (url.searchParams.get("page") ?? "1") !== "1") {
+                    return body === undefined ? new Response("not found", { status: 404 }) : Response.json([]);
+                }
+
+                return Response.json(body);
+            },
+        });
+
+        try {
+            const api: ProjectApi = { host: `http://127.0.0.1:${server.port}`, token: "t", project: "group/app" };
+            const facts = await collectPrReviewFacts({ api, iid: 42, repoPath: repo, impactSource: "git" });
+
+            expect(facts.impact?.map((entry) => [entry.iid, entry.imports[0]?.specifier])).toEqual([[51, "src/old"]]);
+            expect(facts.impactScanned).toBe(1);
+            expect(requested).not.toContain("/api/v4/projects/group%2Fapp/merge_requests/51/diffs");
+            expect(run(repo, "rev-parse", "--verify", "origin/feature/other").status).toBe(0);
+
+            const noCheckout = await collectPrReviewFacts({ api, iid: 42, repoPath: null, impactSource: "git" });
+            expect(noCheckout.impact).toBeNull();
+            expect(noCheckout.warnings).toContain("impact: --impact-source git needs a checkout (--repo); not scanned");
+        } finally {
+            server.stop(true);
+        }
+    });
+});
+
+describe("pr review file names", () => {
+    test("the facts JSON sits beside the report", () => {
+        expect(factsPathOf("/tmp/gitlab-give-review-7.md")).toBe("/tmp/gitlab-give-review-7.json");
+        expect(factsPathOf("/tmp/report")).toBe("/tmp/report.json");
+    });
+});
+
+describe("the api impact source", () => {
+    test("warns when GitLab collapsed a file of another MR, since an import there is not seen", async () => {
+        const mr = (iid: number, source: string): RawMergeRequest => ({
+            iid,
+            title: `MR ${iid}`,
+            web_url: `https://gitlab.example.com/group/app/-/merge_requests/${iid}`,
+            source_branch: source,
+            target_branch: "main",
+            sha: `head${iid}`,
+            author: { username: "alice" },
+        });
+        const routes: Record<string, unknown> = {
+            "/api/v4/projects/group%2Fapp/merge_requests/42": mr(42, "feature/tidy"),
+            "/api/v4/projects/group%2Fapp/merge_requests/42/diffs": [
+                { old_path: "src/old.ts", new_path: "src/old.ts", deleted_file: true, diff: "@@ -1 +0,0 @@\n-x\n" },
+            ],
+            "/api/v4/projects/group%2Fapp/merge_requests/42/discussions": [],
+            "/api/v4/projects/group%2Fapp/merge_requests/42/draft_notes": [],
+            "/api/v4/projects/group%2Fapp/merge_requests": [mr(42, "feature/tidy"), mr(53, "feature/big")],
+            "/api/v4/projects/group%2Fapp/merge_requests/53/diffs": [
+                { old_path: "src/huge.ts", new_path: "src/huge.ts", too_large: true, diff: "" },
+                { old_path: "src/small.ts", new_path: "src/small.ts", diff: "@@ -1 +1 @@\n-a\n+b\n" },
+            ],
+        };
+        const server = Bun.serve({
+            port: 0,
+            fetch(request) {
+                const url = new URL(request.url);
+                const body = routes[url.pathname];
+
+                if (body === undefined || (url.searchParams.get("page") ?? "1") !== "1") {
+                    return body === undefined ? new Response("not found", { status: 404 }) : Response.json([]);
+                }
+
+                return Response.json(body);
+            },
+        });
+
+        try {
+            const api: ProjectApi = { host: `http://127.0.0.1:${server.port}`, token: "t", project: "group/app" };
+            const facts = await collectPrReviewFacts({ api, iid: 42, repoPath: null });
+
+            expect(facts.impactScanned).toBe(1);
+            expect(facts.warnings).toContain(
+                "impact: !53 has 1 file GitLab collapsed (src/huge.ts); an import there is not seen (--impact-source git reads it)"
+            );
+        } finally {
+            server.stop(true);
+        }
     });
 });

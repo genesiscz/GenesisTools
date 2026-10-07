@@ -1,14 +1,18 @@
 /**
  * GitLab REST and GraphQL for any instance. Nothing is hardcoded: the host, the token and the
- * project are resolved per call site from flags, the environment, glab and the git checkout.
+ * project are resolved per call site from flags, the environment, `defaults.ts`, glab and the git
+ * checkout. Upstream `defaults.ts` is neutral (every default null), so those steps are skipped.
  *
- *   host:    --host → GITLAB_HOST → `glab config get host`
- *   token:   GITLAB_TOKEN → `glab config get token --host <hostname>` → `glab auth token --hostname <hostname>`
- *   project: --project → GITLAB_PROJECT → the `origin` remote, when it points at the resolved host
+ *   host:    --host → GITLAB_HOST → defaults.host → `glab config get host`
+ *   token:   GITLAB_TOKEN → `glab config get token --host <hostname>` → `glab auth token --hostname <hostname>` → defaults.token.extraCommands
+ *   project: --project → GITLAB_PROJECT → the `origin` remote when it points at the resolved host, and
+ *            defaults.project before it when the command names no checkout, after it when it does
  */
 
+import { defaults } from "@app/gitlab/lib/defaults";
 import { gitRepoRoot, gitResult } from "@app/gitlab/lib/git";
 import { HttpError, isRetryableError } from "@app/gitlab/lib/http";
+import type { GitLabTokenDefaults } from "@app/gitlab/lib/neutral-defaults";
 import { fetchAllPages, type Page, parseNextPage } from "@app/gitlab/lib/paginate";
 import { pool } from "@app/gitlab/lib/pool";
 import { retry } from "@genesiscz/utils/async";
@@ -47,6 +51,8 @@ export function hostnameOf(host: string): string {
 export interface HostSources {
     flag?: string | null;
     env?: string | null;
+    /** `defaults.host`: before glab, whose default host answers on any machine for any instance. */
+    fallback?: string | null;
     glabDefault?: () => string | null;
 }
 
@@ -64,6 +70,10 @@ export function pickHost(sources: HostSources): { host: string; source: string }
 
     if (sources.env?.trim()) {
         return { host: normalizeHost(sources.env), source: "GITLAB_HOST" };
+    }
+
+    if (sources.fallback?.trim()) {
+        return { host: normalizeHost(sources.fallback), source: "default host" };
     }
 
     const fromGlab = sources.glabDefault?.();
@@ -103,7 +113,12 @@ function glabDefaultHost(): string | null {
 }
 
 export function resolveHost(flag?: string | null): string {
-    const { host, source } = pickHost({ flag, env: env.getTrimmed("GITLAB_HOST"), glabDefault: glabDefaultHost });
+    const { host, source } = pickHost({
+        flag,
+        env: env.getTrimmed("GITLAB_HOST"),
+        fallback: defaults.host,
+        glabDefault: glabDefaultHost,
+    });
     logger.debug({ host, source }, "gitlab: host resolved");
 
     return host;
@@ -114,27 +129,30 @@ export function resolveHost(flag?: string | null): string {
 /** `api` alone covers everything here: reading discussions and writing notes, drafts and labels. */
 const TOKEN_SCOPES = "api";
 
-export function newTokenUrl(host: string): string {
-    return `${host}/-/user_settings/personal_access_tokens?name=genesis-tools&scopes=${TOKEN_SCOPES}`;
+export function buildNewTokenUrl(host: string, name: string): string {
+    return `${host}/-/user_settings/personal_access_tokens?name=${encodeURIComponent(name)}&scopes=${TOKEN_SCOPES}`;
+}
+
+export function newTokenUrl(host: string, token: GitLabTokenDefaults = defaults.token): string {
+    return token.newTokenUrl?.(host) ?? buildNewTokenUrl(host, token.name);
 }
 
 /** Printed when nothing yields a token, so the next step is a click and a paste. */
-export function tokenSetupHelp(host: string, tried: string[]): string {
+export function tokenSetupHelp(host: string, tried: string[], token: GitLabTokenDefaults = defaults.token): string {
     const hostname = hostnameOf(host);
 
     return [
         `No GitLab token found for ${hostname}.`,
         "",
         `1. Create one, scopes already filled in (${TOKEN_SCOPES}):`,
-        `   ${newTokenUrl(host)}`,
+        `   ${newTokenUrl(host, token)}`,
         "",
         "2. Store it, any one of these:",
-        ...(
-            [
-                [`glab auth login --hostname ${hostname}`, "glab keeps it, nothing else to do"],
-                ["export GITLAB_TOKEN=<token>", "this shell only"],
-            ] as const
-        ).map(([command, note]) => `   ${command.padEnd(46)} # ${note}`),
+        ...[
+            [`glab auth login --hostname ${hostname}`, "glab keeps it, nothing else to do"] as const,
+            ["export GITLAB_TOKEN=<token>", "this shell only"] as const,
+            ...token.extraStoreHints,
+        ].map(([command, note]) => `   ${command.padEnd(46)} # ${note}`),
         "",
         "Looked in:",
         ...tried.map((line) => `   ${line}`),
@@ -151,10 +169,12 @@ export function looksLikeToken(text: string): boolean {
     return token.length >= 20 && !/\s/.test(token);
 }
 
-function tokenCommands(hostname: string): string[][] {
+/** Host-scoped glab first; a fork's extra sources come after them. */
+export function tokenCommands(hostname: string, token: GitLabTokenDefaults = defaults.token): string[][] {
     return [
         ["glab", "config", "get", "token", "--host", hostname],
         ["glab", "auth", "token", "--hostname", hostname],
+        ...token.extraCommands(hostname),
     ];
 }
 
@@ -258,6 +278,10 @@ export function parseGitLabProjectFromRemote(url: string): string | null {
 export interface ProjectSources {
     flag?: string | null;
     env?: string | null;
+    /** `defaults.project`. */
+    fallback?: string | null;
+    /** The fallback wins over the origin remote: true when the command names no checkout. */
+    fallbackFirst?: boolean;
     /** URL of the `origin` remote of the current checkout. */
     remote?: string | null;
     host: string;
@@ -272,10 +296,20 @@ export function pickProject(sources: ProjectSources): { project: string; source:
         return { project: sources.env.trim(), source: "GITLAB_PROJECT" };
     }
 
+    const fallback = sources.fallback?.trim() ? { project: sources.fallback.trim(), source: "default project" } : null;
+
+    if (fallback && sources.fallbackFirst) {
+        return fallback;
+    }
+
     const wanted = new URL(sources.host).hostname;
     const remote = sources.remote ? parseGitLabRemote(sources.remote) : null;
     if (remote && remote.hostname === wanted) {
         return { project: remote.path, source: "git remote origin" };
+    }
+
+    if (fallback) {
+        return fallback;
     }
 
     const why = remote ? ` The origin remote points at ${remote.hostname}, not ${wanted}.` : "";
@@ -296,10 +330,14 @@ export async function resolveProjectApi(
 ): Promise<ProjectApi> {
     const api = await resolveApi({ host: options.host });
     const fromEnv = env.getTrimmed("GITLAB_PROJECT");
+    const fallbackFirst = options.cwd === undefined;
+    const settled = Boolean(options.project?.trim() || fromEnv || (fallbackFirst && defaults.project));
     const { project, source } = pickProject({
         flag: options.project,
         env: fromEnv,
-        remote: options.project?.trim() || fromEnv ? null : originRemote(options.cwd),
+        fallback: defaults.project,
+        fallbackFirst,
+        remote: settled ? null : originRemote(options.cwd),
         host: api.host,
     });
     logger.debug({ project, source }, "gitlab: project resolved");
@@ -351,14 +389,16 @@ async function send(
 ): Promise<Response> {
     const url = apiUrl(api, request.path);
     logger.debug({ method: request.method, url }, "gitlab: request");
+    const form = request.body instanceof FormData ? request.body : null;
+    const json = form || request.body === undefined ? undefined : SafeJSON.stringify(request.body);
 
     const res = await timedFetch(url, {
         method: request.method,
         headers: {
             "PRIVATE-TOKEN": api.token,
-            ...(request.body === undefined ? {} : { "Content-Type": "application/json" }),
+            ...(json === undefined ? {} : { "Content-Type": "application/json" }),
         },
-        body: request.body === undefined ? undefined : SafeJSON.stringify(request.body),
+        body: form ?? json,
         signal: AbortSignal.timeout(request.timeout),
     });
 

@@ -52,6 +52,8 @@ tools gitlab pr review 57 --md
 tools gitlab pr review 57 --llm
 tools gitlab pr review 57 --expand f3,t1
 tools gitlab pr review 57 --proposal-skeleton --agent claude > /tmp/review-57.json
+tools gitlab pr review 57 --drafts-only --threads --md   # critique your own pending review
+tools gitlab give-review 57 --cwd ~/code/web-app-57 --print
 
 # Threads, draft replies, publish
 tools gitlab discussions 42 --unresolved
@@ -76,6 +78,22 @@ tools gitlab batch-label 12,34 --add Stale --remove "Needs review" --dry-run
 
 The host is normalised to `https://host` (an explicit `http://` and a relative root such as `/gitlab` are kept). The token is resolved once per host per process.
 
+### Company-specific defaults for a fork
+
+`lib/defaults.ts` holds the defaults this copy runs with; upstream it is `NEUTRAL_DEFAULTS` from `lib/neutral-defaults.ts`, so every step below is skipped. A fork that always talks to one instance replaces that one file:
+
+| Field | Effect |
+|-------|--------|
+| `host` | Used after `GITLAB_HOST`, before glab's default host |
+| `project` | Used after `GITLAB_PROJECT`: before the origin remote when the command names no checkout, after it when it does |
+| `storageName` | Folder under `~/.genesis-tools` for `config.json` and the ledgers |
+| `token.name`, `token.newTokenUrl` | Token creation link in the setup help |
+| `token.extraCommands`, `token.extraStoreHints` | More token sources after glab's, and more "store it" lines |
+| `legacyLedgerProject` | Project of ledger lines written before they carried one |
+| `config` | Laid over the built-in config defaults; the user's `config.json` still wins |
+
+Tests assert against `NEUTRAL_DEFAULTS` and `NEUTRAL_CONFIG`, never the seam.
+
 ---
 
 ## Subcommands
@@ -88,7 +106,8 @@ The host is normalised to `https://host` (an explicit `http://` and a relative r
 | `batch-comment <iids> --comment <text>` | Post the same comment on many MRs; skips a (project, MR, text) already in the ledger |
 | `batch-label <iids> --add/--remove <label>` | Change labels on many MRs; refuses unknown labels unless `--create-missing` |
 | `fetch-review <iid>` | Discussions JSON (default); `--md` (or `--format md\|both`) renders the per-thread report with local and frozen code views |
-| `pr review <iid>` | Facts for reviewing an MR (see below); `--md`, `--llm`, `--expand <refs>`, `--proposal-skeleton` |
+| `pr review <iid>` | Facts for reviewing an MR (see below); `--md`, `--llm`, `--format summary`, `--expand <refs>`, `--proposal-skeleton`, `--drafts-only` |
+| `give-review <iid>` | `pr review` with older defaults: `--impact-source git`, only a summary (stderr), `$TMPDIR/gitlab-give-review-<iid>.md` and `.json`; `--cwd` is the MR worktree |
 | `discussions <iid>` | Threads with author, anchor and state |
 | `draft-reply <iid>` | Draft reply, anchored draft (`--file/--line`), top-level draft, or `--now` with `--resolve` |
 | `drafts <iid>` | Pending drafts with where each one landed; `--publish`, `--delete <id>` |
@@ -120,11 +139,13 @@ Other steps: `reconcile`, `sync-note`, `shipped-detail`, `side-comment`, `mark-r
 The reviewer's twin of `fetch-review`. Read-only: GETs on GitLab, and `git diff` / `cat-file` / `worktree list` in the checkout.
 
 - **Diff**: from local git when the checkout has both the base and head commits (`--context-lines`, default 8), else from GitLab's diffs API. Every line carries its old- and new-side number.
-- **Checkout**: `--repo <checkout>` (default: the current checkout when `--project` is not given). File links point at the worktree that has the MR's source branch checked out; the report warns when there is none or it is behind the MR head.
-- **Impact**: other open MRs that add an import of a module this MR deletes or renames (relative, root-relative and `@/` or `~/` aliased imports), or change the same files. It reads the diffs of at most 50 other open MRs, the most recently updated first (`--impact-limit <n>` changes that), and warns when the result is partial. `--no-impact` skips the scan.
-- **Gates**: the `review.gates` from the config, below. None configured, no gates section.
-- **Output**: stdout is the facts JSON by default; `--md` the numbered report (json2md); `--llm` a compact view with refs (`f1` files, `t1` threads, `d1` your drafts, `m1` affected MRs); `--expand f3,t1` prints refs in full from the saved facts (`--refresh` collects again). Every collecting run writes `$TMPDIR/gitlab-pr-<project>-<key>-<iid>.json` and `.md` (`<key>` is a hash of the host and project, so two hosts never share a file) and prints both paths on stderr.
-- **Review window**: `--proposal-skeleton` prints a review proposal pre-filled from the facts (provider, host, project, number, branches, `baseSha`, `headSha`, `repoPath`, every thread with its `resolved` state). An agent adds the verdict and drafts and pushes it with `tools hub proposal push`; the `gt:review-proposal` skill describes the flow.
+- **Checkout**: `--repo <checkout>` (or `--cwd`; default: the current checkout when `--project` is not given). File links point at the worktree that has the MR's source branch checked out; the report warns when there is none or it is behind the MR head. `--worktree <dir>` uses that directory as the MR worktree even when its HEAD is on another branch.
+- **Impact**: other open MRs that add an import of a module this MR deletes or renames (relative, root-relative and `@/` or `~/` aliased imports), or change the same files. `--impact-source api` (default) reads the diffs of at most 50 other open MRs from GitLab, the most recently updated first (`--impact-limit <n>` changes that), and warns when the result is partial. `--impact-source git` needs a checkout: it fetches every open MR branch into `refs/remotes/origin/*` and diffs locally, with no cap and no diff GitLab collapsed. `--no-impact` skips the scan.
+- **Gates**: the `review.gates` from the config, below. None configured, no gates section. `review.runner: "parallel"` prints one block that starts every gate as a background `tools task` session and then prints each exit code (needs a POSIX shell). When `tools` is not on PATH, that block lists each command instead. A gate whose `{tests}` finds no test file is replaced by a note.
+- **Drafts**: every pending draft of yours in full: its body, whether it replies to a thread or opens one, where it sits in the diff (added, context or removed line) and the code around the anchor. `--drafts-only` prints only that, skips the impact scan and writes `...-drafts.json` and `.md`.
+- **Threads**: `--threads` adds every unresolved diff thread in full after the checklist, as `fetch-review` renders it: all notes, the local code and the reviewer's frozen view. With `--drafts-only` it is the re-review view: your pending drafts and the conversation they join.
+- **Output**: stdout is the facts JSON by default; `--md` (or `--print`) the numbered report (json2md); `--llm` a compact view with refs (`f1` files, `t1` threads, `d1` your drafts, `m1` affected MRs); `--format summary` nothing, only the summary lines on stderr; `--expand f3,t1` prints refs in full from the saved facts (`--refresh` collects again). Every collecting run writes `$TMPDIR/gitlab-pr-<project>-<key>-<iid>.json` and `.md` (`<key>` is a hash of the host and project, so two hosts never share a file), or the report at `--out <file>` with the JSON beside it, and prints both paths on stderr.
+- **Proposal skeleton**: `--proposal-skeleton` prints a review proposal pre-filled from the facts (provider, host, project, number, branches, `baseSha`, `headSha`, `repoPath`, every thread with its `resolved` state). An agent adds the verdict and drafts. The `gt:review-proposal` skill says how to fill the proposal and push it with `tools hub proposal push`.
 
 **Content check, not history.** `shipped` samples the lines an MR branch adds and looks for them in the environment branches, because squash merges and rebases make ancestry say "never merged" for code that shipped.
 
@@ -149,13 +170,19 @@ The reviewer's twin of `fetch-review`. Read-only: GETs on GitLab, and `git diff`
         "label": "Stale",
         "mergeLabelPattern": "^(NOT\\s+)?merged into (\\S+)$",
         "environments": { "uat": "staging", "production": null, "releasePrefix": "release/", "test": "develop" },
-        "draftCommentGuide": null
+        "draftCommentGuide": null,
+        "instructionsExtra": null,
+        "noteTags": [],
+        "contentCheckNote": null
     },
     "review": {
         "gates": [
             { "label": "types", "command": "bunx tsgo --noEmit" },
-            { "label": "unit tests", "command": "bun test {files}", "when": "src/**/*.test.ts" }
-        ]
+            { "label": "unit tests", "command": "bun test {tests}", "exclude": "mobile/**" }
+        ],
+        "runner": "list",
+        "fetch": { "format": "json", "contextLines": 3 },
+        "nextSteps": []
     }
 }
 ```
@@ -174,7 +201,14 @@ The reviewer's twin of `fetch-review`. Read-only: GETs on GitLab, and `git diff`
 | `stale.environments.production` | `null` | Production branch; `null` means the default branch |
 | `stale.environments.releasePrefix` | `null` | Dated release branches (`release/2026-09-10`); the newest past one is production |
 | `stale.draftCommentGuide` | `null` | Replaces the draft-comment guidance in the preflight instructions |
-| `review.gates` | `[]` | Checks `pr review` lists for the reviewer to run: `label`, `command` (`{files}` becomes the matching changed files), optional `when` glob over changed paths; a gate with `when` is listed only when a changed file matches |
+| `stale.instructionsExtra` | `null` | Appended to the preflight instructions (house style, where evidence lives) |
+| `stale.noteTags` | `[]` | Extra front-matter tags of the rendered note |
+| `stale.contentCheckNote` | `null` | Appended to the note's explanation of the content check |
+| `review.gates` | `[]` | Checks `pr review` lists for the reviewer to run: `label`, `command` (`{files}` becomes the matching changed files, `{tests}` the changed test files plus the test next to each changed source file), optional `when` glob over changed paths (a gate with `when` is listed only when a changed file matches), optional `exclude` glob removed from `{files}` and `{tests}` |
+| `review.fetch.format` | `json` | What `fetch-review` prints when neither `--format` nor `--md` is given: `json`, `md` or `both` |
+| `review.fetch.contextLines` | `3` | `fetch-review --context-lines` when the flag is not given |
+| `review.nextSteps` | `[]` | Extra bullets under "Next steps" in the `fetch-review` report; `{iid}` becomes the MR iid |
+| `review.runner` | `list` | `list`: the gate commands one after another. `parallel`: each gate as a background `tools task` session, then every exit code |
 
 Ledgers of writes live next to the config: `comment-batch.jsonl` and `label-batch.jsonl`.
 
