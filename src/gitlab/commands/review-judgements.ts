@@ -123,7 +123,7 @@ export function registerReviewJudgements(review: Command): void {
             )
             .option("--digest", "Print the chat view: one card per item, every quoted comment in full")
             .option("--item <ids>", "Print these items in the full layout, e.g. T03,D01")
-            .option("--proposal", "Print the review proposal JSON for `tools hub proposal push -`")
+            .option("--proposal", `Print the review proposal JSON for \`${toolCommand("hub proposal push", "-")}\``)
             .option("--out <path>", "Where the full layout goes (default: beside the judgements file, -report.md)")
             .option("--open", "Open the full layout in Genesis Markdown")
             .option(
