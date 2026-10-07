@@ -208,8 +208,20 @@ function mergeConfigEdit({
             next = indexed(after),
             latest = indexed(current);
         if (base && next && latest) {
+            // Order is data here (the first matching route wins), so a reorder merges too. Rows
+            // follow the edit's order when only the edit reordered, and the latest order
+            // otherwise; two different reorders are a conflict.
+            const order = (rows: Map<string, unknown>, other: Map<string, unknown>): string[] =>
+                [...rows.keys()].filter((id) => other.has(id));
+            const editReordered = !isDeepStrictEqual(order(base, next), order(next, base));
+            const latestReordered = !isDeepStrictEqual(order(base, latest), order(latest, base));
+            if (editReordered && latestReordered && !isDeepStrictEqual(order(next, latest), order(latest, next))) {
+                throw new Error(`Proxy config changed concurrently at ${field}; reload and retry`);
+            }
+            const first = editReordered ? next : latest;
+            const second = editReordered ? latest : next;
             const result: unknown[] = [];
-            for (const id of new Set([...latest.keys(), ...next.keys()])) {
+            for (const id of new Set([...first.keys(), ...second.keys()])) {
                 const value = mergeConfigEdit({
                     before: base.get(id),
                     after: next.get(id),

@@ -90,6 +90,35 @@ describe("config-store migration", () => {
             await second.save(f);
             expect((await first.loadFresh()).accounts[0]).toMatchObject({ enabled: false, label: "renamed label" });
 
+            // A reorder is kept when another writer edited a row of the same array first.
+            const reorder = await first.loadFresh(),
+                edit = await second.loadFresh();
+            reorder.accounts.reverse();
+            edit.accounts[1].label = "shop label";
+            await second.save(edit);
+            await first.save(reorder);
+            const reordered = (await first.loadFresh()).accounts;
+            expect(reordered.map((account) => account.name)).toEqual(["shop", "work"]);
+            expect(reordered[0].label).toBe("shop label");
+            // Without a reorder the merge keeps the order already on disk.
+            const keep = await first.loadFresh(),
+                relabel = await second.loadFresh();
+            keep.accounts[0].enabled = false;
+            relabel.accounts[1].label = "work label";
+            await second.save(relabel);
+            await first.save(keep);
+            expect((await first.loadFresh()).accounts.map((account) => account.name)).toEqual(["shop", "work"]);
+            // Two different reorders of the same rows cannot both win.
+            const one = await first.loadFresh();
+            one.accounts.push({ name: "side", provider: "openai", providerSlug: "openai", enabled: true });
+            await first.save(one);
+            const three = await first.loadFresh(),
+                four = await second.loadFresh();
+            three.accounts = [three.accounts[2], three.accounts[0], three.accounts[1]];
+            four.accounts = [four.accounts[1], four.accounts[2], four.accounts[0]];
+            await first.save(three);
+            await expect(second.save(four)).rejects.toThrow("changed concurrently");
+
             const g = await first.loadFresh(),
                 h = await second.loadFresh();
             g.listen.port = 9345;
