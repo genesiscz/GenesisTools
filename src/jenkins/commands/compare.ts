@@ -1,4 +1,5 @@
 import { out } from "@genesiscz/utils/logger";
+import { createBoxTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import { parseJenkinsInput } from "../lib/mcp/url";
 import { getJenkinsBackend } from "../lib/rest/client";
@@ -35,23 +36,22 @@ export async function cmdCompare(jobPath: string, b1: string, b2: string): Promi
     const stages2: Stage[] = d2.stages ?? [];
     const names = [...new Set([...stages1.map((s) => s.name), ...stages2.map((s) => s.name)])];
 
-    out.println(`Compare: #${b1} vs #${b2}`);
-    out.println("─".repeat(70));
-    out.println(`  ${"Stage".padEnd(35)} ${`#${b1}`.padStart(10)} ${`#${b2}`.padStart(10)}  Δ`);
-    out.println("─".repeat(70));
+    const table = createBoxTable(["Stage", `#${b1}`, `#${b2}`, "Δ"]);
 
     for (const name of names) {
         const t1 = stages1.find((s) => s.name === name)?.durationMillis ?? 0;
         const t2 = stages2.find((s) => s.name === name)?.durationMillis ?? 0;
-        out.println(
-            `  ${name.padEnd(35)} ${fmtDuration(t1).padStart(10)} ${fmtDuration(t2).padStart(10)}  ${signedDuration(t2 - t1)}`
-        );
+        table.push([name, fmtDuration(t1), fmtDuration(t2), signedDuration(t2 - t1)]);
     }
 
-    out.println("─".repeat(70));
-    out.println(
-        `  ${"TOTAL".padEnd(35)} ${fmtDuration(d1.durationMillis).padStart(10)} ${fmtDuration(d2.durationMillis).padStart(10)}  ${signedDuration(d2.durationMillis - d1.durationMillis)}`
-    );
+    table.push([
+        "TOTAL",
+        fmtDuration(d1.durationMillis),
+        fmtDuration(d2.durationMillis),
+        signedDuration(d2.durationMillis - d1.durationMillis),
+    ]);
+    out.println(`Compare: #${b1} vs #${b2}`);
+    out.println(table.toString());
 }
 
 export function registerCompare(jenkins: Command): void {

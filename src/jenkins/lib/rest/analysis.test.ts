@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import axios from "axios";
+import { diagnoseExecutors, diagnoseQueue, groupAgents, queueReasons } from "./capacity";
 import type { JenkinsBackend } from "./client";
 import {
     getDownstreamJobs,
@@ -195,6 +196,65 @@ describe("trackPipeline", () => {
             "app-build #3 pipeline complete - android-app SUCCESS, ios-app NOT FOUND",
             "app-build #3 pipeline complete - android-app NOT FOUND, ios-app NOT FOUND",
         ]);
+    });
+});
+
+describe("capacity", () => {
+    it("groups agents by template, a long template name included", () => {
+        const groups = groupAgents({
+            computer: [
+                { displayName: "build-agent-with-a-very-long-template-name-ab12c", executors: [{ idle: false }] },
+                { displayName: "build-agent-with-a-very-long-template-name-zz9x0", executors: [{ idle: true }] },
+                { displayName: "mac-mini-q1w2e", offline: true },
+            ],
+        });
+
+        expect(groups).toEqual([
+            { template: "build-agent-with-a-very-long-template-name", online: 2, busy: 1, offline: 0 },
+            { template: "mac-mini", online: 0, busy: 0, offline: 1 },
+        ]);
+    });
+
+    it("names the starved label from the dominant queue reason", () => {
+        const items = [
+            { why: "Waiting for next available executor on ‘linux-big’", task: { name: "a" }, inQueueSince: 50 },
+            { why: "Waiting for next available executor on ‘linux-big’", task: { name: "b" }, inQueueSince: 20 },
+            { why: "In the quiet period", task: { name: "a" }, stuck: true },
+        ];
+        const queue = diagnoseQueue(items);
+
+        expect(queue.starvedLabel).toBe("linux-big");
+        expect(queue.stuck).toBe(1);
+        expect(queue.oldestSince).toBe(20);
+        expect(queueReasons(items)[0]).toEqual({
+            why: "Waiting for next available executor on 'linux-big'",
+            count: 2,
+            oldestSince: 20,
+            tasks: ["a", "b"],
+        });
+    });
+
+    it("lists the label's holders longest first and every zombie", () => {
+        const now = 1_000 * 60_000;
+        const executable = (name: string, minutes: number) => ({
+            idle: false,
+            currentExecutable: { fullDisplayName: name, timestamp: now - minutes * 60_000, url: `u/${name}` },
+        });
+        const diagnosis = diagnoseExecutors(
+            {
+                totalExecutors: 3,
+                busyExecutors: 2,
+                computer: [
+                    { assignedLabels: [{ name: "linux-big" }], executors: [executable("short", 5), { idle: true }] },
+                    { assignedLabels: [{ name: "mac" }], executors: [executable("hung", 300)] },
+                ],
+            },
+            { now, wantLabel: "linux-big", zombieMins: 120 }
+        );
+
+        expect(diagnosis.wanted).toEqual({ label: "linux-big", busy: 1, idle: 1 });
+        expect(diagnosis.holders.map((h) => h.name)).toEqual(["short"]);
+        expect(diagnosis.zombies.map((z) => [z.name, z.matchesLabel])).toEqual([["hung", false]]);
     });
 });
 
