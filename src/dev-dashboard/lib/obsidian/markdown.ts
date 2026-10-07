@@ -1,3 +1,4 @@
+import { detailsExtension, groupDetails } from "@app/dev-dashboard/lib/obsidian/details";
 import { buildObsidianNoteHref } from "@app/dev-dashboard/lib/obsidian/note-href";
 import { escapeHtml } from "@genesiscz/utils/string";
 import hljs from "highlight.js/lib/core";
@@ -32,7 +33,7 @@ import swift from "highlight.js/lib/languages/swift";
 import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
-import type { MarkedExtension, Tokens } from "marked";
+import type { MarkedExtension, Token, Tokens } from "marked";
 import { Marked } from "marked";
 import { markedHighlight } from "marked-highlight";
 import markedKatex from "marked-katex-extension";
@@ -663,6 +664,7 @@ function buildMarked(opts: RenderOptions): Marked {
             highlight: highlightCode,
         }),
         obsidianCalloutExtension(),
+        detailsExtension(),
         markedKatex({ throwOnError: false, output: "html", strict: false }),
         embedExtension(opts),
         wikilinkExtension(opts),
@@ -679,14 +681,19 @@ function lineCount(text: string): number {
  * lines it came from. Inline references were already resolved by the lexer, and highlighting runs in
  * walkTokens, so both behave exactly as in a whole-document parse.
  */
-function renderWithLineAnchors(md: Marked, markdown: string, lineOffset: number): string {
-    const tokens = md.lexer(markdown);
+function lexDocument(md: Marked, markdown: string): Token[] {
+    const tokens = groupDetails(md, md.lexer(markdown));
     const walk = md.defaults.walkTokens;
 
     if (walk) {
         md.walkTokens(tokens, walk);
     }
 
+    return tokens;
+}
+
+function renderWithLineAnchors(md: Marked, markdown: string, lineOffset: number): string {
+    const tokens = lexDocument(md, markdown);
     let line = lineOffset;
     const parts: string[] = [];
 
@@ -764,7 +771,7 @@ export function renderMarkdown(source: string, opts: RenderOptions): RenderResul
               metadata.markdown,
               lineCount(source.slice(0, source.length - metadata.markdown.length))
           )
-        : (md.parse(metadata.markdown, { async: false }) as string);
+        : md.parser(lexDocument(md, metadata.markdown));
     const tagsHeader = renderTagsHeader(metadata.tags);
     const hasMath = /class="katex(?:[ "])/.test(body);
     const hasMermaid = body.includes('<div class="mermaid">');

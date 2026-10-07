@@ -462,6 +462,71 @@ body.dd-share-panel-open .dd-share-panel { transform: none; }
 .markdown-alert-example { --cal: #a855f7; }
 .markdown-alert-quote { --cal: var(--dd-text-dim); }
 
+.dd-details {
+    --fold: var(--dd-accent-2, #2dd4bf);
+    margin: 1.2em 0;
+    border: 1px solid color-mix(in srgb, var(--fold) 30%, var(--dd-border));
+    border-left: 4px solid var(--fold);
+    border-radius: 0 10px 10px 0;
+    background: color-mix(in srgb, var(--fold) 6%, var(--dd-bg-panel));
+    overflow: hidden;
+}
+
+.dd-details-summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    cursor: pointer;
+    font-weight: 600;
+    list-style: none;
+    user-select: none;
+}
+
+.dd-details-summary::-webkit-details-marker { display: none; }
+
+.dd-details-summary::before {
+    content: "";
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--fold);
+    border-bottom: 2px solid var(--fold);
+    transform: rotate(-45deg);
+    transition: transform 0.15s ease;
+    margin: 0 4px 0 2px;
+}
+
+.dd-details[open] > .dd-details-summary::before { transform: rotate(45deg); }
+
+.dd-details-title { flex: 1; min-width: 0; }
+.dd-details-title code { color: inherit; }
+
+.dd-details-summary::after {
+    content: "Show";
+    flex: none;
+    font-size: 0.72em;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--fold);
+    padding: 2px 9px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--fold) 45%, transparent);
+    background: color-mix(in srgb, var(--fold) 12%, transparent);
+}
+
+.dd-details[open] > .dd-details-summary::after { content: "Hide"; }
+.dd-details-summary:hover { background: color-mix(in srgb, var(--fold) 10%, transparent); }
+
+.dd-details-body {
+    padding: 4px 16px 12px;
+    border-top: 1px solid color-mix(in srgb, var(--fold) 22%, var(--dd-border));
+}
+
+.dd-details-body > :first-child { margin-top: 12px; }
+.dd-details-body > :last-child { margin-bottom: 0; }
+
 .mermaid {
     background: var(--dd-bg-panel);
     border: 1px solid var(--dd-border);

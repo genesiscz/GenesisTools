@@ -209,3 +209,47 @@ describe("renderMarkdown", () => {
         expect(html).toContain("image.png");
     });
 });
+
+describe("details and summary", () => {
+    test("a details block with blank lines inside becomes one fold with its body inside", () => {
+        const md = "Before\n\n<details> <summary>Diff (testy)</summary>\n\n```diff\n-a\n+b\n```\n\n</details>\n\nAfter";
+        const { html } = renderMarkdown(md, noop);
+
+        expect(html).toContain('<details class="dd-details">');
+        expect(html).toContain('<span class="dd-details-title">Diff (testy)</span>');
+        expect(html.indexOf("dd-details-body")).toBeLessThan(html.indexOf("language-diff"));
+        expect(html.indexOf("language-diff")).toBeLessThan(html.indexOf("</details>"));
+        expect(html.indexOf("</details>")).toBeLessThan(html.indexOf("After"));
+        expect(html).not.toContain("&lt;details");
+    });
+
+    test("a one-block details, the open attribute and a nested fold all work", () => {
+        const one = renderMarkdown("<details open><summary>S</summary>inline **body**</details>", noop).html;
+        expect(one).toContain('<details class="dd-details" open>');
+        expect(one).toContain("<strong>body</strong>");
+
+        const nested = renderMarkdown(
+            "<details>\n<summary>A</summary>\n\n<details>\n<summary>B</summary>\n\nx\n\n</details>\n\n</details>",
+            noop
+        ).html;
+        expect(nested.match(/<details /g)?.length).toBe(2);
+        expect(nested.match(/<\/details>/g)?.length).toBe(2);
+    });
+
+    test("markup in the summary and an unmatched tag stay inert", () => {
+        const html = renderMarkdown(
+            "<details><summary><img src=x onerror=alert(1)></summary>\n\ntext\n\n</details>\n\n<details>\n\nlost",
+            noop
+        ).html;
+        expect(html).not.toContain("<img");
+        expect(html).toContain("&lt;details&gt;");
+    });
+
+    test("line anchors keep the fold in one block", () => {
+        const html = renderMarkdown("<details>\n<summary>S</summary>\n\nbody\n\n</details>", {
+            ...noop,
+            lineAnchors: true,
+        }).html;
+        expect(html.match(/dd-src-block/g)?.length).toBe(1);
+    });
+});
