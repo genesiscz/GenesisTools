@@ -144,6 +144,16 @@ describe("account-refs", () => {
                 config.accounts = [grokAccount];
             });
 
+            // A refused save serves the name links that are on disk, not the unsaved refs.
+            const refused = await ensureProxyAccountRefs({
+                load: () => store.load(),
+                save: async () => {
+                    throw new Error("Proxy config changed concurrently at accounts; reload and retry");
+                },
+            });
+            expect(refused.accounts[0]?.account).toBeUndefined();
+            expect(refused.accounts[0]?.grok?.accountName).toBe("genesiscz");
+
             const result = await ensureProxyAccountRefs({
                 load: () => store.load(),
                 save: (config) => store.save(config),
