@@ -1,6 +1,5 @@
 import type { Command } from "commander";
-import { parseJenkinsInput } from "../lib/mcp/url";
-import { getJenkinsBackend } from "../lib/rest/client";
+import { getJenkinsBackend, refOnInstance } from "../lib/rest/client";
 import { trackPipeline } from "../lib/rest/track-pipeline";
 
 export function registerTrack(jenkins: Command): void {
@@ -10,7 +9,8 @@ export function registerTrack(jenkins: Command): void {
         .argument("<job-or-url>", "Jenkins job path or build URL")
         .argument("[build-number]", "Build number or latest (default: the build in the URL, else latest)")
         .action(async (jobOrUrl: string, buildArg: string | undefined) => {
-            const ref = parseJenkinsInput(jobOrUrl);
+            const backend = await getJenkinsBackend();
+            const ref = refOnInstance(backend.baseUrl, jobOrUrl);
             const raw = buildArg ?? ref.buildNumber ?? "latest";
             const buildNumber = raw === "latest" ? "latest" : Number.parseInt(raw, 10);
 
@@ -18,7 +18,7 @@ export function registerTrack(jenkins: Command): void {
                 throw new Error(`Invalid build number: ${raw}`);
             }
 
-            const result = await trackPipeline(await getJenkinsBackend(), ref.jobPath, buildNumber);
+            const result = await trackPipeline(backend, ref.jobPath, buildNumber);
 
             if (!result.allPassed) {
                 process.exitCode = 1;

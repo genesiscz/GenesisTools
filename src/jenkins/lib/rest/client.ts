@@ -5,6 +5,7 @@ import { logger } from "@genesiscz/utils/logger";
 import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from "axios";
 import { createClient } from "../mcp/client";
 import { type JenkinsAuth, resolveAuth } from "../mcp/credentials";
+import { type JenkinsRef, parseJenkinsInput } from "../mcp/url";
 
 function localDate(d: Date = new Date()): string {
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -22,6 +23,30 @@ export class JenkinsHttpError extends Error {
         super(`HTTP ${status}: ${url}`);
         this.name = "JenkinsHttpError";
     }
+}
+
+/**
+ * A job path, or a Jenkins URL read relative to `baseUrl`. A URL must be on the configured Jenkins
+ * (scheme, host, port and context path), so credentials for one instance never act on a job of the
+ * same name on another, and a context path such as `/jenkins` is not prefixed a second time.
+ */
+export function refOnInstance(baseUrl: string, input: string): JenkinsRef {
+    const trimmed = input.trim();
+
+    if (!/^https?:\/\//i.test(trimmed)) {
+        return parseJenkinsInput(trimmed);
+    }
+
+    const base = new URL(`${baseUrl.replace(/\/+$/, "")}/`);
+    const url = new URL(trimmed);
+
+    if (url.origin !== base.origin || !`${url.pathname}/`.startsWith(base.pathname)) {
+        throw new Error(`${trimmed} is not on the configured Jenkins (${base.origin}${base.pathname})`);
+    }
+
+    url.pathname = `/${url.pathname.slice(base.pathname.length)}`;
+
+    return parseJenkinsInput(url.toString());
 }
 
 export interface PostResult {

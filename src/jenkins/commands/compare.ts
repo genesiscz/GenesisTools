@@ -1,8 +1,7 @@
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
-import { parseJenkinsInput } from "../lib/mcp/url";
-import { getJenkinsBackend } from "../lib/rest/client";
+import { getJenkinsBackend, refOnInstance } from "../lib/rest/client";
 import { describeRun, fmtDuration, notFound, type Stage } from "../lib/rest/wfapi";
 
 function signedDuration(delta: number): string {
@@ -62,6 +61,7 @@ export function registerCompare(jenkins: Command): void {
         .argument("<b1>", "First build number")
         .argument("<b2>", "Second build number")
         .action(async (jobOrUrl: string, b1: string, b2: string) => {
-            await cmdCompare(parseJenkinsInput(jobOrUrl).jobPath, b1, b2);
+            const backend = await getJenkinsBackend();
+            await cmdCompare(refOnInstance(backend.baseUrl, jobOrUrl).jobPath, b1, b2);
         });
 }

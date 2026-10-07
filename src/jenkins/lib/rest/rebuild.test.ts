@@ -107,21 +107,52 @@ describe("deriveQueueApiUrl", () => {
 
 describe("resolveRebuildTarget", () => {
     it("takes the job path and number from a build URL", () => {
-        expect(resolveRebuildTarget({ url: `${BASE}/job/Acme/job/web/964/console` })).toEqual({
+        expect(resolveRebuildTarget({ url: `${BASE}/job/Acme/job/web/964/console` }, BASE)).toEqual({
             jobPath: "job/Acme/job/web",
             buildNumber: 964,
         });
     });
 
     it("refuses a URL without a build number", () => {
-        expect(() => resolveRebuildTarget({ url: `${BASE}/job/web/` })).toThrow(/specific build/);
+        expect(() => resolveRebuildTarget({ url: `${BASE}/job/web/` }, BASE)).toThrow(/specific build/);
     });
 
     it("maps latest to lastBuild for a job path", () => {
-        expect(resolveRebuildTarget({ jobPath: "job/web", buildNumber: "latest" })).toEqual({
+        expect(resolveRebuildTarget({ jobPath: "job/web", buildNumber: "latest" }, BASE)).toEqual({
             jobPath: "job/web",
             buildNumber: "lastBuild",
         });
+    });
+
+    it("strips the configured context path from a build URL", () => {
+        expect(resolveRebuildTarget({ url: `${BASE}/jenkins/job/web/42/` }, `${BASE}/jenkins/`)).toEqual({
+            jobPath: "job/web",
+            buildNumber: 42,
+        });
+    });
+
+    it("refuses a URL on another Jenkins, or outside the context path, and a bad build number", () => {
+        expect(() => resolveRebuildTarget({ url: "https://other.invalid/job/web/42/" }, BASE)).toThrow(
+            /not on the configured Jenkins/
+        );
+        expect(() => resolveRebuildTarget({ url: `${BASE}/job/web/42/` }, `${BASE}/jenkins`)).toThrow(
+            /not on the configured Jenkins/
+        );
+
+        for (const bad of [0, -1, 1.5, Number.NaN]) {
+            expect(() => resolveRebuildTarget({ jobPath: "job/web", buildNumber: bad }, BASE)).toThrow(
+                /Invalid build number/
+            );
+        }
+    });
+
+    it("a mismatched instance never reaches a POST", async () => {
+        const { backend, calls } = fakeBackend({ get: () => PARAMS, post: () => ({ status: 201 }) });
+
+        await expect(rebuild(backend, { url: "https://other.invalid/job/web/42/" })).rejects.toThrow(
+            /not on the configured Jenkins/
+        );
+        expect(calls).toEqual([]);
     });
 });
 

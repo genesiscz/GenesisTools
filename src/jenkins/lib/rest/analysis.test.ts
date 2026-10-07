@@ -247,6 +247,7 @@ describe("capacity", () => {
                 computer: [
                     { assignedLabels: [{ name: "linux-big" }], executors: [executable("short", 5), { idle: true }] },
                     { assignedLabels: [{ name: "mac" }], executors: [executable("hung", 300)] },
+                    { assignedLabels: [{ name: "linux-big" }], offline: true, executors: [{ idle: true }] },
                 ],
             },
             { now, wantLabel: "linux-big", zombieMins: 120 }

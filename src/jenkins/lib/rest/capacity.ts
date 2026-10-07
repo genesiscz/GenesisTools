@@ -211,8 +211,11 @@ export function diagnoseExecutors(
             const current = executor.currentExecutable;
 
             if (executor.idle || !current) {
-                for (const key of keys) {
-                    countInto(idleByLabel, key);
+                // An offline agent keeps its idle executors on paper but cannot take a queued build.
+                if (!computer.offline) {
+                    for (const key of keys) {
+                        countInto(idleByLabel, key);
+                    }
                 }
 
                 continue;

@@ -1,8 +1,7 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
-import { parseJenkinsInput } from "../mcp/url";
-import type { JenkinsBackend, PostResult } from "./client";
+import { type JenkinsBackend, type PostResult, refOnInstance } from "./client";
 import { getJobNameFromPath } from "./jobs";
 
 export interface JenkinsParameter {
@@ -48,10 +47,16 @@ export function deriveQueueApiUrl(queueLocationHeader: string): string {
     return `${queueLocationHeader.replace(/\/$/, "")}/api/json`;
 }
 
-/** A build URL must carry its build number; a job path takes `latest` or `lastBuild` as the last build. */
-export function resolveRebuildTarget(target: RebuildTarget): { jobPath: string; buildNumber: number | "lastBuild" } {
+/**
+ * A build URL must carry its build number and sit on the Jenkins at `baseUrl`; a job path takes a
+ * whole build number of 1 or more, or `latest` / `lastBuild` for the last build.
+ */
+export function resolveRebuildTarget(
+    target: RebuildTarget,
+    baseUrl: string
+): { jobPath: string; buildNumber: number | "lastBuild" } {
     if ("url" in target) {
-        const ref = parseJenkinsInput(target.url);
+        const ref = refOnInstance(baseUrl, target.url);
 
         if (!ref.jobPath) {
             throw new Error(`Could not parse Jenkins URL: ${target.url}`);
@@ -62,6 +67,12 @@ export function resolveRebuildTarget(target: RebuildTarget): { jobPath: string; 
         }
 
         return { jobPath: ref.jobPath, buildNumber: Number(ref.buildNumber) };
+    }
+
+    const n = target.buildNumber;
+
+    if (typeof n === "number" && (!Number.isSafeInteger(n) || n < 1)) {
+        throw new Error(`Invalid build number: ${n}`);
     }
 
     return {
@@ -147,7 +158,7 @@ export async function rebuild(
     target: RebuildTarget,
     options: RebuildOptions = {}
 ): Promise<RebuildResult> {
-    const { jobPath, buildNumber } = resolveRebuildTarget(target);
+    const { jobPath, buildNumber } = resolveRebuildTarget(target, backend.baseUrl);
     const wait = options.wait ?? true;
     const queueTimeoutMs = options.queueTimeoutMs ?? 30_000;
 

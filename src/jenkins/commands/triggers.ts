@@ -1,7 +1,6 @@
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
-import { parseJenkinsInput } from "../lib/mcp/url";
-import { getJenkinsBackend, type JenkinsBackend } from "../lib/rest/client";
+import { getJenkinsBackend, type JenkinsBackend, refOnInstance } from "../lib/rest/client";
 import { deriveQueueApiUrl, triggerAccepted } from "../lib/rest/rebuild";
 import { positiveInt } from "./helpers";
 
@@ -96,6 +95,7 @@ export function registerTriggers(jenkins: Command): void {
                 throw new Error(`--count must be a whole number of 1 or more, got "${options.count}"`);
             }
 
-            await cmdTriggers(parseJenkinsInput(jobOrUrl).jobPath, count);
+            const backend = await getJenkinsBackend();
+            await cmdTriggers(refOnInstance(backend.baseUrl, jobOrUrl).jobPath, count, { backend });
         });
 }

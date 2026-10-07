@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { getJenkinsBackend } from "../lib/rest/client";
 import { rebuild } from "../lib/rest/rebuild";
+import { positiveInt } from "./helpers";
 
 export function registerRebuild(jenkins: Command): void {
     jenkins
@@ -25,10 +26,10 @@ export function registerRebuild(jenkins: Command): void {
                 );
             }
 
-            const parsed = buildNumber === "latest" ? "latest" : Number.parseInt(buildNumber, 10);
+            const parsed = buildNumber === "latest" ? "latest" : positiveInt(buildNumber);
 
-            if (parsed !== "latest" && Number.isNaN(parsed)) {
-                throw new Error(`Invalid build number: ${buildNumber}`);
+            if (parsed === null) {
+                throw new Error(`Invalid build number: ${buildNumber} (a whole number of 1 or more, or latest)`);
             }
 
             await rebuild(backend, { jobPath: target, buildNumber: parsed }, options);

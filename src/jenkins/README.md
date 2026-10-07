@@ -161,7 +161,7 @@ Every tool that takes a `jobPath` also accepts a full Jenkins URL — the build 
 | `JENKINS_USER` | Jenkins username |
 | `JENKINS_TOKEN` | Jenkins API token (Manage Jenkins → Users → API Token) |
 
-All required at startup. MCP server exits non-zero with a clear error if any are missing.
+Credentials are resolved on the first tool call, from the environment or the stored login. The MCP server can start and list its tools without credentials; an authenticated call reports setup instructions when none are available.
 
 ---
 

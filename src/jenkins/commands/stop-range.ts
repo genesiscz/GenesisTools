@@ -1,7 +1,6 @@
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
-import { parseJenkinsInput } from "../lib/mcp/url";
-import { getJenkinsBackend } from "../lib/rest/client";
+import { getJenkinsBackend, refOnInstance } from "../lib/rest/client";
 import { parseBuildRange } from "./helpers";
 
 export async function cmdStopRange(jobPath: string, from: number, to: number): Promise<void> {
@@ -23,6 +22,7 @@ export function registerStopRange(jenkins: Command): void {
         .argument("<to>", "Last build number")
         .action(async (jobOrUrl: string, fromArg: string, toArg: string) => {
             const { from, to } = parseBuildRange(fromArg, toArg, "stop-range");
-            await cmdStopRange(parseJenkinsInput(jobOrUrl).jobPath, from, to);
+            const backend = await getJenkinsBackend();
+            await cmdStopRange(refOnInstance(backend.baseUrl, jobOrUrl).jobPath, from, to);
         });
 }
