@@ -129,7 +129,7 @@ export async function clientsAdd(input: {
     // silently downgrading storage is worse than asking the caller to retry.
     // Only a vault step failing means "vault unavailable"; a name another writer took meanwhile,
     // or a config that fails validation on write, is reported as itself.
-    const progress: { stage: "vault" | "config" } = { stage: "vault" };
+    const progress: { stage: "vault" | "config"; storedKey?: () => Promise<boolean> } = { stage: "vault" };
     try {
         const store = await secrets();
         await getAiProxyConfigStore().mutate(async (current) => {
@@ -142,11 +142,16 @@ export async function clientsAdd(input: {
             // The name is reserved by the config lock before its vault key is touched.
             progress.stage = "vault";
             client.key = await store.set(clientKeyPath(input.name), key);
+            progress.storedKey = () => store.delete(clientKeyPath(input.name));
             progress.stage = "config";
             current.clients = latest;
         });
     } catch (err) {
         if (progress.stage === "config") {
+            // The name was free under the lock, so the key just stored belongs to no client: drop it.
+            await progress.storedKey?.().catch((cleanup: unknown) => {
+                logger.warn({ cleanup, client: input.name }, "ai-proxy: the orphaned client key could not be removed");
+            });
             logger.error({ err, client: input.name }, "ai-proxy: refusing to add the client");
             out.log.error(`The client was NOT added: ${err instanceof Error ? err.message : String(err)}`);
             process.exitCode = 1;
