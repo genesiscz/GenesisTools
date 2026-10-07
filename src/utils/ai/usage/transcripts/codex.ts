@@ -32,6 +32,10 @@ interface CodexState {
     totals?: CodexRawUsage;
     serviceTier?: string;
     context?: CodexContext;
+    recentResponses?: string[];
+    lastUsage?: { signature: string; dialect: string };
+    /** The file has shown a `token_usage_record`, so its `token_count` lines mirror those calls. */
+    sawCurrent?: boolean;
 }
 
 /** First candidate that is genuinely a non-empty string. */
@@ -48,6 +52,16 @@ function readState(state: unknown): CodexState {
         totals: isRecord(state.totals) ? (state.totals as CodexRawUsage) : undefined,
         serviceTier: typeof state.serviceTier === "string" ? state.serviceTier : undefined,
         context: isRecord(state.context) ? (state.context as CodexContext) : {},
+        recentResponses: Array.isArray(state.recentResponses)
+            ? state.recentResponses.filter((id): id is string => typeof id === "string").slice(-256)
+            : [],
+        sawCurrent: state.sawCurrent === true ? true : undefined,
+        lastUsage:
+            isRecord(state.lastUsage) &&
+            typeof state.lastUsage.signature === "string" &&
+            typeof state.lastUsage.dialect === "string"
+                ? { signature: state.lastUsage.signature, dialect: state.lastUsage.dialect }
+                : undefined,
     };
 }
 
@@ -130,18 +144,34 @@ export function createCodexUsageParser(options: CreateParserOptions): DriverLine
                 }
                 return;
             }
-            if (raw.type !== "event_msg" || raw.payload?.type !== "token_count") {
+            const current = raw.type === "token_usage_record";
+            if (!current && (raw.type !== "event_msg" || payload.type !== "token_count")) {
                 return;
             }
-            const info = raw.payload.info;
+            const info = raw.payload?.info;
             const totals = info?.total_token_usage;
             // Codex re-emits the same cumulative total on some events; when it has NOT advanced,
             // `last_token_usage` is a repeat of a turn that was already counted.
             const advanced = !totals || !sameTotals(totals, state.totals);
             const last = advanced ? info?.last_token_usage : undefined;
-            const usage = last ?? (totals ? subtractTotals(totals, state.totals) : undefined);
+            const usage = current
+                ? isRecord(payload.usage)
+                    ? (payload.usage as CodexRawUsage)
+                    : undefined
+                : (last ?? (totals ? subtractTotals(totals, state.totals) : undefined));
             if (totals) {
                 state.totals = totals;
+            }
+            if (current) {
+                state.sawCurrent = true;
+            }
+            // A rollout that writes per-response records writes a `token_count` for the same call
+            // 0 ms to minutes later (median 154 ms, 83 of 89 rollouts measured 2026-10-05), so the
+            // timestamps never agree and the mirror check below cannot pair them: the doubled
+            // total was twice ccusage's. The record carries the response id; the count line only
+            // advances the cumulative totals above.
+            if (!current && state.sawCurrent) {
+                return;
             }
             if (!usage) {
                 return;
@@ -157,11 +187,26 @@ export function createCodexUsageParser(options: CreateParserOptions): DriverLine
             // The cast to CodexLine is a shape hint, not a validation: these files are a system
             // boundary. A non-string `model` would reach `priceCandidates()` and throw on
             // `.endsWith`, aborting the chunk.
-            const model = firstString(raw.payload.model, info?.model, state.model) ?? "unknown";
+            const model = firstString(raw.payload?.model, info?.model, state.model) ?? "unknown";
             const cacheWrite = Math.min(num(usage.cache_write_input_tokens), inputTotal - cached);
             const inputTokens = inputTotal - cached - cacheWrite;
+            const signature = [timestamp, model, inputTokens, cached, cacheWrite, output, reasoning].join("|");
+            const responseId =
+                typeof payload.response_id === "string" && payload.response_id ? payload.response_id : undefined;
+            const dialect = current ? "current" : "legacy";
+            const duplicate = responseId ? state.recentResponses?.includes(responseId) : false;
+            // Mirror records must agree in timestamp, model and counts across dialects.
+            // Distinct response IDs with equal usage still represent separate calls.
+            const mirrored = state.lastUsage?.signature === signature && state.lastUsage.dialect !== dialect;
+            state.lastUsage = { signature, dialect };
+            if (responseId) {
+                state.recentResponses = [...(state.recentResponses ?? []), responseId].slice(-256);
+            }
+            if (duplicate || mirrored) {
+                return;
+            }
             emit({
-                id: `${timestamp}|${model}|${inputTokens}|${cached}|${output}|${reasoning}`,
+                id: responseId ? `response:${responseId}` : signature,
                 model,
                 timestamp,
                 inputTokens,

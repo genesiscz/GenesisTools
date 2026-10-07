@@ -27,7 +27,73 @@ const tokenCount = (timestamp: string, total: Record<string, number>, last: Reco
         },
     });
 
+const currentUsage = (response: string): string =>
+    SafeJSON.stringify({
+        type: "token_usage_record",
+        timestamp: "2026-08-27T09:00:10.000Z",
+        payload: {
+            response_id: response,
+            usage: { input_tokens: 120, cached_input_tokens: 100, output_tokens: 30, reasoning_output_tokens: 12 },
+        },
+    });
+
 describe("codex driver", () => {
+    test("current per-response usage is a delta and deduplicates IDs across restored state", () => {
+        const first = codexDriver.createParser({ file: "/fixture/rollout.jsonl", state: undefined });
+        const events: DriverUsageEvent[] = [];
+        first.parseLine(turnContext("gpt-5"), (event) => events.push(event));
+        first.parseLine(currentUsage("fixture-one"), (event) => events.push(event));
+        const resumed = codexDriver.createParser({ file: "/fixture/rollout.jsonl", state: first.snapshot() });
+        resumed.parseLine(currentUsage("fixture-one"), (event) => events.push(event));
+        resumed.parseLine(currentUsage("fixture-two"), (event) => events.push(event));
+        expect(events).toHaveLength(2);
+        expect(events[0]).toMatchObject({
+            id: "response:fixture-one",
+            inputTokens: 20,
+            cacheReadTokens: 100,
+            outputTokens: 30,
+            reasoningOutputTokens: 12,
+        });
+        expect(events[1].id).toBe("response:fixture-two");
+    });
+
+    test("a mirrored legacy/current record counts once in either order", () => {
+        const usage = { input_tokens: 120, cached_input_tokens: 100, output_tokens: 30, reasoning_output_tokens: 12 };
+        const legacy = tokenCount("2026-08-27T09:00:10.000Z", usage, usage);
+        for (const rows of [
+            [legacy, currentUsage("fixture-one")],
+            [currentUsage("fixture-one"), legacy],
+        ]) {
+            expect(collectEvents(codexDriver, [turnContext("gpt-5"), ...rows])).toHaveLength(1);
+        }
+    });
+
+    test("a rollout with per-response records counts each call once although its token_count lands later", () => {
+        // Observed 2026-10-05 in 83 of 89 real rollouts: every call is written twice, as a
+        // `token_usage_record` and, 0 ms to minutes later (median 154 ms), as a `token_count` with the
+        // same counts. The timestamps never agree, so only the record's presence can tell them apart.
+        const usage = { input_tokens: 120, cached_input_tokens: 100, output_tokens: 30, reasoning_output_tokens: 12 };
+        const rows = [
+            turnContext("gpt-5"),
+            currentUsage("resp-1"),
+            tokenCount("2026-08-27T09:00:10.166Z", usage, usage),
+            currentUsage("resp-2"),
+            tokenCount("2026-08-27T09:00:10.304Z", { ...usage, input_tokens: 240, output_tokens: 60 }, usage),
+        ];
+        const events = collectEvents(codexDriver, rows);
+
+        expect(events.map((event) => event.id)).toEqual(["response:resp-1", "response:resp-2"]);
+
+        // Across a resumed parse the file is still known to carry records.
+        const first = codexDriver.createParser({ file: "/fixture/rollout.jsonl", state: undefined });
+        const seen: DriverUsageEvent[] = [];
+        first.parseLine(turnContext("gpt-5"), (event) => seen.push(event));
+        first.parseLine(currentUsage("resp-1"), (event) => seen.push(event));
+        const resumed = codexDriver.createParser({ file: "/fixture/rollout.jsonl", state: first.snapshot() });
+        resumed.parseLine(tokenCount("2026-08-27T09:00:10.166Z", usage, usage), (event) => seen.push(event));
+        expect(seen).toHaveLength(1);
+    });
+
     test("bills last_token_usage with cached input subtracted, model from turn_context", () => {
         const events = collectEvents(codexDriver, [
             turnContext("gpt-5.6-sol"),

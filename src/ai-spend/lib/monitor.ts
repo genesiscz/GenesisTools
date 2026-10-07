@@ -202,7 +202,7 @@ interface FileCacheEntry {
     accountId?: string;
     /** Byte offset already parsed (== size unless the file shrank). */
     offset: number;
-    days: Record<string, DaySums>;
+    events: Array<DaySums & { id: string; day: string; sidechain?: boolean }>;
     /**
      * Event-id dedup frontier: transcript duplicates of one event sit
      * adjacent (streaming rewrites), so a bounded tail window is enough.
@@ -240,13 +240,15 @@ interface AgentCache {
  * rows for the Wednesday-to-Sunday before. Keeping it would report a short
  * yesterday and last 7 days until the next sweep; one full re-parse is cheaper
  * than a wrong number.
+ * Bumped to 8 when Codex stopped counting a call twice (record and token_count), which the cached
+ * event rows still held.
  * Bumped to 5 for Astra context/fast pricing and Codex cache-write tokens.
  * Previously bumped to 4 when file rows gained `accountId`: a v3 row has no account tag,
  * and reporting it under "(unbound)" would be a guess. Discarding the file
  * costs one full re-parse and gets every row tagged from the live root map.
  */
 interface MonitorCache {
-    version: 6;
+    version: 8;
     agents: Record<AgentId, AgentCache>;
 }
 
@@ -272,9 +274,29 @@ function freshAgentCache(): AgentCache {
 
 function freshCache(): MonitorCache {
     return {
-        version: 6,
+        version: 8,
         agents: { claude: freshAgentCache(), codex: freshAgentCache(), grok: freshAgentCache() },
     };
+}
+
+/**
+ * The version number alone cannot vouch for a row: two layouts have carried the same number
+ * (observed 2026-10-05, a v7 file holding the old `days` rows while the code read `events`, so
+ * every `tools ai-spend monitor` died on `entry.events.map` and the usage popup showed it as an
+ * error). A row of the wrong shape costs one re-parse of its file, never a crash.
+ */
+function isFileEntry(entry: unknown): entry is FileCacheEntry {
+    const row = entry as Partial<FileCacheEntry> | null;
+
+    return (
+        typeof row === "object" &&
+        row !== null &&
+        typeof row.size === "number" &&
+        typeof row.mtimeMs === "number" &&
+        typeof row.offset === "number" &&
+        Array.isArray(row.events) &&
+        Array.isArray(row.recentIds)
+    );
 }
 
 function loadCache(storage: Storage): MonitorCache {
@@ -287,14 +309,24 @@ function loadCache(storage: Storage): MonitorCache {
     try {
         const raw = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as MonitorCache;
 
-        if (raw?.version === 6 && raw.agents) {
+        if (raw?.version === 8 && raw.agents) {
             const cache = freshCache();
 
             for (const id of AGENT_IDS) {
                 const agent = raw.agents[id];
 
                 if (agent?.files) {
-                    cache.agents[id] = agent;
+                    const files = Object.entries(agent.files).filter(([, entry]) => isFileEntry(entry));
+                    const dropped = Object.keys(agent.files).length - files.length;
+
+                    if (dropped > 0) {
+                        logger.debug(
+                            { path, agent: id, dropped },
+                            "ai-spend monitor: cache rows of another shape dropped"
+                        );
+                    }
+
+                    cache.agents[id] = { ...agent, files: Object.fromEntries(files) };
                 }
             }
 
@@ -453,7 +485,7 @@ interface ParseChunkOptions {
 function parseChunk(options: ParseChunkOptions): void {
     const { driver, entry, chunk, pricing } = options;
     const parser = driver.createParser({ file: options.file, state: entry.state });
-    const seen = new Set(entry.recentIds);
+    const seen = new Set(entry.events.map((event) => event.id));
 
     const emit = (event: DriverUsageEvent): void => {
         const when = new Date(event.timestamp);
@@ -497,15 +529,7 @@ function parseChunk(options: ParseChunkOptions): void {
                 : 0;
         }
 
-        let sums = entry.days[day];
-
-        if (!sums) {
-            sums = { cost: 0, tokens: 0 };
-            entry.days[day] = sums;
-        }
-
-        sums.cost += cost;
-        sums.tokens += tokens;
+        entry.events.push({ id: event.id, day, cost, tokens, sidechain: event.isSidechain });
     };
 
     for (const line of chunk.split("\n")) {
@@ -608,11 +632,11 @@ function scanAgent(options: ScanOptions): ScanResult {
 
         let entry: FileCacheEntry;
 
-        if (cached && stat.size >= cached.offset && cached.offset > 0) {
+        if (cached && stat.size > cached.size && cached.offset > 0) {
             // Append-only growth: parse just the tail.
             entry = cached;
         } else {
-            entry = { size: 0, mtimeMs: 0, offset: 0, days: {}, recentIds: [] };
+            entry = { size: 0, mtimeMs: 0, offset: 0, events: [], recentIds: [] };
         }
 
         const chunk = tailReader(file, entry.offset, stat.size);
@@ -639,6 +663,8 @@ function scanAgent(options: ScanOptions): ScanResult {
 
         if (entry) {
             entry.accountId = accountIdForFile(file, driverRoots);
+            const cutoff = localDayString(new Date(minMtimeMs));
+            entry.events = entry.events.filter((event) => event.day >= cutoff);
         }
     }
 
@@ -774,9 +800,18 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
         }
 
         const totals = agents[id];
-
+        const unique = new Map<string, { event: FileCacheEntry["events"][number]; accountId?: string }>();
         for (const entry of Object.values(cache.agents[id].files)) {
-            const rowId = accountRowId(id, entry.accountId);
+            for (const event of entry.events) {
+                const existing = unique.get(event.id);
+                if (!existing || (existing.event.sidechain && !event.sidechain)) {
+                    unique.set(event.id, { event, accountId: entry.accountId });
+                }
+            }
+        }
+
+        for (const { event, accountId } of unique.values()) {
+            const rowId = accountRowId(id, accountId);
 
             // `--account` restricts the totals too, not just the breakdown: a
             // number labelled "one account" that summed every account would be
@@ -794,7 +829,9 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
                 rows.set(key, row);
             }
 
-            for (const [day, sums] of Object.entries(entry.days)) {
+            {
+                const { day } = event;
+                const sums = event;
                 const windows: MonitorWindow[] = [];
 
                 if (day === todayDate) {

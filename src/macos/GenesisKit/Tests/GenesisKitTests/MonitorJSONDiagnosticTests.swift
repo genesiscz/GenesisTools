@@ -53,6 +53,28 @@ final class MonitorJSONDiagnosticTests: XCTestCase {
         XCTAssertLessThanOrEqual(preview.count, 41)
     }
 
+    func testAFailureReasonSkipsTheProfilerTimingsThatComeFirst() {
+        let stderr = """
+        [profile:ai-spend] pricing 0.375ms
+        [profile:ai-spend] monitor:accounts 13.58ms
+        [profile:ai-spend] monitor:build 1.515s
+        ERROR: undefined is not an object (evaluating 'entry.events.map')
+        """
+        XCTAssertEqual(
+            MonitorJSON.failureReason(stderr),
+            "ERROR: undefined is not an object (evaluating 'entry.events.map')"
+        )
+    }
+
+    func testAFailureReasonQuotesTheTimingsWhenThereIsNothingElse() {
+        XCTAssertEqual(MonitorJSON.failureReason("[profile:x] a 1ms\n[profile:x] b 2ms"), "[profile:x] a 1ms ⏎ [profile:x] b 2ms")
+        XCTAssertEqual(MonitorJSON.failureReason(""), "")
+    }
+
+    func testAFailureReasonWithoutProfilerLinesIsThePlainPreview() {
+        XCTAssertEqual(MonitorJSON.failureReason("boom\nsecond"), "boom ⏎ second")
+    }
+
     func testADecodingErrorNamesTheKeyInsteadOfSayingNothing() {
         struct Envelope: Decodable { let rows: [String] }
         do {

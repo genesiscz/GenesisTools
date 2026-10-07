@@ -206,6 +206,20 @@ describe("monitor report", () => {
         expect(report.week.tokens).toBe(2_850_000 + inWeek * 1_000_000);
     });
 
+    test("copied Claude turns count once across files on cold, warm and appended reads", () => {
+        const storage = new Storage("ai-spend");
+        const copied = join(home, ".claude", "projects", "p1", "fork.jsonl");
+        writeFileSync(copied, readFileSync(mainFile, "utf8"));
+        const opts = { home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0, drivers: [claudeDriver] };
+        const cold = buildMonitorReport(opts);
+        const warm = buildMonitorReport(opts);
+        expect(cold.today.tokens).toBe(2_850_000);
+        expect(warm.today.tokens).toBe(cold.today.tokens);
+        expect(warm.parsedFiles).toBe(0);
+        appendFileSync(copied, line("new-unique", new Date().toISOString(), { input_tokens: 12 }));
+        expect(buildMonitorReport(opts).today.tokens).toBe(cold.today.tokens + 12);
+    });
+
     test("an old cache is discarded, and the current one it writes is reused", () => {
         const storage = new Storage("ai-spend");
         const cacheFile = join(storage.getCacheDir(), "monitor-cache.json");
@@ -214,7 +228,7 @@ describe("monitor report", () => {
         // file is dropped rather than reported under a guessed account.
         buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
         const written = SafeJSON.parse(readFileSync(cacheFile, "utf8"), { strict: true }) as { version: number };
-        expect(written.version).toBe(6);
+        expect(written.version).toBe(8);
 
         writeFileSync(cacheFile, SafeJSON.stringify({ ...written, version: 5 }, { strict: true }));
         const afterDowngrade = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
@@ -225,6 +239,32 @@ describe("monitor report", () => {
         const afterV4 = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
         expect(afterV4.parsedFiles).toBe(0);
         expect(afterV4.today.cost).toBeCloseTo(3.48, 5);
+    });
+
+    test("rows of another shape under the current version are re-parsed, never a crash", () => {
+        const storage = new Storage("ai-spend");
+        const cacheFile = join(storage.getCacheDir(), "monitor-cache.json");
+
+        buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
+        const written = SafeJSON.parse(readFileSync(cacheFile, "utf8"), { strict: true }) as {
+            agents: Record<string, { files: Record<string, Record<string, unknown>> }>;
+        };
+
+        // The shape of a v7 file written before the rows held `events`: `days` and no `events`.
+        for (const entry of Object.values(written.agents.claude?.files ?? {})) {
+            delete entry.events;
+            entry.days = { "2026-10-05": { cost: 999, tokens: 1 } };
+        }
+
+        writeFileSync(cacheFile, SafeJSON.stringify(written, { strict: true }));
+        const healed = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
+        expect(healed.parsedFiles).toBe(3);
+        expect(healed.today.cost).toBeCloseTo(3.48, 5);
+
+        // Negative control: the rows it wrote back are the right shape and ARE reused.
+        const reused = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
+        expect(reused.parsedFiles).toBe(0);
+        expect(reused.today.cost).toBeCloseTo(3.48, 5);
     });
 
     test("fast path within sweep TTL catches appends, new siblings, and new project dirs", () => {

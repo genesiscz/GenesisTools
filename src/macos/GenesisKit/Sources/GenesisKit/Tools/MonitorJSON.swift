@@ -54,7 +54,7 @@ public enum MonitorJSON {
         }
         let out = preview(stdout, limit: 160)
         if !out.isEmpty { parts.append("stdout: \(out)") }
-        let err = preview(stderr, limit: 160)
+        let err = failureReason(stderr, limit: 160)
         if !err.isEmpty { parts.append("stderr: \(err)") }
         return parts.joined(separator: " · ")
     }
@@ -77,6 +77,19 @@ public enum MonitorJSON {
         @unknown default:
             return "could not decode the response"
         }
+    }
+
+    /// Why a `tools` child failed, from its stderr, for a banner or a section error.
+    ///
+    /// A child started with `PROFILE=<scope>` echoes its `[profile:…]` timing lines to stderr
+    /// BEFORE anything fails, so quoting the head of stderr showed only timings: the usage popup read
+    /// `ai-spend monitor failed (exit 1): [profile:ai-spend] pr…` and the real error, three lines
+    /// down, never reached the screen (2026-10-05). Those lines go; if nothing else was printed the
+    /// timings are all there is to quote.
+    public static func failureReason(_ stderr: String, limit: Int = 200) -> String {
+        let lines = stderr.split(whereSeparator: \.isNewline).filter { !$0.hasPrefix("[profile:") }
+        let reason = preview(lines.joined(separator: "\n"), limit: limit)
+        return reason.isEmpty ? preview(stderr, limit: limit) : reason
     }
 
     /// A short, single-line quote of the output for an error message.

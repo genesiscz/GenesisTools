@@ -47,7 +47,7 @@ export function seriesRetentionCutoffMs(now: Date): number {
 }
 
 /** 2: entries gained `id`, without which cross-file dedup cannot work. */
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 5;
 
 /** Same bound as the monitor: duplicates of one event sit adjacent in a transcript. */
 const RECENT_ID_WINDOW = 50;
@@ -171,22 +171,29 @@ function compact(
  * A file whose every event aged out keeps its row: the offset and the driver
  * resume state are what stop the next run from re-reading it from byte zero.
  */
-function pruneAndSave(cache: EventsCache, storage: Storage, now: Date): void {
+function pruneAndSave(cache: EventsCache, storage: Storage, now: Date, dirty: boolean): void {
     const cutoff = seriesRetentionCutoffMs(now);
 
     for (const [file, entry] of Object.entries(cache.files)) {
         if (!existsSync(file)) {
             delete cache.files[file];
+            dirty = true;
             continue;
         }
 
-        entry.events = entry.events.filter((event) => {
+        const retained = entry.events.filter((event) => {
             const at = Date.parse(event.t);
             return !Number.isNaN(at) && at >= cutoff;
         });
+        if (retained.length !== entry.events.length) {
+            entry.events = retained;
+            dirty = true;
+        }
     }
 
-    atomicWriteFileSync(cachePath(storage), SafeJSON.stringify(cache, { strict: true }));
+    if (dirty) {
+        atomicWriteFileSync(cachePath(storage), SafeJSON.stringify(cache, { strict: true }));
+    }
 }
 
 /**
@@ -203,6 +210,7 @@ export function collectSeriesEvents(options: CollectSeriesEventsOptions): Compac
     const drivers = options.drivers ?? MONITOR_DRIVERS;
     const wanted = new Set(options.sources);
     const cache = loadCache(options.storage);
+    let dirty = false;
     const cutoff = seriesRetentionCutoffMs(now);
     // Keyed by `source:id`, the identity `reports/load.ts:dedupEvents` uses.
     // The per-file `recentIds` window catches only adjacent repeats inside one
@@ -236,6 +244,7 @@ export function collectSeriesEvents(options: CollectSeriesEventsOptions): Compac
                 stat = statSync(file);
             } catch (err) {
                 logger.debug({ err, file }, "ai-spend series: file vanished mid-run");
+                dirty = Object.hasOwn(cache.files, file) || dirty;
                 delete cache.files[file];
                 continue;
             }
@@ -246,11 +255,12 @@ export function collectSeriesEvents(options: CollectSeriesEventsOptions): Compac
             if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
                 entry = cached;
             } else {
-                entry = cached && stat.size >= cached.offset && cached.offset > 0 ? cached : freshEntry();
+                entry = cached && stat.size > cached.size && cached.offset > 0 ? cached : freshEntry();
                 readAppendedBytes({ driver, entry, file, size: stat.size, tailReader, pricing: options.pricing });
                 entry.size = stat.size;
                 entry.mtimeMs = stat.mtimeMs;
                 cache.files[file] = entry;
+                dirty = true;
             }
 
             const accountId = accountIdForFile(file, roots);
@@ -265,13 +275,13 @@ export function collectSeriesEvents(options: CollectSeriesEventsOptions): Compac
                     continue;
                 }
 
-                event.accountId = accountId;
+                const attributed = { ...event, accountId };
 
                 const key = `${event.source}:${event.id}`;
                 const existing = byId.get(key);
 
                 if (!existing) {
-                    byId.set(key, event);
+                    byId.set(key, attributed);
                     continue;
                 }
 
@@ -280,7 +290,7 @@ export function collectSeriesEvents(options: CollectSeriesEventsOptions): Compac
                 // Same preference as the report loader: a real turn beats the
                 // sidechain copy of itself.
                 if (existing.sidechain && !event.sidechain) {
-                    byId.set(key, event);
+                    byId.set(key, attributed);
                 }
             }
         }
@@ -288,7 +298,7 @@ export function collectSeriesEvents(options: CollectSeriesEventsOptions): Compac
 
     const collected = [...byId.values()];
 
-    pruneAndSave(cache, options.storage, now);
+    pruneAndSave(cache, options.storage, now, dirty);
 
     logger.debug(
         {
