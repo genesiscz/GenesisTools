@@ -109,7 +109,7 @@ export class ControlLogCursor {
         const appended = requests.filter(
             (request) => request.seq > this.afterSeq && request.generation === this.options.generation
         );
-        this.afterSeq = Math.max(this.afterSeq, ...appended.map((request) => request.seq));
+        this.afterSeq = appended.reduce((highest, request) => Math.max(highest, request.seq), this.afterSeq);
         return appended;
     }
 }

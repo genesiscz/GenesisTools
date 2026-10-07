@@ -262,6 +262,7 @@ const STORAGE_DIR = join(HOME, ".genesis-tools", "claude-code", "sessions");
 const CLEANUP_DAYS = 30;
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const LOCK_STALE_MS = 30_000;
+const LOCK_RETRY_MS = 100;
 const LOCK_WAIT_MS = 1000;
 
 function ensureDir() {
@@ -320,7 +321,7 @@ async function withBoundedLock<T>(lockPath: string, fn: () => T | Promise<T>, wa
                 throw new Error(`Timed out waiting for session tracker lock: ${lockPath}`);
             }
 
-            await Bun.sleep(20);
+            await Bun.sleep(Math.min(LOCK_RETRY_MS, Math.max(0, deadline - Date.now())));
         }
     }
 

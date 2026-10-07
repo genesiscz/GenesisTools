@@ -106,7 +106,7 @@ export class FeedLogCursor {
         const events = complete ? parseJsonl<FeedEvent>(complete) : [];
         this.options.onRead?.({ bytes: bytesRead, records: events.length });
         const appended = events.filter((event) => event.seq > this.sinceSeq);
-        this.sinceSeq = Math.max(this.sinceSeq, ...appended.map((event) => event.seq));
+        this.sinceSeq = appended.reduce((highest, event) => Math.max(highest, event.seq), this.sinceSeq);
         return appended;
     }
 }
