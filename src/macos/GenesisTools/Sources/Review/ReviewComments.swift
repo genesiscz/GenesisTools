@@ -302,9 +302,10 @@ final class ReviewCommentStore {
     }
 
     /// The changes of one store that are not on disk yet, read by the writer queue when a write
-    /// RUNS: a write takes every unwritten change in order and drops them once they are saved. A
-    /// later edit therefore never reaches disk without the addition it depends on, and a change
-    /// that is already saved is never replayed over another store's newer edit.
+    /// RUNS: a write takes the unwritten changes up to its own, in order, and drops them once they
+    /// are saved. A later edit therefore never reaches disk without the addition it depends on, a
+    /// change that is already saved is never replayed over another store's newer edit, and a change
+    /// is never written before another store's write that was queued ahead of it.
     private final class Unwritten: @unchecked Sendable {
         private let lock = NSLock()
         private var changes: [Pending] = []
@@ -314,9 +315,12 @@ final class ReviewCommentStore {
             changes.append(change)
         }
 
-        func snapshot() -> [Pending] {
+        /// The unwritten changes up to and including `id`: a write never pulls a change queued
+        /// after it ahead of another store's write that was queued in between.
+        func through(_ id: UUID) -> [Pending] {
             lock.lock(); defer { lock.unlock() }
-            return changes
+            guard let end = changes.firstIndex(where: { $0.id == id }) else { return [] }
+            return Array(changes[...end])
         }
 
         func remove(_ ids: Set<UUID>) {
@@ -373,7 +377,7 @@ final class ReviewCommentStore {
         let target = file
         let queue = unwritten
         Self.writer.async {
-            let batch = queue.snapshot()
+            let batch = queue.through(change.id)
             let covered = Set(batch.map(\.id))
             let result = Result { () throws -> [ReviewComment] in
                 try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)

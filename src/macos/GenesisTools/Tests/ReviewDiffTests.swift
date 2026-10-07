@@ -146,6 +146,29 @@ final class ReviewDiffTests: XCTestCase {
         XCTAssertEqual(reloaded.comments.first?.state, .draft)
     }
 
+    @MainActor
+    func testQueuedEditsAcrossStoresKeepTheirOrder() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("comments-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = ReviewCommentStore(repo: directory, directory: directory)
+        let second = ReviewCommentStore(repo: directory, directory: directory)
+        let file = DiffFile(id: "a", path: "a", status: .modified, additions: 1, deletions: 0,
+                            oldContents: "", newContents: "first\nsecond\n")
+        let a = try XCTUnwrap(first.add(CommentInput(editingID: nil, fileID: "a", side: .additions,
+                                                     startLine: 1, endLine: 1, body: "A"), files: [file]))
+        await first.flush()
+        // Hold the writer so all three edits are queued before any of them runs.
+        let gate = DispatchSemaphore(value: 0)
+        ReviewCommentStore.writer.async { _ = gate.wait(timeout: .now() + 10) }
+        first.edit(id: a.id, body: "one")
+        second.edit(id: a.id, body: "two")
+        first.edit(id: a.id, body: "three")
+        gate.signal()
+        await first.flush()
+        let reloaded = ReviewCommentStore(repo: directory, directory: directory)
+        XCTAssertEqual(reloaded.comments.first?.body, "three")
+    }
+
     func testRemoteDraftOwnershipIncludesHostProjectNumberAndProvider() throws {
         let identity = PRIdentity(provider: "github", host: "github.com", project: "example/app", number: 7)
         let owner = PRDraftOwnership(pr: identity, headSha: "reviewed-head", draftID: "draft-1")
