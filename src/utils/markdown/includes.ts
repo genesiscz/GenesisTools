@@ -286,7 +286,7 @@ export async function resolveIncludes(text: string, options: ResolveIncludesOpti
 
 // MARK: - Code links to tokens
 
-/** Source files a `file://…#L5` link may point at; the token's code fence takes its language from the extension. */
+/** Source files a `/abs/a.ts#L5` link may point at; the token's code fence takes its language from the extension. */
 export const CODE_EXTENSIONS = new Set([
     ".ts",
     ".tsx",
@@ -420,7 +420,7 @@ export function linesToken(path: string, range: string): string {
 
 /**
  * Adds a `{{lines}}` token after the paragraph of every link to a line of a source file
- * (`[a.ts:5](file:///abs/a.ts#L5)`), so the next resolve puts the excerpt under the text that cites it.
+ * (`[a.ts:5](/abs/a.ts#L5)`, with or without `file://`), so the next resolve puts the excerpt under the text that cites it.
  * The link itself stays: it still opens the file in Obsidian and Genesis. Links in code, links to a whole
  * file, to a missing file or to a non-source file, links whose paragraph a code block already follows,
  * and links whose token the text already holds are skipped.
