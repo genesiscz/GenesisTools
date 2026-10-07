@@ -420,7 +420,7 @@ function threadBlocksOf(extras: ReportExtras): BlockInput {
 }
 
 /** The drafts-only report: the header plus every pending draft in full, for a pass over one's own review. */
-/** `--yours-only`: my comments on the MR (pending drafts and published threads), no impact scan. */
+/** `--mine-only`: my comments on the MR (pending drafts and published threads), no impact scan. */
 export function renderDraftsOnlyMarkdown(facts: PrReviewFacts, extras: ReportExtras = {}): string {
     return json2md([
         { h1: `Your comments: !${facts.iid} ${facts.title}` },

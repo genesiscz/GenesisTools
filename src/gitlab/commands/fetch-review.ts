@@ -46,8 +46,10 @@ export interface FetchReviewOptions extends TargetOptions {
     confirm?: boolean;
     anchors?: boolean;
     schemaFormat?: string;
-    schemaSidecar?: boolean;
-    mdSidecar?: boolean;
+    /** false: no `<out>.schema.json` (a JSON Schema describing the discussions JSON). */
+    schemaFile?: boolean;
+    /** false: no `<out>.md` (the markdown report) next to the JSON. */
+    reportFile?: boolean;
 }
 
 function isTty(): boolean {
@@ -190,7 +192,7 @@ export async function runFetchReview(mrIid: string, opts: FetchReviewOptions): P
         }
 
         const { md, threadCount, totalDiscussions, headShas, files } = renderMarkdown(discussions, renderOpts);
-        if (opts.mdSidecar !== false) {
+        if (opts.reportFile !== false) {
             const mdPath = `${outPath.replace(/\.json$/, "")}.md`;
             writeFileSync(mdPath, md);
             status.success(`Markdown report written → ${mdPath}`);
@@ -225,10 +227,10 @@ export async function runFetchReview(mrIid: string, opts: FetchReviewOptions): P
         }
     }
 
-    if (opts.schemaSidecar !== false) {
-        const sidecarPath = `${outPath.replace(/\.json$/, "")}.schema.json`;
-        writeFileSync(sidecarPath, formatSchema(discussions, "schema", { pretty: true, schemaHeader: true }));
-        status.success(`Schema sidecar written → ${sidecarPath}`);
+    if (opts.schemaFile !== false) {
+        const schemaPath = `${outPath.replace(/\.json$/, "")}.schema.json`;
+        writeFileSync(schemaPath, formatSchema(discussions, "schema", { pretty: true, schemaHeader: true }));
+        status.success(`JSON Schema of the discussions written → ${schemaPath}`);
     }
 
     if (tty) {

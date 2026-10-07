@@ -58,7 +58,7 @@ tools gitlab pr 57 review --give --md
 tools gitlab pr 57 review --give --llm
 tools gitlab pr 57 review --give --expand F03,T01
 tools gitlab pr 57 review --give --proposal-skeleton --agent claude > /tmp/review-57.json
-tools gitlab pr 57 review --give --yours-only --threads --md   # critique your own comments
+tools gitlab pr 57 review --give --mine-only --threads --md   # critique your own comments
 
 # Judging a review: one file per MR, checked, rendered, then posted as drafts
 tools gitlab pr 57 review skeleton --give --file MR57-judgements.md
@@ -117,7 +117,7 @@ Tests assert against `NEUTRAL_DEFAULTS` and `NEUTRAL_CONFIG`, never the seam.
 |---------|-------------|
 | `pr <iid>` | The MR: title, author, branches, state, merge status, labels, thread and draft counts; `--json` |
 | `pr <iid> review --receive` | Discussions JSON (default); `--md` (or `--format md\|both`) renders each unresolved thread with the MR tip, the reviewer's view when it differs, and a divergence label; `--llm` one line per thread, `--expand T01,T03` those threads in full |
-| `pr <iid> review --give` | Facts for reviewing someone else's MR (see below); `--md`, `--llm`, `--format summary`, `--expand <ids>`, `--proposal-skeleton`, `--yours-only` |
+| `pr <iid> review --give` | Facts for reviewing someone else's MR (see below); `--md`, `--llm`, `--format summary`, `--expand <ids>`, `--proposal-skeleton`, `--mine-only` |
 | `pr <iid> review skeleton` | Write the judgements file: every judgeable item's heading (id, `discussion …` or `draft …`, anchor) and empty fields; `--force` starts over |
 | `pr <iid> review check` | Check a filled judgements file; exit 1 with the item and line of every error |
 | `pr <iid> review render` | The full layout to a file (`--out`, `--open`), or `--digest`, `--item <ids>`, `--proposal` (for `tools hub proposal push -`) |
@@ -166,8 +166,8 @@ The reviewer's twin of `--receive`. Read-only: GETs on GitLab, and `git diff` / 
 - **Checkout**: `--repo <checkout>` (or `--cwd`; default: the current checkout when `--project` is not given). File links point at the worktree that has the MR's source branch checked out; the report warns when there is none or it is behind the MR head. `--worktree <dir>` uses that directory as the MR worktree even when its HEAD is on another branch.
 - **Impact**: other open MRs that add an import of a module this MR deletes or renames (relative, root-relative and `@/` or `~/` aliased imports), or change the same files. `--impact-source api` (default) reads the diffs of at most 50 other open MRs from GitLab, the most recently updated first (`--impact-limit <n>` changes that), and warns when the result is partial. `--impact-source git` needs a checkout: it fetches every open MR branch into `refs/remotes/origin/*` and diffs locally, with no cap and no diff GitLab collapsed. `--no-impact` skips the scan.
 - **Gates**: the `review.gates` from the config, below. None configured, no gates section. `review.runner: "parallel"` prints one block that starts every gate as a background `tools task` session and then prints each exit code (needs a POSIX shell). When `tools` is not on PATH, that block lists each command instead. A gate whose `{tests}` finds no test file is replaced by a note.
-- **Your comments**: every pending draft of yours (`D`) in full: its body, whether it replies to a thread or opens one, where it sits in the diff (added, context or removed line) and the code around the anchor; then every thread you started (`Y`) in full. `--yours-only` prints only that, skips the impact scan and writes `...-drafts.json` and `.md`.
-- **Threads**: `--threads` adds every unresolved diff thread in full after the checklist, as `--receive` renders it: all notes, the MR tip and the reviewer's view. With `--yours-only` it is the re-review view: your comments and the conversations they join.
+- **Your comments**: every pending draft of yours (`D`) in full: its body, whether it replies to a thread or opens one, where it sits in the diff (added, context or removed line) and the code around the anchor; then every thread you started (`Y`) in full. `--mine-only` prints only that, skips the impact scan and writes `...-drafts.json` and `.md`.
+- **Threads**: `--threads` adds every unresolved diff thread in full after the checklist, as `--receive` renders it: all notes, the MR tip and the reviewer's view. With `--mine-only` it is the re-review view: your comments and the conversations they join.
 - **Output**: stdout is the facts JSON by default; `--md` (or `--print`) the numbered report (json2md); `--llm` a compact view with ids (`F01` files, `T01` threads, `Y01` your threads, `D01` your drafts, `M01` affected MRs); `--format summary` nothing, only the summary lines on stderr; `--expand F03,T01` prints ids in full from the saved facts (`--refresh` collects again). Ids are kept per MR, so a second run gives the same thread the same id. Every collecting run writes `$TMPDIR/gitlab-pr-<project>-<key>-<iid>.json` and `.md` (`<key>` is a hash of the host and project, so two hosts never share a file), or the report at `--out <file>` with the JSON beside it, and prints both paths on stderr.
 - **Proposal skeleton**: `--proposal-skeleton` prints a review proposal pre-filled from the facts (provider, host, project, number, branches, `baseSha`, `headSha`, `repoPath`, every thread with its `resolved` state). An agent adds the verdict and drafts. The `gt:review-proposal` skill says how to fill the proposal and push it with `tools hub proposal push`.
 
@@ -197,6 +197,7 @@ Fixed in the next push.
 …
 ````
 
+- **JSON**: the same file can be JSON (`--file x.json`, or `review skeleton --format json`; `--print` writes the skeleton to stdout). Every command reads either form; broken JSON is repaired and reported. Both forms go through `md2json` / the JSON reader, which accept hand edits whose meaning stays clear (bold keys, `*` bullets, any heading level, `t3` for `T03`, a reply left outside its fence) and report each repair.
 - **Items**: `T` threads others started (receive), `D` my pending drafts and `Y` threads I started (give), `N01…` new findings. The heading's `discussion …` / `draft …` is checked against the MR, so an id from an older run cannot reach another thread.
 - **Actions**: `T` reply, reply-resolve, none; `Y` reply, none; `D` keep, reword, move, delete; `N` comment, none.
 - **Anchors** carry the text of the line: `check` refuses a line outside the diff, or a line whose text differs, and names the line where that text really is.

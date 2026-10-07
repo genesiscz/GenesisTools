@@ -18,7 +18,7 @@
  *   tools gitlab pr 42 review --give --repo ~/code/app
  *   tools gitlab pr 42 review --give --llm
  *   tools gitlab pr 42 review --give --expand f3,t1
- *   tools gitlab pr 42 review --give --yours-only --md
+ *   tools gitlab pr 42 review --give --mine-only --md
  *   tools gitlab pr 42 review --give --proposal-skeleton > proposal.json
  */
 
@@ -79,12 +79,12 @@ interface Options extends TargetOptions {
     impact?: boolean;
     impactLimit: string;
     impactSource?: string | true;
-    yoursOnly?: boolean;
+    mineOnly?: boolean;
     threads?: boolean;
     anchors?: boolean;
     schemaFormat?: string;
-    schemaSidecar?: boolean;
-    mdSidecar?: boolean;
+    schemaFile?: boolean;
+    reportFile?: boolean;
     confirm?: boolean;
 }
 
@@ -118,10 +118,10 @@ const GIVE_ONLY = [
     "impact",
     "impactLimit",
     "impactSource",
-    "yoursOnly",
+    "mineOnly",
     "threads",
 ] as const;
-const RECEIVE_ONLY = ["anchors", "schemaFormat", "schemaSidecar", "mdSidecar", "confirm"] as const;
+const RECEIVE_ONLY = ["anchors", "schemaFormat", "schemaFile", "reportFile", "confirm"] as const;
 
 function reviewCommand(iid: string | number = "<iid>"): string {
     return toolCommand("gitlab pr", String(iid), "review");
@@ -194,7 +194,7 @@ export function registerPrReview(pr: Command): Command {
                 `--give: ${IMPACT_SOURCES.join(" | ")} (default: review.impactSource in the config, else api); api reads each MR's diff from GitLab, git fetches every open branch and diffs locally (needs a checkout, no cap)`
             )
             .option(
-                "--yours-only",
+                "--mine-only",
                 "--give: only my comments: pending drafts in full with the code at the anchor, and my published threads; no impact scan"
             )
             .option(
@@ -209,8 +209,11 @@ export function registerPrReview(pr: Command): Command {
                 "--schema-format <fmt>",
                 "--receive: print the inferred discussions schema: schema | skeleton | typescript | none"
             )
-            .option("--no-schema-sidecar", "--receive: don't write a <out>.schema.json sidecar")
-            .option("--no-md-sidecar", "--receive: don't write the <out>.md sidecar")
+            .option(
+                "--no-schema-file",
+                "--receive: don't write <out>.schema.json, a JSON Schema describing the shape of the discussions JSON"
+            )
+            .option("--no-report-file", "--receive: don't write <out>.md, the markdown report, next to the JSON")
             .option("--no-confirm", "--receive: skip the confirm prompt in a terminal")
     ).action(runReview);
 
@@ -270,8 +273,8 @@ async function runReview(iid: string, opts: Options, cmd: Command): Promise<void
         contextLines: opts.contextLines,
         anchors: opts.anchors,
         schemaFormat: opts.schemaFormat,
-        schemaSidecar: opts.schemaSidecar,
-        mdSidecar: opts.mdSidecar,
+        schemaFile: opts.schemaFile,
+        reportFile: opts.reportFile,
         confirm: opts.confirm,
         llm: opts.llm,
         expand: opts.expand,
@@ -442,7 +445,7 @@ async function runPrReview(mrIid: string, opts: Options, door: ReviewDoor): Prom
           : currentCheckout(process.cwd());
     const api = await resolveProjectApi({ host: opts.host, project: opts.project, cwd: repoPath ?? process.cwd() });
     const key = { host: api.host, project: api.project, iid };
-    const draftsOnly = Boolean(opts.yoursOnly);
+    const draftsOnly = Boolean(opts.mineOnly);
     const reportPath = opts.out ? resolve(opts.out) : door.defaultReport(key, draftsOnly);
     const jsonPath = factsPathOf(reportPath);
     const cached = opts.expand && !opts.refresh && !draftsOnly ? savedFacts(jsonPath, key) : null;
