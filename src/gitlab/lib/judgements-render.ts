@@ -63,6 +63,8 @@ export interface RenderContext {
     files: DiffFile[] | null;
     /** Who signs an answer in my own thread: `[90%] <agent>: …`. */
     agent: string;
+    /** Lines of code on each side of an anchor in an excerpt; default 10, the least a review layout shows. */
+    contextLines?: number;
 }
 
 // ─── text helpers ──────────────────────────────────────────────────────────────
@@ -203,21 +205,18 @@ function where(ctx: RenderContext, path: string | null, line: number | null): st
 }
 
 function excerptBlock(
-    files: DiffFile[] | null,
+    ctx: RenderContext,
     target: { path: string | null; line: number | null; side: "new" | "old" }
 ): BlockInput {
-    if (!files || !target.path || !target.line) {
+    if (!ctx.files || !target.path || !target.line) {
         return [];
     }
 
-    const excerpt = draftExcerpt(files, {
-        id: 0,
-        discussionId: null,
-        path: target.path,
-        line: target.line,
-        side: target.side,
-        note: "",
-    });
+    const excerpt = draftExcerpt(
+        ctx.files,
+        { id: 0, discussionId: null, path: target.path, line: target.line, side: target.side, note: "" },
+        ctx.contextLines ?? 10
+    );
 
     return excerpt.lines.length > 0
         ? [
@@ -267,7 +266,7 @@ function draftItemBlocks(item: JudgementItem, ctx: RenderContext, full: boolean)
     return [
         heading(full, `${item.id} · draft ${known?.pair.value ?? "?"} · ${where(ctx, path, line)}`),
         { raw: `**Your draft:**\n${quote(draft?.note ?? known?.body ?? "")}` },
-        full ? excerptBlock(ctx.files, { path, line, side: draft?.side === "old" ? "old" : "new" }) : [],
+        full ? excerptBlock(ctx, { path, line, side: draft?.side === "old" ? "old" : "new" }) : [],
         full ? { h3: "Judgement" } : [],
         judgementBlocks(item, ctx, full),
         full ? { hr: true } : [],
@@ -292,7 +291,7 @@ function findingBlocks(item: JudgementItem, ctx: RenderContext, full: boolean): 
             `${item.id} · ${item.title}${target ? ` · ${where(ctx, target.path, target.line)}` : " · top-level"}`
         ),
         target?.text ? { p: `Anchor (${target.side} side): \`${target.text}\`` } : [],
-        showCode && target ? excerptBlock(ctx.files, target) : [],
+        showCode && target ? excerptBlock(ctx, target) : [],
         full ? { h3: "Judgement" } : [],
         judgementBlocks(item, ctx, showCode),
         full ? { hr: true } : [],

@@ -163,6 +163,36 @@ describe("judgements render", () => {
         expect(digest).toContain("Code at the anchor (added line; old · new · kind):");
     });
 
+    test("an excerpt shows 10 lines on each side of the anchor", () => {
+        const long = parseUnifiedDiff(
+            [
+                "diff --git a/src/long.ts b/src/long.ts",
+                "--- /dev/null",
+                "+++ b/src/long.ts",
+                "@@ -0,0 +1,30 @@",
+                ...Array.from({ length: 30 }, (_, i) => `+const v${i + 1} = ${i + 1};`),
+            ].join("\n")
+        );
+        const finding = [
+            "# N01 Fifteen",
+            "- Severity: ⚠️ should fix",
+            "- Anchor: src/long.ts:15 (new) `const v15 = 15;`",
+            "- Verdict: Bug [85%]",
+            "- Action: comment",
+            "- Proposed draft comment:",
+            "",
+            "```markdown",
+            "Tady.",
+            "```",
+        ].join("\n");
+        const full = renderFull(parseJudgements(finding), { ...CTX, files: long });
+
+        expect(full).toContain("const v5 = 5;");
+        expect(full).toContain("const v25 = 25;");
+        expect(full).not.toContain("const v4 = 4;");
+        expect(full).not.toContain("const v26 = 26;");
+    });
+
     test("the full layout groups threads, my comments and new findings; --item picks blocks by id", () => {
         const full = renderFull(parseJudgements(FILLED), CTX);
 
