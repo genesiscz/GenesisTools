@@ -39,10 +39,13 @@ export interface ActionRecording {
 export function redactBrowserText(text: string): string {
     return text
         .replace(/(bearer\s+)[\w.+/=:-]+/gi, "$1[redacted]")
-        .replace(/([?&](?:token|key|secret|password|code|auth)[^=]*=)[^&#\s]*/gi, "$1[redacted]")
+        .replace(
+            /([?&](?:[^=&#\s]*(?:token|secret|password|passwd)|api[_-]?key|key|code|auth)[^=&#\s]*=)[^&#\s]*/gi,
+            "$1[redacted]"
+        )
         .replace(/(https?:\/\/)[^/@\s]+:[^/@\s]+@/gi, "$1[redacted]@")
         .replace(
-            /(\b(?:api[_ -]?key|password|passwd|secret|token|credential|authorization)["']?\s*[:=]\s*["']?)[^\s"',;}]+/gi,
+            /((?<![a-z0-9])(?:api[_ -]?key|password|passwd|secret|token|credential|authorization)["']?\s*[:=]\s*["']?)[^\s"',;}&]+/gi,
             "$1[redacted]"
         )
         .slice(0, 4000);
@@ -72,12 +75,37 @@ export function validBrowserLocator(value: unknown): value is BrowserLocator {
         typeof item.value === "string" &&
         item.value.length > 0 &&
         item.value.length < 1000 &&
-        (item.name === undefined || typeof item.name === "string")
+        (item.name === undefined || (typeof item.name === "string" && item.name.length < 1000))
     );
+}
+
+/** Keeps only the validated fields, so extra properties a page attaches to an event are never retained. */
+function copyBrowserLocator(locator: BrowserLocator): BrowserLocator {
+    const copy: BrowserLocator = { kind: locator.kind, value: locator.value };
+    if (locator.name !== undefined) {
+        copy.name = locator.name;
+    }
+
+    if (locator.fingerprint) {
+        const { tag, role, name } = locator.fingerprint;
+        copy.fingerprint = { tag, role, name };
+    }
+
+    return copy;
 }
 
 const BINDING = "__genesisRecordAction";
 export const ACTION_RECORDING_SCRIPT = `(() => {
+    if (window.top !== window) {
+        const frameHandler = event => {
+            if (!event.isTrusted) return;
+            if (event.type === 'click' && event.detail === 0) return;
+            if (event.type === 'keydown' && !['Enter','Escape','Tab'].includes(event.key)) return;
+            if (typeof window.${BINDING} === 'function') window.${BINDING}(JSON.stringify({warning:'Frame actions require a manually adapted Playwright frame locator and were omitted.'}));
+        };
+        for (const type of ['click','change','keydown']) document.addEventListener(type,frameHandler,true);
+        return true;
+    }
     const owner = '__GENESIS_RECORDING_OWNER__';
     if (window.__genesisRecordingOwner && window.__genesisRecordingOwner !== owner) throw new Error('Another recording owns this tab.');
     if (window.__genesisRecordingCleanup) {
@@ -105,9 +133,11 @@ export const ACTION_RECORDING_SCRIPT = `(() => {
     };
     const handler = event => {
         if (!event.isTrusted || !(event.target instanceof Element)) return;
-        if (window.top !== window) { send({warning:'Frame actions require a manually adapted Playwright frame locator and were omitted.'}); return; }
         if (event.type === 'click' && event.detail === 0) return;
+        if (event.type === 'keydown' && !['Enter','Escape','Tab'].includes(event.key)) return;
         const el = event.type === 'click' ? event.target.closest('button,a,input,select,textarea,[role],[data-testid]') || event.target : event.target;
+        if (event.type === 'click' && ['INPUT','TEXTAREA','SELECT'].includes(el.tagName) && !['checkbox','radio','submit','button'].includes(el.type)) return;
+        if (event.type === 'change' && ['checkbox','radio'].includes(el.type)) return;
         const hint = [el.id,el.getAttribute('name'),el.getAttribute('data-testid'),name(el),el.autocomplete].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]/g,' ');
         if (el.matches('input,textarea,select') && /\\b(password|passwd|secret|token|api\\s*key|credential|card|cvv|cvc)\\b/i.test(hint)) {
             send({warning:'Credential input omitted. Use an explicit runtime secret in a manually adapted test.'}); return;
@@ -115,9 +145,6 @@ export const ACTION_RECORDING_SCRIPT = `(() => {
         if (el.type === 'password' || el.type === 'file' || el.autocomplete?.includes('cc-') || el.autocomplete?.includes('password')) {
             send({warning:'Sensitive input omitted. Add a local fixture manually if it is required.'}); return;
         }
-        if (event.type === 'click' && ['INPUT','TEXTAREA','SELECT'].includes(el.tagName) && !['checkbox','radio','submit','button'].includes(el.type)) return;
-        if (event.type === 'change' && ['checkbox','radio'].includes(el.type)) return;
-        if (event.type === 'keydown' && !['Enter','Escape','Tab'].includes(event.key)) return;
         const locator = locate(el);
         if (locator) locator.fingerprint = {tag:el.tagName,role:role(el),name:name(el)};
         if (!locator) { send({warning:'An action had no unique locator and was omitted.'}); return; }
@@ -182,7 +209,11 @@ export async function startActionRecording(options: {
             try {
                 const event = SafeJSON.parse(params.payload, { strict: true }) as Record<string, unknown>;
                 if (typeof event.warning === "string") {
-                    evidence("warning", event.warning);
+                    const text = redactBrowserText(event.warning);
+                    // One login form or iframe repeats the same warning per key; a repeat would only spend evidence slots.
+                    if (!state.evidence.some((item) => item.kind === "warning" && item.text === text)) {
+                        evidence("warning", text);
+                    }
                 } else if (
                     ["click", "fill", "select", "press"].includes(String(event.kind)) &&
                     validBrowserLocator(event.locator) &&
@@ -191,7 +222,7 @@ export async function startActionRecording(options: {
                     state.actions.push({
                         id: crypto.randomUUID(),
                         kind: event.kind as BrowserAction["kind"],
-                        locator: event.locator,
+                        locator: copyBrowserLocator(event.locator),
                         sourceUrl: typeof event.sourceUrl === "string" ? redactBrowserText(event.sourceUrl) : undefined,
                         value: typeof event.value === "string" ? event.value.slice(0, 4000) : undefined,
                         excluded: false,
@@ -243,6 +274,7 @@ export async function startActionRecording(options: {
                         excluded: false,
                         at: Date.now(),
                     });
+                    update();
                 }
             }
         }
