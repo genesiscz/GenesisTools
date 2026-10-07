@@ -585,17 +585,21 @@ export class YoutubeDatabase extends BaseDatabase {
                 this.db.exec("ALTER TABLE jobs ADD COLUMN credit_hold_id INTEGER REFERENCES credit_holds(id)");
             }
 
-            this.db.exec(`
-                UPDATE jobs
-                SET credit_hold_id = CAST(json_extract(params, '$.holdId') AS INTEGER)
-                WHERE credit_hold_id IS NULL
-                  AND json_type(params, '$.holdId') IN ('integer', 'real')
-                  AND EXISTS (
-                      SELECT 1 FROM credit_holds h
-                      WHERE h.id = CAST(json_extract(jobs.params, '$.holdId') AS INTEGER)
-                  );
-                CREATE INDEX IF NOT EXISTS idx_jobs_credit_hold ON jobs(credit_hold_id);
-            `);
+            // A jobs table older than its `params` column holds no hold id to carry over.
+            if (columns.some((column) => column.name === "params")) {
+                this.db.exec(`
+                    UPDATE jobs
+                    SET credit_hold_id = CAST(json_extract(params, '$.holdId') AS INTEGER)
+                    WHERE credit_hold_id IS NULL
+                      AND json_type(params, '$.holdId') IN ('integer', 'real')
+                      AND EXISTS (
+                          SELECT 1 FROM credit_holds h
+                          WHERE h.id = CAST(json_extract(jobs.params, '$.holdId') AS INTEGER)
+                      );
+                `);
+            }
+
+            this.db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_credit_hold ON jobs(credit_hold_id);");
         });
 
         // Audit trail (Phase 1 foundations). Deliberately NO foreign keys:

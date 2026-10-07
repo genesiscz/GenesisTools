@@ -75,12 +75,20 @@ describe("QueueService", () => {
         const fixture = await makeFixture();
 
         try {
+            // A job's holdId names a real credit hold (the jobs table references credit_holds).
+            const user = fixture.db.createUser({
+                email: "queue@example.com",
+                passwordHash: "hash",
+                apiToken: "ytu_queue",
+            });
+            fixture.db.grantCredits(user.id, 10, "register-grant");
+            const { holdId } = fixture.db.reserveCredits({ userId: user.id, amount: 4, reason: "ask" });
             fixture.pipeline.enqueue({
                 targetKind: "video",
                 target: "sensitive-job",
                 stages: ["qa"],
                 params: {
-                    holdId: 12,
+                    holdId,
                     creditCost: 4,
                     question: "private question",
                     presetInstructions: "private instructions",
@@ -89,7 +97,7 @@ describe("QueueService", () => {
             });
 
             expect(fixture.queue.list({ actor: { kind: "operator" } })[0]?.params).toEqual({
-                holdId: 12,
+                holdId,
                 creditCost: 4,
                 question: "private question",
                 presetInstructions: "private instructions",

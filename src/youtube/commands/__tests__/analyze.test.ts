@@ -78,6 +78,7 @@ mock.module("@app/youtube/commands/_shared/ensure-pipeline", () => ({
             getVideosByIds: (ids: string[]) => ids.map((id) => ({ id, title: "Fake video", uploadDate: null })),
         },
         qa: {
+            resolveEmbeddingIdentity: async () => ({ provider: "fake", model: "fake-embed", bucket: "fake" }),
             index: async (opts: unknown) => {
                 calls.index.push(opts);
                 return { indexed: 1, modelId: "fake" };
