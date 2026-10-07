@@ -377,7 +377,16 @@ export function attachCodexAgents(records: CodexAgentRecord[], context: CodexAge
             continue;
         }
 
-        const built = nodeOf(record, head, context, cache);
+        let built: { node: AgentNode; changed: boolean };
+
+        // The head read above is not the only one: the tool-call scan reads the rest of the file,
+        // and a rollout removed or truncated in between must not take the whole list down.
+        try {
+            built = nodeOf(record, head, context, cache);
+        } catch (error) {
+            logger.debug({ error, path: record.filePath }, "[hub agents] unreadable codex agent rollout");
+            continue;
+        }
 
         changed = changed || built.changed;
         byId.set(record.id, built.node);
