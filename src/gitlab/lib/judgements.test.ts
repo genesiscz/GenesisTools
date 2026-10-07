@@ -12,7 +12,7 @@ const KNOWN: KnownItem[] = [
         path: "src/lock.ts",
         line: 3,
         body: "The lock stays off while a browser is open",
-        author: "filip",
+        author: "bob",
     },
     {
         id: "D01",
