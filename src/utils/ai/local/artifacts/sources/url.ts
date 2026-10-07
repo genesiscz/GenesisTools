@@ -344,12 +344,37 @@ export class UrlSource {
 
             const topLevel = [...topLevels][0] as string;
             const finalTopLevel = join(targetDir, topLevel);
-            if (existsSync(finalTopLevel)) {
-                throw new Error(`Refusing to overwrite existing artifact directory: ${finalTopLevel}`);
-            }
             await mkdir(targetDir, { recursive: true });
-            await rename(join(stageDir, topLevel), finalTopLevel);
+            // ensure() only extracts when the expected file is missing, so a directory already here is
+            // incomplete: a prune removed its file, or an earlier extraction died. Only a real
+            // directory is replaced, and it is moved aside first so a failed publish can put it back.
+            const existing = await lstat(finalTopLevel).catch(() => null);
+            if (existing && !existing.isDirectory()) {
+                throw new Error(`Refusing to replace a non-directory at ${finalTopLevel}`);
+            }
+
+            const aside = existing ? join(targetDir, `.${topLevel}.replaced-${randomUUID()}`) : null;
+            if (aside) {
+                logger.info(
+                    { locator: ref.locator, path: finalTopLevel },
+                    "[artifacts:url] replacing an incomplete artifact directory"
+                );
+                await rename(finalTopLevel, aside);
+            }
+
+            try {
+                await rename(join(stageDir, topLevel), finalTopLevel);
+            } catch (error) {
+                if (aside) {
+                    await rename(aside, finalTopLevel);
+                }
+                throw error;
+            }
+
             await rmdir(stageDir);
+            if (aside) {
+                await rm(aside, { recursive: true, force: true });
+            }
         } catch (error) {
             await rm(stageDir, { recursive: true, force: true });
             logger.warn({ locator: ref.locator, error }, "[artifacts:url] extraction failed");

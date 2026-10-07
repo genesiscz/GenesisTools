@@ -146,6 +146,39 @@ describe("ensure", () => {
         expect(readdirSync(root).some((name) => name.includes(".download-"))).toBe(false);
     });
 
+    test("re-extracts into an archive directory that lost its file to a prune", async () => {
+        const stage = join(root, "stage-pruned");
+        mkdirSync(join(stage, "seg-pruned"), { recursive: true });
+        writeFileSync(join(stage, "seg-pruned", "model.onnx"), Buffer.alloc(6));
+        const archive = join(root, "pruned.tar.bz2");
+        await Bun.spawn(["tar", "cjf", archive, "-C", stage, "seg-pruned"], { env: process.env }).exited;
+        const archiveBytes = await Bun.file(archive).arrayBuffer();
+        rmSync(stage, { recursive: true, force: true });
+        rmSync(archive, { force: true });
+
+        const target = join(root, "extracted-pruned");
+        const file = join(target, "seg-pruned", "model.onnx");
+        // What a prune leaves behind: the parent directory with a leftover, the model file gone.
+        mkdirSync(join(target, "seg-pruned"), { recursive: true });
+        writeFileSync(join(target, "seg-pruned", "stale.txt"), "left over");
+        const store = makeStore(async () => archiveBytes);
+
+        const resolved = await store.ensure([
+            {
+                source: "url",
+                locator: "https://example.invalid/pruned.tar.bz2",
+                file,
+                archive: "tar.bz2",
+                archiveRoot: target,
+            },
+        ]);
+
+        expect(resolved[0]?.cached).toBe(false);
+        expect(existsSync(file)).toBe(true);
+        expect(existsSync(join(target, "seg-pruned", "stale.txt"))).toBe(false);
+        expect(readdirSync(target).filter((name) => name.startsWith("."))).toEqual([]);
+    });
+
     test("an archive that does not yield the expected file is an error, not a silent success", async () => {
         const stage = join(root, "stage2");
         mkdirSync(join(stage, "other"), { recursive: true });
