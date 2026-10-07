@@ -246,6 +246,11 @@ enum PRRefMenu {
     /// A link from a comment: a PR/MR asks where to open it, anything else opens in the browser.
     @MainActor
     static func open(_ url: URL, model: ReviewModel) {
+        if let sha = CommitMenu.sha(url) {
+            CommitMenu.open(url, sha: sha, model: model)
+            return
+        }
+
         guard let target = target(url) else {
             ExternalOpener.open(url)
             return
@@ -351,5 +356,138 @@ enum PRRefMenu {
         } catch {
             model.notice = "Could not open \(args.first ?? "it"): \(error.localizedDescription)"
         }
+    }
+}
+
+// MARK: - A click on a commit id
+
+/// What a click on a linked commit id offers: the commit on the host, this review showing only that
+/// commit (`DiffScope.commit`), or a review window of its own. The review entries need the commit in
+/// this repository: it is looked up first, fetched by id from origin when it is not here (GitLab and
+/// GitHub serve any commit of the project by id), and the entries are off, saying why, when neither works.
+enum CommitMenu {
+    struct Item: Equatable {
+        enum Action: Equatable { case host, thisReview, newWindow }
+
+        let action: Action
+        let title: String
+        let enabled: Bool
+        let tooltip: String?
+    }
+
+    /// The commit a link points at: `…/-/commit/<sha>` (GitLab) or `…/commit/<sha>` (GitHub).
+    static func sha(_ url: URL) -> String? {
+        let path = url.path
+        guard let regex = try? NSRegularExpression(pattern: "/commit/([0-9a-fA-F]{7,40})/?$"),
+              let match = regex.firstMatch(in: path, range: NSRange(location: 0, length: (path as NSString).length)) else { return nil }
+        return (path as NSString).substring(with: match.range(at: 1))
+    }
+
+    /// `missing`: why the commit is not in this repository (nil: it is), which turns the review entries off.
+    static func items(short: String, gitlab: Bool, missing: String?) -> [Item] {
+        let off = missing.map { "\($0) The diff needs the commit in this repository." }
+        return [
+            Item(action: .host, title: "Open \(short) on \(gitlab ? "GitLab" : "GitHub")", enabled: true, tooltip: nil),
+            Item(action: .thisReview, title: "Show \(short) in this review", enabled: missing == nil,
+                 tooltip: off ?? "This window shows only that commit's changes (the scope menu goes back)"),
+            Item(action: .newWindow, title: "Open \(short) in a new review window", enabled: missing == nil,
+                 tooltip: off ?? "A review window of its own with that commit's changes"),
+        ]
+    }
+
+    /// The commit as this repository knows it, after one fetch by id when it is not here.
+    struct Lookup: Equatable {
+        var full: String?
+        var subject: String = ""
+        var missing: String?
+    }
+
+    @MainActor
+    static func open(_ url: URL, sha: String, model: ReviewModel) {
+        let at = NSEvent.mouseLocation
+        let repo = model.repo.path
+        let short = String(sha.prefix(10))
+        let gitlab = url.path.contains("/-/commit/")
+        Task.detached(priority: .userInitiated) {
+            let span = HubPerf.begin("review.commitRef", short, awaits: true)
+            let found = lookup(sha, repo: repo)
+            span.end(found.missing == nil ? "found" : "missing")
+            await MainActor.run {
+                show(items(short: short, gitlab: gitlab, missing: found.missing), at: at, url: url, found: found, model: model)
+            }
+        }
+    }
+
+    @MainActor
+    private static func show(_ items: [Item], at point: NSPoint, url: URL, found: Lookup, model: ReviewModel) {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for item in items {
+            let entry = ClosureMenuItem(item.title) { run(item.action, url: url, found: found, model: model) }
+            entry.isEnabled = item.enabled
+            entry.toolTip = item.tooltip
+            menu.addItem(entry)
+        }
+        HubPerf.log("review.commitRef menu \(url.lastPathComponent) missing=\(found.missing ?? "no")")
+        menu.popUp(positioning: nil, at: point, in: nil)
+    }
+
+    @MainActor
+    private static func run(_ action: Item.Action, url: URL, found: Lookup, model: ReviewModel) {
+        guard action != .host else {
+            ExternalOpener.open(url)
+            return
+        }
+
+        guard let full = found.full else { return }
+        let label = "\(full.prefix(10)) \(found.subject.prefix(50))"
+        switch action {
+        case .thisReview:
+            model.setScope(.commit(sha: full, title: found.subject))
+        case .newWindow:
+            guard let executable = Bundle.main.executableURL else { return }
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = ["--review", "--repo", model.repo.path, "--range", "\(full)^..\(full)", "--label", label]
+            do {
+                try process.run()
+                HubPerf.log("review.commitRef new window \(full.prefix(10))")
+            } catch {
+                model.notice = "Could not open a review window: \(error.localizedDescription)"
+            }
+        case .host:
+            break
+        }
+    }
+
+    /// Blocking git: only from the detached task.
+    nonisolated private static func lookup(_ sha: String, repo: String) -> Lookup {
+        if git(repo, ["cat-file", "-e", "\(sha)^{commit}"]) == nil {
+            _ = git(repo, ["fetch", "--no-tags", "--quiet", "origin", sha])
+            guard git(repo, ["cat-file", "-e", "\(sha)^{commit}"]) != nil else {
+                return Lookup(full: nil, missing: "\(sha.prefix(10)) is not in \(URL(fileURLWithPath: repo).lastPathComponent), and origin did not give it.")
+            }
+        }
+        let full = git(repo, ["rev-parse", "\(sha)^{commit}"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let subject = git(repo, ["log", "-1", "--format=%s", sha])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return Lookup(full: full, subject: subject, missing: full == nil ? "\(sha.prefix(10)) could not be read." : nil)
+    }
+
+    nonisolated private static func git(_ repo: String, _ args: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["-C", repo] + args
+        let out = Pipe()
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            HubPerf.log("review.commitRef git failed to start: \(error.localizedDescription)")
+            return nil
+        }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
     }
 }

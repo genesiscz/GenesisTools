@@ -86,6 +86,23 @@ interface BridgeComment {
     replyStatus?: string;
     /** The live thread on the PR (`tools hub pr threads`): its notes, and which buttons the card gets. */
     live?: LiveThread;
+    /** A local comment: the PR thread it answers (Swift moves such a comment into that thread's card). */
+    thread?: string;
+    /** A local comment a session's pane got: the session's name and the time ("19:20"). */
+    deliveredTo?: string;
+    sentAt?: string;
+    /** A thread card: my local reply to it, drawn under the notes in place of the suggested reply. */
+    localReply?: LocalReply;
+}
+
+interface LocalReply {
+    id: string;
+    body: string;
+    when: string;
+    /** local / queued / sent / draft / posted */
+    state: string;
+    deliveredTo?: string;
+    sentAt?: string;
 }
 
 interface LiveNote {
@@ -627,7 +644,9 @@ const css = {
 
 const stateLabel: Record<string, string> = {
     local: "Local",
-    sent: "Sent to agent",
+    queued: "Queued",
+    // A comment without the session it went to (`deliveredTo`) was never proven sent: see `localStateLabel`.
+    sent: "Queued",
     draft: "Review draft",
     posted: "Posted",
     proposed: "Proposed",
@@ -786,7 +805,14 @@ function openComposerFor(comment: BridgeComment, editingId: string, body: string
 function sendRow(act: (action: string) => () => void, reply: boolean): HTMLElement {
     const row = element("div", "display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap");
     row.appendChild(element("span", css.dim, reply ? "Send the reply:" : "Send:"));
-    row.appendChild(button("For agent", act("agent"), true, "Copy it into the agent's outbox and tell its cmux pane"));
+    row.appendChild(
+        button(
+            "Queue to agent",
+            act("agent"),
+            true,
+            "Write it into the agent's outbox; it is sent when this review has an agent (Send… in the header picks one)"
+        )
+    );
     row.appendChild(
         button(
             reply ? "Draft reply on PR" : "Draft on PR",
@@ -807,7 +833,7 @@ function sendRow(act: (action: string) => () => void, reply: boolean): HTMLEleme
 }
 
 const sentLabel: Record<string, string> = {
-    sent: "Sent to agent",
+    sent: "Queued for agent",
     drafted: "Review draft on PR",
     posted: "Posted on PR",
 };
@@ -949,7 +975,13 @@ function renderThread(comment: BridgeComment): HTMLElement {
         wrap.appendChild(renderMeta(comment.meta));
     }
 
-    if (comment.reply) {
+    if (comment.localReply) {
+        // My reply took the suggestion's place: one card per thread, under the notes. While its edit box
+        // is open, the box (below the card) holds the text.
+        if (composer?.editingId !== comment.localReply.id) {
+            wrap.appendChild(renderLocal(comment.localReply, comment, { range: false, reply: true }));
+        }
+    } else if (comment.reply) {
         wrap.appendChild(renderReply(comment, comment.reply));
     }
 
@@ -1376,7 +1408,13 @@ function renderLiveThread(comment: BridgeComment, live: LiveThread): HTMLElement
         wrap.appendChild(renderMeta(comment.meta));
     }
 
-    if (comment.reply) {
+    if (comment.localReply) {
+        // My reply took the suggestion's place: one card per thread, under the notes. While its edit box
+        // is open, the box (below the card) holds the text.
+        if (composer?.editingId !== comment.localReply.id) {
+            wrap.appendChild(renderLocal(comment.localReply, comment, { range: false, reply: true }));
+        }
+    } else if (comment.reply) {
         wrap.appendChild(renderReply(comment, comment.reply));
     }
 
@@ -1897,43 +1935,101 @@ function renderComment(comment: BridgeComment): HTMLElement {
         return renderThread(comment);
     }
 
-    const row = element("div", css.row);
-    row.appendChild(avatar(comment.author, comment.remote));
-    const main = element("div", "flex:1;min-width:0");
-    const head = element("div", css.head);
-    head.appendChild(element("span", css.name, comment.author));
-    head.appendChild(element("span", css.dim, comment.when));
-    const range =
-        comment.startLine === comment.endLine ? `L${comment.endLine}` : `L${comment.startLine}–${comment.endLine}`;
-    head.appendChild(element("span", css.dim, range));
-    head.appendChild(element("span", css.badge, stateLabel[comment.state] ?? comment.state));
-    const actions = element("div", css.actions);
-
-    if (!comment.remote) {
-        actions.appendChild(
-            button("Edit", () => {
-                const previous = composer?.fileId;
-                composer = {
-                    fileId: comment.fileId,
-                    side: comment.side,
-                    startLine: comment.startLine,
-                    endLine: comment.endLine,
-                    editingId: comment.id,
-                    body: comment.body,
-                };
-                refreshAnnotations(previous ? [previous, comment.fileId] : [comment.fileId]);
-            })
-        );
-        actions.appendChild(button("Delete", () => post({ type: "comment.delete", id: comment.id })));
+    if (comment.remote) {
+        const row = element("div", css.row);
+        row.appendChild(avatar(comment.author, comment.remote));
+        const main = element("div", "flex:1;min-width:0");
+        const head = element("div", css.head);
+        head.appendChild(element("span", css.name, comment.author));
+        head.appendChild(element("span", css.dim, comment.when));
+        head.appendChild(element("span", css.badge, stateLabel[comment.state] ?? comment.state));
+        main.appendChild(head);
+        main.appendChild(richText(comment.body));
+        row.appendChild(main);
+        return row;
     }
 
-    // A remote or posted comment is already on the PR: promoting it would make a second draft.
-    if (!comment.remote && comment.state !== "posted") {
-        const action = comment.state === "draft" ? "post" : "promote";
+    return renderLocal(
+        {
+            id: comment.id,
+            body: comment.body,
+            when: comment.when,
+            state: comment.state,
+            deliveredTo: comment.deliveredTo,
+            sentAt: comment.sentAt,
+        },
+        comment,
+        { range: true, reply: Boolean(comment.thread) }
+    );
+}
+
+/** "Sent to <session> · 19:20" only for a comment a session's pane got; "Queued" for one written for an agent. */
+function localStateLabel(local: LocalReply): string {
+    if (local.state === "sent" && local.deliveredTo) {
+        return `Sent to ${local.deliveredTo}${local.sentAt ? ` · ${local.sentAt}` : ""}`;
+    }
+
+    return stateLabel[local.state] ?? local.state;
+}
+
+/**
+ * My comment ("You"): its own card on its lines, or inside a PR thread's card under the notes when it
+ * answers that thread (`reply`). Queued or sent to an agent, it still offers the PR ways out: queuing
+ * is an extra state, not a last one. `anchor` places the edit box: the thread card's line for a reply.
+ */
+function renderLocal(
+    local: LocalReply,
+    anchor: BridgeComment,
+    options: { range: boolean; reply: boolean }
+): HTMLElement {
+    const row = element("div", `${css.row}${options.reply ? ";border-top:1px solid rgba(255,255,255,.06)" : ""}`);
+    row.appendChild(avatar("You", false));
+    const main = element("div", "flex:1;min-width:0");
+    const head = element("div", css.head);
+    head.appendChild(element("span", css.name, "You"));
+    head.appendChild(element("span", css.dim, local.when));
+
+    if (options.range) {
+        const range =
+            anchor.startLine === anchor.endLine ? `L${anchor.endLine}` : `L${anchor.startLine}–${anchor.endLine}`;
+        head.appendChild(element("span", css.dim, range));
+    }
+
+    if (options.reply) {
+        head.appendChild(element("span", `${css.badge};border-color:#ffa11f;color:#ffa11f`, "Your reply"));
+    }
+
+    const badge = element("span", css.badge, localStateLabel(local));
+
+    if (local.state === "queued" || (local.state === "sent" && !local.deliveredTo)) {
+        badge.title = "Written to the outbox for an agent; no session got it yet. Send… in the header sends it.";
+    }
+
+    head.appendChild(badge);
+    const actions = element("div", css.actions);
+    actions.appendChild(
+        button("Edit", () => {
+            const previous = composer?.fileId;
+            composer = {
+                fileId: anchor.fileId,
+                side: anchor.side,
+                startLine: anchor.startLine,
+                endLine: anchor.endLine,
+                editingId: local.id,
+                body: local.body,
+            };
+            refreshAnnotations(previous ? [previous, anchor.fileId] : [anchor.fileId]);
+        })
+    );
+    actions.appendChild(button("Delete", () => post({ type: "comment.delete", id: local.id })));
+
+    // A plain comment becomes a draft of its own; a reply goes into its thread (the row below).
+    if (!options.reply && local.state !== "posted") {
+        const action = local.state === "draft" ? "post" : "promote";
         actions.appendChild(
             button(
                 action === "post" ? "Post" : "Promote to draft",
-                () => post({ type: "comment.action", id: comment.id, action }),
+                () => post({ type: "comment.action", id: local.id, action }),
                 false,
                 "GitHub / GitLab review sync"
             )
@@ -1942,7 +2038,49 @@ function renderComment(comment: BridgeComment): HTMLElement {
 
     head.appendChild(actions);
     main.appendChild(head);
-    main.appendChild(richText(comment.body));
+    main.appendChild(markdown(local.body));
+
+    const act = (action: string) => () => post({ type: "comment.action", id: local.id, action });
+    const onPR = local.state === "draft" || local.state === "posted";
+
+    if (!onPR) {
+        const row2 = element("div", "display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap");
+
+        if (local.state === "local") {
+            row2.appendChild(
+                button(
+                    "Queue to agent",
+                    act("agent"),
+                    false,
+                    "Write it into the agent's outbox; it is sent when this review has an agent (Send… in the header picks one)"
+                )
+            );
+        }
+
+        if (options.reply) {
+            row2.appendChild(
+                button(
+                    "Draft reply on PR",
+                    act("draft"),
+                    false,
+                    "A pending review draft in the thread: only you see it until you publish the review"
+                )
+            );
+            row2.appendChild(
+                button(
+                    "Post reply on PR",
+                    act("post"),
+                    false,
+                    "Published in the thread at once, visible to everyone (asks first)"
+                )
+            );
+        }
+
+        if (row2.childElementCount > 0) {
+            main.appendChild(row2);
+        }
+    }
+
     row.appendChild(main);
     return row;
 }

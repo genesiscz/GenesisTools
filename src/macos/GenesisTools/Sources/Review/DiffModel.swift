@@ -73,6 +73,57 @@ struct RenderedComment: Encodable, Equatable {
     var replyStatus: String?
     /// The live thread on the PR (`tools hub pr threads`): every note, and which buttons the card gets.
     var live: RenderedLiveThread?
+    /// A local comment: the PR thread it answers (an id or an id prefix); `ReviewThreadReplies.attach`
+    /// moves such a comment into that thread's card.
+    var thread: String?
+    /// A local comment a session's pane got: that session's name, and the time ("19:20").
+    var deliveredTo: String?
+    var sentAt: String?
+    /// A thread card: my local reply to it, shown under the notes in place of the suggested reply.
+    var localReply: RenderedLocalReply?
+}
+
+/// My local comment that answers a PR thread, as its thread card draws it (the "You" block).
+struct RenderedLocalReply: Encodable, Equatable {
+    var id: String
+    var body: String
+    var when: String
+    /// `local`, `queued`, `sent`, `draft`, `posted` (`ReviewComment.State`).
+    var state: String
+    var deliveredTo: String?
+    var sentAt: String?
+}
+
+/// One card per thread: a local comment that answers a PR thread leaves its own card and sits inside
+/// that thread's card, under the notes, where the suggested reply was (the suggestion is mine now).
+/// Its own card sat on the comment's last line, which the diff may not show (a 3-line thread on a
+/// 1-line hunk), so after an edit it seemed to vanish; inside the thread card it shows wherever that does.
+enum ReviewThreadReplies {
+    static func attach(_ comments: [RenderedComment]) -> [RenderedComment] {
+        var replies: [String: RenderedComment] = [:]
+        var cardOf: [String: String] = [:]
+        for card in comments where card.kind == "thread" {
+            let threadID = card.id.replacingOccurrences(of: "^(live|thread):", with: "", options: .regularExpression)
+            for reply in comments where reply.kind == "local" {
+                guard let ref = reply.thread, !ref.isEmpty, cardOf[reply.id] == nil, threadID.hasPrefix(ref) else { continue }
+                cardOf[reply.id] = card.id
+                replies[card.id] = replies[card.id] ?? reply
+            }
+        }
+        let attached = Set(replies.values.map(\.id))
+        return comments.compactMap { comment in
+            if attached.contains(comment.id) {
+                return nil
+            }
+
+            guard let reply = replies[comment.id] else { return comment }
+            var card = comment
+            card.localReply = RenderedLocalReply(id: reply.id, body: reply.body, when: reply.when, state: reply.state,
+                                                 deliveredTo: reply.deliveredTo, sentAt: reply.sentAt)
+            card.reply = nil
+            return card
+        }
+    }
 }
 
 /// A PR thread as the card draws it, GitLab style: the notes in order, then Reply and Resolve.

@@ -5,8 +5,10 @@ import Foundation
 /// (handoff h_3te8zv19). It is anchored to the TEXT of the commented lines, not only their numbers,
 /// so it survives reloads and edits above it, and goes `outdated` when that text is gone.
 struct ReviewComment: Codable, Identifiable, Equatable {
+    /// `queued`: written to the outbox for an agent, nobody told yet. `sent`: a session's pane got it
+    /// (`deliveredTo` names it). A queued or sent comment can still become a PR draft or post.
     enum State: String, Codable {
-        case local, sent, draft, posted
+        case local, queued, sent, draft, posted
     }
 
     var id: String
@@ -27,6 +29,29 @@ struct ReviewComment: Codable, Identifiable, Equatable {
     var sentAt: Date?
     var remoteDraftID: String?
     var remoteOwner: PRDraftOwnership?
+    /// The PR thread this comment answers (a suggested reply that became mine): the diff shows it inside
+    /// that thread's card, under its notes. Older comments named it in a footer of their text, an id prefix.
+    var thread: String?
+    /// The session that got it: its title or short id, set only by a real delivery to its pane.
+    var deliveredTo: String?
+
+    private static let threadFooter = try? NSRegularExpression(pattern: "\\n*\\(A reply to PR thread ([0-9A-Za-z_-]+)(?: on [^)]*)?\\.\\)\\s*$")
+
+    /// A comment saved before `thread` and `queued` existed: the footer becomes `thread`, and a "sent"
+    /// that no session ever got (no `deliveredTo`) is what it really was, queued.
+    func migrated() -> ReviewComment {
+        var copy = self
+        if copy.state == .sent, copy.deliveredTo == nil {
+            copy.state = .queued
+        }
+        let ns = copy.body as NSString
+        if copy.thread == nil, let footer = Self.threadFooter,
+           let match = footer.firstMatch(in: copy.body, range: NSRange(location: 0, length: ns.length)) {
+            copy.thread = ns.substring(with: match.range(at: 1))
+            copy.body = ns.replacingCharacters(in: match.range, with: "")
+        }
+        return copy
+    }
 }
 
 /// `~/.genesis-tools/review/<repo key>/comments.json`, written atomically on every change.
@@ -88,12 +113,30 @@ final class ReviewCommentStore {
         save()
     }
 
-    func markSent(_ ids: [String]) {
-        let now = Date()
-        for index in comments.indices where ids.contains(comments[index].id) {
-            comments[index].state = .sent
-            comments[index].sentAt = now
+    /// Written for an agent, nobody told: only a comment that went nowhere yet moves to queued.
+    func markQueued(_ ids: [String]) {
+        for index in comments.indices where ids.contains(comments[index].id) && comments[index].state == .local {
+            comments[index].state = .queued
         }
+        save()
+    }
+
+    /// A session's pane got them: the only way a comment becomes "sent". A PR draft or post keeps its state.
+    func markDelivered(_ ids: [String], to target: String, at now: Date = Date()) {
+        for index in comments.indices where ids.contains(comments[index].id) {
+            if [.local, .queued, .sent].contains(comments[index].state) {
+                comments[index].state = .sent
+            }
+            comments[index].sentAt = now
+            comments[index].deliveredTo = target
+        }
+        save()
+    }
+
+    /// The thread a comment answers, set when a suggested reply becomes mine.
+    func link(_ id: String, thread: String) {
+        guard let index = comments.firstIndex(where: { $0.id == id }) else { return }
+        comments[index].thread = thread
         save()
     }
 
@@ -205,12 +248,21 @@ final class ReviewCommentStore {
 
     // MARK: rendering and sending
 
+    /// "19:20", local time: when a session got the comment.
+    private static let clock: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
     func rendered(for files: [DiffFile], now: Date = Date()) -> [RenderedComment] {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
         let byPath = Self.filesByPath(files)
         return comments.compactMap { comment in
-            guard !comment.outdated, let file = byPath[comment.path] else { return nil }
+            // A reply to a PR thread lives in that thread's card, not on its lines: when the diff shows another
+            // version of the file its lines are "outdated" here, and hiding it made it vanish after an edit.
+            guard !comment.outdated || comment.thread != nil, let file = byPath[comment.path] else { return nil }
             return RenderedComment(
                 id: comment.id,
                 fileId: file.id,
@@ -221,7 +273,10 @@ final class ReviewCommentStore {
                 author: "You",
                 when: formatter.localizedString(for: comment.updatedAt, relativeTo: now),
                 state: comment.state.rawValue,
-                remote: false
+                remote: false,
+                thread: comment.thread,
+                deliveredTo: comment.deliveredTo,
+                sentAt: comment.sentAt.map { Self.clock.string(from: $0) }
             )
         }
     }
@@ -245,6 +300,9 @@ final class ReviewCommentStore {
             out += "File: \(comment.path)\n"
             out += "Lines: \(lineRange) (\(sideLabel) side)\(comment.outdated ? " [outdated: the code moved or is gone]" : "")\n"
             out += "User comment: \"\(comment.body.replacingOccurrences(of: "\"", with: "\\\""))\"\n"
+            if let thread = comment.thread {
+                out += "It answers the PR review thread \(thread) on these lines.\n"
+            }
             let key = comment.path + ":" + comment.side.rawValue
             let lines = split[key] ?? byPath[comment.path].map { Self.lines(of: $0, side: comment.side) } ?? []
             split[key] = lines
@@ -290,6 +348,7 @@ final class ReviewCommentStore {
             changed(\.body); changed(\.updatedAt); changed(\.state)
             changed(\.anchor); changed(\.before); changed(\.after); changed(\.outdated)
             changed(\.sentAt); changed(\.remoteDraftID); changed(\.remoteOwner)
+            changed(\.thread); changed(\.deliveredTo)
         }
     }
 
@@ -346,8 +405,11 @@ final class ReviewCommentStore {
 
     private func load() {
         do {
-            comments = try Self.read(file)
-            projection = comments
+            // The projection is what the file holds: a comment the migration changed differs from it, so the
+            // next save writes the migration too (its thread and queued state), not only the edit.
+            let raw = try Self.read(file)
+            comments = raw.map { $0.migrated() }
+            projection = raw
         } catch {
             saveBlocked = true
             saveError = "Comments could not be read; the original file was preserved."
@@ -403,7 +465,7 @@ final class ReviewCommentStore {
                     for store in stores {
                         var visible = rows
                         store.pending.flatMap(\.patches).forEach { $0.apply(to: &visible) }
-                        store.comments = visible
+                        store.comments = visible.map { $0.migrated() }
                         store.projection = visible
                         if !store.pending.contains(where: \.failed) { store.saveError = nil }
                         NotificationCenter.default.post(name: Self.changed, object: store)

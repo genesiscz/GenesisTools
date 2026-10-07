@@ -24,6 +24,7 @@ func runReview(_ args: [String]) -> Never {
     var rangeLabel: String?
     var options = DiffViewOptions()
     var activate = true
+    var snapshotHeight: CGFloat?
     var demo = ReviewSnapshotDemo()
     var settings: [String: Any] = [:]
     var index = 0
@@ -50,6 +51,7 @@ func runReview(_ args: [String]) -> Never {
             if ends.count == 2, !ends[0].isEmpty, !ends[1].isEmpty { range = (ends[0], ends[1]) }
             index += 1
         case "--no-activate": activate = false
+        case "--snapshot-height": snapshotHeight = Double(value ?? "").map { CGFloat($0) }; index += 1
         case "--style": options.diffStyle = DiffViewOptions.Style(rawValue: value ?? "") ?? .split; index += 1
         case "--set":
             // Snapshot runs only, on the scratch settings: `--set panel.review.context.collapsed=false`.
@@ -125,7 +127,13 @@ func runReview(_ args: [String]) -> Never {
     // The title bar strip zooms on a double-click and drags the window (WindowTitlebar.swift).
     window.contentView = NSHostingView(rootView: ReviewRootView(model: model).defaultAppStorage(HubDefaults.store).titlebarZone())
     window.center()
-    window.setFrameAutosaveName("GenesisToolsReview")
+    if snapshotPath != nil, let snapshotHeight {
+        // A snapshot of a long thread card (`--snapshot-height <pt>`): a taller window, and no autosave
+        // name, so the size never reaches the frame the live window restores.
+        window.setContentSize(NSSize(width: window.frame.width, height: snapshotHeight))
+    } else {
+        window.setFrameAutosaveName("GenesisToolsReview")
+    }
     delegate.window = window
 
     if let snapshotPath {
@@ -995,7 +1003,8 @@ final class ReviewModel: ObservableObject {
             // Cached threads: the cards show, their Reply and Resolve wait for the host's fresh answer.
             threadComments = threadComments.map(PRThreadRendering.readOnly)
         }
-        let all = local + Self.globalized(threadComments, primary)
+        // A local reply to a PR thread sits inside that thread's card, once (ReviewThreadReplies).
+        let all = ReviewThreadReplies.attach(local + Self.globalized(threadComments, primary))
         renderer.showComments(all)
         threadCards = ReviewKeyNav.threadCards(all, files: files)
         if let focusedCard, !threadCards.contains(where: { $0.id == focusedCard }) {
@@ -1006,7 +1015,7 @@ final class ReviewModel: ObservableObject {
         }
         focusPendingThread()
         commentCount = owned.reduce(0) { $0 + $1.store.comments.count }
-        unsentCount = owned.reduce(0) { $0 + $1.store.comments.filter { $0.state == .local }.count }
+        unsentCount = owned.reduce(0) { $0 + $1.store.comments.filter { $0.state == .local || $0.state == .queued }.count }
     }
 
     private static func globalized(_ comments: [RenderedComment], _ root: ReviewRoot) -> [RenderedComment] {
@@ -1018,23 +1027,91 @@ final class ReviewModel: ObservableObject {
         }
     }
 
-    /// Writes every unsent comment with its code into one markdown file, copies it, and, when the
-    /// window was opened for a session, tells that session's cmux pane to read it. The pane gets one
-    /// line, never the comment text, so nothing multi-line is typed into the agent's prompt.
-    func sendToAgent() {
-        sendToAgent(ids: commentRoots.flatMap { $0.store.comments.filter { $0.state == .local }.map(\.id) })
+    /// Every comment not yet with an agent (written, or queued): the header's "Send N…" takes them all.
+    var pendingAgentIDs: [String] {
+        commentRoots.flatMap { $0.store.comments.filter { $0.state == .local || $0.state == .queued }.map(\.id) }
     }
 
-    /// The same send for a chosen set of comments (one suggestion sent from its card). `afterSend` runs
-    /// when the comments went out; `finished` runs once at the end either way.
-    func sendToAgent(ids: [String], afterSend: (() -> Void)? = nil, finished: (() -> Void)? = nil) {
+    /// Where comments go: the window's own session, else the session last picked for this PR (or this
+    /// repository when the diff is no PR). Nil: nobody, so a comment can only be queued.
+    var agentTarget: AgentTarget? {
+        if let session, AgentTarget.validID(session) {
+            return AgentTarget(sessionId: session, provider: nil, name: "session \(session.prefix(8))")
+        }
+        return AgentTarget.remembered(for: agentTargetKey)
+    }
+
+    /// The PR's URL, or the repository's path for a diff that is no PR: one remembered agent each.
+    var agentTargetKey: String {
+        pr?.payload?.pr.webUrl ?? pr?.payload?.pr.url ?? repo.path
+    }
+
+    func sendToAgent() {
+        sendToAgent(ids: pendingAgentIDs)
+    }
+
+    /// The comments go to the agent: written into one outbox file, then, when there is a target (the
+    /// window's session, or the one picked for this PR), one line naming the file is typed into that
+    /// session's pane, and only then they read "Sent to <it>". With no target they are queued, which says
+    /// what happened: written, nobody told. `afterSend` runs when a pane got them; `finished` always, once.
+    func sendToAgent(ids: [String], to chosen: AgentTarget? = nil, afterSend: (() -> Void)? = nil, finished: (() -> Void)? = nil) {
         guard !ids.isEmpty else {
-            notice = "No unsent comments."
+            notice = "No comments waiting for the agent."
             finished?()
             return
         }
 
-        // One section per repository: each comment names its file relative to the repository it is in.
+        guard let written = writeOutbox(ids) else {
+            finished?()
+            return
+        }
+
+        guard let target = chosen ?? agentTarget else {
+            for owner in written.owners {
+                owner.store.markQueued(owner.ids)
+            }
+            pushComments()
+            notice = "Queued \(ids.count) \(ids.count == 1 ? "comment" : "comments"), not sent: no agent is picked for this review. Send… in the header picks one."
+            finished?()
+            return
+        }
+
+        let line = "Read the review comments in \(written.file.path) and address each one."
+        let host = TerminalHosts.current
+        notice = "Sending \(ids.count) comments to \(target.name)…"
+        Task { @MainActor in
+            let error = await Task.detached(priority: .userInitiated) {
+                host.send(sessionId: target.sessionId, provider: target.provider, text: line)
+            }.value
+            let outcome = AgentDelivery.outcome(target: target, error: error)
+            for owner in written.owners {
+                switch outcome {
+                case .sent(let to): owner.store.markDelivered(owner.ids, to: to)
+                case .queued: owner.store.markQueued(owner.ids)
+                }
+            }
+            if case .sent = outcome {
+                afterSend?()
+            }
+            pushComments()
+            notice = AgentDelivery.notice(outcome, count: ids.count, host: host.name, error: error)
+            finished?()
+        }
+    }
+
+    /// The explicit fallback: the comments copied to the clipboard and kept queued. Nothing was sent.
+    func copyForAgent(ids: [String]) {
+        guard !ids.isEmpty, let written = writeOutbox(ids) else { return }
+        for owner in written.owners {
+            owner.store.markQueued(owner.ids)
+        }
+        PathOpener.copy(written.message, what: "\(ids.count) comments")
+        pushComments()
+        notice = "Copied \(ids.count) comments, not sent. Paste them into an agent."
+    }
+
+    /// One markdown file in the outbox with every comment and its code, one section per repository.
+    private func writeOutbox(_ ids: [String]) -> (file: URL, message: String, owners: [(store: ReviewCommentStore, ids: [String])])? {
         let owners = commentRoots.map { root, store in
             (root: root, store: store, ids: ids.filter { id in store.comments.contains { $0.id == id } })
         }.filter { !$0.ids.isEmpty }
@@ -1043,11 +1120,6 @@ final class ReviewModel: ObservableObject {
             let rootBranch = root.path == repo.path ? (remoteHead?.branchNote ?? branch) : owner.root.branch
             return owner.store.agentMessage(repo: root, branch: rootBranch, files: owner.root.files, ids: owner.ids)
         }.joined(separator: "\n")
-        let markSent = {
-            for owner in owners {
-                owner.store.markSent(owner.ids)
-            }
-        }
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let outbox = comments.directory.appendingPathComponent("outbox", isDirectory: true)
         let file = outbox.appendingPathComponent("\(stamp).md")
@@ -1056,36 +1128,9 @@ final class ReviewModel: ObservableObject {
             try message.write(to: file, atomically: true, encoding: .utf8)
         } catch {
             notice = "Could not write \(file.path): \(error.localizedDescription)"
-            finished?()
-            return
+            return nil
         }
-
-        PathOpener.copy(message, what: "\(ids.count) comments")
-
-        guard let session, session.range(of: "^[A-Za-z0-9-]+$", options: .regularExpression) != nil else {
-            markSent()
-            afterSend?()
-            pushComments()
-            notice = "\(ids.count) comments copied. Paste them into the agent, or open the window with --session."
-            finished?()
-            return
-        }
-
-        let line = "Read the review comments in \(file.path) and address each one."
-        let host = TerminalHosts.current
-        notice = "Sending \(ids.count) comments…"
-        Task { @MainActor in
-            let error = await Task.detached(priority: .userInitiated) { host.send(sessionId: session, text: line) }.value
-            if let error {
-                notice = "\(host.name) send failed (\(error.prefix(80))); the comments are copied to the clipboard."
-            } else {
-                markSent()
-                afterSend?()
-                pushComments()
-                notice = "Sent \(ids.count) comments to session \(session.prefix(8))."
-            }
-            finished?()
-        }
+        return (file, message, owners.map { ($0.store, $0.ids) })
     }
 
     private func handle(_ event: DiffRendererEvent) {
@@ -1144,7 +1189,7 @@ final class ReviewModel: ObservableObject {
             case "accept": updateDraft(id, status: "accepted")
             case "reject": updateDraft(id, status: "rejected")
             case "restore": updateDraft(id, status: "proposed")
-            case "agent": send(id, to: .agent)
+            case "agent", "queue": send(id, to: .agent)
             case "draft", "promote": send(id, to: .prDraft)
             case "post": send(id, to: .prComment)
             default: HubPerf.log("review.commentAction unknown \(action)")
@@ -1457,6 +1502,8 @@ final class ReviewModel: ObservableObject {
         let startLine: Int
         let line: Int
         let thread: String?
+        /// A local reply whose PR thread is not among the loaded threads: it cannot go to the PR as a reply.
+        var unresolvedThread = false
         /// A local comment that is already my pending draft on the PR: Promote replaces its text, Post
         /// publishes and then deletes it, so the PR never gets the comment twice.
         var pendingDraft: String?
@@ -1474,8 +1521,11 @@ final class ReviewModel: ObservableObject {
     private func suggestion(for id: String) -> Suggestion? {
         if let owner = commentOwner(id), let comment = owner.store.comments.first(where: { $0.id == id }),
            let file = owner.root.files.first(where: { $0.path == comment.path }) {
+            // A reply to a PR thread answers that thread on the PR too, never a new thread on its lines.
+            let thread = comment.thread.flatMap { ref in pr?.payload?.threads.first { $0.id.hasPrefix(ref) }?.id }
             return Suggestion(text: comment.body, path: comment.path, fileID: owner.root.global(file.id), side: comment.side,
-                              startLine: comment.startLine, line: comment.endLine, thread: nil,
+                              startLine: comment.startLine, line: comment.endLine, thread: thread,
+                              unresolvedThread: comment.thread != nil && thread == nil,
                               pendingDraft: comment.state == .draft ? comment.remoteDraftID : nil,
                               otherRoot: owner.root.repo?.path == repo.path ? nil : owner.root.prefix,
                               kind: "local", state: comment.state.rawValue)
@@ -1534,15 +1584,19 @@ final class ReviewModel: ObservableObject {
                 sendToAgent(ids: [id])
                 return
             }
-            let where_ = proposal.map { " on \($0.label)" } ?? ""
-            let note = item.thread.map { "\(item.text)\n\n(A reply to PR thread \($0.prefix(8))\(where_).)" } ?? item.text
-            let input = CommentInput(editingID: nil, fileID: item.fileID, side: item.side, startLine: item.startLine, endLine: item.line, body: note)
+            // The suggestion becomes my comment, linked to its thread: the thread's card shows it in the
+            // suggestion's place (ReviewThreadReplies), and Draft / Post reply stay on it. The proposal's
+            // own reply status is left alone: queuing it is not a reply on the PR.
+            let input = CommentInput(editingID: nil, fileID: item.fileID, side: item.side, startLine: item.startLine, endLine: item.line, body: item.text)
             guard let comment = addComment(input) else {
                 notice = "Could not anchor the comment on \(item.path):\(item.line)."
                 return
             }
+            if let thread = item.thread {
+                commentOwner(comment.id)?.store.link(comment.id, thread: thread)
+            }
             sendingSuggestions.insert(id)
-            sendToAgent(ids: [comment.id], afterSend: { markSent("sent", nil) }, finished: { [weak self] in
+            sendToAgent(ids: [comment.id], finished: { [weak self] in
                 self?.sendingSuggestions.remove(id)
             })
         case .prDraft, .prComment:
@@ -1562,6 +1616,10 @@ final class ReviewModel: ObservableObject {
             }
             if let other = item.otherRoot {
                 notice = "This comment is on a file in \(other), not in the PR's repository."
+                return
+            }
+            if item.unresolvedThread {
+                notice = "The PR thread this reply answers is not among the loaded threads. Reload the threads, then send it again."
                 return
             }
             let publish = target == .prComment
@@ -1888,6 +1946,7 @@ private struct ReviewHeader: View {
     /// Standalone: room for the traffic lights when the header starts at the window's left edge.
     var leadingInset: CGFloat = 78
     @ObservedObject private var repos = RepoFactsStore.shared
+    @State private var pickingAgent = false
 
     var body: some View {
         // One row of one height at every width. It used to wrap its controls to a second row in a
@@ -2010,15 +2069,16 @@ private struct ReviewHeader: View {
                 .foregroundColor(ReviewPalette.dim)
                 .instantTooltip("\(model.commentCount) comments, \(model.unsentCount) not sent yet")
             }
-            Button(action: model.sendToAgent) {
-                Label(model.unsentCount > 0 ? "Send \(model.unsentCount)" : "Send", systemImage: "paperplane")
+            Button { pickingAgent = true } label: {
+                Label(model.unsentCount > 0 ? "Send \(model.unsentCount)…" : "Send", systemImage: "paperplane")
                     .font(.system(size: 12, weight: .semibold))
                     .fixedSize()
             }
             .disabled(model.unsentCount == 0)
-            .instantTooltip(model.session == nil
-                ? "Copy the comments with their code for an agent"
-                : "Send the comments to session \(model.session?.prefix(8) ?? "")")
+            .instantTooltip("Pick the agent session that gets the \(model.unsentCount) queued comments (AgentSend.swift)")
+            .popover(isPresented: $pickingAgent, arrowEdge: .bottom) {
+                AgentSendForm(model: model) { pickingAgent = false }
+            }
             Picker("", selection: Binding(get: { model.options.diffStyle }, set: { model.setStyle($0) })) {
                 Text("Split").tag(DiffViewOptions.Style.split)
                 Text("Unified").tag(DiffViewOptions.Style.unified)
@@ -2048,10 +2108,13 @@ private struct ReviewHeader: View {
 
     private var sendButton: some View {
         IconButton(systemName: "paperplane",
-                   tooltip: model.unsentCount > 0 ? "Send \(model.unsentCount) comments to the agent" : "No unsent comments") {
-            model.sendToAgent()
+                   tooltip: model.unsentCount > 0 ? "Send \(model.unsentCount) queued comments to an agent…" : "No comments waiting for an agent") {
+            pickingAgent = true
         }
         .disabled(model.unsentCount == 0)
+        .popover(isPresented: $pickingAgent, arrowEdge: .bottom) {
+            AgentSendForm(model: model) { pickingAgent = false }
+        }
     }
 
     /// Icons instead of labels, and the text size behind a menu.

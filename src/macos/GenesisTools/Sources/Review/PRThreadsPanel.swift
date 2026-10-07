@@ -359,7 +359,9 @@ struct PRThreadsList: View {
     @AppStorage("review.prThreads.thisFile", store: HubDefaults.store) private var onlyThisFile = false
     @AppStorage("review.prThreads.closed", store: HubDefaults.store) private var showClosed = false
     @State private var find = PanelFindModel(scope: "pr.threads", title: "the threads")
+    /// Folded files and threads of this PR (`PRThreadFolds`), read when the PR's threads arrive.
     @State private var folded: Set<String> = []
+    @State private var foldedThreads: Set<String> = []
     /// The previous visit to this PR's threads: notes by others written after it are marked new.
     @State private var seenSince: Date?
     @State private var seenFor: String?
@@ -450,13 +452,22 @@ struct PRThreadsList: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 fileHeader(group, placed: placed, fresh: fresh)
                                 if !folded.contains(group.path) {
-                                    ForEach(group.threads) { thread in
-                                        PRThreadRow(model: model, store: store, thread: thread,
-                                                    selected: model.selectedThreads.contains(thread.id),
-                                                    placement: placed[thread.id] ?? .onDiff(outdatedOnHost: false),
-                                                    fresh: fresh, atHead: atHead[thread.path],
-                                                    headSha: query?.head, compact: compact, clicks: clicks)
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        ForEach(group.threads) { thread in
+                                            PRThreadRow(model: model, store: store, thread: thread,
+                                                        selected: model.selectedThreads.contains(thread.id),
+                                                        placement: placed[thread.id] ?? .onDiff(outdatedOnHost: false),
+                                                        fresh: fresh, atHead: atHead[thread.path],
+                                                        headSha: query?.head, compact: compact, clicks: clicks,
+                                                        folded: foldedThreads.contains(thread.id)) {
+                                                toggle(thread: thread.id)
+                                            }
                                             .findRow(thread.id, cornerRadius: 8)
+                                        }
+                                    }
+                                    // The file's rail: a click folds the whole file, as its header's chevron does.
+                                    .overlay(alignment: .leading) {
+                                        PRFileRail { toggle(file: group.path) }
                                     }
                                 }
                             }
@@ -508,6 +519,28 @@ struct PRThreadsList: View {
         seenSince = previous > 0 ? Date(timeIntervalSince1970: previous) : nil
         seenFor = pr.url
         HubDefaults.store.set(Date().timeIntervalSince1970, forKey: key)
+        folded = Set(HubDefaults.store.stringArray(forKey: PRThreadFolds.filesKey(pr.url)) ?? [])
+        foldedThreads = Set(HubDefaults.store.stringArray(forKey: PRThreadFolds.threadsKey(pr.url)) ?? [])
+    }
+
+    /// Folds or opens one file's threads; kept per PR.
+    private func toggle(file path: String) {
+        withAnimation(.snappy(duration: 0.2)) {
+            folded = PRThreadFolds.toggled(folded, path)
+        }
+        if let url = store.pr?.url {
+            HubDefaults.store.set(folded.sorted(), forKey: PRThreadFolds.filesKey(url))
+        }
+    }
+
+    /// Folds or opens one thread to its header and first line; kept per PR.
+    private func toggle(thread id: String) {
+        withAnimation(.snappy(duration: 0.2)) {
+            foldedThreads = PRThreadFolds.toggled(foldedThreads, id)
+        }
+        if let url = store.pr?.url {
+            HubDefaults.store.set(foldedThreads.sorted(), forKey: PRThreadFolds.threadsKey(url))
+        }
     }
 
     // MARK: Toolbar
@@ -566,13 +599,7 @@ struct PRThreadsList: View {
         let absolute = model.file(atPath: group.path).flatMap { model.absolutePath(of: $0) }
         return HStack(alignment: .top, spacing: 6) {
             IconButton(systemName: "chevron.right", tooltip: isFolded ? "Show the threads on this file" : "Fold the threads on this file") {
-                withAnimation(.snappy(duration: 0.2)) {
-                    if isFolded {
-                        folded.remove(group.path)
-                    } else {
-                        folded.insert(group.path)
-                    }
-                }
+                toggle(file: group.path)
             }
             .rotationEffect(.degrees(isFolded ? 0 : 90))
             .frame(width: 16, height: 18)
@@ -623,6 +650,53 @@ struct PRThreadsList: View {
                 PathActionsMenu(path: absolute, line: group.threads.first?.line)
             }
         }
+    }
+}
+
+enum PRThreadFold {
+    /// A note's first line of text, without markdown marks, for a folded thread.
+    static func firstLine(_ markdown: String) -> String {
+        let line = markdown.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty && !$0.hasPrefix("```") } ?? ""
+        return line.replacingOccurrences(of: "[*_`>#]+", with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+    }
+}
+
+/// Folded files and threads of the threads list, kept per PR in the hub's settings.
+enum PRThreadFolds {
+    static func filesKey(_ pr: String) -> String { "review.prThreads.foldedFiles.\(pr)" }
+    static func threadsKey(_ pr: String) -> String { "review.prThreads.foldedThreads.\(pr)" }
+
+    static func toggled(_ set: Set<String>, _ id: String) -> Set<String> {
+        set.contains(id) ? set.subtracting([id]) : set.union([id])
+    }
+}
+
+/// The thin line left of a file's thread cards: a click folds the file, as its header's chevron does.
+private struct PRFileRail: View {
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Rectangle()
+            .fill(hovering ? ReviewPalette.renamed.opacity(0.8) : Color.white.opacity(0.1))
+            .frame(width: hovering ? 3 : 2)
+            .frame(width: 8)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+            .onHover { inside in
+                guard NSEvent.pressedMouseButtons == 0 || !inside, inside != hovering else { return }
+                hovering = inside
+            }
+            .hoverCursor(.pointingHand)
+            .animation(.easeOut(duration: 0.12), value: hovering)
+            .instantTooltip("Fold the threads on this file")
+            .accessibilityElement()
+            .accessibilityLabel(Text("Fold the threads on this file"))
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { action() }
     }
 }
 
@@ -788,8 +862,9 @@ private struct PRThreadRow: View {
     @State private var hovering = false
     /// The list's click router: a plain click anywhere on the card shows the thread in the diff.
     let clicks: PRCardClicks
-
-    private var dimmed: Bool { thread.resolved || placement == .outdated }
+    /// Folded: the header, the first note's first line and the count; the chevron on the right opens it.
+    var folded = false
+    var toggleFold: () -> Void = {}
 
     /// A note's markdown at the list's size, `inline code` on a faint fill as the host pages draw it.
     static let noteStyle: MarkdownStyle = {
@@ -825,10 +900,16 @@ private struct PRThreadRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
-            ForEach(Array(thread.comments.enumerated()), id: \.element.id) { index, comment in
-                commentView(comment, reply: index > 0)
+            if folded {
+                foldedSummary
+            } else {
+                ForEach(Array(thread.comments.enumerated()), id: \.element.id) { index, comment in
+                    commentView(comment, reply: index > 0)
+                }
             }
-            if replying {
+            if folded {
+                EmptyView()
+            } else if replying {
                 replyComposer
             } else if compact, !thread.isMyDraft {
                 HStack(spacing: 10) {
@@ -866,8 +947,32 @@ private struct PRThreadRow: View {
         }
         .animation(.easeOut(duration: 0.12), value: hovering)
         .accessibilityAction(named: Text("Show in the diff")) { cardClicked() }
-        .opacity(dimmed ? 0.72 : 1)
-        .padding(.leading, 6)
+        // Room for the file's rail (PRFileRail) on the left. Resolved and outdated cards keep their
+        // colours: a dimmed card read as a grey film over it (Martin, 2026-10-07).
+        .padding(.leading, 10)
+    }
+
+    /// A folded thread: who opened it, its first line, and how many notes it has.
+    private var foldedSummary: some View {
+        HStack(spacing: 6) {
+            if let first = thread.comments.first {
+                PRAvatar(name: first.author.name, username: first.author.username, url: first.author.avatarUrl, size: 16)
+                Text(verbatim: first.author.name)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundColor(Color.white.opacity(0.85))
+                    .fixedSize()
+                Text(verbatim: PRThreadFold.firstLine(first.bodyMarkdown))
+                    .font(.system(size: 11.5))
+                    .foregroundColor(Color.white.opacity(0.7))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: 4)
+            Text(verbatim: thread.comments.count == 1 ? "1 note" : "\(thread.comments.count) notes")
+                .font(.system(size: 11))
+                .foregroundColor(ReviewPalette.dim)
+                .fixedSize()
+        }
     }
 
     private var header: some View {
@@ -911,9 +1016,14 @@ private struct PRThreadRow: View {
             }
             Spacer(minLength: 4)
             // A narrow panel puts them under the notes instead: beside the badges they were cut to "Re… R…".
-            if !compact {
+            if !compact, !folded {
                 threadActions
             }
+            IconButton(systemName: "chevron.down", tooltip: folded ? "Show the whole thread" : "Fold the thread to one line") {
+                toggleFold()
+            }
+            .rotationEffect(.degrees(folded ? -90 : 0))
+            .frame(width: 16)
         }
         .font(.system(size: 11.5))
         .lineLimit(1)
