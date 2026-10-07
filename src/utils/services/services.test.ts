@@ -5,7 +5,7 @@ import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { classifyPid } from "@genesiscz/utils/process-identity";
 import { getDashboard, type RegistryEntry } from "@genesiscz/utils/ui/dashboards";
 import { type FleetOutcome, OUTSIDE_THE_FLEET, portMove, selectFleet, startFleet, stopFleet } from "./fleet";
-import { clientPortsFrom, connectedPorts, idleDecisions, stateKey } from "./idle";
+import { clientPortsFrom, connectedPorts, idleDecisions, netstatClientPortsFrom, stateKey } from "./idle";
 import {
     type LaunchdJob,
     listServices,
@@ -102,6 +102,17 @@ describe("parsers", () => {
         const ports = parseNetstatClientPorts(NETSTAT);
 
         expect([...ports].sort((a, b) => a - b)).toEqual([4242, 5000, 55910]);
+    });
+
+    test("a netstat whose ESTABLISHED rows do not parse is unknown, not idle", () => {
+        expect(netstatClientPortsFrom({ status: 0, stdout: NETSTAT, stderr: "" })?.size).toBe(3);
+        expect(netstatClientPortsFrom({ status: 0, stdout: "tcp4 0 0 *.4242 *.* LISTEN", stderr: "" })).toEqual(
+            new Set()
+        );
+        expect(
+            netstatClientPortsFrom({ status: 0, stdout: "tcp4 ? ? ESTABLISHED changed-format", stderr: "" })
+        ).toBeNull();
+        expect(netstatClientPortsFrom({ status: 1, stdout: "", stderr: "netstat: failed" })).toBeNull();
     });
 
     test("an lsof that failed is unknown, not idle; one with nothing to list is no clients", () => {

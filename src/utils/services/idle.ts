@@ -92,14 +92,28 @@ export function clientPortsFrom(run: CaptureResult): Set<number> | null {
     return connectedPorts(run.stdout);
 }
 
+/**
+ * The ports with a connected client, from one `netstat` run, or null when the run failed. Rows
+ * that say ESTABLISHED but parse to nothing mean the output format moved: that reads as unknown,
+ * never as "nobody is connected", or a server in use is stopped.
+ */
+export function netstatClientPortsFrom(run: CaptureResult): Set<number> | null {
+    if (run.status !== 0) {
+        return null;
+    }
+
+    const ports = parseNetstatClientPorts(run.stdout);
+    return ports.size > 0 || !run.stdout.includes("ESTABLISHED") ? ports : null;
+}
+
 export function readClientPorts(): Set<number> | null {
     if (netstatIsUsable()) {
         // netstat reads the kernel's socket list in milliseconds; lsof took 9 s under load and was killed
         // at its 10 s deadline on 38 of 79 daemon runs on 2026-10-05, each one a banner.
         const run = runNetstat();
 
-        if (run.status === 0) {
-            const ports = parseNetstatClientPorts(run.stdout);
+        const ports = netstatClientPortsFrom(run);
+        if (ports) {
             logger.debug({ ports: [...ports], via: "netstat" }, "services: client check");
             return ports;
         }
