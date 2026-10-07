@@ -8,11 +8,33 @@ export interface GitResult {
 
 /** Synchronous git in `cwd`; stdout is trimmed. The content check runs thousands of these, one after another. */
 export function gitResult(cwd: string, args: string[]): GitResult {
+    return runGit({ cwd, args, trim: true });
+}
+
+/**
+ * `git show <rev>:<path>` with the file's text as stored: no trim, so a leading blank line keeps every
+ * line number below it. Null when git cannot show it.
+ */
+export function gitShowFile(cwd: string, spec: string): string | null {
+    const result = gitRawResult(cwd, ["show", spec]);
+
+    return result.exitCode === 0 ? result.stdout : null;
+}
+
+/** `gitResult` without the trim, for output whose edges carry data (`-z` lists, file blobs). */
+export function gitRawResult(cwd: string, args: string[]): GitResult {
+    return runGit({ cwd, args, trim: false });
+}
+
+function runGit(options: { cwd: string; args: string[]; trim: boolean }): GitResult {
+    const { cwd, args } = options;
+
     try {
         const result = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+        const stdout = result.stdout.toString();
 
         return {
-            stdout: result.stdout.toString().trim(),
+            stdout: options.trim ? stdout.trim() : stdout,
             stderr: result.stderr.toString().trim(),
             exitCode: result.exitCode ?? 1,
         };

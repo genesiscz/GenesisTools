@@ -20,8 +20,11 @@ import {
     collectUnresolvedAnchorPairs,
     type Discussion,
     fetchAnchorViews,
+    fetchTipViews,
+    fileLines,
     renderMarkdown,
     unresolvedThreads,
+    unresolvedTopLevelThreads,
 } from "@app/gitlab/lib/review-render";
 import { formatSearchText, type MRNode, matchedPaths, searchMrsByFiles } from "@app/gitlab/lib/search-by-file";
 import { localImagePath, rewriteLocalImages, uploadToProject } from "@app/gitlab/lib/uploads";
@@ -349,6 +352,89 @@ describe("fetchAnchorViews", () => {
             server.stop(true);
         }
     });
+
+    test("keeps leading blank lines, so line 3 is still the file's line 3", async () => {
+        const server = Bun.serve({ port: 0, fetch: () => new Response("\n\nline three\n") });
+
+        try {
+            const { views } = await fetchAnchorViews({
+                pairs: new Set(["a1b2c3d4 src/app.ts"]),
+                api: { host: `http://localhost:${server.port}`, token: "t", project: "group/app" },
+                fetchRemote: true,
+                onWarn: () => {},
+                cwd: mkdtempSync(join(tmpdir(), "gt-anchor-")),
+            });
+
+            expect(views.get("a1b2c3d4:src/app.ts")).toEqual(["", "", "line three"]);
+        } finally {
+            server.stop(true);
+        }
+    });
+});
+
+describe("fileLines", () => {
+    test("drops exactly one terminal newline and keeps every other blank line", () => {
+        expect(fileLines("\n  indented\n\n")).toEqual(["", "  indented", ""]);
+        expect(fileLines("a\r\nb\r\n")).toEqual(["a", "b"]);
+        expect(fileLines("no newline")).toEqual(["no newline"]);
+    });
+});
+
+describe("fetchTipViews", () => {
+    const thread = (path: string): Discussion => ({
+        id: path,
+        notes: [
+            {
+                resolvable: true,
+                resolved: false,
+                position: { head_sha: "a1b2c3d4e5f6a7b8", base_sha: "0f0f0f0f0f", new_path: path, new_line: 1 },
+            },
+        ],
+    });
+
+    test("a 404 means the file is not at the tip; any other failure leaves it unknown and warns", async () => {
+        // cwd is not a git checkout, so every tip view goes through the files API.
+        const server = Bun.serve({
+            port: 0,
+            fetch(request) {
+                const path = new URL(request.url).pathname;
+
+                if (path.endsWith("/merge_requests/42")) {
+                    return Response.json({ sha: "ffffeeeedddd" });
+                }
+
+                if (path.includes(encodeURIComponent("src/gone.ts"))) {
+                    return new Response("not found", { status: 404 });
+                }
+
+                if (path.includes(encodeURIComponent("src/locked.ts"))) {
+                    return new Response("forbidden", { status: 403 });
+                }
+
+                return new Response("\nsecond\n");
+            },
+        });
+        const warnings: string[] = [];
+
+        try {
+            const tip = await fetchTipViews({
+                api: { host: `http://localhost:${server.port}`, token: "t", project: "group/app" },
+                iid: "42",
+                cwd: mkdtempSync(join(tmpdir(), "gt-tip-")),
+                discussions: [thread("src/gone.ts"), thread("src/locked.ts"), thread("src/app.ts")],
+                fetchRemote: false,
+                onWarn: (msg) => warnings.push(msg),
+            });
+
+            expect(tip.views.get("src/gone.ts")).toBeNull();
+            expect(tip.views.has("src/locked.ts")).toBe(false);
+            expect([...(tip.unavailable ?? [])]).toEqual(["src/locked.ts"]);
+            expect(tip.views.get("src/app.ts")).toEqual(["", "second"]);
+            expect(warnings).toEqual([expect.stringContaining("src/locked.ts could not be read")]);
+        } finally {
+            server.stop(true);
+        }
+    });
 });
 
 describe("searchMrsByFiles retries", () => {
@@ -512,6 +598,93 @@ describe("review render", () => {
         expect([...collectUnresolvedAnchorPairs(discussions)]).toEqual(["a1b2c3d4e5f6a7b8 src/app.ts"]);
     });
 
+    describe("with the MR tip known", () => {
+        const reviewer = ["one", "two", "three"];
+        const opts = (
+            tipLines: string[] | null,
+            renames = new Map<string, string>(),
+            checkout = { cwd: "/nonexistent-checkout", follows: false }
+        ) => ({
+            mrIid: "42",
+            project: "acme/web-app",
+            cwd: checkout.cwd,
+            contextLines: 1,
+            anchorViews: new Map([["a1b2c3d4e5f6a7b8:src/app.ts", reviewer]]),
+            tip: {
+                sha: "ffffeeeedddd",
+                views: new Map([["src/app.ts", tipLines]]),
+                renames,
+                checkoutFollowsTip: checkout.follows,
+            },
+        });
+
+        test("a checkout's own version shows only when the checkout follows the MR", () => {
+            const cwd = mkdtempSync(join(tmpdir(), "gt-tip-"));
+            mkdirSync(join(cwd, "src"));
+            writeFileSync(join(cwd, "src/app.ts"), "one\ntwo, edited locally\nthree");
+
+            expect(renderMarkdown(discussions, opts([...reviewer], undefined, { cwd, follows: true })).md).toContain(
+                "### Local checkout, not pushed (lines 1–3):"
+            );
+            expect(
+                renderMarkdown(discussions, opts([...reviewer], undefined, { cwd, follows: false })).md
+            ).not.toContain("Local checkout");
+        });
+
+        test("when the anchor line itself changed, the tip window sits where that code is now", () => {
+            const long = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`);
+            const tip = [...long.slice(0, 3), ...long.slice(5)];
+            const moved = {
+                ...opts(tip),
+                anchorViews: new Map([["a1b2c3d4e5f6a7b8:src/app.ts", long]]),
+            };
+            const shifted = [
+                {
+                    ...discussions[0],
+                    notes: [{ ...discussions[0].notes?.[0], position: { ...position, new_line: 5 } }],
+                },
+            ];
+
+            expect(renderMarkdown(shifted, moved).md).toContain("### MR tip `ffffeeeedd` (lines 3–5):");
+        });
+
+        test("an unchanged thread shows the tip only, in the file's language", () => {
+            const { md } = renderMarkdown(discussions, opts([...reviewer]));
+
+            expect(md).toContain("## Thread 1 — `src/app.ts`:2 · unchanged");
+            expect(md).toContain("### MR tip `ffffeeeedd` (lines 1–3):\n\n```ts\n1   one\n2 ▶ two");
+            expect(md).not.toContain("Reviewer's view");
+            expect(md).not.toContain("Local checkout");
+        });
+
+        test("a changed anchor shows the tip and the reviewer's view side by side", () => {
+            const { md } = renderMarkdown(discussions, opts(["one", "two fixed", "three"]));
+
+            expect(md).toContain("· changed at the anchor");
+            expect(md).toContain("### MR tip `ffffeeeedd`");
+            expect(md).toContain("### Reviewer's view at `a1b2c3d4e5` (lines 1–3):");
+        });
+
+        test("a file gone from the tip says so; a rename names the new path", () => {
+            expect(renderMarkdown(discussions, opts(null)).md).toContain("· deleted at the tip");
+            expect(
+                renderMarkdown(discussions, opts(null, new Map([["a1b2c3d4e5f6a7b8:src/app.ts", "src/main.ts"]]))).md
+            ).toContain("· renamed to src/main.ts");
+        });
+
+        test("a tip that could not be read is unavailable, never deleted", () => {
+            const base = opts(null);
+            const { md } = renderMarkdown(discussions, {
+                ...base,
+                tip: { ...base.tip, unavailable: new Set(["src/app.ts"]) },
+            });
+
+            expect(md).toContain("· unavailable (the MR tip's version could not be read)");
+            expect(md).toContain("src/app.ts could not be read at the tip");
+            expect(md).not.toContain("deleted at the tip");
+        });
+    });
+
     test("the report quotes the thread and compares the frozen view with the working tree", () => {
         const { md, threadCount, totalDiscussions } = renderMarkdown(discussions, {
             mrIid: "42",
@@ -613,6 +786,7 @@ describe("review render", () => {
           - **Project**: \`group/app\`
           - **Discussions total**: 5
           - **Unresolved diff-attached threads**: 3
+          - **Unresolved top-level threads**: 0
           - **Files touched**: 3
           - **Distinct head_shas**: 3  _(each comment may be anchored to a different commit — fetch / read at its own \`head_sha\`)_
           - **Local cwd**: \`<cwd>\`
@@ -723,6 +897,7 @@ describe("review render", () => {
               - **Project**: \`group/app\`
               - **Discussions total**: 0
               - **Unresolved diff-attached threads**: 0
+              - **Unresolved top-level threads**: 0
               - **Files touched**: 0
               - **Distinct head_shas**: 0  _(each comment may be anchored to a different commit — fetch / read at its own \`head_sha\`)_
               - **Local cwd**: \`/x\`
@@ -888,5 +1063,43 @@ describe("local images in a draft", () => {
         const api = { host: "http://gitlab.example.com", token: "t", project: "group/app" };
 
         await expect(uploadToProject(api, shot)).rejects.toThrow("Refusing to send a GitLab token");
+    });
+});
+
+describe("top-level threads in the receive report", () => {
+    const position = { head_sha: "a1b2c3", base_sha: "0f0f0f", new_path: "src/app.ts", new_line: 2 };
+    const discussions: Discussion[] = [
+        {
+            id: "diff1",
+            notes: [{ resolvable: true, resolved: false, position, author: { username: "bob" }, body: "On a line" }],
+        },
+        {
+            id: "top1",
+            notes: [
+                { resolvable: true, resolved: false, author: { username: "bob" }, body: "About the MR as a whole" },
+            ],
+        },
+        {
+            id: "note1",
+            individual_note: true,
+            notes: [{ resolvable: false, author: { username: "bob" }, body: "LGTM" }],
+        },
+        { id: "top2", notes: [{ resolvable: true, resolved: true, author: { username: "bob" }, body: "Done" }] },
+    ];
+
+    test("a started discussion without an anchor counts and is shown; a plain note and a resolved one are not", () => {
+        expect(unresolvedTopLevelThreads(discussions).map((d) => d.id)).toEqual(["top1"]);
+
+        const { md, threadCount } = renderMarkdown(discussions, {
+            mrIid: "42",
+            project: "group/app",
+            cwd: "/nonexistent-checkout",
+            contextLines: 1,
+        });
+
+        expect(threadCount).toBe(2);
+        expect(md).toContain("**Unresolved top-level threads**: 1");
+        expect(md).toContain("About the MR as a whole");
+        expect(md).not.toContain("LGTM");
     });
 });

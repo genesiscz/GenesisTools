@@ -575,7 +575,7 @@ describe("stale-branches side-comment", () => {
         const program = new Command();
         registerStaleBranches(program);
         const side = program.commands
-            .find((command) => command.name() === "stale-branches")
+            .find((command) => command.name() === "stale")
             ?.commands.find((command) => command.name() === "side-comment");
 
         expect(side?.helpInformation()).toContain("--missing-work-item");

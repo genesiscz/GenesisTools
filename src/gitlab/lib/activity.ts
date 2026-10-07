@@ -1,5 +1,5 @@
 /**
- * `gitlab activity` core: one user's events grouped per LOCAL day.
+ * `gitlab activity user` core: one user's events grouped per LOCAL day.
  *
  * GitLab's `after`/`before` filters are exclusive and date-only, and events carry UTC timestamps,
  * so an event at 23:30 in Central Europe lands on the next UTC day. The query window is therefore widened

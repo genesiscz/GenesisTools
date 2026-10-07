@@ -12,7 +12,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, posix, resolve } from "node:path";
 import { type ProjectApi, projectBase, restGet, restGetPaginated } from "@app/gitlab/lib/client";
-import type { GateRunner, ReviewGate } from "@app/gitlab/lib/config";
+import { type GateRunner, IMPACT_SOURCES, type ImpactSource, type ReviewGate } from "@app/gitlab/lib/config";
 import { gitResult } from "@app/gitlab/lib/git";
 import { errorMessage, HttpError } from "@app/gitlab/lib/http";
 import { pool } from "@app/gitlab/lib/pool";
@@ -44,6 +44,8 @@ export interface DiffHunk {
 }
 
 export interface DiffFile {
+    /** `F12`, from the MR's id map. */
+    ref?: string;
     path: string;
     oldPath: string;
     status: FileStatus;
@@ -63,6 +65,8 @@ export interface AddedImport {
 }
 
 export interface ImpactEntry {
+    /** `M02`, from the MR's id map. */
+    ref?: string;
     iid: number;
     author: string;
     title: string;
@@ -88,6 +92,11 @@ export interface PrReviewGate {
 export const NO_TESTS_NOTE =
     "No test file sits next to a changed file. Pick the test paths by hand, or state that none apply.";
 
+/** The note of a `{tests}` gate whose `exclude` removed every test file of the MR. */
+export function excludedTestsNote(exclude: string, count: number): string {
+    return `This gate's exclude (\`${exclude}\`) leaves out the ${count} test file(s) of this MR; another gate may run them. Nothing to run here.`;
+}
+
 export interface PrReviewFacts {
     provider: "gitlab";
     /** `https://gitlab.example.com` */
@@ -97,6 +106,8 @@ export interface PrReviewFacts {
     iid: number;
     title: string;
     author: string;
+    /** The token's owner: threads they started are `Y`, everyone else's `T`. */
+    me?: string;
     webUrl: string;
     sourceBranch: string;
     targetBranch: string;
@@ -119,6 +130,8 @@ export interface PrReviewFacts {
     impactScanned: number;
     gates: PrReviewGate[];
     gateRunner: GateRunner;
+    /** Advice when no worktree has the MR branch; null means the built-in `git worktree add` line. */
+    worktreeHint?: string | null;
     /** Changed test files plus the test next to each changed source file (found only with a checkout). */
     testPaths: string[];
     /** Partial failures: the facts are real, a part is missing. */
@@ -414,6 +427,7 @@ export function selectGates(
 
         const usesTests = gate.command.includes("{tests}");
         const tests = usesTests ? allTests.filter((path) => kept(path) && (!when || when.match(path))) : [];
+        const excludedTests = usesTests && gate.exclude ? allTests.filter((path) => !kept(path)).length : 0;
 
         selected.push({
             label: gate.label,
@@ -422,7 +436,12 @@ export function selectGates(
                 .replaceAll("{tests}", tests.map(shellQuote).join(" ")),
             files: matching,
             tests,
-            note: usesTests && tests.length === 0 ? NO_TESTS_NOTE : null,
+            note:
+                usesTests && tests.length === 0
+                    ? excludedTests > 0 && gate.exclude
+                        ? excludedTestsNote(gate.exclude, excludedTests)
+                        : NO_TESTS_NOTE
+                    : null,
         });
     }
 
@@ -652,9 +671,7 @@ export function branchDiff(repoPath: string, target: string, source: string): Di
 
 // ─── collect ───────────────────────────────────────────────────────────────────
 
-export const IMPACT_SOURCES = ["api", "git"] as const;
-/** `api`: one diffs request per other MR, capped. `git`: fetch every open branch and diff locally, no cap. */
-export type ImpactSource = (typeof IMPACT_SOURCES)[number];
+export { IMPACT_SOURCES, type ImpactSource };
 
 export interface CollectOptions {
     api: ProjectApi;
@@ -673,6 +690,8 @@ export interface CollectOptions {
     impactLimit?: number;
     gates?: ReviewGate[];
     gateRunner?: GateRunner;
+    /** The config's `review.worktreeHint`, carried into the facts for the report. */
+    worktreeHint?: string | null;
     concurrency?: number;
     onProgress?: (message: string) => void;
 }
@@ -921,6 +940,7 @@ export async function collectPrReviewFacts(options: CollectOptions): Promise<PrR
         impactScanned,
         gates: selectGates(options.gates ?? [], files, exists),
         gateRunner: options.gateRunner ?? "list",
+        worktreeHint: options.worktreeHint ?? null,
         testPaths: testCandidates(files, exists),
         warnings,
     };

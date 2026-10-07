@@ -477,7 +477,7 @@ describe("review", () => {
 
     it("starts the agent in the worktree on the MR branch with a prompt file, never the prompt on the line", async () => {
         const { deps, calls } = fakeDeps({
-            tools: () => ({ code: 0, stdout: "Usage: gitlab pr review [options] <iid>", stderr: "" }),
+            tools: () => ({ code: 0, stdout: "Usage: gitlab pr <iid> review [options]", stderr: "" }),
         });
         await startReview(deps, { url, branch: "feat/login" });
         const argv = calls.terminal[0]?.argv ?? [];
@@ -486,7 +486,7 @@ describe("review", () => {
         expect(argv.slice(0, -1)).toEqual(parseConfig({}).agent.interactive);
         expect(sentence).toMatch(/^Read the task in .+-review-.+\.md and do it\.$/);
         const prompt = await Bun.file(sentence.replace(/^Read the task in (.+) and do it\.$/, "$1")).text();
-        expect(prompt).toContain("tools gitlab pr review 7 --json");
+        expect(prompt).toContain("tools gitlab pr 7 review --give --json");
         expect(prompt).toContain("Never post, approve or merge");
     });
 });

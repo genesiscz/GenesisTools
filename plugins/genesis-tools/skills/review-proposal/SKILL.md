@@ -20,16 +20,20 @@ the calling skill describes. Exit 0 means continue.
 
 ## 2. Gather facts
 
-- GitLab: `tools gitlab pr review <iid> --repo <checkout> --proposal-skeleton > /tmp/review-<iid>.json`
+- GitLab: `tools gitlab pr <iid> review --give --repo <checkout> --proposal-skeleton > /tmp/review-<iid>.json`
   writes the proposal with provider, host, project, number, branches, `baseSha`, `headSha`, `repoPath`
   and every existing thread already filled (a resolved one with `resolved: true`); you add `author.agent`,
   the verdict and the drafts.
   The same run saves the facts (`<tmp>/gitlab-pr-<project>-<key>-<iid>.json`, path on stderr; JSON by default on stdout
   without the flag) and the numbered report (`.md`, or `--md` on stdout): diff hunks with new-side
   line numbers, the file checklist, existing threads, your pending drafts, other open MRs this one
-  breaks or overlaps, and the configured gates. `--llm` is a compact view; `--expand f3,t1` prints
-  one file or thread in full. `tools gitlab fetch-review <iid> --md` shows existing threads with
-  the code at their anchor.
+  breaks or overlaps, and the configured gates. `--llm` is a compact view; `--expand F03,T01` prints
+  one file or thread in full. `--threads` adds every unresolved thread with the code at its
+  anchor.
+- GitLab, when the review was judged in a judgements file (`review skeleton`, `review check`):
+  `tools gitlab pr <iid> review render --file <judgements.md> --proposal | tools hub proposal push -`
+  builds the whole proposal from it (new findings as drafts, threads with verdicts and replies), so
+  there is nothing to fill by hand.
 - GitHub: `tools github review <pr> --llm` for existing threads; `tools github pr <pr>` for details.
   A GitHub thread's `threadId` is its review-thread node id (`PRRT_…`, the `threadId` field of
   `tools github review <pr> --json`): the window replies with `tools github review comment --thread`.
@@ -92,11 +96,11 @@ Rules:
 - `body` is written for the PR author. `meta` is written for Martin. Do not repeat one in the other.
 - Do not set `status`: the window owns it (proposed → accepted / edited / rejected → sent / drafted → posted).
 - Carry **every** existing thread over with its own facts (`path`, `line`, `author`, `body`, `noteCount`,
-  `resolved`; GitLab: the skeleton's `threads`, or the JSON of `tools gitlab fetch-review <iid>`). The window shows
+  `resolved`; GitLab: the skeleton's `threads`, or the JSON of `tools gitlab pr <iid> review --receive`). The window shows
   them on their lines. Add `verdict` + `proof` only for a thread
   you actually checked at `headSha`; add `suggestedReply` when a reply is worth sending.
 - The window turns each draft and each suggested reply into an editable suggestion with three
-  sends: **For agent** (outbox + cmux), **Draft on PR** (`tools gitlab draft-reply`, a pending review
+  sends: **For agent** (outbox + cmux), **Draft on PR** (`tools gitlab pr <iid> comments reply`, a pending review
   draft) and **Post on PR** (`--now`, asks first). Write `body` and `suggestedReply` so they can go
   out as they are; Martin rewords them in the window when he wants to.
 

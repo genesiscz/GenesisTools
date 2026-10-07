@@ -1,5 +1,5 @@
 /**
- * Renderers for `tools gitlab pr review`: the markdown report (json2md blocks, never concatenated
+ * Renderers for `tools gitlab pr <iid> review --give`: the markdown report (json2md blocks, never concatenated
  * strings), the compact `--llm` view with f/t/d/m refs, the `--expand` drill-down, and the review
  * proposal skeleton (`--proposal-skeleton`).
  * The `gt:review-proposal` skill says how to fill the proposal and push it with `tools hub proposal push`.
@@ -8,6 +8,7 @@
 import { join } from "node:path";
 import { hostnameOf } from "@app/gitlab/lib/client";
 import { fileLink } from "@app/gitlab/lib/file-link";
+import { fenceLanguage } from "@app/gitlab/lib/markdown";
 import {
     type DiffFile,
     firstChangedLine,
@@ -16,7 +17,12 @@ import {
     type PrReviewGate,
 } from "@app/gitlab/lib/pr-review";
 import type { DraftSummary } from "@app/gitlab/lib/review-drafts";
-import { type Discussion, type RenderMarkdownOpts, threadSections } from "@app/gitlab/lib/review-render";
+import {
+    type Discussion,
+    type RenderMarkdownOpts,
+    threadSections,
+    threadSectionsOf,
+} from "@app/gitlab/lib/review-render";
 import { detectGenesisTools } from "@genesiscz/utils/cli/genesis-tools";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type BlockInput, json2md } from "@genesiscz/utils/json2md";
@@ -56,7 +62,11 @@ function worktreeLine(facts: PrReviewFacts): string {
     }
 
     if (!facts.worktree) {
-        return `⚠️ Worktree: none has \`${facts.sourceBranch}\` checked out. The links point at \`${facts.repoPath}\`, which is NOT the MR code. Create one with \`git worktree add <dir> ${facts.sourceBranch}\`, then re-run.`;
+        const advice = facts.worktreeHint
+            ? facts.worktreeHint.replaceAll("{branch}", facts.sourceBranch).replaceAll("{iid}", String(facts.iid))
+            : `Create one with \`git worktree add <dir> ${facts.sourceBranch}\`, then re-run.`;
+
+        return `⚠️ Worktree: none has \`${facts.sourceBranch}\` checked out. The links point at \`${facts.repoPath}\`, which is NOT the MR code. ${advice}`;
     }
 
     if (facts.worktreeHead !== facts.headSha) {
@@ -64,45 +74,6 @@ function worktreeLine(facts: PrReviewFacts): string {
     }
 
     return `Worktree: \`${facts.worktree}\` (HEAD is the MR head)`;
-}
-
-const FENCE_LANGUAGE: Record<string, string> = {
-    ts: "ts",
-    mts: "ts",
-    cts: "ts",
-    tsx: "tsx",
-    js: "js",
-    mjs: "js",
-    cjs: "js",
-    jsx: "jsx",
-    json: "json",
-    groovy: "groovy",
-    md: "markdown",
-    patch: "diff",
-    diff: "diff",
-    podspec: "ruby",
-    rb: "ruby",
-    py: "python",
-    go: "go",
-    rs: "rust",
-    java: "java",
-    kt: "kotlin",
-    m: "objectivec",
-    swift: "swift",
-    sh: "bash",
-    yml: "yaml",
-    yaml: "yaml",
-    css: "css",
-    scss: "scss",
-    html: "html",
-    php: "php",
-};
-
-/** Fence language from the file extension, so a terminal or viewer can colour the excerpt. */
-export function fenceLanguage(path: string): string {
-    const extension = path.split(".").pop()?.toLowerCase() ?? "";
-
-    return FENCE_LANGUAGE[extension] ?? "text";
 }
 
 /** The hunks of one file as numbered text: new-side numbers, removed lines unnumbered, `⋯` between hunks. */
@@ -126,7 +97,7 @@ export function numberedHunks(file: DiffFile): string {
 
 function fileBlocks(facts: PrReviewFacts, file: DiffFile, index: number): BlockInput {
     const heading = {
-        h3: `${pad(index + 1)} \`${file.path}\` · ${file.status} · +${file.additions} −${file.deletions}`,
+        h3: `${file.ref ?? pad(index + 1)} \`${file.path}\` · ${file.status} · +${file.additions} −${file.deletions}`,
     };
     const renamed = file.status === "renamed" ? `Renamed from \`${file.oldPath}\`.` : [];
 
@@ -160,12 +131,19 @@ function threadRows(facts: PrReviewFacts): BlockInput {
     return {
         table: {
             rows: facts.discussions.map((d) => ({
+                id: d.ref ?? "",
                 author: `@${d.author}`,
                 anchor: anchor(facts, d.path, d.line),
                 resolved: d.resolved ? "yes" : "no",
                 note: flat(d.body),
             })),
-            columns: [{ key: "author" }, { key: "anchor" }, { key: "resolved" }, { key: "note", header: "first note" }],
+            columns: [
+                ...(facts.discussions.some((d) => d.ref) ? [{ key: "id" }] : []),
+                { key: "author" },
+                { key: "anchor" },
+                { key: "resolved" },
+                { key: "note", header: "first note" },
+            ],
         },
     };
 }
@@ -369,7 +347,7 @@ export function draftBlocks(facts: PrReviewFacts): BlockInput {
     return [
         `${facts.drafts.length} unpublished draft(s). They are visible only to their author.`,
         {
-            blockquote: `🛑 A draft that opens a new thread has no discussion yet. Nobody can reply to it, you included, until the review is published with \`${toolCommand("gitlab drafts", iid, "--publish")}\`. After publishing, \`${toolCommand("gitlab discussions", iid, "--author", "<you>", "--json")}\` gives the new discussion ids; match them by path and line.`,
+            blockquote: `🛑 A draft that opens a new thread has no discussion yet. Nobody can reply to it, you included, until the review is published with \`${toolCommand("gitlab pr", iid, "comments", "publish", "--apply")}\`. After publishing, \`${toolCommand("gitlab pr", iid, "comments", "--mine", "--json")}\` gives the new discussion ids; match them by path and line.`,
         },
         sorted.map((draft, i): BlockInput => {
             const excerpt = draftExcerpt(facts.files, draft);
@@ -380,7 +358,7 @@ export function draftBlocks(facts: PrReviewFacts): BlockInput {
                   : "top-level";
 
             return [
-                { h3: `D${pad(i + 1)} · draft ${draft.id} · ${where}` },
+                { h3: `${draft.ref ?? `D${pad(i + 1)}`} · draft ${draft.id} · ${where}` },
                 {
                     ul: [
                         `Target: ${draftTarget(draft)}`,
@@ -405,6 +383,27 @@ export function draftBlocks(facts: PrReviewFacts): BlockInput {
 export interface ReportExtras {
     /** `--threads`: every unresolved diff thread in full, as `fetch-review` renders it. */
     threads?: { discussions: Discussion[]; opts: RenderMarkdownOpts };
+    /** My published threads (`Y`) in full, for the Your comments section. */
+    mine?: { discussions: Discussion[]; opts: RenderMarkdownOpts };
+}
+
+/** The count line of the Your comments section. */
+export function yourCommentsLine(facts: PrReviewFacts): string {
+    const threads = facts.discussions.filter((d) => d.ref?.startsWith("Y")).length;
+
+    return `Your comments: ${facts.drafts.length} pending draft${facts.drafts.length === 1 ? "" : "s"}, ${threads} published thread${threads === 1 ? "" : "s"}`;
+}
+
+/** My pending drafts (`D`), then my published threads (`Y`) in full. */
+function yourCommentsBlocks(facts: PrReviewFacts, extras: ReportExtras): BlockInput {
+    const mine = extras.mine && extras.mine.discussions.length > 0 ? extras.mine : null;
+
+    return [
+        yourCommentsLine(facts),
+        { h3: "Pending drafts" },
+        draftBlocks(facts),
+        mine ? [{ h3: "Published threads" }, threadSectionsOf(mine.discussions, mine.opts)] : [],
+    ];
 }
 
 function threadBlocksOf(extras: ReportExtras): BlockInput {
@@ -421,9 +420,10 @@ function threadBlocksOf(extras: ReportExtras): BlockInput {
 }
 
 /** The drafts-only report: the header plus every pending draft in full, for a pass over one's own review. */
+/** `--mine-only`: my comments on the MR (pending drafts and published threads), no impact scan. */
 export function renderDraftsOnlyMarkdown(facts: PrReviewFacts, extras: ReportExtras = {}): string {
     return json2md([
-        { h1: `Pending drafts: !${facts.iid} ${facts.title}` },
+        { h1: `Your comments: !${facts.iid} ${facts.title}` },
         {
             ul: [
                 `Author: @${facts.author} · \`${facts.sourceBranch}\` → \`${facts.targetBranch}\` · head \`${facts.headSha.slice(0, 10)}\``,
@@ -431,7 +431,7 @@ export function renderDraftsOnlyMarkdown(facts: PrReviewFacts, extras: ReportExt
                 worktreeLine(facts),
             ],
         },
-        draftBlocks(facts),
+        yourCommentsBlocks(facts, extras),
         threadBlocksOf(extras),
     ]);
 }
@@ -447,7 +447,7 @@ export function prReviewBlocks(facts: PrReviewFacts, extras: ReportExtras = {}):
                 `Author: @${facts.author} · \`${facts.sourceBranch}\` → \`${facts.targetBranch}\` · head \`${facts.headSha.slice(0, 10)}\` · diff from ${facts.diffSource}`,
                 `MR: ${facts.webUrl}`,
                 worktreeLine(facts),
-                `Files: ${facts.files.length} changed (+${additions} −${deletions}) · Existing threads: ${facts.discussions.length} (${unresolved} unresolved) · Your pending drafts: ${facts.drafts.length}`,
+                `Files: ${facts.files.length} changed (+${additions} −${deletions}) · Existing threads: ${facts.discussions.length} (${unresolved} unresolved) · ${yourCommentsLine(facts)}`,
             ],
         },
         facts.warnings.length > 0
@@ -457,15 +457,15 @@ export function prReviewBlocks(facts: PrReviewFacts, extras: ReportExtras = {}):
         "Mark every file before you write the report. A file counts as read when you read its hunks, or when a script proved the change mechanical (name the script in the report).",
         {
             tasks: facts.files.map((file, i) => ({
-                text: `${pad(i + 1)} · ${file.status} · +${file.additions} −${file.deletions}${file.status === "deleted" ? "" : ` · ${anchor(facts, file.path, firstChangedLine(file))}`} · \`${file.path}\``,
+                text: `${file.ref ?? pad(i + 1)} · ${file.status} · +${file.additions} −${file.deletions}${file.status === "deleted" ? "" : ` · ${anchor(facts, file.path, firstChangedLine(file))}`} · \`${file.path}\``,
                 checked: false,
             })),
         },
         threadBlocksOf(extras),
         { h2: "Existing threads" },
         threadRows(facts),
-        { h2: "Your pending drafts" },
-        draftBlocks(facts),
+        { h2: "Your comments" },
+        yourCommentsBlocks(facts, extras),
         { h2: "Open MRs this one affects" },
         impactBlocks(facts),
         gateBlocks(facts),
@@ -493,7 +493,7 @@ function gateLine(gate: PrReviewGate, index: number): string {
     return `  g${index + 1}  ${gate.label}: ${gate.note ?? gate.command}`;
 }
 
-/** Compact first-level view with refs (f1 files, t1 threads, d1 drafts, m1 affected MRs) for `--expand`. */
+/** Compact first-level view with ids (F01 files, T01 threads, Y01 my threads, D01 drafts, M01 affected MRs) for `--expand`. */
 export function formatPrReviewLLM(facts: PrReviewFacts, command: string): string {
     const { additions, deletions, unresolved } = totals(facts);
     const lines = [
@@ -508,14 +508,14 @@ export function formatPrReviewLLM(facts: PrReviewFacts, command: string): string
 
     lines.push("", "Files:");
     facts.files.forEach((file, i) => {
-        lines.push(`  f${i + 1}  ${file.status}  +${file.additions} −${file.deletions}  ${file.path}`);
+        lines.push(`  ${file.ref ?? `f${i + 1}`}  ${file.status}  +${file.additions} −${file.deletions}  ${file.path}`);
     });
 
     if (facts.discussions.length > 0) {
         lines.push("", "Threads:");
         facts.discussions.forEach((d, i) => {
             lines.push(
-                `  t${i + 1}  ${d.resolved ? "RESOLVED" : "UNRESOLVED"}  ${lineRef(d.path, d.line)}  @${d.author}  ${d.noteCount}n  ${flat(d.body, 60)}`
+                `  ${d.ref ?? `t${i + 1}`}  ${d.resolved ? "RESOLVED" : "UNRESOLVED"}  ${lineRef(d.path, d.line)}  @${d.author}  ${d.noteCount}n  ${flat(d.body, 60)}`
             );
         });
     }
@@ -523,7 +523,7 @@ export function formatPrReviewLLM(facts: PrReviewFacts, command: string): string
     if (facts.drafts.length > 0) {
         lines.push("", "My drafts:");
         facts.drafts.forEach((draft, i) => {
-            lines.push(`  d${i + 1}  ${lineRef(draft.path, draft.line)}  ${flat(draft.note, 60)}`);
+            lines.push(`  ${draft.ref ?? `d${i + 1}`}  ${lineRef(draft.path, draft.line)}  ${flat(draft.note, 60)}`);
         });
     }
 
@@ -531,7 +531,7 @@ export function formatPrReviewLLM(facts: PrReviewFacts, command: string): string
         lines.push("", "Affected MRs:");
         facts.impact.forEach((entry, i) => {
             lines.push(
-                `  m${i + 1}  !${entry.iid}  ${entry.imports.length} imports, ${entry.sharedFiles.length} shared  @${entry.author}  ${flat(entry.title, 50)}`
+                `  ${entry.ref ?? `m${i + 1}`}  !${entry.iid}  ${entry.imports.length} imports, ${entry.sharedFiles.length} shared  @${entry.author}  ${flat(entry.title, 50)}`
             );
         });
     }
@@ -540,7 +540,8 @@ export function formatPrReviewLLM(facts: PrReviewFacts, command: string): string
         lines.push("", "Gates:", ...facts.gates.map(gateLine));
     }
 
-    lines.push("", `Expand: ${command} --expand f1,t1`, `Markdown: ${command} --md`);
+    const sample = [facts.files[0]?.ref ?? "f1", facts.discussions[0]?.ref ?? "t1"].join(",");
+    lines.push("", `Expand: ${command} --expand ${sample}`, `Markdown: ${command} --md`);
 
     return `${lines.join("\n")}\n`;
 }
@@ -567,11 +568,34 @@ function excerptAround(facts: PrReviewFacts, path: string | null, line: number |
 }
 
 /** One ref in full. Unknown refs come back as an error line, never a throw, so a batch still prints the rest. */
-function expandOne(facts: PrReviewFacts, ref: string): string {
-    const match = /^([ftdm])(\d+)$/.exec(ref.trim());
-    const index = match ? Number(match[2]) - 1 : -1;
+/** The kind and the position of an id: a stored ref (`T03`) first, the older positional form (`t3`) after. */
+function locate(facts: PrReviewFacts, ref: string): { kind: "f" | "t" | "d" | "m"; index: number } | null {
+    const wanted = ref.trim().toUpperCase();
+    const lists = [
+        ["f", facts.files],
+        ["t", facts.discussions],
+        ["d", facts.drafts],
+        ["m", facts.impact ?? []],
+    ] as const;
 
-    switch (match?.[1]) {
+    for (const [kind, list] of lists) {
+        const index = list.findIndex((item) => item.ref?.toUpperCase() === wanted);
+
+        if (index !== -1) {
+            return { kind, index };
+        }
+    }
+
+    const match = /^([ftdm])(\d+)$/.exec(ref.trim());
+
+    return match ? { kind: match[1] as "f" | "t" | "d" | "m", index: Number(match[2]) - 1 } : null;
+}
+
+function expandOne(facts: PrReviewFacts, ref: string): string {
+    const located = locate(facts, ref);
+    const index = located?.index ?? -1;
+
+    switch (located?.kind) {
         case "f": {
             const file = facts.files[index];
 
@@ -638,7 +662,7 @@ function expandOne(facts: PrReviewFacts, ref: string): string {
         }
     }
 
-    return `=== ${ref}: no such ref (use f1…f${facts.files.length}, t1…t${facts.discussions.length}, d1…d${facts.drafts.length}, m1…m${facts.impact?.length ?? 0}) ===\n`;
+    return `=== ${ref}: no such id (the --llm view lists every id) ===\n`;
 }
 
 export function expandRefs(facts: PrReviewFacts, refs: string[]): string {
@@ -684,3 +708,5 @@ export function proposalSkeleton(facts: PrReviewFacts, agent = "agent"): Record<
         })),
     };
 }
+
+export { fenceLanguage };

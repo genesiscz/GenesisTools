@@ -81,6 +81,10 @@ export const GATE_RUNNERS = ["list", "parallel"] as const;
 /** `list`: the commands one after another. `parallel`: each gate as a background `tools task` session, then every exit code. */
 export type GateRunner = (typeof GATE_RUNNERS)[number];
 
+export const IMPACT_SOURCES = ["api", "git"] as const;
+/** `api`: one diffs request per other MR, capped. `git`: fetch every open branch and diff locally, no cap. */
+export type ImpactSource = (typeof IMPACT_SOURCES)[number];
+
 export const FETCH_FORMATS = ["json", "md", "both"] as const;
 export type FetchFormat = (typeof FETCH_FORMATS)[number];
 
@@ -94,8 +98,24 @@ export interface ReviewConfig {
     gates: ReviewGate[];
     runner: GateRunner;
     fetch: FetchReviewConfig;
-    /** Extra bullets under "Next steps" in the `fetch-review` report. */
+    /** Extra bullets under "Next steps" in the receive report. */
     nextSteps: string[];
+    /** How `review --give` scans the other open MRs when `--impact-source` is not given. */
+    impactSource: ImpactSource;
+    /** Replaces the "create a worktree" advice when no worktree has the MR branch; `{branch}` and `{iid}` are filled in. */
+    worktreeHint: string | null;
+    /** Rules `review check` applies to text that goes to the MR (drafts, replies, answers). */
+    draftRules: DraftRules;
+}
+
+/** House rules for review text; all empty upstream, a fork sets its team's. */
+export interface DraftRules {
+    /** Words never to write, each with what to write instead. */
+    bannedWords: Array<{ word: string; instead: string }>;
+    /** Refuse em and en dashes. */
+    forbidDashes: boolean;
+    /** Phrases that address nobody in a thread the user started (a second-person "you are right"). */
+    ownThreadForbidden: string[];
 }
 
 export interface GitLabToolConfig {
@@ -129,7 +149,15 @@ export const NEUTRAL_CONFIG: GitLabToolConfig = {
         noteTags: [],
         contentCheckNote: null,
     },
-    review: { gates: [], runner: "list", fetch: { format: "json", contextLines: 3 }, nextSteps: [] },
+    review: {
+        gates: [],
+        runner: "list",
+        fetch: { format: "json", contextLines: 3 },
+        nextSteps: [],
+        impactSource: "api",
+        worktreeHint: null,
+        draftRules: { bannedWords: [], forbidDashes: false, ownThreadForbidden: [] },
+    },
 };
 
 /** `NEUTRAL_CONFIG` under `defaults.config`, checked like a config file. */
@@ -278,6 +306,14 @@ export function mergeConfig(raw: unknown, base: GitLabToolConfig = DEFAULT_CONFI
         );
     }
 
+    const impactSource = review.impactSource ?? d.review.impactSource;
+
+    if (!IMPACT_SOURCES.includes(impactSource as ImpactSource)) {
+        throw new Error(
+            `gitlab config: review.impactSource must be one of ${IMPACT_SOURCES.join(", ")}, got ${String(impactSource)}`
+        );
+    }
+
     const contextLines = fetch.contextLines ?? d.review.fetch.contextLines;
 
     if (typeof contextLines !== "number" || !Number.isInteger(contextLines) || contextLines < 0) {
@@ -297,7 +333,48 @@ export function mergeConfig(raw: unknown, base: GitLabToolConfig = DEFAULT_CONFI
             runner: runner as GateRunner,
             fetch: { format: fetchFormat as FetchFormat, contextLines },
             nextSteps: stringList(review.nextSteps, "review.nextSteps", d.review.nextSteps),
+            impactSource: impactSource as ImpactSource,
+            worktreeHint: stringOrNull(review.worktreeHint, "review.worktreeHint", d.review.worktreeHint),
+            draftRules: parseDraftRules(review.draftRules, d.review.draftRules),
         },
+    };
+}
+
+function parseDraftRules(value: unknown, fallback: DraftRules): DraftRules {
+    if (value === undefined) {
+        return fallback;
+    }
+
+    const raw = section(value, "review.draftRules");
+    const banned = raw.bannedWords ?? fallback.bannedWords;
+
+    if (
+        !Array.isArray(banned) ||
+        !banned.every(
+            (entry) =>
+                typeof entry === "object" &&
+                entry !== null &&
+                typeof (entry as { word?: unknown }).word === "string" &&
+                typeof (entry as { instead?: unknown }).instead === "string"
+        )
+    ) {
+        throw new Error("gitlab config: review.draftRules.bannedWords must be an array of { word, instead }");
+    }
+
+    const forbidDashes = raw.forbidDashes ?? fallback.forbidDashes;
+
+    if (typeof forbidDashes !== "boolean") {
+        throw new Error("gitlab config: review.draftRules.forbidDashes must be true or false");
+    }
+
+    return {
+        bannedWords: banned as DraftRules["bannedWords"],
+        forbidDashes,
+        ownThreadForbidden: stringList(
+            raw.ownThreadForbidden,
+            "review.draftRules.ownThreadForbidden",
+            fallback.ownThreadForbidden
+        ),
     };
 }
 

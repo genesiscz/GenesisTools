@@ -1,14 +1,15 @@
 /**
- * Batch-comment on MRs with dedup, retry, and timeout.
+ * One top-level comment on several MRs, with dedup, retry, and timeout. Reached through
+ * `comments add` with a comma list of MRs:
  *
- *   tools gitlab batch-comment 12,34,56 --comment "your message"
- *   tools gitlab batch-comment 12 --comment "test" --dry-run
+ *   tools gitlab pr 12,34,56 comments add --top-level --now --body "your message"
+ *   tools gitlab pr 12,34 comments add --top-level --dry-run --body "test"
  *
  * Dedup: every posted comment is appended to ~/.genesis-tools/gitlab/comment-batch.jsonl, and a
  * (project, MR, message) triple already there is skipped.
  */
 
-import { type TargetOptions, withProject } from "@app/gitlab/commands/shared";
+import type { TargetOptions } from "@app/gitlab/commands/shared";
 import { resolveProjectApi } from "@app/gitlab/lib/client";
 import {
     appendLedger,
@@ -20,25 +21,13 @@ import {
 } from "@app/gitlab/lib/comment-batch";
 import { parseIids } from "@app/gitlab/lib/label-batch";
 import { out } from "@genesiscz/utils/logger";
-import type { Command } from "commander";
 
-interface Options extends TargetOptions {
+export interface BatchCommentOptions extends TargetOptions {
     comment: string;
     dryRun?: boolean;
 }
 
-export function registerBatchComment(parent: Command): Command {
-    return withProject(
-        parent
-            .command("batch-comment")
-            .description("Batch-comment on MRs with dedup, retry, and timeout")
-            .argument("<iids>", "Comma-separated MR IIDs (e.g. 12,34,56)")
-            .requiredOption("--comment <message>", "Comment body to post on each MR")
-            .option("--dry-run", "Print what would be posted without calling the API")
-    ).action(runBatchComment);
-}
-
-async function runBatchComment(iidsArg: string, opts: Options): Promise<void> {
+export async function runBatchComment(iidsArg: string, opts: BatchCommentOptions): Promise<void> {
     const iids = parseIids(iidsArg).map(String);
     const comment = opts.comment;
     const dryRun = Boolean(opts.dryRun);

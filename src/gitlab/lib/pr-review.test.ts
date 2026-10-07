@@ -6,10 +6,12 @@ import { join } from "node:path";
 import { factsBaseName, factsPathOf } from "@app/gitlab/commands/pr-review";
 import type { ProjectApi } from "@app/gitlab/lib/client";
 import { mergeConfig, NEUTRAL_CONFIG } from "@app/gitlab/lib/config";
+import { applyRefs, emptyIdMap } from "@app/gitlab/lib/ids";
 import {
     type ApiDiff,
     branchRef,
     collectPrReviewFacts,
+    excludedTestsNote,
     fetchRefs,
     findAddedImports,
     findWorktree,
@@ -195,6 +197,14 @@ describe("impact scan", () => {
 describe("gates", () => {
     const files = parseUnifiedDiff(GIT_DIFF);
 
+    test("the impact source and the worktree hint come from the config, checked", () => {
+        expect(mergeConfig({}, NEUTRAL_CONFIG).review).toMatchObject({ impactSource: "api", worktreeHint: null });
+        expect(mergeConfig({ review: { impactSource: "git" } }, NEUTRAL_CONFIG).review.impactSource).toBe("git");
+        expect(() => mergeConfig({ review: { impactSource: "ftp" } }, NEUTRAL_CONFIG)).toThrow(
+            "review.impactSource must be one of api, git"
+        );
+    });
+
     test("no gates configured means no gates, and the config default is empty", () => {
         expect(mergeConfig({}, NEUTRAL_CONFIG).review.gates).toEqual([]);
         expect(selectGates([], files)).toEqual([]);
@@ -256,7 +266,9 @@ describe("gates", () => {
 
         expect(unit).toMatchObject({ command: "bun test src/app.test.ts", tests: ["src/app.test.ts"], note: null });
         expect(unit?.files).not.toContain("src/lib/new-name.ts");
-        expect(lib).toMatchObject({ tests: [], note: NO_TESTS_NOTE });
+        // The MR's only lib test is a .spec.tsx, which this gate's exclude leaves out: the note says so.
+        expect(lib).toMatchObject({ tests: [], note: excludedTestsNote("src/lib/**/*.spec.tsx", 1) });
+        expect(selectGates(gates, files, () => false)[1]).toMatchObject({ tests: [], note: NO_TESTS_NOTE });
     });
 
     test("review.runner is list by default and refuses an unknown value", () => {
@@ -447,7 +459,7 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
           - Author: @alice · \`feature/tidy\` → \`main\` · head \`head420000\` · diff from api
           - MR: https://gitlab.example.com/group/app/-/merge_requests/42
           - Checkout: none given (\`--repo <checkout>\`); file references are repository paths.
-          - Files: 2 changed (+2 −2) · Existing threads: 2 (1 unresolved) · Your pending drafts: 1
+          - Files: 2 changed (+2 −2) · Existing threads: 2 (1 unresolved) · Your comments: 1 pending draft, 0 published threads
 
           ## Checklist
 
@@ -463,11 +475,15 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
           | @bob   | \`src/lib/util.ts:2\` | no       | Why \\| this? |
           | @carol | top-level           | yes      | Looks fine   |
 
-          ## Your pending drafts
+          ## Your comments
+
+          Your comments: 1 pending draft, 0 published threads
+
+          ### Pending drafts
 
           1 unpublished draft(s). They are visible only to their author.
 
-          > 🛑 A draft that opens a new thread has no discussion yet. Nobody can reply to it, you included, until the review is published with \`tools gitlab drafts 42 --publish\`. After publishing, \`tools gitlab discussions 42 --author <you> --json\` gives the new discussion ids; match them by path and line.
+          > 🛑 A draft that opens a new thread has no discussion yet. Nobody can reply to it, you included, until the review is published with \`tools gitlab pr 42 comments publish --apply\`. After publishing, \`tools gitlab pr 42 comments --mine --json\` gives the new discussion ids; match them by path and line.
 
           ### D01 · draft 900 · \`src/lib/util.ts:3\`
 
@@ -612,14 +628,37 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
         expect(md).toContain("Worktree: `/work/app-tidy` (HEAD is the MR head)");
     });
 
+    test("without a worktree on the branch the report says so, with the configured advice when there is one", () => {
+        const none = { ...facts, repoPath: "/work/app", worktree: null };
+
+        expect(renderPrReviewMarkdown(none)).toContain(
+            "which is NOT the MR code. Create one with `git worktree add <dir> feature/tidy`, then re-run."
+        );
+        expect(
+            renderPrReviewMarkdown({ ...none, worktreeHint: "Run `tool worktree init --pr {iid}` ({branch})." })
+        ).toContain("which is NOT the MR code. Run `tool worktree init --pr 42` (feature/tidy).");
+    });
+
     test("the --llm view names refs and --expand prints one in full", () => {
-        const llm = formatPrReviewLLM(facts, "tools gitlab pr review 42");
+        const llm = formatPrReviewLLM(facts, "tools gitlab pr 42 review --give");
 
         expect(llm).toContain("  f1  modified  +2 −1  src/lib/util.ts");
         expect(llm).toContain("  t1  UNRESOLVED  src/lib/util.ts:2  @bob  1n  Why | this?");
         expect(llm).toContain("  m1  !51  1 imports, 0 shared");
         expect(expandRefs(facts, ["t1", "x9"])).toContain("Discussion id: disc1");
-        expect(expandRefs(facts, ["x9"])).toContain("no such ref");
+        expect(expandRefs(facts, ["x9"])).toContain("no such id");
+    });
+
+    test("with stored ids the views use them, my own threads are Y, and --expand takes an id", () => {
+        const withIds = applyRefs({ ...facts, me: "bob" }, emptyIdMap());
+        const llm = formatPrReviewLLM(withIds, "tools gitlab pr 42 review --give");
+
+        expect(llm).toContain("  F01  modified  +2 −1  src/lib/util.ts");
+        expect(llm).toContain("  Y01  UNRESOLVED  src/lib/util.ts:2  @bob");
+        expect(llm).toContain("  T01  RESOLVED");
+        expect(llm).toContain("  M01  !51");
+        expect(expandRefs(withIds, ["Y01"])).toContain("Discussion id: disc1");
+        expect(renderPrReviewMarkdown(withIds)).toContain("### F01 `src/lib/util.ts`");
     });
 
     test("the proposal skeleton plus one draft passes parseProposal", () => {
@@ -723,7 +762,7 @@ describe("pending drafts in full", () => {
         const reply = { ...draft(null, null, null), id: 2, discussionId: "d".repeat(40), note: "agreed" };
         const md = renderDraftsOnlyMarkdown(facts([reply]));
 
-        expect(md).toContain("# Pending drafts: !7 Tidy");
+        expect(md).toContain("# Your comments: !7 Tidy");
         expect(md).toContain("### D01 · draft 2 · reply");
         expect(md).toContain(`- Target: reply in existing thread \`${"d".repeat(40)}\``);
         expect(md).not.toContain("Open MRs this one affects");
@@ -751,7 +790,13 @@ describe("pending drafts in full", () => {
             fetch(request) {
                 const path = new URL(request.url).pathname;
 
-                return path.endsWith("/discussions") ? Response.json(discussions) : new Response("x\ny\nz\n");
+                if (path.endsWith("/discussions")) {
+                    return Response.json(discussions);
+                }
+
+                return path.endsWith("/merge_requests/7")
+                    ? Response.json({ sha: "d".repeat(40) })
+                    : new Response("x\ny\nz\n");
             },
         });
 
@@ -773,7 +818,9 @@ describe("pending drafts in full", () => {
             );
             expect(md).not.toContain("## Thread 2");
             expect(md).toContain("**@alice**:\n> Because.");
-            expect(md).toContain("Reviewer's frozen view");
+            // The reviewer's file and the tip's are the same here, so only the tip is shown.
+            expect(md).toContain("## Thread 1 — `src/app.ts`:11 · unchanged");
+            expect(md).toContain("### MR tip `dddddddddd`");
             expect(renderDraftsOnlyMarkdown(facts([]), { threads: { discussions: [], opts } })).toContain(
                 "## Unresolved threads in full\n\nNone."
             );

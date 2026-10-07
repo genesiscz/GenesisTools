@@ -1,17 +1,17 @@
 /**
  * Open-MR staleness report in two steps.
  *
- *   tools gitlab stale-branches preflight --out <sweep.json> [--cwd <checkout>] [--project group/name] [--review-min-age 90]
+ *   tools gitlab pr stale preflight --out <sweep.json> [--cwd <checkout>] [--project group/name] [--review-min-age 90]
  *   ...an agent fills the `review` fields of every MR with needsReview=true...
- *   tools gitlab stale-branches merge <sweep.json> --review <slice.json>... [--out <merged.json>]
- *   tools gitlab stale-branches render <sweep.json> --out <note.md> [--ado 1234] [--allow-unfilled]
- *   tools gitlab stale-branches recheck <sweep.json> [--recommendation CLOSE] [--iid 42]   # re-run the content check, compare MR + work item with the snapshot
- *   tools gitlab stale-branches post <sweep.json> --iid 42 [--dry-run] [--force]         # ONE MR, after that draft was approved; refuses when the MR or work item moved
- *   tools gitlab stale-branches apply-labels <sweep.json> [--iid 42] [--dry-run]         # review.labels of every pending MR, after the dry-run table was approved
- *   tools gitlab stale-branches manifest <sweep.json> [--out <manifest.json>] [--status silent]   # every MR we wrote to, refetched live
- *   tools gitlab stale-branches followup <sweep.json> [--after-days 7]                   # phase 2 list: notified MRs, activity since, close candidates
- *   tools gitlab stale-branches close <sweep.json> --iid 42 [--dry-run] [--force]         # phase 2: close ONE notified MR after it was approved
- *   tools gitlab stale-branches closed-bug <sweep.json> [--select new|posted|all] [--draft] [--dry-run]   # closed bug, open MR
+ *   tools gitlab pr stale merge <sweep.json> --review <slice.json>... [--out <merged.json>]
+ *   tools gitlab pr stale render <sweep.json> --out <note.md> [--ado 1234] [--allow-unfilled]
+ *   tools gitlab pr stale recheck <sweep.json> [--recommendation CLOSE] [--iid 42]   # re-run the content check, compare MR + work item with the snapshot
+ *   tools gitlab pr stale post <sweep.json> --iid 42 [--dry-run] [--force]         # ONE MR, after that draft was approved; refuses when the MR or work item moved
+ *   tools gitlab pr stale apply-labels <sweep.json> [--iid 42] [--dry-run]         # review.labels of every pending MR, after the dry-run table was approved
+ *   tools gitlab pr stale manifest <sweep.json> [--out <manifest.json>] [--status silent]   # every MR we wrote to, refetched live
+ *   tools gitlab pr stale followup <sweep.json> [--after-days 7]                   # phase 2 list: notified MRs, activity since, close candidates
+ *   tools gitlab pr stale close <sweep.json> --iid 42 [--dry-run] [--force]         # phase 2: close ONE notified MR after it was approved
+ *   tools gitlab pr stale closed-bug <sweep.json> [--select new|posted|all] [--draft] [--dry-run]   # closed bug, open MR
  *
  * The sweep JSON records the host and project it read, so every later subcommand writes to the
  * same place without --host or --project.
@@ -102,6 +102,7 @@ import {
     renderFollowupTable,
 } from "@app/gitlab/lib/stale-phases";
 import { type AdoWorkItem, extractWorkItemIds, resolveAdo } from "@app/gitlab/lib/work-items";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { type Command, Option } from "commander";
@@ -303,7 +304,7 @@ export function missingWorkItemSelected(opts: { missingWorkItem?: boolean; ado?:
 
 export function registerStaleBranches(parent: Command): Command {
     const cmd = parent
-        .command("stale-branches")
+        .command("stale")
         .description("Open-MR staleness report: preflight JSON, agent review, render note, then two-phase cleanup");
 
     withProject(
@@ -1047,7 +1048,7 @@ export function registerStaleBranches(parent: Command): Command {
                 const mr = findReviewedMr(report, iid);
                 if (mr.review.draftNoteId && !opts.force) {
                     throw new Error(
-                        `!${mr.iid} already has draft note ${mr.review.draftNoteId}; publish it with \`stale-branches publish ${json} --iid ${mr.iid}\`, or pass --force to post a second copy.`
+                        `!${mr.iid} already has draft note ${mr.review.draftNoteId}; publish it with \`${toolCommand("gitlab pr stale publish", json, "--iid", String(mr.iid))}\`, or pass --force to post a second copy.`
                     );
                 }
 
@@ -1340,7 +1341,7 @@ export function registerStaleBranches(parent: Command): Command {
             out.println(renderFollowupTable(rows));
             const candidates = rows.filter((r) => r.candidate);
             progress(
-                `${rows.length} notified; ${candidates.length} close candidate(s) after ${opts.afterDays} silent day(s)${candidates.length ? `: ${candidates.map((r) => `!${r.iid}`).join(", ")}` : ""}. Close each with \`stale-branches close <json> --iid <n>\` after its own approval.`
+                `${rows.length} notified; ${candidates.length} close candidate(s) after ${opts.afterDays} silent day(s)${candidates.length ? `: ${candidates.map((r) => `!${r.iid}`).join(", ")}` : ""}. Close each with \`${toolCommand("gitlab pr stale close", "<json>", "--iid", "<n>")}\` after its own approval.`
             );
         });
 
@@ -1631,7 +1632,7 @@ async function postDraftBatch(options: {
     progress(
         options.dryRun
             ? `Dry run: ${rows.length} draft note(s) would be created, nothing sent.`
-            : `${rows.length - failed} draft note(s) created, ${failed} failed. They are visible only to you until published: \`stale-branches publish <json> --iid <n>\` or the GitLab review UI.`
+            : `${rows.length - failed} draft note(s) created, ${failed} failed. They are visible only to you until published: \`${toolCommand("gitlab pr stale publish", "<json>", "--iid", "<n>")}\` or the GitLab review UI.`
     );
     if (failed) {
         process.exitCode = 1;
