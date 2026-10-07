@@ -225,6 +225,8 @@ describe("trackPipeline", () => {
         const result = await trackPipeline(backend, APP, 3, { ...CTX, sleep: async () => {}, notify: async () => {} });
 
         expect(jobFullName(APP)).toBe("Acme/web/FE/app-build");
+        expect(jobFullName("job/Acme%20Team/job/build%2Bdeploy")).toBe("Acme Team/build+deploy");
+        expect(jobFullName("job/bad%zz")).toBe("bad%zz");
         expect(result.downstream.map((d) => `${d.jobName} #${d.buildNumber}`)).toEqual(["ios-app #51"]);
         expect(result.missing).toEqual(["android-app"]);
         expect(result.allPassed).toBe(false);

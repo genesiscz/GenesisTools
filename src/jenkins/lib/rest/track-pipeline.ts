@@ -39,14 +39,27 @@ export async function fetchBuildInfo(
     }
 }
 
-/** `job/Acme/job/web` as Jenkins names it in an upstream cause: `Acme/web`. */
+function decodedSegment(segment: string): string {
+    try {
+        return decodeURIComponent(segment);
+    } catch (error) {
+        logger.debug({ error, segment }, "jenkins track: job segment is not valid percent-encoding");
+        return segment;
+    }
+}
+
+/**
+ * `job/Acme/job/web` as Jenkins names it in an upstream cause: `Acme/web`. A path taken from a URL
+ * keeps its percent-encoding (`Acme%20Team`), while the cause carries the plain name, so each
+ * segment is decoded.
+ */
 export function jobFullName(jobPath: string): string {
     const segments = jobPath.split("/").filter(Boolean);
     const names: string[] = [];
 
     for (let i = 0; i < segments.length; i++) {
         if (segments[i] === "job" && segments[i + 1] !== undefined) {
-            names.push(segments[i + 1] as string);
+            names.push(decodedSegment(segments[i + 1] as string));
             i++;
         }
     }
