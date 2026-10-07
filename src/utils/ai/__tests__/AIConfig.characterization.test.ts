@@ -226,7 +226,7 @@ describe("AIConfig mutations (characterization)", () => {
         expect(reloaded.getAppDefaults("youtube")?.temperature).toBe(0.9);
     });
 
-    test("load() is a process-lifetime singleton that does NOT see external writes", async () => {
+    test("load() is a process-lifetime singleton that sees another process's write to the file", async () => {
         const config = await AIConfig.load();
         expect(config.getAccount("late-arrival")).toBeUndefined();
 
@@ -238,12 +238,9 @@ describe("AIConfig mutations (characterization)", () => {
 
         const same = await AIConfig.load();
         expect(same).toBe(config);
-        // Pinned as CURRENT behavior, not as desirable behavior: this staleness is
-        // why running daemons miss config changes, and Phase 1 adds a freshness check.
-        expect(same.getAccount("late-arrival")).toBeUndefined();
-
-        AIConfig.invalidate();
-        expect((await AIConfig.load()).getAccount("late-arrival")).toBeDefined();
+        // The freshness check landed: load() re-reads the file when its mtime changes, so a running
+        // daemon sees a login done in another terminal without invalidate().
+        expect(same.getAccount("late-arrival")).toBeDefined();
     });
 });
 
