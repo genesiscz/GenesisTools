@@ -98,6 +98,12 @@ function lowerCased(headers: Record<string, unknown> | undefined): Record<string
 
 class CdpTabDriver implements TabDriver {
     private readonly connections = new Map<string, Promise<Conn>>();
+    /**
+     * Callers still waiting on an attachment in flight. The attachment is aborted only when every
+     * one of them has given up: the first caller's short deadline must not fail a second caller
+     * with a longer one, and a hung attachment nobody waits for must not stay open.
+     */
+    private readonly attaching = new Map<string, { controller: AbortController; waiting: number }>();
     /** Request waits running per connection: Network stays enabled until the last one ends. */
     private readonly networkWaits = new Map<Conn, number>();
 
@@ -110,15 +116,25 @@ class CdpTabDriver implements TabDriver {
     private connect(tabId: string, signal?: AbortSignal): Promise<Conn> {
         const known = this.connections.get(tabId);
         if (known) {
+            this.wait(tabId, signal);
             return known;
         }
 
-        const pending = this.attach(tabId, signal);
+        const controller = new AbortController();
+        this.attaching.set(tabId, { controller, waiting: 0 });
+        this.wait(tabId, signal);
+        const pending = this.attach(tabId, controller.signal);
         const forget = () => {
             if (this.connections.get(tabId) === pending) {
                 this.connections.delete(tabId);
             }
         };
+        const settled = () => {
+            if (this.attaching.get(tabId)?.controller === controller) {
+                this.attaching.delete(tabId);
+            }
+        };
+        void pending.then(settled, settled);
         this.connections.set(tabId, pending);
         void pending.then(
             (conn) => conn.closed.then(forget),
@@ -128,6 +144,26 @@ class CdpTabDriver implements TabDriver {
             }
         );
         return pending;
+    }
+
+    /** Counts a caller on the attachment in flight; a caller without a signal never gives up. */
+    private wait(tabId: string, signal?: AbortSignal): void {
+        const state = this.attaching.get(tabId);
+        if (!state || signal?.aborted) {
+            return;
+        }
+
+        state.waiting++;
+        signal?.addEventListener(
+            "abort",
+            () => {
+                state.waiting--;
+                if (state.waiting === 0 && this.attaching.get(tabId) === state) {
+                    state.controller.abort(signal.reason);
+                }
+            },
+            { once: true }
+        );
     }
 
     private async attach(tabId: string, signal?: AbortSignal): Promise<Conn> {

@@ -771,6 +771,47 @@ describe("CDP transport deadlines", () => {
         driver.close();
     });
 
+    test("a shared attachment outlives a short-deadline caller while a longer one still waits", async () => {
+        fixture();
+        const fetch = spyOn(globalThis, "fetch").mockImplementation(
+            Object.assign(
+                async () =>
+                    new Response(
+                        SafeJSON.stringify(
+                            [
+                                {
+                                    id: "fixture",
+                                    type: "page",
+                                    title: "Fixture",
+                                    url: "https://fixture.example.com",
+                                    webSocketDebuggerUrl: socketUrl,
+                                },
+                            ],
+                            { strict: true }
+                        )
+                    ),
+                globalThis.fetch
+            )
+        );
+        undoFetch = () => fetch.mockRestore();
+        respond = (socket, packet) => {
+            if (packet.method === "Page.enable") {
+                setTimeout(() => socket.reply(packet.id, {}), 40);
+                return;
+            }
+
+            socket.reply(packet.id, packet.method === "Runtime.evaluate" ? { result: { value: 42 } } : {});
+        };
+        const driver = createTabDriver(9222);
+        const short = driver.evaluate("fixture", "42", { deadlineMs: 15 });
+        const long = driver.evaluate("fixture", "42", { deadlineMs: 1000 });
+        await expect(short).rejects.toThrow("within 15 ms");
+        expect(await long).toBe(42);
+        expect(sockets).toHaveLength(1);
+        expect(sockets[0].closes).toBe(0);
+        driver.close();
+    });
+
     test("the public evaluate budget aborts stalled target discovery", async () => {
         fixture();
         const fetch = spyOn(globalThis, "fetch").mockImplementation(
