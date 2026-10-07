@@ -1,6 +1,7 @@
 import type { ModelPricing } from "@genesiscz/utils/ai/catalog";
 export interface UsageEvent {
     messageId: string;
+    isSidechain?: boolean;
     model: string;
     /** ISO-8601 UTC timestamp, e.g. "2026-06-01T09:52:38.815Z" */
     timestamp: string;

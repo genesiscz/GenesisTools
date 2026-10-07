@@ -96,8 +96,16 @@ export async function transcriptEnvelope(
     if (indexed) {
         return indexed;
     }
+    return (await transcriptSnapshot(resolved))(opts);
+}
+
+/** One caller-owned parse for a catch-up drain; discarded before the next file-growth wake. */
+export async function transcriptSnapshot(
+    resolved: ResolvedTranscript
+): Promise<(opts?: SliceOptions) => TranscriptEnvelope> {
     const turns = await allTranscriptTurns(resolved);
-    const sliced = sliceTurns(turns, opts);
+    const totals = totalsOf(turns);
+    const terminated = terminatedOf(turns);
     let byteSize = 0;
     try {
         byteSize = statSync(resolved.filePath).size;
@@ -107,16 +115,19 @@ export async function transcriptEnvelope(
     } catch {
         byteSize = 0;
     }
-    return {
-        provider: resolved.provider,
-        sessionId: resolved.sessionId,
-        filePath: resolved.filePath,
-        byteSize,
-        truncated: sliced.truncated,
-        nextOffset: sliced.nextOffset,
-        turns: sliced.turns,
-        totals: totalsOf(turns),
-        terminated: terminatedOf(turns),
-        turnCount: turns.length,
+    return (opts = {}) => {
+        const sliced = sliceTurns(turns, opts);
+        return {
+            provider: resolved.provider,
+            sessionId: resolved.sessionId,
+            filePath: resolved.filePath,
+            byteSize,
+            truncated: sliced.truncated,
+            nextOffset: sliced.nextOffset,
+            turns: sliced.turns,
+            totals,
+            terminated,
+            turnCount: turns.length,
+        };
     };
 }

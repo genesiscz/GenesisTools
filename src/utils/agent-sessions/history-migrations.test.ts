@@ -185,3 +185,33 @@ test("the one-way provider rewrite copies the database aside exactly once", () =
         rmSync(root, { recursive: true, force: true });
     }
 });
+
+test("rollback snapshot includes committed WAL observations behind a held reader", () => {
+    const root = mkdtempSync(join(tmpdir(), "gt-history-wal-backup-"));
+    const path = join(root, "index.db");
+    const writer = new Database(path);
+    let reader: Database | undefined;
+    try {
+        writer.exec("PRAGMA journal_mode=WAL");
+        initializeHistorySchema(writer);
+        writer.exec("CREATE TABLE usage_snapshots (id INTEGER PRIMARY KEY); INSERT INTO usage_snapshots VALUES (1)");
+        writer.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+        reader = new Database(path);
+        reader.exec("BEGIN");
+        expect(reader.query("SELECT count(*) AS count FROM usage_snapshots").get()).toEqual({ count: 1 });
+        writer.exec("INSERT INTO usage_snapshots VALUES (2)");
+        initializeCompactHistorySchema(writer);
+        const backup = new Database(path + PRE_COMPACT_BACKUP_SUFFIX, { readonly: true });
+        try {
+            expect(backup.query("SELECT count(*) AS count FROM usage_snapshots").get()).toEqual({ count: 2 });
+            expect(backup.query("PRAGMA quick_check").get()).toEqual({ quick_check: "ok" });
+        } finally {
+            backup.close();
+        }
+        expect(reader.query("SELECT count(*) AS count FROM usage_snapshots").get()).toEqual({ count: 1 });
+    } finally {
+        reader?.close();
+        writer.close();
+        rmSync(root, { recursive: true, force: true });
+    }
+});

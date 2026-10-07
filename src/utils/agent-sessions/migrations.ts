@@ -1,5 +1,6 @@
-import type { Database } from "bun:sqlite";
-import { copyFileSync, existsSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { chmodSync, existsSync, linkSync, mkdtempSync, rmdirSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -394,10 +395,38 @@ function backupBeforeCompactRewrite(db: Database): void {
         return;
     }
 
-    // Fold the WAL back in first, so the copy is a complete database on its own.
-    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-    copyFileSync(path, backup);
-    logger.warn({ path, backup }, "Copied the history database aside before the provider-history rewrite");
+    // SQLite includes committed WAL frames even with an older reader still active.
+    // The private directory protects the snapshot until its permissions are installed.
+    const pending = mkdtempSync(`${backup}.pending-`);
+    const snapshot = join(pending, "snapshot.db");
+    try {
+        db.exec(`VACUUM INTO '${snapshot.replaceAll("'", "''")}'`);
+        chmodSync(snapshot, 0o600);
+        const check = new Database(snapshot, { readonly: true });
+        try {
+            const result = check.query<{ quick_check: string }, []>("PRAGMA quick_check").all();
+            if (result.length !== 1 || result[0].quick_check !== "ok") {
+                throw new Error("History rollback snapshot failed SQLite integrity verification");
+            }
+        } finally {
+            check.close();
+        }
+        try {
+            // Atomic, same-filesystem installation without replacing a competing backup.
+            linkSync(snapshot, backup);
+            logger.warn({ path, backup }, "Saved a verified history snapshot before the provider-history rewrite");
+        } catch (error) {
+            if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) {
+                throw error;
+            }
+            logger.debug({ backup }, "Another initializer installed the history rollback snapshot");
+        }
+    } finally {
+        if (existsSync(snapshot)) {
+            unlinkSync(snapshot);
+        }
+        rmdirSync(pending);
+    }
 }
 
 const COMPACT_REWRITE_MIGRATION_IDS = new Set([

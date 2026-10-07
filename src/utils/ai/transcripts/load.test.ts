@@ -1,9 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { transcriptEnvelope } from "./load";
+import { transcriptEnvelope, transcriptSnapshot } from "./load";
 import type { ResolvedTranscript } from "./resolve";
 
 function fixtureRoot(): string {
@@ -11,6 +12,45 @@ function fixtureRoot(): string {
 }
 
 describe("transcriptEnvelope", () => {
+    test("one native snapshot drains all pages with one read and refreshes on the next drain", async () => {
+        const file = join(fixtureRoot(), "native.jsonl");
+        const rows = Array.from({ length: 2001 }, (_, i) =>
+            SafeJSON.stringify({
+                type: "response_item",
+                timestamp: "2026-09-01T10:00:00.000Z",
+                payload: {
+                    type: "message",
+                    role: i % 2 ? "assistant" : "user",
+                    content: [{ type: i % 2 ? "output_text" : "input_text", text: String(i) }],
+                },
+            })
+        );
+        writeFileSync(file, `${rows.join("\n")}\n`);
+        const resolved: ResolvedTranscript = {
+            provider: "codex",
+            source: "native",
+            sessionId: "fixture",
+            filePath: file,
+        };
+        const reader = spyOn(fs, "readFileSync");
+        try {
+            const page = await transcriptSnapshot(resolved);
+            const all = [
+                page({ offset: 0, limit: 1000 }),
+                page({ offset: 1000, limit: 1000 }),
+                page({ offset: 2000, limit: 1000 }),
+            ];
+            expect(reader.mock.calls.filter(([path]) => path === file)).toHaveLength(1);
+            expect(all.flatMap((item) => item.turns).map((turn) => turn.text)).toEqual(rows.map((_, i) => String(i)));
+            expect(all.map((item) => item.nextOffset)).toEqual([1000, 2000, 2001]);
+            writeFileSync(file, `${rows[0]}\n`);
+            expect(page().turnCount).toBe(2001);
+            expect((await transcriptSnapshot(resolved))().turnCount).toBe(1);
+        } finally {
+            reader.mockRestore();
+        }
+    });
+
     test("loads grok native ACP updates into assistant turns", async () => {
         const root = fixtureRoot();
         const file = join(root, "updates.jsonl");

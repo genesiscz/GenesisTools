@@ -20,6 +20,7 @@ interface RawLine {
     timestamp?: string;
     cwd?: string;
     sessionId?: string;
+    isSidechain?: boolean;
     message?: RawMessage;
 }
 
@@ -61,6 +62,7 @@ export function parseTranscriptLine(line: string): UsageEvent | null {
 
     return {
         messageId: message.id,
+        ...(raw.isSidechain === true ? { isSidechain: true } : {}),
         model: message.model ?? "unknown",
         timestamp: raw.timestamp ?? "",
         project: raw.cwd ?? "",

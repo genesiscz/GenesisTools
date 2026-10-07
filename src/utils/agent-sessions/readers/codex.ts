@@ -1093,7 +1093,7 @@ export type CodexHistoryOperations = Pick<NativeSessionReader<"codex">, "parserV
 
 export function createCodexHistoryOperations(): CodexHistoryOperations {
     return {
-        parserVersion: "6",
+        parserVersion: "7",
         readMetadata: readCodexMetadata,
         scan: scanCodexRecords,
         readRecords: readCodexRecords,

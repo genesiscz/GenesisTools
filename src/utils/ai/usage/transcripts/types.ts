@@ -24,6 +24,7 @@ export interface DriverUsageEvent {
      * the same figure. Absent means "derive it from the catalog rates".
      */
     recordedCostUsd?: number;
+    isSidechain?: boolean;
     serviceTier?: string;
     codex?: CodexContext;
 }

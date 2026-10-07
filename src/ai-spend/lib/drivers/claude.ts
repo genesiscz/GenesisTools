@@ -77,6 +77,7 @@ export const claudeDriver: MonitorDriver = {
 
                 emit({
                     id: event.messageId,
+                    isSidechain: event.isSidechain,
                     model: event.model,
                     timestamp: event.timestamp,
                     inputTokens: event.inputTokens,

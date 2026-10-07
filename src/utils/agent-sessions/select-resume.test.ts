@@ -129,13 +129,13 @@ test("a canonical copy wins for an explicit UUID while a missing UUID never resu
 
 test("a title match resolves to the launch home's copy, but two different sessions stay ambiguous", async () => {
     const id = "33333333-3333-4333-8333-333333333333";
-    const local = { ...session(id, "astra-pricing"), sourceHome: "/home" };
+    const local = { ...session(id, "astra-pricing"), sourceHome: "/invented-resume-home" };
     const retained = { ...session(id, "astra-pricing"), sourceHome: "/old-home" };
     expect(
         await selectResumeSession({
             adapter: adapter([retained, local]),
             query: "astra-pricing",
-            preferredHome: "/home",
+            preferredHome: "/invented-resume-home",
             interactive: false,
         })
     ).toBe(local);
@@ -144,7 +144,7 @@ test("a title match resolves to the launch home's copy, but two different sessio
         selectResumeSession({
             adapter: adapter([other, local]),
             query: "astra-pricing",
-            preferredHome: "/home",
+            preferredHome: "/invented-resume-home",
             interactive: false,
         })
     ).rejects.toThrow("Ambiguous");
@@ -304,7 +304,11 @@ test("the metadata and content union counts one session once, so a single answer
     // The two rows deliberately differ in `filePath`, so identity is the only term that can
     // collapse them; the rungs do read that field from different projections.
     const id = "99999999-9999-4999-8999-999999999999";
-    const listed = { ...session(id, "invoice draft"), sourceHome: "/home", sourceKey: sourceKeyFor("/home", id) };
+    const listed = {
+        ...session(id, "invoice draft"),
+        sourceHome: "/invented-resume-home",
+        sourceKey: sourceKeyFor("/invented-resume-home", id),
+    };
     const found = { ...listed, filePath: "/home/projects/moved/99999999.jsonl" };
     const { adapter: counting, searches } = countingAdapter([listed], [found]);
 
@@ -322,8 +326,8 @@ test("two homes' copies of one session survive the dedup; the launch home is wha
     const id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     const local = {
         ...session(id, "invoice draft"),
-        sourceHome: "/home",
-        sourceKey: sourceKeyFor("/home", id),
+        sourceHome: "/invented-resume-home",
+        sourceKey: sourceKeyFor("/invented-resume-home", id),
         filePath: "/home/sessions/bbbbbbbb.jsonl",
     };
     const retained = {
@@ -348,7 +352,7 @@ test("two homes' copies of one session survive the dedup; the launch home is wha
         await selectResumeSession({
             adapter: countingAdapter([local], [retained]).adapter,
             query: "invoice",
-            preferredHome: "/home",
+            preferredHome: "/invented-resume-home",
             interactive: false,
         })
     ).toBe(local);

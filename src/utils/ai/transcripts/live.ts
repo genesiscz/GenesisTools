@@ -1,6 +1,6 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { transcriptEnvelope } from "./load";
+import { transcriptEnvelope, transcriptSnapshot } from "./load";
 import type { ResolvedTranscript } from "./resolve";
 import { followTranscript } from "./tail";
 import type { TranscriptEnvelope, TranscriptTurn } from "./types";
@@ -137,9 +137,11 @@ export async function followTranscriptLive(resolved: ResolvedTranscript, options
     const drain = async (from: number): Promise<void> => {
         let at = Math.max(from, drainedTo);
         let open: number | null = null;
+        const snapshot = resolved.provider === "claude" ? null : await transcriptSnapshot(resolved);
 
         while (!options.signal?.aborted) {
-            const page = await transcriptEnvelope(resolved, { offset: at, limit: LIVE_WINDOW });
+            const opts = { offset: at, limit: LIVE_WINDOW };
+            const page = snapshot ? snapshot(opts) : await transcriptEnvelope(resolved, opts);
             stream.envelope(page, { advance: false });
             const start = page.nextOffset - page.turns.length;
 

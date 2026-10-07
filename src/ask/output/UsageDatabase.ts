@@ -7,6 +7,12 @@ import { logger } from "@genesiscz/utils/logger";
 import type { LanguageModelUsage } from "ai";
 import { sql } from "kysely";
 
+export interface UsageScope {
+    days?: number;
+    provider?: string;
+    model?: string;
+}
+
 export interface UsageRecord {
     id?: number;
     sessionId: string;
@@ -106,9 +112,23 @@ export class UsageDatabase {
         return id;
     }
 
-    async getDailyUsage(days = 30): Promise<DailyUsage[]> {
-        const rows = await this.client.kysely
-            .selectFrom("usage_records")
+    private usageQuery(scope: number | UsageScope | undefined) {
+        const filters = typeof scope === "number" ? { days: scope } : (scope ?? {});
+        let query = this.client.kysely.selectFrom("usage_records");
+        if (filters.days !== undefined) {
+            query = query.where(sql<string>`date(timestamp)`, ">=", sinceDays(filters.days));
+        }
+        if (filters.provider) {
+            query = query.where("provider", "=", filters.provider);
+        }
+        if (filters.model) {
+            query = query.where("model", "=", filters.model);
+        }
+        return query;
+    }
+
+    async getDailyUsage(scope: number | UsageScope = 30): Promise<DailyUsage[]> {
+        const rows = await this.usageQuery(scope)
             .select([
                 sql<string>`date(timestamp)`.as("date"),
                 sql<number>`SUM(cost)`.as("total_cost"),
@@ -116,7 +136,7 @@ export class UsageDatabase {
                 sql<number>`COUNT(*)`.as("message_count"),
                 sql<number>`COUNT(DISTINCT provider)`.as("provider_count"),
             ])
-            .where(sql<string>`date(timestamp)`, ">=", sinceDays(days))
+
             .groupBy(sql`date(timestamp)`)
             .orderBy("date", "desc")
             .execute();
@@ -130,9 +150,8 @@ export class UsageDatabase {
         }));
     }
 
-    async getProviderUsage(days = 30): Promise<ProviderUsage[]> {
-        const rows = await this.client.kysely
-            .selectFrom("usage_records")
+    async getProviderUsage(scope: number | UsageScope = 30): Promise<ProviderUsage[]> {
+        const rows = await this.usageQuery(scope)
             .select([
                 "provider",
                 sql<number>`SUM(cost)`.as("total_cost"),
@@ -140,7 +159,7 @@ export class UsageDatabase {
                 sql<number>`COUNT(*)`.as("message_count"),
                 sql<number>`AVG(cost)`.as("avg_cost_per_message"),
             ])
-            .where(sql<string>`date(timestamp)`, ">=", sinceDays(days))
+
             .groupBy("provider")
             .orderBy("total_cost", "desc")
             .execute();
@@ -154,9 +173,8 @@ export class UsageDatabase {
         }));
     }
 
-    async getModelUsage(days = 30): Promise<ModelUsage[]> {
-        const rows = await this.client.kysely
-            .selectFrom("usage_records")
+    async getModelUsage(scope: number | UsageScope = 30): Promise<ModelUsage[]> {
+        const rows = await this.usageQuery(scope)
             .select([
                 "provider",
                 "model",
@@ -165,7 +183,7 @@ export class UsageDatabase {
                 sql<number>`COUNT(*)`.as("message_count"),
                 sql<number>`AVG(cost)`.as("avg_cost_per_message"),
             ])
-            .where(sql<string>`date(timestamp)`, ">=", sinceDays(days))
+
             .groupBy("provider")
             .groupBy("model")
             .orderBy("total_cost", "desc")
@@ -216,24 +234,18 @@ export class UsageDatabase {
         }));
     }
 
-    async getTotalUsage(days?: number): Promise<{
+    async getTotalUsage(scope?: number | UsageScope): Promise<{
         totalCost: number;
         totalTokens: number;
         messageCount: number;
         sessionCount: number;
     }> {
-        let query = this.client.kysely
-            .selectFrom("usage_records")
-            .select([
-                sql<number | null>`SUM(cost)`.as("total_cost"),
-                sql<number | null>`SUM(total_tokens)`.as("total_tokens"),
-                sql<number>`COUNT(*)`.as("message_count"),
-                sql<number>`COUNT(DISTINCT session_id)`.as("session_count"),
-            ]);
-
-        if (days) {
-            query = query.where(sql<string>`date(timestamp)`, ">=", sinceDays(days));
-        }
+        const query = this.usageQuery(scope).select([
+            sql<number | null>`SUM(cost)`.as("total_cost"),
+            sql<number | null>`SUM(total_tokens)`.as("total_tokens"),
+            sql<number>`COUNT(*)`.as("message_count"),
+            sql<number>`COUNT(DISTINCT session_id)`.as("session_count"),
+        ]);
 
         const row = await query.executeTakeFirstOrThrow();
 
@@ -245,11 +257,10 @@ export class UsageDatabase {
         };
     }
 
-    async getCostTrend(days = 7): Promise<Array<{ date: string; cost: number }>> {
-        const rows = await this.client.kysely
-            .selectFrom("usage_records")
+    async getCostTrend(scope: number | UsageScope = 7): Promise<Array<{ date: string; cost: number }>> {
+        const rows = await this.usageQuery(scope)
             .select([sql<string>`date(timestamp)`.as("date"), sql<number>`SUM(cost)`.as("cost")])
-            .where(sql<string>`date(timestamp)`, ">=", sinceDays(days))
+
             .groupBy(sql`date(timestamp)`)
             .orderBy("date", "asc")
             .execute();
@@ -257,21 +268,15 @@ export class UsageDatabase {
         return rows.map((row) => ({ date: row.date, cost: row.cost }));
     }
 
-    async getTopModels(limit = 10, days?: number): Promise<ModelUsage[]> {
-        let query = this.client.kysely
-            .selectFrom("usage_records")
-            .select([
-                "provider",
-                "model",
-                sql<number>`SUM(cost)`.as("total_cost"),
-                sql<number>`SUM(total_tokens)`.as("total_tokens"),
-                sql<number>`COUNT(*)`.as("message_count"),
-                sql<number>`AVG(cost)`.as("avg_cost_per_message"),
-            ]);
-
-        if (days) {
-            query = query.where(sql<string>`date(timestamp)`, ">=", sinceDays(days));
-        }
+    async getTopModels(limit = 10, scope?: number | UsageScope): Promise<ModelUsage[]> {
+        const query = this.usageQuery(scope).select([
+            "provider",
+            "model",
+            sql<number>`SUM(cost)`.as("total_cost"),
+            sql<number>`SUM(total_tokens)`.as("total_tokens"),
+            sql<number>`COUNT(*)`.as("message_count"),
+            sql<number>`AVG(cost)`.as("avg_cost_per_message"),
+        ]);
 
         const rows = await query
             .groupBy("provider")

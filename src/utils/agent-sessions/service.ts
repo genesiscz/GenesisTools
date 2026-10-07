@@ -379,13 +379,14 @@ export class HistoryService {
         const candidates = await historyCandidates({ sources: discovery.sources, filters: { signal: filters.signal } });
         // A windowed listing refreshes the window and its top-up only; everything older is read
         // as indexed. Old sessions do not change, and refreshing all of them was the cost.
+        const sorted = listingIndexSlice(candidates);
         const windowed =
             filters.mtimeFrom === undefined
-                ? candidates
-                : listingIndexSlice(candidates).filter(
+                ? sorted
+                : sorted.filter(
                       (candidate, index) => candidate.mtime >= (filters.mtimeFrom ?? 0) || index < (filters.newest ?? 0)
                   );
-        const selected = listingIndexSlice(windowed, filters.limit);
+        const selected = filters.limit == null ? windowed : windowed.slice(0, Math.max(20, filters.limit * 4));
         return synchronizeHistory({
             ...this.options,
             discovery,

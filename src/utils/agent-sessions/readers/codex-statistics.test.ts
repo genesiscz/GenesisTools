@@ -153,3 +153,45 @@ test("incomplete metadata coverage explicitly invalidates the statistics contrib
     expect(result.issues.map((issue) => issue.message)).toContain("Metadata coverage incomplete");
     expect(result.summary.messages).toBe(1);
 });
+
+test("current native response usage contributes complete statistics without duplicate calls", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-current-statistics-"));
+    const path = join(home, "rollout.jsonl");
+    const usage = line({
+        type: "token_usage_record",
+        timestamp: "2026-09-01T10:03:00.000Z",
+        payload: {
+            response_id: "fixture-response",
+            usage: {
+                input_tokens: 120,
+                cached_input_tokens: 100,
+                output_tokens: 30,
+                reasoning_output_tokens: 12,
+            },
+        },
+    });
+    writeFileSync(
+        path,
+        line({ type: "session_meta", payload: { id: ID, cwd: "/projects/shop", history_mode: "legacy" } }) +
+            line({ type: "turn_context", payload: { model: "gpt-5" } }) +
+            usage +
+            usage
+    );
+    const result = await readCodexStatistics({
+        kind: "codex",
+        root: home,
+        sourceHome: home,
+        filePath: path,
+        dataPaths: [path],
+        metadataPaths: [],
+        statisticsPaths: [path],
+    });
+    expect(result.complete).toBe(true);
+    expect(result.summary.tokenUsage).toEqual({
+        inputTokens: 20,
+        outputTokens: 30,
+        cacheCreateTokens: 0,
+        cacheReadTokens: 100,
+    });
+    expect(result.summary.modelCounts).toEqual({ "gpt-5": 1 });
+});

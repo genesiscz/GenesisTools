@@ -72,16 +72,17 @@ export async function runUsageCommand(args: string[]): Promise<void> {
             return;
         }
 
+        const scope = { days, provider: options.provider, model: options.model };
         if (options.format === "json") {
-            await showJSON(db, days, options.provider, options.model);
+            await showJSON(db, scope);
         } else if (options.format === "summary") {
-            await showSummary(db, days);
+            await showSummary(db, scope);
         } else {
-            await showSummary(db, days);
-            await showDailyUsage(db, days);
-            await showProviderUsage(db, days);
-            await showModelUsage(db, days);
-            await showCostTrend(db, days);
+            await showSummary(db, scope);
+            await showDailyUsage(db, scope);
+            await showProviderUsage(db, scope);
+            await showModelUsage(db, scope);
+            await showCostTrend(db, scope);
         }
 
         db.close();

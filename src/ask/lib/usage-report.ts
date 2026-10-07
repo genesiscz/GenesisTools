@@ -1,4 +1,4 @@
-import type { UsageDatabase } from "@app/ask/output/UsageDatabase";
+import type { UsageDatabase, UsageScope } from "@app/ask/output/UsageDatabase";
 import { formatDateTime } from "@genesiscz/utils/date";
 import { formatCost, formatTokens } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -10,11 +10,11 @@ function formatDate(dateStr: string): string {
     return formatDateTime(dateStr, { absolute: "date" });
 }
 
-export async function showSummary(db: UsageDatabase, days: number) {
-    const total = await db.getTotalUsage(days);
+export async function showSummary(db: UsageDatabase, scope: UsageScope) {
+    const total = await db.getTotalUsage(scope);
 
     out.println(chalk.bold.cyan("\n📊 USAGE SUMMARY\n"));
-    out.println(chalk.white(`Period: Last ${days} days`));
+    out.println(chalk.white(`Period: Last ${scope.days} days`));
     out.println(chalk.white(`Total Cost: ${chalk.green.bold(formatCost(total.totalCost))}`));
     out.println(chalk.white(`Total Tokens: ${chalk.yellow(formatTokens(total.totalTokens))}`));
     out.println(chalk.white(`Messages: ${chalk.blue(total.messageCount.toLocaleString())}`));
@@ -28,8 +28,8 @@ export async function showSummary(db: UsageDatabase, days: number) {
     }
 }
 
-export async function showDailyUsage(db: UsageDatabase, days: number) {
-    const dailyUsage = await db.getDailyUsage(days);
+export async function showDailyUsage(db: UsageDatabase, scope: UsageScope) {
+    const dailyUsage = await db.getDailyUsage(scope);
 
     if (dailyUsage.length === 0) {
         out.println(chalk.yellow("\nNo usage data found for the specified period."));
@@ -56,8 +56,8 @@ export async function showDailyUsage(db: UsageDatabase, days: number) {
     out.println(table.toString());
 }
 
-export async function showProviderUsage(db: UsageDatabase, days: number) {
-    const providerUsage = await db.getProviderUsage(days);
+export async function showProviderUsage(db: UsageDatabase, scope: UsageScope) {
+    const providerUsage = await db.getProviderUsage(scope);
 
     if (providerUsage.length === 0) {
         return;
@@ -83,8 +83,8 @@ export async function showProviderUsage(db: UsageDatabase, days: number) {
     out.println(table.toString());
 }
 
-export async function showModelUsage(db: UsageDatabase, days: number) {
-    const modelUsage = await db.getModelUsage(days);
+export async function showModelUsage(db: UsageDatabase, scope: UsageScope) {
+    const modelUsage = await db.getModelUsage(scope);
 
     if (modelUsage.length === 0) {
         return;
@@ -118,8 +118,8 @@ export async function showModelUsage(db: UsageDatabase, days: number) {
     }
 }
 
-export async function showCostTrend(db: UsageDatabase, days: number) {
-    const trend = await db.getCostTrend(Math.min(days, 7));
+export async function showCostTrend(db: UsageDatabase, scope: UsageScope) {
+    const trend = await db.getCostTrend({ ...scope, days: Math.min(scope.days ?? 7, 7) });
 
     if (trend.length === 0) {
         return;
@@ -137,15 +137,15 @@ export async function showCostTrend(db: UsageDatabase, days: number) {
     }
 }
 
-export async function showJSON(db: UsageDatabase, days: number, _provider?: string, _model?: string) {
-    const total = await db.getTotalUsage(days);
-    const dailyUsage = await db.getDailyUsage(days);
-    const providerUsage = await db.getProviderUsage(days);
-    const modelUsage = await db.getModelUsage(days);
+export async function showJSON(db: UsageDatabase, scope: UsageScope) {
+    const total = await db.getTotalUsage(scope);
+    const dailyUsage = await db.getDailyUsage(scope);
+    const providerUsage = await db.getProviderUsage(scope);
+    const modelUsage = await db.getModelUsage(scope);
 
     const output = {
         period: {
-            days,
+            days: scope.days,
             startDate: dailyUsage.length > 0 ? dailyUsage[dailyUsage.length - 1].date : null,
             endDate: dailyUsage.length > 0 ? dailyUsage[0].date : null,
         },

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
@@ -171,6 +171,8 @@ describe("buildSpendSeries", () => {
     test("an unchanged file is never re-read on the second call", async () => {
         await buildSpendSeries({ ...window(), grain: "day" }, options);
 
+        const cacheFile = join(storage.getCacheDir(), "events-cache.json");
+        const original = statSync(cacheFile);
         const opened: string[] = [];
         const second = await buildSpendSeries(
             { ...window(), grain: "day" },
@@ -185,6 +187,8 @@ describe("buildSpendSeries", () => {
         );
 
         expect(opened).toEqual([]);
+        expect(statSync(cacheFile).ino).toBe(original.ino);
+        expect(statSync(cacheFile).mtimeMs).toBe(original.mtimeMs);
         // Negative control: the cached numbers are still the real ones.
         expect(second.points[0].tokens).toBe(600_000);
     });
