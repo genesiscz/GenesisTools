@@ -250,3 +250,28 @@ test("a process that blocks after withInterrupt returned still dies on Ctrl-C", 
     expect(proc.signalCode).toBe("SIGINT");
     expect(Date.now() - sentAt).toBeLessThan(5000);
 });
+
+test("a first Ctrl-C during SIGTERM cleanup still gets first-interrupt handling", async () => {
+    let clock = 1000;
+    let forced = 0;
+    let announced = 0;
+    await withInterrupt(
+        async (signal) => {
+            process.emit("SIGTERM");
+            expect(signal.aborted).toBe(true);
+            clock += 2000;
+            process.emit("SIGINT");
+            expect([announced, forced]).toEqual([1, 0]);
+            clock += 2000;
+            process.emit("SIGINT");
+            expect(forced).toBe(1);
+        },
+        {
+            handleTermination: true,
+            now: () => clock,
+            onInterrupt: () => announced++,
+            forceExit: () => forced++,
+        }
+    );
+    expect(process.listenerCount("SIGINT")).toBe(0);
+});

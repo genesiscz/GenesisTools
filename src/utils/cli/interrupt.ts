@@ -32,9 +32,10 @@ export async function withInterrupt<T>(
     const controller = new AbortController();
     const window = options.duplicateWindowMs ?? INTERRUPT_DUPLICATE_WINDOW_MS;
     const now = options.now ?? Date.now;
-    let firstAt = 0;
+    // Set by the first Ctrl-C only: a SIGTERM also aborts the signal, and must not make a first Ctrl-C look like a second.
+    let firstAt: number | undefined;
     const handler = () => {
-        if (!controller.signal.aborted) {
+        if (firstAt === undefined) {
             firstAt = now();
             options.onInterrupt?.();
             controller.abort();
@@ -67,7 +68,7 @@ export async function withInterrupt<T>(
         if (options.handleTermination) {
             process.off("SIGTERM", terminate);
         }
-        const remaining = controller.signal.aborted ? window - (now() - firstAt) : 0;
+        const remaining = firstAt === undefined ? 0 : window - (now() - firstAt);
         const release = () => {
             process.off("SIGINT", handler);
             releaseInterruptObserver();
