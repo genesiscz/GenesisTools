@@ -11,7 +11,8 @@ export function resolveJobAndBuild(
     return { jobPath: ref.jobPath, buildNumber: buildArg || ref.buildNumber || defaultBuild };
 }
 
-function buildNumber(arg: string): number | null {
+/** A whole number of 1 or more, written in full: `2oops`, `1.5`, `0` and `-1` are null. */
+export function positiveInt(arg: string): number | null {
     const value = /^\d+$/.test(arg.trim()) ? Number(arg.trim()) : Number.NaN;
 
     return Number.isSafeInteger(value) && value >= 1 ? value : null;
@@ -22,8 +23,8 @@ function buildNumber(arg: string): number | null {
  * `12oops` or `12.9` is refused instead of read as 12, and an inverted range is an error, not a no-op.
  */
 export function parseBuildRange(fromArg: string, toArg: string, cmd: string): { from: number; to: number } {
-    const from = buildNumber(fromArg);
-    const to = buildNumber(toArg);
+    const from = positiveInt(fromArg);
+    const to = positiveInt(toArg);
 
     if (from === null || to === null) {
         throw new Error(

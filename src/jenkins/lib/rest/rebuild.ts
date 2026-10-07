@@ -2,7 +2,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 import { parseJenkinsInput } from "../mcp/url";
-import type { JenkinsBackend } from "./client";
+import type { JenkinsBackend, PostResult } from "./client";
 import { getJobNameFromPath } from "./jobs";
 
 export interface JenkinsParameter {
@@ -87,6 +87,21 @@ export async function fetchBuildParameters(
     return paramsAction?.parameters ?? [];
 }
 
+const QUEUE_ITEM = /\/queue\/item\/\d+\/?$/;
+
+/**
+ * Whether Jenkins accepted a build trigger: 201 Created, or another answer below 400 whose
+ * `Location` is a queue item. The POST follows no redirect, so a 302 to a login page or anywhere
+ * else is a refusal, not a queued build.
+ */
+export function triggerAccepted(res: PostResult): boolean {
+    if (res.status === 201) {
+        return true;
+    }
+
+    return res.status < 400 && res.location !== undefined && QUEUE_ITEM.test(res.location);
+}
+
 export async function triggerRebuild(
     backend: JenkinsBackend,
     jobPath: string,
@@ -98,8 +113,9 @@ export async function triggerRebuild(
         parameters.length > 0 ? buildParamsForm(parameters) : undefined
     );
 
-    if (res.status >= 400) {
-        throw new Error(`Trigger failed (${res.status}): ${backend.fullUrl(`${jobPath}/${endpoint}`)}`);
+    if (!triggerAccepted(res)) {
+        const where = res.location ? ` -> ${res.location}` : "";
+        throw new Error(`Trigger failed (${res.status}${where}): ${backend.fullUrl(`${jobPath}/${endpoint}`)}`);
     }
 
     return { queueUrl: res.location };

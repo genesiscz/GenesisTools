@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { parseBuildRange } from "./helpers";
+import { parseBuildRange, positiveInt } from "./helpers";
+
+describe("positiveInt", () => {
+    test("reads a whole number of 1 or more and nothing else", () => {
+        expect(positiveInt("3")).toBe(3);
+        expect(positiveInt(" 12 ")).toBe(12);
+
+        for (const bad of ["0", "-1", "2oops", "1.5", "", "garbage", "99999999999999999999"]) {
+            expect(positiveInt(bad)).toBeNull();
+        }
+    });
+});
 
 describe("parseBuildRange", () => {
     test("accepts two whole build numbers in order", () => {

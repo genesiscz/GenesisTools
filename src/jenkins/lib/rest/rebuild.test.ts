@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import axios from "axios";
+import { cmdTriggers } from "../../commands/triggers";
 import type { JenkinsBackend, PostResult } from "./client";
 import {
     buildParamsForm,
@@ -8,6 +9,7 @@ import {
     rebuild,
     resolveQueueToBuild,
     resolveRebuildTarget,
+    triggerAccepted,
     triggerRebuild,
 } from "./rebuild";
 
@@ -161,6 +163,79 @@ describe("triggerRebuild", () => {
         const { backend } = fakeBackend({ post: () => ({ status: 403 }) });
 
         await expect(triggerRebuild(backend, "job/web", [])).rejects.toThrow(/Trigger failed \(403\)/);
+    });
+
+    it("throws on a redirect to a login page instead of reporting a queued build", async () => {
+        const { backend } = fakeBackend({ post: () => ({ status: 302, location: `${BASE}/login?from=%2Fjob%2Fweb` }) });
+
+        await expect(triggerRebuild(backend, "job/web", [])).rejects.toThrow(/Trigger failed \(302 -> .*login/);
+    });
+
+    it("accepts 201, and a redirect only when it names a queue item", () => {
+        expect(triggerAccepted({ status: 201 })).toBe(true);
+        expect(triggerAccepted({ status: 302, location: `${BASE}/queue/item/9/` })).toBe(true);
+        expect(triggerAccepted({ status: 302, location: `${BASE}/login` })).toBe(false);
+        expect(triggerAccepted({ status: 302 })).toBe(false);
+        expect(triggerAccepted({ status: 500, location: `${BASE}/queue/item/9/` })).toBe(false);
+    });
+});
+
+describe("cmdTriggers", () => {
+    const quick = { queueWaitMs: 20, pollMs: 5 };
+
+    it("waits for each queue item to become a build before the next request", async () => {
+        let item = 0;
+        const { backend, calls } = fakeBackend({
+            get: (url) => ({ executable: { number: 100 + Number(url.match(/item\/(\d+)/)?.[1]) } }),
+            post: () => {
+                item++;
+                return { status: 201, location: `${BASE}/queue/item/${item}/` };
+            },
+        });
+
+        await cmdTriggers("job/web", 2, { backend, ...quick });
+
+        expect(calls.filter((call) => call.startsWith("POST"))).toHaveLength(2);
+        expect(process.exitCode ?? 0).toBe(0);
+    });
+
+    it("sends no second request while the first item never becomes a build", async () => {
+        const { backend, calls } = fakeBackend({
+            get: () => ({ why: "Waiting for next available executor" }),
+            post: () => ({ status: 201, location: `${BASE}/queue/item/1/` }),
+        });
+
+        try {
+            await cmdTriggers("job/web", 3, { backend, ...quick });
+
+            expect(calls.filter((call) => call.startsWith("POST"))).toHaveLength(1);
+            expect(process.exitCode).toBe(1);
+        } finally {
+            process.exitCode = 0;
+        }
+    });
+
+    it("stops on a missing queue location and on a refused request", async () => {
+        const noLocation = fakeBackend({ post: () => ({ status: 201 }) });
+        const refused = fakeBackend({ post: () => ({ status: 302, location: `${BASE}/login` }) });
+
+        try {
+            await cmdTriggers("job/web", 2, { backend: noLocation.backend, ...quick });
+            expect(noLocation.calls.filter((call) => call.startsWith("POST"))).toHaveLength(1);
+
+            await cmdTriggers("job/web", 2, { backend: refused.backend, ...quick });
+            expect(refused.calls.filter((call) => call.startsWith("POST"))).toHaveLength(1);
+            expect(process.exitCode).toBe(1);
+        } finally {
+            process.exitCode = 0;
+        }
+    });
+
+    it("refuses a count below 1 before any request", async () => {
+        const { backend, calls } = fakeBackend({});
+
+        await expect(cmdTriggers("job/web", 0, { backend, ...quick })).rejects.toThrow("count of 1 or more");
+        expect(calls).toEqual([]);
     });
 });
 
