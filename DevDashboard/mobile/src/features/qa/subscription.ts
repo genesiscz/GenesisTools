@@ -25,6 +25,20 @@ import type { DashboardClient, QaRow } from "@dd/contract";
  */
 export type QaLiveStatus = "connecting" | "open" | "live" | "down";
 
+/** Live rows kept on screen; older ones are already in the persisted log the screen merges with. */
+export const QA_LIVE_WINDOW = 200;
+/** Ids remembered for dedupe. Larger than the live window, so an evicted row is not shown twice. */
+export const QA_SEEN_LIMIT = QA_LIVE_WINDOW * 4;
+
+/** Prepend a live row, newest first, deduped by id and capped at {@link QA_LIVE_WINDOW}. */
+export function pushLiveRow(prev: QaRow[], entry: QaRow): QaRow[] {
+    if (entry.id != null && prev.some((r) => r.id === entry.id)) {
+        return prev;
+    }
+
+    return [entry, ...prev].slice(0, QA_LIVE_WINDOW);
+}
+
 export interface QaSubscriptionCallbacks {
     /** Fired once per NEW entry id (deduped across the controller's lifetime). */
     onRow: (entry: QaRow) => void;
@@ -70,6 +84,13 @@ export function openQaSubscription(
 
             if (id != null) {
                 seen.add(id);
+                if (seen.size > QA_SEEN_LIMIT) {
+                    // A Set iterates in insertion order, so the first id is the oldest.
+                    const oldest = seen.values().next().value;
+                    if (oldest !== undefined) {
+                        seen.delete(oldest);
+                    }
+                }
             }
 
             if (!live) {

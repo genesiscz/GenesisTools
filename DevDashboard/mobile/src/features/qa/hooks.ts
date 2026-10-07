@@ -6,6 +6,7 @@ import { useDashboardClient } from "@/api/client-provider";
 import { type QaLogParams, qaLogQuery } from "@/features/qa/queries";
 import {
     openQaSubscription,
+    pushLiveRow,
     type QaLiveStatus,
     type QaSubscriptionHandle,
 } from "@/features/qa/subscription";
@@ -66,13 +67,7 @@ export function useQaStream(options: { onResume?: () => void } = {}): UseQaStrea
     onResumeRef.current = options.onResume;
 
     const pushLive = useCallback((entry: QaRow) => {
-        setLive((prev) => {
-            if (entry.id != null && prev.some((r) => r.id === entry.id)) {
-                return prev;
-            }
-
-            return [entry, ...prev];
-        });
+        setLive((prev) => pushLiveRow(prev, entry));
     }, []);
 
     useEffect(() => {

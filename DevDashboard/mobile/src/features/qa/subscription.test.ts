@@ -1,6 +1,12 @@
 import type { DashboardClient, EnrichedQaEntry, QaRow, QaSubscription } from "@dd/contract";
 import { describe, expect, it } from "bun:test";
-import { openQaSubscription, type QaLiveStatus } from "@/features/qa/subscription";
+import {
+    openQaSubscription,
+    pushLiveRow,
+    QA_LIVE_WINDOW,
+    QA_SEEN_LIMIT,
+    type QaLiveStatus,
+} from "@/features/qa/subscription";
 
 /**
  * Tests the renderer-free QA subscription controller by mocking the contract's `qa.subscribe` (the
@@ -56,6 +62,32 @@ function row(id: string): QaRow {
     // a full QaRow isn't needed to exercise dedupe/status/teardown.
     return { id, question: "q", answerMd: "a", project: "P", tag: "question", refs: [] } as unknown as QaRow;
 }
+
+describe("bounded live state", () => {
+    it("caps the live window newest-first and still dedupes", () => {
+        let live: QaRow[] = [];
+        for (let i = 0; i < QA_LIVE_WINDOW + 5; i++) {
+            live = pushLiveRow(live, row(String(i)));
+        }
+
+        expect(live).toHaveLength(QA_LIVE_WINDOW);
+        expect(live[0]?.id).toBe(String(QA_LIVE_WINDOW + 4));
+        expect(pushLiveRow(live, row(String(QA_LIVE_WINDOW + 4)))).toBe(live);
+    });
+
+    it("forgets the oldest seen id once the dedupe window is full", () => {
+        const ctrl = fakeClient();
+        const got: string[] = [];
+        openQaSubscription(ctrl.client, { onRow: (e) => got.push(e.id) });
+        for (let i = 0; i <= QA_SEEN_LIMIT; i++) {
+            ctrl.emit(row(String(i)));
+        }
+
+        ctrl.emit(row("0"));
+        ctrl.emit(row(String(QA_SEEN_LIMIT)));
+        expect(got).toHaveLength(QA_SEEN_LIMIT + 2);
+    });
+});
 
 describe("openQaSubscription", () => {
     it("forwards each new entry to onRow", () => {
