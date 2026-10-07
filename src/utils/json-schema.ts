@@ -31,7 +31,15 @@ interface FormatOptions {
     maxDepth?: number;
     /** Multi-line indented output (default: false → compact one-line) */
     pretty?: boolean;
+    /** typescript: name of the root type; an array root also gets a `type <rootName> = Item[]` alias */
+    rootName?: string;
+    /** typescript: prefix every declaration with `export` */
+    exported?: boolean;
+    /** schema: add a `$schema` key; `true` names JSON Schema draft-07 */
+    schemaHeader?: boolean | string;
 }
+
+export const JSON_SCHEMA_DRAFT_07 = "http://json-schema.org/draft-07/schema#";
 
 // ─── Core inference ──────────────────────────────────────────────────
 
@@ -204,16 +212,24 @@ export function inferSchema(value: unknown, options?: FormatOptions): SchemaNode
 export function formatSchema(value: unknown, mode: OutputMode, options?: FormatOptions): string {
     const schema = inferSchema(value, options);
     const pretty = options?.pretty ?? false;
+    const header = options?.schemaHeader;
+    const document =
+        header === undefined || header === false
+            ? schema
+            : { $schema: header === true ? JSON_SCHEMA_DRAFT_07 : header, ...schema };
+    const ts: TypeScriptOptions = {
+        rootName: options?.rootName ?? "Root",
+        aliasRoot: options?.rootName !== undefined,
+        exported: options?.exported ?? false,
+    };
 
     switch (mode) {
-        case "schema":
-            return pretty ? SafeJSON.stringify(schema, null, 2) : SafeJSON.stringify(schema);
         case "skeleton":
             return pretty ? formatSkeletonPretty(schema, 0) : formatSkeletonCompact(schema);
         case "typescript":
-            return pretty ? formatTypeScriptPretty(schema) : formatTypeScriptCompact(schema);
+            return pretty ? formatTypeScriptPretty(schema, ts) : formatTypeScriptCompact(schema, ts);
         default:
-            return pretty ? SafeJSON.stringify(schema, null, 2) : SafeJSON.stringify(schema);
+            return pretty ? SafeJSON.stringify(document, null, 2) : SafeJSON.stringify(document);
     }
 }
 
@@ -289,7 +305,16 @@ function formatSkeletonPretty(node: SchemaNode, indent: number): string {
 
 // ─── TypeScript: compact (default) ───────────────────────────────────
 
-function collectTypeScriptInterfaces(schema: SchemaNode): { interfaces: CollectedInterface[]; rootType: string } {
+interface TypeScriptOptions {
+    rootName: string;
+    aliasRoot: boolean;
+    exported: boolean;
+}
+
+function collectTypeScriptInterfaces(
+    schema: SchemaNode,
+    options: TypeScriptOptions
+): { interfaces: CollectedInterface[]; rootType: string } {
     const interfaces: CollectedInterface[] = [];
     const nameCounters = new Map<string, number>();
 
@@ -299,7 +324,7 @@ function collectTypeScriptInterfaces(schema: SchemaNode): { interfaces: Collecte
         return count === 0 ? base : `${base}${count + 1}`;
     }
 
-    function nodeToType(node: SchemaNode, contextName: string): string {
+    function nodeToType(node: SchemaNode, contextName: string, itemName?: string): string {
         const type = Array.isArray(node.type) ? node.type : [node.type];
 
         if (type.includes("object") && node.properties) {
@@ -310,8 +335,7 @@ function collectTypeScriptInterfaces(schema: SchemaNode): { interfaces: Collecte
         }
 
         if (type.includes("array") && node.items) {
-            const singularName = singularize(contextName);
-            const itemType = nodeToType(node.items, pascalCase(singularName));
+            const itemType = nodeToType(node.items, itemName ?? typeName(singularize(contextName)));
             const extraTypes = type.filter((t) => t !== "array").map(mapPrimitive);
             const arrayExpr = `${itemType}[]`;
             return extraTypes.length > 0 ? `${arrayExpr} | ${extraTypes.join(" | ")}` : arrayExpr;
@@ -325,52 +349,66 @@ function collectTypeScriptInterfaces(schema: SchemaNode): { interfaces: Collecte
         const fields: CollectedInterface["fields"] = [];
 
         for (const [key, child] of Object.entries(node.properties ?? {})) {
-            const childType = nodeToType(child, pascalCase(key));
+            const childType = nodeToType(child, typeName(key));
             fields.push({ key, type: childType, optional: !required.has(key) });
         }
 
         interfaces.push({ name, fields });
     }
 
-    const rootType = nodeToType(schema, "Root");
+    const rootName = typeName(options.rootName);
+    const singular = typeName(singularize(rootName));
+    const rootType = nodeToType(
+        schema,
+        rootName,
+        options.aliasRoot && singular === rootName ? `${rootName}Item` : singular
+    );
     return { interfaces, rootType };
+}
+
+/** The `type <root> = …;` line, when the root is not itself the root interface. */
+function rootAlias(rootType: string, options: TypeScriptOptions, hasInterfaces: boolean): string | null {
+    const name = typeName(options.rootName);
+
+    if (hasInterfaces && (!options.aliasRoot || rootType === name)) {
+        return null;
+    }
+
+    return `${options.exported ? "export " : ""}type ${name} = ${rootType};`;
 }
 
 // ─── TypeScript: compact (default) ───────────────────────────────────
 
-function formatTypeScriptCompact(schema: SchemaNode): string {
-    const { interfaces, rootType } = collectTypeScriptInterfaces(schema);
+function formatTypeScriptCompact(schema: SchemaNode, options: TypeScriptOptions): string {
+    const { interfaces, rootType } = collectTypeScriptInterfaces(schema, options);
+    const alias = rootAlias(rootType, options, interfaces.length > 0);
+    const lines = interfaces.map((iface) => {
+        const fields = iface.fields.map((f) => `${tsKey(f.key)}${f.optional ? "?" : ""}: ${f.type}`).join("; ");
+        return `${options.exported ? "export " : ""}interface ${iface.name} { ${fields} }`;
+    });
 
-    if (interfaces.length === 0) {
-        return `type Root = ${rootType};`;
-    }
-
-    return interfaces
-        .map((iface) => {
-            const fields = iface.fields.map((f) => `${f.key}${f.optional ? "?" : ""}: ${f.type}`).join("; ");
-            return `interface ${iface.name} { ${fields} }`;
-        })
-        .join("\n");
+    return [...lines, ...(alias ? [alias] : [])].join("\n");
 }
 
 // ─── TypeScript: pretty ──────────────────────────────────────────────
 
-function formatTypeScriptPretty(schema: SchemaNode): string {
-    const { interfaces, rootType } = collectTypeScriptInterfaces(schema);
-
-    if (interfaces.length === 0) {
-        return `type Root = ${rootType};\n`;
-    }
+function formatTypeScriptPretty(schema: SchemaNode, options: TypeScriptOptions): string {
+    const { interfaces, rootType } = collectTypeScriptInterfaces(schema, options);
+    const alias = rootAlias(rootType, options, interfaces.length > 0);
 
     const lines: string[] = [];
     for (const iface of interfaces) {
-        lines.push(`interface ${iface.name} {`);
+        lines.push(`${options.exported ? "export " : ""}interface ${iface.name} {`);
         for (const f of iface.fields) {
             const opt = f.optional ? "?" : "";
-            lines.push(`  ${f.key}${opt}: ${f.type};`);
+            lines.push(`  ${tsKey(f.key)}${opt}: ${f.type};`);
         }
         lines.push("}");
         lines.push("");
+    }
+
+    if (alias) {
+        lines.push(alias);
     }
 
     return `${lines.join("\n").trimEnd()}\n`;
@@ -398,6 +436,22 @@ function mapPrimitive(type: string): string {
 
 function pascalCase(str: string): string {
     return str.replace(/[-_](\w)/g, (_, c: string) => c.toUpperCase()).replace(/^\w/, (c) => c.toUpperCase());
+}
+
+/** A property key as TypeScript accepts it: quoted unless it is an identifier. */
+function tsKey(key: string): string {
+    return /^[A-Za-z_$][\w$]*$/.test(key) ? key : SafeJSON.stringify(key);
+}
+
+/** A declaration name from any key: PascalCase, identifier characters only, never a leading digit. */
+function typeName(key: string): string {
+    const name = pascalCase(key).replace(/[^\w$]/g, "");
+
+    if (name === "") {
+        return "Field";
+    }
+
+    return /^\d/.test(name) ? `_${name}` : name;
 }
 
 function singularize(str: string): string {

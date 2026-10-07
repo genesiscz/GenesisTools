@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { type ProjectApi, projectBase, restGet, restGetPaginated, restWrite } from "@app/gitlab/lib/client";
 import { HttpError } from "@app/gitlab/lib/http";
-import type { DiffFile } from "@app/gitlab/lib/pr-review";
+import { type DiffFile, fetchMrDiffs } from "@app/gitlab/lib/pr-review";
 
 export interface DiscussionSummary {
     id: string;
@@ -18,6 +18,8 @@ export interface DraftSummary {
     discussionId: string | null;
     path: string | null;
     line: number | null;
+    /** `old` when GitLab stored only `old_line`: the draft sits on a removed line. */
+    side: "new" | "old" | null;
     note: string;
 }
 
@@ -104,8 +106,9 @@ export async function fetchDrafts(api: ProjectApi, iid: string): Promise<DraftSu
 
     return raw.map((draft) => {
         const { path, line } = anchorOf(draft.position);
+        const side = draft.position?.new_line != null ? "new" : draft.position?.old_line != null ? "old" : null;
 
-        return { id: draft.id, discussionId: draft.discussion_id ?? null, path, line, note: draft.note ?? "" };
+        return { id: draft.id, discussionId: draft.discussion_id ?? null, path, line, side, note: draft.note ?? "" };
     });
 }
 
@@ -349,6 +352,21 @@ export async function writePositionedDraft(
 }
 
 /**
+ * The position of a new-side line (an old-side one for a deleted file) of the file named by its new
+ * or old path. A renamed file keeps its old path in `old_path`, and a context line gets its
+ * `old_line`: GitLab stores a wrong pair with 201, then shows "Unable to load the diff".
+ */
+export function anchoredPosition(files: DiffFile[], path: string, line: number): LinePosition | string {
+    const file = files.find((candidate) => candidate.path === path) ?? files.find((f) => f.oldPath === path);
+
+    if (!file) {
+        return `${path} is not in the MR diff`;
+    }
+
+    return diffLinePosition({ file, side: file.status === "deleted" ? "deletions" : "additions", line });
+}
+
+/**
  * A draft anchored to a line of the diff.
  *
  * The position must go in a JSON body. GitLab accepts `position[...]` form pairs on `/discussions`
@@ -366,11 +384,17 @@ export async function writeAnchoredDraft(
         return { ok: false, action: "failed", error: `line must be a positive line number, got ${draft.line}` };
     }
 
-    return writePositionedDraft(api, {
-        iid: draft.iid,
-        body: draft.body,
-        position: { old_path: draft.path, new_path: draft.path, old_line: null, new_line: draft.line },
-    });
+    try {
+        const position = anchoredPosition(await fetchMrDiffs(api, Number(draft.iid)), draft.path, draft.line);
+
+        if (typeof position === "string") {
+            return { ok: false, action: "failed", error: `${position}, so GitLab cannot anchor a comment there.` };
+        }
+
+        return await writePositionedDraft(api, { iid: draft.iid, body: draft.body, position });
+    } catch (e) {
+        return failure(e);
+    }
 }
 
 /** A standalone draft with no thread. There is no one-per-discussion limit here. */
@@ -419,11 +443,14 @@ export async function publishAllDrafts(api: ProjectApi, iid: string): Promise<{ 
 }
 
 /**
- * A malformed anchor is accepted with 201 and silently becomes a top-level note, so a draft that
- * should be a reply but carries no discussion id is reported here rather than discovered in the UI.
+ * A malformed anchor is accepted with 201 and silently becomes a top-level note, so a draft with
+ * neither a discussion id nor a line anchor is reported here rather than discovered in the UI.
+ * A new thread on a diff line has no discussion id until it is published; its anchor proves it.
  */
 export function findUnanchoredDrafts(drafts: DraftSummary[], intentionalTopLevel: number[] = []): DraftSummary[] {
-    return drafts.filter((draft) => draft.discussionId === null && !intentionalTopLevel.includes(draft.id));
+    return drafts.filter(
+        (draft) => draft.discussionId === null && draft.path === null && !intentionalTopLevel.includes(draft.id)
+    );
 }
 
 export function renderDiscussionTable(discussions: DiscussionSummary[]): string {
@@ -441,7 +468,11 @@ export function renderDiscussionTable(discussions: DiscussionSummary[]): string 
 export function renderDraftTable(drafts: DraftSummary[]): string {
     return drafts
         .map((draft) => {
-            const target = draft.discussionId ? `reply → ${draft.discussionId.slice(0, 12)}` : "TOP-LEVEL";
+            const target = draft.discussionId
+                ? `reply → ${draft.discussionId.slice(0, 12)}`
+                : draft.path
+                  ? "new thread on a line"
+                  : "TOP-LEVEL";
             const anchor = draft.path ? `${draft.path}:${draft.line ?? "-"}` : "";
 
             return `${String(draft.id).padStart(6)}  ${target.padEnd(24)} ${String(draft.note.length).padStart(5)} chars  ${anchor}`;

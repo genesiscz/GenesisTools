@@ -15,6 +15,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { type TargetOptions, withProject } from "@app/gitlab/commands/shared";
 import { type ProjectApi, resolveProjectApi } from "@app/gitlab/lib/client";
 import {
@@ -31,6 +32,7 @@ import {
     writeDraftReply,
     writeTopLevelDraft,
 } from "@app/gitlab/lib/review-drafts";
+import { rewriteLocalImages, uploadToProject } from "@app/gitlab/lib/uploads";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -95,7 +97,10 @@ export function registerReviewDrafts(parent: Command): Command {
             .option("--file <path>", "Anchor a new draft to this file (with --line)")
             .option("--line <n>", "Anchor a new draft to this line of the new file (with --file)")
             .option("--body <text>", "Reply body; prefer --body-file for anything with newlines or backticks")
-            .option("--body-file <path>", "Read the reply body from a file")
+            .option(
+                "--body-file <path>",
+                "Read the reply body from a file; ![alt](local.png) images are uploaded to the project first"
+            )
             .option("--append", "Append to the existing draft instead of replacing it")
             .option("--now", "Publish the reply immediately instead of leaving it as a draft")
             .option("--resolve", "Resolve the thread after replying (needs --discussion)")
@@ -172,8 +177,14 @@ async function runDraftReply(iid: string, opts: DraftReplyOptions): Promise<void
         );
     }
 
-    const body = readBody(opts);
     const api = await resolveProjectApi({ host: opts.host, project: opts.project });
+    const baseDir = opts.bodyFile ? dirname(resolve(opts.bodyFile)) : process.cwd();
+    const images = await rewriteLocalImages(readBody(opts), baseDir, (path) => uploadToProject(api, path));
+    const body = images.body;
+
+    for (const file of images.uploaded) {
+        out.println(`📎 uploaded ${file.localPath} → ${file.url}`);
+    }
 
     if (opts.file && opts.line) {
         const result = await writeAnchoredDraft(api, { iid, path: opts.file, line: Number(opts.line), body });

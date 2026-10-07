@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { expectedLabels, parseIids, parseLabels, renderChangeTable, sameLabels } from "@app/gitlab/lib/label-batch";
-import type { DiffFile } from "@app/gitlab/lib/pr-review";
+import { type DiffFile, parseApiDiffs } from "@app/gitlab/lib/pr-review";
 import {
     anchorDrift,
+    anchoredPosition,
     type DiscussionSummary,
     type DraftSummary,
     diffLinePosition,
@@ -22,12 +23,14 @@ import {
     unresolvedThreads,
 } from "@app/gitlab/lib/review-render";
 import { formatSearchText, type MRNode, matchedPaths, searchMrsByFiles } from "@app/gitlab/lib/search-by-file";
+import { localImagePath, rewriteLocalImages, uploadToProject } from "@app/gitlab/lib/uploads";
 
 const draft = (id: number, discussionId: string | null, path: string | null = null): DraftSummary => ({
     id,
     discussionId,
     path,
     line: path ? 12 : null,
+    side: path ? "new" : null,
     note: "body",
 });
 
@@ -44,6 +47,72 @@ describe("findUnanchoredDrafts", () => {
 
     test("returns nothing when every draft is a reply", () => {
         expect(findUnanchoredDrafts([draft(1, "abc"), draft(2, "def")])).toEqual([]);
+    });
+
+    test("does not flag a new thread anchored on a diff line", () => {
+        expect(findUnanchoredDrafts([draft(1, null, "EmailEditModal.tsx")])).toEqual([]);
+    });
+});
+
+const A_TS_DIFF = [{ old_path: "a.ts", new_path: "a.ts", diff: "@@ -1,3 +1,4 @@\n a\n b\n+c\n d\n" }];
+
+describe("anchoredPosition", () => {
+    // A rename that also edits the file: GitLab reports the new path with the old one beside it.
+    const [renamed] = parseApiDiffs([
+        {
+            old_path: "packages/core/src/roles/Roles.ts",
+            new_path: "packages/types/src/roles/Roles.ts",
+            renamed_file: true,
+            diff: [
+                "@@ -1,5 +1,5 @@",
+                "-// TODO: replace this enum",
+                "-/** @deprecated */",
+                "+/** Single source of role identifiers */",
+                " export enum Roles {",
+                ' \tADMIN = "ADMIN",',
+                '+\tEDITOR = "EDITOR",',
+                ' \tVIEWER = "VIEWER",',
+                "\\ No newline at end of file",
+                "",
+            ].join("\n"),
+        },
+    ]);
+    const files = renamed ? [renamed] : [];
+    const newPath = "packages/types/src/roles/Roles.ts";
+    const oldPath = "packages/core/src/roles/Roles.ts";
+
+    test("an unchanged line of a renamed file carries the old path and the old line", () => {
+        expect(anchoredPosition(files, newPath, 2)).toEqual({
+            old_path: oldPath,
+            new_path: newPath,
+            old_line: 3,
+            new_line: 2,
+        });
+    });
+
+    test("an added line of a renamed file carries the old path and no old line", () => {
+        expect(anchoredPosition(files, newPath, 4)).toEqual({
+            old_path: oldPath,
+            new_path: newPath,
+            old_line: null,
+            new_line: 4,
+        });
+    });
+
+    test("counts old lines past a removed block", () => {
+        expect(anchoredPosition(files, newPath, 5)).toMatchObject({ old_line: 5, new_line: 5 });
+    });
+
+    test("finds the file by its old path too", () => {
+        expect(anchoredPosition(files, oldPath, 2)).toMatchObject({ old_path: oldPath, new_path: newPath });
+    });
+
+    test("refuses a line outside every hunk", () => {
+        expect(anchoredPosition(files, newPath, 40)).toContain("is not in the MR diff");
+    });
+
+    test("refuses a file that is not in the diff", () => {
+        expect(anchoredPosition(files, "missing.ts", 1)).toBe("missing.ts is not in the MR diff");
     });
 });
 
@@ -69,7 +138,9 @@ describe("writeAnchoredDraft", () => {
                 calls.push(request.method);
 
                 if (request.method === "GET") {
-                    return Response.json({ diff_refs: { base_sha: "a", start_sha: "b", head_sha: "c" } });
+                    return new URL(request.url).pathname.endsWith("/diffs")
+                        ? Response.json(A_TS_DIFF)
+                        : Response.json({ diff_refs: { base_sha: "a", start_sha: "b", head_sha: "c" } });
                 }
 
                 if (request.method === "POST") {
@@ -88,7 +159,66 @@ describe("writeAnchoredDraft", () => {
             expect(result.draftId).toBe(77);
             expect(result.error).toContain("deleting it failed");
             // One DELETE, not three: a retried delete that had landed would answer 404.
-            expect(calls).toEqual(["GET", "POST", "DELETE"]);
+            expect(calls).toEqual(["GET", "GET", "POST", "DELETE"]);
+        } finally {
+            server.stop(true);
+        }
+    });
+
+    test("posts the old path and old line of a renamed file's context line", async () => {
+        const posted: unknown[] = [];
+        const server = Bun.serve({
+            port: 0,
+            async fetch(request) {
+                if (request.method === "GET") {
+                    return new URL(request.url).pathname.endsWith("/diffs")
+                        ? Response.json([
+                              {
+                                  old_path: "old/a.ts",
+                                  new_path: "new/a.ts",
+                                  renamed_file: true,
+                                  diff: A_TS_DIFF[0]?.diff,
+                              },
+                          ])
+                        : Response.json({ diff_refs: { base_sha: "a", start_sha: "b", head_sha: "c" } });
+                }
+
+                const body = (await request.json()) as { position: Record<string, unknown> };
+                posted.push(body.position);
+
+                return Response.json({ id: 79, position: body.position });
+            },
+        });
+
+        try {
+            const api = { host: `http://localhost:${server.port}`, token: "t", project: "group/app" };
+            const result = await writeAnchoredDraft(api, { iid: "1", path: "new/a.ts", line: 2, body: "x" });
+
+            expect(result.ok).toBe(true);
+            expect(posted[0]).toMatchObject({ old_path: "old/a.ts", new_path: "new/a.ts", old_line: 2, new_line: 2 });
+        } finally {
+            server.stop(true);
+        }
+    });
+
+    test("refuses a line outside the diff before any write", async () => {
+        const calls: string[] = [];
+        const server = Bun.serve({
+            port: 0,
+            fetch(request) {
+                calls.push(request.method);
+
+                return Response.json(A_TS_DIFF);
+            },
+        });
+
+        try {
+            const api = { host: `http://localhost:${server.port}`, token: "t", project: "group/app" };
+            const result = await writeAnchoredDraft(api, { iid: "1", path: "a.ts", line: 40, body: "x" });
+
+            expect(result.ok).toBe(false);
+            expect(result.error).toContain("cannot anchor a comment there");
+            expect(calls).toEqual(["GET"]);
         } finally {
             server.stop(true);
         }
@@ -155,7 +285,9 @@ describe("positioned drafts", () => {
                 calls.push(request.method);
 
                 if (request.method === "GET") {
-                    return Response.json({ diff_refs: { base_sha: "a", start_sha: "b", head_sha: "c" } });
+                    return new URL(request.url).pathname.endsWith("/diffs")
+                        ? Response.json(A_TS_DIFF)
+                        : Response.json({ diff_refs: { base_sha: "a", start_sha: "b", head_sha: "c" } });
                 }
 
                 if (request.method === "POST") {
@@ -175,7 +307,7 @@ describe("positioned drafts", () => {
 
             expect(result.ok).toBe(false);
             expect(result.error).toContain("new_line 3 became 4");
-            expect(calls).toEqual(["GET", "POST", "DELETE"]);
+            expect(calls).toEqual(["GET", "GET", "POST", "DELETE"]);
         } finally {
             server.stop(true);
         }
@@ -244,6 +376,13 @@ describe("renderDraftTable", () => {
         expect(rendered).toContain("reply → 3f9c2d1e8b7a");
         expect(rendered).toContain("client.ts:12");
         expect(rendered).toContain("TOP-LEVEL");
+    });
+
+    test("labels an anchored draft without a discussion as a new thread, not top-level", () => {
+        const rendered = renderDraftTable([draft(503, null, "EmailEditModal.tsx")]);
+
+        expect(rendered).toContain("new thread on a line");
+        expect(rendered).not.toContain("TOP-LEVEL");
     });
 });
 
@@ -381,6 +520,16 @@ describe("review render", () => {
         expect(md).toContain("_(file not in current working tree)_");
         expect(md).toContain("2 ▶ two");
         expect(md).toContain("**@bob**:\n> Why \\| this?");
+        expect(md).not.toContain("Reply with the review skill.");
+        expect(
+            renderMarkdown(discussions, {
+                mrIid: "42",
+                project: "acme/web-app",
+                cwd: "/nonexistent-checkout",
+                contextLines: 1,
+                nextSteps: ["Reply with the review skill for !{iid}."],
+            }).md
+        ).toContain("- Resolve threads in the GitLab UI after verifying.\n- Reply with the review skill for !42.");
     });
 
     test("the report keeps its sections, excerpts and quotes (snapshot taken before the json2md move)", () => {
@@ -465,6 +614,7 @@ describe("review render", () => {
 
           ## Thread 1 — \`src/app.ts\`:3
 
+          - **File**: [app.ts:3](file://<cwd>/src/app.ts#L3)
           - **Anchored at**: \`1111111111\` _(per-thread head_sha; **NOT** necessarily MR HEAD)_
           - **Base sha**: \`b0b0b0b0b0\`
           - **Local state**: file is 5 lines locally
@@ -500,6 +650,7 @@ describe("review render", () => {
 
           ## Thread 2 — \`src/moved.ts\`:2
 
+          - **File**: [moved.ts:2](file://<cwd>/src/moved.ts#L2)
           - **Anchored at**: \`2222222222\` _(per-thread head_sha; **NOT** necessarily MR HEAD)_
           - **Base sha**: \`b0b0b0b0b0\`
           - **Local state**: file is 3 lines locally
@@ -531,6 +682,7 @@ describe("review render", () => {
 
           ## Thread 3 — \`src/gone.ts\`:7 _(deleted line — comment on removed code)_
 
+          - **File**: [gone.ts:7](file://<cwd>/src/gone.ts#L7)
           - **Anchored at**: \`3333333333\` _(per-thread head_sha; **NOT** necessarily MR HEAD)_
           - **Base sha**: \`b0b0b0b0b0\`
           - **Local state**: file not in cwd
@@ -607,5 +759,101 @@ describe("search by file", () => {
         expect(text).toContain("2 MRs touch package.json (oldest first):");
         expect(text.split("\n").at(-1)).toBe("7,9");
         expect(formatSearchText([], ["x"])).toBe("No open MRs touch x.");
+    });
+});
+
+describe("local images in a draft", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-uploads-"));
+    const shot = join(dir, "shot.png");
+    writeFileSync(shot, "png");
+    const never = async (): Promise<string> => {
+        throw new Error("uploader must not run");
+    };
+
+    test("resolves absolute, home, relative, file: and Windows paths, and leaves remote targets alone", () => {
+        expect(localImagePath("/tmp/a.png", "/base")).toBe("/tmp/a.png");
+        expect(localImagePath("~/x/a.png", "/base")).toBe(join(homedir(), "x/a.png"));
+        expect(localImagePath("shots/a.png", "/base")).toBe(resolve("/base", "shots/a.png"));
+        expect(localImagePath("shots/a%20b.png", "/base")).toBe(resolve("/base", "shots/a b.png"));
+        expect(localImagePath("file:///tmp/a.png", "/base")).toBe("/tmp/a.png");
+        expect(localImagePath(String.raw`C:\shots\a.png`, "/base")).toBe(String.raw`C:\shots\a.png`);
+        expect(localImagePath("https://example.com/a.png", "/base")).toBeNull();
+        expect(localImagePath("/uploads/abc/a.png", "/base")).toBeNull();
+    });
+
+    test("uploads each local file once and swaps in its URL, keeping alt text and remote images", async () => {
+        const calls: string[] = [];
+        const uploader = async (path: string): Promise<string> => {
+            calls.push(path);
+
+            return "/uploads/hash/shot.png";
+        };
+        const body = `before ![one](${shot}) mid ![two](shot.png) ![remote](https://x.test/r.png)`;
+        const result = await rewriteLocalImages(body, dir, uploader);
+
+        expect(result.body).toBe(
+            "before ![one](/uploads/hash/shot.png) mid ![two](/uploads/hash/shot.png) ![remote](https://x.test/r.png)"
+        );
+        expect(calls).toEqual([shot]);
+        expect(result.uploaded).toHaveLength(1);
+    });
+
+    test("a missing file, a non-image, a folder or an oversized image uploads nothing", async () => {
+        const secret = join(dir, "notes.txt");
+        writeFileSync(secret, "secret");
+        mkdirSync(join(dir, "folder.png"));
+
+        await expect(rewriteLocalImages(`![a](${shot}) ![b](/nope/missing.png)`, dir, never)).rejects.toThrow(
+            "image file not found: /nope/missing.png"
+        );
+        await expect(rewriteLocalImages(`![a](${secret})`, dir, never)).rejects.toThrow("is not an image");
+        await expect(rewriteLocalImages("![a](folder.png)", dir, never)).rejects.toThrow("is not a file");
+        await expect(rewriteLocalImages(`![a](${shot})`, dir, never, 2)).rejects.toThrow("over the 2 byte limit");
+    });
+
+    test("returns the body unchanged when it has no local images", async () => {
+        const result = await rewriteLocalImages("plain text ![r](https://x.test/r.png)", dir, never);
+
+        expect(result.body).toBe("plain text ![r](https://x.test/r.png)");
+        expect(result.uploaded).toEqual([]);
+    });
+
+    test("an upload is one multipart POST, sent once even on a 502", async () => {
+        const seen: Array<{ method: string; path: string; type: string | null }> = [];
+        let fail = false;
+        const server = Bun.serve({
+            port: 0,
+            fetch(request) {
+                seen.push({
+                    method: request.method,
+                    path: new URL(request.url).pathname,
+                    type: request.headers.get("content-type"),
+                });
+
+                return fail
+                    ? new Response("bad gateway", { status: 502 })
+                    : Response.json({ url: "/uploads/h/shot.png" });
+            },
+        });
+
+        try {
+            const api = { host: `http://localhost:${server.port}`, token: "t", project: "group/app" };
+
+            expect(await uploadToProject(api, shot)).toBe("/uploads/h/shot.png");
+            expect(seen[0]?.path).toBe("/api/v4/projects/group%2Fapp/uploads");
+            expect(seen[0]?.type).toContain("multipart/form-data");
+
+            fail = true;
+            await expect(uploadToProject(api, shot)).rejects.toThrow();
+            expect(seen).toHaveLength(2);
+        } finally {
+            server.stop(true);
+        }
+    });
+
+    test("an upload to a plain http host that is not loopback is refused", async () => {
+        const api = { host: "http://gitlab.example.com", token: "t", project: "group/app" };
+
+        await expect(uploadToProject(api, shot)).rejects.toThrow("Refusing to send a GitLab token");
     });
 });

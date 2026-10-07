@@ -94,5 +94,55 @@ describe("formatSchema", () => {
             const parsed = SafeJSON.parse(result);
             expect(parsed.type).toBe("string");
         });
+
+        it("adds the draft-07 $schema key only when asked", () => {
+            expect(formatSchema({ a: 1 }, "schema")).not.toContain("$schema");
+            expect(SafeJSON.parse(formatSchema({ a: 1 }, "schema", { schemaHeader: true })).$schema).toBe(
+                "http://json-schema.org/draft-07/schema#"
+            );
+        });
+
+        it("keeps the properties of an object that is null in another sample", () => {
+            const parsed = SafeJSON.parse(formatSchema([{ position: { line: 1 } }, { position: null }], "schema"));
+            expect(parsed.items.properties.position.type).toEqual(["object", "null"]);
+            expect(parsed.items.properties.position.properties.line.type).toBe("integer");
+        });
+    });
+
+    describe("typescript naming", () => {
+        it("quotes keys that are not identifiers and names their types validly", () => {
+            const result = formatSchema({ "x-weird-key": 1, "2fa": { on: true }, plain: 1 }, "typescript");
+            expect(result).toContain('"x-weird-key": number');
+            expect(result).toContain('"2fa": _2fa');
+            expect(result).toContain("interface _2fa { on: boolean }");
+            expect(result).toContain("; plain: number");
+        });
+
+        it("names an array root and aliases it, exported when asked", () => {
+            const result = formatSchema([{ id: 1 }], "typescript", {
+                pretty: true,
+                rootName: "Discussions",
+                exported: true,
+            });
+            expect(result).toContain("export interface Discussion {");
+            expect(result).toContain("export type Discussions = Discussion[];");
+        });
+
+        it("a singular root name still gives distinct element and alias names", () => {
+            expect(formatSchema([{ id: 1 }], "typescript", { rootName: "Item" })).toBe(
+                "interface ItemItem { id: number }\ntype Item = ItemItem[];"
+            );
+        });
+
+        it("an object root is the named interface itself, with no alias", () => {
+            expect(formatSchema({ id: 1 }, "typescript", { rootName: "Payload" })).toBe(
+                "interface Payload { id: number }"
+            );
+        });
+
+        it("default output is unchanged without the options", () => {
+            expect(formatSchema([{ id: 1 }], "typescript")).toBe("interface Root { id: number }");
+            expect(formatSchema([1, 2], "typescript")).toBe("type Root = number[];");
+        });
     });
 });
