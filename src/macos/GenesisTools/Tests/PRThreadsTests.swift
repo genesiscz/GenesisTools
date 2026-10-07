@@ -70,7 +70,7 @@ final class PRThreadsTests: XCTestCase {
                        ["hub", "pr", "publish", "--pr", "https://github.com/acme/shop/pull/7", "--request-changes", "--json"])
     }
 
-    /// `tools gitlab draft-reply --file --line --now` is refused by that command ("--now can only be used
+    /// `tools gitlab draft-reply --file --line --now` (now `gitlab pr <iid> comments add`) was refused by that command ("--now can only be used
     /// with --discussion"), and it has no old side: posting a new comment on an MR always failed. Both
     /// hosts now take `hub pr comment`, with the side and the range of `draft add`.
     func testANewCommentPublishedAtOnceGoesThroughHubPRCommentOnBothHosts() {

@@ -467,7 +467,7 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
 
           1 unpublished draft(s). They are visible only to their author.
 
-          > 🛑 A draft that opens a new thread has no discussion yet. Nobody can reply to it, you included, until the review is published with \`tools gitlab drafts 42 --publish\`. After publishing, \`tools gitlab discussions 42 --author <you> --json\` gives the new discussion ids; match them by path and line.
+          > 🛑 A draft that opens a new thread has no discussion yet. Nobody can reply to it, you included, until the review is published with \`tools gitlab pr 42 comments publish --apply\`. After publishing, \`tools gitlab pr 42 comments --mine --json\` gives the new discussion ids; match them by path and line.
 
           ### D01 · draft 900 · \`src/lib/util.ts:3\`
 
@@ -613,7 +613,7 @@ describe("collectPrReviewFacts against a fixture GitLab", () => {
     });
 
     test("the --llm view names refs and --expand prints one in full", () => {
-        const llm = formatPrReviewLLM(facts, "tools gitlab pr review 42");
+        const llm = formatPrReviewLLM(facts, "tools gitlab pr 42 review --give");
 
         expect(llm).toContain("  f1  modified  +2 −1  src/lib/util.ts");
         expect(llm).toContain("  t1  UNRESOLVED  src/lib/util.ts:2  @bob  1n  Why | this?");

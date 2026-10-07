@@ -1,30 +1,37 @@
 /**
- * `gitlab pr review`: the reviewer's twin of `fetch-review`. The facts a review of someone else's
- * MR needs, as JSON (default), markdown (`--md`), a compact ref view (`--llm`, drill down with
- * `--expand f1,t2`), only a summary on stderr (`--format summary`), or a review proposal skeleton
- * (`--proposal-skeleton`). Read-only on GitLab; git is fetched only by `--impact-source git`. Writes
- * `<tmp>/gitlab-pr-<project>-<host+project hash>-<iid>.{json,md}` unless `--out` names the report.
+ * `gitlab pr <iid> review`: the facts for one of the two review modes.
+ *
+ * `--receive` (someone reviewed my MR): every thread with the code at its anchor, as JSON or the
+ * per-thread markdown report.
+ *
+ * `--give` (I review someone else's MR): hunks with line numbers, threads, my drafts, the open MRs
+ * this one affects and the gates, as JSON (default), markdown (`--md`), a compact ref view (`--llm`,
+ * drill down with `--expand f1,t2`), only a summary on stderr (`--format summary`), or a review
+ * proposal skeleton (`--proposal-skeleton`). Read-only on GitLab; git is fetched only by
+ * `--impact-source git`. Writes `<tmp>/gitlab-pr-<project>-<host+project hash>-<iid>.{json,md}` unless
+ * `--out` names the report.
  * The `gt:review-proposal` skill says how to fill the proposal and push it with `tools hub proposal push`.
  *
- * `gitlab give-review` is the same command with older defaults: `--impact-source git`, only the
- * summary (on stderr, like every progress line), and `<tmp>/gitlab-give-review-<iid>.{md,json}`.
+ * No mode flag: the token's owner is the MR's author → receive, anyone else → give.
  *
- *   tools gitlab pr review 42 --repo ~/code/app
- *   tools gitlab pr review 42 --llm
- *   tools gitlab pr review 42 --expand f3,t1
- *   tools gitlab pr review 42 --drafts-only --md
- *   tools gitlab pr review 42 --proposal-skeleton > proposal.json
- *   tools gitlab give-review 42 --cwd ~/code/app-feature --print
+ *   tools gitlab pr 42 review --receive --md
+ *   tools gitlab pr 42 review --give --repo ~/code/app
+ *   tools gitlab pr 42 review --give --llm
+ *   tools gitlab pr 42 review --give --expand f3,t1
+ *   tools gitlab pr 42 review --give --drafts-only --md
+ *   tools gitlab pr 42 review --give --proposal-skeleton > proposal.json
  */
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { type FetchReviewOptions, runFetchReview } from "@app/gitlab/commands/fetch-review";
 import { progress, type TargetOptions, withProject } from "@app/gitlab/commands/shared";
-import { resolveProjectApi } from "@app/gitlab/lib/client";
-import { loadConfig } from "@app/gitlab/lib/config";
+import { currentUser, resolveProjectApi } from "@app/gitlab/lib/client";
+import { FETCH_FORMATS, loadConfig } from "@app/gitlab/lib/config";
 import { gitResult } from "@app/gitlab/lib/git";
+import { fetchMr } from "@app/gitlab/lib/merge-requests";
 import {
     checkoutOf,
     collectPrReviewFacts,
@@ -53,6 +60,8 @@ const FORMATS = ["json", "md", "llm", "summary"] as const;
 type Format = (typeof FORMATS)[number];
 
 interface Options extends TargetOptions {
+    receive?: boolean;
+    give?: boolean;
     repo?: string;
     cwd?: string;
     worktree?: string;
@@ -72,6 +81,11 @@ interface Options extends TargetOptions {
     impactSource?: string | true;
     draftsOnly?: boolean;
     threads?: boolean;
+    anchors?: boolean;
+    schemaFormat?: string;
+    schemaSidecar?: boolean;
+    mdSidecar?: boolean;
+    confirm?: boolean;
 }
 
 interface FactsKey {
@@ -81,115 +95,184 @@ interface FactsKey {
     iid: number;
 }
 
-/** One registration of the review command: its name and the defaults that differ between doors. */
+/** The defaults of the give mode. */
 interface ReviewDoor {
-    /** Command words after `gitlab`, also used in hints. */
-    words: string[];
     format: Format;
     impactSource: ImpactSource;
-    /** `--cwd` also pins the worktree, as the older door did. */
-    cwdIsWorktree: boolean;
     /** The report path when `--out` is not given. */
     defaultReport: (key: FactsKey, draftsOnly: boolean) => string;
 }
 
 const PR_REVIEW: ReviewDoor = {
-    words: ["pr", "review"],
     format: "json",
     impactSource: "api",
-    cwdIsWorktree: false,
     defaultReport: (key, draftsOnly) => join(tmpdir(), `${factsBaseName(key)}${draftsOnly ? "-drafts" : ""}.md`),
 };
 
-const GIVE_REVIEW: ReviewDoor = {
-    words: ["give-review"],
-    format: "summary",
-    impactSource: "git",
-    cwdIsWorktree: true,
-    defaultReport: (key, draftsOnly) =>
-        join(tmpdir(), `gitlab-give-review-${key.iid}${draftsOnly ? "-drafts" : ""}.md`),
-};
+/** Options that only one mode reads; passing one to the other mode is an error, never ignored. */
+const GIVE_ONLY = [
+    "repo",
+    "worktree",
+    "llm",
+    "print",
+    "expand",
+    "refresh",
+    "proposalSkeleton",
+    "agent",
+    "impact",
+    "impactLimit",
+    "impactSource",
+    "draftsOnly",
+    "threads",
+] as const;
+const RECEIVE_ONLY = ["anchors", "schemaFormat", "schemaSidecar", "mdSidecar", "confirm"] as const;
 
-function reviewOptions(cmd: Command, door: ReviewDoor): Command {
+function reviewCommand(iid: string | number = "<iid>"): string {
+    return toolCommand("gitlab pr", String(iid), "review");
+}
+
+function flagOf(cmd: Command, key: string): string {
+    return cmd.options.find((option) => option.attributeName() === key)?.flags ?? key;
+}
+
+/** The options of `names` the user passed on the command line (a default does not count). */
+function passed(cmd: Command, names: readonly string[]): string[] {
+    return names.filter((name) => cmd.getOptionValueSource(name) === "cli").map((name) => flagOf(cmd, name));
+}
+
+export function registerPrReview(pr: Command): Command {
     return withProject(
-        cmd
-            .argument("<mr-iid>", "MR IID (the small number in the URL)")
-            .option(
-                "--repo <checkout>",
-                "Local checkout of the project: file links, the MR worktree, and a git diff with --context-lines (default: the current checkout when --project is not given)"
+        pr
+            .command("review")
+            .description(
+                "Facts for a review: --receive (threads on my MR) or --give (someone else's MR); no flag picks by author"
             )
+            .argument("<iid>", "MR iid (the number after `pr`)")
+            .option("--receive", "Someone reviewed my MR: every thread with the code at its anchor")
+            .option("--give", "I review someone else's MR: hunks, threads, my drafts, affected MRs, gates")
+            .option("--cwd <checkout>", "Local checkout of the project (code excerpts, git, the origin remote)")
             .option(
-                "--cwd <checkout>",
-                door.cwdIsWorktree
-                    ? "The MR worktree, used as given even when its HEAD is on another branch (same as --repo X --worktree X)"
-                    : "Same as --repo"
+                "--format [fmt]",
+                `stdout. --give: ${FORMATS.join(" | ")} (default ${PR_REVIEW.format}); --receive: ${FETCH_FORMATS.join(" | ")}`
             )
-            .option("--worktree <dir>", "Use this directory as the MR worktree even when its HEAD is on another branch")
-            .option("--format [fmt]", `stdout: ${FORMATS.join(" | ")} (default ${door.format})`)
             .option("--json", "Same as --format json")
             .option("--md", "Same as --format md: the markdown report")
-            .option("--llm", "Same as --format llm: a compact view with refs (f1 files, t1 threads, d1 drafts, m1 MRs)")
-            .option("--print", "Print the markdown report to stdout (same as --md)")
-            .option("--out <file>", "Write the markdown report here, the facts JSON beside it")
-            .option("--expand <refs>", "Print these refs in full, e.g. f2,t1 (reads the saved facts)")
-            .option("--refresh", "With --expand: collect the facts again instead of reading the saved ones")
-            .option("--proposal-skeleton", "Print a review proposal JSON pre-filled from the facts")
-            .option("--agent <name>", "author.agent in the proposal skeleton", "agent")
-            .option("--context-lines <n>", "Unchanged lines around each hunk when the diff comes from local git", "8")
-            .option("--no-impact", "Skip the scan of other open MRs")
+            .option(
+                "--out <file>",
+                "--give: the markdown report here, the facts JSON beside it; --receive: the JSON here"
+            )
+            .option(
+                "--context-lines <n>",
+                "--give: unchanged lines around each hunk (default 8); --receive: lines around each anchor (default from the config)"
+            )
+            .option(
+                "--repo <checkout>",
+                "--give: local checkout for file links, the MR worktree and a git diff (default: the current checkout when --project is not given)"
+            )
+            .option(
+                "--worktree <dir>",
+                "--give: use this directory as the MR worktree even when its HEAD is on another branch"
+            )
+            .option(
+                "--llm",
+                "--give: same as --format llm, a compact view with refs (f1 files, t1 threads, d1 drafts, m1 MRs)"
+            )
+            .option("--print", "--give: print the markdown report to stdout (same as --md)")
+            .option("--expand <refs>", "--give: print these refs in full, e.g. f2,t1 (reads the saved facts)")
+            .option("--refresh", "--give: with --expand, collect the facts again instead of reading the saved ones")
+            .option("--proposal-skeleton", "--give: print a review proposal JSON pre-filled from the facts")
+            .option("--agent <name>", "--give: author.agent in the proposal skeleton", "agent")
+            .option("--no-impact", "--give: skip the scan of other open MRs")
             .option(
                 "--impact-limit <n>",
-                "With --impact-source api: read the diffs of at most <n> other open MRs, the most recently updated first",
+                "--give: with --impact-source api, read the diffs of at most <n> other open MRs, the most recently updated first",
                 String(DEFAULT_IMPACT_LIMIT)
             )
             .option(
                 "--impact-source [source]",
-                `${IMPACT_SOURCES.join(" | ")} (default ${door.impactSource}): api reads each MR's diff from GitLab; git fetches every open branch and diffs locally (needs a checkout, no cap)`
+                `--give: ${IMPACT_SOURCES.join(" | ")} (default ${PR_REVIEW.impactSource}); api reads each MR's diff from GitLab, git fetches every open branch and diffs locally (needs a checkout, no cap)`
             )
             .option(
                 "--drafts-only",
-                "Only my pending drafts, each in full with the code at its anchor; no impact scan (critique your own review)"
+                "--give: only my pending drafts, each in full with the code at its anchor; no impact scan (critique your own review)"
             )
             .option(
                 "--threads",
-                "Add every unresolved diff thread in full: all notes, the local code and the reviewer's frozen view"
+                "--give: add every unresolved diff thread in full: all notes, the local code and the reviewer's frozen view"
             )
-    ).action((mrIid: string, opts: Options) => runPrReview(mrIid, opts, door));
+            .option(
+                "--no-anchors",
+                "--receive: skip the API fallback for the reviewer's frozen view; views whose sha is in local history still come from git"
+            )
+            .option(
+                "--schema-format <fmt>",
+                "--receive: print the inferred discussions schema: schema | skeleton | typescript | none"
+            )
+            .option("--no-schema-sidecar", "--receive: don't write a <out>.schema.json sidecar")
+            .option("--no-md-sidecar", "--receive: don't write the <out>.md sidecar")
+            .option("--no-confirm", "--receive: skip the confirm prompt in a terminal")
+    ).action(runReview);
 }
 
-export function registerPrReview(parent: Command): Command {
-    const pr = parent.command("pr").description("Review someone else's merge request");
+/** The mode the flags ask for, or by authorship: the token's owner wrote the MR → receive. */
+async function pickMode(iid: string, opts: Options): Promise<"receive" | "give"> {
+    if (opts.receive && opts.give) {
+        throw new Error("Pick one: --receive (threads on my MR) or --give (someone else's MR).");
+    }
 
-    reviewOptions(
-        pr
-            .command("review")
-            .description(
-                "Facts for reviewing an MR: hunks with line numbers, threads, my drafts, affected open MRs, gates"
-            ),
-        PR_REVIEW
+    if (opts.receive || opts.give) {
+        return opts.receive ? "receive" : "give";
+    }
+
+    if (!/^\d+$/.test(iid)) {
+        throw new Error(`The MR iid must be a positive integer; got "${iid}".`);
+    }
+
+    const api = await resolveProjectApi({ host: opts.host, project: opts.project, cwd: opts.cwd ?? opts.repo });
+    const [mr, me] = await Promise.all([fetchMr(api, Number(iid)), currentUser(api)]);
+    const mode = mr.author.username === me.username ? "receive" : "give";
+    progress(
+        `mode: ${mode} (${mode === "receive" ? "you are" : `@${mr.author.username} is`} the author of !${iid}; pass --receive or --give to choose)`
     );
 
-    return pr;
+    return mode;
 }
 
-/** The same command under its older name, with its older defaults. */
-export function registerGiveReview(parent: Command): Command {
-    return reviewOptions(
-        parent
-            .command("give-review")
-            .description(
-                "Same as `pr review` with older defaults: git impact scan, only a summary (stderr), $TMPDIR/gitlab-give-review-<iid>.md"
-            ),
-        GIVE_REVIEW
-    );
+async function runReview(iid: string, opts: Options, cmd: Command): Promise<void> {
+    const mode = await pickMode(iid, opts);
+    const foreign = passed(cmd, mode === "receive" ? GIVE_ONLY : RECEIVE_ONLY);
+
+    if (foreign.length > 0) {
+        throw new Error(
+            `${foreign.join(", ")} ${foreign.length === 1 ? "belongs" : "belong"} to the ${mode === "receive" ? "--give" : "--receive"} mode.`
+        );
+    }
+
+    if (mode === "give") {
+        await runPrReview(iid, { ...opts, contextLines: opts.contextLines ?? "8" }, PR_REVIEW);
+
+        return;
+    }
+
+    const receive: FetchReviewOptions = {
+        host: opts.host,
+        project: opts.project,
+        cwd: opts.cwd,
+        out: opts.out,
+        format: typeof opts.format === "string" ? opts.format : opts.json ? "json" : undefined,
+        md: opts.md,
+        contextLines: opts.contextLines,
+        anchors: opts.anchors,
+        schemaFormat: opts.schemaFormat,
+        schemaSidecar: opts.schemaSidecar,
+        mdSidecar: opts.mdSidecar,
+        confirm: opts.confirm,
+    };
+
+    await runFetchReview(iid, receive);
 }
 
-async function pickEnum<T extends string>(
-    values: readonly T[],
-    value: string | true,
-    door: ReviewDoor,
-    flag: string
-): Promise<T | null> {
+async function pickEnum<T extends string>(values: readonly T[], value: string | true, flag: string): Promise<T | null> {
     const match = values.find((candidate) => candidate === value);
 
     if (match) {
@@ -203,8 +286,8 @@ async function pickEnum<T extends string>(
     }
 
     out.log.error(
-        suggestEnumFlag(toolCommand(`gitlab ${door.words.join(" ")}`), flag, values, {
-            subcommand: door.words,
+        suggestEnumFlag(toolCommand("gitlab pr"), flag, values, {
+            subcommand: ["<iid>", "review", "--give"],
             given: typeof value === "string" ? value : undefined,
         })
     );
@@ -230,7 +313,7 @@ async function pickFormat(opts: Options, door: ReviewDoor): Promise<Format | nul
         return door.format;
     }
 
-    return pickEnum(FORMATS, value ?? true, door, "--format");
+    return pickEnum(FORMATS, value ?? true, "--format");
 }
 
 /** The checkout at `cwd`, or null outside a git repository. */
@@ -265,7 +348,7 @@ function savedFacts(path: string, key: FactsKey): PrReviewFacts | null {
 
         return isFacts(parsed, key) ? parsed : null;
     } catch (error) {
-        logger.debug({ error, path }, "gitlab pr review: saved facts unreadable");
+        logger.debug({ error, path }, "gitlab pr <iid> review: saved facts unreadable");
         return null;
     }
 }
@@ -323,7 +406,7 @@ async function runPrReview(mrIid: string, opts: Options, door: ReviewDoor): Prom
     const impactSource =
         opts.impactSource === undefined
             ? door.impactSource
-            : await pickEnum(IMPACT_SOURCES, opts.impactSource, door, "--impact-source");
+            : await pickEnum(IMPACT_SOURCES, opts.impactSource, "--impact-source");
 
     if (!format || !impactSource) {
         process.exitCode = 1;
@@ -332,7 +415,7 @@ async function runPrReview(mrIid: string, opts: Options, door: ReviewDoor): Prom
 
     const iid = Number(mrIid);
     const checkoutFlag = opts.repo ?? opts.cwd;
-    const pinned = opts.worktree ?? (door.cwdIsWorktree ? opts.cwd : undefined);
+    const pinned = opts.worktree;
     const repoPath = checkoutFlag
         ? checkoutOf(resolve(checkoutFlag))
         : opts.project
@@ -403,7 +486,7 @@ async function runPrReview(mrIid: string, opts: Options, door: ReviewDoor): Prom
     const target = [opts.host ? `--host ${opts.host}` : "", opts.project ? `--project ${opts.project}` : ""]
         .filter(Boolean)
         .join(" ");
-    const command = `${toolCommand(`gitlab ${door.words.join(" ")}`)} ${iid}${target ? ` ${target}` : ""}`;
+    const command = `${reviewCommand(iid)} --give${target ? ` ${target}` : ""}`;
 
     if (opts.expand) {
         out.print(expandRefs(facts, opts.expand.split(",").filter(Boolean)));

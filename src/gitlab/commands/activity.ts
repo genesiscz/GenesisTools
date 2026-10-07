@@ -1,10 +1,10 @@
 /**
- * `gitlab activity` — what a user did on GitLab, per local day: comments per merge request, pushes
+ * `gitlab user activity` — what a user did on GitLab, per local day: comments per merge request, pushes
  * per branch with commit counts, approvals, merges, opened MRs.
  *
- *   tools gitlab activity --from 2026-09-16 --to 2026-09-22
- *   tools gitlab activity --user alice --days 7 --detail
- *   tools gitlab activity --from 2026-09-01 --to 2026-09-30 --format json > sept.json
+ *   tools gitlab user activity --from 2026-09-16 --to 2026-09-22
+ *   tools gitlab user activity --user alice --days 7 --detail
+ *   tools gitlab user activity --from 2026-09-01 --to 2026-09-30 --format json > sept.json
  *
  * stderr always states how many events were fetched and how many fell in the range, so an empty
  * day can be told apart from a failed or truncated fetch.

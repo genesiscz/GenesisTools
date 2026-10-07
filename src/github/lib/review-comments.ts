@@ -4,7 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 /**
  * Writing to a PR's review: a reply in an existing thread, or a new comment on a line; either as a
  * pending review draft (only the author sees it until the review is submitted) or published at once.
- * The GitHub half of what `tools gitlab draft-reply` does for GitLab, used by the hub's review window.
+ * The GitHub half of what `tools gitlab pr <iid> comments reply|add` does for GitLab, used by the hub's review window.
  */
 
 /** The two GitHub API calls this module makes; injected in tests. */

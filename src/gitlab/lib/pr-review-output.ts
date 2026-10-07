@@ -1,5 +1,5 @@
 /**
- * Renderers for `tools gitlab pr review`: the markdown report (json2md blocks, never concatenated
+ * Renderers for `tools gitlab pr <iid> review --give`: the markdown report (json2md blocks, never concatenated
  * strings), the compact `--llm` view with f/t/d/m refs, the `--expand` drill-down, and the review
  * proposal skeleton (`--proposal-skeleton`).
  * The `gt:review-proposal` skill says how to fill the proposal and push it with `tools hub proposal push`.
@@ -369,7 +369,7 @@ export function draftBlocks(facts: PrReviewFacts): BlockInput {
     return [
         `${facts.drafts.length} unpublished draft(s). They are visible only to their author.`,
         {
-            blockquote: `🛑 A draft that opens a new thread has no discussion yet. Nobody can reply to it, you included, until the review is published with \`${toolCommand("gitlab drafts", iid, "--publish")}\`. After publishing, \`${toolCommand("gitlab discussions", iid, "--author", "<you>", "--json")}\` gives the new discussion ids; match them by path and line.`,
+            blockquote: `🛑 A draft that opens a new thread has no discussion yet. Nobody can reply to it, you included, until the review is published with \`${toolCommand("gitlab pr", iid, "comments", "publish", "--apply")}\`. After publishing, \`${toolCommand("gitlab pr", iid, "comments", "--mine", "--json")}\` gives the new discussion ids; match them by path and line.`,
         },
         sorted.map((draft, i): BlockInput => {
             const excerpt = draftExcerpt(facts.files, draft);

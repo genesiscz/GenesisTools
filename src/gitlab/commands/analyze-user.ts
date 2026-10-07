@@ -1,5 +1,5 @@
 /**
- * `gitlab analyze-user` — a user's contribution history across every project they pushed to,
+ * `gitlab user commits` — a user's contribution history across every project they pushed to,
  * since a date, as a day-by-day Markdown report or a JSON dump.
  *
  * Strategy: walk `/users/<id>/events` (which paginates reliably) to find every push, then
@@ -45,7 +45,7 @@ interface Options extends TargetOptions {
 export function registerAnalyzeUser(parent: Command): Command {
     return withHost(
         parent
-            .command("analyze-user")
+            .command("commits")
             .description("Analyze a GitLab user's commit activity across all projects they contribute to")
             .requiredOption("--user <username>", "GitLab username")
             .requiredOption("--since <YYYY-MM-DD>", "Inclusive start date: commits authored on or after it")

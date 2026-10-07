@@ -9,7 +9,7 @@ import type { ForgePage } from "./page-url";
 export interface ReviewGate {
     /** `tools hub status` exited 0: the review window is installed. */
     hub: boolean;
-    /** The facts command exists (`tools gitlab pr review` for GitLab; always true for GitHub). */
+    /** The facts command exists (`tools gitlab pr <iid> review` for GitLab; always true for GitHub). */
     facts: boolean;
     /** Why the review cannot start; null when both gates pass. */
     reason: string | null;
@@ -39,8 +39,8 @@ export function reviewPrompt(page: ForgePage, root: string): string {
     const facts =
         page.kind === "gitlab"
             ? [
-                  `\`${toolCommand("gitlab pr review", String(n), "--json")}\` (diff hunks, checklist, related MRs)`,
-                  `\`${toolCommand("gitlab fetch-review", String(n))}\` (existing threads with the code at each anchor)`,
+                  `\`${toolCommand("gitlab pr", String(n), "review", "--give", "--json")}\` (diff hunks, checklist, related MRs)`,
+                  `\`${toolCommand("gitlab pr", String(n), "review", "--give", "--threads", "--md")}\` (existing threads with the code at each anchor)`,
               ]
             : [
                   `\`${toolCommand("github review", String(n), "--llm")}\` (existing threads)`,
@@ -76,14 +76,14 @@ export async function reviewGate(deps: Deps, page: ForgePage, root: string): Pro
     if (page.kind === "gitlab") {
         // Commander answers `--help` for an unknown subcommand with the ROOT usage and exit 0, so
         // only the command's own usage line proves it exists.
-        const help = await deps.tools(["gitlab", "pr", "review", "--help"], { cwd: root, timeoutMs: 15_000 });
-        factsOk = help.code === 0 && /Usage: gitlab pr review\b/.test(help.stdout);
+        const help = await deps.tools(["gitlab", "pr", "1", "review", "--help"], { cwd: root, timeoutMs: 15_000 });
+        factsOk = help.code === 0 && /Usage: gitlab pr <iid> review\b/.test(help.stdout);
     }
 
     const reason = !hubOk
         ? `The GenesisTools.app review window is not installed (${toolCommand("hub status")} exits 1).`
         : !factsOk
-          ? `${toolCommand("gitlab pr review")} is not available yet, so the review has no MR facts to start from.`
+          ? `${toolCommand("gitlab pr", "<iid>", "review")} is not available yet, so the review has no MR facts to start from.`
           : null;
     log.info({ hub: hubOk, facts: factsOk, kind: page.kind }, "review gate");
     return { hub: hubOk, facts: factsOk, reason };

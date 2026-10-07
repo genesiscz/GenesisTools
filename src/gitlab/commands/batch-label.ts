@@ -1,8 +1,9 @@
 /**
- * Add or remove labels on a batch of MRs, logging labels before and after per MR.
+ * `gitlab pr <iids> labels`: add or remove labels on one MR or a comma list, logging labels before and
+ * after per MR.
  *
- *   tools gitlab batch-label 12,34 --add "Stale" --dry-run
- *   tools gitlab batch-label 12,34 --add "Stale" --remove "Needs review"
+ *   tools gitlab pr 12,34 labels --add "Stale" --dry-run
+ *   tools gitlab pr 12,34 labels --add "Stale" --remove "Needs review"
  *
  * Every applied change is appended to ~/.genesis-tools/gitlab/label-batch.jsonl.
  */
@@ -36,12 +37,12 @@ interface Options extends TargetOptions {
     out?: string;
 }
 
-export function registerBatchLabel(parent: Command): Command {
+export function registerLabels(pr: Command): Command {
     return withProject(
-        parent
-            .command("batch-label")
-            .description("Add and/or remove labels on many MRs; prints and logs labels before and after per MR")
-            .argument("<iids>", "Comma-separated MR iids (e.g. 12,34)")
+        pr
+            .command("labels")
+            .description("Add and/or remove labels on one MR or a comma list; prints and logs labels before and after")
+            .argument("<iid>", "MR iid, or a comma list (12,34)")
             .option("--add <label>", "Label to add (repeatable or comma-separated)", collect, [])
             .option("--remove <label>", "Label to remove (repeatable or comma-separated)", collect, [])
             .option("--dry-run", "Fetch current labels and print the planned result without changing anything")

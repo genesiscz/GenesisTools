@@ -1,18 +1,18 @@
 /**
- * `gitlab fetch-review` — the discussions of one MR as raw JSON (always saved, and the default
+ * The receive mode of `gitlab pr <iid> review --receive`: the discussions of one MR as raw JSON (always saved, and the default
  * stdout) and, with `--md`, a per-thread Markdown report rendered through json2md with code
  * excerpts from the local working tree and the reviewer's frozen view.
  *
  * In a terminal it shows clack status lines and a confirm prompt; piped or redirected, it writes
  * plain status to stderr and the result to stdout.
  *
- *   tools gitlab fetch-review <MR_IID> [--project group/name] [--cwd <checkout>] [--md | --format json|md|both]
+ *   tools gitlab pr <iid> review --receive [--project group/name] [--cwd <checkout>] [--md | --format json|md|both]
  */
 
 import { existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { type TargetOptions, withProject } from "@app/gitlab/commands/shared";
+import type { TargetOptions } from "@app/gitlab/commands/shared";
 import { projectBase, resolveProjectApi, restGetPaginated } from "@app/gitlab/lib/client";
 import { FETCH_FORMATS, loadConfig } from "@app/gitlab/lib/config";
 import {
@@ -26,12 +26,11 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { formatSchema, type OutputMode } from "@genesiscz/utils/json-schema";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
-import type { Command } from "commander";
 
 const FORMATS = FETCH_FORMATS;
 const SCHEMA_FORMATS = ["schema", "skeleton", "typescript", "none"] as const;
 
-interface Options extends TargetOptions {
+export interface FetchReviewOptions extends TargetOptions {
     cwd?: string;
     out?: string;
     format?: string;
@@ -55,45 +54,10 @@ const status = {
     message: (msg: string) => (isTty() ? out.log.message(msg) : out.printlnErr(msg)),
 };
 
-export function registerFetchReview(parent: Command): Command {
-    return withProject(
-        parent
-            .command("fetch-review")
-            .description("Fetch MR discussions as JSON; --md renders the per-thread Markdown report")
-            .argument("<mr-iid>", "MR IID (the small number in the URL, not the global id)")
-            .option(
-                "--cwd <dir>",
-                "Checkout to read code excerpts, git anchors and the origin remote from (default: current directory)"
-            )
-            .option("--out <file>", "Save JSON here (default: $TMPDIR/gitlab-review-<iid>.json)")
-            .option(
-                "--format <fmt>",
-                "stdout: json = the discussions JSON, md = the Markdown report, both = Markdown on stdout plus the JSON file (default: review.fetch.format in the config, else json)"
-            )
-            .option("--md", "Same as --format md")
-            .option(
-                "--context-lines <n>",
-                "Lines of code excerpt around each anchor (default: review.fetch.contextLines in the config, else 3)"
-            )
-            .option(
-                "--no-anchors",
-                "Skip the API fallback for the reviewer's frozen view; views whose sha is in local history still come from git"
-            )
-            .option(
-                "--schema-format <fmt>",
-                "Print the inferred discussions schema: schema | skeleton | typescript | none",
-                "none"
-            )
-            .option("--no-schema-sidecar", "Don't write a <out>.schema.json sidecar")
-            .option("--no-md-sidecar", "Don't write the <out>.md sidecar")
-            .option("--no-confirm", "Skip the confirm prompt in a terminal")
-    ).action(runFetchReview);
-}
-
-async function runFetchReview(mrIid: string, opts: Options): Promise<void> {
+export async function runFetchReview(mrIid: string, opts: FetchReviewOptions): Promise<void> {
     const tty = isTty();
     if (tty) {
-        out.intro(`gitlab fetch-review ${mrIid}`);
+        out.intro(`gitlab pr ${mrIid} review --receive`);
     }
 
     if (!/^\d+$/.test(mrIid)) {
