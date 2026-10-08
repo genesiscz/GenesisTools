@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { parseCmuxTree, pickAdoptable, ttyRunsAgent } from "./session-adopt";
+import { liveAgentSurfaces, matchLiveAgentSurfaces, parseCmuxTree, pickAdoptable, ttyRunsAgent } from "./session-adopt";
 
 function surface(ref: string, tty: string) {
     return { ref, tty, type: "terminal", title: "t" };
@@ -57,7 +57,40 @@ test("the tree gives each terminal surface its tty, workspace and window, and na
         tty: "ttys006",
         workspace: "workspace:2",
         window: "window:1",
+        title: "t",
+        workspaceTitle: null,
     });
+});
+
+test("a live agent session is found by part of its tab title, workspace title or cwd folder", () => {
+    const live = liveAgentSurfaces({
+        refs: [refs("0199cccc-0000-7000-8000-000000000001", "surface:6", 5, "grok")],
+        tree: parseCmuxTree(
+            SafeJSON.stringify({
+                caller: { surface_ref: "surface:1" },
+                windows: [
+                    {
+                        ref: "window:1",
+                        workspaces: [
+                            {
+                                ref: "workspace:2",
+                                title: "cleanup old PRs",
+                                panes: [{ surfaces: [{ ...surface("surface:6", "ttys006"), title: "vybava - grok" }] }],
+                            },
+                        ],
+                    },
+                ],
+            })
+        ),
+        providerOf,
+    });
+
+    expect(matchLiveAgentSurfaces("vybava", "grok", live).map((hit) => hit.sessionId)).toEqual([
+        "0199cccc-0000-7000-8000-000000000001",
+    ]);
+    expect(matchLiveAgentSurfaces("old prs", "grok", live)).toHaveLength(1);
+    expect(matchLiveAgentSurfaces("work", "grok", live)).toHaveLength(1);
+    expect(matchLiveAgentSurfaces("vybava", "claude", live)).toEqual([]);
 });
 
 test("a session id, its prefix or its surface adopts the newest session of a live surface", () => {

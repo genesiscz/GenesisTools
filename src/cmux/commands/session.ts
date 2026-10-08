@@ -3,9 +3,10 @@ import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 
-import { suggestEnumFlag } from "@genesiscz/utils/cli";
+import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
+import { type AccountBudget, accountChoiceMessage, liveAccountBudgets } from "../lib/account-budgets";
 import {
     type AccountChoice,
     isSessionAgentId,
@@ -44,19 +45,18 @@ interface SessionNewFlags {
 
 interface AccountSource {
     accounts: AccountChoice[];
-    appDefaultModel?: string;
 }
 
 export interface SessionNewDeps {
     io: SessionNewIO;
     store: SessionStore;
     accounts: () => Promise<AccountSource>;
+    budgets: (agent: SessionAgentId, accounts: readonly AccountChoice[]) => Promise<AccountBudget[]>;
 }
 
-async function liveAccounts(agent: SessionAgentId): Promise<AccountSource> {
+async function liveAccounts(): Promise<AccountSource> {
     const config = await AiConfigStore.readOnly();
-    const model = config.data().defaults.app?.[agent]?.chat?.model;
-    return { accounts: config.accounts(), ...(model ? { appDefaultModel: model } : {}) };
+    return { accounts: config.accounts() };
 }
 
 function blank(value: string | undefined): string | undefined {
@@ -133,13 +133,29 @@ export async function runSessionNew(
 
     const io = deps.io ?? liveSessionIO();
     const store = deps.store ?? fileSessionStore();
-    const source = await (deps.accounts ?? (() => liveAccounts(agent)))();
-    const account = pickSessionAccount({
-        agent: sessionAgent(agent),
-        accounts: source.accounts,
-        requested: blank(options.account),
-        ...(source.appDefaultModel ? { appDefaultModel: source.appDefaultModel } : {}),
-    });
+    const source = await (deps.accounts ?? liveAccounts)();
+    const requested = blank(options.account);
+
+    if (!requested) {
+        const enabled = source.accounts.filter(
+            (entry) => entry.provider === sessionAgent(agent).provider && entry.enabled
+        );
+        const budgets = await (deps.budgets ?? liveAccountBudgets)(agent, enabled);
+        out.error(
+            accountChoiceMessage({
+                agent,
+                budgets,
+                retry: suggestCommand(`tools cmux agents new ${agent}`, {
+                    subcommand: ["agents", "new", agent],
+                    add: ["--account", "<name>"],
+                }),
+            })
+        );
+        process.exitCode = 1;
+        return;
+    }
+
+    const account = pickSessionAccount({ agent: sessionAgent(agent), accounts: source.accounts, requested });
     const cwd = resolveSessionRepo(repo, homedir(), process.cwd(), io.repoFs);
     const title = blank(options.name);
     const name = title ? sessionSlug(title) : `${agent}-${sessionSlug(basename(cwd))}-${io.nonce()}`;
@@ -276,7 +292,10 @@ async function runSessionList(options: { agent?: string; all?: boolean; json?: b
 function addNewOptions(command: Command): Command {
     return command
         .requiredOption("--repo <name|path>", "Project name under ~/Tresors/Projects, or a directory path")
-        .option("--account <name>", "Account. Omit to use the agent's default account.")
+        .option(
+            "--account <name>",
+            "Account (required). Omit it to list every account with its 5h and weekly budget left"
+        )
         .option("--model <id>", "Model id or alias, passed to tools <agent> run -m")
         .option("--prompt <text>", "Initial prompt. Passed after -- to tools <agent> run.")
         .option("--prompt-file <path>", "Read the prompt from a file when the workspace command runs")

@@ -8,6 +8,9 @@ export interface LiveSurface {
     tty: string | null;
     workspace: string;
     window: string;
+    /** The tab title (`vybava - grok`). */
+    title: string | null;
+    workspaceTitle: string | null;
 }
 
 export interface CmuxTreeView {
@@ -63,6 +66,8 @@ export function parseCmuxTree(stdout: string): CmuxTreeView {
                             tty: text(surface.tty),
                             workspace: String(workspace.ref),
                             window: String(window.ref),
+                            title: text(surface.title),
+                            workspaceTitle: text(workspace.title),
                         });
                     }
                 }
@@ -156,4 +161,75 @@ function adoptedFrom(entry: SessionCmuxRefs, live: LiveSurface, agent: SessionAg
 export function ttyRunsAgent(psArgs: string, agent: SessionAgentId): boolean {
     const word = new RegExp(`(^|[\\s/])${agent}(\\s|$)`);
     return psArgs.split("\n").some((line) => word.test(line.trim()));
+}
+
+export interface LiveAgentSurface {
+    sessionId: string;
+    agent: SessionAgentId;
+    surface: LiveSurface;
+    cwd: string | null;
+}
+
+/** The newest agent session of each live surface (caller excluded), with the agent named. */
+export function liveAgentSurfaces(input: {
+    refs: Iterable<SessionCmuxRefs>;
+    tree: CmuxTreeView;
+    providerOf: (entry: SessionCmuxRefs) => string | undefined;
+}): LiveAgentSurface[] {
+    const newest = new Map<string, SessionCmuxRefs>();
+
+    for (const entry of input.refs) {
+        const ref = entry.surfaceRef;
+
+        if (!ref || !input.tree.surfaces.has(ref) || ref === input.tree.caller) {
+            continue;
+        }
+
+        const seen = newest.get(ref);
+
+        if (!seen || entry.at > seen.at) {
+            newest.set(ref, entry);
+        }
+    }
+
+    const found: LiveAgentSurface[] = [];
+
+    for (const [ref, entry] of newest) {
+        const agent = input.providerOf(entry);
+        const surface = input.tree.surfaces.get(ref);
+
+        if (agent && isSessionAgentId(agent) && surface) {
+            found.push({ sessionId: entry.sessionId, agent, surface, cwd: entry.cwd });
+        }
+    }
+
+    return found;
+}
+
+/**
+ * Live sessions of one agent that a query names: the session id or an 8+ character prefix, else a
+ * case-insensitive part of the tab title, the workspace title or the cwd's last folder.
+ */
+export function matchLiveAgentSurfaces(
+    query: string,
+    agent: SessionAgentId,
+    live: readonly LiveAgentSurface[]
+): LiveAgentSurface[] {
+    const needle = query.trim().toLowerCase();
+    const mine = live.filter((entry) => entry.agent === agent);
+    const byId = mine.filter(
+        (entry) =>
+            entry.sessionId.toLowerCase() === needle ||
+            (needle.length >= 8 && entry.sessionId.toLowerCase().startsWith(needle))
+    );
+
+    if (byId.length > 0 || needle === "") {
+        return byId;
+    }
+
+    return mine.filter((entry) =>
+        [entry.surface.title, entry.surface.workspaceTitle, entry.cwd?.split("/").pop() ?? null].some((value) =>
+            value?.toLowerCase().includes(needle)
+        )
+    );
 }

@@ -3,6 +3,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { registerSessionCommand, runSessionNew } from "../commands/session";
+import { accountChoiceMessage, budgetsFromSnapshots } from "./account-budgets";
 import { agentRunCommand, pickSessionAccount, sessionAgent, withPidNote } from "./session-agents";
 import {
     assertShellExecutable,
@@ -105,7 +106,7 @@ test("the run line quotes the account and the prompt, and omits -- when there is
     );
 });
 
-test("the session account is the one asked for, else the app default, else the only one", () => {
+test("the session account is exactly the one asked for; there is no default", () => {
     const account = (id: string, name: string, provider: string, enabled = true) => ({ id, name, provider, enabled });
     const accounts = [
         account("acc_work", "work", "anthropic-sub"),
@@ -117,11 +118,7 @@ test("the session account is the one asked for, else the app default, else the o
     const grok = sessionAgent("grok");
 
     expect(pickSessionAccount({ agent: claude, accounts, requested: "sho" }).name).toBe("shop");
-    expect(pickSessionAccount({ agent: claude, accounts, appDefaultModel: "@account/acc_work:sonnet" }).name).toBe(
-        "work"
-    );
-    expect(pickSessionAccount({ agent: grok, accounts }).name).toBe("side");
-    expect(() => pickSessionAccount({ agent: claude, accounts })).toThrow("pass --account");
+    expect(pickSessionAccount({ agent: grok, accounts, requested: "acc_side" }).name).toBe("side");
     expect(() => pickSessionAccount({ agent: grok, accounts, requested: "work" })).toThrow(
         'no grok account matches "work"'
     );
@@ -390,7 +387,17 @@ const ACCOUNTS = async () => ({
 test("agents new prints the result JSON, records the session, and rejects a bad focus first", async () => {
     const { io, calls } = harness();
     const store = memoryStore();
-    const deps = { io, store, accounts: ACCOUNTS };
+    const budgets = async () => [
+        {
+            name: "side",
+            fiveHourLeft: 80,
+            fiveHourResetsAt: null,
+            weeklyLeft: 40,
+            weeklyResetsAt: null,
+            note: null,
+        },
+    ];
+    const deps = { io, store, accounts: ACCOUNTS, budgets };
     const stdout = await captureStdout(() =>
         runSessionNew(
             "claude",
@@ -418,9 +425,10 @@ test("agents new prints the result JSON, records the session, and rejects a bad 
         expect.objectContaining({ type: "created", name: "claude-app-ab12cd", workspace: "workspace:9" }),
     ]);
 
-    await expect(runSessionNew("grok", { repo: "/repo/app" }, deps)).rejects.toThrow(
-        "no default grok account; pass --account <name> (known: none)"
-    );
+    process.exitCode = 0;
+    await runSessionNew("codex", { repo: "/repo/app" }, deps);
+    expect(process.exitCode).toBe(1);
+    expect(calls.filter((call) => call[0] === "workspace")).toHaveLength(1);
 
     process.exitCode = 0;
     await runSessionNew("claude", { repo: "/repo/app", account: "work", focus: "maybe" }, deps);
@@ -433,12 +441,14 @@ test("a codex session runs tools codex run with its only account, and a taken na
     const store = memoryStore();
     const deps = { io, store, accounts: ACCOUNTS };
 
-    await captureStdout(() => runSessionNew("codex", { repo: "/repo/app", name: "Fix It", prompt: "go" }, deps));
+    await captureStdout(() =>
+        runSessionNew("codex", { repo: "/repo/app", account: "side", name: "Fix It", prompt: "go" }, deps)
+    );
     expect(calls.find((call) => call[0] === "workspace")).toContain(
         withPidNote("'tools' 'codex' 'run' 'side' '--' 'go'", "/state/sessions/fix-it.pid")
     );
 
-    await expect(runSessionNew("codex", { repo: "/repo/app", name: "fix it" }, deps)).rejects.toThrow(
+    await expect(runSessionNew("codex", { repo: "/repo/app", account: "side", name: "fix it" }, deps)).rejects.toThrow(
         'a session named "fix-it" is already open'
     );
 });
@@ -499,3 +509,48 @@ async function captureStdout(run: () => Promise<void>): Promise<string> {
         process.stdout.write = original;
     }
 }
+
+test("without --account the error lists every account's 5h and weekly budget and tells an agent what to do", () => {
+    const now = Date.parse("2026-10-08T20:00:00Z");
+    const budgets = budgetsFromSnapshots(
+        [
+            { id: "acc_work", name: "work", provider: "anthropic-sub", enabled: true },
+            { id: "acc_shop", name: "shop", provider: "anthropic-sub", enabled: true },
+        ],
+        [
+            {
+                provider: "anthropic-sub",
+                accountId: "acc_work",
+                accountName: "work",
+                fetchedAt: "2026-10-08T19:59:00Z",
+                limits: [
+                    {
+                        key: "five_hour",
+                        label: "5h",
+                        kind: "session",
+                        percentUsed: 13,
+                        resetsAt: "2026-10-08T22:00:00Z",
+                    },
+                    { key: "seven_day", label: "Weekly", kind: "weekly", percentUsed: 100 },
+                    { key: "seven_day_opus", label: "7d Opus", kind: "weekly", scopeModel: "opus", percentUsed: 5 },
+                ],
+            },
+        ]
+    );
+
+    expect(budgets).toEqual([
+        expect.objectContaining({ name: "work", fiveHourLeft: 87, weeklyLeft: 0, note: null }),
+        expect.objectContaining({ name: "shop", fiveHourLeft: null, weeklyLeft: null, note: "no usage reading" }),
+    ]);
+
+    const message = accountChoiceMessage({
+        agent: "claude",
+        budgets,
+        retry: "tools cmux agents new claude --account <name>",
+        now,
+    });
+    expect(message).toContain("work  5h 87% left (resets in 2h 0m)   weekly 0% left");
+    expect(message).toContain("shop  5h ?   weekly ?   [no usage reading]");
+    expect(message).toContain("AGENT INSTRUCTION: do not choose silently");
+    expect(message).toContain("tell the user in your reply which one you picked and why");
+});

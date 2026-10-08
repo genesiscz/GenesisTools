@@ -89,44 +89,29 @@ export function withPidNote(command: string, pidFile: string): string {
 
 export type AccountChoice = Pick<AccountEntry, "id" | "name" | "provider" | "enabled">;
 
-/** The account a new session runs as: the one asked for, else the app default, else the only enabled one. */
+/**
+ * The account a new session runs as: exactly the one asked for (id, name, or a unique part of the name).
+ * There is no default on purpose: the caller lists the accounts with their budgets and lets the user (or
+ * an agent that tells the user) choose.
+ */
 export function pickSessionAccount<T extends AccountChoice>(input: {
     agent: SessionAgent;
     accounts: readonly T[];
-    /** `@account/<id>` from the app default of the agent (`defaults.app.<agent>.chat.model`), if any. */
-    appDefaultModel?: string;
-    requested?: string;
+    requested: string;
 }): T {
     const enabled = input.accounts.filter((account) => account.provider === input.agent.provider && account.enabled);
     const names = enabled.map((account) => account.name).join(", ") || "none";
+    const needle = input.requested.toLowerCase();
+    const exact = enabled.filter((account) => account.id === input.requested || account.name === input.requested);
+    const hits = exact.length > 0 ? exact : enabled.filter((account) => account.name.toLowerCase().includes(needle));
 
-    if (input.requested) {
-        const needle = input.requested.toLowerCase();
-        const exact = enabled.filter((account) => account.id === input.requested || account.name === input.requested);
-        const hits =
-            exact.length > 0 ? exact : enabled.filter((account) => account.name.toLowerCase().includes(needle));
-
-        if (hits.length === 1) {
-            return hits[0];
-        }
-
-        throw new Error(
-            hits.length === 0
-                ? `no ${input.agent.id} account matches "${input.requested}" (known: ${names})`
-                : `"${input.requested}" matches ${hits.length} ${input.agent.id} accounts: ${hits.map((a) => a.name).join(", ")}`
-        );
+    if (hits.length === 1) {
+        return hits[0];
     }
 
-    const defaultId = input.appDefaultModel?.match(/^@account\/([^:]+)/)?.[1];
-    const byDefault = defaultId ? enabled.find((account) => account.id === defaultId) : undefined;
-
-    if (byDefault) {
-        return byDefault;
-    }
-
-    if (enabled.length === 1) {
-        return enabled[0];
-    }
-
-    throw new Error(`no default ${input.agent.id} account; pass --account <name> (known: ${names})`);
+    throw new Error(
+        hits.length === 0
+            ? `no ${input.agent.id} account matches "${input.requested}" (known: ${names})`
+            : `"${input.requested}" matches ${hits.length} ${input.agent.id} accounts: ${hits.map((a) => a.name).join(", ")}`
+    );
 }

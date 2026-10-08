@@ -8,7 +8,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
-import { parseCmuxTree, pickAdoptable, ttyRunsAgent } from "./session-adopt";
+import { type LiveAgentSurface, liveAgentSurfaces, parseCmuxTree, pickAdoptable, ttyRunsAgent } from "./session-adopt";
 import {
     type AdoptedSession,
     type CloseSubject,
@@ -104,6 +104,15 @@ async function spawnOk(argv: string[]): Promise<{ code: number; stdout: string; 
         proc.exited,
     ]);
     return { code, stdout, stderr };
+}
+
+/** Every live agent session in cmux with its tab and workspace titles (newest per surface, caller excluded). */
+export async function liveAgentSurfacesNow(): Promise<LiveAgentSurface[]> {
+    return liveAgentSurfaces({
+        refs: loadAllSessionCmuxRefs().values(),
+        tree: await liveTree(),
+        providerOf: (entry) => resolveRefsProvider(entry, undefined),
+    });
 }
 
 /** Every live agent session in cmux that `close` could adopt (newest session per surface, caller excluded). */

@@ -1,3 +1,5 @@
+import { type LiveAgentSurface, matchLiveAgentSurfaces } from "@app/cmux/lib/session-adopt";
+import { liveAgentSurfacesNow } from "@app/cmux/lib/session-close-live";
 import type { TurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
 import {
     type ClaudeLiveSession,
@@ -15,7 +17,8 @@ const { log } = logger.scoped("agent-message");
 /**
  * `tools <agent> message <session> <text>`: deliver a message to a RUNNING session through the agent's own
  * structured channel, never by typing into its terminal. One driver per agent; an agent without such a
- * channel says so and names the keystroke fallback (`tools <agent> cmux send`).
+ * channel throws `NoChannelError`, and only `--allow-keystrokes` then pastes into its cmux surface
+ * (`cmux paste --submit`, which refuses to type over a draft or into an open dialog).
  *
  * Not the agents bus: `tools agents message` talks to agents logged into a bus session. This reaches a
  * session that is not on the bus at all.
@@ -32,7 +35,7 @@ export interface MessageDelivery {
     agent: TurnProvider;
     sessionId: string;
     name: string | null;
-    via: "claude-socket" | "codex-queue";
+    via: "claude-socket" | "codex-queue" | "cmux-paste";
     /** What the receiver does with it, in one line. */
     note: string;
 }
@@ -46,6 +49,68 @@ export class MessageError extends Error {
         super(message);
         this.name = "MessageError";
     }
+}
+
+/** The session was found but its agent offers no structured way in (or refused); keystrokes are the only path. */
+export class NoChannelError extends MessageError {
+    constructor(
+        message: string,
+        readonly sessionId: string,
+        suggestions: string[] = []
+    ) {
+        super(message, suggestions);
+        this.name = "NoChannelError";
+    }
+}
+
+function liveLabel(entry: LiveAgentSurface): string {
+    return `${entry.sessionId.slice(0, 8)}  "${entry.surface.title ?? ""}"  ${entry.surface.workspaceTitle ?? ""}  ${entry.surface.ref}`;
+}
+
+/**
+ * A session id for a query: the transcript resolver first (id, prefix, path, /rename title), then the
+ * live cmux surfaces of that agent (tab title, workspace title, cwd folder), so `vybava` finds the
+ * Grok tab called "vybava - grok". Several live matches fail with each candidate's exact command.
+ */
+export async function resolveSessionId(input: {
+    alias: TurnProvider;
+    query: string;
+    first: boolean;
+    transcript?: (query: string, first: boolean) => Promise<string>;
+    live?: () => Promise<LiveAgentSurface[]>;
+}): Promise<string> {
+    const transcript =
+        input.transcript ??
+        (async (query, first) => (await resolveWaitTranscript(input.alias, query, first)).sessionId);
+    const live = input.live ?? liveAgentSurfacesNow;
+
+    try {
+        return await transcript(input.query, input.first);
+    } catch (error) {
+        log.debug({ error, query: input.query, alias: input.alias }, "no transcript match; trying live cmux tabs");
+    }
+
+    const surfaces = await live().catch((error: unknown) => {
+        log.debug({ error }, "cmux tree unavailable");
+        return [];
+    });
+    const hits = matchLiveAgentSurfaces(input.query, input.alias, surfaces);
+
+    if (hits.length === 1) {
+        return hits[0].sessionId;
+    }
+
+    const mine = surfaces.filter((entry) => entry.agent === input.alias);
+    const shown = hits.length > 1 ? hits : mine;
+    throw new MessageError(
+        hits.length > 1
+            ? `"${input.query}" matches ${hits.length} running ${input.alias} sessions:\n${hits.map((hit) => `  ${liveLabel(hit)}`).join("\n")}`
+            : `no ${input.alias} session matches "${input.query}" (tried session id, path, /rename title, cmux tab and workspace titles)` +
+                  (mine.length > 0
+                      ? `\nrunning ${input.alias} sessions in cmux:\n${mine.map((entry) => `  ${liveLabel(entry)}`).join("\n")}`
+                      : ""),
+        shown.map((entry) => `tools ${input.alias} message ${entry.sessionId} "<text>"`)
+    );
 }
 
 export interface MessageDriver {
@@ -100,8 +165,7 @@ export function claudeMessageDriver(
     const sessions = deps.sessions ?? (() => listClaudeLiveSessions());
     const token = deps.token ?? ((session) => readPeerToken(session));
     const send = deps.send ?? sendClaudePeerMessage;
-    const resolveId =
-        deps.resolveId ?? (async (query, first) => (await resolveWaitTranscript("claude", query, first)).sessionId);
+    const resolveId = deps.resolveId ?? ((query, first) => resolveSessionId({ alias: "claude", query, first }));
 
     return {
         async deliver(request) {
@@ -117,7 +181,11 @@ export function claudeMessageDriver(
 
                 // Not a live id or name: maybe a /rename title or a path the transcript resolver knows.
                 const sessionId = await resolveId(request.query, request.first === true).catch((resolveError) => {
-                    log.debug({ error: resolveError, query: request.query }, "transcript resolver found nothing");
+                    if (resolveError instanceof MessageError && resolveError.suggestions.length > 0) {
+                        throw resolveError;
+                    }
+
+                    log.debug({ error: resolveError, query: request.query }, "no session id for the query");
                     return null;
                 });
                 const running = sessionId ? live.find((session) => session.sessionId === sessionId) : undefined;
@@ -177,8 +245,7 @@ export function codexMessageDriver(
         queue?: (threadId: string, text: string) => Promise<{ code: number; stderr: string }>;
     } = {}
 ): MessageDriver {
-    const resolveId =
-        deps.resolveId ?? (async (query, first) => (await resolveWaitTranscript("codex", query, first)).sessionId);
+    const resolveId = deps.resolveId ?? ((query, first) => resolveSessionId({ alias: "codex", query, first }));
     const queue = deps.queue ?? runCodexQueue;
 
     return {
@@ -187,10 +254,10 @@ export function codexMessageDriver(
             const result = await queue(sessionId, request.text);
 
             if (result.code !== 0) {
-                throw new MessageError(
+                throw new NoChannelError(
                     `codex queue refused (${result.code}): ${result.stderr.trim() || "no detail"}. ` +
-                        "A Codex TUI reaches only the shared app-server when it was started with --remote (or the default daemon).",
-                    [`tools codex cmux send ${sessionId} "<text>"   # keystroke fallback`]
+                        "A Codex TUI takes queued messages only when it was started against the shared app-server (--remote or the default daemon).",
+                    sessionId
                 );
             }
 
@@ -205,22 +272,60 @@ export function codexMessageDriver(
     };
 }
 
-/** Grok has no structured way into a running TUI yet (no leader runs; `grok agent --leader` is untested). */
+/**
+ * Grok has no structured way into a running TUI: checked 2026-10-08 on a live `grok` (1.0.44) in cmux, the
+ * process holds only connected anonymous socket pairs and no listening socket, and no leader runs
+ * (`grok leader list`: none). Sessions GenesisTools starts itself are driven over ACP (`tools grok worker`).
+ */
 export function grokMessageDriver(
     deps: { resolveId?: (query: string, first: boolean) => Promise<string> } = {}
 ): MessageDriver {
-    const resolveId =
-        deps.resolveId ?? (async (query, first) => (await resolveWaitTranscript("grok", query, first)).sessionId);
+    const resolveId = deps.resolveId ?? ((query, first) => resolveSessionId({ alias: "grok", query, first }));
 
     return {
         async deliver(request) {
             const sessionId = await resolveId(request.query, request.first === true);
-            throw new MessageError(
-                `Grok has no structured channel into a running session yet (session ${sessionId}). ` +
-                    "Sessions GenesisTools starts itself are driven over ACP (`tools grok worker`).",
-                [`tools grok cmux send ${sessionId} "<text>"   # keystroke fallback into its cmux pane`]
+            throw new NoChannelError(
+                `Grok has no structured channel into a running session (session ${sessionId}): the TUI listens on no socket.`,
+                sessionId
             );
         },
+    };
+}
+
+/** Paste into the session's cmux surface and submit; cmux refuses over a draft or an open dialog. */
+async function pasteIntoSurface(input: {
+    alias: TurnProvider;
+    sessionId: string;
+    text: string;
+    live?: () => Promise<LiveAgentSurface[]>;
+}): Promise<MessageDelivery> {
+    const surfaces = await (input.live ?? liveAgentSurfacesNow)();
+    const target = surfaces.find((entry) => entry.sessionId === input.sessionId && entry.agent === input.alias);
+
+    if (!target) {
+        throw new MessageError(`session ${input.sessionId} has no live cmux surface to paste into`);
+    }
+
+    const proc = Bun.spawn(["cmux", "paste", "--surface", target.surface.ref, "--submit", "--", input.text], {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+    });
+    const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+
+    if (code !== 0) {
+        throw new MessageError(
+            `cmux paste refused (${code}): ${stderr.trim() || "no detail"}. It refuses while the prompt holds a draft or a question/permission dialog is open.`
+        );
+    }
+
+    return {
+        agent: input.alias,
+        sessionId: input.sessionId,
+        name: target.surface.title,
+        via: "cmux-paste",
+        note: `pasted and submitted in ${target.surface.ref} (keystrokes, no structured channel)`,
     };
 }
 
@@ -235,6 +340,7 @@ export function messageDriverFor(alias: TurnProvider): MessageDriver {
 interface MessageFlags {
     priority?: string;
     first?: boolean;
+    allowKeystrokes?: boolean;
     json?: boolean;
 }
 
@@ -266,7 +372,25 @@ export async function messageCommand(alias: TurnProvider, query: string, parts: 
     const priority = PRIORITIES.find((value) => value === flags.priority);
 
     try {
-        const delivery = await messageDriverFor(alias).deliver({ query, text, priority, first: flags.first });
+        const delivery = await messageDriverFor(alias)
+            .deliver({ query, text, priority, first: flags.first })
+            .catch((error: unknown) => {
+                if (!(error instanceof NoChannelError)) {
+                    throw error;
+                }
+
+                if (!flags.allowKeystrokes) {
+                    throw new MessageError(error.message, [
+                        `tools ${alias} message ${error.sessionId} "<text>" --allow-keystrokes   # paste into its cmux tab (refuses over a draft or dialog)`,
+                    ]);
+                }
+
+                log.debug(
+                    { alias, sessionId: error.sessionId },
+                    "no structured channel; pasting into the cmux surface"
+                );
+                return pasteIntoSurface({ alias, sessionId: error.sessionId, text });
+            });
 
         if (flags.json) {
             out.result(delivery);
@@ -300,11 +424,16 @@ export function registerAgentMessageCommand(program: Command, alias: TurnProvide
         )
         .option("--priority <now|next|later>", "Claude: when the session handles it (default: its own queue order)")
         .option("--first", "When a /rename title matches several sessions, take the newest instead of failing")
+        .option(
+            "--allow-keystrokes",
+            "When the agent has no structured channel (Grok, a Codex TUI without the shared app-server), paste into its cmux tab with cmux paste --submit"
+        )
         .option("--json", "Print {agent,sessionId,name,via,note}")
         .addHelpText(
             "after",
             `
-<session> is a session id (8+ characters is enough), a session name, or a /rename title.
+<session> is a session id (8+ characters is enough), a session name, a /rename title, or part of the
+cmux tab or workspace title the session runs in ("vybava" finds the tab "vybava - grok").
 <text> is the message; pass - to read it from stdin.
 
 Channels:
@@ -314,7 +443,8 @@ Channels:
           session in bypass mode holds it for approval unless its crossSessionInbound setting is accept.
   codex   codex queue on the shared app-server; runs after the current turn. Needs a TUI attached to
           that server (started with --remote or the default daemon).
-  grok    no structured channel yet; the error names the keystroke fallback.
+  grok    no structured channel: the TUI listens on no socket. --allow-keystrokes pastes into its cmux
+          tab instead (cmux paste --submit refuses over a draft or an open dialog).
 
 Not the agents bus: \`tools agents message\` sends to agents logged into a bus session.`
         )
