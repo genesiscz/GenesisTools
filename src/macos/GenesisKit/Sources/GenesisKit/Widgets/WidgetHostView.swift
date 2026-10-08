@@ -222,18 +222,19 @@ struct WidgetHostView: View {
                         Button {
                             model.openInboxNotification(on: surface, key: session.key)
                         } label: {
-                            WidgetActivityIndicator(
-                                status: session.visualStatus, animate: !model.effectiveReduceMotion
-                            )
-                            .frame(width: WidgetSideStripMetrics.sessionWidth, height: WidgetSideStripMetrics.sessionHeight)
-                            .overlay(alignment: .topTrailing) {
+                            HStack(spacing: 3) {
+                                WidgetActivityIndicator(
+                                    status: session.visualStatus, animate: !model.effectiveReduceMotion
+                                ).frame(width: 10)
                                 if let inbox = model.inboxFor(session.key), inbox.unread + inbox.needsAnswer > 0 {
                                     WidgetInboxCount(count: inbox.unread + inbox.needsAnswer,
                                         needsAnswer: inbox.needsAnswer > 0, pulse: model.inboxPulseFor(session.key),
                                         reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete, compact: true)
-                                        .offset(x: 4, y: -3).allowsHitTesting(false)
+                                } else {
+                                    Color.clear.frame(width: 20, height: 13)
                                 }
                             }
+                            .frame(width: WidgetSideStripMetrics.sessionWidth, height: WidgetSideStripMetrics.sessionHeight)
                         }
                         .buttonStyle(.genHoverPlain())
                         .instantTooltip(sessionSummary(session))
@@ -301,9 +302,16 @@ struct WidgetHostView: View {
             if id == "agents", model.inboxCount > 0 { model.openInboxNotification(on: surface) }
             else { model.openModule(id, on: surface) }
         } label: {
-            Image(systemName: classicSide && id == "agents" ? "tray" : registry.module(id)?.symbol ?? "square.dashed")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(classicSide ? Color.white : registry.module(id)?.tint ?? .secondary)
+            VStack(spacing: 0) {
+                Image(systemName: classicSide && id == "agents" ? "tray" : registry.module(id)?.symbol ?? "square.dashed")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(classicSide ? Color.white : registry.module(id)?.tint ?? .secondary)
+                if surface.edge != .top, id == "agents", model.inboxCount > 0 {
+                    WidgetInboxCount(count: model.inboxCount, needsAnswer: model.inbox.needsAnswer > 0,
+                        pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion,
+                        complete: model.inbox.complete, compact: true)
+                }
+            }
                 .frame(width: size, height: size)
                 .background(
                     selected?.id == id && presentation != .compact ? Color.white.opacity(0.09) : .clear,
@@ -311,7 +319,7 @@ struct WidgetHostView: View {
         }
         .buttonStyle(.genHoverPlain())
         .overlay(alignment: .topTrailing) {
-            if id == "agents", model.inboxCount > 0 {
+            if surface.edge == .top, id == "agents", model.inboxCount > 0 {
                 WidgetInboxCount(count: model.inboxCount, needsAnswer: model.inbox.needsAnswer > 0,
                         pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
                         .allowsHitTesting(false)

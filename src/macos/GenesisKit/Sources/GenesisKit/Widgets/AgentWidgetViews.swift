@@ -27,8 +27,9 @@ struct WidgetInboxCount: View {
             }
             Text(verbatim: count > 99 ? "99+" : String(max(0, count)) + (complete ? "" : "+"))
                 .font(.system(size: compact ? 8 : 9, weight: .bold, design: .monospaced))
-        }.foregroundStyle(.white).frame(width: compact ? 18 : 29, height: compact ? 13 : 15)
-            .background(needsAnswer ? Color.orange : WidgetInk.blue, in: Capsule())
+        }.foregroundStyle(compact ? (needsAnswer ? Color.orange : WidgetInk.blue) : .white)
+            .frame(width: compact ? 20 : 29, height: compact ? 13 : 15)
+            .background((needsAnswer ? Color.orange : WidgetInk.blue).opacity(compact ? 0.14 : 1), in: Capsule())
             .accessibilityLabel((complete ? "" : "At least ") + "\(count) inbox notifications")
     }
 }
