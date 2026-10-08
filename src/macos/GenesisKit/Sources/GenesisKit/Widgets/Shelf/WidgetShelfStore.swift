@@ -336,14 +336,17 @@ public final class WidgetShelfStore: ObservableObject {
         error = nil
         notice = nil
         operation = Task { [weak self] in
-            guard let self, !self.stopped, !Task.isCancelled else { return }
+            guard let self else { return }
+            // Reset even when cancelled before the first line ran, or the shelf stays busy forever.
             defer {
                 self.isBusy = false
                 self.isCapturing = false
                 self.operation = nil
                 self.refresh()
             }
+            guard !self.stopped else { return }
             do {
+                try Task.checkCancellation()
                 try await action()
                 try Task.checkCancellation()
                 guard !self.stopped else { return }

@@ -1,3 +1,4 @@
+import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 import type { AgentRuntimeContext } from "./context";
 
@@ -61,8 +62,12 @@ export function createTranscriptAnchor({
     const provider = context.agent === "claude-code" ? "claude" : context.agent;
     const sessionId = context.sessionId?.trim();
     if (!["claude", "codex", "grok", "copilot"].includes(provider) || !sessionId || sessionId === "unknown") {
+        // The receipt itself still matters; native IDs without a provider and session cannot be resolved.
         if (source) {
-            throw new Error("Native source IDs require an identified provider and session.");
+            logger.warn(
+                { agent: context.agent, sessionId },
+                "Native source IDs dropped: no identified provider and session"
+            );
         }
         return transcriptAnchorSchema.parse({ kind: "unanchored", receivedAt });
     }

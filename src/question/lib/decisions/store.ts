@@ -332,6 +332,8 @@ export async function postDecisions(
                     ...withoutVersioned(row),
                     ...content,
                     ...context,
+                    // The provider is half of the item's session identity, which a revision keeps.
+                    ...(context.provider || !row.provider ? {} : { provider: row.provider }),
                     transcriptAnchor,
                     state: "open",
                     revision: (row.revision ?? 1) + 1,

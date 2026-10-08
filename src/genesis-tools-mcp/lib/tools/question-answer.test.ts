@@ -96,3 +96,25 @@ it("reports unavailable gateway identity in its receipt instead of hiding it", a
     expect(receipt.context.transcriptAnchor?.kind).toBe("unanchored");
     expect(receipt.warnings).toHaveLength(1);
 });
+
+it("records the answer when native IDs arrive from a caller with no provider", async () => {
+    const receipt = await runAsCaller({ agent: "unknown", sessionId: null, cwd: "/" }, () =>
+        handleQuestionAnswer(
+            {
+                question: "Did the feature finish?",
+                answer: "Here is its evidence.",
+                tag: "action",
+                sessionHint: "explicit-session",
+                sourceMessage: { messageId: "native-message" },
+            },
+            {
+                logBase: mkdtempSync(join(tmpdir(), "qa-gateway-no-provider-")),
+                env: {},
+                config: { sinks: { obsidian: false, sound: false, notify: false } },
+            }
+        )
+    );
+    expect(receipt.id).toMatch(/.+/);
+    expect(receipt.context.transcriptAnchor?.kind).toBe("unanchored");
+    expect(receipt.warnings).toHaveLength(1);
+});

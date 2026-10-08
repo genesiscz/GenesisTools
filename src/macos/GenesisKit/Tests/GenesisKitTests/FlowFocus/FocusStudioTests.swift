@@ -393,6 +393,28 @@ final class FocusStudioModelTests: XCTestCase {
         XCTAssertEqual(model.laneSpanMinutes, 60, "a day view draws one hour per lane")
     }
 
+    func testTheRepeatedHourWhenClocksGoBackGetsItsOwnLane() throws {
+        let previous = NSTimeZone.default
+        let prague = try XCTUnwrap(TimeZone(identifier: "Europe/Prague"))
+        NSTimeZone.default = prague
+        defer { NSTimeZone.default = previous }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = prague
+        // 2026-10-25 00:30Z is 02:30 CEST; 01:30Z is 02:30 CET, the same wall-clock hour again.
+        let start: Int64 = 1_792_888_200_000
+        let hour: Int64 = 3_600_000
+        let id = try store.openSegment(.init(startedMs: start, appBundle: "dev.cursor", appName: "Cursor"))
+        try store.closeSegment(id: id, at: start + hour)
+        model.range = FocusRange.make(.day, containing: Date(timeIntervalSince1970: Double(start) / 1000),
+                                      calendar: calendar)
+
+        model.reload()
+        XCTAssertEqual(model.lanes.count, 2)
+        XCTAssertEqual(model.lanes.first, "02:00")
+        XCTAssertTrue(model.lanes.last?.hasPrefix("02:00 ") == true, "\(model.lanes)")
+        XCTAssertEqual(model.bars.reduce(0) { $0 + $1.offsetEndMs - $1.offsetStartMs }, hour)
+    }
+
     func testASegmentThatCrossesAnHourIsDrawnInBothLanes() throws {
         let dayStart = FocusRange.make(.day).fromMs
         let nineFifty = dayStart + 9 * 3_600_000 + 50 * 60_000
@@ -513,6 +535,22 @@ final class FocusStudioModelTests: XCTestCase {
         recorder.closeDowntime(launchedAt: Date(timeIntervalSince1970: Double(launch) / 1000))
         XCTAssertEqual(try store.gaps(from: 0, to: launch + 1).first?.endedMs, launch)
         XCTAssertTrue(try store.gaps(from: launch, to: launch + 60_000).isEmpty)
+    }
+
+    func testASleepLongerThanTheTickBudgetEndsTheSegmentWhereTheLastTickSawIt() throws {
+        let recorder = ActivityRecorder(store: store)
+        recorder.applyProbe(.init(title: "Fixture", url: nil, displayId: nil),
+                            bundle: "dev.cursor", appName: "Cursor", settings: FocusSettings(), idle: false)
+        let lastTick = nowMs()
+        recorder.noteTick(at: lastTick)
+        recorder.noteTick(at: lastTick + 2_000)
+        let wake = lastTick + 2_000 + 8 * 3_600_000
+        recorder.noteTick(at: wake)
+        let row = try XCTUnwrap(try store.segments(from: 0, to: wake + 1).last)
+        XCTAssertEqual(row.endedMs, lastTick + 2_000, "the night is not counted as work")
+        let gap = try XCTUnwrap(try store.gaps(from: 0, to: wake + 1).first { $0.reason == "system_sleep" })
+        XCTAssertEqual(gap.startedMs, lastTick + 2_000)
+        XCTAssertEqual(gap.endedMs, wake)
     }
 
     func testTitlePrivacyAlsoCoversCmuxSessionAndPane() throws {

@@ -37,7 +37,7 @@ export async function handleQuestionAnswer(args: QuestionAnswerArgs, deps: Recor
         sinks: res.sinks,
         context: res.context,
         warnings:
-            res.context.sessionId === "unknown"
+            res.context.sessionId === "unknown" || res.context.transcriptAnchor?.kind === "unanchored"
                 ? [
                       `This gateway could not identify the originating session. Supply its known sessionHint and projectPath, or use ${toolCommand("question record")} from the agent's worktree. Do not invent an ID.`,
                   ]

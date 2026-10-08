@@ -315,13 +315,18 @@ public final class FocusStudioModel: ObservableObject {
         /// Names the lane containing `ms` and remembers its time window the first time it is seen.
         func note(_ ms: Int64) -> (key: String, to: Int64)? {
             let date = Date(timeIntervalSince1970: Double(ms) / 1000)
-            let key = perHour
-                ? String(format: "%02d:00", calendar.component(.hour, from: date))
-                : FocusFormat.dayKey(date, calendar: calendar)
-            if let existing = windows[key] { return (key, existing.to) }
             guard let interval = calendar.dateInterval(of: unit, for: date) else { return nil }
             let window = (from: Int64(interval.start.timeIntervalSince1970 * 1000),
                           to: Int64(interval.end.timeIntervalSince1970 * 1000))
+            var key = perHour
+                ? String(format: "%02d:00", calendar.component(.hour, from: date))
+                : FocusFormat.dayKey(date, calendar: calendar)
+            // The night the clocks go back repeats one wall-clock hour. Sharing its lane would hand
+            // back the first hour's end, which is this hour's start, and the cursor would never move.
+            if perHour, let existing = windows[key], existing.from != window.from {
+                key += " " + (calendar.timeZone.abbreviation(for: date) ?? "repeated")
+            }
+            if let existing = windows[key] { return (key, existing.to) }
             windows[key] = window
             return (key, window.to)
         }
@@ -334,7 +339,7 @@ public final class FocusStudioModel: ObservableObject {
             guard to > from else { continue }
             var cursor = from
             while cursor < to {
-                guard let step = note(cursor) else { break }
+                guard let step = note(cursor), step.to > cursor else { break }
                 cursor = step.to
             }
         }

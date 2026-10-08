@@ -976,6 +976,30 @@ test("a revised decision retains earlier repository facts without leaking them i
     });
 });
 
+test("a revision posted without a harness keeps the item's provider", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-revision-provider-"));
+    const file = join(dir, "decisions.jsonl");
+    const events = join(dir, "events.jsonl");
+    const [first] = await postDecisions(
+        file,
+        events,
+        { decisions: [{ type: "todo", prompt: "First", options: [] }] },
+        { env: {}, ctx: { agent: "codex", sessionId: "provider-session" } }
+    );
+    const [next] = await postDecisions(
+        file,
+        events,
+        {
+            sessionId: "provider-session",
+            decisions: [{ type: "todo", prompt: "Next", options: [], supersedes: first.id }],
+        },
+        { env: {}, ctx: { agent: "unknown", sessionId: null } }
+    );
+    expect(first.provider).toBe("codex");
+    expect(next.provider).toBe("codex");
+    expect(readDecisions(file)[0].provider).toBe("codex");
+});
+
 test("a decision provider override cannot inherit another provider's native message IDs", async () => {
     const dir = mkdtempSync(join(tmpdir(), "decision-retarget-anchor-"));
     const [row] = await postDecisions(

@@ -93,6 +93,9 @@ public final class ActivityRecorder: ObservableObject {
     public static let historyLength = 24
 
     public static let pollSeconds: TimeInterval = 2
+    /// Far above App Nap timer throttling, so only real sleep or suspension counts as unobserved.
+    static let unobservedGapMs: Int64 = 60_000
+    private var lastTickMs: Int64?
 
     public init(store: ActivityStore, settings: FocusSettings = FocusSettings(), liveServices: Bool = true,
                 probeReader: (@Sendable (pid_t, String) -> AXFocusProbe.Result)? = nil) {
@@ -200,6 +203,7 @@ public final class ActivityRecorder: ObservableObject {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         pollTimer?.invalidate()
         pollTimer = nil
+        lastTickMs = nil
         counter.stop()
         closeCurrentSegment(at: nowMs())
         current = nil // as in pauseCapture: `start()` must open a fresh segment
@@ -295,13 +299,14 @@ public final class ActivityRecorder: ObservableObject {
 
     private func tick() {
         guard isCapturing, liveServices else { return }
-        guard resumeIfPauseExpired() else { return }
+        guard resumeIfPauseExpired() else {
+            lastTickMs = nil
+            return
+        }
         counter.flush(now: Date().timeIntervalSince1970 * 1000)
         recordInputSample()
         recomputeMix()
-        // Provisional end, moved forward every tick. If the app dies here, the record stops
-        // within one tick of the truth instead of running to "now" forever.
-        if let id = segmentId { try? store.touchSegment(id: id, at: nowMs()) }
+        noteTick(at: nowMs())
 
         let idleSeconds = Self.idleSeconds()
         let nowIdle = idleSeconds >= Double(settings.idleThresholdSec)
@@ -316,6 +321,21 @@ public final class ActivityRecorder: ObservableObject {
         }
 
         requestProbe(pid: app.processIdentifier, bundle: bundle, appName: name, idle: nowIdle)
+    }
+
+    /// Ticks stop while the Mac sleeps. A silence far longer than the poll interval was never
+    /// observed, so it ends the open segment where the last tick saw it instead of stretching it.
+    func noteTick(at now: Int64) {
+        if let last = lastTickMs, now - last > Self.unobservedGapMs {
+            closeCurrentSegment(at: last)
+            current = nil
+            do { try store.recordGap(startedMs: last, endedMs: now, reason: "system_sleep") }
+            catch { FlowFocusLog.focus.error("sleep gap record failed: \(error.localizedDescription)") }
+        }
+        lastTickMs = now
+        // Provisional end, moved forward every tick. If the app dies here, the record stops
+        // within one tick of the truth instead of running to "now" forever.
+        if let id = segmentId { try? store.touchSegment(id: id, at: now) }
     }
 
     private func invalidateProbes() {

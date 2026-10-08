@@ -306,7 +306,9 @@ export function transcriptAround({
             turnIndex < 0 || beforeCount === 0 ? [] : window.slice(Math.max(0, turnIndex - beforeCount), turnIndex);
         result.around = turnIndex < 0 ? [] : window.slice(turnIndex, turnIndex + 1);
         result.after =
-            afterCount === 0 ? [] : window.slice(Math.max(0, turnIndex + 1), Math.max(0, turnIndex + 1) + afterCount);
+            turnIndex < 0 || afterCount === 0
+                ? []
+                : window.slice(Math.max(0, turnIndex + 1), Math.max(0, turnIndex + 1) + afterCount);
         result.truncated ||= result.before.length + result.around.length + result.after.length < window.length;
         result.truncated ||= before.length < selected || selected + 1 + after.length < rows.length;
     }

@@ -210,6 +210,22 @@ final class WidgetShelfStoreTests: XCTestCase {
         XCTAssertNil(store.notice)
     }
 
+    func testCaptureCancelledBeforeItStartsReleasesTheShelf() async {
+        var captures = 0
+        let store = WidgetShelfStore(request: { args, _ in
+            if args.first == "capture" { captures += 1 }
+            return self.empty
+        })
+        await complete(store) {
+            store.capture()
+            store.cancelCapture()
+        }
+        XCTAssertEqual(captures, 0)
+        XCTAssertFalse(store.isBusy)
+        XCTAssertFalse(store.isCapturing)
+        XCTAssertEqual(store.notice, "Capture cancelled.")
+    }
+
     func testWebURLCannotBeMistakenForALocalFilePath() {
         var calls = 0
         let store = WidgetShelfStore(request: { _, _ in

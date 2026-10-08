@@ -141,19 +141,21 @@ public enum FlowInjector {
         // Activation is asynchronous. Posting ⌘V in the same runloop turn
         // races the app becoming frontmost and the keystroke lands nowhere.
         // A short hop is enough in practice and keeps the whole turn snappy.
-        postPasteAfterActivation(previousClipboard: previous)
+        postPasteAfterActivation(previousClipboard: previous, written: pasteboard.changeCount)
         return .injected
     }
 
     // MARK: - Keystroke
 
-    private static func postPasteAfterActivation(previousClipboard: String?) {
+    private static func postPasteAfterActivation(previousClipboard: String?, written: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
             postCommandV()
             guard let previousClipboard else { return }
             // Restore only after the paste has had time to read the pasteboard.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                 let pasteboard = NSPasteboard.general
+                // Something the user copied after the transcript is newer than both; keep it.
+                guard pasteboard.changeCount == written else { return }
                 pasteboard.clearContents()
                 pasteboard.setString(previousClipboard, forType: .string)
             }
