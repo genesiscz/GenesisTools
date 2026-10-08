@@ -9,6 +9,12 @@ public struct NativeTimePoint: Identifiable, Equatable, Sendable {
 }
 
 public enum NativeChartSampling {
+    public static func pannedPosition(origin: Date, translation: Double, width: Double,
+        window: TimeInterval, domain: ClosedRange<Date>) -> Date {
+        let proposed = origin.addingTimeInterval(-translation / max(1, width) * window)
+        return max(domain.lowerBound, min(proposed, domain.upperBound.addingTimeInterval(-window)))
+    }
+
     public static func bins(points: [NativeTimePoint], start: Date, end: Date, step: TimeInterval,
         calendar: Calendar = .current) -> [NativeTimePoint] {
         guard let first = points.first, end > start, step > 0 else { return [] }
@@ -62,6 +68,9 @@ public struct NativeTimeSeriesChart: View {
     @State private var zoom = 1.0
     @State private var position: Date
     @State private var selected: Date?
+    @State private var panOrigin: Date?
+    @State private var plotWidth: CGFloat = 1
+    @GestureState private var dragging = false
 
     public init(points: [NativeTimePoint], interval: TimeInterval, initialWindow: TimeInterval,
         end: Date = Date(), valueLabel: String = "Events") {
@@ -140,6 +149,16 @@ public struct NativeTimeSeriesChart: View {
         .chartXVisibleDomain(length: window)
         .chartScrollPosition(x: $position)
         .chartXSelection(value: $selected)
+        .onGeometryChange(for: CGFloat.self) { ceil($0.size.width) } action: { plotWidth = $0 }
+        .simultaneousGesture(DragGesture(minimumDistance: 4)
+            .updating($dragging) { _, state, _ in state = true }
+            .onChanged { event in
+                if panOrigin == nil { panOrigin = position }
+                position = NativeChartSampling.pannedPosition(origin: panOrigin ?? position,
+                    translation: event.translation.width, width: plotWidth, window: window, domain: domain)
+                selected = nil
+            })
+        .onChange(of: dragging) { _, active in if !active { panOrigin = nil } }
         .chartYAxis { AxisMarks(position: .leading) }
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 4)) {
