@@ -5,6 +5,7 @@ import { suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { WORKER_CAPABILITIES } from "@genesiscz/utils/worker/capabilities";
+import { WorkerDeliveryRejectedError } from "@genesiscz/utils/worker/delivery";
 import type { WorkerDriver, WorkerMeta, WorkerVerbOutcome } from "@genesiscz/utils/worker/driver";
 import { surfacesFromFlags } from "@genesiscz/utils/worker/isolation";
 import { printWorkerTurn } from "@genesiscz/utils/worker/turn-report";
@@ -155,7 +156,11 @@ export function registerWorkerVerbs<Meta extends WorkerMeta>(
         .description(driver.help.steer)
         .requiredOption("--name <name>", "Session name")
         .option("--prompt <text>", "Inline instruction")
-        .option("--prompt-file <path>", "Read the instruction from a file");
+        .option("--prompt-file <path>", "Read the instruction from a file")
+        .option("--json", "Return a machine-readable same-session turn receipt")
+        .option("--expect-session <id>", "Refuse delivery if the session identity changed")
+        .option("--expect-home <path>", "Refuse delivery if the source home changed")
+        .option("--expect-turn <n>", "Refuse delivery if the previous turn changed");
 
     driver.extendSteer?.(steer);
     steer.action(async (flags: Record<string, unknown>) => {
@@ -166,7 +171,34 @@ export function registerWorkerVerbs<Meta extends WorkerMeta>(
         }
 
         const meta = await requireMeta(flags.name as string);
-        emit(await driver.steer(meta, { prompt, extras: flags }));
+        try {
+            const outcome = await driver.steer(meta, { prompt, extras: flags });
+            if (flags.json === true && outcome.kind === "turn") {
+                const report = outcome.report;
+                out.result({
+                    kind: "turn",
+                    backend: report.backend,
+                    name: report.name,
+                    sessionId: report.sessionId,
+                    sourceHome: report.sourceHome,
+                    turn: report.turn,
+                    completed: report.ended,
+                    exitCode: report.exitCode,
+                });
+                if (!report.ended || report.exitCode !== 0) {
+                    process.exitCode = 1;
+                }
+            } else {
+                emit(outcome);
+            }
+        } catch (error) {
+            if (flags.json === true && error instanceof WorkerDeliveryRejectedError) {
+                out.result({ kind: "rejected", backend: driver.backend, name: meta.name, error: error.message });
+                process.exitCode = 1;
+                return;
+            }
+            throw error;
+        }
     });
 
     const read = parent

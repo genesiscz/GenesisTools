@@ -1,9 +1,10 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { logger } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import type { WorkerBackend } from "@genesiscz/utils/worker/capabilities";
+import { WorkerDeliveryRejectedError } from "@genesiscz/utils/worker/delivery";
 import type { WorkerDriver, WorkerMeta } from "@genesiscz/utils/worker/driver";
 import { WorkerMetaStore } from "@genesiscz/utils/worker/meta-store";
 import { Command } from "commander";
@@ -275,4 +276,74 @@ test("every backend gets sessions --json and a --name-less status", () => {
     // Listing every session is what a bare `status` does; it must not be a parse error.
     // `mandatory` is the flag itself; `required` would only say its VALUE is not optional.
     expect(status?.options.find((option) => option.long === "--name")?.mandatory).toBe(false);
+});
+
+test("steer JSON distinguishes a completed native receipt, an explicit pre-input refusal and an unknown failure", async () => {
+    const { driver } = fakeDriver({ backend: "grok" });
+    driver.store.createMeta({ name: "fixture", cwd: "/fixture" });
+    const output = spyOn(out, "result").mockImplementation(() => {});
+    const previousExitCode = process.exitCode;
+    try {
+        driver.steer = async () => ({
+            kind: "turn",
+            report: {
+                backend: "grok",
+                name: "fixture",
+                sessionId: "native-session",
+                sourceHome: "/fixture/grok",
+                turn: 2,
+                ended: true,
+                exitCode: 0,
+                report: "private response body",
+                stderr: "",
+                toolCalls: [],
+                logPath: "/fixture/log",
+                transcriptHint: "fixture",
+            },
+        });
+        const args = [
+            "steer",
+            "--name",
+            "fixture",
+            "--prompt",
+            "Synthetic",
+            "--json",
+            "--expect-session",
+            "native-session",
+            "--expect-home",
+            "/fixture/grok",
+            "--expect-turn",
+            "1",
+        ];
+        await programFor(driver).parseAsync(args, { from: "user" });
+        expect(output).toHaveBeenLastCalledWith({
+            kind: "turn",
+            backend: "grok",
+            name: "fixture",
+            sessionId: "native-session",
+            sourceHome: "/fixture/grok",
+            turn: 2,
+            completed: true,
+            exitCode: 0,
+        });
+        driver.steer = async () => {
+            throw new WorkerDeliveryRejectedError("busy before input");
+        };
+        await programFor(driver).parseAsync(args, { from: "user" });
+        expect(output).toHaveBeenLastCalledWith({
+            kind: "rejected",
+            backend: "grok",
+            name: "fixture",
+            error: "busy before input",
+        });
+        expect(process.exitCode).toBe(1);
+        driver.steer = async () => {
+            throw new Error("receipt lost after input");
+        };
+        await expect(programFor(driver).parseAsync(args, { from: "user" })).rejects.toThrow("receipt lost after input");
+        expect(output).toHaveBeenCalledTimes(2);
+    } finally {
+        output.mockRestore();
+        process.exitCode = previousExitCode;
+    }
 });
