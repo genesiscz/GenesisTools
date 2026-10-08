@@ -74,6 +74,44 @@ if ! bun run typecheck:all; then
     exit 1
 fi
 
+# The repo guards from the CI "checks" job (ci.yml, after the TypeScript check). They used to run on
+# CI only, so a pid probe or a hard-coded command name reached every PR of a stack before anything
+# said so (2026-10-09). They run in parallel: about 13 s, the time of check-tool-commands alone.
+echo "▶ CI guards (parallel)..."
+guard_dir=$(mktemp -d "${TMPDIR:-/tmp}/gt-pre-push-guards.XXXXXX")
+guard_pids=""
+run_guard() {
+    name="$1"
+    shift
+    ("$@" > "$guard_dir/$name.log" 2>&1; echo $? > "$guard_dir/$name.status") &
+    guard_pids="$guard_pids $!"
+}
+run_guard logging-guard bash scripts/ci/logging-guard.sh
+run_guard ai-credentials-guard bash scripts/ci/ai-credentials-guard.sh
+run_guard pid-safety-guard bash scripts/ci/pid-safety-guard.sh
+run_guard package-boundaries bun scripts/ci/check-package-boundaries.ts
+run_guard plugin-standalone bun scripts/ci/check-plugin-standalone.ts
+run_guard tool-commands bun scripts/ci/check-tool-commands.ts --strict
+run_guard jev-instrumentation bun scripts/ci/jev-instrumentation-guard.ts
+run_guard entrypoint-imports bun scripts/ci/entrypoint-import-guard.ts
+# shellcheck disable=SC2086
+wait $guard_pids
+
+guard_failed=0
+for status_file in "$guard_dir"/*.status; do
+    name=$(basename "$status_file" .status)
+    if [ "$(cat "$status_file")" != "0" ]; then
+        echo "✖ $name failed:"
+        tail -n 30 "$guard_dir/$name.log"
+        guard_failed=1
+    fi
+done
+
+if [ "$guard_failed" -ne 0 ]; then
+    echo "✖ CI guards failed: push refused (full logs in $guard_dir)."
+    exit 1
+fi
+
 echo "✔ pre-push passed (CI mirror)"
 # Note: `bash scripts/ci/check-hardcoded-paths.sh` catches hardcoded /tmp/Users
 # paths in src/. Not wired in here yet — it can be appended after the typecheck
