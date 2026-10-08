@@ -90,6 +90,10 @@ public final class EdgePanelController<Content: View> {
         self.panel = panel
     }
 
+    public func updateContent(@ViewBuilder _ content: () -> Content) {
+        (panel.contentView as? NSHostingView<Content>)?.rootView = content()
+    }
+
     public func setCompactSize(_ size: CGSize) { compactSize = size }
     public func setExpandedSize(_ size: CGSize) { expandedSize = size }
     public func setPreviewSize(_ size: CGSize) { previewSize = size }

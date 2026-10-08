@@ -16,20 +16,14 @@ struct WidgetInboxCount: View {
     var compact = false
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     var body: some View {
-        HStack(spacing: 2) {
-            if !compact, reduceMotion || systemReduceMotion {
-                Image(systemName: needsAnswer ? "questionmark.bubble.fill" : "tray.fill")
-                    .font(.system(size: 7, weight: .bold))
-            } else if !compact {
-                Image(systemName: needsAnswer ? "questionmark.bubble.fill" : "tray.fill")
-                    .font(.system(size: 7, weight: .bold))
-                    .symbolEffect(.bounce, options: .nonRepeating, value: pulse)
-            }
-            Text(verbatim: count > 99 ? "99+" : String(max(0, count)) + (complete ? "" : "+"))
-                .font(.system(size: compact ? 8 : 9, weight: .bold, design: .monospaced))
-        }.foregroundStyle(compact ? (needsAnswer ? Color.orange : WidgetInk.blue) : .white)
-            .frame(width: compact ? 20 : 29, height: compact ? 13 : 15)
-            .background((needsAnswer ? Color.orange : WidgetInk.blue).opacity(compact ? 0.14 : 1), in: Capsule())
+        Text(verbatim: count > 99 ? "99+" : String(max(0, count)) + (complete ? "" : "+"))
+            .font(.system(size: compact ? 9 : 11, weight: .semibold, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(needsAnswer ? Color.orange : Color(red: 0.45, green: 0.76, blue: 1))
+            .padding(.horizontal, compact ? 4 : 6)
+            .padding(.vertical, compact ? 2 : 3)
+            .fixedSize()
+            .background((needsAnswer ? Color.orange : WidgetInk.blue).opacity(0.16), in: Capsule())
             .accessibilityLabel((complete ? "" : "At least ") + "\(count) inbox notifications")
     }
 }
