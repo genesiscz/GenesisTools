@@ -409,9 +409,13 @@ export async function readClaudeMetadata(
     source: NativeSessionSource<"claude">,
     options: HistoryReadOptions = {}
 ): Promise<HistoryMetadataRead> {
-    return profiler
-        .scope("agent-sessions")
-        .measureAsync("metadata.claude", () => readClaudeMetadataUncounted(source, options));
+    return profiler.scope("agent-sessions").measureAsync(
+        "metadata.claude",
+        () => readClaudeMetadataUncounted(source, options),
+        () => ({
+            file: basename(source.filePath),
+        })
+    );
 }
 
 async function readClaudeMetadataUncounted(

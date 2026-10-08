@@ -147,6 +147,55 @@ describe("profiler config gate", () => {
         expect(stderr).toContain("[profile:t] loud");
     });
 
+    it("writes metadata as key=value pairs after the label, built when the timer stops, never in the stats label", async () => {
+        await setProfilingConfig({ enabled: true });
+        env.testing.set("PROFILE_TO_STDERR", "1");
+        reloadProfiler();
+
+        let found = 0;
+        const stderr = captureStderr(() => {
+            profiler.scope("t").measure(
+                "walk",
+                () => {
+                    found = 7;
+                },
+                () => ({ roots: "~/a b", files: found, empty: undefined, many: "x".repeat(120) })
+            );
+            profiler.scope("t").measure(
+                "broken",
+                () => 1,
+                () => {
+                    throw new Error("no source");
+                }
+            );
+        });
+
+        expect(stderr).toMatch(/\[profile:t\] walk roots=~\/a_b files=7 many=x{79}… \d/);
+        expect(stderr).toContain("[profile:t] broken meta=unavailable(no_source)");
+        expect(
+            profiler
+                .scope("t")
+                .entries()
+                .map((entry) => entry.label)
+        ).toContain("walk");
+    });
+
+    it("builds no metadata while the scope is off", async () => {
+        await setProfilingConfig({ enabled: false });
+        reloadProfiler();
+
+        let built = 0;
+        profiler.scope("t").measure(
+            "quiet",
+            () => 1,
+            () => {
+                built++;
+                return {};
+            }
+        );
+        expect(built).toBe(0);
+    });
+
     it("skips duration lines shorter than minDurationMs but still records stats", async () => {
         await setProfilingConfig({ enabled: true, minDurationMs: 50 });
         reloadProfiler();

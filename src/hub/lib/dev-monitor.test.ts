@@ -102,6 +102,11 @@ describe("classifyProfileLine", () => {
             "slow"
         );
         expect(classifyProfileLine("[profile:widget] sessions 53.89ms")).toBeNull();
+        expect(
+            classifyProfileLine(
+                "[profile:agent-sessions] discover.walk roots=~/.claude/projects files=30631 1.07s pid=999999999"
+            )?.text
+        ).toBe("agent-sessions discover.walk roots=~/.claude/projects files=30631 1.07s [pid 999999999]");
         expect(classifyProfileLine("[profile:a] walk 1.5s trace=t1 pid=999999999")?.text).toBe(
             "a walk 1.50s trace=t1 [pid 999999999]"
         );

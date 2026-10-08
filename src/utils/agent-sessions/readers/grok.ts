@@ -530,9 +530,13 @@ export async function readGrokMetadata(
     source: NativeSessionSource<"grok">,
     options: HistoryReadOptions = {}
 ): Promise<HistoryMetadataRead> {
-    return profiler
-        .scope("agent-sessions")
-        .measureAsync("metadata.grok", () => readGrokMetadataUncounted(source, options));
+    return profiler.scope("agent-sessions").measureAsync(
+        "metadata.grok",
+        () => readGrokMetadataUncounted(source, options),
+        () => ({
+            session: basename(dirname(source.filePath)),
+        })
+    );
 }
 
 async function readGrokMetadataUncounted(

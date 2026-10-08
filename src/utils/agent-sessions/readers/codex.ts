@@ -933,9 +933,13 @@ export async function readCodexMetadata(
     source: NativeSessionSource<"codex">,
     options: HistoryReadOptions = {}
 ): Promise<HistoryMetadataRead> {
-    return profiler
-        .scope("agent-sessions")
-        .measureAsync("metadata.codex", () => readCodexMetadataUncounted(source, options));
+    return profiler.scope("agent-sessions").measureAsync(
+        "metadata.codex",
+        () => readCodexMetadataUncounted(source, options),
+        () => ({
+            file: source.filePath.split(sep).pop(),
+        })
+    );
 }
 
 async function readCodexMetadataUncounted(

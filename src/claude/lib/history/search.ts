@@ -128,18 +128,28 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
         metadata: all,
         report,
         reindexed,
-    } = await p.measureAsync("listing.catalog", () =>
-        catalogHistory({
-            provider: "claude",
-            filters: {
-                project,
-                excludeAgents: !subagentsOnly && excludeSubagents,
-                agentsOnly: subagentsOnly,
-                limit,
-                mtimeFrom: options.mtimeFrom,
-                newest: options.newest,
-            },
-            maxDiscoveryAgeMs: options.maxDiscoveryAgeMs,
+    } = await p.measureAsync(
+        "listing.catalog",
+        () =>
+            catalogHistory({
+                provider: "claude",
+                filters: {
+                    project,
+                    excludeAgents: !subagentsOnly && excludeSubagents,
+                    agentsOnly: subagentsOnly,
+                    limit,
+                    mtimeFrom: options.mtimeFrom,
+                    newest: options.newest,
+                },
+                maxDiscoveryAgeMs: options.maxDiscoveryAgeMs,
+                refresh: options.refresh,
+            }),
+        () => ({
+            project,
+            limit,
+            newest: options.newest,
+            since: options.mtimeFrom,
+            agents: subagentsOnly ? "only" : excludeSubagents ? "excluded" : "included",
             refresh: options.refresh,
         })
     );

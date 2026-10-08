@@ -1,5 +1,6 @@
 import type { Dirent } from "node:fs";
 import { readdir, realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { profiler } from "@genesiscz/utils/profile";
 import type { NativeSourceIssue } from "./types";
@@ -88,7 +89,23 @@ function errorCategory(error: unknown, fallback: string, missing = fallback): st
  * timer here prices the whole corpus scan.
  */
 export async function walkSourceRoots(options: WalkSourceRootsOptions): Promise<WalkSourceRootsResult> {
-    return profiler.scope("agent-sessions").measureAsync("discover.walk", () => walkRoots(options));
+    let files: number | undefined;
+    let issues: number | undefined;
+    return profiler.scope("agent-sessions").measureAsync(
+        "discover.walk",
+        async () => {
+            const result = await walkRoots(options);
+            files = result.files.length;
+            issues = result.issues.length;
+            return result;
+        },
+        () => ({
+            roots: options.roots.map((root) => root.replace(homedir(), "~")).join(","),
+            files,
+            issues: issues || undefined,
+            maxDepth: options.maxDepth,
+        })
+    );
 }
 
 async function walkRoots(options: WalkSourceRootsOptions): Promise<WalkSourceRootsResult> {

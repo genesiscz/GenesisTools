@@ -314,6 +314,50 @@ function write(line: string, durMs?: number): void {
     }
 }
 
+/**
+ * Context for one timed call (which file, which options), written as `key=value` pairs after the label on the
+ * logged line and never into the stats label, so the summary still groups every call. A function is called only
+ * when the timer stops and its line is written, so it costs nothing while profiling is off and may read results
+ * the timed call stored (a file count, a cache hit).
+ */
+export type ProfileMeta = Record<string, string | number | boolean | null | undefined>;
+export type ProfileMetaInput = ProfileMeta | (() => ProfileMeta);
+
+const META_VALUE_CHARS = 80;
+
+function formatMeta(input: ProfileMetaInput | undefined): string {
+    if (!input) {
+        return "";
+    }
+
+    let meta: ProfileMeta;
+    try {
+        meta = typeof input === "function" ? input() : input;
+    } catch (error) {
+        // Shown on the line itself rather than logged: the profiler sits below the logger.
+        return ` meta=unavailable(${String(error instanceof Error ? error.message : error)
+            .replace(/\s+/g, "_")
+            .slice(0, 60)})`;
+    }
+
+    let text = "";
+    for (const [key, raw] of Object.entries(meta)) {
+        if (raw === undefined || raw === null || raw === "") {
+            continue;
+        }
+
+        // One token per value: the line stays one space-separated record a pattern can read.
+        let value = String(raw).replace(/\s+/g, "_");
+        if (value.length > META_VALUE_CHARS) {
+            value = `${value.slice(0, META_VALUE_CHARS - 1)}…`;
+        }
+
+        text += ` ${key}=${value}`;
+    }
+
+    return text;
+}
+
 interface Stat {
     count: number;
     total: number;
@@ -329,11 +373,11 @@ export interface ProfilerScope {
      * code, an HTTP status) is known only at the end: it goes on the logged line, never into the stats
      * label, so the summary still groups every call of `label`.
      */
-    start(label: string): (outcome?: string) => number;
+    start(label: string, meta?: ProfileMetaInput): (outcome?: string) => number;
     /** Time a synchronous fn, record under `label`, return its value. */
-    measure<T>(label: string, fn: () => T): T;
+    measure<T>(label: string, fn: () => T, meta?: ProfileMetaInput): T;
     /** Time an async fn, record under `label`, return its value. */
-    measureAsync<T>(label: string, fn: () => Promise<T>): Promise<T>;
+    measureAsync<T>(label: string, fn: () => Promise<T>, meta?: ProfileMetaInput): Promise<T>;
     /** Record a duration measured elsewhere (a whole process run, from its start), with an optional outcome. */
     record(label: string, ms: number, outcome?: string): void;
     /** Record an instantaneous mark (ms since this scope was created). */
@@ -389,16 +433,21 @@ function makeScope(name: string): ProfilerScope {
         };
     }
 
-    const recordLine = (label: string, dur: number, outcome?: string): void => {
+    const recordLine = (label: string, dur: number, outcome?: string, meta?: ProfileMetaInput): void => {
         record(label, dur);
-        write(`[profile:${name}] ${label}${outcome ? ` ${outcome}` : ""} ${fmtMs(dur)}`, dur);
+        if (meta && dur < getGate().minDurationMs) {
+            // Below the line threshold `write` drops the line; do not build metadata for it.
+            return;
+        }
+
+        write(`[profile:${name}] ${label}${outcome ? ` ${outcome}` : ""}${formatMeta(meta)} ${fmtMs(dur)}`, dur);
     };
 
-    const start = (label: string): ((outcome?: string) => number) => {
+    const start = (label: string, meta?: ProfileMetaInput): ((outcome?: string) => number) => {
         const s = performance.now();
         return (outcome) => {
             const dur = performance.now() - s;
-            recordLine(label, dur, outcome);
+            recordLine(label, dur, outcome, meta);
             return dur;
         };
     };
@@ -406,16 +455,16 @@ function makeScope(name: string): ProfilerScope {
     return {
         enabled: true,
         start,
-        measure: (label, fn) => {
-            const end = start(label);
+        measure: (label, fn, meta) => {
+            const end = start(label, meta);
             try {
                 return fn();
             } finally {
                 end();
             }
         },
-        measureAsync: async (label, fn) => {
-            const end = start(label);
+        measureAsync: async (label, fn, meta) => {
+            const end = start(label, meta);
             try {
                 return await fn();
             } finally {
@@ -499,9 +548,9 @@ export const profiler: Profiler = {
     get detail() {
         return getGate().detail;
     },
-    start: (label) => globalScope().start(label),
-    measure: (label, fn) => globalScope().measure(label, fn),
-    measureAsync: (label, fn) => globalScope().measureAsync(label, fn),
+    start: (label, meta) => globalScope().start(label, meta),
+    measure: (label, fn, meta) => globalScope().measure(label, fn, meta),
+    measureAsync: (label, fn, meta) => globalScope().measureAsync(label, fn, meta),
     record: (label, ms, outcome) => globalScope().record(label, ms, outcome),
     mark: (label) => globalScope().mark(label),
     section: (label) => globalScope().section(label),
