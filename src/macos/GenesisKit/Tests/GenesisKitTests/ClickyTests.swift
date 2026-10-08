@@ -523,6 +523,21 @@ final class ClickyTests: XCTestCase {
         model.shutdown()
     }
 
+    func testRestoredSettingsGeometryKeepsReachableWindowsAcrossDisplays() {
+        let screens = [NSRect(x: 0, y: 0, width: 1440, height: 900),
+            NSRect(x: -1920, y: 100, width: 1920, height: 1080)]
+        XCTAssertTrue(NativeSettingsWindowGeometry.hasReachableTitlebar(
+            frame: NSRect(x: 100, y: 100, width: 960, height: 760), visibleScreens: screens))
+        XCTAssertTrue(NativeSettingsWindowGeometry.hasReachableTitlebar(
+            frame: NSRect(x: -1600, y: 200, width: 960, height: 760), visibleScreens: screens))
+        XCTAssertFalse(NativeSettingsWindowGeometry.hasReachableTitlebar(
+            frame: NSRect(x: 3000, y: 100, width: 960, height: 760), visibleScreens: screens))
+        XCTAssertFalse(NativeSettingsWindowGeometry.hasReachableTitlebar(
+            frame: NSRect(x: 100, y: 850, width: 960, height: 760), visibleScreens: screens))
+        XCTAssertFalse(NativeSettingsWindowGeometry.hasReachableTitlebar(
+            frame: .zero, visibleScreens: screens))
+    }
+
     func testPreferenceSanitizationAndRoundTrip() throws {
         var preferences = ClickyPreferences()
         preferences.volume = .nan

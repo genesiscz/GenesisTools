@@ -40,8 +40,13 @@ public final class FeatureSettingsWindowController {
         window.contentMinSize = NSSize(width: 860, height: 650)
         window.contentView = NSHostingView(rootView: FeatureSettingsView(store: store, title: title))
         window.appearance = NSAppearance(named: .darkAqua)
+        let restored = window.setFrameUsingName(frameAutosaveName, force: true)
+        if !restored || !NativeSettingsWindowGeometry.hasReachableTitlebar(
+            frame: window.frame, visibleScreens: NSScreen.screens.map(\.visibleFrame))
+        {
+            window.center()
+        }
         window.setFrameAutosaveName(frameAutosaveName)
-        window.center()
         self.window = window
         return window
     }
@@ -52,4 +57,16 @@ public final class FeatureSettingsWindowController {
     }
 
     public func close() { window?.close() }
+}
+
+enum NativeSettingsWindowGeometry {
+    static func hasReachableTitlebar(frame: NSRect, visibleScreens: [NSRect]) -> Bool {
+        guard !frame.isEmpty, frame.origin.x.isFinite, frame.origin.y.isFinite,
+            frame.width.isFinite, frame.height.isFinite else { return false }
+        let titlebar = NSRect(x: frame.minX, y: frame.maxY - 28, width: frame.width, height: 28)
+        return visibleScreens.contains { screen in
+            let reachable = screen.intersection(titlebar)
+            return reachable.width >= 80 && reachable.height >= 20
+        }
+    }
 }

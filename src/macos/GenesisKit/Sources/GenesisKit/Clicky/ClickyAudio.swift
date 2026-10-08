@@ -68,7 +68,7 @@ final class ClickyAudio {
         guard preferences.volume > 0 else { return }
         idleStop?.cancel()
         if !engine.isRunning {
-            try engine.start()
+            try PerfLog.span("clicky.audio.start") { try engine.start() }
         }
         let voice = voices[cursor]
         cursor = (cursor + 1) % voices.count

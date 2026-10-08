@@ -30,6 +30,10 @@ final class SystemClickyInputMonitor: ClickyInputMonitoring {
         let callback: CGEventTapCallBack = { _, type, event, context in
             guard let context else { return Unmanaged.passUnretained(event) }
             let monitor = Unmanaged<SystemClickyInputMonitor>.fromOpaque(context).takeUnretainedValue()
+            if ClickyInputDiagnostics.enabled {
+                let source = event.getIntegerValueField(.eventSourceUnixProcessID) == 0 ? "device" : "posted"
+                PerfLog.mark("clicky.tap.\(source).\(type.rawValue)")
+            }
             MainActor.assumeIsolated { monitor.handler?(type, event) }
             return Unmanaged.passUnretained(event)
         }
@@ -69,4 +73,9 @@ final class SystemClickyInputMonitor: ClickyInputMonitoring {
         if let tap { CFMachPortInvalidate(tap) }
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
     }
+}
+
+/// Explicit profiling records event phases and duration, never key codes or text.
+enum ClickyInputDiagnostics {
+    static let enabled = CommandLine.arguments.contains("--input-diagnostics")
 }

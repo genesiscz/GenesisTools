@@ -323,6 +323,9 @@ public final class ClickyModel: ObservableObject {
     }
 
     private func receive(type: CGEventType, event: CGEvent) {
+        let diagnosticStart = ClickyInputDiagnostics.enabled ? PerfLog.now() : nil
+        let diagnosticSource = event.getIntegerValueField(.eventSourceUnixProcessID) == 0 ? "device" : "posted"
+        defer { PerfLog.since("clicky.receive.\(diagnosticSource).\(type.rawValue)", diagnosticStart) }
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             deactivate()
             error = "macOS paused input monitoring. Click Enable Clicky to restart it."
@@ -353,7 +356,15 @@ public final class ClickyModel: ObservableObject {
             let transition = inputState.transition(
                 keyCode: code, release: release, repeated: repeated,
                 repeatSounds: preferences.repeatSounds)
-        else { return }
+        else {
+            if ClickyInputDiagnostics.enabled {
+                PerfLog.mark("clicky.transition.\(diagnosticSource).\(type.rawValue).ignored")
+            }
+            return
+        }
+        if ClickyInputDiagnostics.enabled {
+            PerfLog.mark("clicky.transition.\(diagnosticSource).\(type.rawValue).accepted")
+        }
         if preferences.collectStats && (transition.countsPress || transition.release) {
             if transition.release { statistics.releases += 1 } else { statistics.presses += 1 }
             pendingStats = true
