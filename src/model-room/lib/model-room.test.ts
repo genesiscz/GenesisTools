@@ -421,6 +421,28 @@ describe("document time conversion", () => {
 });
 
 describe("portable model exports", () => {
+    test("scenario metadata treats a removed inherited-name quantity as absent", async () => {
+        const document = readModelDocument({
+            format: "genesis-model-room",
+            version: 1,
+            id: "inherited_metadata",
+            title: "Inherited metadata",
+            time: { unit: "day", duration: 1, step: 1 },
+            quantities: [
+                { id: "toString", label: "Assumption", kind: "input", unit: "1", value: 2 },
+                { id: "spare", label: "Spare", kind: "input", unit: "1", value: 3 },
+            ],
+            scenarios: [{ id: "removed", label: "Removed", removed: ["toString"] }],
+        });
+        const { scenarios } = await evaluateDocument({ input: document });
+        const id: string = "toString";
+        expect(scenarios[0].quantities[id]).toMatchObject({ label: "Assumption", unit: "1" });
+        expect(scenarios[1].quantities[id]).toBeUndefined();
+        expect(
+            comparisonValue({ value: 2, source: scenarios[1].quantities[id], target: scenarios[0].quantities[id] })
+        ).toBeUndefined();
+    });
+
     test("presentation steps accept known branches and reject unknown branches", async () => {
         const document = supportCapacityModel();
         document.presentation.steps = [{ title: "Branch", text: "", scenario: document.scenarios[0].id }];
@@ -470,8 +492,16 @@ describe("portable model exports", () => {
                     { id: "toString", label: "Assumption", kind: "input", unit: "1", value: 2 },
                     { id: "outcome", label: "Outcome", kind: "formula", unit: "1", expression: "10 / toString" },
                 ],
-                scenarios: [{ id: "branch", label: "Branch" }],
-                presentation: { controls: ["toString"], outputs: ["outcome"], steps: [] },
+                scenarios: [
+                    { id: "branch", label: "Branch" },
+                    {
+                        id: "without_assumption",
+                        label: "Without assumption",
+                        removed: ["toString", "outcome"],
+                        replacements: [{ id: "spare", label: "Spare", kind: "input", unit: "1", value: 3 }],
+                    },
+                ],
+                presentation: { controls: ["toString"], outputs: ["outcome", "toString"], steps: [] },
             });
             const html = await standaloneModelHTML(document);
             const browser = await chromium.launch();
@@ -522,6 +552,17 @@ describe("portable model exports", () => {
                 await page.getByRole("button", { name: "Reset", exact: true }).click();
                 await page.getByRole("status").filter({ hasText: "Ready" }).waitFor();
                 expect(await page.locator("#toString").inputValue()).toBe("2");
+                await page.getByRole("combobox", { name: "Chart quantity" }).selectOption("toString");
+                await scenario.selectOption("without_assumption");
+                expect(
+                    await page
+                        .getByRole("combobox", { name: "Chart quantity" })
+                        .locator('option[value="toString"]')
+                        .textContent()
+                ).toBe("Assumption · 1");
+                expect(await page.locator("svg polyline").count()).toBe(2);
+                await page.getByText("Inspect every result", { exact: true }).click();
+                expect(await page.locator("table").textContent()).toContain("Absent or incompatible quantity");
                 expect(errors).toEqual([]);
                 expect(requests).toEqual([]);
             } finally {

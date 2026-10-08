@@ -45,6 +45,7 @@ function describeModel(model: CompiledModel) {
             },
         ])
     );
+    Object.setPrototypeOf(quantities, null);
     const relationships = [...model.quantities].flatMap(([target, entry]) => [
         ...[...entry.references.immediate]
             .filter((id) => model.quantities.has(id))
