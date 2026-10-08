@@ -1078,6 +1078,17 @@ final class WidgetInboxNotificationTests: XCTestCase {
         XCTAssertEqual(reads.count, 1)
     }
 
+    func testOpeningAReadSessionNeverNavigatesToAnotherSessionsUnreadItem() {
+        let model = model()
+        defer { model.stop() }
+        let old = "local:codex:fixture-old:"
+        model.actionRunner = { _ in ["ok": true] }
+        model.updateInbox(summary(item("another-session-question", at: 1, pending: true)))
+        model.openInboxNotification(on: .init(edge: .right), key: old)
+        XCTAssertEqual(model.selectedKey, old)
+        XCTAssertNil(model.selectedCardID)
+    }
+
     func testReadingPendingQuestionKeepsNeedsAnswerAndCollapseCancelsLateAck() async throws {
         let model = model()
         defer { model.stop() }
@@ -1118,6 +1129,8 @@ final class WidgetAgentTreeTests: XCTestCase {
         let filtered = WidgetAgentTree.groups([worker, nested, session("lead")], query: "6.1-sol")
         XCTAssertEqual(filtered.map(\.id), ["lead"])
         XCTAssertEqual(filtered[0].children.map(\.id), ["named-worker"])
+        let parentMatch = WidgetAgentTree.groups([worker, nested, session("lead")], query: "lead")
+        XCTAssertEqual(parentMatch[0].children.map(\.id), ["named-worker", "nested"])
     }
 
     func testPinnedChildKeepsUnpinnedParentAndOrphansRemainReachable() {

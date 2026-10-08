@@ -16,7 +16,7 @@ public struct WidgetSessionBrowser: View {
 
     public var body: some View {
         let groups = WidgetAgentTree.groups(model.snapshot?.sessions ?? [], query: query, onlyPinned: onlyPinned)
-        VStack(alignment: .leading, spacing: 10) {
+        LazyVStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Find a project, session, agent or model", text: $query)
@@ -48,7 +48,7 @@ public struct WidgetSessionBrowser: View {
                             if value { expanded.insert(group.id); collapsed.remove(group.id) }
                             else { expanded.remove(group.id); collapsed.insert(group.id) }
                         })) {
-                            VStack(spacing: 2) {
+                            LazyVStack(spacing: 2) {
                                 row(group.parent, title: "Main", depth: 0)
                                 ForEach(group.children) { child in row(child.session, title: child.session.title, depth: child.depth) }
                             }.padding(.top, 6)
