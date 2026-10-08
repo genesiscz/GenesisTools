@@ -4,12 +4,14 @@ import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { physFootprintBytes } from "@genesiscz/utils/process/footprint";
+import { profiler } from "@genesiscz/utils/profile";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { withTraceId } from "@genesiscz/utils/trace";
 import type { Door } from "./doors/types";
 import { type CallResult, type EndReason, type HubServerHealth, LineBuffer, parseRequest } from "./protocol";
 
 const log = logger.child({ component: "hub-server" });
+const prof = profiler.scope("hub-server");
 /** Unsent bytes one connection may queue before it is closed as too slow. */
 const MAX_PENDING_WRITE_BYTES = 16 * 1024 * 1024;
 /** How long a start waits for another start to finish binding the socket. */
@@ -229,10 +231,14 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
 
             const used = process.cpuUsage(cpu);
             const ms = Math.round(performance.now() - started);
+            // The whole process's CPU over the call: calls that overlap count each other's work too.
+            const cpuMs = Math.round((used.user + used.system) / 1000);
+            prof.record(door.name, performance.now() - started, `exit=${result.exit} cpu=${cpuMs}ms`);
             log.debug(
                 {
                     door: door.name,
                     ms,
+                    cpuMs,
                     exit: result.exit,
                     bytes: result.stdout.length,
                     ...(result.exit !== 0 && { stderr: result.stderr.slice(-300) }),
@@ -244,7 +250,7 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
                 ok: true,
                 ...result,
                 ms,
-                cpuMs: Math.round((used.user + used.system) / 1000),
+                cpuMs,
             });
             return;
         }

@@ -15,6 +15,8 @@ export const PROFILER_SCOPE_NAMES = [
     "clones",
     "teams",
     "hub-agents",
+    // One line per call the resident hub server answers: the door, its exit code, wall time and process CPU.
+    "hub-server",
     // `tools hub pr *` phases; with spawn, forge-http and cache below, the hub's PR calls end to end.
     "hub-pr",
     // Every child process an Executor runs (git, gh, glab), with its exit code.
