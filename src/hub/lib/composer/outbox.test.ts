@@ -10,7 +10,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { createWidgetHandoff } from "../widget/handoff";
 import { readWidgetChanges, readWidgetDecisionEvents, type WidgetSources, widgetSnapshot } from "../widget/snapshot";
 import { mutateWidgetState, readWidgetState } from "../widget/storage";
-import { type WidgetTarget, widgetOutgoingSchema, widgetSessionKey } from "../widget/types";
+import { type WidgetTarget, widgetOutgoingSchema, widgetPreferencesSchema, widgetSessionKey } from "../widget/types";
 import { widgetDispatcher } from "./dispatch";
 import { processWidgetOutbox } from "./engine";
 import { changeOutgoing, enqueueWidgetMessage, messageReadiness, recoverWidgetOutbox } from "./outbox";
@@ -612,4 +612,15 @@ test("new external answers and saved drafts remain discoverable while another se
     );
     expect(snapshot.cards).toHaveLength(0);
     expect(snapshot.errors).toEqual([]);
+});
+
+test("legacy preferences gain independent module layouts without accepting off-screen positions", () => {
+    const preferences = widgetPreferencesSchema.parse({ placement: "side" });
+    expect(preferences.topModules).toEqual(["agents"]);
+    expect(preferences.sideGroups).toHaveLength(3);
+    expect(preferences.sidePosition).toBe(0.5);
+    expect(preferences.hoverPreviews).toBe(true);
+    expect(widgetPreferencesSchema.safeParse({ sidePosition: -1 }).success).toBe(false);
+    expect(widgetPreferencesSchema.safeParse({ sideGroups: [["agents"]] }).success).toBe(false);
+    expect(widgetPreferencesSchema.safeParse({ topModules: ["../../invalid"] }).success).toBe(false);
 });

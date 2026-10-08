@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 
 @testable import GenesisKit
@@ -111,5 +112,62 @@ final class WidgetSelectionTests: XCTestCase {
             "local:codex:chosen:home")
         XCTAssertEqual(WidgetSelection.initial(persisted: nil, visibleKeys: ["first", "second"]), "first")
         XCTAssertEqual(WidgetSelection.initial(persisted: nil, visibleKeys: []), "")
+    }
+}
+
+final class WidgetModuleTests: XCTestCase {
+    @MainActor
+    func testBothSurfacesShareOneLifecycleAndCollapseOnlyAfterTheLastViewer() throws {
+        let registry = WidgetModuleRegistry()
+        var events: [WidgetModulePresentation?] = []
+        try registry.register(
+            WidgetModuleDescriptor(
+                id: "fixture", title: "Fixture", symbol: "circle", tint: .blue,
+                summary: { "Ready" }, visibilityChanged: { events.append($0) }
+            ) { _ in EmptyView() })
+        let top = WidgetSurfaceID(edge: .top)
+        let side = WidgetSurfaceID(edge: .right, group: 1)
+        registry.update(surface: top, moduleID: "fixture", presentation: .expanded)
+        registry.update(surface: side, moduleID: "fixture", presentation: .expanded)
+        registry.update(surface: top, moduleID: nil)
+        XCTAssertEqual(events, [.expanded])
+        registry.update(surface: side, moduleID: "fixture", presentation: .preview)
+        registry.update(surface: side, moduleID: nil)
+        XCTAssertEqual(events, [.expanded, .preview, nil])
+        XCTAssertThrowsError(
+            try registry.register(
+                WidgetModuleDescriptor(
+                    id: "fixture", title: "Again", symbol: "circle", tint: .blue, summary: { "" }
+                ) { _ in EmptyView() }))
+        XCTAssertEqual(registry.modules.count, 1)
+    }
+
+    func testLayoutsRetainFutureModulesAndDeduplicateOnlyWithinEachGroup() {
+        let layout = WidgetLayoutConfiguration(
+            topModules: ["agents", "future", "agents"],
+            sideGroups: [["agents", "agents"], ["agents", "focus"], ["future"]],
+            separated: true, sidePosition: 12)
+        XCTAssertEqual(layout.topModules, ["agents", "future"])
+        XCTAssertEqual(layout.top(available: ["agents"]), ["agents"])
+        XCTAssertEqual(layout.groups(available: ["agents", "focus"]), [["agents"], ["agents", "focus"], []])
+        XCTAssertEqual(layout.sidePosition, 1)
+    }
+
+    func testClusterDragUsesAvailableTravelAndKeepsAllPartsInsideTheDisplay() {
+        let visible = CGRect(x: -1800, y: -300, width: 1800, height: 900)
+        let heights: [CGFloat] = [200, 120, 48]
+        for position in [0.0, 0.5, 1.0] {
+            let centers = WidgetClusterGeometry.centers(heights: heights, position: position, visible: visible)
+            for (index, center) in centers.enumerated() {
+                XCTAssertLessThanOrEqual(center + heights[index] / 2, visible.maxY)
+                XCTAssertGreaterThanOrEqual(center - heights[index] / 2, visible.minY)
+            }
+        }
+        XCTAssertEqual(
+            WidgetClusterGeometry.position(
+                starting: 0.5, translationDown: 100, clusterHeight: 400, visibleHeight: 900), 0.7, accuracy: 0.0001)
+        XCTAssertEqual(
+            WidgetClusterGeometry.position(
+                starting: 0.5, translationDown: -2000, clusterHeight: 400, visibleHeight: 900), 0)
     }
 }

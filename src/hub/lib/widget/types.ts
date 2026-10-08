@@ -36,6 +36,18 @@ export const widgetPreferencesSchema = z.object({
     showChanges: z.boolean().default(true),
     placement: z.enum(["top", "side", "both"]).default("both"),
     side: z.enum(["left", "right"]).default("right"),
+    topModules: z
+        .array(z.string().regex(/^[a-z][a-z0-9-]{0,47}$/))
+        .max(12)
+        .default(["agents"]),
+    sideGroups: z
+        .array(z.array(z.string().regex(/^[a-z][a-z0-9-]{0,47}$/)).max(12))
+        .length(3)
+        .default([["agents"], ["capture", "shelf"], ["focus", "voice", "tasks"]]),
+    sideLayout: z.enum(["joined", "separated"]).default("joined"),
+    sidePosition: z.number().min(0).max(1).default(0.5),
+    hoverPreviews: z.boolean().default(true),
+    glassEffect: z.boolean().default(true),
     quietSeconds: z.number().int().min(3).max(300).default(15),
     voiceProvider: z.string().default("xai"),
     voiceAccount: z.string().nullable().optional(),

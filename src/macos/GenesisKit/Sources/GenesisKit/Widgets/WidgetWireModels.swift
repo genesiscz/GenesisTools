@@ -224,6 +224,20 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var showChanges: Bool
     public var placement: String
     public var side: String
+    public var topModules: [String]?
+    public var sideGroups: [[String]]?
+    public var sideLayout: String?
+    public var sidePosition: Double?
+    public var hoverPreviews: Bool?
+    public var glassEffect: Bool?
+
+    public var layout: WidgetLayoutConfiguration {
+        WidgetLayoutConfiguration(
+            topModules: topModules ?? ["agents"],
+            sideGroups: sideGroups ?? [["agents"], ["capture", "shelf"], ["focus", "voice", "tasks"]],
+            separated: sideLayout == "separated", sidePosition: sidePosition ?? 0.5,
+            hoverPreviews: hoverPreviews ?? true)
+    }
     public var quietSeconds: Int
     public var voiceProvider: String
     public var voiceAccount: String?
