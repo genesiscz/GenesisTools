@@ -1,3 +1,4 @@
+import { logger } from "@genesiscz/utils/logger";
 import { videoSettingsSchema } from "@genesiscz/utils/video/types";
 import { z } from "zod";
 
@@ -11,6 +12,21 @@ export const widgetTargetSchema = z.object({
 export type WidgetTarget = z.infer<typeof widgetTargetSchema>;
 export function widgetSessionKey(target: WidgetTarget): string {
     return [target.hostId, target.provider, target.sessionId, target.sourceHome].map(encodeURIComponent).join(":");
+}
+
+export function parseWidgetSessionKey(key: string): WidgetTarget | undefined {
+    try {
+        const parts = key.split(":").map(decodeURIComponent);
+        if (parts.length !== 4) {
+            return undefined;
+        }
+        const [hostId, provider, sessionId, sourceHome] = parts;
+        const result = widgetTargetSchema.safeParse({ hostId, provider, sessionId, sourceHome });
+        return result.success ? result.data : undefined;
+    } catch (error) {
+        logger.debug({ error }, "Invalid widget session identity");
+        return undefined;
+    }
 }
 
 export const widgetPreferencesSchema = z.object({

@@ -513,3 +513,47 @@ test("a failing preflight cannot overwrite a concurrent cancellation", async () 
     });
     expect((await readWidgetState(directory)).outgoing[0].state).toBe("cancelled");
 });
+
+test("a resolved form remains in an external session timeline after leaving the waiting roster", async () => {
+    const directory = await root();
+    const external = { ...target, provider: "unknown" as const, sourceHome: "", sessionId: "external-question" };
+    const key = widgetSessionKey(external);
+    await mutateWidgetState(directory, (state) => {
+        state.selectedKey = key;
+        state.preferences.showChanges = false;
+    });
+    const sources: WidgetSources = {
+        sessions: async () => [],
+        decisions: () => [],
+        answers: () => [],
+        agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+        forms: (session) =>
+            session === external.sessionId
+                ? [
+                      {
+                          id: "external-form",
+                          sessionHint: external.sessionId,
+                          source: "Fixture source",
+                          status: "answered",
+                          createdAt: 1,
+                          resolvedAt: 2,
+                          projectPath: "/fixture/project",
+                          cwd: "/fixture/project",
+                          entryId: "answer-fixture",
+                          items: [{ id: "one", promptMarkdown: "Choose", choices: [{ id: "yes", label: "Yes" }] }],
+                          answers: { one: { itemId: "one", selectedChoices: ["yes"] } },
+                      },
+                  ]
+                : [],
+    };
+    const snapshot = await widgetSnapshot({ root: directory, sources });
+    expect(snapshot.sessions[0]).toMatchObject({ key, title: "Fixture source" });
+    expect(snapshot.cards).toHaveLength(1);
+    expect(snapshot.cards[0]).toMatchObject({
+        kind: "form",
+        status: "answered",
+        sessionKey: key,
+        entryId: "answer-fixture",
+    });
+    expect(snapshot.cards[0].body).toContain("Yes");
+});

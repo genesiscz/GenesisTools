@@ -17,7 +17,7 @@ import { hubAgents } from "../agents";
 import type { AgentNode, AgentsTree } from "../agents/types";
 import { readAssetManifest } from "../composer/serialize";
 import { readWidgetState } from "./storage";
-import { type WidgetTarget, widgetSessionKey } from "./types";
+import { parseWidgetSessionKey, type WidgetTarget, widgetSessionKey } from "./types";
 
 const prof = profiler.scope("widget");
 
@@ -383,11 +383,25 @@ export async function widgetSnapshot({
         current.status = "waiting";
     }
     const selected = selectedKey ? sessions.get(selectedKey) : undefined;
-    const selectedId = selected?.target.sessionId;
+    const persistedTarget = selectedKey ? parseWidgetSessionKey(selectedKey) : undefined;
+    const selectedId = selected?.target.sessionId ?? persistedTarget?.sessionId;
     const [answers, forms] = await Promise.all([
         read("answers", () => sources.answers(selectedId), []),
         selectedId ? read("question timeline", () => sources.forms(selectedId), []) : Promise.resolve(waitingForms),
     ]);
+    for (const form of forms) {
+        const id = form.sessionHint || form.id;
+        if (!findSession(id)) {
+            const identity = persistedTarget?.sessionId === id ? persistedTarget : targetOf({ sessionId: id }, form.id);
+            const session = addSession(
+                { ...identity, cwd: form.cwd },
+                form.source ?? id,
+                form.projectPath,
+                form.resolvedAt ?? form.createdAt
+            );
+            session.status = form.status === "pending" ? "waiting" : "recent";
+        }
+    }
     const cards: WidgetCard[] = [];
     const formEntries = new Set(forms.flatMap((form) => (form.entryId ? [form.entryId] : [])));
     for (const row of answers) {

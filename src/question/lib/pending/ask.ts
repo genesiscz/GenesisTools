@@ -266,7 +266,7 @@ export async function answerAskForm(id: string, answers: AskAnswer[], deps: AskD
                 source: "ask",
                 sessionId: form.sessionHint,
             },
-            { logBase: deps.logBase }
+            { logBase: deps.logBase, env: deps.env, ctx: { ...deps.ctx, cwd: form.cwd, sessionId: form.sessionHint } }
         );
     } catch (err) {
         // Nothing was recorded, so nothing is orphaned — but the claim would otherwise hold the
