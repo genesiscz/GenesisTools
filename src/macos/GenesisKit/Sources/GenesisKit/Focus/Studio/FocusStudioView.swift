@@ -178,17 +178,19 @@ public struct FocusStudioView: View {
 
     private var emptyState: some View {
         VStack(spacing: GenSpacing.sm) {
-            Image(systemName: model.emptiness == .captureWasOff ? "eye.slash" : "clock")
+            Image(systemName: model.emptiness == .noMatches ? "line.3.horizontal.decrease.circle"
+                  : model.emptiness == .captureWasOff ? "eye.slash" : "clock")
                 .font(.system(size: 26))
                 .foregroundStyle(Color.genTextMuted)
-            Text(model.emptiness == .captureWasOff
-                 ? "Capture was off for \(model.range.label)."
+            Text(model.emptiness == .noMatches ? "No activity matches these filters."
+                 : model.emptiness == .captureWasOff ? "Capture was off for \(model.range.label)."
                  : "Nothing recorded for \(model.range.label).")
                 .font(GenTypography.body(14))
                 .foregroundStyle(Color.genTextSecondary)
-            Text(model.emptiness == .captureWasOff
+            Text(model.emptiness == .noMatches ? "Clear the search or choose another tag or project to see recorded activity."
+                 : model.emptiness == .captureWasOff
                  ? "This range was not measured, which is not the same as an empty day. Turn capture back on in Settings → Focus."
-                 : "Capture is on. Start a flow from the HUD, or run genesis focus start.")
+                 : "Capture is on. Start a flow from the timer.")
                 .font(GenTypography.caption(11))
                 .foregroundStyle(Color.genTextTertiary)
                 .multilineTextAlignment(.center)

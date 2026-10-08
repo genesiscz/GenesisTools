@@ -160,6 +160,89 @@ final class FocusStudioModelTests: XCTestCase {
 
     private func nowMs() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
 
+    func testFilteredRecordedActivityDoesNotClaimNothingWasRecorded() throws {
+        let from = model.range.fromMs + 9 * 3_600_000
+        _ = try store.openSegment(.init(startedMs: from, endedMs: from + 60_000,
+                                        appBundle: "test.editor", appName: "Fixture editor"))
+        model.search = "does-not-match-any-fixture"
+        model.reload(now: Date(timeIntervalSince1970: Double(from + 120_000) / 1000))
+        XCTAssertEqual(model.emptiness, .noMatches)
+        XCTAssertTrue(model.bars.isEmpty)
+    }
+
+    func testSelectedSessionClipsTimelineBarsToTheSameWindowAsTotals() throws {
+        let nine = model.range.fromMs + 9 * 3_600_000
+        let id = try store.startSession(.init(kind: "flow", plannedSec: 900, startedMs: nine + 900_000, state: "running", cycleIndex: 1))
+        try store.endSession(id: id, at: nine + 1_800_000, state: .done)
+        _ = try store.openSegment(.init(startedMs: nine, endedMs: nine + 3_000_000, sessionId: id,
+                                        appBundle: "test.editor", appName: "Fixture editor"))
+        model.sessionFilter = id
+        model.reload(now: Date(timeIntervalSince1970: Double(nine + 3_600_000) / 1000))
+        XCTAssertEqual(model.totals.focusedMs, 900_000)
+        XCTAssertEqual(model.bars.first?.startedMs, nine + 900_000)
+        XCTAssertEqual(model.bars.last?.endedMs, nine + 1_800_000)
+    }
+
+    func testSessionCardsUseABoundedNumberOfLedgerQueries() throws {
+        let base = model.range.fromMs + 2 * 3_600_000
+        for index in 0 ..< 30 {
+            let start = base + Int64(index) * 600_000
+            let id = try store.startSession(.init(kind: "flow", plannedSec: 600, startedMs: start, state: "running", cycleIndex: 1))
+            try store.endSession(id: id, at: start + 600_000, state: .done)
+            for part in 0 ..< 3 {
+                let began = start + Int64(part) * 120_000
+                let segment = try store.openSegment(.init(startedMs: began, endedMs: began + 60_000, sessionId: id,
+                                                          appBundle: "test.editor", appName: "Fixture editor"))
+                try store.appendInput(bucketMs: began, segmentId: segment, counts: .init(keys: part + 1))
+            }
+        }
+        let now = Date(timeIntervalSince1970: Double(base + 30 * 600_000) / 1000)
+        let before = store.preparedStatementCount
+        model.reload(now: now)
+        let queries = store.preparedStatementCount - before
+        print("STUDIO_QUERY_COUNT sessions=30 segments=90 prepared=\(queries)")
+        XCTAssertLessThanOrEqual(queries, 6)
+        XCTAssertEqual(model.sessionCards.count, 30)
+        XCTAssertEqual(model.sessionOptions.count, 30)
+        XCTAssertTrue(model.sessionCards.allSatisfy { $0.keys == 6 })
+        if ProcessInfo.processInfo.environment["FLOW_STUDIO_BENCH"] == "1" {
+            measure(metrics: [XCTCPUMetric()]) { model.reload(now: now) }
+        }
+    }
+
+    func testSessionPickerKeepsWholePhaseDataWhenAnotherSessionIsSelected() throws {
+        let base = model.range.fromMs
+        var ids: [Int64] = []
+        for offset: Int64 in [0, 3_600_000] {
+            let start = base + offset
+            let id = try store.startSession(.init(kind: "flow", plannedSec: 180,
+                                                  startedMs: start, state: "running", cycleIndex: 1))
+            ids.append(id)
+            try store.endSession(id: id, at: start + 180_000, state: .done)
+            let segment = try store.openSegment(.init(startedMs: start, endedMs: start + 180_000,
+                                                      sessionId: id, appBundle: "test.editor", appName: "Fixture editor"))
+            try store.appendInput(bucketMs: start, segmentId: segment, counts: .init(keys: 2))
+            try store.appendInput(bucketMs: start + 180_000, segmentId: segment, counts: .init(keys: 100))
+        }
+        model.sessionFilter = ids[1]
+        model.reload(now: Date(timeIntervalSince1970: Double(base + 7_200_000) / 1000))
+        XCTAssertEqual(model.sessionCards.map(\.id), [ids[1]])
+        XCTAssertEqual(model.sessionOptions.count, 2)
+        XCTAssertTrue(model.sessionOptions.allSatisfy { $0.topApps.first?.ms == 180_000 })
+        XCTAssertTrue(model.sessionOptions.allSatisfy { $0.keys == 2 }, "input at the exclusive phase end is not counted")
+        XCTAssertEqual(model.keys, 2)
+        XCTAssertEqual(model.availableProjects, [])
+    }
+
+    func testClockFormattingMatchesTheOriginalHourMinuteContract() {
+        let reference = DateFormatter()
+        reference.dateFormat = "HH:mm"
+        for hour in 0 ..< 48 {
+            let ms = model.range.fromMs + Int64(hour) * 3_600_000 + 1_020_000
+            XCTAssertEqual(FocusFormat.clockTime(ms), reference.string(from: Date(timeIntervalSince1970: Double(ms) / 1000)))
+        }
+    }
+
     func testAnEmptyDayWithCaptureOnReadsAsNothingRecorded() {
         model.reload()
         XCTAssertEqual(model.emptiness, .nothingRecorded)

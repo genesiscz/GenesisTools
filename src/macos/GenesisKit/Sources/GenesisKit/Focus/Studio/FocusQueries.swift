@@ -126,10 +126,16 @@ public enum FocusFormat {
 
     public static func percent(_ share: Double) -> String { "\(Int((share * 100).rounded()))%" }
 
-    public static func clockTime(_ ms: Int64) -> String {
+    private static let clockFormatter: DateFormatter = {
         let formatter = DateFormatter()
+        formatter.locale = .autoupdatingCurrent
+        formatter.timeZone = .autoupdatingCurrent
         formatter.dateFormat = "HH:mm"
-        return formatter.string(from: Date(timeIntervalSince1970: Double(ms) / 1000))
+        return formatter
+    }()
+
+    public static func clockTime(_ ms: Int64) -> String {
+        clockFormatter.string(from: Date(timeIntervalSince1970: Double(ms) / 1000))
     }
 
     public static func dayKey(_ date: Date, calendar: Calendar = .current) -> String {

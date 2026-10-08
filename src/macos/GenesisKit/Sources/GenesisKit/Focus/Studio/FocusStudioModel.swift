@@ -98,6 +98,7 @@ public final class FocusStudioModel: ObservableObject {
         case notEmpty
         case nothingRecorded
         case captureWasOff
+        case noMatches
     }
 
     @Published public var tab: Tab = .timeline
@@ -143,6 +144,10 @@ public final class FocusStudioModel: ObservableObject {
     // MARK: - Loading
 
     public func reload(now: Date = Date()) {
+        PerfLog.span("focus.studio.reload") { reloadSnapshot(now: now) }
+    }
+
+    private func reloadSnapshot(now: Date) {
         let nowMs = Int64(now.timeIntervalSince1970 * 1000)
         let from = range.fromMs
         let to = range.toMs
@@ -162,10 +167,17 @@ public final class FocusStudioModel: ObservableObject {
         let windowTo = focused.map { $0.endedMs ?? nowMs } ?? to
         let sessions = focused.map { [$0] } ?? rangeSessions
 
-        let allSegments = (try? store.segments(from: windowFrom, to: windowTo)) ?? []
+        // The picker describes whole sessions, including phases crossing the range boundary.
+        // Read their union once, then scope the visible charts in memory.
+        let readFrom = min(from, rangeSessions.map(\.startedMs).min() ?? from)
+        let readTo = max(to, rangeSessions.map { $0.endedMs ?? nowMs }.max() ?? to)
+        let allSegments = (try? store.segments(from: readFrom, to: readTo)) ?? []
+        let input = InputIndex((try? store.inputSeries(from: readFrom, to: readTo)) ?? [])
         let gaps = (try? store.gaps(from: windowFrom, to: windowTo)) ?? []
-
-        let segments = allSegments.filter(matchesFilters)
+        let windowSegments = allSegments.filter {
+            $0.startedMs < windowTo && ($0.endedMs ?? nowMs) > windowFrom
+        }
+        let segments = windowSegments.filter(matchesFilters)
         totals = FocusAggregate.totals(segments, from: windowFrom, to: windowTo, now: nowMs)
         appBuckets = FocusAggregate.buckets(segments, from: windowFrom, to: windowTo, now: nowMs,
                                             bundle: { $0.appBundle }) { $0.appName }
@@ -182,9 +194,7 @@ public final class FocusStudioModel: ObservableObject {
                 let end = min(session.endedMs ?? nowMs, windowTo)
                 return end > start ? (start, end) : nil
             }
-        keys = spans.reduce(0) { total, span in
-            total + ((try? store.inputTotals(from: span.from, to: span.to)) ?? .init()).keys
-        }
+        keys = spans.reduce(0) { $0 + input.keys(from: $1.from, to: $1.to) }
 
         childBuckets = Dictionary(uniqueKeysWithValues: appBuckets.map { bucket in
             let rows = segments.filter { $0.appName == bucket.key }
@@ -194,7 +204,7 @@ public final class FocusStudioModel: ObservableObject {
             return (bucket.key, Array(children.prefix(8)))
         })
 
-        buildLanes(segments, now: nowMs)
+        buildLanes(segments, from: windowFrom, to: windowTo, now: nowMs)
         phaseBands = taggedSessions.flatMap { session -> [PhaseBand] in
             let start = max(session.startedMs, windowFrom)
             let end = min(session.endedMs ?? nowMs, windowTo)
@@ -229,7 +239,14 @@ public final class FocusStudioModel: ObservableObject {
                               offsetEndMs: piece.to - laneStart, reason: gap.reason)
             }
         }
-        buildSessionCards(sessions, segments: segments, from: windowFrom, to: windowTo, now: nowMs)
+        let allCards = sessionCardsFor(rangeSessions, segments: allSegments, input: input, now: nowMs)
+        let visibleSessionIDs = Set(sessions.filter { tagFilter == nil || $0.tag == tagFilter }.map(\.id))
+        if projectFilter == nil && search.isEmpty {
+            sessionCards = allCards.filter { visibleSessionIDs.contains($0.id) }
+        } else {
+            sessionCards = sessionCardsFor(sessions.filter { visibleSessionIDs.contains($0.id) },
+                                           segments: segments, input: input, now: nowMs)
+        }
 
         // Resolve icons here rather than inside a row body: the first lookup is disk work.
         AppIconService.shared.preload(appBuckets.map(\.bundleId))
@@ -240,8 +257,10 @@ public final class FocusStudioModel: ObservableObject {
         // The tag list always comes from the whole range, never from the filtered set: sourcing
         // it from the filtered sessions would empty the menu that just picked a tag.
         availableProjects = Array(Set(allSegments.compactMap(\.project))).sorted()
-        sessionOptions = sessionCardsFor(rangeSessions, segments: allSegments, now: nowMs)
-        emptiness = resolveEmptiness(segments: segments, from: windowFrom, to: windowTo, now: nowMs)
+        sessionOptions = allCards
+        emptiness = segments.isEmpty && !windowSegments.isEmpty
+            ? .noMatches
+            : resolveEmptiness(segments: segments, from: windowFrom, to: windowTo, now: nowMs)
     }
 
     /// Minutes in one lane: 60 on a day view, 1440 otherwise. The timeline's x domain.
@@ -285,7 +304,8 @@ public final class FocusStudioModel: ObservableObject {
     /// left to right. Drawing lanes on one shared day axis made them a waterfall: each row held
     /// a short block somewhere along an otherwise empty line, and 23 hours of every row were
     /// dead space.
-    private func buildLanes(_ segments: [ActivityStore.Segment], now: Int64) {
+    private func buildLanes(_ segments: [ActivityStore.Segment], from windowFrom: Int64,
+                            to windowTo: Int64, now: Int64) {
         var calendar = Calendar.current
         calendar.firstWeekday = 2
         let perHour = range.granularity == .day
@@ -309,10 +329,11 @@ public final class FocusStudioModel: ObservableObject {
         // First pass: every lane any segment TOUCHES, so a stretch that runs across a boundary
         // creates the lane on the far side of it too.
         for segment in segments {
-            let from = max(segment.startedMs, range.fromMs)
-            let to = min(segment.endedMs ?? now, range.toMs)
+            let from = max(segment.startedMs, windowFrom)
+            let to = min(segment.endedMs ?? now, windowTo)
+            guard to > from else { continue }
             var cursor = from
-            while cursor <= max(from, to - 1) {
+            while cursor < to {
                 guard let step = note(cursor) else { break }
                 cursor = step.to
             }
@@ -323,8 +344,8 @@ public final class FocusStudioModel: ObservableObject {
         // Second pass: one bar per lane the segment crosses, each clipped to its lane.
         var built: [TimelineBar] = []
         for segment in segments {
-            let from = max(segment.startedMs, range.fromMs)
-            let to = min(segment.endedMs ?? now, range.toMs)
+            let from = max(segment.startedMs, windowFrom)
+            let to = min(segment.endedMs ?? now, windowTo)
             guard to > from else { continue }
             for piece in lanePieces(from: from, to: to) {
                 let laneStart = laneWindows[piece.lane]?.from ?? piece.from
@@ -345,21 +366,44 @@ public final class FocusStudioModel: ObservableObject {
         bars = built
     }
 
-    private func buildSessionCards(_ sessions: [ActivityStore.FocusSession],
-                                   segments: [ActivityStore.Segment],
-                                   from: Int64, to: Int64, now: Int64) {
-        let filtered = tagFilter.map { tag in sessions.filter { $0.tag == tag } } ?? sessions
-        sessionCards = sessionCardsFor(filtered, segments: segments, now: now)
+    private struct InputIndex {
+        let times: [Int64]
+        let cumulativeKeys: [Int]
+
+        init(_ samples: [ActivityStore.InputSample]) {
+            times = samples.map(\.bucketMs)
+            var sums = [0]
+            sums.reserveCapacity(samples.count + 1)
+            for sample in samples { sums.append(sums[sums.count - 1] + sample.counts.keys) }
+            cumulativeKeys = sums
+        }
+
+        func keys(from: Int64, to: Int64) -> Int {
+            guard to > from else { return 0 }
+            return cumulativeKeys[lowerBound(to)] - cumulativeKeys[lowerBound(from)]
+        }
+
+        private func lowerBound(_ value: Int64) -> Int {
+            var lower = 0
+            var upper = times.count
+            while lower < upper {
+                let middle = lower + (upper - lower) / 2
+                if times[middle] < value { lower = middle + 1 } else { upper = middle }
+            }
+            return lower
+        }
     }
 
     private func sessionCardsFor(_ sessions: [ActivityStore.FocusSession],
-                                 segments: [ActivityStore.Segment], now: Int64) -> [SessionCard] {
-        sessions.reversed().map { session in
-            let own = segments.filter { $0.sessionId == session.id }
+                                 segments: [ActivityStore.Segment], input: InputIndex,
+                                 now: Int64) -> [SessionCard] {
+        let bySession = Dictionary(grouping: segments, by: \.sessionId)
+        return sessions.reversed().map { session in
+            let own = bySession[session.id] ?? []
             let ended = session.endedMs ?? now
             let apps = FocusAggregate.buckets(own, from: session.startedMs, to: ended, now: now,
                                               bundle: { $0.appBundle }) { $0.appName }
-            let counts = (try? store.inputTotals(from: session.startedMs, to: ended)) ?? .init()
+            let count = input.keys(from: session.startedMs, to: ended)
             return SessionCard(
                 id: session.id,
                 kind: session.kind,
@@ -370,7 +414,7 @@ public final class FocusStudioModel: ObservableObject {
                 plannedMs: Int64(session.plannedSec) * 1000,
                 interruptions: session.interruptions,
                 state: session.state,
-                keys: counts.keys,
+                keys: count,
                 topApps: Array(apps.prefix(3)))
         }
     }

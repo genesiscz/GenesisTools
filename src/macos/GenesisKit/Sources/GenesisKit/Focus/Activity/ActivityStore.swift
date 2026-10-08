@@ -79,6 +79,8 @@ public final class ActivityStore {
     // MARK: - Storage
 
     private var db: OpaquePointer?
+    private var preparedStatements = 0
+    var preparedStatementCount: Int { queue.sync { preparedStatements } }
     private let queue = DispatchQueue(label: "dev.genesis.activity-store")
     public let dbPath: String
 
@@ -864,6 +866,7 @@ public final class ActivityStore {
     // MARK: - SQLite helpers
 
     private func prepare(_ sql: String) throws -> OpaquePointer? {
+        preparedStatements += 1
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             throw StoreError.sqlite(lastMessage())
