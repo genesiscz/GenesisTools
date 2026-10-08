@@ -36,7 +36,54 @@ public struct WidgetLayoutConfiguration: Codable, Equatable, Sendable {
     }
 }
 
+struct WidgetSideStripMetrics {
+    static let width: CGFloat = 44
+    static let verticalPadding: CGFloat = 4
+    static let dragWidth: CGFloat = 40
+    static let dragHeight: CGFloat = 21
+    static let settingsWidth: CGFloat = 32
+    static let settingsHeight: CGFloat = 24
+    static let addWidth: CGFloat = 34
+    static let addHeight: CGFloat = 30
+    static let sessionWidth: CGFloat = 26
+    static let sessionHeight: CGFloat = 17
+    static let sessionSpacing: CGFloat = 6
+    static let minimumSpacer: CGFloat = 2
+    static let sessionLimit = 4
+
+    let classic: Bool
+    let moduleCount: Int
+    let sessionCount: Int
+
+    init(classic: Bool, moduleIDs: [String], visibleSessionCount: Int) {
+        self.classic = classic
+        moduleCount = moduleIDs.count
+        sessionCount = moduleIDs.contains("agents") ? min(Self.sessionLimit, max(0, visibleSessionCount)) : 0
+    }
+
+    var spacing: CGFloat { classic ? 5 : 7 }
+    var moduleSize: CGFloat { classic ? 28 : 32 }
+
+    var minimumHeight: CGFloat {
+        let modules = moduleCount == 0 ? Self.addHeight : CGFloat(moduleCount) * moduleSize
+        let sessions = CGFloat(sessionCount) * Self.sessionHeight
+            + CGFloat(max(0, sessionCount - 1)) * Self.sessionSpacing
+        // Drag handle, settings and flexible spacer are always arranged children.
+        let childCount = max(1, moduleCount) + 3 + (sessionCount > 0 ? 1 : 0)
+        return Self.verticalPadding * 2 + Self.dragHeight + Self.settingsHeight + Self.minimumSpacer
+            + modules + sessions + CGFloat(childCount - 1) * spacing
+    }
+}
+
 public enum WidgetClusterGeometry {
+    public static func topWidth(cutout: CGFloat, moduleCount: Int) -> CGFloat {
+        let otherButtons = min(4, max(0, moduleCount - 1))
+        let titleWidth: CGFloat = cutout > 0 ? 24 : 110
+        let fixedWidth: CGFloat = 32 + titleWidth + 64 + 20 + 24
+        let overflowWidth: CGFloat = moduleCount > 5 ? 28 : 0
+        return max(360, max(0, cutout) + fixedWidth + CGFloat(otherButtons) * 33 + overflowWidth)
+    }
+
     public static func centers(
         heights: [CGFloat], position: Double, visible: CGRect, gap: CGFloat = 12
     ) -> [CGFloat] {

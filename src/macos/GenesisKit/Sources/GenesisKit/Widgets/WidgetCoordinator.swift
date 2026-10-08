@@ -158,7 +158,10 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func compactHeight(_ ids: [String]) -> CGFloat {
-        50 + CGFloat(max(1, ids.count)) * 39 + (ids.contains("agents") ? 76 : 0)
+        WidgetSideStripMetrics(
+            classic: model.snapshot?.state.preferences.sideStyle == "classic",
+            moduleIDs: ids, visibleSessionCount: model.sessions.count
+        ).minimumHeight
     }
 
     private func moduleIDs(for surface: WidgetSurfaceID) -> [String] {
@@ -202,7 +205,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             cutout = 0
         }
         topHeaderHeight = max(36, screen.safeAreaInsets.top + 6)
-        topCompactWidth = max(360, cutout + 260)
+        topCompactWidth = WidgetClusterGeometry.topWidth(
+            cutout: cutout, moduleCount: moduleIDs(for: WidgetSurfaceID(edge: .top)).count)
         availableCardHeight = min(660, screen.visibleFrame.height - 20)
         lastSide = model.side
         var layout = model.layout

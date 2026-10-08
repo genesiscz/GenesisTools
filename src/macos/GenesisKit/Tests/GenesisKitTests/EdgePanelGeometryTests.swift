@@ -7,6 +7,27 @@ final class EdgePanelGeometryTests: XCTestCase {
     private let screen = CGRect(x: -1600, y: 100, width: 1600, height: 1000)
     private let visible = CGRect(x: -1600, y: 150, width: 1600, height: 920)
 
+    func testTopWidthReservesRoomForTheCutoutAndEveryVisibleControl() {
+        XCTAssertEqual(WidgetClusterGeometry.topWidth(cutout: 200, moduleCount: 1), 364)
+        XCTAssertEqual(WidgetClusterGeometry.topWidth(cutout: 200, moduleCount: 6), 524)
+        XCTAssertEqual(WidgetClusterGeometry.topWidth(cutout: 0, moduleCount: 6), 410)
+        XCTAssertEqual(WidgetClusterGeometry.topWidth(cutout: 200, moduleCount: 12), 524)
+    }
+
+    func testRoundedSurfacesKeepTheirFrameAndCutAllFourCorners() {
+        let rect = CGRect(x: -400, y: 120, width: 44, height: 165)
+        for edge in [EdgePanelPlacement.left, .right, .top] {
+            let path = EdgePanelShape(placement: edge, corner: 20, joined: false).path(in: rect)
+            XCTAssertEqual(path.boundingRect, rect)
+            XCTAssertTrue(path.contains(CGPoint(x: rect.midX, y: rect.midY)))
+            for x in [rect.minX + 1, rect.maxX - 1] {
+                for y in [rect.minY + 1, rect.maxY - 1] {
+                    XCTAssertFalse(path.contains(CGPoint(x: x, y: y)))
+                }
+            }
+        }
+    }
+
     func testTopKeepsItsBezelAnchorAcrossSizes() {
         let compact = EdgePanelGeometry.frame(
             placement: .top, size: CGSize(width: 260, height: 36),
@@ -848,7 +869,10 @@ final class WidgetRosterTests: XCTestCase {
         }.prefix(4))
     }
 
-    private func withFixture(_ body: (WidgetModel, URL, WidgetSnapshot) async throws -> Void) async throws {
+    private func withFixture(
+        sessionCount: Int? = nil, sideStyle: String = "modular",
+        _ body: (WidgetModel, URL, WidgetSnapshot) async throws -> Void
+    ) async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("widget-roster-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer {
@@ -858,7 +882,12 @@ final class WidgetRosterTests: XCTestCase {
         {"version":1,"state":{"version":1,"revision":0,"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":""},"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}
         """.utf8)
         var snapshot = try JSONDecoder().decode(WidgetSnapshot.self, from: data)
-        snapshot.sessions = fixtureSessions()
+        snapshot.sessions = sessionCount.map { Array(fixtureSessions().prefix($0)).map { session in
+            var visible = session
+            visible.visible = true
+            return visible
+        } } ?? fixtureSessions()
+        snapshot.state.preferences.sideStyle = sideStyle
         let snapshotFile = directory.appendingPathComponent("snapshot.json")
         try JSONEncoder().encode(snapshot).write(to: snapshotFile, options: .atomic)
         let binary = directory.appendingPathComponent("tools")
@@ -878,6 +907,91 @@ final class WidgetRosterTests: XCTestCase {
         }
         XCTAssertNotNil(model.snapshot)
         try await body(model, snapshotFile, snapshot)
+    }
+
+    func testCompactSideHeightMatchesRealHostingLayoutForEachStyleAndSessionCount() async throws {
+        _ = NSApplication.shared
+        let groups = [[], ["shelf"], ["agents"], ["agents", "capture", "shelf", "tasks"]]
+        for style in ["classic", "modular"] {
+            for count in [0, 1, 4, 7] {
+                try await withFixture(sessionCount: count, sideStyle: style) { model, _, _ in
+                    let registry = WidgetModuleRegistry()
+                    for id in groups.last! {
+                        try registry.register(WidgetModuleDescriptor(
+                            id: id, title: id, symbol: "circle", tint: .blue, summary: { "Fixture" }
+                        ) { _ in EmptyView() })
+                    }
+                    for edge in [EdgePanelPlacement.left, .right] {
+                        for ids in groups {
+                            let metrics = WidgetSideStripMetrics(
+                                classic: style == "classic", moduleIDs: ids, visibleSessionCount: model.sessions.count)
+                            let root = WidgetHostView(
+                                model: model, registry: registry, surface: WidgetSurfaceID(edge: edge),
+                                moduleIDs: ids, cutout: 0, headerHeight: 36, visibleHeight: 900)
+                            let host = NSHostingView(rootView: root)
+                            let measured = host.fittingSize
+                            XCTAssertEqual(measured.width, 44, accuracy: 0.5)
+                            XCTAssertEqual(measured.height, metrics.minimumHeight, accuracy: 0.5,
+                                "Real SwiftUI layout differs: style=\(style), sessions=\(count), modules=\(ids)")
+                            if ids.count == 4 && count >= 4 {
+                                XCTAssertEqual(measured.height, style == "classic" ? 288 : 318, accuracy: 0.5)
+                            }
+                            if ids.isEmpty {
+                                XCTAssertEqual(measured.height, style == "classic" ? 100 : 106, accuracy: 0.5)
+                            }
+                            print("SIDE_LAYOUT style=\(style) edge=\(edge) sessions=\(count) modules=\(ids.count) measured=\(measured.height) allocated=\(metrics.minimumHeight)")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func testInboxDoesNotParseTranscriptAndLeavingConversationStopsTail() async throws {
+        try await withFixture { model, snapshotFile, _ in
+            let directory = snapshotFile.deletingLastPathComponent()
+            let calls = directory.appendingPathComponent("calls.txt")
+            try Data().write(to: calls)
+            let tailPID = directory.appendingPathComponent("tail.pid")
+            let binary = directory.appendingPathComponent("tools")
+            let script = """
+            #!/bin/sh
+            printf '%s\\n' "$*" >> '\(calls.path)'
+            if [ "$1" = "ai" ]; then
+                case " $* " in
+                    *' --live '*) printf '%s' "$$" > '\(tailPID.path)'; exec /bin/sleep 30 ;;
+                esac
+                printf '%s\\n' '{"provider":"codex","sessionId":"fixture-0","filePath":"/fixture/session.jsonl","byteSize":1,"truncated":false,"nextOffset":1,"turns":[{"id":"fixture-turn","role":"user","text":"Fixture conversation","tools":[]}]}'
+            else
+                cat '\(snapshotFile.path)'
+            fi
+            """
+            try script.write(to: binary, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
+            model.select("fixture-0")
+            model.open(.top)
+            try await Task.sleep(for: .milliseconds(100))
+            let inboxCalls = try String(contentsOf: calls, encoding: .utf8)
+            XCTAssertFalse(inboxCalls.contains("ai sessions tail"), "Inbox must not launch the full transcript parser")
+            XCTAssertFalse(model.transcriptLoading)
+            model.section = "Conversation"
+            let deadline = ContinuousClock.now + .seconds(5)
+            while (!FileManager.default.fileExists(atPath: tailPID.path) || model.transcript.isEmpty)
+                && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            XCTAssertEqual(model.transcript.first?.text, "Fixture conversation")
+            let pidText = try String(contentsOf: tailPID, encoding: .utf8)
+            let pid = try XCTUnwrap(Int32(pidText))
+            XCTAssertEqual(kill(pid, 0), 0, "The live follow process must have started")
+            model.section = "Inbox"
+            XCTAssertTrue(model.transcript.isEmpty)
+            XCTAssertFalse(model.transcriptLoading)
+            while kill(pid, 0) == 0 && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            XCTAssertNotEqual(kill(pid, 0), 0, "Leaving Conversation must terminate its live tail")
+        }
     }
 
     func testVisibleRosterAndRankedPreviewMatchTheOriginalComparator() async throws {

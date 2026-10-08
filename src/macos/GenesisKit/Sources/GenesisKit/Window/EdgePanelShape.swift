@@ -5,11 +5,13 @@ public struct EdgePanelShape: Shape {
     public var placement: EdgePanelPlacement
     public var shoulder: CGFloat
     public var corner: CGFloat
+    public var joined: Bool
 
-    public init(placement: EdgePanelPlacement, shoulder: CGFloat = 10, corner: CGFloat = 18) {
+    public init(placement: EdgePanelPlacement, shoulder: CGFloat = 10, corner: CGFloat = 18, joined: Bool = true) {
         self.placement = placement
         self.shoulder = shoulder
         self.corner = corner
+        self.joined = joined
     }
 
     public var animatableData: AnimatablePair<CGFloat, CGFloat> {
@@ -18,6 +20,9 @@ public struct EdgePanelShape: Shape {
     }
 
     public func path(in rect: CGRect) -> Path {
+        if !joined {
+            return RoundedRectangle(cornerRadius: corner, style: .continuous).path(in: rect)
+        }
         let vertical = placement != .top
         let width = vertical ? rect.width : rect.height
         let height = vertical ? rect.height : rect.width

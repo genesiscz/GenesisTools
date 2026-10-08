@@ -19,11 +19,20 @@ struct WidgetHostView: View {
         return moduleIDs.first(where: { $0 == preferred }).flatMap(registry.module)
             ?? moduleIDs.first.flatMap(registry.module)
     }
+    private var classicSide: Bool {
+        surface.edge != .top && model.snapshot?.state.preferences.sideStyle == "classic"
+    }
+
+    private var sideMetrics: WidgetSideStripMetrics {
+        WidgetSideStripMetrics(classic: classicSide, moduleIDs: moduleIDs, visibleSessionCount: model.sessions.count)
+    }
+
     private var shape: EdgePanelShape {
         EdgePanelShape(
             placement: surface.edge,
             shoulder: presentation == .compact ? 7 : 10,
-            corner: presentation == .compact ? 13 : 22)
+            corner: presentation == .compact ? (classicSide ? 21 : 13) : 22,
+            joined: model.snapshot?.state.preferences.joinedEdges ?? true)
     }
 
     var body: some View {
@@ -73,7 +82,7 @@ struct WidgetHostView: View {
                         Text(selected?.id == "agents" ? "Agents" : selected?.title ?? "Widgets")
                             .font(.system(size: 12, weight: .semibold))
                     }
-                }
+                }.frame(maxWidth: cutout == 0 ? 110 : 24, alignment: .leading)
             }
             .buttonStyle(.genHoverPlain())
             .accessibilityLabel("Open " + (selected?.title ?? "widgets"))
@@ -83,6 +92,7 @@ struct WidgetHostView: View {
                     ForEach(Array(model.previewSessions.prefix(3))) { session in
                         Button {
                             model.select(session.key)
+                            model.section = "Inbox"
                             model.openModule("agents", on: surface)
                         } label: {
                             WidgetActivityIndicator(status: session.visualStatus, animate: !model.effectiveReduceMotion)
@@ -95,26 +105,26 @@ struct WidgetHostView: View {
             ForEach(Array(moduleIDs.filter { $0 != selected?.id }.prefix(4)), id: \.self) { id in
                 moduleButton(id, size: 25)
             }
-            if moduleIDs.count > 4 {
+            if moduleIDs.count > 5 {
                 Button {
                     model.showSettings?()
                 } label: {
-                    Text("+\(moduleIDs.count - 4)").font(.caption2)
+                    Text("+\(moduleIDs.count - 5)").font(.caption2)
                 }.buttonStyle(.genHoverPlain()).accessibilityLabel("Choose widgets")
             }
             if selected?.id == "agents" {
-                Text(String(model.sessions.filter { $0.status == "waiting" }.count))
+                Text(String(model.waitingSessionCount))
                     .font(.system(size: 10, weight: .semibold, design: .rounded))
                     .foregroundStyle(.orange).accessibilityLabel("Agents needing an answer")
             }
         }.padding(.horizontal, 16).frame(height: headerHeight)
     }
 
-    private var sideStrip: some View {
-        VStack(spacing: 7) {
-            Image(systemName: "line.3.horizontal")
+    private var dragHandle: some View {
+        Image(systemName: "line.3.horizontal")
                 .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-                .frame(width: 40, height: 21).contentShape(Rectangle())
+                .frame(width: WidgetSideStripMetrics.dragWidth, height: WidgetSideStripMetrics.dragHeight)
+                .contentShape(Rectangle())
                 .accessibilityLabel("Drag widgets vertically")
                 .gesture(
                     DragGesture(minimumDistance: 4)
@@ -140,26 +150,33 @@ struct WidgetHostView: View {
                             dragOrigin = nil
                             dragClusterHeight = nil
                         })
+    }
+
+    private var sideStrip: some View {
+        VStack(spacing: sideMetrics.spacing) {
+            if !classicSide { dragHandle }
             if moduleIDs.isEmpty {
                 Button {
                     model.showSettings?()
                 } label: {
-                    Image(systemName: "plus").frame(width: 34, height: 30)
+                    Image(systemName: "plus")
+                        .frame(width: WidgetSideStripMetrics.addWidth, height: WidgetSideStripMetrics.addHeight)
                 }.buttonStyle(.genHoverPlain()).accessibilityLabel("Add a widget to this group")
             }
             ForEach(moduleIDs, id: \.self) { id in
-                moduleButton(id, size: 32)
-                if id == "agents" {
-                    VStack(spacing: 6) {
-                        ForEach(Array(model.sessions.prefix(4))) { session in
+                moduleButton(id, size: sideMetrics.moduleSize)
+                if id == "agents", sideMetrics.sessionCount > 0 {
+                    VStack(spacing: WidgetSideStripMetrics.sessionSpacing) {
+                        ForEach(Array(model.sessions.prefix(sideMetrics.sessionCount))) { session in
                             Button {
                                 model.select(session.key)
+                                model.section = "Inbox"
                                 model.openModule("agents", on: surface)
                             } label: {
                                 WidgetActivityIndicator(
                                     status: session.visualStatus, animate: !model.effectiveReduceMotion
                                 )
-                                .frame(width: 26, height: 17)
+                                .frame(width: WidgetSideStripMetrics.sessionWidth, height: WidgetSideStripMetrics.sessionHeight)
                             }
                             .buttonStyle(.genHoverPlain())
                             .instantTooltip(session.title + " · " + session.visualStatus.label)
@@ -168,14 +185,16 @@ struct WidgetHostView: View {
                     }
                 }
             }
-            Spacer(minLength: 2)
+            Spacer(minLength: WidgetSideStripMetrics.minimumSpacer)
             Button {
                 model.showSettings?()
             } label: {
                 Image(systemName: "slider.horizontal.3").font(.system(size: 11))
-                    .foregroundStyle(.secondary).frame(width: 32, height: 24)
+                    .foregroundStyle(.secondary)
+                    .frame(width: WidgetSideStripMetrics.settingsWidth, height: WidgetSideStripMetrics.settingsHeight)
             }.buttonStyle(.genHoverPlain()).accessibilityLabel("Widget settings")
-        }.padding(.vertical, 4).frame(width: 44)
+            if classicSide { dragHandle }
+        }.padding(.vertical, WidgetSideStripMetrics.verticalPadding).frame(width: WidgetSideStripMetrics.width)
     }
 
     @ViewBuilder private var content: some View {
@@ -223,9 +242,9 @@ struct WidgetHostView: View {
         Button {
             model.openModule(id, on: surface)
         } label: {
-            Image(systemName: registry.module(id)?.symbol ?? "square.dashed")
+            Image(systemName: classicSide && id == "agents" ? "tray" : registry.module(id)?.symbol ?? "square.dashed")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(registry.module(id)?.tint ?? .secondary)
+                .foregroundStyle(classicSide ? Color.white : registry.module(id)?.tint ?? .secondary)
                 .frame(width: size, height: size)
                 .background(
                     selected?.id == id && presentation != .compact ? Color.white.opacity(0.09) : .clear,

@@ -231,6 +231,8 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var sideLayout: String?
     public var sidePosition: Double?
     public var hoverPreviews: Bool?
+    public var sideStyle: String?
+    public var joinedEdges: Bool?
     public var glassEffect: Bool?
     public var display: String?
     public var providers: [String]?

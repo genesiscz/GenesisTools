@@ -168,6 +168,18 @@ private struct WidgetGeneralSettings: View {
                     ) {
                         Text("5 seconds").tag(5)
                         Text("15 seconds").tag(15)
+            NativeSettingsCard("Shape") {
+                NativeSettingsRow("Side style", detail: "Classic keeps a compact monochrome rail with its handle below.") {
+                    Picker("Side style", selection: string("sideStyle", prefs?.sideStyle ?? "modular")) {
+                        Text("Modular").tag("modular")
+                        Text("Classic").tag("classic")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 220)
+                }
+                Divider()
+                NativeSettingsToggle(
+                    "Join screen edges", detail: "Curved shoulders join the display. Turn off for fully rounded bubbles.",
+                    isOn: boolean("joinedEdges", prefs?.joinedEdges ?? true))
+            }
                         Text("30 seconds").tag(30)
                         Text("1 minute").tag(60)
                     }.labelsHidden().frame(width: 150)
