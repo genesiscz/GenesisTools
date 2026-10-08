@@ -32,7 +32,15 @@ public struct WidgetSessionBrowser: View {
                 Spacer()
                 Toggle("Pinned only", isOn: $onlyPinned).toggleStyle(.checkbox)
             }.font(.system(size: 11))
-            if groups.isEmpty {
+            if !groups.isEmpty && model.snapshot?.rosterLoading == true {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading more agents…").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if groups.isEmpty && model.snapshot?.rosterLoading == true {
+                ProgressView("Loading your agents…").frame(maxWidth: .infinity).padding(20)
+            } else if groups.isEmpty {
                 ContentUnavailableView.search(text: query).frame(maxWidth: .infinity)
             } else {
                 ForEach(Array(groups.prefix(limit))) { group in

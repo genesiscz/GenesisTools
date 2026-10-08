@@ -369,6 +369,7 @@ public struct WidgetInboxSummary: Codable, Equatable, Sendable {
 
 public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public var notifications: WidgetInboxSummary? = nil
+    public var rosterLoading: Bool? = nil
     public struct Changes: Codable, Equatable, Sendable {
         public struct File: Codable, Identifiable, Equatable, Sendable {
             public var path: String
