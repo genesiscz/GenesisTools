@@ -14,45 +14,45 @@ import Foundation
 /// AX reads run off the main thread with a messaging timeout, because a hung app must cost a
 /// null title, never a frozen UI.
 @MainActor
-final class ActivityRecorder: ObservableObject {
+public final class ActivityRecorder: ObservableObject {
     /// What the desktop looks like right now, after the privacy policy has been applied.
-    struct FocusSnapshot: Equatable {
-        var appBundle: String
-        var appName: String
-        var windowTitle: String?
-        var urlHost: String?
-        var urlPath: String?
-        var cmuxSession: String?
-        var cmuxPane: String?
-        var displayId: Int64?
+    public struct FocusSnapshot: Equatable {
+        public var appBundle: String
+        public var appName: String
+        public var windowTitle: String?
+        public var urlHost: String?
+        public var urlPath: String?
+        public var cmuxSession: String?
+        public var cmuxPane: String?
+        public var displayId: Int64?
 
         /// Two snapshots are the same *segment* when the triple matches. Anything else is a
         /// switch, and switches are what the breakdown counts.
-        func sameSegment(as other: FocusSnapshot) -> Bool {
+        public func sameSegment(as other: FocusSnapshot) -> Bool {
             appBundle == other.appBundle && windowTitle == other.windowTitle
                 && urlHost == other.urlHost && urlPath == other.urlPath
         }
     }
 
-    @Published private(set) var isCapturing = false
-    @Published private(set) var isIdle = false
-    @Published private(set) var current: FocusSnapshot?
+    @Published public private(set) var isCapturing = false
+    @Published public private(set) var isIdle = false
+    @Published public private(set) var current: FocusSnapshot?
     /// Set when capture is paused, so the HUD can show the badge instead of pretending.
-    @Published private(set) var pausedUntil: Date?
+    @Published public private(set) var pausedUntil: Date?
     /// Keystrokes per poll tick, newest last, capped. The HUD sparkline reads this instead of
     /// running its own timer — one source of truth, one wakeup.
-    @Published private(set) var inputHistory: [Int] = []
+    @Published public private(set) var inputHistory: [Int] = []
     /// The app mix of the running phase, recomputed once per tick. The HUD reads this instead
     /// of querying the store from its body, which would re-run on every invalidation.
-    @Published private(set) var currentMix: [AppShare] = []
+    @Published public private(set) var currentMix: [AppShare] = []
 
     /// One app's share of the current phase.
-    struct AppShare: Identifiable, Equatable {
-        let appName: String
-        let bundleId: String?
-        let ms: Int64
-        let share: Double
-        var id: String { appName }
+    public struct AppShare: Identifiable, Equatable {
+        public let appName: String
+        public let bundleId: String?
+        public let ms: Int64
+        public let share: Double
+        public var id: String { appName }
     }
 
     private let store: ActivityStore
@@ -69,11 +69,11 @@ final class ActivityRecorder: ObservableObject {
     private var openGapId: Int64?
     private var terminateObserver: NSObjectProtocol?
 
-    static let historyLength = 24
+    public static let historyLength = 24
 
-    static let pollSeconds: TimeInterval = 2
+    public static let pollSeconds: TimeInterval = 2
 
-    init(store: ActivityStore, settings: FocusSettings = FocusSettings()) {
+    public init(store: ActivityStore, settings: FocusSettings = FocusSettings()) {
         self.store = store
         self.settings = settings
         counter.onFlush = { [weak self] bucketMs, counts in
@@ -97,7 +97,7 @@ final class ActivityRecorder: ObservableObject {
     /// The app being closed is not an idle user and not an empty day: it is time nobody
     /// measured, and the ledger says so rather than leaving a hole the views would have to
     /// guess about.
-    func closeDowntime(launchedAt: Date = Date()) {
+    public func closeDowntime(launchedAt: Date = Date()) {
         let launch = Int64(launchedAt.timeIntervalSince1970 * 1000)
         // An unclean exit can leave a segment with no end at all; finish it where it was.
         for segment in (try? store.openSegments()) ?? [] {
@@ -112,7 +112,7 @@ final class ActivityRecorder: ObservableObject {
         try? store.recordGap(startedMs: lastMs, endedMs: launch, reason: "app_not_running")
     }
 
-    func start() {
+    public func start() {
         guard !isCapturing, settings.captureEnabled else { return }
         isCapturing = true
         closeOpenGap()
@@ -131,7 +131,7 @@ final class ActivityRecorder: ObservableObject {
 
     /// Ends the record cleanly on quit. Synchronous on the main queue on purpose: a nested Task
     /// may not run before the process exits (the same trap FocusOrchestrator documents).
-    func installTerminateHook() {
+    public func installTerminateHook() {
         guard terminateObserver == nil else { return }
         terminateObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
@@ -150,7 +150,7 @@ final class ActivityRecorder: ObservableObject {
             }
     }
 
-    func stop() {
+    public func stop() {
         guard isCapturing else { return }
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         pollTimer?.invalidate()
@@ -164,7 +164,7 @@ final class ActivityRecorder: ObservableObject {
         }
     }
 
-    func apply(settings newValue: FocusSettings) {
+    public func apply(settings newValue: FocusSettings) {
         let wasEnabled = settings.captureEnabled
         settings = newValue
         if !newValue.captureEnabled, isCapturing {
@@ -176,7 +176,7 @@ final class ActivityRecorder: ObservableObject {
 
     /// Pauses capture for a while. The current segment closes immediately — a paused recorder
     /// must never leave a segment open that later looks like hours of focus.
-    func pauseCapture(until date: Date) {
+    public func pauseCapture(until date: Date) {
         pausedUntil = date
         // Stop first: its final flush is written against the segment that is still open.
         counter.stop()
@@ -192,7 +192,7 @@ final class ActivityRecorder: ObservableObject {
         }
     }
 
-    func resumeCapture() {
+    public func resumeCapture() {
         pausedUntil = nil
         closeOpenGap()
         guard isCapturing else { return }
@@ -203,7 +203,7 @@ final class ActivityRecorder: ObservableObject {
     /// False while a timed pause is still running. Once it has run out, capture comes back and
     /// the gap the pause opened is closed; left open, it would read as "not measured" up to
     /// now while capture was in fact running, and block the next pause from recording its own.
-    func resumeIfPauseExpired(now: Date = Date()) -> Bool {
+    public func resumeIfPauseExpired(now: Date = Date()) -> Bool {
         guard let until = pausedUntil else { return true }
         if now < until { return false }
         pausedUntil = nil
@@ -220,7 +220,7 @@ final class ActivityRecorder: ObservableObject {
 
     /// The pomodoro engine calls this on every phase boundary: the current segment is split so
     /// no segment ever straddles two sessions.
-    func attach(sessionId newValue: Int64?) {
+    public func attach(sessionId newValue: Int64?) {
         let now = nowMs()
         let snapshot = current
         closeCurrentSegment(at: now)
@@ -275,7 +275,7 @@ final class ActivityRecorder: ObservableObject {
     }
 
     /// Internal, not private: tests feed it probes directly.
-    func applyProbe(_ probe: AXFocusProbe.Result, bundle: String, appName: String,
+    public func applyProbe(_ probe: AXFocusProbe.Result, bundle: String, appName: String,
                             settings: FocusSettings, idle: Bool) {
         let parts = settings.urlParts(probe.url)
         let cmux = CmuxAttribution.parse(title: probe.title, bundle: bundle)
@@ -358,7 +358,7 @@ final class ActivityRecorder: ObservableObject {
     }
 
     /// The HUD's live mix: which apps this stretch of time actually went to.
-    func appMix(from: Int64, to: Int64, limit: Int = 3) -> [AppShare] {
+    public func appMix(from: Int64, to: Int64, limit: Int = 3) -> [AppShare] {
         guard let rows = try? store.segments(from: from, to: to) else { return [] }
         var totals: [String: (ms: Int64, bundleId: String)] = [:]
         let now = nowMs()
@@ -379,13 +379,13 @@ final class ActivityRecorder: ObservableObject {
     }
 
     /// Counts in the bucket still open, for the sparkline.
-    func liveInput() -> ActivityStore.InputCounts { counter.snapshot() }
+    public func liveInput() -> ActivityStore.InputCounts { counter.snapshot() }
 
     // MARK: - Clocks
 
     private func nowMs() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
 
-    static func idleSeconds() -> Double {
+    public static func idleSeconds() -> Double {
         guard let any = CGEventType(rawValue: ~0) else { return 0 }
         return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: any)
     }
@@ -395,16 +395,16 @@ final class ActivityRecorder: ObservableObject {
 
 /// Reads the focused window of one process. Nonisolated on purpose: it runs on a utility queue
 /// with a messaging timeout, so an app that stops answering costs a null title and nothing else.
-enum AXFocusProbe {
-    struct Result: Equatable {
-        var title: String?
-        var url: String?
-        var displayId: Int64?
+public enum AXFocusProbe {
+    public struct Result: Equatable {
+        public var title: String?
+        public var url: String?
+        public var displayId: Int64?
     }
 
-    static let messagingTimeout: Float = 0.25
+    public static let messagingTimeout: Float = 0.25
 
-    static func read(pid: pid_t, bundle: String) -> Result {
+    public static func read(pid: pid_t, bundle: String) -> Result {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, messagingTimeout)
         guard let window = copy(app, kAXFocusedWindowAttribute) else { return Result() }
@@ -466,10 +466,10 @@ enum AXFocusProbe {
 
 /// cmux window titles carry the session, which is the most reliable project signal on this
 /// machine. Parsing the title is deliberate: it costs nothing and never shells out.
-enum CmuxAttribution {
-    static let bundles: Set<String> = ["com.cmuxterm.app"]
+public enum CmuxAttribution {
+    public static let bundles: Set<String> = ["com.cmuxterm.app"]
 
-    static func parse(title: String?, bundle: String) -> (session: String?, pane: String?) {
+    public static func parse(title: String?, bundle: String) -> (session: String?, pane: String?) {
         guard bundles.contains(bundle), let title, !title.isEmpty else { return (nil, nil) }
         // Observed shapes: "restart-restart-◑ col-302921-pr-7402" and "session · pane".
         if let separator = title.range(of: " · ") {

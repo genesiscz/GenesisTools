@@ -1,6 +1,9 @@
 // Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Tests/GenesisTests/FocusOrchestratorTests.swift at 2026-10-08T05:04:08+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
 import XCTest
+@testable import GenesisKit
+#if canImport(Genesis)
 @testable import Genesis
+#endif
 
 @MainActor
 final class FocusOrchestratorTests: XCTestCase {
@@ -13,6 +16,9 @@ final class FocusOrchestratorTests: XCTestCase {
         tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("genesis-focus-test-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        FlowFocusConfiguration.shared = FlowFocusConfiguration(directory: tempDir)
+        FlowFocusConfiguration.shared.allowsWrites = true
+        FocusOrchestrator.shared = FocusOrchestrator(stateURL: tempDir.appendingPathComponent("shared-focus.json"), openURL: { _ in })
         openedURLs = []
         orch = FocusOrchestrator(
             stateURL: tempDir.appendingPathComponent("focus-snapshot.json"),
@@ -23,6 +29,7 @@ final class FocusOrchestratorTests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        await FlowFocusConfiguration.shared.flush()
         try? FileManager.default.removeItem(at: tempDir)
         // Restore shared mode label so parallel host runs stay clean.
         FocusOrchestrator.shared.setModeLabel(FocusOrchestrator.ModeLabel.off)
@@ -121,11 +128,11 @@ final class FocusOrchestratorTests: XCTestCase {
 
     func testShortcutURLOpenedWhenConfigured() throws {
         // Write config via ConfigStore so focusShortcutName getter sees it.
-        ConfigStore.shared.setAppValue("Genesis Voice Focus", forKey: FocusOrchestrator.ConfigKey.focusShortcutName)
+        FlowFocusConfiguration.shared.setAppValue("Genesis Voice Focus", forKey: FocusOrchestrator.ConfigKey.focusShortcutName)
         defer {
-            ConfigStore.shared.setAppValue("", forKey: FocusOrchestrator.ConfigKey.focusShortcutName)
+            FlowFocusConfiguration.shared.setAppValue("", forKey: FocusOrchestrator.ConfigKey.focusShortcutName)
         }
-        // Re-read via shared store; our orch uses ConfigStore.shared.
+        // Re-read via shared store; our orch uses FlowFocusConfiguration.shared.
         _ = try orch.beginSession(reason: "shortcut-test")
         XCTAssertEqual(openedURLs.count, 1)
         XCTAssertEqual(openedURLs.first?.scheme, "shortcuts")
@@ -171,9 +178,9 @@ final class FocusOrchestratorTests: XCTestCase {
 
     // T4 — recover with shortcuts integration invokes openURL end phase
     func testRecoverWithShortcutsIntegrationInvokesEndPhase() throws {
-        ConfigStore.shared.setAppValue("Genesis Voice Focus", forKey: FocusOrchestrator.ConfigKey.focusShortcutName)
+        FlowFocusConfiguration.shared.setAppValue("Genesis Voice Focus", forKey: FocusOrchestrator.ConfigKey.focusShortcutName)
         defer {
-            ConfigStore.shared.setAppValue("", forKey: FocusOrchestrator.ConfigKey.focusShortcutName)
+            FlowFocusConfiguration.shared.setAppValue("", forKey: FocusOrchestrator.ConfigKey.focusShortcutName)
         }
         orch.setModeLabel("personal")
         _ = try orch.beginSession(reason: "shortcut-crash")
@@ -198,9 +205,9 @@ final class FocusOrchestratorTests: XCTestCase {
     // T8 — toggle off → beginForVoiceIfEnabled does not create snapshot
     func testBeginForVoiceIfEnabledRespectsToggleOff() throws {
         let key = FocusOrchestrator.ConfigKey.focusWhileListening
-        let prior = ConfigStore.shared.app[key] as? Bool
-        ConfigStore.shared.setAppValue(false, forKey: key)
-        defer { ConfigStore.shared.setAppValue(prior ?? true, forKey: key) }
+        let prior = FlowFocusConfiguration.shared.app[key] as? Bool
+        FlowFocusConfiguration.shared.setAppValue(false, forKey: key)
+        defer { FlowFocusConfiguration.shared.setAppValue(prior ?? true, forKey: key) }
         orch.setModeLabel("off")
         orch.beginForVoiceIfEnabled()
         XCTAssertFalse(FileManager.default.fileExists(atPath: orch.stateURL.path))
@@ -211,9 +218,9 @@ final class FocusOrchestratorTests: XCTestCase {
     // T8 — toggle on → beginForVoiceIfEnabled writes snapshot
     func testBeginForVoiceIfEnabledWhenToggleOnWritesSnapshot() throws {
         let key = FocusOrchestrator.ConfigKey.focusWhileListening
-        let prior = ConfigStore.shared.app[key] as? Bool
-        ConfigStore.shared.setAppValue(true, forKey: key)
-        defer { ConfigStore.shared.setAppValue(prior ?? true, forKey: key) }
+        let prior = FlowFocusConfiguration.shared.app[key] as? Bool
+        FlowFocusConfiguration.shared.setAppValue(true, forKey: key)
+        defer { FlowFocusConfiguration.shared.setAppValue(prior ?? true, forKey: key) }
         orch.setModeLabel("off")
         orch.beginForVoiceIfEnabled()
         XCTAssertTrue(FileManager.default.fileExists(atPath: orch.stateURL.path))
@@ -224,6 +231,7 @@ final class FocusOrchestratorTests: XCTestCase {
     }
 }
 
+#if canImport(Genesis)
 // MARK: - NotifyCenter mute gate (Spec 17 T8 / G7)
 
 @MainActor
@@ -270,3 +278,4 @@ final class NotifyCenterMuteGateTests: XCTestCase {
         XCTAssertEqual(delivered.first?.title, "live")
     }
 }
+#endif

@@ -7,17 +7,17 @@ import SwiftUI
 /// One window per session id, cascaded, so comparing two pomodoros means opening two cards and
 /// putting them side by side rather than losing the first one.
 @MainActor
-final class FocusSessionWindowController: NSWindowController, NSWindowDelegate {
-    let sessionId: Int64
+public final class FocusSessionWindowController: NSWindowController, NSWindowDelegate {
+    public let sessionId: Int64
     private let model: FocusSessionDetailModel
     /// Told when the window closes, so the owner can drop its reference instead of leaking one
     /// controller per card ever clicked.
-    var onClose: ((Int64) -> Void)?
+    public var onClose: ((Int64) -> Void)?
 
     /// Where the next window lands. Static because the cascade is per app, not per window.
     private static var cascadePoint = NSPoint(x: 160, y: 160)
 
-    init(model: FocusSessionDetailModel) {
+    public init(model: FocusSessionDetailModel) {
         self.model = model
         sessionId = model.sessionId
         let window = NSWindow(
@@ -38,9 +38,9 @@ final class FocusSessionWindowController: NSWindowController, NSWindowDelegate {
         window.setAccessibilityIdentifier("focus-session-window-\(sessionId)")
     }
 
-    required init?(coder: NSCoder) { fatalError("not supported") }
+    public required init?(coder: NSCoder) { fatalError("not supported") }
 
-    func present() {
+    public func present() {
         guard let window else { return }
         if !window.isVisible {
             Self.cascadePoint = window.cascadeTopLeft(from: Self.cascadePoint)
@@ -52,7 +52,7 @@ final class FocusSessionWindowController: NSWindowController, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func windowWillClose(_ notification: Notification) {
+    public func windowWillClose(_ notification: Notification) {
         onClose?(sessionId)
     }
 }

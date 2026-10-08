@@ -7,15 +7,35 @@ import Foundation
 /// The phase table is a value type (`PomodoroPlan`) so the rules can be tested without a store,
 /// a clock or a main actor. The engine around it owns persistence, so a crash mid-flow resumes
 /// with the right remaining time instead of restarting the phase.
-struct PomodoroPlan: Equatable {
-    enum Phase: String, Equatable {
+public struct PomodoroPlan: Equatable {
+    public init(
+        flowSec: Int = 25 * 60, shortBreakSec: Int = 5 * 60, longBreakSec: Int = 30 * 60,
+        cycleLength: Int = 4, autoStartBreaks: Bool = true, autoStartFlows: Bool = false,
+        allowOverrun: Bool = true, dndWhileFlowing: Bool = true, sound: String = "Glass",
+        idlePauseSec: Int = 60, resumeOnActivity: Bool = true, nudgeEverySec: Int = 10 * 60
+    ) {
+        self.flowSec = flowSec
+        self.shortBreakSec = shortBreakSec
+        self.longBreakSec = longBreakSec
+        self.cycleLength = cycleLength
+        self.autoStartBreaks = autoStartBreaks
+        self.autoStartFlows = autoStartFlows
+        self.allowOverrun = allowOverrun
+        self.dndWhileFlowing = dndWhileFlowing
+        self.sound = sound
+        self.idlePauseSec = idlePauseSec
+        self.resumeOnActivity = resumeOnActivity
+        self.nudgeEverySec = nudgeEverySec
+    }
+
+    public enum Phase: String, Equatable {
         case flow
         case shortBreak = "short_break"
         case longBreak = "long_break"
 
-        var isBreak: Bool { self != .flow }
+        public var isBreak: Bool { self != .flow }
 
-        var label: String {
+        public var label: String {
             switch self {
             case .flow: return "Flow"
             case .shortBreak: return "Short break"
@@ -24,25 +44,25 @@ struct PomodoroPlan: Equatable {
         }
     }
 
-    var flowSec = 25 * 60
-    var shortBreakSec = 5 * 60
-    var longBreakSec = 30 * 60
-    var cycleLength = 4
-    var autoStartBreaks = true
-    var autoStartFlows = false
-    var allowOverrun = true
-    var dndWhileFlowing = true
+    public var flowSec = 25 * 60
+    public var shortBreakSec = 5 * 60
+    public var longBreakSec = 30 * 60
+    public var cycleLength = 4
+    public var autoStartBreaks = true
+    public var autoStartFlows = false
+    public var allowOverrun = true
+    public var dndWhileFlowing = true
     /// A name from `FocusChime.available`, or "off". Plays at every phase boundary.
-    var sound = FocusChime.defaultName
+    public var sound = FocusChime.defaultName
     /// Seconds without keyboard or mouse input before a running flow pauses itself. 0 turns
     /// it off. Breaks never pause: being away is what a break is for.
-    var idlePauseSec = 60
+    public var idlePauseSec = 60
     /// Whether a flow that paused itself for idleness resumes on the first input.
-    var resumeOnActivity = true
+    public var resumeOnActivity = true
     /// Shortest gap between two "no flow is running" nudges while you type. 0 turns it off.
-    var nudgeEverySec = 10 * 60
+    public var nudgeEverySec = 10 * 60
 
-    func duration(of phase: Phase) -> Int {
+    public func duration(of phase: Phase) -> Int {
         switch phase {
         case .flow: return flowSec
         case .shortBreak: return shortBreakSec
@@ -52,7 +72,7 @@ struct PomodoroPlan: Equatable {
 
     /// What comes after `phase`, given how many flows have completed in this cycle.
     /// A long break lands on every `cycleLength`-th completed flow, which is what the dots show.
-    func next(after phase: Phase, completedFlows: Int) -> Phase {
+    public func next(after phase: Phase, completedFlows: Int) -> Phase {
         guard phase == .flow else { return .flow }
         let boundary = max(1, cycleLength)
         return completedFlows % boundary == 0 ? .longBreak : .shortBreak
@@ -61,18 +81,18 @@ struct PomodoroPlan: Equatable {
     /// The phase that came BEFORE this one, so a mis-skip can be walked back.
     /// A break is always preceded by a flow; a flow by the break whose length the cycle
     /// boundary decides.
-    func previous(before phase: Phase, completedFlows: Int) -> Phase {
+    public func previous(before phase: Phase, completedFlows: Int) -> Phase {
         guard phase == .flow else { return .flow }
         let boundary = max(1, cycleLength)
         return completedFlows > 0 && completedFlows % boundary == 0 ? .longBreak : .shortBreak
     }
 
     /// Whether the phase that follows starts by itself.
-    func autoStarts(_ phase: Phase) -> Bool {
+    public func autoStarts(_ phase: Phase) -> Bool {
         phase.isBreak ? autoStartBreaks : autoStartFlows
     }
 
-    static func from(appConfig: [String: Any]) -> PomodoroPlan {
+    public static func from(appConfig: [String: Any]) -> PomodoroPlan {
         var plan = PomodoroPlan()
         guard let focus = appConfig["focus"] as? [String: Any],
               let timer = focus["timer"] as? [String: Any] else { return plan }
@@ -94,27 +114,27 @@ struct PomodoroPlan: Equatable {
 }
 
 @MainActor
-final class PomodoroEngine: ObservableObject {
-    enum State: String, Equatable { case idle, running, paused, overrun }
+public final class PomodoroEngine: ObservableObject {
+    public enum State: String, Equatable { case idle, running, paused, overrun }
 
-    @Published private(set) var state: State = .idle
-    @Published private(set) var phase: PomodoroPlan.Phase = .flow
+    @Published public private(set) var state: State = .idle
+    @Published public private(set) var phase: PomodoroPlan.Phase = .flow
     /// Seconds left; negative while overrunning, which the HUD shows counting up.
-    @Published private(set) var remainingSec: Int = 0
-    @Published private(set) var completedFlows: Int = 0
-    @Published private(set) var tag: String?
-    @Published private(set) var interruptions: Int = 0
+    @Published public private(set) var remainingSec: Int = 0
+    @Published public private(set) var completedFlows: Int = 0
+    @Published public private(set) var tag: String?
+    @Published public private(set) var interruptions: Int = 0
     /// Why the current pause began; nil while not paused. The idle watch resumes only its own.
-    @Published private(set) var pauseReason: ActivityStore.PauseReason?
-    @Published var plan = PomodoroPlan()
+    @Published public private(set) var pauseReason: ActivityStore.PauseReason?
+    @Published public var plan = PomodoroPlan()
 
     /// Set by the host so the engine can split segments and arm DND without importing the app.
-    var onSessionChange: ((Int64?) -> Void)?
-    var onPhaseEnd: ((PomodoroPlan.Phase, Int64) -> Void)?
+    public var onSessionChange: ((Int64?) -> Void)?
+    public var onPhaseEnd: ((PomodoroPlan.Phase, Int64) -> Void)?
     /// Fires once per announced boundary, after the chime and the notification.
-    var onBoundary: (() -> Void)?
-    var beginDND: (() -> Void)?
-    var endDND: (() -> Void)?
+    public var onBoundary: (() -> Void)?
+    public var beginDND: (() -> Void)?
+    public var endDND: (() -> Void)?
 
     private let store: ActivityStore
     private var sessionId: Int64?
@@ -127,14 +147,14 @@ final class PomodoroEngine: ObservableObject {
     /// Set when a flow announced itself at zero, so the skip that ends its overrun is silent.
     private var overrunAnnounced = false
 
-    init(store: ActivityStore, plan: PomodoroPlan = PomodoroPlan()) {
+    public init(store: ActivityStore, plan: PomodoroPlan = PomodoroPlan()) {
         self.store = store
         self.plan = plan
     }
 
     // MARK: - Commands
 
-    func start(_ phase: PomodoroPlan.Phase = .flow, seconds: Int? = nil, tag: String? = nil) {
+    public func start(_ phase: PomodoroPlan.Phase = .flow, seconds: Int? = nil, tag: String? = nil) {
         endCurrent(state: .abandoned)
         let duration = seconds ?? plan.duration(of: phase)
         let now = nowMs()
@@ -161,7 +181,7 @@ final class PomodoroEngine: ObservableObject {
 
     /// `since` backdates the pause: an idle pause starts when the input stopped, not when the
     /// threshold noticed it, so the minute you were away is not charged to the flow.
-    func pause(reason: ActivityStore.PauseReason = .manual, since: Date? = nil) {
+    public func pause(reason: ActivityStore.PauseReason = .manual, since: Date? = nil) {
         guard state == .running || state == .overrun, let sessionId else { return }
         let now = nowMs()
         // A row this engine forgot (a restart, a double press) must be closed before a new one
@@ -181,7 +201,7 @@ final class PomodoroEngine: ObservableObject {
         releaseDND()
     }
 
-    func resume() {
+    public func resume() {
         guard state == .paused else { return }
         pauseReason = nil
         let now = nowMs()
@@ -217,7 +237,7 @@ final class PomodoroEngine: ObservableObject {
 
     /// Ends the phase early and moves on. The session is still recorded — a skipped flow is data,
     /// not an absence.
-    func skip() {
+    public func skip() {
         let finished = phase
         endCurrent(state: .done)
         advance(after: finished, auto: plan.autoStarts(plan.next(after: finished, completedFlows: completedFlows)))
@@ -228,7 +248,7 @@ final class PomodoroEngine: ObservableObject {
     ///
     /// The phase you return to starts fresh rather than resuming, because the session you
     /// skipped is already closed in the ledger and inventing time back into it would be a lie.
-    func goBack() {
+    public func goBack() {
         let current = phase
         let target = plan.previous(before: current, completedFlows: completedFlows)
         endCurrent(state: .abandoned)
@@ -237,26 +257,26 @@ final class PomodoroEngine: ObservableObject {
         start(target, tag: tag)
     }
 
-    func stop() {
+    public func stop() {
         endCurrent(state: .abandoned)
         state = .idle
         remainingSec = 0
         stopTicker()
     }
 
-    func setTag(_ value: String?) {
+    public func setTag(_ value: String?) {
         tag = value
         guard let sessionId else { return }
         try? store.updateSession(id: sessionId, tag: value, note: nil, interruptions: nil)
     }
 
-    func setNote(_ value: String) {
+    public func setNote(_ value: String) {
         guard let sessionId else { return }
         try? store.updateSession(id: sessionId, tag: nil, note: value, interruptions: nil)
     }
 
     /// Called by the recorder when focus left the tagged work for longer than the threshold.
-    func recordInterruption() {
+    public func recordInterruption() {
         guard state == .running || state == .overrun, phase == .flow else { return }
         interruptions += 1
         guard let sessionId else { return }
@@ -268,7 +288,7 @@ final class PomodoroEngine: ObservableObject {
     /// Picks up a session the app died inside. Remaining time comes from the wall clock, so a
     /// five-minute crash costs five minutes of the phase, exactly as it would have if the app
     /// had stayed up.
-    func resumeOpenSessionIfAny() {
+    public func resumeOpenSessionIfAny() {
         guard let open = try? store.openSession(), let phase = PomodoroPlan.Phase(rawValue: open.kind) else { return }
         sessionId = open.id
         self.phase = phase
@@ -346,7 +366,7 @@ final class PomodoroEngine: ObservableObject {
     }
 
     /// Internal rather than private so a test can step the clock without waiting a second.
-    func tick() {
+    public func tick() {
         guard state == .running || state == .overrun else { return }
         // Remaining is derived from the clock, never decremented, so a missed tick or a sleeping
         // machine cannot drift the timer.
@@ -401,7 +421,7 @@ final class PomodoroEngine: ObservableObject {
     }
 
     /// Overridable for tests: they assert the boundary was announced without making noise.
-    var announcePhaseChange: ((PomodoroPlan.Phase, PomodoroPlan.Phase, Bool) -> Void)?
+    public var announcePhaseChange: ((PomodoroPlan.Phase, PomodoroPlan.Phase, Bool) -> Void)?
 
     private func announce(finished: PomodoroPlan.Phase, next: PomodoroPlan.Phase, autoStarted: Bool) {
         defer { onBoundary?() }
@@ -441,9 +461,9 @@ final class PomodoroEngine: ObservableObject {
     }
 
     /// The engine's only clock. Tests move it instead of sleeping.
-    var clock: () -> Date = Date.init
+    public var clock: () -> Date = Date.init
     /// Whether the one-second ticker exists. A running phase without it shows a frozen clock.
-    var isTicking: Bool { ticker != nil }
+    public var isTicking: Bool { ticker != nil }
 
     private func nowMs() -> Int64 { Int64(clock().timeIntervalSince1970 * 1000) }
 }

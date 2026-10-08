@@ -12,8 +12,8 @@ import SwiftUI
 /// Resolution is disk work the first time (`urlForApplication` + `icon(forFile:)`), so the
 /// studio preloads the bundles it is about to draw rather than discovering them inside a body.
 @MainActor
-final class AppIconService {
-    static let shared = AppIconService()
+public final class AppIconService {
+    public static let shared = AppIconService()
 
     private var cache: [String: NSImage] = [:]
     private var fallbackCache: [Int: NSImage] = [:]
@@ -26,7 +26,7 @@ final class AppIconService {
 
     private init() {}
 
-    func icon(for bundleId: String?, size: CGFloat = 16) -> NSImage {
+    public func icon(for bundleId: String?, size: CGFloat = 16) -> NSImage {
         guard let bundleId, !bundleId.isEmpty, !unresolved.contains(bundleId) else {
             return fallbackIcon(size: size)
         }
@@ -44,13 +44,13 @@ final class AppIconService {
 
     /// Resolve ahead of drawing, so the first frame of a reloaded Studio is not doing disk work
     /// inside a view body.
-    func preload(_ bundleIds: [String?], sizes: [CGFloat] = [14, 16]) {
+    public func preload(_ bundleIds: [String?], sizes: [CGFloat] = [14, 16]) {
         for bundleId in bundleIds {
             for size in sizes { _ = icon(for: bundleId, size: size) }
         }
     }
 
-    func clear() {
+    public func clear() {
         cache.removeAll()
         fallbackCache.removeAll()
         unresolved.removeAll()
@@ -78,12 +78,12 @@ final class AppIconService {
 
 /// The icon of one app, at one of three sizes. Decorative by default: the app name is always
 /// written next to it, so VoiceOver reads the name once rather than twice.
-struct AppIcon: View {
-    let bundleId: String?
-    var size: CGFloat = 14
-    var cornerRadius: CGFloat = 3
+public struct AppIcon: View {
+    public let bundleId: String?
+    public var size: CGFloat = 14
+    public var cornerRadius: CGFloat = 3
 
-    var body: some View {
+    public var body: some View {
         Image(nsImage: AppIconService.shared.icon(for: bundleId, size: size))
             .resizable()
             .frame(width: size, height: size)

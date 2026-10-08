@@ -11,35 +11,35 @@ import Foundation
 /// cannot answer "what did I do at 14:32", so segments, pauses and capture gaps are merged into
 /// one chronological list, and the rankings are derived from it.
 @MainActor
-final class FocusSessionDetailModel: ObservableObject {
+public final class FocusSessionDetailModel: ObservableObject {
     /// One thing that happened inside the session, whatever kind of thing it was.
-    struct Event: Identifiable, Equatable {
-        enum Kind: Equatable {
+    public struct Event: Identifiable, Equatable {
+        public enum Kind: Equatable {
             case work
             case idle
             case pause(String)
             case gap(String)
 
-            var isWork: Bool { self == .work }
+            public var isWork: Bool { self == .work }
         }
 
-        let id: String
-        let kind: Kind
-        let startedMs: Int64
-        let endedMs: Int64
-        let appName: String
-        let appBundle: String?
-        let windowTitle: String?
-        let urlHost: String?
-        let urlPath: String?
-        let project: String?
-        let cmux: String?
-        let keys: Int
+        public let id: String
+        public let kind: Kind
+        public let startedMs: Int64
+        public let endedMs: Int64
+        public let appName: String
+        public let appBundle: String?
+        public let windowTitle: String?
+        public let urlHost: String?
+        public let urlPath: String?
+        public let project: String?
+        public let cmux: String?
+        public let keys: Int
 
-        var durationMs: Int64 { max(0, endedMs - startedMs) }
+        public var durationMs: Int64 { max(0, endedMs - startedMs) }
 
         /// The one line a row shows under the app name.
-        var detail: String? {
+        public var detail: String? {
             if let urlHost {
                 guard let urlPath, urlPath != "/" , !urlPath.isEmpty else { return urlHost }
                 return urlHost + urlPath
@@ -50,38 +50,38 @@ final class FocusSessionDetailModel: ObservableObject {
     }
 
     /// Keystrokes and clicks in one slot of the effort chart.
-    struct EffortPoint: Identifiable, Equatable {
-        let id: Int64
-        let startedMs: Int64
-        let keys: Int
-        let clicks: Int
+    public struct EffortPoint: Identifiable, Equatable {
+        public let id: Int64
+        public let startedMs: Int64
+        public let keys: Int
+        public let clicks: Int
     }
 
-    @Published private(set) var session: ActivityStore.FocusSession?
-    @Published private(set) var totals = FocusAggregate.Totals()
-    @Published private(set) var appBuckets: [FocusAggregate.Bucket] = []
-    @Published private(set) var windowBuckets: [FocusAggregate.Bucket] = []
-    @Published private(set) var siteBuckets: [FocusAggregate.Bucket] = []
-    @Published private(set) var projectBuckets: [FocusAggregate.Bucket] = []
-    @Published private(set) var events: [Event] = []
-    @Published private(set) var effort: [EffortPoint] = []
-    @Published private(set) var counts = ActivityStore.InputCounts()
-    @Published private(set) var pausedMs: Int64 = 0
-    @Published private(set) var unmeasuredMs: Int64 = 0
+    @Published public private(set) var session: ActivityStore.FocusSession?
+    @Published public private(set) var totals = FocusAggregate.Totals()
+    @Published public private(set) var appBuckets: [FocusAggregate.Bucket] = []
+    @Published public private(set) var windowBuckets: [FocusAggregate.Bucket] = []
+    @Published public private(set) var siteBuckets: [FocusAggregate.Bucket] = []
+    @Published public private(set) var projectBuckets: [FocusAggregate.Bucket] = []
+    @Published public private(set) var events: [Event] = []
+    @Published public private(set) var effort: [EffortPoint] = []
+    @Published public private(set) var counts = ActivityStore.InputCounts()
+    @Published public private(set) var pausedMs: Int64 = 0
+    @Published public private(set) var unmeasuredMs: Int64 = 0
     /// True when the row is gone (forgotten through the privacy path, or a stale window).
-    @Published private(set) var missing = false
+    @Published public private(set) var missing = false
 
-    let sessionId: Int64
+    public let sessionId: Int64
     private let store: ActivityStore
 
-    init(store: ActivityStore, sessionId: Int64) {
+    public init(store: ActivityStore, sessionId: Int64) {
         self.store = store
         self.sessionId = sessionId
     }
 
     // MARK: - Loading
 
-    func reload(now: Date = Date()) {
+    public func reload(now: Date = Date()) {
         let nowMs = Int64(now.timeIntervalSince1970 * 1000)
         guard let session = try? store.session(id: sessionId) else {
             missing = true
@@ -192,35 +192,35 @@ final class FocusSessionDetailModel: ObservableObject {
 
     // MARK: - Derived
 
-    var title: String {
+    public var title: String {
         guard let session else { return "Session \(sessionId)" }
         let kind = session.kind.replacingOccurrences(of: "_", with: " ")
         let tag = session.tag.map { " · \($0)" } ?? ""
         return "\(kind.capitalized)\(tag) — \(FocusFormat.clockTime(session.startedMs))"
     }
 
-    var plannedMs: Int64 { Int64(session?.plannedSec ?? 0) * 1000 }
+    public var plannedMs: Int64 { Int64(session?.plannedSec ?? 0) * 1000 }
 
-    var actualMs: Int64 {
+    public var actualMs: Int64 {
         guard let session else { return 0 }
         return (session.endedMs ?? Int64(Date().timeIntervalSince1970 * 1000)) - session.startedMs
     }
 
     /// Fraction of the planned length that was actually spent, capped at 1 for the ring.
-    var completion: Double {
+    public var completion: Double {
         guard plannedMs > 0 else { return actualMs > 0 ? 1 : 0 }
         return min(1, Double(actualMs) / Double(plannedMs))
     }
 
     /// The share of the session spent focused on something, as opposed to idle, paused or
     /// unrecorded. This is the number that says whether a pomodoro was real.
-    var density: Double {
+    public var density: Double {
         guard actualMs > 0 else { return 0 }
         return min(1, Double(totals.focusedMs) / Double(actualMs))
     }
 
     /// Same numbers, pasteable. Deliberately the shape `genesis focus sessions` prints.
-    func markdown() -> String {
+    public func markdown() -> String {
         guard let session else { return "Session \(sessionId) is no longer recorded." }
         var lines = ["# \(title)", ""]
         let ended = session.endedMs.map(FocusFormat.clockTime) ?? "running"

@@ -4,7 +4,7 @@ import Foundation
 extension Notification.Name {
     /// Posted on the main queue after a dictation turn lands. `userInfo`
     /// carries a `FlowEvents.Payload` under `FlowEvents.payloadKey`.
-    static let genesisFlowTranscript = Notification.Name("genesis.flow.transcript")
+    public static let genesisFlowTranscript = Notification.Name("genesis.flow.transcript")
 }
 
 /// The completion hook other tools can listen to.
@@ -25,22 +25,22 @@ extension Notification.Name {
 /// expected to follow it. That keeps the writer trivial and means a crashed
 /// consumer cannot lose events it never read.
 @MainActor
-enum FlowEvents {
+public enum FlowEvents {
 
-    static let payloadKey = "payload"
+    public static let payloadKey = "payload"
 
-    struct Payload: Codable, Equatable {
-        var id: UUID
-        var text: String
+    public struct Payload: Codable, Equatable {
+        public var id: UUID
+        public var text: String
         /// The transcript before dictionary, snippets and any transform —
         /// so a consumer can tell what was said from what was written.
-        var rawText: String
-        var targetBundleId: String?
-        var targetAppName: String?
-        var injected: Bool
-        var wordCount: Int
-        var durationSeconds: Double
-        var createdAt: Date
+        public var rawText: String
+        public var targetBundleId: String?
+        public var targetAppName: String?
+        public var injected: Bool
+        public var wordCount: Int
+        public var durationSeconds: Double
+        public var createdAt: Date
     }
 
     private static let encoder: JSONEncoder = {
@@ -57,7 +57,7 @@ enum FlowEvents {
     }
 
     /// Announce a completed turn.
-    static func publish(_ entry: FlowEntry) {
+    public static func publish(_ entry: FlowEntry) {
         let payload = Payload(
             id: entry.id,
             text: entry.text,
@@ -107,7 +107,7 @@ enum FlowEvents {
             try handle.seekToEnd()
             try handle.write(contentsOf: data)
         } catch {
-            Log.flow.error("events: append failed: \(error.localizedDescription)")
+            FlowFocusLog.flow.error("events: append failed: \(error.localizedDescription)")
         }
     }
 }

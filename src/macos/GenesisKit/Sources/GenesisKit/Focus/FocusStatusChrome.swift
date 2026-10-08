@@ -2,10 +2,12 @@
 import SwiftUI
 
 /// Status-bar chip + post-crash recovery banner for Spec 17 Focus sessions.
-struct FocusStatusChip: View {
-    @ObservedObject var focus: FocusOrchestrator
+public struct FocusStatusChip: View {
+    public init(focus: FocusOrchestrator) { self.focus = focus }
 
-    var body: some View {
+    @ObservedObject public var focus: FocusOrchestrator
+
+    public var body: some View {
         if focus.isActive {
             HStack(spacing: 5) {
                 Image(systemName: "moon.fill")
@@ -45,10 +47,10 @@ struct FocusStatusChip: View {
 }
 
 /// Top-of-workspace recovery strip after crash/force-quit mid-session.
-struct FocusRecoveryBanner: View {
-    @ObservedObject var focus: FocusOrchestrator
+public struct FocusRecoveryBanner: View {
+    @ObservedObject public var focus: FocusOrchestrator
 
-    var body: some View {
+    public var body: some View {
         if let notice = focus.recoveryNotice {
             HStack(alignment: .top, spacing: GenSpacing.sm) {
                 Image(systemName: "arrow.uturn.backward.circle.fill")

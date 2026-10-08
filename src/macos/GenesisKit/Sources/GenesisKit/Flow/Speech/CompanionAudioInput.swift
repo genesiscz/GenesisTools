@@ -23,7 +23,7 @@ import Foundation
 
 /// Where a hold's audio comes from. Live: the microphone. Tests: a WAV file.
 @MainActor
-protocol CompanionAudioSource: AnyObject {
+public protocol CompanionAudioSource: AnyObject {
     /// Device, transport and rate for the log line ("MacBook Pro Microphone
     /// (built-in) 48000Hz/1ch").
     var deviceLabel: String { get }
@@ -39,16 +39,16 @@ protocol CompanionAudioSource: AnyObject {
 /// change between holds (a headset connects, another app asks for 24 kHz), and
 /// a buffer in a stale format is dropped by the recognizer without an error.
 @MainActor
-final class CompanionMicSource: CompanionAudioSource {
+public final class CompanionMicSource: CompanionAudioSource {
 
     /// When true and the system default input is a Bluetooth device, record
     /// from the built-in mic instead (see the file header for why).
-    var avoidBluetooth = false
+    public var avoidBluetooth = false
 
     private var engine: AVAudioEngine?
-    private(set) var deviceLabel = "system default"
+    public private(set) var deviceLabel = "system default"
 
-    func start(onBuffer: @escaping (AVAudioPCMBuffer) -> Void) throws -> AVAudioFormat {
+    public func start(onBuffer: @escaping (AVAudioPCMBuffer) -> Void) throws -> AVAudioFormat {
         stop()
         let defaultDevice = CompanionInputDevices.defaultInput()
         var chosen = defaultDevice
@@ -58,11 +58,11 @@ final class CompanionMicSource: CompanionAudioSource {
            let builtIn = CompanionInputDevices.builtInInput() {
             if AudioDevices.applyInputDevice(builtIn.uid, to: engine), Self.formatIsUsable(engine.inputNode) {
                 chosen = builtIn
-                Log.companion.info("stt mic: default input \(current.label) is Bluetooth, recording from \(builtIn.label) instead")
+                FlowFocusLog.speech.info("stt mic: default input \(current.label) is Bluetooth, recording from \(builtIn.label) instead")
             } else {
                 // A pin that leaves the node without a valid format is the
                 // -10875 path VoiceSession documents. Start over unpinned.
-                Log.companion.warning("stt mic: could not switch to \(builtIn.label), staying on \(current.label)")
+                FlowFocusLog.speech.warning("stt mic: could not switch to \(builtIn.label), staying on \(current.label)")
                 engine = AVAudioEngine()
             }
         }
@@ -76,7 +76,7 @@ final class CompanionMicSource: CompanionAudioSource {
             format = input.outputFormat(forBus: 0)
         }
         guard format.sampleRate > 0, format.channelCount > 0 else {
-            Log.companion.error("stt start ABORT, bad input format rate=\(format.sampleRate) ch=\(format.channelCount)")
+            FlowFocusLog.speech.error("stt start ABORT, bad input format rate=\(format.sampleRate) ch=\(format.channelCount)")
             throw CompanionSpeechError.recognizerUnavailable
         }
 
@@ -95,7 +95,7 @@ final class CompanionMicSource: CompanionAudioSource {
         return format
     }
 
-    func stop() {
+    public func stop() {
         guard let engine else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
@@ -115,26 +115,26 @@ final class CompanionMicSource: CompanionAudioSource {
 /// Everything one hold captured: counters for the log line, and a bounded copy
 /// of the audio so an empty on-device result can be retried on the same sound.
 /// Written from the audio thread, read on the main actor.
-final class CompanionHoldCapture: @unchecked Sendable {
+public final class CompanionHoldCapture: @unchecked Sendable {
 
-    struct Stats: Equatable {
-        var buffers = 0
-        var frames = 0
-        var sampleRate: Double = 0
+    public struct Stats: Equatable {
+        public var buffers = 0
+        public var frames = 0
+        public var sampleRate: Double = 0
         /// Milliseconds from `begin()` to the first buffer; nil = none arrived.
-        var firstBufferMs: Int?
+        public var firstBufferMs: Int?
         /// Loudest buffer RMS in 0…1. Near zero with buffers > 0 means the
         /// device delivered silence.
-        var peakLevel: Double = 0
+        public var peakLevel: Double = 0
 
-        var audioMs: Int {
+        public var audioMs: Int {
             sampleRate > 0 ? Int((Double(frames) / sampleRate * 1000).rounded()) : 0
         }
     }
 
     /// Keep at most this much audio for the retry. The retry only matters for
     /// short holds, and 30 s of 48 kHz float mono is already 5.8 MB.
-    nonisolated static let maxRetainedSeconds: Double = 30
+    public nonisolated static let maxRetainedSeconds: Double = 30
 
     private let lock = NSLock()
     private var stats = Stats()
@@ -142,7 +142,7 @@ final class CompanionHoldCapture: @unchecked Sendable {
     private var retainedFrames = 0
     private var startedAt: TimeInterval = 0
 
-    func begin() {
+    public func begin() {
         lock.lock()
         stats = Stats()
         retained = []
@@ -157,7 +157,7 @@ final class CompanionHoldCapture: @unchecked Sendable {
     /// outside the lock: past 30 s a long hold allocates nothing more on the
     /// audio thread, and the main actor never waits on a copy.
     @discardableResult
-    func record(_ buffer: AVAudioPCMBuffer) -> Double {
+    public func record(_ buffer: AVAudioPCMBuffer) -> Double {
         let level = Self.rmsLevel(buffer)
         let frames = Int(buffer.frameLength)
         lock.lock()
@@ -182,19 +182,19 @@ final class CompanionHoldCapture: @unchecked Sendable {
         return level
     }
 
-    func snapshot() -> Stats {
+    public func snapshot() -> Stats {
         lock.lock()
         defer { lock.unlock() }
         return stats
     }
 
-    func retainedBuffers() -> [AVAudioPCMBuffer] {
+    public func retainedBuffers() -> [AVAudioPCMBuffer] {
         lock.lock()
         defer { lock.unlock() }
         return retained
     }
 
-    func reset() {
+    public func reset() {
         lock.lock()
         stats = Stats()
         retained = []
@@ -203,7 +203,7 @@ final class CompanionHoldCapture: @unchecked Sendable {
     }
 
     /// RMS of the first channel scaled into 0…1 the way the HUD meter expects.
-    nonisolated static func rmsLevel(_ buffer: AVAudioPCMBuffer) -> Double {
+    public nonisolated static func rmsLevel(_ buffer: AVAudioPCMBuffer) -> Double {
         let n = Int(buffer.frameLength)
         guard n > 0 else { return 0 }
         var sum: Float = 0
@@ -224,7 +224,7 @@ final class CompanionHoldCapture: @unchecked Sendable {
     /// One buffer holding every retained buffer back to back, plus `padMs` of
     /// silence. The recognizer closes an utterance on trailing silence, so a
     /// clip that ends mid-word finalizes more reliably with a pad.
-    nonisolated static func joined(_ buffers: [AVAudioPCMBuffer], padMs: Int) -> AVAudioPCMBuffer? {
+    public nonisolated static func joined(_ buffers: [AVAudioPCMBuffer], padMs: Int) -> AVAudioPCMBuffer? {
         guard let format = buffers.first?.format else { return nil }
         let same = buffers.filter { $0.format == format }
         let padFrames = Int(format.sampleRate * Double(padMs) / 1000)
@@ -258,22 +258,22 @@ final class CompanionHoldCapture: @unchecked Sendable {
 }
 
 /// Read-only CoreAudio lookups for the hold log line and the Bluetooth check.
-enum CompanionInputDevices {
+public enum CompanionInputDevices {
 
-    struct Device: Equatable {
-        let id: AudioDeviceID
-        let uid: String
-        let name: String
-        let transport: UInt32
-        let nominalRate: Double
+    public struct Device: Equatable {
+        public let id: AudioDeviceID
+        public let uid: String
+        public let name: String
+        public let transport: UInt32
+        public let nominalRate: Double
 
-        var isBluetooth: Bool {
+        public var isBluetooth: Bool {
             transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE
         }
 
-        var isBuiltIn: Bool { transport == kAudioDeviceTransportTypeBuiltIn }
+        public var isBuiltIn: Bool { transport == kAudioDeviceTransportTypeBuiltIn }
 
-        var transportName: String {
+        public var transportName: String {
             switch transport {
             case kAudioDeviceTransportTypeBuiltIn: return "built-in"
             case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE: return "bluetooth"
@@ -284,15 +284,15 @@ enum CompanionInputDevices {
             }
         }
 
-        var label: String { "\(name) (\(transportName))" }
+        public var label: String { "\(name) (\(transportName))" }
     }
 
-    static func defaultInput() -> Device? {
+    public static func defaultInput() -> Device? {
         guard let base = AudioDevices.systemDefaultInput() else { return nil }
         return device(base)
     }
 
-    static func builtInInput() -> Device? {
+    public static func builtInInput() -> Device? {
         AudioDevices.inputs().lazy.map(device).first { $0.isBuiltIn }
     }
 

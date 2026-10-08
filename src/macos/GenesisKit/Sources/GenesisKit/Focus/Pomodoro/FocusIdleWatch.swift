@@ -14,20 +14,20 @@ import Foundation
 /// extra permission. `step` is the whole policy and takes its inputs as values, so tests can
 /// drive it without a clock or a keyboard.
 @MainActor
-final class FocusIdleWatch {
-    var onAutoPause: (() -> Void)?
-    var onAutoResume: (() -> Void)?
-    var onNudge: (() -> Void)?
+public final class FocusIdleWatch {
+    public var onAutoPause: (() -> Void)?
+    public var onAutoResume: (() -> Void)?
+    public var onNudge: (() -> Void)?
 
     /// Polls with a key press in them, needed before a nudge. One key that wakes the screen is
     /// not "starting to work".
-    static let typingPollsForNudge = 5
+    public static let typingPollsForNudge = 5
     /// No nudge in the first minute after the timer stopped: you just stopped it on purpose.
-    static let graceAfterStopSec: TimeInterval = 60
+    public static let graceAfterStopSec: TimeInterval = 60
     /// Input this recent counts as "back" for an automatic resume.
-    static let activeWithinSec: Double = 2
+    public static let activeWithinSec: Double = 2
     /// A gap in input this long resets the typing count.
-    static let typingResetIdleSec: Double = 30
+    public static let typingResetIdleSec: Double = 30
 
     private let engine: PomodoroEngine
     private var timer: Timer?
@@ -36,12 +36,12 @@ final class FocusIdleWatch {
     private var lastNudge: Date?
     private var wasRunning = false
 
-    init(engine: PomodoroEngine, now: Date = Date()) {
+    public init(engine: PomodoroEngine, now: Date = Date()) {
         self.engine = engine
         notRunningSince = now
     }
 
-    func start() {
+    public func start() {
         stop()
         let timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.poll() }
@@ -51,7 +51,7 @@ final class FocusIdleWatch {
         self.timer = timer
     }
 
-    func stop() {
+    public func stop() {
         timer?.invalidate()
         timer = nil
     }
@@ -63,7 +63,7 @@ final class FocusIdleWatch {
     }
 
     /// One decision. `idleSec` is seconds since any input, `sinceKeySec` since the last key.
-    func step(now: Date, idleSec: Double, sinceKeySec: Double) {
+    public func step(now: Date, idleSec: Double, sinceKeySec: Double) {
         let plan = engine.plan
         if engine.state == .running || engine.state == .overrun {
             wasRunning = true
@@ -71,7 +71,7 @@ final class FocusIdleWatch {
             if plan.idlePauseSec > 0, engine.phase == .flow, idleSec >= Double(plan.idlePauseSec) {
                 engine.pause(reason: .idle, since: now.addingTimeInterval(-idleSec))
                 if engine.state == .paused {
-                    Log.app.notice("focus idle: auto-paused after \(Int(idleSec)) s without input")
+                    FlowFocusLog.focus.notice("focus idle: auto-paused after \(Int(idleSec)) s without input")
                     onAutoPause?()
                 }
             }
@@ -85,7 +85,7 @@ final class FocusIdleWatch {
             if idleSec < Self.activeWithinSec {
                 engine.resume()
                 if engine.state != .paused {
-                    Log.app.notice("focus idle: auto-resumed on input (ticking \(engine.isTicking))")
+                    FlowFocusLog.focus.notice("focus idle: auto-resumed on input (ticking \(self.engine.isTicking))")
                     onAutoResume?()
                 }
             }

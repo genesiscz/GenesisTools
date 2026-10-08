@@ -10,27 +10,27 @@ import Foundation
 ///
 /// Snapshot file: `~/.genesis/focus-snapshot.json` (crash-safe restore).
 @MainActor
-final class FocusOrchestrator: ObservableObject {
-    static let shared = FocusOrchestrator()
+public final class FocusOrchestrator: ObservableObject {
+    public static var shared = FocusOrchestrator()
 
     /// Wired into status chrome + recovery banner.
-    @Published private(set) var isActive = false
-    @Published private(set) var activeReason: String?
-    @Published private(set) var suppressesSystemNotifications = false
+    @Published public private(set) var isActive = false
+    @Published public private(set) var activeReason: String?
+    @Published public private(set) var suppressesSystemNotifications = false
     /// One-shot message after crash recovery (UI clears after display).
-    @Published var recoveryNotice: String?
+    @Published public var recoveryNotice: String?
 
-    struct Snapshot: Codable, Equatable {
-        var previousMode: String
-        var setAt: Int
-        var reason: String
+    public struct Snapshot: Codable, Equatable {
+        public var previousMode: String
+        public var setAt: Int
+        public var reason: String
         /// `appLocal` (default) or `shortcuts`.
-        var integration: String
-        var suppressSystemNotifications: Bool
+        public var integration: String
+        public var suppressSystemNotifications: Bool
         /// Shortcut name at begin time — recovery must not use a later-renamed config.
-        var shortcutName: String?
+        public var shortcutName: String?
 
-        init(
+        public init(
             previousMode: String,
             setAt: Int,
             reason: String,
@@ -47,36 +47,36 @@ final class FocusOrchestrator: ObservableObject {
         }
     }
 
-    enum Integration: String, Codable {
+    public enum Integration: String, Codable {
         case appLocal
         case shortcuts
     }
 
-    enum ModeLabel {
-        static let off = "off"
-        static let genesisListening = "genesis-listening"
+    public enum ModeLabel {
+        public static let off = "off"
+        public static let genesisListening = "genesis-listening"
     }
 
     /// Config keys under `app` in `~/.genesis/client.json`.
-    enum ConfigKey {
-        static let focusWhileListening = "focusWhileListening"
-        static let focusShortcutName = "focusShortcutName"
+    public enum ConfigKey {
+        public static let focusWhileListening = "focusWhileListening"
+        public static let focusShortcutName = "focusShortcutName"
     }
 
     /// Default product path for production installs (nonisolated for default args).
-    nonisolated static var defaultStateURL: URL {
+    public nonisolated static var defaultStateURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".genesis/focus-snapshot.json")
     }
 
     /// Injectable for tests (temp dir) — default is real home path.
-    private(set) var stateURL: URL
+    public private(set) var stateURL: URL
     private let fileManager: FileManager
     /// Opens Shortcuts URLs; injectable no-op in tests.
-    var openURL: (URL) -> Void
+    public var openURL: (URL) -> Void
     private var terminateObserver: NSObjectProtocol?
 
-    init(
+    public init(
         stateURL: URL? = nil,
         fileManager: FileManager = .default,
         openURL: ((URL) -> Void)? = nil
@@ -95,26 +95,26 @@ final class FocusOrchestrator: ObservableObject {
     // MARK: - Config
 
     /// Default **on** — feature is useful daily; toggle still available.
-    var focusWhileListeningEnabled: Bool {
+    public var focusWhileListeningEnabled: Bool {
         get {
-            if let v = ConfigStore.shared.app[ConfigKey.focusWhileListening] as? Bool { return v }
+            if let v = FlowFocusConfiguration.shared.app[ConfigKey.focusWhileListening] as? Bool { return v }
             return true
         }
-        set { ConfigStore.shared.setAppValue(newValue, forKey: ConfigKey.focusWhileListening) }
+        set { FlowFocusConfiguration.shared.setAppValue(newValue, forKey: ConfigKey.focusWhileListening) }
     }
 
-    var focusShortcutName: String {
-        get { (ConfigStore.shared.app[ConfigKey.focusShortcutName] as? String) ?? "" }
-        set { ConfigStore.shared.setAppValue(newValue, forKey: ConfigKey.focusShortcutName) }
+    public var focusShortcutName: String {
+        get { (FlowFocusConfiguration.shared.app[ConfigKey.focusShortcutName] as? String) ?? "" }
+        set { FlowFocusConfiguration.shared.setAppValue(newValue, forKey: ConfigKey.focusShortcutName) }
     }
 
     // MARK: - Mode label (file-backed probe; not OS Focus id)
 
-    func currentModeLabel() -> String {
+    public func currentModeLabel() -> String {
         UserDefaults.standard.string(forKey: "genesis.focus.mode") ?? ModeLabel.off
     }
 
-    func setModeLabel(_ mode: String) {
+    public func setModeLabel(_ mode: String) {
         UserDefaults.standard.set(mode, forKey: "genesis.focus.mode")
     }
 
@@ -125,7 +125,7 @@ final class FocusOrchestrator: ObservableObject {
     /// If a dangling snapshot exists after crash (`!isActive` but file present),
     /// recover first so `previousMode` cannot chain-corrupt to `genesis-listening`.
     @discardableResult
-    func beginSession(reason: String = "genesis-voice") throws -> Snapshot {
+    public func beginSession(reason: String = "genesis-voice") throws -> Snapshot {
         if isActive, let existing = try? loadSnapshot() {
             return existing
         }
@@ -152,13 +152,13 @@ final class FocusOrchestrator: ObservableObject {
         setModeLabel(ModeLabel.genesisListening)
         applyLiveState(from: snap)
         invokeShortcutIfNeeded(name: shortcut, phase: "begin")
-        Log.app.info("focus session begin reason=\(reason) integration=\(integration.rawValue)")
+        FlowFocusLog.focus.info("focus session begin reason=\(reason) integration=\(integration.rawValue)")
         return snap
     }
 
     /// Restore prior mode, clear suppression, delete snapshot.
     @discardableResult
-    func endSession() throws -> Snapshot? {
+    public func endSession() throws -> Snapshot? {
         guard fileManager.fileExists(atPath: stateURL.path) else {
             clearLiveState()
             return nil
@@ -171,7 +171,7 @@ final class FocusOrchestrator: ObservableObject {
         if snap.integration == Integration.shortcuts.rawValue || !shortcut.isEmpty {
             invokeShortcutIfNeeded(name: shortcut, phase: "end")
         }
-        Log.app.info("focus session end restored previousMode=\(snap.previousMode)")
+        FlowFocusLog.focus.info("focus session end restored previousMode=\(snap.previousMode)")
         return snap
     }
 
@@ -182,7 +182,7 @@ final class FocusOrchestrator: ObservableObject {
     /// - Parameter skipShortcut: when true (implicit recover inside `beginSession`),
     ///   do not fire Shortcuts "end" (avoids end→begin race) and skip recovery notice.
     @discardableResult
-    func recoverIfNeeded(skipShortcut: Bool = false) -> Snapshot? {
+    public func recoverIfNeeded(skipShortcut: Bool = false) -> Snapshot? {
         guard fileManager.fileExists(atPath: stateURL.path) else {
             clearLiveState()
             return nil
@@ -202,7 +202,7 @@ final class FocusOrchestrator: ObservableObject {
                 recoveryNotice =
                     "Restored notification-mute session after interrupt (\(snap.reason)). Genesis system notifications are active again."
             }
-            Log.app.notice("focus crash recovery cleared snapshot reason=\(snap.reason) skipShortcut=\(skipShortcut)")
+            FlowFocusLog.focus.notice("focus crash recovery cleared snapshot reason=\(snap.reason) skipShortcut=\(skipShortcut)")
             return snap
         } catch {
             try? fileManager.removeItem(at: stateURL)
@@ -210,28 +210,28 @@ final class FocusOrchestrator: ObservableObject {
             if !skipShortcut {
                 recoveryNotice = "Cleared a corrupt notification-mute snapshot. Notifications are active."
             }
-            Log.app.warning("focus recovery failed: \(error.localizedDescription)")
+            FlowFocusLog.focus.warning("focus recovery failed: \(error.localizedDescription)")
             return nil
         }
     }
 
     /// Voice path: begin only when Settings toggle is on. Failures are logged;
     /// voice must not block on Focus.
-    func beginForVoiceIfEnabled() {
+    public func beginForVoiceIfEnabled() {
         guard focusWhileListeningEnabled else { return }
         do {
             try beginSession(reason: "genesis-voice")
         } catch {
-            Log.app.warning("focus beginForVoice failed: \(error.localizedDescription)")
+            FlowFocusLog.focus.warning("focus beginForVoice failed: \(error.localizedDescription)")
         }
     }
 
-    func endForVoiceIfNeeded() {
+    public func endForVoiceIfNeeded() {
         guard isActive || fileManager.fileExists(atPath: stateURL.path) else { return }
         do {
             _ = try endSession()
         } catch {
-            Log.app.warning("focus endForVoice failed: \(error.localizedDescription)")
+            FlowFocusLog.focus.warning("focus endForVoice failed: \(error.localizedDescription)")
             clearLiveState()
             try? fileManager.removeItem(at: stateURL)
         }
@@ -240,7 +240,7 @@ final class FocusOrchestrator: ObservableObject {
     /// Observe quit so we never leave a dangling session if the process exits cleanly.
     /// Ends **synchronously** on the main queue — a nested `Task` may not complete
     /// before process exit (P1 G4.2).
-    func installTerminateHook() {
+    public func installTerminateHook() {
         guard terminateObserver == nil else { return }
         terminateObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
@@ -255,13 +255,13 @@ final class FocusOrchestrator: ObservableObject {
         }
     }
 
-    func clearRecoveryNotice() {
+    public func clearRecoveryNotice() {
         recoveryNotice = nil
     }
 
     // MARK: - File I/O
 
-    func loadSnapshot() throws -> Snapshot {
+    public func loadSnapshot() throws -> Snapshot {
         let data = try Data(contentsOf: stateURL)
         return try JSONDecoder().decode(Snapshot.self, from: data)
     }
@@ -306,11 +306,11 @@ final class FocusOrchestrator: ObservableObject {
             URLQueryItem(name: "text", value: phase),
         ]
         guard let url = components?.url else {
-            Log.app.warning("focus shortcut URL build failed name=\(trimmed)")
+            FlowFocusLog.focus.warning("focus shortcut URL build failed name=\(trimmed)")
             return
         }
         openURL(url)
-        Log.app.info("focus shortcut invoked phase=\(phase) name=\(trimmed)")
+        FlowFocusLog.focus.info("focus shortcut invoked phase=\(phase) name=\(trimmed)")
     }
 }
 
@@ -318,23 +318,23 @@ final class FocusOrchestrator: ObservableObject {
 
 extension FocusOrchestrator {
     /// Production path used by unit tests that target the default shared URL.
-    static var stateURL: URL { shared.stateURL }
+    public static var stateURL: URL { shared.stateURL }
 
     @discardableResult
-    static func beginSession(reason: String = "genesis-voice") throws -> Snapshot {
+    public static func beginSession(reason: String = "genesis-voice") throws -> Snapshot {
         try shared.beginSession(reason: reason)
     }
 
     @discardableResult
-    static func endSession() throws -> Snapshot? {
+    public static func endSession() throws -> Snapshot? {
         try shared.endSession()
     }
 
-    static func currentModeLabel() -> String {
+    public static func currentModeLabel() -> String {
         shared.currentModeLabel()
     }
 
-    static func setModeLabel(_ mode: String) {
+    public static func setModeLabel(_ mode: String) {
         shared.setModeLabel(mode)
     }
 }

@@ -1,7 +1,10 @@
 // Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Tests/GenesisTests/FlowPreRollTests.swift at 2026-10-08T05:04:08+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
 import AVFoundation
 import XCTest
+@testable import GenesisKit
+#if canImport(Genesis)
 @testable import Genesis
+#endif
 
 /// Pre-roll sizing and buffer copying. The engine itself needs a live
 /// microphone, so what is tested here is the arithmetic and the memory

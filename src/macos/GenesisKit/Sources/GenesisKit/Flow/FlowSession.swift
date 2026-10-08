@@ -11,28 +11,28 @@ import SwiftUI
 /// record. Nothing here talks to eve; Flow is a voice *keyboard*, not the
 /// companion's voice *assistant*.
 @MainActor
-final class FlowSession: ObservableObject {
+public final class FlowSession: ObservableObject {
 
-    static let shared = FlowSession()
+    public static let shared = FlowSession()
 
     // MARK: - Published state
 
-    @Published private(set) var phase: FlowPhase = .idle {
+    @Published public private(set) var phase: FlowPhase = .idle {
         didSet {
             guard phase != oldValue else { return }
             syncPill()
         }
     }
-    @Published private(set) var lastError: String?
+    @Published public private(set) var lastError: String?
     /// Set for a few seconds after a turn so the pill can confirm what landed.
-    @Published private(set) var lastInjected: String?
+    @Published public private(set) var lastInjected: String?
     /// Settings → Labs → Dictation (`app.labs.dictation`, default on). Off =
     /// no hotkey, and the menu bar and palette entries hide.
-    @Published private(set) var labEnabled = true
+    @Published public private(set) var labEnabled = true
     /// Whether the dictation chord is live; the menu item shows it.
-    @Published private(set) var hotkeyStatus: GlobalHotkeyStatus = .off
+    @Published public private(set) var hotkeyStatus: GlobalHotkeyStatus = .off
 
-    @Published var config: FlowConfig {
+    @Published public var config: FlowConfig {
         didSet {
             guard config != oldValue else { return }   // @Published has no value-skip
             store.saveConfig(config)
@@ -41,17 +41,17 @@ final class FlowSession: ObservableObject {
         }
     }
 
-    @Published private(set) var history: [FlowEntry] = []
-    @Published private(set) var stats: FlowStats = FlowStats()
-    @Published private(set) var suggestions: [FlowSuggestion] = []
-    @Published var dictionary: [FlowDictionaryRule] = []
-    @Published var snippets: [FlowSnippet] = []
-    @Published var transforms: [FlowTransform] = []
+    @Published public private(set) var history: [FlowEntry] = []
+    @Published public private(set) var stats: FlowStats = FlowStats()
+    @Published public private(set) var suggestions: [FlowSuggestion] = []
+    @Published public var dictionary: [FlowDictionaryRule] = []
+    @Published public var snippets: [FlowSnippet] = []
+    @Published public var transforms: [FlowTransform] = []
 
     /// The recogniser is exposed so the pill can observe `partialText` and
     /// `micLevel` directly. Those change at speech rate; routing them through
     /// this object would invalidate every Flow view on each audio buffer.
-    let recognizer = CompanionSpeechRecognizer()
+    public let recognizer = CompanionSpeechRecognizer()
 
     // MARK: - Private
 
@@ -81,7 +81,7 @@ final class FlowSession: ObservableObject {
         if migrated != loaded {
             // Property observers do not run in init, so save here.
             store.saveConfig(migrated)
-            Log.flow.info("dictation chord moved off ⌃⌥D (Magnet/Rectangle own it) to \(FlowKeyNames.describe(keyCode: migrated.keyCode, modifiers: migrated.modifiers))")
+            FlowFocusLog.flow.info("dictation chord moved off ⌃⌥D (Magnet/Rectangle own it) to \(FlowKeyNames.describe(keyCode: migrated.keyCode, modifiers: migrated.modifiers))")
         }
         config = migrated
         history = store.loadHistory()
@@ -95,14 +95,14 @@ final class FlowSession: ObservableObject {
     // MARK: - Lifecycle
 
     /// Register the global hotkey. Safe to call more than once.
-    func start() {
-        labEnabled = Labs.isOn(.dictation, in: ConfigStore.shared.app)
+    public func start() {
+        labEnabled = FlowFocusConfiguration.shared.dictationEnabled
         activate()
     }
 
     private func activate() {
         guard isOn else {
-            Log.flow.info("dictation off (labs: \(self.labEnabled), enabled: \(self.config.enabled))")
+            FlowFocusLog.flow.info("dictation off (labs: \(self.labEnabled), enabled: \(self.config.enabled))")
             return
         }
         applyHotkeyBinding()
@@ -112,10 +112,10 @@ final class FlowSession: ObservableObject {
     }
 
     /// Labs switch. Off drops the hotkey and any turn in flight.
-    func setLabEnabled(_ on: Bool) {
+    public func setLabEnabled(_ on: Bool) {
         guard labEnabled != on else { return }
         labEnabled = on
-        Log.flow.info("dictation lab \(on ? "on" : "off")")
+        FlowFocusLog.flow.info("dictation lab \(on ? "on" : "off")")
         if on {
             activate()
         } else {
@@ -130,7 +130,7 @@ final class FlowSession: ObservableObject {
 
     /// Why dictation cannot start, or nil when both switches are on. The one sentence the panel's
     /// hotkey hint and a refused turn both show.
-    nonisolated static func offReason(labEnabled: Bool, enabled: Bool) -> String? {
+    public nonisolated static func offReason(labEnabled: Bool, enabled: Bool) -> String? {
         if !labEnabled {
             return "Dictation is off in Settings → Labs."
         }
@@ -142,7 +142,7 @@ final class FlowSession: ObservableObject {
         return nil
     }
 
-    enum TurnStart: Equatable {
+    public enum TurnStart: Equatable {
         case begin
         /// A turn is already in progress; the press changes nothing.
         case busy
@@ -151,7 +151,7 @@ final class FlowSession: ObservableObject {
     }
 
     /// Whether a press may start a turn. Pure, so the tests hold every entry point to it.
-    nonisolated static func turnStart(phase: FlowPhase, labEnabled: Bool, enabled: Bool) -> TurnStart {
+    public nonisolated static func turnStart(phase: FlowPhase, labEnabled: Bool, enabled: Bool) -> TurnStart {
         guard phase == .idle || phase == .error else { return .busy }
         if let reason = offReason(labEnabled: labEnabled, enabled: enabled) {
             return .off(reason)
@@ -162,7 +162,7 @@ final class FlowSession: ObservableObject {
 
     /// Menu bar / palette: start a turn, or end the one in progress. Works
     /// without the chord, so dictation stays reachable when it is taken.
-    func toggleFromMenu() {
+    public func toggleFromMenu() {
         guard labEnabled else { return }
         if phase == .listening {
             endTurn()
@@ -208,7 +208,7 @@ final class FlowSession: ObservableObject {
         }
     }
 
-    func stop() {
+    public func stop() {
         hotKey?.stop()
         hotKey = nil
         hotkeyStatus = .off
@@ -228,7 +228,7 @@ final class FlowSession: ObservableObject {
             let ok = hotKey.rebind(keyCode: config.keyCode, modifiers: config.modifiers)
             hotkeyStatus = ok ? .registered(chord: chord) : .unavailable(chord: chord)
             if !ok {
-                Log.flow.error("dictation hotkey \(chord) rebind refused by Carbon")
+                FlowFocusLog.flow.error("dictation hotkey \(chord) rebind refused by Carbon")
             }
             return
         }
@@ -250,11 +250,11 @@ final class FlowSession: ObservableObject {
         if key.start() {
             hotKey = key
             hotkeyStatus = .registered(chord: chord)
-            Log.flow.info("dictation hotkey \(chord) registered keyCode=\(self.config.keyCode) modifiers=\(self.config.modifiers)")
+            FlowFocusLog.flow.info("dictation hotkey \(chord) registered keyCode=\(self.config.keyCode) modifiers=\(self.config.modifiers)")
         } else {
             hotkeyStatus = .unavailable(chord: chord)
             lastError = "Could not register the dictation hotkey \(chord). Start dictation from the menu bar instead."
-            Log.flow.error("dictation hotkey \(chord) registration refused by Carbon")
+            FlowFocusLog.flow.error("dictation hotkey \(chord) registration refused by Carbon")
         }
     }
 
@@ -279,7 +279,7 @@ final class FlowSession: ObservableObject {
     /// Start capturing. The focus target is grabbed FIRST, before any Flow UI
     /// can appear — see `FlowFocusTarget` for why that ordering is the whole
     /// trick.
-    func beginTurn() {
+    public func beginTurn() {
         switch Self.turnStart(phase: phase, labEnabled: labEnabled, enabled: config.enabled) {
         case .busy:
             return
@@ -288,7 +288,7 @@ final class FlowSession: ObservableObject {
             // panel reach this too; none of them may open the microphone past a switch that is off.
             lastError = reason
             phase = .error
-            Log.flow.info("turn refused: \(reason)")
+            FlowFocusLog.flow.info("turn refused: \(reason)")
             return
         case .begin:
             break
@@ -313,16 +313,16 @@ final class FlowSession: ObservableObject {
                 : Locale(identifier: config.localeIdentifier)
             try recognizer.start(locale: locale, forceServer: config.forceServerRecognition)
             phase = .listening
-            Log.flow.info("turn begin target=\(self.target?.bundleIdentifier ?? "none")")
+            FlowFocusLog.flow.info("turn begin target=\(self.target?.bundleIdentifier ?? "none")")
         } catch {
             phase = .error
             lastError = error.localizedDescription
-            Log.flow.error("turn begin failed: \(error.localizedDescription)")
+            FlowFocusLog.flow.error("turn begin failed: \(error.localizedDescription)")
         }
     }
 
     /// Stop capturing and run the rest of the pipeline.
-    func endTurn() {
+    public func endTurn() {
         guard phase == .listening else { return }
         phase = .transcribing
 
@@ -343,7 +343,7 @@ final class FlowSession: ObservableObject {
     }
 
     /// Abandon the turn without injecting anything.
-    func cancelTurn() {
+    public func cancelTurn() {
         finishTask?.cancel()
         finishTask = nil
         recognizer.cancel()
@@ -360,7 +360,7 @@ final class FlowSession: ObservableObject {
         guard !trimmed.isEmpty else {
             phase = .idle
             target = nil
-            Log.flow.info("turn produced no text")
+            FlowFocusLog.flow.info("turn produced no text")
             return
         }
 
@@ -400,7 +400,7 @@ final class FlowSession: ObservableObject {
         target = nil
         phase = .idle
         applyPreRoll()   // reclaim the mic for the next turn's history
-        Log.flow.info("turn done words=\(text.split(separator: " ").count) outcome=\(String(describing: outcome))")
+        FlowFocusLog.flow.info("turn done words=\(text.split(separator: " ").count) outcome=\(String(describing: outcome))")
     }
 
     // MARK: - Persistence
@@ -448,7 +448,7 @@ final class FlowSession: ObservableObject {
     /// Consecutive-day counter.
     ///
     /// Same day → unchanged. Next day → +1. Any bigger gap → back to 1.
-    nonisolated static func streak(endingAt now: Date, previous: Date?, current: Int) -> Int {
+    public nonisolated static func streak(endingAt now: Date, previous: Date?, current: Int) -> Int {
         guard let previous else { return 1 }
         let calendar = Calendar.current
         if calendar.isDate(now, inSameDayAs: previous) { return max(current, 1) }
@@ -458,18 +458,18 @@ final class FlowSession: ObservableObject {
 
     // MARK: - Mutations from the UI
 
-    func addRule(from: String, to: String) {
+    public func addRule(from: String, to: String) {
         let rule = FlowDictionaryRule(from: from, to: to)
         dictionary.append(rule)
         store.saveDictionary(dictionary)
     }
 
-    func removeRule(_ id: UUID) {
+    public func removeRule(_ id: UUID) {
         dictionary.removeAll { $0.id == id }
         store.saveDictionary(dictionary)
     }
 
-    func acceptSuggestion(_ suggestion: FlowSuggestion, replacement: String) {
+    public func acceptSuggestion(_ suggestion: FlowSuggestion, replacement: String) {
         dictionary.append(
             FlowDictionaryRule(from: suggestion.heard, to: replacement, learned: true)
         )
@@ -478,33 +478,33 @@ final class FlowSession: ObservableObject {
         store.saveSuggestions(suggestions)
     }
 
-    func dismissSuggestion(_ suggestion: FlowSuggestion) {
+    public func dismissSuggestion(_ suggestion: FlowSuggestion) {
         dismissedTokens.insert(suggestion.heard.lowercased())
         suggestions.removeAll { $0.id == suggestion.id }
         store.saveSuggestions(suggestions)
     }
 
-    func addSnippet(trigger: String, body: String) {
+    public func addSnippet(trigger: String, body: String) {
         snippets.append(FlowSnippet(trigger: trigger, body: body))
         store.saveSnippets(snippets)
     }
 
-    func removeSnippet(_ id: UUID) {
+    public func removeSnippet(_ id: UUID) {
         snippets.removeAll { $0.id == id }
         store.saveSnippets(snippets)
     }
 
-    func deleteEntry(_ id: UUID) {
+    public func deleteEntry(_ id: UUID) {
         history.removeAll { $0.id == id }
         store.saveHistory(history)
     }
 
-    func clearHistory() {
+    public func clearHistory() {
         history.removeAll()
         store.saveHistory(history)
     }
 
-    func copyEntry(_ entry: FlowEntry) {
+    public func copyEntry(_ entry: FlowEntry) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(entry.text, forType: .string)

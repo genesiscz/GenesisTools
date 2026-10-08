@@ -13,9 +13,9 @@ import Foundation
 /// atomic rename, owner-only permissions, and a corrupt file gets renamed
 /// aside rather than silently replaced with defaults.
 @MainActor
-final class FlowStore {
+public final class FlowStore {
 
-    static let shared = FlowStore()
+    public static let shared = FlowStore()
 
     private let directory: URL
     private let encoder: JSONEncoder
@@ -48,38 +48,38 @@ final class FlowStore {
 
     // MARK: - Typed accessors
 
-    func loadConfig() -> FlowConfig { load(configURL) ?? FlowConfig() }
-    func saveConfig(_ value: FlowConfig) { save(value, to: configURL) }
+    public func loadConfig() -> FlowConfig { load(configURL) ?? FlowConfig() }
+    public func saveConfig(_ value: FlowConfig) { save(value, to: configURL) }
 
-    func loadHistory() -> [FlowEntry] { load(historyURL) ?? [] }
-    func saveHistory(_ value: [FlowEntry]) { save(value, to: historyURL) }
+    public func loadHistory() -> [FlowEntry] { load(historyURL) ?? [] }
+    public func saveHistory(_ value: [FlowEntry]) { save(value, to: historyURL) }
 
-    func loadDictionary() -> [FlowDictionaryRule] { load(dictionaryURL) ?? [] }
-    func saveDictionary(_ value: [FlowDictionaryRule]) { save(value, to: dictionaryURL) }
+    public func loadDictionary() -> [FlowDictionaryRule] { load(dictionaryURL) ?? [] }
+    public func saveDictionary(_ value: [FlowDictionaryRule]) { save(value, to: dictionaryURL) }
 
-    func loadSuggestions() -> [FlowSuggestion] { load(suggestionsURL) ?? [] }
-    func saveSuggestions(_ value: [FlowSuggestion]) { save(value, to: suggestionsURL) }
+    public func loadSuggestions() -> [FlowSuggestion] { load(suggestionsURL) ?? [] }
+    public func saveSuggestions(_ value: [FlowSuggestion]) { save(value, to: suggestionsURL) }
 
-    func loadSnippets() -> [FlowSnippet] { load(snippetsURL) ?? [] }
-    func saveSnippets(_ value: [FlowSnippet]) { save(value, to: snippetsURL) }
+    public func loadSnippets() -> [FlowSnippet] { load(snippetsURL) ?? [] }
+    public func saveSnippets(_ value: [FlowSnippet]) { save(value, to: snippetsURL) }
 
-    func loadTransforms() -> [FlowTransform] { load(transformsURL) ?? FlowStore.defaultTransforms }
-    func saveTransforms(_ value: [FlowTransform]) { save(value, to: transformsURL) }
+    public func loadTransforms() -> [FlowTransform] { load(transformsURL) ?? FlowStore.defaultTransforms }
+    public func saveTransforms(_ value: [FlowTransform]) { save(value, to: transformsURL) }
 
-    func loadStats() -> FlowStats { load(statsURL) ?? FlowStats() }
-    func saveStats(_ value: FlowStats) { save(value, to: statsURL) }
+    public func loadStats() -> FlowStats { load(statsURL) ?? FlowStats() }
+    public func saveStats(_ value: FlowStats) { save(value, to: statsURL) }
 
-    func loadScratchpad() -> String {
+    public func loadScratchpad() -> String {
         (try? String(contentsOf: scratchpadURL, encoding: .utf8)) ?? ""
     }
 
-    func saveScratchpad(_ text: String) {
+    public func saveScratchpad(_ text: String) {
         writeAtomic(Data(text.utf8), to: scratchpadURL)
     }
 
     /// Shipped starting set. Users can delete them; they are not re-seeded,
     /// because an empty transforms file is a legitimate choice.
-    static let defaultTransforms: [FlowTransform] = [
+    public static let defaultTransforms: [FlowTransform] = [
         FlowTransform(
             name: "Clean up",
             prompt: """
@@ -126,7 +126,7 @@ final class FlowStore {
                 attributes: [.posixPermissions: 0o700]
             )
         } catch {
-            Log.flow.error("FlowStore: could not create \(self.directory.path): \(error.localizedDescription)")
+            FlowFocusLog.flow.error("FlowStore: could not create \(self.directory.path): \(error.localizedDescription)")
         }
     }
 
@@ -139,7 +139,7 @@ final class FlowStore {
             // user keeps a chance of recovering it by hand, and the next save
             // starts clean instead of failing forever.
             backupCorrupt(url)
-            Log.flow.error("FlowStore: \(url.lastPathComponent) was unreadable, moved aside: \(error.localizedDescription)")
+            FlowFocusLog.flow.error("FlowStore: \(url.lastPathComponent) was unreadable, moved aside: \(error.localizedDescription)")
             return nil
         }
     }
@@ -148,7 +148,7 @@ final class FlowStore {
         do {
             writeAtomic(try encoder.encode(value), to: url)
         } catch {
-            Log.flow.error("FlowStore: encoding \(url.lastPathComponent) failed: \(error.localizedDescription)")
+            FlowFocusLog.flow.error("FlowStore: encoding \(url.lastPathComponent) failed: \(error.localizedDescription)")
         }
     }
 
@@ -164,7 +164,7 @@ final class FlowStore {
             _ = try FileManager.default.replaceItemAt(url, withItemAt: temp)
         } catch {
             try? FileManager.default.removeItem(at: temp)
-            Log.flow.error("FlowStore: writing \(url.lastPathComponent) failed: \(error.localizedDescription)")
+            FlowFocusLog.flow.error("FlowStore: writing \(url.lastPathComponent) failed: \(error.localizedDescription)")
         }
     }
 

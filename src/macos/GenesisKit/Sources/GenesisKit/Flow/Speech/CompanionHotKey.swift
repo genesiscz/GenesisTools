@@ -13,7 +13,7 @@ import Cocoa
 /// One global press/release hotkey backed by Carbon `RegisterEventHotKey`.
 /// The registered key is swallowed system-wide (never reaches the app below),
 /// which is exactly what the F6 walkthrough needs.
-final class CompanionHotKey {
+public final class CompanionHotKey {
 
     /// Carries WHEN the key event happened (`GetEventTime`, i.e. seconds on the
     /// `ProcessInfo.systemUptime` clock) — not when the callback ran.
@@ -30,14 +30,14 @@ final class CompanionHotKey {
     /// press still measured ~290 ms afterwards, so some of the delay is in the
     /// event pipeline itself while the app captures the screen. Physical
     /// presses are stamped by the HID layer, which is the case this protects.
-    typealias Callback = (TimeInterval) -> Void
+    public typealias Callback = (TimeInterval) -> Void
 
     /// Fired on the main queue when the key goes down / up.
-    var onKeyDown: Callback?
-    var onKeyUp: Callback?
+    public var onKeyDown: Callback?
+    public var onKeyUp: Callback?
 
-    private(set) var keyCode: UInt32
-    private(set) var modifiers: UInt32
+    public private(set) var keyCode: UInt32
+    public private(set) var modifiers: UInt32
 
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandler: EventHandlerRef?
@@ -49,12 +49,12 @@ final class CompanionHotKey {
     private let signature: OSType
 
     /// "GNCP" — Genesis CompanioN.
-    static let companionSignature: OSType = 0x474E_4350
+    public static let companionSignature: OSType = 0x474E_4350
     /// "GNFL" — Genesis FLow.
-    static let flowSignature: OSType = 0x474E_464C
+    public static let flowSignature: OSType = 0x474E_464C
 
     /// Default: bare F6 (kVK_F6 = 0x61), no modifiers, companion identity.
-    init(
+    public init(
         keyCode: UInt32 = UInt32(kVK_F6),
         modifiers: UInt32 = 0,
         signature: OSType = CompanionHotKey.companionSignature,
@@ -75,7 +75,7 @@ final class CompanionHotKey {
     /// Register the hotkey + install press/release handlers.
     /// Returns false when Carbon refuses the registration (key taken).
     @discardableResult
-    func start() -> Bool {
+    public func start() -> Bool {
         guard hotKeyRef == nil else { return true }
 
         var eventTypes = [
@@ -102,7 +102,7 @@ final class CompanionHotKey {
             &eventHandler
         )
         guard installStatus == noErr else {
-            Log.companion.error("CompanionHotKey: InstallEventHandler failed status=\(installStatus)")
+            FlowFocusLog.speech.error("CompanionHotKey: InstallEventHandler failed status=\(installStatus)")
             return false
         }
 
@@ -110,7 +110,7 @@ final class CompanionHotKey {
     }
 
     /// Unregister everything. Safe to call repeatedly.
-    func stop() {
+    public func stop() {
         if let ref = hotKeyRef {
             UnregisterEventHotKey(ref)
             hotKeyRef = nil
@@ -123,7 +123,7 @@ final class CompanionHotKey {
 
     /// Swap the bound key without restarting the app (§10.5 remap acceptance).
     @discardableResult
-    func rebind(keyCode: UInt32, modifiers: UInt32) -> Bool {
+    public func rebind(keyCode: UInt32, modifiers: UInt32) -> Bool {
         self.keyCode = keyCode
         self.modifiers = modifiers
         guard eventHandler != nil else { return true } // not started yet
@@ -148,11 +148,11 @@ final class CompanionHotKey {
             &ref
         )
         guard status == noErr else {
-            Log.companion.error("CompanionHotKey: RegisterEventHotKey failed status=\(status) keyCode=\(keyCode)")
+            FlowFocusLog.speech.error("CompanionHotKey: RegisterEventHotKey failed status=\(status) keyCode=\(self.keyCode)")
             return false
         }
         hotKeyRef = ref
-        Log.companion.info("CompanionHotKey registered keyCode=\(keyCode) modifiers=\(modifiers)")
+        FlowFocusLog.speech.info("CompanionHotKey registered keyCode=\(self.keyCode) modifiers=\(self.modifiers)")
         return true
     }
 

@@ -12,14 +12,14 @@ final class FocusHUDPanel: ConstraintSafePanel {
     /// The HUD refuses key status so it can never swallow a keystroke meant for the editor you
     /// are working in. That also makes a `TextField` inside it impossible to type into, so the
     /// refusal is lifted for exactly as long as a field is open (see `beginTextEditing`).
-    var allowsKey = false
+    public var allowsKey = false
 
-    override var canBecomeKey: Bool { allowsKey }
-    override var canBecomeMain: Bool { false }
+    public override var canBecomeKey: Bool { allowsKey }
+    public override var canBecomeMain: Bool { false }
 }
 
 @MainActor
-final class FocusHUDWindowController {
+public final class FocusHUDWindowController {
     private var panel: FocusHUDPanel?
     private var hosting: NSHostingController<AnyView>?
     private var moveObserver: NSObjectProtocol?
@@ -31,30 +31,30 @@ final class FocusHUDWindowController {
     private static let visibleKey = "focus.hud.visible"
     private static let styleKey = "focus.hud.style"
 
-    static var savedStyle: FocusHUDStyle {
+    public static var savedStyle: FocusHUDStyle {
         FocusHUDStyle(rawValue: UserDefaults.standard.string(forKey: styleKey) ?? "") ?? .full
     }
 
-    private(set) var isVisible = false
-    private(set) var style: FocusHUDStyle = FocusHUDWindowController.savedStyle
+    public private(set) var isVisible = false
+    public private(set) var style: FocusHUDStyle = FocusHUDWindowController.savedStyle
 
     /// Whether the HUD was up when the app last closed. Default true: the point of a timer
     /// window is that it is there.
-    static var wasVisible: Bool {
+    public static var wasVisible: Bool {
         UserDefaults.standard.object(forKey: visibleKey) as? Bool ?? true
     }
 
-    init(content: @escaping () -> AnyView) {
+    public init(content: @escaping () -> AnyView) {
         makeContent = content
     }
 
-    func toggle() {
+    public func toggle() {
         isVisible ? hide() : show(followPointer: true)
     }
 
     /// Swaps shape in place. The panel keeps its top-left corner so a compact HUD appears where
     /// the full one was, rather than jumping by the height difference.
-    func setStyle(_ next: FocusHUDStyle) {
+    public func setStyle(_ next: FocusHUDStyle) {
         guard next != style else { return }
         style = next
         UserDefaults.standard.set(next.rawValue, forKey: Self.styleKey)
@@ -69,20 +69,20 @@ final class FocusHUDWindowController {
         persistFrame()
     }
 
-    func toggleStyle() {
+    public func toggleStyle() {
         setStyle(style == .full ? .compact : .full)
     }
 
     /// Lets the panel take key status for a text field, and gives it back afterwards. Without
     /// the round trip a field in this window can be clicked but never typed into.
-    func beginTextEditing() {
+    public func beginTextEditing() {
         guard let panel else { return }
         appBeforeEditing = NSWorkspace.shared.frontmostApplication
         panel.allowsKey = true
         panel.makeKeyAndOrderFront(nil)
     }
 
-    func endTextEditing() {
+    public func endTextEditing() {
         guard let panel else { return }
         panel.allowsKey = false
         panel.resignKey()
@@ -97,7 +97,7 @@ final class FocusHUDWindowController {
     /// `followPointer` is for an explicit "show it" from a menu or a shortcut: if the remembered
     /// frame is on a different screen from the pointer, the window comes to the screen you are
     /// looking at. An automatic show (a phase starting, a relaunch) leaves it where you put it.
-    func show(followPointer: Bool = false) {
+    public func show(followPointer: Bool = false) {
         let panel = ensurePanel()
         // Rebuilt on every show so the tag menu lists the tags that exist now, not the ones
         // that existed when the window was first created.
@@ -115,7 +115,7 @@ final class FocusHUDWindowController {
         UserDefaults.standard.set(true, forKey: Self.visibleKey)
     }
 
-    func hide() {
+    public func hide() {
         persistFrame()
         panel?.orderOut(nil)
         isVisible = false

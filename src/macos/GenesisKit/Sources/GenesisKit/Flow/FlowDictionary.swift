@@ -10,7 +10,7 @@ import Foundation
 /// mine it from what the recogniser actually produces. Tokenise every
 /// transcript, count what recurs, and when a token is not a common English
 /// word but looks like a term, propose it.
-enum FlowDictionary {
+public enum FlowDictionary {
 
     // MARK: - Applying rules
 
@@ -26,7 +26,7 @@ enum FlowDictionary {
     /// 2. **Conditional word boundaries.** `\b` between `+` and a space does
     ///    not exist, so `\bc\+\+\b` never matches "c++". The anchor is only
     ///    added on an edge that is actually a word character.
-    static func apply(_ rules: [FlowDictionaryRule], to text: String) -> String {
+    public static func apply(_ rules: [FlowDictionaryRule], to text: String) -> String {
         let pairs = rules
             .filter { $0.enabled && !$0.from.isEmpty }
             .map { ($0.from, $0.to) }
@@ -47,7 +47,7 @@ enum FlowDictionary {
     /// | `{{datetime}}` | 2026-07-29 14:32 |
     /// | `{{clipboard}}` | current pasteboard string |
     /// | `{{newline}}` | a line break |
-    static func expand(_ snippets: [FlowSnippet], in text: String, now: Date = Date()) -> String {
+    public static func expand(_ snippets: [FlowSnippet], in text: String, now: Date = Date()) -> String {
         let pairs = snippets
             .filter { $0.enabled && !$0.trigger.isEmpty }
             .map { ($0.trigger, resolveVariables(in: $0.body, now: now)) }
@@ -69,7 +69,7 @@ enum FlowDictionary {
     /// Substitute `{{…}}` placeholders. Unknown names are left alone rather
     /// than blanked, so a typo is visible in the output instead of silently
     /// deleting text the user dictated.
-    static func resolveVariables(in body: String, now: Date = Date()) -> String {
+    public static func resolveVariables(in body: String, now: Date = Date()) -> String {
         guard body.contains("{{") else { return body }
         var out = body
         out = out.replacingOccurrences(of: "{{date}}", with: dateFormatter.string(from: now))
@@ -127,7 +127,7 @@ enum FlowDictionary {
     // MARK: - Tokenizing
 
     /// Split into lowercase word tokens, dropping punctuation and digits.
-    static func tokenize(_ text: String) -> [String] {
+    public static func tokenize(_ text: String) -> [String] {
         text.lowercased()
             .split(whereSeparator: { !$0.isLetter && $0 != "'" && $0 != "-" })
             .map(String.init)
@@ -157,7 +157,7 @@ enum FlowDictionary {
         "more", "most", "must", "same", "them", "used", "using", "give", "went", "look",
     ]
 
-    static func isCommonWord(_ token: String) -> Bool {
+    public static func isCommonWord(_ token: String) -> Bool {
         commonWords.contains(token)
     }
 
@@ -167,7 +167,7 @@ enum FlowDictionary {
     /// with internal punctuation ("next.js" arrives as "next js"), and words
     /// with unusual letter patterns. Kept conservative: a false positive costs
     /// the user one dismissal, but a noisy suggester gets switched off.
-    static func isLikelyTechnical(_ token: String) -> Bool {
+    public static func isLikelyTechnical(_ token: String) -> Bool {
         guard token.utf8.count >= 4 else { return false }
         if isCommonWord(token) { return false }
         if token.contains("-") { return true }
@@ -187,9 +187,9 @@ enum FlowDictionary {
 
     /// Per-word counters. Persisted inside the suggestion store's lifetime
     /// only — this is a heuristic, not an archive.
-    struct WordStats: Equatable {
-        var occurrences: Int = 0
-        var lastSeen: Date = Date()
+    public struct WordStats: Equatable {
+        public var occurrences: Int = 0
+        public var lastSeen: Date = Date()
     }
 
     /// Fold one transcript into `stats` and return suggestions worth raising.
@@ -200,7 +200,7 @@ enum FlowDictionary {
     ///   - dismissed: lowercase tokens the user rejected before.
     ///   - minimumOccurrences: how many times a token must appear across turns
     ///     before it is worth interrupting the user about.
-    static func learn(
+    public static func learn(
         from transcript: String,
         stats: inout [String: WordStats],
         existingRules: [FlowDictionaryRule],

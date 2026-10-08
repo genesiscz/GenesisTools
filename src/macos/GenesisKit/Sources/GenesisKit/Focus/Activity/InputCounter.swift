@@ -14,13 +14,13 @@ import os
 /// Counts are flushed into one-minute buckets. If the system disables the tap (it does, under
 /// load), the watchdog re-enables it and records a `capture_gap`, so a quiet hour reads as
 /// "not measured" rather than "you did nothing".
-final class InputCounter {
+public final class InputCounter {
     /// Called once per bucket with the counts accumulated in it. Always on `queue`.
-    var onFlush: ((_ bucketMs: Int64, _ counts: ActivityStore.InputCounts) -> Void)?
+    public var onFlush: ((_ bucketMs: Int64, _ counts: ActivityStore.InputCounts) -> Void)?
     /// Called when the tap died and came back, with the gap it left behind.
-    var onGap: ((_ startedMs: Int64, _ endedMs: Int64, _ reason: String) -> Void)?
+    public var onGap: ((_ startedMs: Int64, _ endedMs: Int64, _ reason: String) -> Void)?
 
-    private(set) var isRunning = false
+    public private(set) var isRunning = false
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var timer: DispatchSourceTimer?
@@ -32,9 +32,9 @@ final class InputCounter {
     private var lastPoint: CGPoint?
     private var tapDisabledAtMs: Int64?
 
-    static let bucketSeconds: Int64 = 60
+    public static let bucketSeconds: Int64 = 60
 
-    static func bucketStart(_ epochMs: Double) -> Int64 {
+    public static func bucketStart(_ epochMs: Double) -> Int64 {
         let ms = Int64(epochMs)
         let width = bucketSeconds * 1_000
         return ms - (ms % width)
@@ -45,7 +45,7 @@ final class InputCounter {
     /// Starts the tap. Returns false when Accessibility is not granted — the caller shows the
     /// honest "capture is off" state rather than pretending to record.
     @discardableResult
-    func start() -> Bool {
+    public func start() -> Bool {
         guard !isRunning else { return true }
         guard AXIsProcessTrusted() else { return false }
 
@@ -82,7 +82,7 @@ final class InputCounter {
         return true
     }
 
-    func stop() {
+    public func stop() {
         guard isRunning else { return }
         // Forced: the bucket that is still open would otherwise be dropped with the tap.
         flush(now: Date().timeIntervalSince1970 * 1000, force: true)
@@ -131,7 +131,7 @@ final class InputCounter {
     }
 
     /// Test seam: drive the counter without a real tap.
-    func recordForTesting(type: CGEventType, at point: CGPoint? = nil) {
+    public func recordForTesting(type: CGEventType, at point: CGPoint? = nil) {
         os_unfair_lock_lock(&lock)
         switch type {
         case .keyDown: pending.keys += 1
@@ -181,7 +181,7 @@ final class InputCounter {
 
     /// Flushes whenever the wall clock crosses a bucket boundary. `force` flushes the open
     /// bucket as well, which `stop()` needs so the last minute is not lost.
-    func flush(now epochMs: Double, force: Bool = false) {
+    public func flush(now epochMs: Double, force: Bool = false) {
         let currentBucket = Self.bucketStart(epochMs)
         os_unfair_lock_lock(&lock)
         let counts = pending
@@ -199,7 +199,7 @@ final class InputCounter {
     }
 
     /// Everything counted in the bucket that is still open. The HUD sparkline reads this.
-    func snapshot() -> ActivityStore.InputCounts {
+    public func snapshot() -> ActivityStore.InputCounts {
         os_unfair_lock_lock(&lock)
         defer { os_unfair_lock_unlock(&lock) }
         return pending

@@ -10,16 +10,16 @@ import SwiftUI
 /// through `FocusOrchestrator` (spec 17) rather than re-solving it; and drains the intents
 /// `genesis focus …` queues, so the CLI can drive a running app without a second IPC channel.
 @MainActor
-final class FocusController: ObservableObject {
-    static let shared = FocusController()
+public final class FocusController: ObservableObject {
+    public static let shared = FocusController()
 
-    @Published private(set) var available = false
-    @Published private(set) var lastError: String?
+    @Published public private(set) var available = false
+    @Published public private(set) var lastError: String?
 
-    private(set) var store: ActivityStore?
-    private(set) var recorder: ActivityRecorder?
-    private(set) var engine: PomodoroEngine?
-    private(set) var studioModel: FocusStudioModel?
+    public private(set) var store: ActivityStore?
+    public private(set) var recorder: ActivityRecorder?
+    public private(set) var engine: PomodoroEngine?
+    public private(set) var studioModel: FocusStudioModel?
 
     private var hud: FocusHUDWindowController?
     private let flash = FocusFlash()
@@ -42,7 +42,7 @@ final class FocusController: ObservableObject {
 
     /// Called once at startup. A failure here disables the feature and says why; it never takes
     /// the app down, because a ledger is not worth a launch failure.
-    func start(appConfig: [String: Any]) {
+    public func start(appConfig: [String: Any]) {
         guard store == nil else { return }
         do {
             let store = try ActivityStore()
@@ -62,11 +62,11 @@ final class FocusController: ObservableObject {
             // reason string and its own gate (plan.dndWhileFlowing), not the voice toggle.
             engine.beginDND = {
                 do { _ = try FocusOrchestrator.shared.beginSession(reason: "genesis-focus-flow") }
-                catch { Log.app.warning("focus DND begin failed: \(error.localizedDescription)") }
+                catch { FlowFocusLog.focus.warning("focus DND begin failed: \(error.localizedDescription)") }
             }
             engine.endDND = {
                 do { _ = try FocusOrchestrator.shared.endSession() }
-                catch { Log.app.warning("focus DND end failed: \(error.localizedDescription)") }
+                catch { FlowFocusLog.focus.warning("focus DND end failed: \(error.localizedDescription)") }
             }
 
             self.store = store
@@ -84,7 +84,7 @@ final class FocusController: ObservableObject {
                     engine: engine,
                     recorder: recorder,
                     onOpenStudio: { self?.openStudio() },
-                    onOpenSettings: { SettingsWindowController.shared.show() },
+                    onOpenSettings: { FlowFocusHost.shared.openSettings() },
                     onToggleStyle: { self?.hud?.toggleStyle() },
                     // The panel refuses key status; naming a tag needs it back for as long as
                     // the field is open, and not one moment longer.
@@ -135,7 +135,7 @@ final class FocusController: ObservableObject {
         }
     }
 
-    func stop() {
+    public func stop() {
         intentTimer?.invalidate()
         intentTimer = nil
         hud?.hide()
@@ -147,22 +147,22 @@ final class FocusController: ObservableObject {
 
     // MARK: - Surfaces
 
-    func toggleHUD() { hud?.toggle() }
+    public func toggleHUD() { hud?.toggle() }
 
-    func showHUD() { hud?.show(followPointer: true) }
+    public func showHUD() { hud?.show(followPointer: true) }
 
     /// Brings the timer in front of you and blinks it. A banner click uses `bringForward`:
     /// the window comes to the screen under the pointer, shown if it was hidden. An automatic
     /// event only blinks a window that is already up.
-    func callAttention(bringForward: Bool) {
+    public func callAttention(bringForward: Bool) {
         guard let hud else { return }
         if bringForward {
             hud.show(followPointer: true)
         } else if !hud.isVisible {
-            Log.app.notice("focus attention: HUD hidden, no blink")
+            FlowFocusLog.focus.notice("focus attention: HUD hidden, no blink")
             return
         }
-        Log.app.notice("focus attention: blink (bringForward \(bringForward))")
+        FlowFocusLog.focus.notice("focus attention: blink (bringForward \(bringForward))")
         // A beat later, so a window that was just ordered in is on screen for the whole blink,
         // and a rebuilt root view has subscribed before the count changes.
         let flash = self.flash
@@ -170,18 +170,18 @@ final class FocusController: ObservableObject {
     }
 
     /// Saves a plan edited from the HUD menu and applies it: the same path Settings uses.
-    func updatePlan(_ plan: PomodoroPlan) {
-        ConfigStore.shared.updateFocus(settings: settings, plan: plan)
-        apply(appConfig: ConfigStore.shared.app)
+    public func updatePlan(_ plan: PomodoroPlan) {
+        FlowFocusConfiguration.shared.updateFocus(settings: settings, plan: plan)
+        apply(appConfig: FlowFocusConfiguration.shared.app)
     }
 
-    func openStudio() {
+    public func openStudio() {
         guard let studioModel else { return }
         if studio == nil { studio = FocusStudioWindowController(model: studioModel) }
         studio?.present()
     }
 
-    func setHUDStyle(_ style: FocusHUDStyle) {
+    public func setHUDStyle(_ style: FocusHUDStyle) {
         hud?.setStyle(style)
         // A shape chosen in Settings is a request to see it, so the window comes up if it was
         // hidden. Nothing about the HUD is worth a preference you cannot observe.
@@ -189,7 +189,7 @@ final class FocusController: ObservableObject {
     }
 
     /// Opens (or raises) the granular breakdown of one session.
-    func openSession(_ id: Int64) {
+    public func openSession(_ id: Int64) {
         guard let store else { return }
         if let existing = sessionWindows[id] {
             existing.present()
@@ -220,7 +220,7 @@ final class FocusController: ObservableObject {
         return tags
     }
 
-    func apply(appConfig: [String: Any]) {
+    public func apply(appConfig: [String: Any]) {
         settings = FocusSettings.from(appConfig: appConfig)
         recorder?.apply(settings: settings)
         engine?.plan = PomodoroPlan.from(appConfig: appConfig)
@@ -273,7 +273,7 @@ final class FocusController: ObservableObject {
         intentTimer = timer
     }
 
-    func drainIntents() {
+    public func drainIntents() {
         guard let store, let engine else { return }
         guard let intents = try? store.takeIntents(), !intents.isEmpty else { return }
         for intent in intents {
@@ -294,7 +294,7 @@ final class FocusController: ObservableObject {
 extension PomodoroEngine {
     /// Applies one queued CLI command. Unknown kinds are ignored on purpose: a newer CLI must
     /// not be able to wedge an older app.
-    func apply(intent: ActivityStore.Intent) {
+    public func apply(intent: ActivityStore.Intent) {
         switch intent.kind {
         case "start":
             let minutes = intent.payload["minutes"] as? Int

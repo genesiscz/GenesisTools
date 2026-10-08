@@ -10,7 +10,10 @@
 //
 
 import XCTest
+@testable import GenesisKit
+#if canImport(Genesis)
 @testable import Genesis
+#endif
 
 final class CompanionTranscriptAccumulatorTests: XCTestCase {
 

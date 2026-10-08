@@ -9,10 +9,12 @@ import SwiftUI
 /// way (strip and effort), then where it went (apps, sites, windows), then exactly what
 /// happened (the event log). Every block draws the icon of the app it is about, because a row
 /// of names is slower to read than a row of icons.
-struct FocusSessionDetailView: View {
-    @ObservedObject var model: FocusSessionDetailModel
+public struct FocusSessionDetailView: View {
+    public init(model: FocusSessionDetailModel) { self.model = model }
 
-    var body: some View {
+    @ObservedObject public var model: FocusSessionDetailModel
+
+    public var body: some View {
         Group {
             if model.missing {
                 missingState
@@ -376,10 +378,10 @@ struct FocusSessionDetailView: View {
 }
 
 /// One line of the log. Split out so the lazy stack diffs rows, not one giant body.
-struct FocusSessionEventRow: View {
-    let event: FocusSessionDetailModel.Event
+public struct FocusSessionEventRow: View {
+    public let event: FocusSessionDetailModel.Event
 
-    var body: some View {
+    public var body: some View {
         HStack(spacing: GenSpacing.sm) {
             Text(FocusFormat.clockTime(event.startedMs))
                 .font(GenTypography.mono(10))

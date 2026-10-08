@@ -8,16 +8,18 @@ import SwiftUI
 /// Layout follows the Wispr Flow reference (left section rail, history centre,
 /// stats rail right) but on the Genesis dark palette — the reference is a light
 /// theme and this app is dark-only.
-struct FlowView: View {
-    @ObservedObject var session: FlowSession
+public struct FlowView: View {
+    public init(session: FlowSession) { self.session = session }
+
+    @ObservedObject public var session: FlowSession
     @State private var section: FlowSection = .dictation
     @State private var search = ""
 
-    enum FlowSection: String, CaseIterable, Identifiable {
+    public enum FlowSection: String, CaseIterable, Identifiable {
         case dictation, insights, dictionary, snippets, transforms, scratchpad, settings
-        var id: String { rawValue }
+        public var id: String { rawValue }
 
-        var title: String {
+        public var title: String {
             switch self {
             case .dictation: return "Dictation"
             case .insights: return "Insights"
@@ -29,7 +31,7 @@ struct FlowView: View {
             }
         }
 
-        var icon: String {
+        public var icon: String {
             switch self {
             case .dictation: return "mic"
             case .insights: return "chart.bar"
@@ -42,7 +44,7 @@ struct FlowView: View {
         }
     }
 
-    var body: some View {
+    public var body: some View {
         HStack(spacing: 0) {
             sectionRail
             Divider().overlay(Color.genGlassBorder)
@@ -307,10 +309,10 @@ private struct FlowSettingsPane: View {
 /// else the search drops below the title: in a 720 pt window, with both rails,
 /// the title got about 50 pt beside the fixed-width search and wrapped letter
 /// by letter ("Dict / atio / n").
-struct FlowHistoryHeader: View {
-    @Binding var search: String
+public struct FlowHistoryHeader: View {
+    @Binding public var search: String
 
-    var body: some View {
+    public var body: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: GenSpacing.md) {
                 title
@@ -1006,8 +1008,8 @@ private struct FlowScratchpadPane: View {
 // MARK: - Key naming
 
 /// Renders a Carbon keycode + modifier mask as something a human reads.
-enum FlowKeyNames {
-    static func describe(keyCode: UInt32, modifiers: UInt32) -> String {
+public enum FlowKeyNames {
+    public static func describe(keyCode: UInt32, modifiers: UInt32) -> String {
         var parts = ""
         if modifiers & 0x1000 != 0 { parts += "⌃" }   // controlKey
         if modifiers & 0x0800 != 0 { parts += "⌥" }   // optionKey
@@ -1025,7 +1027,7 @@ enum FlowKeyNames {
         0x31: "Space", 0x61: "F6", 0x60: "F5", 0x76: "F4", 0x63: "F3",
     ]
 
-    static func keyName(_ code: UInt32) -> String {
+    public static func keyName(_ code: UInt32) -> String {
         names[code] ?? "Key \(code)"
     }
 }

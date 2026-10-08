@@ -1,6 +1,9 @@
 // Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Tests/GenesisTests/FocusPomodoroTests.swift at 2026-10-08T05:04:08+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
 import XCTest
+@testable import GenesisKit
+#if canImport(Genesis)
 @testable import Genesis
+#endif
 
 /// Spec 22 (S6) T4 + the privacy policy. The plan is a value type, so its rules are tested
 /// without a clock; the engine is tested against a real store on a temp path.

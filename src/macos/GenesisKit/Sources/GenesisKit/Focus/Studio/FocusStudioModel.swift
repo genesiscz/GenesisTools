@@ -7,68 +7,68 @@ import Foundation
 /// and never aggregate in a body, because a body re-runs on every invalidation and this work is
 /// proportional to a day of segments.
 @MainActor
-final class FocusStudioModel: ObservableObject {
-    enum Tab: String, CaseIterable, Identifiable {
+public final class FocusStudioModel: ObservableObject {
+    public enum Tab: String, CaseIterable, Identifiable {
         case timeline = "Timeline"
         case breakdown = "Breakdown"
         case heatmap = "Heatmap"
         case sessions = "Sessions"
-        var id: String { rawValue }
+        public var id: String { rawValue }
     }
 
     /// A segment as the timeline draws it: already clipped to the range and given its lane.
-    struct TimelineBar: Identifiable, Equatable {
-        let segmentId: Int64
-        let laneKey: String
+    public struct TimelineBar: Identifiable, Equatable {
+        public let segmentId: Int64
+        public let laneKey: String
         /// Absolute times, for the tooltip and for any caller that needs the real clock.
-        let startedMs: Int64
-        let endedMs: Int64
+        public let startedMs: Int64
+        public let endedMs: Int64
         /// Milliseconds from the START OF THE LANE. Every lane is drawn across the full width,
         /// so 19:23 in the 19:00 lane is 23 minutes in, not "wherever 19:23 falls in the day".
-        let offsetStartMs: Int64
-        let offsetEndMs: Int64
-        var id: String { "\(segmentId)-\(laneKey)-\(offsetStartMs)" }
-        let appName: String
-        let appBundle: String
-        let detail: String
-        let idle: Bool
-        let sessionId: Int64?
+        public let offsetStartMs: Int64
+        public let offsetEndMs: Int64
+        public var id: String { "\(segmentId)-\(laneKey)-\(offsetStartMs)" }
+        public let appName: String
+        public let appBundle: String
+        public let detail: String
+        public let idle: Bool
+        public let sessionId: Int64?
     }
 
     /// One pomodoro phase as the timeline draws it: a band behind the segments that belong to
     /// it, so a flow and the break after it are two visibly different stretches rather than one
     /// continuous smear of app colours.
-    struct PhaseBand: Identifiable, Equatable {
-        let sessionId: Int64
+    public struct PhaseBand: Identifiable, Equatable {
+        public let sessionId: Int64
         /// The lane this piece of the band belongs to. A band is cut per lane and clipped to it:
         /// drawing the whole band in every lane made a 20:30 flow appear in the 18:00 row.
-        let laneKey: String
-        let kind: String
-        let tag: String?
-        let startedMs: Int64
-        let endedMs: Int64
-        let offsetStartMs: Int64
-        let offsetEndMs: Int64
-        var id: String { "\(sessionId)-\(laneKey)" }
-        var isBreak: Bool { kind != ActivityStore.SessionKind.flow.rawValue }
-        var label: String {
+        public let laneKey: String
+        public let kind: String
+        public let tag: String?
+        public let startedMs: Int64
+        public let endedMs: Int64
+        public let offsetStartMs: Int64
+        public let offsetEndMs: Int64
+        public var id: String { "\(sessionId)-\(laneKey)" }
+        public var isBreak: Bool { kind != ActivityStore.SessionKind.flow.rawValue }
+        public var label: String {
             let base = isBreak ? "break" : "flow"
             return tag.map { "\(base) · \($0)" } ?? base
         }
     }
 
     /// A stretch nothing was recorded in, clipped to the range.
-    struct GapBar: Identifiable, Equatable {
-        let gapId: Int64
-        let laneKey: String
-        let startedMs: Int64
-        let endedMs: Int64
-        let offsetStartMs: Int64
-        let offsetEndMs: Int64
-        let reason: String
-        var id: String { "\(gapId)-\(laneKey)" }
+    public struct GapBar: Identifiable, Equatable {
+        public let gapId: Int64
+        public let laneKey: String
+        public let startedMs: Int64
+        public let endedMs: Int64
+        public let offsetStartMs: Int64
+        public let offsetEndMs: Int64
+        public let reason: String
+        public var id: String { "\(gapId)-\(laneKey)" }
 
-        var label: String {
+        public var label: String {
             switch reason {
             case "app_not_running": return "app closed"
             case "capture_paused": return "capture paused"
@@ -78,71 +78,71 @@ final class FocusStudioModel: ObservableObject {
         }
     }
 
-    struct SessionCard: Identifiable, Equatable {
-        let id: Int64
-        let kind: String
-        let tag: String?
-        let note: String?
-        let startedMs: Int64
-        let actualMs: Int64
-        let plannedMs: Int64
-        let interruptions: Int
-        let state: String
-        let keys: Int
-        let topApps: [FocusAggregate.Bucket]
+    public struct SessionCard: Identifiable, Equatable {
+        public let id: Int64
+        public let kind: String
+        public let tag: String?
+        public let note: String?
+        public let startedMs: Int64
+        public let actualMs: Int64
+        public let plannedMs: Int64
+        public let interruptions: Int
+        public let state: String
+        public let keys: Int
+        public let topApps: [FocusAggregate.Bucket]
     }
 
     /// Why a range is empty. "Nothing happened" and "nothing was recorded" must never look the
     /// same, so the empty state asks this rather than guessing.
-    enum Emptiness: Equatable {
+    public enum Emptiness: Equatable {
         case notEmpty
         case nothingRecorded
         case captureWasOff
     }
 
-    @Published var tab: Tab = .timeline
-    @Published var range = FocusRange.make(.day)
-    @Published var tagFilter: String?
-    @Published var projectFilter: String?
-    @Published var search = ""
+    @Published public var tab: Tab = .timeline
+    @Published public var range = FocusRange.make(.day)
+    @Published public var tagFilter: String?
+    @Published public var projectFilter: String?
+    @Published public var search = ""
 
-    @Published private(set) var totals = FocusAggregate.Totals()
-    @Published private(set) var bars: [TimelineBar] = []
-    @Published private(set) var lanes: [String] = []
-    @Published private(set) var appBuckets: [FocusAggregate.Bucket] = []
-    @Published private(set) var hostBuckets: [FocusAggregate.Bucket] = []
-    @Published private(set) var projectBuckets: [FocusAggregate.Bucket] = []
-    @Published private(set) var heatCells: [FocusAggregate.HeatCell] = []
-    @Published private(set) var sessionCards: [SessionCard] = []
-    @Published private(set) var childBuckets: [String: [FocusAggregate.Bucket]] = [:]
-    @Published private(set) var emptiness: Emptiness = .notEmpty
-    @Published private(set) var keys = 0
+    @Published public private(set) var totals = FocusAggregate.Totals()
+    @Published public private(set) var bars: [TimelineBar] = []
+    @Published public private(set) var lanes: [String] = []
+    @Published public private(set) var appBuckets: [FocusAggregate.Bucket] = []
+    @Published public private(set) var hostBuckets: [FocusAggregate.Bucket] = []
+    @Published public private(set) var projectBuckets: [FocusAggregate.Bucket] = []
+    @Published public private(set) var heatCells: [FocusAggregate.HeatCell] = []
+    @Published public private(set) var sessionCards: [SessionCard] = []
+    @Published public private(set) var childBuckets: [String: [FocusAggregate.Bucket]] = [:]
+    @Published public private(set) var emptiness: Emptiness = .notEmpty
+    @Published public private(set) var keys = 0
     /// Milliseconds inside the range that nothing was recording, from `capture_gap`.
-    @Published private(set) var unmeasuredMs: Int64 = 0
+    @Published public private(set) var unmeasuredMs: Int64 = 0
     /// The gaps themselves, so the timeline can draw the hole instead of closing over it.
-    @Published private(set) var gapBars: [GapBar] = []
+    @Published public private(set) var gapBars: [GapBar] = []
     /// Flow and break spans for the timeline's background bands.
-    @Published private(set) var phaseBands: [PhaseBand] = []
+    @Published public private(set) var phaseBands: [PhaseBand] = []
     /// When set, every view is scoped to this one session instead of the whole range.
-    @Published var sessionFilter: Int64?
+    @Published public var sessionFilter: Int64?
     /// Sessions the session picker offers, newest first.
-    @Published private(set) var sessionOptions: [SessionCard] = []
-    @Published private(set) var availableTags: [String] = []
-    @Published private(set) var availableProjects: [String] = []
+    @Published public private(set) var sessionOptions: [SessionCard] = []
+    @Published public private(set) var availableTags: [String] = []
+    @Published public private(set) var availableProjects: [String] = []
 
     /// Opening a window is the app's job, not the model's; the Sessions tab calls this and
     /// `FocusController` decides what a session window is.
-    var onOpenSession: ((Int64) -> Void)?
+    public var onOpenSession: ((Int64) -> Void)?
 
     private let store: ActivityStore
 
-    init(store: ActivityStore) {
+    public init(store: ActivityStore) {
         self.store = store
     }
 
     // MARK: - Loading
 
-    func reload(now: Date = Date()) {
+    public func reload(now: Date = Date()) {
         let nowMs = Int64(now.timeIntervalSince1970 * 1000)
         let from = range.fromMs
         let to = range.toMs
@@ -245,7 +245,7 @@ final class FocusStudioModel: ObservableObject {
     }
 
     /// Minutes in one lane: 60 on a day view, 1440 otherwise. The timeline's x domain.
-    var laneSpanMinutes: Double { range.granularity == .day ? 60 : 1440 }
+    public var laneSpanMinutes: Double { range.granularity == .day ? 60 : 1440 }
 
     /// Session ids carrying the chosen tag, or nil when no tag is chosen. Held rather than
     /// recomputed, because `matchesFilters` runs once per segment.
@@ -387,19 +387,19 @@ final class FocusStudioModel: ObservableObject {
 
     // MARK: - Commands
 
-    func step(_ delta: Int) {
+    public func step(_ delta: Int) {
         range = range.stepped(by: delta)
         reload()
     }
 
-    func setGranularity(_ granularity: FocusRange.Granularity) {
+    public func setGranularity(_ granularity: FocusRange.Granularity) {
         let anchor = Date(timeIntervalSince1970: Double(range.fromMs) / 1000)
         range = FocusRange.make(granularity, containing: anchor)
         reload()
     }
 
     /// The digest the CLI prints, for the copy button — same numbers, same wording.
-    func digestMarkdown() -> String {
+    public func digestMarkdown() -> String {
         var lines = ["# Focus digest — \(range.label)", ""]
         lines.append("Focused \(FocusFormat.duration(totals.focusedMs)) · idle \(FocusFormat.duration(totals.idleMs)) · "
             + "\(totals.switches) context switches · longest unbroken \(FocusFormat.duration(totals.longestStretchMs))")

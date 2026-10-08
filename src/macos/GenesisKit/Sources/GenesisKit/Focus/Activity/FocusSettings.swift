@@ -6,33 +6,35 @@ import Foundation
 ///
 /// Read from `~/.genesis/client.json` under `app.focus`. The defaults are the conservative
 /// ones on purpose: the exclusion list ships non-empty, and URL paths are off until asked for.
-struct FocusSettings: Equatable {
-    enum TitleMode: String { case full, appOnly = "app-only", hashed }
-    enum URLMode: String { case off, host, hostPath = "host+path" }
+public struct FocusSettings: Equatable {
+    public init() {}
 
-    struct ProjectRule: Equatable {
-        var name: String
-        var cmuxSession: String?
-        var titleContains: String?
-        var host: String?
+    public enum TitleMode: String { case full, appOnly = "app-only", hashed }
+    public enum URLMode: String { case off, host, hostPath = "host+path" }
+
+    public struct ProjectRule: Equatable {
+        public var name: String
+        public var cmuxSession: String?
+        public var titleContains: String?
+        public var host: String?
     }
 
-    var captureEnabled = true
-    var titleMode: TitleMode = .full
-    var urlMode: URLMode = .host
-    var idleThresholdSec = 120
-    var retentionDays = 365
-    var interruptionThresholdSec = 45
-    var pauseWhileScreenShared = true
+    public var captureEnabled = true
+    public var titleMode: TitleMode = .full
+    public var urlMode: URLMode = .host
+    public var idleThresholdSec = 120
+    public var retentionDays = 365
+    public var interruptionThresholdSec = 45
+    public var pauseWhileScreenShared = true
     /// `time` shows the countdown, `dot` only the phase dot, `off` removes the item.
-    var menuBarStyle = "time"
-    var excludedBundles: Set<String> = FocusSettings.defaultExcludedBundles
-    var excludedHosts: Set<String> = []
-    var projects: [ProjectRule] = []
+    public var menuBarStyle = "time"
+    public var excludedBundles: Set<String> = FocusSettings.defaultExcludedBundles
+    public var excludedHosts: Set<String> = []
+    public var projects: [ProjectRule] = []
 
     /// Apps whose mere window title is a secret. Shipped non-empty so the first run is already
     /// safe, rather than safe once someone remembers to configure it.
-    static let defaultExcludedBundles: Set<String> = [
+    public static let defaultExcludedBundles: Set<String> = [
         "com.1password.1password",
         "com.agilebits.onepassword7",
         "com.apple.keychainaccess",
@@ -40,7 +42,7 @@ struct FocusSettings: Equatable {
     ]
 
     /// Browsers we know how to read an address from. Anything else records app and title only.
-    static let browserBundles: Set<String> = [
+    public static let browserBundles: Set<String> = [
         "com.brave.Browser",
         "com.google.Chrome",
         "com.apple.Safari",
@@ -52,7 +54,7 @@ struct FocusSettings: Equatable {
 
     /// Builds settings from the `app` dictionary of client.json. Unknown values fall back to the
     /// default rather than throwing: a typo in a config file must not stop the recorder.
-    static func from(appConfig: [String: Any]) -> FocusSettings {
+    public static func from(appConfig: [String: Any]) -> FocusSettings {
         var settings = FocusSettings()
         guard let focus = appConfig["focus"] as? [String: Any] else { return settings }
 
@@ -82,17 +84,17 @@ struct FocusSettings: Equatable {
 
     // MARK: - Policy
 
-    func records(bundle: String) -> Bool {
+    public func records(bundle: String) -> Bool {
         captureEnabled && !excludedBundles.contains(bundle)
     }
 
-    func records(host: String) -> Bool {
+    public func records(host: String) -> Bool {
         !excludedHosts.contains(host)
     }
 
     /// Applies the title policy. `hashed` keeps switch counting honest (the same window is the
     /// same string) while making the title itself unreadable.
-    func title(_ raw: String?, appName: String) -> String? {
+    public func title(_ raw: String?, appName: String) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
         switch titleMode {
         case .full: return raw
@@ -104,7 +106,7 @@ struct FocusSettings: Equatable {
     }
 
     /// Splits a URL under the current policy. Returns nil host when URLs are off entirely.
-    func urlParts(_ raw: String?) -> (host: String?, path: String?) {
+    public func urlParts(_ raw: String?) -> (host: String?, path: String?) {
         guard urlMode != .off, let raw, let url = URL(string: raw), let host = url.host else { return (nil, nil) }
         guard records(host: host) else { return (nil, nil) }
         switch urlMode {
@@ -116,7 +118,7 @@ struct FocusSettings: Equatable {
 
     /// First matching rule wins, checked cmux → title → host, exactly as spec §5.4 says.
     /// No inference: a project that is not in the rules stays nil and shows as unattributed.
-    func project(cmuxSession: String?, title: String?, host: String?) -> String? {
+    public func project(cmuxSession: String?, title: String?, host: String?) -> String? {
         for rule in projects {
             if let want = rule.cmuxSession, let have = cmuxSession, have.contains(want) { return rule.name }
         }

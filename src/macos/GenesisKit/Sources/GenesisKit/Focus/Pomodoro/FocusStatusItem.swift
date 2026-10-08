@@ -9,7 +9,7 @@ import SwiftUI
 /// nothing. Clicking opens a small popover with today's totals; right-clicking is the same
 /// commands without the stats, for speed.
 @MainActor
-final class FocusStatusItem {
+public final class FocusStatusItem {
     private var item: NSStatusItem?
     private var popover: NSPopover?
     private var cancellables: Set<AnyCancellable> = []
@@ -20,9 +20,9 @@ final class FocusStatusItem {
     private let onOpenStudio: () -> Void
     private let onToggleHUD: () -> Void
     /// Read at show time so the popover can say "Hide HUD" when the HUD is already up.
-    var isHUDVisible: () -> Bool = { false }
+    public var isHUDVisible: () -> Bool = { false }
 
-    init(engine: PomodoroEngine, recorder: ActivityRecorder, store: ActivityStore,
+    public init(engine: PomodoroEngine, recorder: ActivityRecorder, store: ActivityStore,
          onOpenStudio: @escaping () -> Void, onToggleHUD: @escaping () -> Void) {
         self.engine = engine
         self.recorder = recorder
@@ -31,7 +31,7 @@ final class FocusStatusItem {
         self.onToggleHUD = onToggleHUD
     }
 
-    func install(style: String) {
+    public func install(style: String) {
         guard style != "off", item == nil else { return }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.setAccessibilityIdentifier("focus-status-item")
@@ -48,7 +48,7 @@ final class FocusStatusItem {
         render(style: style)
     }
 
-    func remove() {
+    public func remove() {
         cancellables.removeAll()
         if let item { NSStatusBar.system.removeStatusItem(item) }
         item = nil
@@ -150,17 +150,17 @@ final class FocusStatusItem {
 
 /// Today's numbers plus the phase controls. Reads the store once when it appears and again only
 /// when the phase changes, never from a body.
-struct FocusStatusPopover: View {
-    @ObservedObject var engine: PomodoroEngine
-    @ObservedObject var recorder: ActivityRecorder
-    let store: ActivityStore
-    var isHUDVisible: () -> Bool = { false }
-    var onOpenStudio: () -> Void
-    var onToggleHUD: () -> Void
+public struct FocusStatusPopover: View {
+    @ObservedObject public var engine: PomodoroEngine
+    @ObservedObject public var recorder: ActivityRecorder
+    public let store: ActivityStore
+    public var isHUDVisible: () -> Bool = { false }
+    public var onOpenStudio: () -> Void
+    public var onToggleHUD: () -> Void
 
     @State private var summary = FocusDaySummary.empty
 
-    var body: some View {
+    public var body: some View {
         VStack(alignment: .leading, spacing: GenSpacing.md) {
             HStack(spacing: GenSpacing.sm) {
                 FocusRing(progress: progress, accent: accent)
@@ -313,11 +313,11 @@ struct FocusStatusPopover: View {
 
 /// A progress ring with no animation of its own: it redraws when `progress` changes, which is
 /// once a second at most.
-struct FocusRing: View {
-    var progress: Double
-    var accent: Color
+public struct FocusRing: View {
+    public var progress: Double
+    public var accent: Color
 
-    var body: some View {
+    public var body: some View {
         ZStack {
             Circle().strokeBorder(Color.genGlassBorder, lineWidth: 3)
             Circle()

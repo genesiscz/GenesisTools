@@ -7,9 +7,9 @@ import SwiftUI
 /// the speech-rate `micLevel` / `partialText` updates invalidate only this
 /// view, not the whole Flow surface. Routing them through `FlowSession` would
 /// re-render the history list on every audio buffer.
-struct FlowPillView: View {
-    @ObservedObject var session: FlowSession
-    @ObservedObject var recognizer: CompanionSpeechRecognizer
+public struct FlowPillView: View {
+    @ObservedObject public var session: FlowSession
+    @ObservedObject public var recognizer: CompanionSpeechRecognizer
 
     /// Drives the idle breathing. A single looping scale, not a shadow and not
     /// a `TimelineView` — both are documented idle-CPU sinks in this repo.
@@ -35,7 +35,7 @@ struct FlowPillView: View {
         }
     }
 
-    var body: some View {
+    public var body: some View {
         VStack(spacing: GenSpacing.sm) {
             // Caption above the pill, matching the reference's floating label.
             Text(label)

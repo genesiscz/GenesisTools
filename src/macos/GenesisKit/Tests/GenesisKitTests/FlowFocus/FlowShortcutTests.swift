@@ -1,6 +1,9 @@
 // Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Tests/GenesisTests/FlowShortcutTests.swift at 2026-10-08T05:04:08+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
 import XCTest
+@testable import GenesisKit
+#if canImport(Genesis)
 @testable import Genesis
+#endif
 
 /// D20: the dictation and voice-command chords, the move off ⌃⌥D / ⌃⌥C, the
 /// menu titles, and the Labs switches.
@@ -23,13 +26,17 @@ final class FlowShortcutTests: XCTestCase {
     func testDefaultChordsAreNotWindowManagerChords() {
         let config = FlowConfig()
         XCTAssertFalse(config.modifiers == controlOption && magnetChords.contains(config.keyCode))
+        #if canImport(Genesis)
         XCTAssertFalse(VoiceCommandSession.modifiers == controlOption && magnetChords.contains(VoiceCommandSession.keyCode))
+        #endif
     }
 
     func testDefaultChordLabels() {
         let config = FlowConfig()
         XCTAssertEqual(FlowKeyNames.describe(keyCode: config.keyCode, modifiers: config.modifiers), "⌃⌥⌘D")
+        #if canImport(Genesis)
         XCTAssertEqual(VoiceCommandSession.chordLabel, "⌃⌥⌘C")
+        #endif
     }
 
     func testSavedLegacyChordMovesToTheNewDefault() throws {
@@ -62,6 +69,7 @@ final class FlowShortcutTests: XCTestCase {
         XCTAssertEqual(GlobalHotkeyStatus.off.menuTitle("Voice command"), "Voice command")
     }
 
+    #if canImport(Genesis)
     // MARK: - Labs
 
     func testLabsDefaultOn() {
@@ -79,4 +87,5 @@ final class FlowShortcutTests: XCTestCase {
     func testLabsKeysAreTheConfigKeys() {
         XCTAssertEqual(LabsFeature.allCases.map(\.rawValue), ["dictation", "voiceCommands"])
     }
+    #endif
 }

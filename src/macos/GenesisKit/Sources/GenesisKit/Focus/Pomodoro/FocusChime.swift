@@ -8,27 +8,27 @@ import UserNotifications
 /// whatever the machine already sounds like, and the notification carries the same sentence, so
 /// a phase change lands whether the HUD is on screen, behind something, or on another display.
 @MainActor
-enum FocusChime {
+public enum FocusChime {
     /// Names from `/System/Library/Sounds`. Kept short and non-alarming: this fires every
     /// 25 minutes, and anything dramatic becomes hateful by the third hour.
-    static let available = ["Glass", "Ping", "Submarine", "Tink", "Blow", "Pop"]
-    static let defaultName = "Glass"
+    public static let available = ["Glass", "Ping", "Submarine", "Tink", "Blow", "Pop"]
+    public static let defaultName = "Glass"
     /// `userInfo[kind]` of every phase notification, so a click on one can be routed to the timer.
-    static let notificationKind = "focus.phase"
+    public static let notificationKind = "focus.phase"
 
-    static func play(_ name: String?) {
+    public static func play(_ name: String?) {
         guard let name, name != "off", !name.isEmpty else { return }
         // A test run must be silent: `swift test` drives whole pomodoro cycles in milliseconds,
         // and every boundary would ring.
-        guard Bundle.main.bundleIdentifier == "dev.foltyn.genesis" else { return }
+        guard FlowFocusHost.shared.soundsEnabled else { return }
         NSSound(named: NSSound.Name(name))?.play()
     }
 
     /// The "no flow is running" nudge: a soft two-note chime, synthesised so it can never be
     /// mistaken for the phase ding or a system alert. Quiet on purpose: it fires while you are
     /// typing, and a loud one would feel like being told off.
-    static func nudge() {
-        guard Bundle.main.bundleIdentifier == "dev.foltyn.genesis" else { return }
+    public static func nudge() {
+        guard FlowFocusHost.shared.soundsEnabled else { return }
         if nudgeSound == nil { nudgeSound = NSSound(data: nudgeWAV()) }
         nudgeSound?.stop()
         nudgeSound?.play()
@@ -38,7 +38,7 @@ enum FocusChime {
 
     /// 16-bit mono PCM WAV: E5 then B5, soft attack, exponential decay, peak well below full
     /// scale. Internal so a test can check that it stays gentle.
-    static func nudgeWAV(sampleRate: Int = 44_100) -> Data {
+    public static func nudgeWAV(sampleRate: Int = 44_100) -> Data {
         let count = Int(Double(sampleRate) * 1.4)
         let notes: [(freq: Double, start: Double, gain: Double)] = [(659.25, 0, 0.16), (987.77, 0.16, 0.12)]
         var data = Data()
@@ -66,15 +66,15 @@ enum FocusChime {
     }
 
     /// Fire-and-forget preview for the settings picker.
-    static func preview(_ name: String) { play(name) }
+    public static func preview(_ name: String) { play(name) }
 
     /// Posts the phase-change notification. Authorisation is the app's existing one (spec 19);
     /// a refusal is silent here rather than a modal — the sound already did the job.
-    static func notify(finished: PomodoroPlan.Phase, next: PomodoroPlan.Phase, autoStarted: Bool) {
+    public static func notify(finished: PomodoroPlan.Phase, next: PomodoroPlan.Phase, autoStarted: Bool) {
         // Same guard `UNMonitorNotifier` carries: under `swift test` the bundle is not
         // Genesis.app, and `UNUserNotificationCenter.current()` does not fail there, it raises
         // and takes the test process down with it.
-        guard Bundle.main.bundleIdentifier == "dev.foltyn.genesis" else { return }
+        guard FlowFocusHost.shared.notificationsEnabled else { return }
         let content = UNMutableNotificationContent()
         content.title = "\(finished.label) finished"
         content.body = autoStarted
@@ -82,7 +82,7 @@ enum FocusChime {
             : "\(next.label) is ready when you are."
         content.sound = nil // the chime already played; two sounds for one event is noise
         content.categoryIdentifier = "focus.phase"
-        content.userInfo = [QaNotificationIDs.kindKey: notificationKind]
+        content.userInfo = ["kind": notificationKind]
 
         let request = UNNotificationRequest(
             identifier: "focus.phase.\(Int(Date().timeIntervalSince1970))",
@@ -90,7 +90,7 @@ enum FocusChime {
             trigger: nil)
         UNUserNotificationCenter.current().add(request) { error in
             if let error {
-                Log.app.debug("focus phase notification failed: \(error.localizedDescription)")
+                FlowFocusLog.focus.debug("focus phase notification failed: \(error.localizedDescription)")
             }
         }
     }

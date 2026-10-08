@@ -16,15 +16,15 @@ import Foundation
 /// not. A rewrite the user did not ask for is indistinguishable from the tool
 /// being wrong. Flow keeps the raw transcript forever and only transforms on
 /// request.
-enum FlowTransformRunner {
+public enum FlowTransformRunner {
 
-    enum RunError: LocalizedError {
+    public enum RunError: LocalizedError {
         case notConfigured
         case tooLong(Int)
         case backend(String)
         case empty
 
-        var errorDescription: String? {
+        public var errorDescription: String? {
             switch self {
             case .notConfigured:
                 return "No AI backend is configured for transforms."
@@ -41,10 +41,10 @@ enum FlowTransformRunner {
     /// Upper bound on input. Matches the ceiling Wispr Flow uses, and exists
     /// for the same reason: a rewrite of something enormous is slow, expensive,
     /// and usually not what was meant.
-    static let wordLimit = 1_000
+    public static let wordLimit = 1_000
 
     /// Apply `transform` to `text`.
-    static func run(
+    public static func run(
         _ transform: FlowTransform,
         on text: String,
         timeout: TimeInterval = 30
@@ -57,15 +57,10 @@ enum FlowTransformRunner {
 
         // Settings live on the main actor; read them once, up front, so the
         // network call itself stays off it.
-        let (base, model, configuredToken) = await MainActor.run {
-            let settings = CompanionSettings.shared
-            return (
-                settings.aiBackendBaseURL.trimmingCharacters(in: .whitespaces),
-                GenesisAISettings.shared.featureModel(.flow) ?? settings.aiBackendModel,
-                settings.aiBackendToken
-            )
-        }
-        guard !base.isEmpty, let url = URL(string: base + "/chat/completions") else {
+        let settings = await configuration()
+        let (base, model, configuredToken) = (settings.baseURL, settings.model, settings.token)
+        guard !base.isEmpty, !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let url = URL(string: base + "/chat/completions") else {
             throw RunError.notConfigured
         }
 
@@ -108,8 +103,13 @@ enum FlowTransformRunner {
         return result
     }
 
+    @MainActor
+    static func configuration() -> FlowTransformConfiguration {
+        FlowFocusHost.shared.transformConfiguration?() ?? FlowFocusConfiguration.shared.transformConfiguration
+    }
+
     /// The instruction, hardened against the payload hijacking it.
-    static func systemPrompt(for transform: FlowTransform) -> String {
+    public static func systemPrompt(for transform: FlowTransform) -> String {
         """
         \(transform.prompt)
 
@@ -123,7 +123,7 @@ enum FlowTransformRunner {
 
     /// Explicit token wins; otherwise read the local ai-proxy key from disk,
     /// the same way the companion's realtime transport does.
-    static func resolveToken(configured: String) -> String? {
+    public static func resolveToken(configured: String) -> String? {
         let trimmed = configured.trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty { return trimmed }
         return proxyApiKeyFromDisk()
@@ -140,7 +140,7 @@ enum FlowTransformRunner {
     }
 
     /// Pull the useful sentence out of an error body rather than showing raw JSON.
-    static func message(from data: Data, status: Int) -> String {
+    public static func message(from data: Data, status: Int) -> String {
         if
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let error = json["error"] as? [String: Any],

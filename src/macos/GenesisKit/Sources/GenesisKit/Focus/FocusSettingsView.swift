@@ -6,7 +6,9 @@ import SwiftUI
 /// Four groups in this order, because the privacy group is the one that needs to be found:
 /// Timer, Capture, Privacy, Projects. Every row explains its consequence in one line; a toggle
 /// whose effect is invisible is a bug, not a preference.
-struct FocusSettingsView: View {
+public struct FocusSettingsView: View {
+    public init() {}
+
     @ObservedObject private var controller = FocusController.shared
     @State private var settings = FocusSettings()
     @State private var plan = PomodoroPlan()
@@ -15,7 +17,7 @@ struct FocusSettingsView: View {
 
     private let accent = Color.neonAmber
 
-    var body: some View {
+    public var body: some View {
         // No ScrollView, padding or background of its own: the Settings shell
         // already scrolls and pads every tab. The nested copies indented this
         // tab 24pt deeper than the others.
@@ -308,7 +310,7 @@ struct FocusSettingsView: View {
     // MARK: - Persistence
 
     private func load() {
-        let app = ConfigStore.shared.app
+        let app = FlowFocusConfiguration.shared.app
         settings = FocusSettings.from(appConfig: app)
         plan = PomodoroPlan.from(appConfig: app)
         hudStyle = FocusHUDWindowController.savedStyle
@@ -318,16 +320,16 @@ struct FocusSettingsView: View {
     /// text fields, so each write is one deliberate act. `ConfigStore.mutate` is a locked,
     /// synchronous disk write — never call it from a continuously changing value.
     private func save() {
-        ConfigStore.shared.updateFocus(settings: settings, plan: plan)
-        FocusController.shared.apply(appConfig: ConfigStore.shared.app)
+        FlowFocusConfiguration.shared.updateFocus(settings: settings, plan: plan)
+        FocusController.shared.apply(appConfig: FlowFocusConfiguration.shared.app)
     }
 }
 
 /// Wrapping row of small tags, for the exclusion lists.
-struct FlowingTags: View {
-    let items: [String]
+public struct FlowingTags: View {
+    public let items: [String]
 
-    var body: some View {
+    public var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(items, id: \.self) { item in
                 Text(item)

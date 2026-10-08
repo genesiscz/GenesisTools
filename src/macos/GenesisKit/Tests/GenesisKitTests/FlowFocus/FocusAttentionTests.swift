@@ -1,7 +1,10 @@
 // Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Tests/GenesisTests/FocusAttentionTests.swift at 2026-10-08T05:04:08+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
 import UserNotifications
 import XCTest
+@testable import GenesisKit
+#if canImport(Genesis)
 @testable import Genesis
+#endif
 
 /// The flow-end ding, the banner click, the idle pause and resume, and the nudge.
 @MainActor
@@ -229,6 +232,7 @@ final class FocusAttentionTests: XCTestCase {
         XCTAssertLessThan(peak, Int(Double(Int16.max) * 0.35), "a nudge, not an alarm")
     }
 
+    #if canImport(Genesis)
     func testClickingAPhaseBannerBringsTheTimerForward() {
         let router = QaNotificationRouter.shared
         var taps = 0
@@ -240,4 +244,5 @@ final class FocusAttentionTests: XCTestCase {
         router.handleAction(actionIdentifier: UNNotificationDismissActionIdentifier, userInfo: info)
         XCTAssertEqual(taps, 1, "swiping the banner away is not a request to see the timer")
     }
+    #endif
 }

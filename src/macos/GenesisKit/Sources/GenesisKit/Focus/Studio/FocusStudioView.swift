@@ -8,10 +8,12 @@ import SwiftUI
 /// good at this (Heatmap), and what each pomodoro actually contained (Sessions). Every number
 /// here is printable from `genesis focus digest` for the same range, which is the rule that
 /// keeps the two surfaces honest.
-struct FocusStudioView: View {
-    @ObservedObject var model: FocusStudioModel
+public struct FocusStudioView: View {
+    public init(model: FocusStudioModel) { self.model = model }
 
-    var body: some View {
+    @ObservedObject public var model: FocusStudioModel
+
+    public var body: some View {
         VStack(spacing: 0) {
             chrome
             Divider().overlay(Color.genGlassBorder)
@@ -227,8 +229,8 @@ struct FocusStudioView: View {
 
 // MARK: - Timeline
 
-struct FocusTimelineView: View {
-    @ObservedObject var model: FocusStudioModel
+public struct FocusTimelineView: View {
+    @ObservedObject public var model: FocusStudioModel
 
     /// Which phase the pointer picked, and where it picked it. The first click on a flow or a
     /// break shows its card; the second opens the full breakdown. One click for "what was
@@ -249,7 +251,7 @@ struct FocusTimelineView: View {
         CGFloat(max(1, model.lanes.count)) * 34 + 40
     }
 
-    var body: some View {
+    public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: GenSpacing.sm) {
                 chart
@@ -447,11 +449,11 @@ struct FocusTimelineView: View {
 
 // MARK: - Breakdown
 
-struct FocusBreakdownView: View {
-    @ObservedObject var model: FocusStudioModel
+public struct FocusBreakdownView: View {
+    @ObservedObject public var model: FocusStudioModel
     @State private var expanded: Set<String> = []
 
-    var body: some View {
+    public var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 section("Apps", model.appBuckets, expandable: true)
@@ -549,8 +551,8 @@ struct FocusBreakdownView: View {
 
 // MARK: - Heatmap
 
-struct FocusHeatmapView: View {
-    @ObservedObject var model: FocusStudioModel
+public struct FocusHeatmapView: View {
+    @ObservedObject public var model: FocusStudioModel
 
     private static let weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
     private static let hours = Array(0 ... 23)
@@ -559,7 +561,7 @@ struct FocusHeatmapView: View {
     /// cell size in points on a continuous axis (`.ratio` measures against a step that a
     /// continuous scale does not have), which produced a sparse row of chips with no grid
     /// between them. Seven rows of twenty-four cells is a layout, not a chart.
-    var body: some View {
+    public var body: some View {
         VStack(alignment: .leading, spacing: GenSpacing.md) {
             grid
             legend
@@ -655,10 +657,10 @@ struct FocusHeatmapView: View {
 
 // MARK: - Sessions
 
-struct FocusSessionsView: View {
-    @ObservedObject var model: FocusStudioModel
+public struct FocusSessionsView: View {
+    @ObservedObject public var model: FocusStudioModel
 
-    var body: some View {
+    public var body: some View {
         ScrollView {
             LazyVStack(spacing: GenSpacing.sm) {
                 ForEach(model.sessionCards) { card in
@@ -683,8 +685,8 @@ struct FocusSessionsView: View {
     }
 }
 
-struct FocusSessionCardView: View {
-    let card: FocusStudioModel.SessionCard
+public struct FocusSessionCardView: View {
+    public let card: FocusStudioModel.SessionCard
 
     private var accent: Color {
         switch card.kind {
@@ -694,7 +696,7 @@ struct FocusSessionCardView: View {
         }
     }
 
-    var body: some View {
+    public var body: some View {
         VStack(alignment: .leading, spacing: GenSpacing.sm) {
             HStack(spacing: GenSpacing.sm) {
                 Text(FocusFormat.clockTime(card.startedMs))
@@ -781,17 +783,17 @@ struct FocusSessionCardView: View {
 
 /// Stable colours per app: the eight most common get named tokens, the rest hash into the same
 /// set. Shuffling colours week to week would make the timeline unreadable at a glance.
-enum FocusPalette {
-    static let swatches: [Color] = [
+public enum FocusPalette {
+    public static let swatches: [Color] = [
         .genAccent, .jarvisTeal, .genWaiting, .genSuccess,
         .neonCyan, .neonPurple, .genWarning, Color(red: 0.55, green: 0.62, blue: 0.85),
     ]
 
     /// Gaps are drawn, never skipped: a hole in the record must look different from an idle
     /// stretch and from a busy one.
-    static let gapFill = Color.white.opacity(0.06)
+    public static let gapFill = Color.white.opacity(0.06)
 
-    static func color(for key: String) -> Color {
+    public static func color(for key: String) -> Color {
         var hash: UInt64 = 5381
         for byte in key.utf8 { hash = (hash &* 33) &+ UInt64(byte) }
         return swatches[Int(hash % UInt64(swatches.count))]
@@ -804,10 +806,10 @@ enum FocusPalette {
 ///
 /// Deliberately short: the five numbers that decide whether the full breakdown is worth opening,
 /// and a line saying how to open it. Anything more and the card is the breakdown.
-struct FocusSessionHoverCard: View {
-    let card: FocusStudioModel.SessionCard
-    var onOpen: () -> Void
-    var onDismiss: () -> Void
+public struct FocusSessionHoverCard: View {
+    public let card: FocusStudioModel.SessionCard
+    public var onOpen: () -> Void
+    public var onDismiss: () -> Void
 
     private var accent: Color {
         switch card.kind {
@@ -817,7 +819,7 @@ struct FocusSessionHoverCard: View {
         }
     }
 
-    var body: some View {
+    public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: GenSpacing.xs) {
                 Circle().fill(accent).frame(width: 6, height: 6)

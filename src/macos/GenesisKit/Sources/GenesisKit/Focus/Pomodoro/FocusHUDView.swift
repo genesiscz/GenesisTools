@@ -7,25 +7,25 @@ import SwiftUI
 /// the live app mix of this phase and a keystroke sparkline, both read from the recorder that
 /// is already running. Nothing here polls on its own — the engine ticks once a second and the
 /// recorder every two, and this view renders whatever they last published.
-struct FocusHUDView: View {
-    @ObservedObject var engine: PomodoroEngine
-    @ObservedObject var recorder: ActivityRecorder
+public struct FocusHUDView: View {
+    @ObservedObject public var engine: PomodoroEngine
+    @ObservedObject public var recorder: ActivityRecorder
 
     /// Injected so the window controller owns dismissal, and so previews need no window.
-    var onOpenStudio: () -> Void = {}
-    var onOpenSettings: () -> Void = {}
-    var onToggleStyle: () -> Void = {}
+    public var onOpenStudio: () -> Void = {}
+    public var onOpenSettings: () -> Void = {}
+    public var onToggleStyle: () -> Void = {}
     /// The panel refuses key status by default, so a text field in it cannot be typed into.
     /// These let the view borrow key status for exactly as long as the field is open.
-    var onBeginEditing: () -> Void = {}
-    var onEndEditing: () -> Void = {}
+    public var onBeginEditing: () -> Void = {}
+    public var onEndEditing: () -> Void = {}
     /// Tags already used, newest first — picking beats typing for the common case.
-    var recentTags: [String] = []
-    var style: FocusHUDStyle = .full
+    public var recentTags: [String] = []
+    public var style: FocusHUDStyle = .full
     /// Blink requests from the controller. Defaulted so a preview needs none.
-    @ObservedObject var flash = FocusFlash()
+    @ObservedObject public var flash = FocusFlash()
     /// Saves a plan changed from the Attention section of the menu.
-    var onPlanChange: (PomodoroPlan) -> Void = { _ in }
+    public var onPlanChange: (PomodoroPlan) -> Void = { _ in }
 
     @State private var isHovering = false
     @State private var skipArmed = false
@@ -50,7 +50,7 @@ struct FocusHUDView: View {
     private var isPaused: Bool { engine.state == .paused }
     private var isRunning: Bool { engine.state == .running || engine.state == .overrun }
 
-    var body: some View {
+    public var body: some View {
         Group {
             if style == .compact { compactBody } else { fullBody }
         }
@@ -588,7 +588,7 @@ struct FocusHUDView: View {
         return "\(engine.phase.label), \(core)\(paused)\(tag)"
     }
 
-    static func clock(_ seconds: Int) -> String {
+    public static func clock(_ seconds: Int) -> String {
         let value = abs(seconds)
         let sign = seconds < 0 ? "+" : ""
         // Hours once past the hour, like the status strip: "+350:45" did not fit the HUD.
@@ -603,10 +603,10 @@ struct FocusHUDView: View {
 
 /// Keystrokes per tick as a polyline. A `Shape` rather than a `Canvas` so it participates in
 /// normal diffing and costs nothing when the samples do not change.
-struct FocusSparkline: Shape {
-    var samples: [Int]
+public struct FocusSparkline: Shape {
+    public var samples: [Int]
 
-    func path(in rect: CGRect) -> Path {
+    public func path(in rect: CGRect) -> Path {
         var path = Path()
         guard samples.count > 1 else { return path }
         let peak = max(samples.max() ?? 1, 1)
@@ -640,30 +640,30 @@ private struct HintOnHover: ViewModifier {
 /// The HUD comes in two shapes. `full` is the working surface: mix, sparkline, hover controls.
 /// `compact` is the glance: phase, time, one button, and the cycle dots — small enough to park
 /// in a corner of a screen you are using for something else.
-enum FocusHUDStyle: String, CaseIterable, Identifiable {
+public enum FocusHUDStyle: String, CaseIterable, Identifiable {
     case full, compact
-    var id: String { rawValue }
-    var label: String { self == .full ? "Full" : "Compact" }
+    public var id: String { rawValue }
+    public var label: String { self == .full ? "Full" : "Compact" }
 }
 
-enum FocusHUDMetrics {
-    static let size = CGSize(width: 320, height: 250)
-    static let compactSize = CGSize(width: 260, height: 104)
-    static let cornerRadius: CGFloat = 20
-    static let compactCornerRadius: CGFloat = 16
+public enum FocusHUDMetrics {
+    public static let size = CGSize(width: 320, height: 250)
+    public static let compactSize = CGSize(width: 260, height: 104)
+    public static let cornerRadius: CGFloat = 20
+    public static let compactCornerRadius: CGFloat = 16
 
-    static func size(for style: FocusHUDStyle) -> CGSize {
+    public static func size(for style: FocusHUDStyle) -> CGSize {
         style == .compact ? compactSize : size
     }
 
-    static func cornerRadius(for style: FocusHUDStyle) -> CGFloat {
+    public static func cornerRadius(for style: FocusHUDStyle) -> CGFloat {
         style == .compact ? compactCornerRadius : cornerRadius
     }
 }
 
 /// Makes the HUD blink. The controller calls `pulse()`; the view plays one `AttentionPulse`
 /// per count.
-final class FocusFlash: ObservableObject {
-    @Published private(set) var count = 0
-    func pulse() { count += 1 }
+public final class FocusFlash: ObservableObject {
+    @Published public private(set) var count = 0
+    public func pulse() { count += 1 }
 }

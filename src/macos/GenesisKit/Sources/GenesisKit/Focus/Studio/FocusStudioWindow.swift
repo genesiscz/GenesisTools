@@ -8,10 +8,10 @@ import SwiftUI
 /// One window, reused. Re-showing it reloads the range rather than opening a second copy, so a
 /// menu item pressed twice cannot leave two studios disagreeing about the same day.
 @MainActor
-final class FocusStudioWindowController: NSWindowController, NSWindowDelegate {
+public final class FocusStudioWindowController: NSWindowController, NSWindowDelegate {
     private let model: FocusStudioModel
 
-    init(model: FocusStudioModel) {
+    public init(model: FocusStudioModel) {
         self.model = model
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1040, height: 680),
@@ -32,9 +32,9 @@ final class FocusStudioWindowController: NSWindowController, NSWindowDelegate {
         window.setAccessibilityIdentifier("focus-studio-window")
     }
 
-    required init?(coder: NSCoder) { fatalError("not supported") }
+    public required init?(coder: NSCoder) { fatalError("not supported") }
 
-    func present() {
+    public func present() {
         guard let window else { return }
         if !window.isVisible {
             window.center()

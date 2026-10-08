@@ -60,12 +60,12 @@ private final class RequestBox: @unchecked Sendable {
 /// the recognizer already closed, `segment` the live one being revised in
 /// place; `text` is always the whole hold. A value type on purpose: the
 /// interesting rules are unit-testable without a microphone.
-struct CompanionTranscriptAccumulator {
-    private(set) var committed = ""
-    private(set) var segment = ""
+public struct CompanionTranscriptAccumulator {
+    public private(set) var committed = ""
+    public private(set) var segment = ""
 
     /// Everything heard during this hold.
-    var text: String {
+    public var text: String {
         if committed.isEmpty { return segment }
         if segment.isEmpty { return committed }
         return committed + " " + segment
@@ -82,7 +82,7 @@ struct CompanionTranscriptAccumulator {
     /// mid-revision, which duplicated every rewritten phrase (live:
     /// `transcript="Produce on See on my screen what do you see on my screen
     /// Produce see on my screen what do you see on my screen"`).
-    mutating func update(_ next: String) {
+    public mutating func update(_ next: String) {
         // An empty revision NEVER wipes the hold — SFSpeech emits one on the
         // final callback of a silence-closed utterance (live: 22 results,
         // `chars=0`).
@@ -91,21 +91,21 @@ struct CompanionTranscriptAccumulator {
     }
 
     /// Fold the live utterance into the accumulated text.
-    mutating func commit() {
+    public mutating func commit() {
         let trimmed = segment.trimmingCharacters(in: .whitespacesAndNewlines)
         segment = ""
         guard !trimmed.isEmpty else { return }
         committed = committed.isEmpty ? trimmed : committed + " " + trimmed
     }
 
-    mutating func reset() {
+    public mutating func reset() {
         committed = ""
         segment = ""
     }
 }
 
 @MainActor
-final class CompanionSpeechRecognizer: ObservableObject {
+public final class CompanionSpeechRecognizer: ObservableObject {
 
     /// Optional source of audio captured before `start()` was called.
     ///
@@ -113,43 +113,43 @@ final class CompanionSpeechRecognizer: ObservableObject {
     /// it nil, so F6 behaviour is unchanged. Buffers whose format does not
     /// match the live tap are dropped rather than fed — a mismatched format is
     /// silently discarded by the recogniser and would cost the whole turn.
-    var preRollProvider: (() -> [AVAudioPCMBuffer])?
+    public var preRollProvider: (() -> [AVAudioPCMBuffer])?
 
     /// Where holds get their audio: the mic by default, a WAV file in tests.
-    var audioSource: CompanionAudioSource
+    public var audioSource: CompanionAudioSource
 
     /// Record from the built-in mic when the system default input is a
     /// Bluetooth headset (the companion sets this from its settings).
-    var avoidBluetoothMic: Bool {
+    public var avoidBluetoothMic: Bool {
         get { (audioSource as? CompanionMicSource)?.avoidBluetooth ?? false }
         set { (audioSource as? CompanionMicSource)?.avoidBluetooth = newValue }
     }
 
     /// Recognize the captured clip once more when the streaming result is
     /// empty although audio arrived.
-    var retryOnEmpty = true
+    public var retryOnEmpty = true
 
     /// false = capture-only holds: the audio path, tail and hold report run,
     /// no recognition task starts. Tests use it where the runner has no Speech
     /// Recognition grant (starting a task there aborts the process).
-    var recognizes = true
+    public var recognizes = true
 
     /// Live partial transcript while the user is speaking (HUD "You" row).
     /// Always the WHOLE hold so far — committed utterances plus the live one.
-    @Published private(set) var partialText = ""
+    @Published public private(set) var partialText = ""
     /// 0…1 mic level for the HUD meter.
-    @Published private(set) var micLevel: Double = 0
+    @Published public private(set) var micLevel: Double = 0
 
     /// What the last finished hold captured and returned.
-    struct HoldReport: Equatable {
-        let text: String
-        let stats: CompanionHoldCapture.Stats
-        let heldMs: Int
-        let tailMs: Int
-        let retried: Bool
+    public struct HoldReport: Equatable {
+        public let text: String
+        public let stats: CompanionHoldCapture.Stats
+        public let heldMs: Int
+        public let tailMs: Int
+        public let retried: Bool
     }
 
-    private(set) var lastHold: HoldReport?
+    public private(set) var lastHold: HoldReport?
 
     private var recognizer: SFSpeechRecognizer?
     private var request: SFSpeechAudioBufferRecognitionRequest?
@@ -172,7 +172,7 @@ final class CompanionSpeechRecognizer: ObservableObject {
     private var holdId = 0
 
     /// A mic level belongs on the ring only while the hold that measured it is live.
-    func acceptsMicLevel(fromHold hold: Int) -> Bool {
+    public func acceptsMicLevel(fromHold hold: Int) -> Bool {
         isActive && hold == holdId
     }
 
@@ -184,21 +184,21 @@ final class CompanionSpeechRecognizer: ObservableObject {
     /// loop must not spin forever).
     private static let maxRestarts = 40
 
-    init(audioSource: CompanionAudioSource? = nil) {
+    public init(audioSource: CompanionAudioSource? = nil) {
         self.audioSource = audioSource ?? CompanionMicSource()
     }
 
     // MARK: - Permissions
 
-    nonisolated static func speechAuthorized() -> Bool {
+    public nonisolated static func speechAuthorized() -> Bool {
         SFSpeechRecognizer.authorizationStatus() == .authorized
     }
 
-    nonisolated static func speechAuthorizationDetermined() -> Bool {
+    public nonisolated static func speechAuthorizationDetermined() -> Bool {
         SFSpeechRecognizer.authorizationStatus() != .notDetermined
     }
 
-    nonisolated static func requestSpeechAuthorization() async -> Bool {
+    public nonisolated static func requestSpeechAuthorization() async -> Bool {
         await withCheckedContinuation { cont in
             SFSpeechRecognizer.requestAuthorization { status in
                 cont.resume(returning: status == .authorized)
@@ -206,18 +206,18 @@ final class CompanionSpeechRecognizer: ObservableObject {
         }
     }
 
-    nonisolated static func micAuthorized() -> Bool {
+    public nonisolated static func micAuthorized() -> Bool {
         AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
-    nonisolated static func requestMicAuthorization() async -> Bool {
+    public nonisolated static func requestMicAuthorization() async -> Bool {
         await AVCaptureDevice.requestAccess(for: .audio)
     }
 
     /// `Locale.current.identifier` on macOS carries user preference subtags
     /// (observed live: `en_US@rg=czzzzz`), which SFSpeech resolves erratically.
     /// Keep only the language_REGION core.
-    nonisolated static func normalizedLocale(_ locale: Locale) -> Locale {
+    public nonisolated static func normalizedLocale(_ locale: Locale) -> Locale {
         let core = locale.identifier.split(separator: "@").first.map(String.init) ?? locale.identifier
         return core.isEmpty ? locale : Locale(identifier: core)
     }
@@ -228,7 +228,7 @@ final class CompanionSpeechRecognizer: ObservableObject {
     /// unavailable (bad locale, no auth) or the audio source fails.
     /// `forceServer` disables on-device recognition (fallback when on-device
     /// silently yields nothing — a known SFSpeech flakiness on macOS).
-    func start(locale: Locale = .current, forceServer: Bool = false) throws {
+    public func start(locale: Locale = .current, forceServer: Bool = false) throws {
         cancel() // never stack two sessions
 
         let resolved = Self.normalizedLocale(locale)
@@ -293,11 +293,11 @@ final class CompanionSpeechRecognizer: ObservableObject {
                 box.append(buffer)
             }
             if !buffers.isEmpty {
-                Log.companion.info("stt pre-roll spliced buffers=\(buffers.count)")
+                FlowFocusLog.speech.info("stt pre-roll spliced buffers=\(buffers.count)")
             }
         }
 
-        Log.companion.info("stt start locale=\(recognizer.locale.identifier) onDevice=\(self.onDevice) device=\(self.audioSource.deviceLabel) inputRate=\(Int(format.sampleRate)) ch=\(format.channelCount) sourceStartMs=\(sourceStartMs)")
+        FlowFocusLog.speech.info("stt start locale=\(recognizer.locale.identifier) onDevice=\(self.onDevice) device=\(self.audioSource.deviceLabel) inputRate=\(Int(format.sampleRate)) ch=\(format.channelCount) sourceStartMs=\(sourceStartMs)")
     }
 
     /// End the utterance (F6 released) and wait briefly for the final
@@ -307,7 +307,7 @@ final class CompanionSpeechRecognizer: ObservableObject {
     /// `tailMs` keeps capturing that long after the release: a key comes up
     /// while the last syllable is still in the air, and cutting the audio at
     /// the release drops it.
-    func finish(timeoutSeconds: Double = 3.0, tailMs: Int = 0) async -> String {
+    public func finish(timeoutSeconds: Double = 3.0, tailMs: Int = 0) async -> String {
         guard isActive || request != nil else { return "" } // never started
         let hold = holdId
         let heldMs = Int(Date().timeIntervalSince(startedAt) * 1000)
@@ -334,7 +334,7 @@ final class CompanionSpeechRecognizer: ObservableObject {
         var retried = false
         if text.isEmpty, stats.buffers > 0, retryOnEmpty, recognizes, let recognizer {
             retried = true
-            Log.companion.info("stt empty with buffers=\(stats.buffers) audio=\(stats.audioMs)ms, recognizing the captured clip once more")
+            FlowFocusLog.speech.info("stt empty with buffers=\(stats.buffers) audio=\(stats.audioMs)ms, recognizing the captured clip once more")
             let clip = CompanionHoldCapture.joined(capture.retainedBuffers(), padMs: 400)
             if let clip {
                 text = await Self.transcribe(
@@ -342,15 +342,15 @@ final class CompanionSpeechRecognizer: ObservableObject {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             }
             guard hold == holdId else { return "" }
-            Log.companion.info("stt retry chars=\(text.count)")
+            FlowFocusLog.speech.info("stt retry chars=\(text.count)")
         }
 
         let peak = String(format: "%.3f", stats.peakLevel)
-        Log.companion.info("stt finish chars=\(text.count) finalized=\(self.finalized) held=\(heldMs)ms tail=\(tailMs)ms buffers=\(stats.buffers) audio=\(stats.audioMs)ms firstBuffer=\(stats.firstBufferMs.map { "\($0)ms" } ?? "none") peak=\(peak) results=\(self.resultCount) segments=\(self.restarts + 1) retried=\(retried) device=\(self.audioSource.deviceLabel)")
+        FlowFocusLog.speech.info("stt finish chars=\(text.count) finalized=\(self.finalized) held=\(heldMs)ms tail=\(tailMs)ms buffers=\(stats.buffers) audio=\(stats.audioMs)ms firstBuffer=\(stats.firstBufferMs.map { "\($0)ms" } ?? "none") peak=\(peak) results=\(self.resultCount) segments=\(self.restarts + 1) retried=\(retried) device=\(self.audioSource.deviceLabel)")
         if text.isEmpty && stats.buffers == 0 {
-            Log.companion.error("stt got ZERO audio buffers — mic tap delivered nothing (check Microphone permission + input device)")
+            FlowFocusLog.speech.error("stt got ZERO audio buffers — mic tap delivered nothing (check Microphone permission + input device)")
         } else if text.isEmpty && stats.peakLevel < 0.02 {
-            Log.companion.warning("stt audio was silent (peak=\(peak)) — the input device delivered near-zero samples")
+            FlowFocusLog.speech.warning("stt audio was silent (peak=\(peak)) — the input device delivered near-zero samples")
         }
         lastHold = HoldReport(text: text, stats: stats, heldMs: heldMs, tailMs: tailMs, retried: retried)
         teardown()
@@ -358,7 +358,7 @@ final class CompanionSpeechRecognizer: ObservableObject {
     }
 
     /// Abort without a transcript (Esc / tap-cancel).
-    func cancel() {
+    public func cancel() {
         holdId += 1
         isActive = false
         audioSource.stop()
@@ -410,7 +410,7 @@ final class CompanionSpeechRecognizer: ObservableObject {
             // finalize with whatever partial we have. Log it so a real
             // recognizer failure isn't invisible.
             if resultCount == 0 {
-                Log.companion.warning("stt recognition error (0 results): \(error.localizedDescription)")
+                FlowFocusLog.speech.warning("stt recognition error (0 results): \(error.localizedDescription)")
             }
             acc.commit()
             partialText = acc.text
@@ -433,12 +433,12 @@ final class CompanionSpeechRecognizer: ObservableObject {
         guard isActive, restarts < Self.maxRestarts, recognizer != nil else {
             finalized = true
             if isActive {
-                Log.companion.warning("stt restart budget exhausted (\(self.restarts)) — mic stays open but silent")
+                FlowFocusLog.speech.warning("stt restart budget exhausted (\(self.restarts)) — mic stays open but silent")
             }
             return
         }
         restarts += 1
-        Log.companion.info("stt segment restart #\(self.restarts) (\(reason)) committed=\(self.acc.text.count) chars")
+        FlowFocusLog.speech.info("stt segment restart #\(self.restarts) (\(reason)) committed=\(self.acc.text.count) chars")
         startRecognitionTask()
     }
 
@@ -446,7 +446,7 @@ final class CompanionSpeechRecognizer: ObservableObject {
 
     /// Recognize one finished clip. Shared by the empty-hold retry and
     /// `transcribeFile`, so the harness exercises the retry's exact wiring.
-    nonisolated static func transcribe(
+    public nonisolated static func transcribe(
         buffer: AVAudioPCMBuffer,
         recognizer: SFSpeechRecognizer,
         onDevice: Bool,
@@ -483,7 +483,7 @@ final class CompanionSpeechRecognizer: ObservableObject {
     /// the URL request) so this exercises the exact append/task wiring the mic
     /// path relies on — only the source of the buffers differs. Static: no
     /// engine, safe to call from tests without the mic.
-    nonisolated static func transcribeFile(_ url: URL, locale: Locale = .current, forceServer: Bool = false) async -> String {
+    public nonisolated static func transcribeFile(_ url: URL, locale: Locale = .current, forceServer: Bool = false) async -> String {
         guard let recognizer = SFSpeechRecognizer(locale: normalizedLocale(locale)) ?? SFSpeechRecognizer(),
               recognizer.isAvailable
         else { return "" }
@@ -512,10 +512,10 @@ final class CompanionSpeechRecognizer: ObservableObject {
     }
 }
 
-enum CompanionSpeechError: LocalizedError {
+public enum CompanionSpeechError: LocalizedError {
     case recognizerUnavailable
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .recognizerUnavailable:
             return "speech recognizer unavailable — check Settings → Privacy → Speech Recognition"

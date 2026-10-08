@@ -2,7 +2,10 @@
 import Carbon
 import XCTest
 
+@testable import GenesisKit
+#if canImport(Genesis)
 @testable import Genesis
+#endif
 
 /// §6.1 — Carbon registration lifecycle. A full synthetic F6 press
 /// (CGEvent.post → callbacks) needs Accessibility + a system event loop, so
@@ -65,6 +68,7 @@ final class CompanionHotKeyTests: XCTestCase {
         XCTAssertEqual(events, ["down", "up"])
     }
 
+    #if canImport(Genesis)
     // MARK: - tap vs hold
 
     /// The gesture is decided by the gap between the two CARBON EVENTS. It used
@@ -96,4 +100,5 @@ final class CompanionHotKeyTests: XCTestCase {
         // Never let a clock oddity turn into a multi-second phantom hold.
         XCTAssertEqual(CompanionOrchestrator.holdMilliseconds(downAt: 5, upAt: 4), 0)
     }
+    #endif
 }

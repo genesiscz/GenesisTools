@@ -7,17 +7,17 @@ import Foundation
 /// and so no view body ever runs a query. The rules match `apps/cli/lib/activityDb.ts`
 /// deliberately: idle never counts as focus, and idle breaks a stretch rather than creating a
 /// context switch.
-enum FocusAggregate {
-    struct Bucket: Identifiable, Equatable {
-        let key: String
-        let ms: Int64
-        let share: Double
-        let visits: Int
+public enum FocusAggregate {
+    public struct Bucket: Identifiable, Equatable {
+        public let key: String
+        public let ms: Int64
+        public let share: Double
+        public let visits: Int
         /// Carried so a row can draw the app's real icon. Nil for sites and projects.
-        let bundleId: String?
-        var id: String { key }
+        public let bundleId: String?
+        public var id: String { key }
 
-        init(key: String, ms: Int64, share: Double, visits: Int, bundleId: String? = nil) {
+        public init(key: String, ms: Int64, share: Double, visits: Int, bundleId: String? = nil) {
             self.key = key
             self.ms = ms
             self.share = share
@@ -26,21 +26,21 @@ enum FocusAggregate {
         }
     }
 
-    struct Totals: Equatable {
-        var focusedMs: Int64 = 0
-        var idleMs: Int64 = 0
-        var switches: Int = 0
-        var longestStretchMs: Int64 = 0
+    public struct Totals: Equatable {
+        public var focusedMs: Int64 = 0
+        public var idleMs: Int64 = 0
+        public var switches: Int = 0
+        public var longestStretchMs: Int64 = 0
     }
 
     /// Duration of a segment clipped into a range; an open segment is clipped at `now`.
-    static func span(_ segment: ActivityStore.Segment, from: Int64, to: Int64, now: Int64) -> Int64 {
+    public static func span(_ segment: ActivityStore.Segment, from: Int64, to: Int64, now: Int64) -> Int64 {
         let start = max(segment.startedMs, from)
         let end = min(segment.endedMs ?? now, to)
         return max(0, end - start)
     }
 
-    static func totals(_ segments: [ActivityStore.Segment], from: Int64, to: Int64, now: Int64) -> Totals {
+    public static func totals(_ segments: [ActivityStore.Segment], from: Int64, to: Int64, now: Int64) -> Totals {
         var totals = Totals()
         var previousApp: String?
         for segment in segments {
@@ -60,7 +60,7 @@ enum FocusAggregate {
 
     /// `bundle` is optional because only app buckets have an icon to draw; sites and projects
     /// pass nil and render with the fallback glyph.
-    static func buckets(_ segments: [ActivityStore.Segment], from: Int64, to: Int64, now: Int64,
+    public static func buckets(_ segments: [ActivityStore.Segment], from: Int64, to: Int64, now: Int64,
                         bundle: ((ActivityStore.Segment) -> String?)? = nil,
                         key: (ActivityStore.Segment) -> String?) -> [Bucket] {
         var totals: [String: (ms: Int64, visits: Int, bundleId: String?)] = [:]
@@ -85,7 +85,7 @@ enum FocusAggregate {
 
     /// Focused minutes per (weekday, hour) cell, for the heatmap. Clipped to the range like
     /// `totals` and `buckets`, so the heatmap never shows more focus than the footer.
-    static func heatmap(_ segments: [ActivityStore.Segment], from: Int64, to: Int64, now: Int64,
+    public static func heatmap(_ segments: [ActivityStore.Segment], from: Int64, to: Int64, now: Int64,
                         calendar: Calendar = .current) -> [HeatCell] {
         var cells: [HeatKey: Int64] = [:]
         for segment in segments where !segment.idle {
@@ -102,37 +102,37 @@ enum FocusAggregate {
         return cells.map { HeatCell(weekday: $0.key.weekday, hour: $0.key.hour, ms: $0.value) }
     }
 
-    struct HeatKey: Hashable { let weekday: Int; let hour: Int }
+    public struct HeatKey: Hashable { public let weekday: Int; public let hour: Int }
 
-    struct HeatCell: Identifiable, Equatable {
-        let weekday: Int
-        let hour: Int
-        let ms: Int64
-        var id: String { "\(weekday)-\(hour)" }
+    public struct HeatCell: Identifiable, Equatable {
+        public let weekday: Int
+        public let hour: Int
+        public let ms: Int64
+        public var id: String { "\(weekday)-\(hour)" }
     }
 }
 
 // MARK: - Formatting
 
-enum FocusFormat {
+public enum FocusFormat {
     /// "1h 30m" / "45m" / "20s" — the same shape the CLI prints, so a screenshot and a terminal
     /// never disagree about the same range.
-    static func duration(_ ms: Int64) -> String {
+    public static func duration(_ ms: Int64) -> String {
         if ms < 60_000 { return "\(max(0, ms / 1000))s" }
         let minutes = Int((Double(ms) / 60_000).rounded())
         let hours = minutes / 60
         return hours == 0 ? "\(minutes)m" : "\(hours)h \(String(format: "%02d", minutes % 60))m"
     }
 
-    static func percent(_ share: Double) -> String { "\(Int((share * 100).rounded()))%" }
+    public static func percent(_ share: Double) -> String { "\(Int((share * 100).rounded()))%" }
 
-    static func clockTime(_ ms: Int64) -> String {
+    public static func clockTime(_ ms: Int64) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         return formatter.string(from: Date(timeIntervalSince1970: Double(ms) / 1000))
     }
 
-    static func dayKey(_ date: Date, calendar: Calendar = .current) -> String {
+    public static func dayKey(_ date: Date, calendar: Calendar = .current) -> String {
         let components = calendar.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
     }
@@ -140,18 +140,18 @@ enum FocusFormat {
 
 // MARK: - Ranges
 
-struct FocusRange: Equatable {
-    enum Granularity: String, CaseIterable, Identifiable {
+public struct FocusRange: Equatable {
+    public enum Granularity: String, CaseIterable, Identifiable {
         case day = "D", week = "W", month = "M", year = "Y"
-        var id: String { rawValue }
+        public var id: String { rawValue }
     }
 
-    var fromMs: Int64
-    var toMs: Int64
-    var granularity: Granularity
-    var label: String
+    public var fromMs: Int64
+    public var toMs: Int64
+    public var granularity: Granularity
+    public var label: String
 
-    static func make(_ granularity: Granularity, containing date: Date = Date(),
+    public static func make(_ granularity: Granularity, containing date: Date = Date(),
                      calendar: Calendar = .current) -> FocusRange {
         var calendar = calendar
         calendar.firstWeekday = 2 // Monday, like the rest of this program
@@ -170,7 +170,7 @@ struct FocusRange: Equatable {
                           label: label(for: granularity, start: interval.start, end: interval.end))
     }
 
-    func stepped(by delta: Int, calendar: Calendar = .current) -> FocusRange {
+    public func stepped(by delta: Int, calendar: Calendar = .current) -> FocusRange {
         let anchor = Date(timeIntervalSince1970: Double(fromMs) / 1000)
         let component: Calendar.Component = switch granularity {
         case .day: .day
@@ -202,15 +202,15 @@ struct FocusRange: Equatable {
 
 // MARK: - Day summary (menu-bar popover)
 
-struct FocusDaySummary: Equatable {
-    var focusedMs: Int64
-    var sessionsDone: Int
-    var switches: Int
-    var topApps: [ActivityRecorder.AppShare]
+public struct FocusDaySummary: Equatable {
+    public var focusedMs: Int64
+    public var sessionsDone: Int
+    public var switches: Int
+    public var topApps: [ActivityRecorder.AppShare]
 
-    static let empty = FocusDaySummary(focusedMs: 0, sessionsDone: 0, switches: 0, topApps: [])
+    public static let empty = FocusDaySummary(focusedMs: 0, sessionsDone: 0, switches: 0, topApps: [])
 
-    static func today(store: ActivityStore, now: Date = Date()) -> FocusDaySummary {
+    public static func today(store: ActivityStore, now: Date = Date()) -> FocusDaySummary {
         let range = FocusRange.make(.day, containing: now)
         let nowMs = Int64(now.timeIntervalSince1970 * 1000)
         guard let segments = try? store.segments(from: range.fromMs, to: range.toMs),

@@ -12,12 +12,12 @@ import SwiftUI
 /// must not deactivate the app the user is dictating into, or the paste target
 /// changes out from under us between key-down and key-up.
 final class FlowPillPanel: ConstraintSafePanel {
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
+    public override var canBecomeKey: Bool { false }
+    public override var canBecomeMain: Bool { false }
 }
 
 @MainActor
-final class FlowPillWindowController {
+public final class FlowPillWindowController {
 
     private var panel: FlowPillPanel?
     private let makeContent: () -> AnyView
@@ -26,18 +26,18 @@ final class FlowPillWindowController {
     /// fight when both happen to be up.
     private static let level: NSWindow.Level = .floating
 
-    init(content: @escaping () -> AnyView) {
+    public init(content: @escaping () -> AnyView) {
         makeContent = content
     }
 
-    func show() {
+    public func show() {
         guard let screen = screenContainingMouse() else { return }
         let panel = ensurePanel()
         position(panel, on: screen)
         panel.orderFrontRegardless()
     }
 
-    func hide() {
+    public func hide() {
         panel?.orderOut(nil)
     }
 
@@ -45,7 +45,7 @@ final class FlowPillWindowController {
     /// pay the initial SwiftUI render on the critical path — the same trick the
     /// companion overlay uses, and it matters more here because the pill is
     /// supposed to appear the instant the key goes down.
-    func prewarm() {
+    public func prewarm() {
         guard panel == nil, let screen = screenContainingMouse() else { return }
         let panel = ensurePanel()
         panel.alphaValue = 0

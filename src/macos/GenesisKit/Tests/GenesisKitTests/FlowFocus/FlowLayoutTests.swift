@@ -2,7 +2,10 @@
 import AppKit
 import SwiftUI
 import XCTest
+@testable import GenesisKit
+#if canImport(Genesis)
 @testable import Genesis
+#endif
 
 /// The Dictation page header in a narrow window. `FLOW_SNAPSHOT_DIR=<dir>`
 /// also writes a PNG per width.

@@ -34,31 +34,31 @@ import Foundation
 /// it the snapshot. The gap costs nothing because the audio for that gap is
 /// already in hand.
 @MainActor
-final class FlowPreRoll {
+public final class FlowPreRoll {
 
     /// How much history to keep. 600 ms comfortably covers "press-as-you-speak"
     /// without holding enough audio to be a recording.
-    nonisolated static let windowSeconds: Double = 0.6
+    public nonisolated static let windowSeconds: Double = 0.6
 
     private var engine: AVAudioEngine?
     private let ring = Ring()
 
-    private(set) var isRunning = false
+    public private(set) var isRunning = false
 
     /// Format of the buffers currently in the ring, for the caller to check
     /// against the recogniser's expectations.
-    private(set) var format: AVAudioFormat?
+    public private(set) var format: AVAudioFormat?
 
     // MARK: - Lifecycle
 
     /// Begin holding a rolling window. Safe to call repeatedly.
-    func start() {
+    public func start() {
         guard !isRunning else { return }
         let engine = AVAudioEngine()
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
-            Log.flow.error("pre-roll: bad input format rate=\(format.sampleRate) ch=\(format.channelCount)")
+            FlowFocusLog.flow.error("pre-roll: bad input format rate=\(format.sampleRate) ch=\(format.channelCount)")
             return
         }
 
@@ -76,19 +76,19 @@ final class FlowPreRoll {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
-            Log.flow.error("pre-roll: engine start failed: \(error.localizedDescription)")
+            FlowFocusLog.flow.error("pre-roll: engine start failed: \(error.localizedDescription)")
             return
         }
 
         self.engine = engine
         self.format = format
         isRunning = true
-        Log.flow.info("pre-roll running window=\(Self.windowSeconds)s buffers=\(capacity)")
+        FlowFocusLog.flow.info("pre-roll running window=\(Self.windowSeconds)s buffers=\(capacity)")
     }
 
     /// Release the microphone. The ring is kept so a turn starting in the same
     /// breath still gets its history.
-    func stop() {
+    public func stop() {
         guard let engine else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
@@ -100,7 +100,7 @@ final class FlowPreRoll {
     ///
     /// Draining is deliberate: replaying the same audio into a second turn
     /// would duplicate whatever was said at the boundary.
-    func drain() -> [AVAudioPCMBuffer] {
+    public func drain() -> [AVAudioPCMBuffer] {
         ring.drain()
     }
 
@@ -109,7 +109,7 @@ final class FlowPreRoll {
     /// The tap is requested at 1024 frames, but Core Audio is free to hand back
     /// a different size, so this is a ceiling with slack rather than an exact
     /// count — over-keeping a little is harmless, under-keeping loses the word.
-    nonisolated static func bufferCount(for format: AVAudioFormat) -> Int {
+    public nonisolated static func bufferCount(for format: AVAudioFormat) -> Int {
         let framesPerBuffer = 1024.0
         let needed = (format.sampleRate * windowSeconds) / framesPerBuffer
         return max(4, Int(needed.rounded(.up)) + 2)
@@ -165,7 +165,7 @@ extension AVAudioPCMBuffer {
     ///
     /// The tap hands back a buffer it will overwrite, so anything held past the
     /// callback must own its samples.
-    func deepCopy() -> AVAudioPCMBuffer? {
+    public func deepCopy() -> AVAudioPCMBuffer? {
         guard
             let copy = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameLength),
             frameLength > 0
