@@ -35,6 +35,22 @@ struct WidgetAgentTree {
                 included.insert(key)
                 cursor = parentOf[key]
             }
+            if !query.isEmpty, parentOf[session.key] == nil {
+                var pending = children[session.key] ?? []
+                var descendants = Set<String>()
+                while let child = pending.popLast() {
+                    guard descendants.insert(child.key).inserted else { continue }
+                    pending.append(contentsOf: children[child.key] ?? [])
+                    if !onlyPinned || child.pinned {
+                        var ancestor: String? = child.key
+                        var visited = Set<String>()
+                        while let key = ancestor, visited.insert(key).inserted {
+                            included.insert(key)
+                            ancestor = parentOf[key]
+                        }
+                    }
+                }
+            }
         }
         var visited = Set<String>()
         var result: [Group] = []
