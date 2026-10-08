@@ -3,6 +3,7 @@ import { appendFileSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { transcriptAround } from "./around";
 import { transcriptEnvelope } from "./load";
 import type { ResolvedTranscript } from "./resolve";
 import { searchTranscript } from "./search";
@@ -314,5 +315,349 @@ describe("sparse envelopes", () => {
         const full = await transcriptEnvelope(resolved, {});
         expect(full.turns.some((turn) => "index" in turn)).toBe(false);
         expect(indexed?.turns.some((turn) => "index" in turn)).toBe(false);
+    });
+});
+
+describe("bounded receipt transcript context", () => {
+    test("matches native Claude IDs with surrounding messages and attached tool results", () => {
+        const fixture = setup(
+            user("before") + assistant("at receipt", "native-tool") + toolResult("native-tool", "done") + user("after")
+        );
+        const result = transcriptAround({
+            resolved: fixture.resolved,
+            anchor: {
+                kind: "native",
+                provider: "claude",
+                sessionId: "session",
+                receivedAt: 1_700_000_000_000,
+                toolCallId: "native-tool",
+            },
+        });
+        expect(result.status).toBe("native");
+        expect(result.before[0]?.text).toBe("before");
+        expect(result.around[0]?.text).toBe("at receipt");
+        expect(result.around[0]?.tools[0]?.result).toBe("done");
+        expect(result.after[0]?.text).toBe("after");
+    });
+
+    test("receipt time and missing native anchors are explicit fallbacks", () => {
+        const fixture = setup(user("first") + user("nearest"));
+        const receivedAt = 1_700_000_000_000 + serial * 1000;
+        const anchor = { kind: "receipt-time" as const, provider: "claude" as const, sessionId: "session", receivedAt };
+        const timed = transcriptAround({ resolved: fixture.resolved, anchor });
+        expect(timed.status).toBe("receipt-time");
+        expect(timed.around[0]?.text).toBe("nearest");
+        const missing = transcriptAround({
+            resolved: fixture.resolved,
+            anchor: { ...anchor, kind: "native", messageId: "absent" },
+        });
+        expect(missing.status).toBe("native-not-found");
+        expect(missing.around[0]?.text).toBe("nearest");
+    });
+
+    test("unanchored and mismatched identities do not read the file", () => {
+        const resolved: ResolvedTranscript = {
+            provider: "codex",
+            source: "native",
+            sessionId: "session",
+            filePath: "/fixture/missing.jsonl",
+        };
+        expect(transcriptAround({ resolved, anchor: { kind: "unanchored", receivedAt: 1 } }).bytesRead).toBe(0);
+        expect(() =>
+            transcriptAround({
+                resolved,
+                anchor: { kind: "receipt-time", provider: "claude", sessionId: "session", receivedAt: 1 },
+            })
+        ).toThrow("different provider/session");
+        expect(() =>
+            transcriptAround({
+                resolved,
+                anchor: { kind: "receipt-time", provider: "codex", sessionId: "other", receivedAt: 1 },
+            })
+        ).toThrow("different provider/session");
+    });
+
+    test("caps reads and skips oversized, malformed and torn records without matching an ID in text", () => {
+        const content =
+            user("padding".repeat(30_000)) +
+            "invalid\n" +
+            assistant("mention fake-id") +
+            user("after") +
+            '{"type":"user"';
+        const fixture = setup(content);
+        const result = transcriptAround({
+            resolved: fixture.resolved,
+            maxBytes: 100_000,
+            anchor: {
+                kind: "native",
+                provider: "claude",
+                sessionId: "session",
+                receivedAt: 1_700_000_000_000,
+                messageId: "fake-id",
+            },
+        });
+        expect(result.bytesRead).toBe(100_000);
+        expect(result.fileSize).toBe(Buffer.byteLength(content));
+        expect(result.status).toBe("native-not-found");
+        expect(result.truncated).toBe(true);
+        expect(result.skippedLines).toBeGreaterThanOrEqual(2);
+        expect(
+            [...result.before, ...result.around, ...result.after].some((turn) => turn.text === "mention fake-id")
+        ).toBe(true);
+        const oversized = transcriptAround({
+            resolved: fixture.resolved,
+            anchor: { kind: "receipt-time", provider: "claude", sessionId: "session", receivedAt: 1_700_000_000_000 },
+        });
+        expect(oversized.skippedLines).toBeGreaterThanOrEqual(3);
+    });
+
+    test("Codex uses call_id and never accepts a normalized ordinal as native ID", () => {
+        const fixture = setup(
+            [
+                {
+                    type: "event_msg",
+                    timestamp: "2026-01-01T10:00:00Z",
+                    payload: { type: "user_message", message: "before" },
+                },
+                {
+                    type: "response_item",
+                    timestamp: "2026-01-01T10:00:01Z",
+                    payload: { type: "function_call", call_id: "native-call", name: "shell", arguments: "{}" },
+                },
+                {
+                    type: "response_item",
+                    timestamp: "2026-01-01T10:00:02Z",
+                    payload: { type: "function_call_output", call_id: "native-call", output: "result" },
+                },
+            ]
+                .map(line)
+                .join("")
+        );
+        const resolved: ResolvedTranscript = { ...fixture.resolved, provider: "codex" };
+        const anchor = {
+            kind: "native" as const,
+            provider: "codex" as const,
+            sessionId: "session",
+            receivedAt: Date.parse("2026-01-01T10:00:01Z"),
+        };
+        const result = transcriptAround({ resolved, anchor: { ...anchor, toolCallId: "native-call" } });
+        expect(result.status).toBe("native");
+        expect(result.around[0]?.tools[0]?.result).toBe("result");
+        expect(transcriptAround({ resolved, anchor: { ...anchor, messageId: "codex-2" } }).status).toBe(
+            "native-not-found"
+        );
+    });
+
+    test("a specific Codex call wins over its distant turn marker and contradictory IDs remain unresolved", () => {
+        const opening = line({
+            type: "event_msg",
+            timestamp: "2026-01-01T10:00:00Z",
+            payload: { type: "task_started", turn_id: "native-turn" },
+        });
+        const middle = Array.from({ length: 50 }, (_, index) =>
+            line({
+                type: "event_msg",
+                timestamp: "2026-01-01T10:00:01Z",
+                payload: { type: "agent_message", message: `Intervening ${index} ${"x".repeat(6000)}` },
+            })
+        ).join("");
+        const invocation = line({
+            type: "response_item",
+            timestamp: "2026-01-01T10:00:02Z",
+            payload: { type: "function_call", call_id: "specific-call", name: "shell", arguments: "{}" },
+        });
+        const output = line({
+            type: "response_item",
+            timestamp: "2026-01-01T10:00:03Z",
+            payload: { type: "function_call_output", call_id: "specific-call", output: "receipt saved" },
+        });
+        const fixture = setup(opening + middle + invocation + output);
+        const resolved: ResolvedTranscript = { ...fixture.resolved, provider: "codex" };
+        const anchor = {
+            kind: "native" as const,
+            provider: "codex" as const,
+            sessionId: "session",
+            receivedAt: Date.parse("2026-01-01T10:00:02Z"),
+            turnId: "native-turn",
+            toolCallId: "specific-call",
+        };
+        const result = transcriptAround({ resolved, anchor });
+        expect(result.status).toBe("native");
+        expect(result.anchorOffset).toBe(Buffer.byteLength(opening + middle));
+        expect(result.around[0]?.tools[0]?.result).toBe("receipt saved");
+        expect(transcriptAround({ resolved, anchor: { ...anchor, toolCallId: "absent-call" } }).status).toBe(
+            "native-not-found"
+        );
+        expect(transcriptAround({ resolved, anchor: { ...anchor, turnId: "another-turn" } }).status).toBe(
+            "native-not-found"
+        );
+        for (const skipped of ["malformed", "x".repeat(70_000)]) {
+            writeFileSync(fixture.file, opening + skipped + "\n" + invocation + output);
+            expect(transcriptAround({ resolved, anchor }).status).toBe("native-not-found");
+            expect(transcriptAround({ resolved, anchor: { ...anchor, turnId: undefined } }).status).toBe("native");
+        }
+        expect(transcriptAround({ resolved, anchor, maxBytes: 1000 }).status).toBe("native-not-found");
+        writeFileSync(
+            fixture.file,
+            opening +
+                line({ type: "event_msg", payload: { type: "task_started", turn_id: "new-turn" } }) +
+                invocation +
+                output
+        );
+        expect(transcriptAround({ resolved, anchor }).status).toBe("native-not-found");
+    });
+
+    test("the matched native tool remains visible when the source message exceeds the tool display cap", () => {
+        const fixture = setup(
+            line({
+                type: "assistant",
+                uuid: "many-tools",
+                timestamp: "2026-01-01T10:00:00Z",
+                message: {
+                    role: "assistant",
+                    content: Array.from({ length: 20 }, (_, index) => ({
+                        type: "tool_use",
+                        id: `call-${index}`,
+                        name: "Bash",
+                        input: { command: "true" },
+                    })),
+                },
+            })
+        );
+        const result = transcriptAround({
+            resolved: fixture.resolved,
+            anchor: { kind: "native", provider: "claude", sessionId: "session", receivedAt: 1, toolCallId: "call-19" },
+        });
+        expect(result.status).toBe("native");
+        expect(result.around[0]?.tools).toHaveLength(12);
+        expect(result.truncated).toBe(true);
+        expect(result.around[0]?.tools.some((tool) => tool.id === "call-19")).toBe(true);
+    });
+
+    test("top-level Codex token usage records expose raw turn IDs but arbitrary fields do not", () => {
+        const fixture = setup(
+            line({
+                type: "token_usage_record",
+                timestamp: "2026-01-01T10:00:00Z",
+                payload: { turn_id: "usage-turn", usage: {} },
+            })
+        );
+        const resolved: ResolvedTranscript = { ...fixture.resolved, provider: "codex" };
+        const anchor = {
+            kind: "native" as const,
+            provider: "codex" as const,
+            sessionId: "session",
+            receivedAt: Date.parse("2026-01-01T10:00:00Z"),
+            turnId: "usage-turn",
+        };
+        expect(transcriptAround({ resolved, anchor }).status).toBe("native");
+        writeFileSync(fixture.file, line({ type: "unrecognized", payload: { turn_id: "usage-turn" } }));
+        expect(transcriptAround({ resolved, anchor }).status).toBe("native-not-found");
+    });
+
+    test("Claude supplied message and tool IDs must describe the same source record", () => {
+        const fixture = setup(
+            line({
+                type: "assistant",
+                uuid: "source-row",
+                timestamp: "2026-01-01T10:00:00Z",
+                message: {
+                    id: "source-message",
+                    role: "assistant",
+                    content: [{ type: "tool_use", id: "source-call", name: "Bash", input: { command: "true" } }],
+                },
+            })
+        );
+        const anchor = {
+            kind: "native" as const,
+            provider: "claude" as const,
+            sessionId: "session",
+            receivedAt: Date.parse("2026-01-01T10:00:00Z"),
+            messageId: "source-message",
+            toolCallId: "source-call",
+        };
+        expect(transcriptAround({ resolved: fixture.resolved, anchor }).status).toBe("native");
+        expect(
+            transcriptAround({ resolved: fixture.resolved, anchor: { ...anchor, messageId: "different-message" } })
+                .status
+        ).toBe("native-not-found");
+        expect(
+            transcriptAround({ resolved: fixture.resolved, anchor: { ...anchor, toolCallId: "different-call" } }).status
+        ).toBe("native-not-found");
+    });
+
+    test("Grok native tool IDs and seconds timestamps preserve receipt-time ordering", () => {
+        const fixture = setup(
+            [
+                {
+                    timestamp: 1_700_000_000,
+                    params: { update: { sessionUpdate: "user_message", content: { type: "text", text: "before" } } },
+                },
+                {
+                    timestamp: 1_700_000_010,
+                    params: { update: { sessionUpdate: "tool_call", toolCallId: "grok-native", title: "shell" } },
+                },
+                {
+                    timestamp: 1_700_000_011,
+                    params: {
+                        update: {
+                            sessionUpdate: "tool_call_update",
+                            toolCallId: "grok-native",
+                            status: "completed",
+                            content: { type: "text", text: "done" },
+                        },
+                    },
+                },
+            ]
+                .map(line)
+                .join("")
+        );
+        const resolved: ResolvedTranscript = { ...fixture.resolved, provider: "grok" };
+        const anchor = {
+            kind: "native" as const,
+            provider: "grok" as const,
+            sessionId: "session",
+            receivedAt: 1_700_000_010_000,
+            toolCallId: "grok-native",
+        };
+        const result = transcriptAround({ resolved, anchor });
+        expect(result.status).toBe("native");
+        expect(result.around[0]?.tools[0]?.result).toBe("done");
+        expect(
+            transcriptAround({ resolved, anchor: { ...anchor, kind: "receipt-time" } }).around[0]?.tools[0]?.id
+        ).toBe("grok-native");
+    });
+
+    test("before and after counts are independent, bounded, and validated before reads", () => {
+        const fixture = setup(user("before") + assistant("center", "count-tool") + user("after"));
+        const anchor = {
+            kind: "native" as const,
+            provider: "claude" as const,
+            sessionId: "session",
+            receivedAt: 1,
+            toolCallId: "count-tool",
+        };
+        const result = transcriptAround({ resolved: fixture.resolved, anchor, before: 0, after: 1 });
+        expect(result.before).toEqual([]);
+        expect(result.around[0]?.text).toBe("center");
+        expect(result.after.map((turn) => turn.text)).toEqual(["after"]);
+        expect(() => transcriptAround({ resolved: fixture.resolved, anchor, before: 11 })).toThrow("between 0 and 10");
+        expect(() => transcriptAround({ resolved: fixture.resolved, anchor, after: 0.5 })).toThrow("between 0 and 10");
+    });
+
+    test("cancelled lookup aborts before reading and worker sources fail explicitly", () => {
+        const fixture = setup(user("example"));
+        const anchor = {
+            kind: "receipt-time" as const,
+            provider: "claude" as const,
+            sessionId: "session",
+            receivedAt: 1,
+        };
+        const controller = new AbortController();
+        controller.abort();
+        expect(() => transcriptAround({ resolved: fixture.resolved, anchor, signal: controller.signal })).toThrow();
+        expect(transcriptAround({ resolved: { ...fixture.resolved, source: "worker" }, anchor }).status).toBe(
+            "unsupported"
+        );
     });
 });
