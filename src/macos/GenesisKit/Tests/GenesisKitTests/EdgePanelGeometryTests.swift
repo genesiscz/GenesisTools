@@ -954,6 +954,31 @@ final class WidgetRosterTests: XCTestCase {
         try await body(model, snapshotFile, snapshot)
     }
 
+    func testSessionSwitchWaitsForItsMatchingInboxBeforeClaimingItIsEmpty() async throws {
+        try await withFixture(sessionCount: 2) { model, _, original in
+            var snapshot = original
+            let first = snapshot.sessions[0].key
+            let second = snapshot.sessions[1].key
+            model.selectedKey = first
+            snapshot.selectedKey = first
+            model.receive([String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)])
+            XCTAssertFalse(model.inboxLoading, "An empty response for this session is a real empty inbox")
+
+            model.select(second)
+            XCTAssertTrue(model.inboxLoading, "The previous session's empty list says nothing about the new session")
+            model.receive([String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)])
+            XCTAssertTrue(model.inboxLoading, "An in-flight old response must not show an empty result")
+
+            snapshot.selectedKey = second
+            model.receive([String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)])
+            XCTAssertFalse(model.inboxLoading, "The matching response ends the loading state even when empty")
+            model.select(first)
+            XCTAssertTrue(model.inboxLoading)
+            model.error = "Fixture source failure"
+            XCTAssertFalse(model.inboxLoading, "A failed request must leave an actionable error rather than an endless spinner")
+        }
+    }
+
     func testNewOutgoingMessageScrollsItsReceiptIntoTheViewport() async throws {
         _ = NSApplication.shared
         try await withFixture(sessionCount: 1) { model, _, original in
