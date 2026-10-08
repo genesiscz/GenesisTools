@@ -58,3 +58,29 @@ Treat raw Instruments traces and exported table-of-contents files as private: th
 entire process environment. Do not print their headers or publish raw files. Export only the required
 timing/stack tables or use an analysis tool's JSON-only output. Preserve raw evidence locally with
 restricted permissions; distribute a timing-only report.
+
+## Hosting size and native panel anchoring — 2026-10-08 08:40
+
+When an NSPanel owns its animated frame, disable NSHostingView's automatic window sizing with
+`sizingOptions = []`. A fixed-size SwiftUI child otherwise competes with the panel's frame setter:
+in the verified edge-panel fixture that moved the right edge by398points. Disabling automatic
+window sizing kept the edge error at0points in three before/after pairs; native layout CPU fell
+from6.647% to5.713% in that fixture. These are fixture results, not whole-app or display-FPS claims.
+Anchor each intermediate frame after AppKit rounding, not just the final target, and keep visible
+content and hit regions aligned. A generic comparison/settings window needs ordinary movable
+window geometry; it must not inherit the edge panel's placement loop.
+
+Put process ID and native window number in transition logs when multiple app faces share a file.
+A nearby transition line is not proof of which app or panel performed it.
+
+The native snapshot command inspected in this session returns an app's first AX window. That
+window is not necessarily its key window. Verify keyboard focus with actual input and the
+resulting sheet/state; do not infer it from the first window's title alone.
+
+## Attached-sheet screenshots — 2026-10-08
+
+A CG window-only capture can contain the dimmed parent while omitting its attached SwiftUI
+sheet. A successful PNG write is not visual proof of the sheet. Inspect the image. The verified
+licence-sheet capture used the live AX sheet's global rectangle with screen capture; its receipt
+records those bounds, parent window ID, PID, installed build and PNG hash. Preserve rejected
+parent-only captures separately instead of labeling them as the completed UI.
