@@ -29,6 +29,13 @@ const STORE_FILES = 20;
 /** Smaller files are folded from the start without the store: re-reading them is cheap, the store is not free. */
 const RESUME_MIN_BYTES = 8 * 1024 * 1024;
 const CHUNK_BYTES = 8 * 1024 * 1024;
+/**
+ * Every fold of this process, any size, by path: the store above skips files under 8 MB, so a resident process (the
+ * hub server) parsed each live 5-6 MB Codex sub-agent rollout from its start on every change, 35-40 ms each and
+ * about 130 reads in 12 minutes (2026-10-08). A kept fold is checked like a stored one before it is used.
+ */
+const memoryFolds = new Map<string, StoredFold<unknown>>();
+const MEMORY_FILES = 64;
 
 function readStore(path: string): FoldStore {
     if (!existsSync(path)) {
@@ -99,16 +106,18 @@ export function foldJsonlResumable<S>(options: FoldJsonlOptions<S>): S | null {
         const { size, ino } = fstatSync(fd);
         const resumable = size >= (options.resumeMinBytes ?? RESUME_MIN_BYTES);
         const store: FoldStore = resumable ? readStore(options.storePath) : { version: 1, files: {} };
-        const kept = store.files[options.path] as StoredFold<S> | undefined;
-        const usable =
-            kept !== undefined &&
-            kept.ino === ino &&
-            kept.consumed <= size &&
-            markBefore(fd, kept.consumed) === kept.mark;
-        const fold: StoredFold<S> =
-            usable && kept
-                ? { ...kept, issues: [...kept.issues], state: options.copy(kept.state) }
-                : { ino, consumed: 0, line: 0, mark: "", issues: [], state: options.initial() };
+        const openFd = fd;
+        const usable = (candidate: StoredFold<S> | undefined): candidate is StoredFold<S> =>
+            candidate !== undefined &&
+            candidate.ino === ino &&
+            candidate.consumed <= size &&
+            markBefore(openFd, candidate.consumed) === candidate.mark;
+        const inMemory = memoryFolds.get(options.path) as StoredFold<S> | undefined;
+        const stored = store.files[options.path] as StoredFold<S> | undefined;
+        const kept = usable(inMemory) ? inMemory : usable(stored) ? stored : undefined;
+        const fold: StoredFold<S> = kept
+            ? { ...kept, issues: [...kept.issues], state: options.copy(kept.state) }
+            : { ino, consumed: 0, line: 0, mark: "", issues: [], state: options.initial() };
 
         for (const message of fold.issues) {
             options.onIssue(message);
@@ -160,8 +169,17 @@ export function foldJsonlResumable<S>(options: FoldJsonlOptions<S>): S | null {
             carried = Buffer.from(bytes.subarray(start));
         }
 
+        fold.mark = markBefore(fd, fold.consumed);
+        memoryFolds.delete(options.path);
+        memoryFolds.set(options.path, { ...fold, issues: [...fold.issues], state: options.copy(fold.state) });
+        if (memoryFolds.size > MEMORY_FILES) {
+            const oldest = memoryFolds.keys().next().value;
+            if (oldest !== undefined) {
+                memoryFolds.delete(oldest);
+            }
+        }
+
         if (resumable) {
-            fold.mark = markBefore(fd, fold.consumed);
             delete store.files[options.path];
             store.files[options.path] = { ...fold, state: options.copy(fold.state) } as StoredFold<unknown>;
             writeStore(options.storePath, store);

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { appendFileSync, mkdtempSync, readdirSync, readlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readdirSync, readlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -172,4 +172,40 @@ test("a resumed fold sees what a full scan sees after every append: rows, malfor
     writeFileSync(path, '{"n":9}\n{"n":10}\n{"n":11}\n{"n":12}\n{"n":13}\n{"n":14}\n{"n":15}\n');
     expect(resumedFold(path, storePath)).toEqual(await fullScan(path));
     expect(resumedFold(join(root, "missing.jsonl"), storePath)).toEqual({ rows: [], issues: ["Source missing"] });
+});
+
+test("a small file resumes in this process without writing the store, and starts over when rewritten", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gt-jsonl-fold-small-"));
+    const path = join(root, "rollout.jsonl");
+    const storePath = join(root, "store.json");
+    let applied = 0;
+    const fold = (): { rows: unknown[]; issues: string[] } => {
+        const issues: string[] = [];
+        const rows =
+            foldJsonlResumable<unknown[]>({
+                path,
+                storePath,
+                initial: () => [],
+                copy: (list) => [...list],
+                apply: (list, row) => {
+                    applied++;
+                    list.push(row);
+                },
+                onIssue: (message) => issues.push(message),
+            }) ?? [];
+        return { rows, issues };
+    };
+
+    writeFileSync(path, '{"n":1}\n{bad\n{"n":2}\n');
+    expect(fold()).toEqual(await fullScan(path));
+    appendFileSync(path, '{"n":3}\n');
+    applied = 0;
+    expect(fold()).toEqual(await fullScan(path));
+    expect(applied).toBe(1);
+    expect(existsSync(storePath)).toBe(false);
+
+    writeFileSync(path, '{"n":7}\n{"n":8}\n{"n":9}\n{"n":0}\n');
+    applied = 0;
+    expect(fold()).toEqual(await fullScan(path));
+    expect(applied).toBe(4);
 });
