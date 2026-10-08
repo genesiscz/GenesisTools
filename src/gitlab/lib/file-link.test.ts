@@ -38,3 +38,9 @@ describe("fileLink", () => {
         expect(fileLink("relative/x.ts", 2)).toBe(`[x.ts:2](${pathToFileURL(resolve("relative/x.ts")).pathname}#L2)`);
     });
 });
+
+test("Markdown-special file names keep an intact label, destination and line fragment", () => {
+    expect(fileLink("/Users/m/file).ts", 3)).toBe(`[file).ts:3](${USERS_M}/file%29.ts#L3)`);
+    expect(fileLink("/Users/m/[file].ts", 3)).toBe(`[\\[file\\].ts:3](${USERS_M}/%5Bfile%5D.ts#L3)`);
+    expect(fileLink("/Users/m/(file).ts", 3, { endLine: 4 })).toBe(`[(file).ts:3-4](${USERS_M}/%28file%29.ts#L3-L4)`);
+});

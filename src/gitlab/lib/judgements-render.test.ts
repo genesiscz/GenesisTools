@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { pathToFileURL } from "node:url";
 import { parseProposal } from "@app/hub/lib/proposal";
 import { parseJudgements } from "./judgements";
 import type { KnownItem } from "./judgements-check";
@@ -253,10 +254,10 @@ describe("judgements render", () => {
     test("a path:line becomes a link only when the file exists in the checkout", () => {
         expect(linkify("see src/lock.ts:3", "/nonexistent-checkout")).toBe("see src/lock.ts:3");
         expect(linkify("see package.json:1", process.cwd())).toContain(
-            `[package.json:1](${process.cwd()}/package.json#L1)`
+            `[package.json:1](${pathToFileURL(process.cwd()).pathname}/package.json#L1)`
         );
         expect(linkify("see package.json:2-4", process.cwd())).toContain(
-            `[package.json:2-4](${process.cwd()}/package.json#L2-L4)`
+            `[package.json:2-4](${pathToFileURL(process.cwd()).pathname}/package.json#L2-L4)`
         );
     });
 });

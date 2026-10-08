@@ -712,6 +712,39 @@ describe("review render", () => {
         ).toContain("- Resolve threads in the GitLab UI after verifying.\n- Reply with the review skill for !42.");
     });
 
+    test("a linked checkout outside the MR history warns beside the file link", () => {
+        const cwd = mkdtempSync(join(tmpdir(), "gt-stale-"));
+        writeFileSync(join(cwd, "app.ts"), "old code\n");
+        const thread: Discussion = {
+            id: "stale",
+            notes: [
+                {
+                    resolvable: true,
+                    resolved: false,
+                    position: { head_sha: "old", new_path: "app.ts", new_line: 1 },
+                    body: "Fix this",
+                },
+            ],
+        };
+        const render = (checkoutFollowsTip: boolean) =>
+            renderMarkdown([thread], {
+                mrIid: "42",
+                project: "acme/web",
+                cwd,
+                contextLines: 1,
+                tip: {
+                    sha: "new",
+                    checkout: cwd,
+                    checkoutFollowsTip,
+                    views: new Map([["app.ts", ["new code"]]]),
+                    renames: new Map(),
+                },
+            }).md;
+        expect(render(false)).toContain("warning: this checkout does not contain the MR tip");
+        expect(render(true)).not.toContain("warning: this checkout does not contain the MR tip");
+        expect(render(true)).toContain("Local checkout, not pushed");
+    });
+
     test("the report keeps its sections, excerpts and quotes (snapshot taken before the json2md move)", () => {
         const cwd = mkdtempSync(join(tmpdir(), "gt-render-"));
         mkdirSync(join(cwd, "src"));

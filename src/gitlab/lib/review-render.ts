@@ -363,7 +363,7 @@ function tipThreadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts, t
         { h2: `${ref} — \`${file}\`:${line} · ${label}` },
         {
             ul: [
-                `**File**: ${localLines === null ? `\`${tipPath}:${tipLine}\` (not in ${checkout})` : fileLink(localPath, tipLine || null, { root: checkout })}`,
+                `**File**: ${localLines === null ? `\`${tipPath}:${tipLine}\` (not in ${checkout})` : fileLink(localPath, tipLine || null, { root: checkout })}${tip.checkoutFollowsTip ? "" : " · warning: this checkout does not contain the MR tip; its file and line may be stale"}`,
                 `**Discussion**: \`${d.id ?? "?"}\``,
                 `**Divergence**: ${label}`,
                 `**Reviewer's sha**: \`${shortSha(pos?.head_sha)}\` · **MR tip**: \`${shortSha(tip.sha)}\``,

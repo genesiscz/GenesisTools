@@ -14,8 +14,8 @@ export interface FileLinkOptions {
 export function fileLink(absPath: string, line?: number | null, options: FileLinkOptions = {}): string {
     const abs = resolve(absPath);
     // pathname of a file URL: "/C:/…" with forward slashes on Windows, and "?", "#" or a space stay inside the path
-    const target = pathToFileURL(abs).pathname;
-    const label = labelOf(abs, options.root);
+    const target = pathToFileURL(abs).pathname.replace(/\(/g, "%28").replace(/\)/g, "%29");
+    const label = labelOf(abs, options.root).replace(/[\\[\]]/g, "\\$&");
 
     if (!line || line < 1) {
         return `[${label}](${target})`;
