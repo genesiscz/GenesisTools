@@ -538,6 +538,34 @@ final class PRThreadsTests: XCTestCase {
                        "one answer per set of files, whatever their order")
     }
 
+    @MainActor
+    func testHeadFileAnswersDependOnTheDisplayedCommitAndRetryMissingHeads() async {
+        XCTAssertNotEqual(PRHeadFiles.key(repo: "/r", head: "head", shown: "old", paths: ["a"]),
+                          PRHeadFiles.key(repo: "/r", head: "head", shown: "older", paths: ["a"]))
+        let lock = NSLock()
+        var reads = 0
+        let retry = PRHeadFiles(readGit: { _, _ in
+            lock.withLock {
+                reads += 1
+                return reads == 1 ? nil : "a\n"
+            }
+        })
+        await retry.load(repo: "/r", head: "head", shown: "old", paths: ["a"])?.value
+        XCTAssertNil(retry.status(repo: "/r", head: "head", shown: "old", paths: ["a"]))
+        await retry.load(repo: "/r", head: "head", shown: "old", paths: ["a"])?.value
+        XCTAssertEqual(retry.status(repo: "/r", head: "head", shown: "old", paths: ["a"]), ["a": .present])
+        XCTAssertNil(retry.load(repo: "/r", head: "head", shown: "old", paths: ["a"]), "successful answers stay cached")
+        XCTAssertEqual(lock.withLock { reads }, 2)
+
+        let renamed = PRHeadFiles(readGit: { _, args in
+            args.first == "ls-tree" ? "" : "R100\ta\t\(args[args.count - 2])-name\n"
+        })
+        await renamed.load(repo: "/r", head: "head", shown: "old", paths: ["a"])?.value
+        await renamed.load(repo: "/r", head: "head", shown: "older", paths: ["a"])?.value
+        XCTAssertEqual(renamed.status(repo: "/r", head: "head", shown: "old", paths: ["a"]), ["a": .renamed(to: "old-name")])
+        XCTAssertEqual(renamed.status(repo: "/r", head: "head", shown: "older", paths: ["a"]), ["a": .renamed(to: "older-name")])
+    }
+
     func testOnlyAPlainSingleClickOnACardJumps() {
         XCTAssertTrue(PRThreadCardClick.jumps(clickCount: 1, laterClick: false, selectedText: false))
         XCTAssertFalse(PRThreadCardClick.jumps(clickCount: 2, laterClick: false, selectedText: false), "a double-click selects a word")

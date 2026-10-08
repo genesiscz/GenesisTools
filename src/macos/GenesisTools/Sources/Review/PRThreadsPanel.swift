@@ -437,7 +437,7 @@ struct PRThreadsList: View {
         let groups = PRThreadFileGroup.groups(threads, order: fileOrder)
         let fresh = newNotes(all)
         let query = headQuery(all)
-        let atHead = query.flatMap { headFiles.status(repo: $0.repo, head: $0.head, paths: $0.paths) } ?? [:]
+        let atHead = query.flatMap { headFiles.status(repo: $0.repo, head: $0.head, shown: $0.shown, paths: $0.paths) } ?? [:]
         VStack(spacing: 0) {
             toolbar(all: all, placed: placed, shown: threads, files: groups.count)
             PanelFindBar(find: find)
@@ -519,9 +519,9 @@ struct PRThreadsList: View {
         }
         .onDisappear { clicks.stop() }
         // One batched `git ls-tree` per head and set of files, off the main thread (PRHeadFiles).
-        .task(id: query.map { PRHeadFiles.key(repo: $0.repo, head: $0.head, paths: $0.paths) }) {
-            guard let query else { return }
-            headFiles.load(repo: query.repo, head: query.head, shown: query.shown, paths: query.paths)
+        .task(id: query.map { PRHeadFiles.key(repo: $0.repo, head: $0.head, shown: $0.shown, paths: $0.paths) + "\u{0}\(model.loading)" }) {
+            guard !model.loading, let query else { return }
+            await headFiles.load(repo: query.repo, head: query.head, shown: query.shown, paths: query.paths)?.value
         }
     }
 

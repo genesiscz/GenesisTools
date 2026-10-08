@@ -157,37 +157,47 @@ final class PRHeadFiles: ObservableObject {
 
     @Published private(set) var results: [String: [String: PathAtHead]] = [:]
     private var started: Set<String> = []
+    private let readGit: @Sendable (String, [String]) -> String?
 
-    nonisolated static func key(repo: String, head: String, paths: [String]) -> String {
-        "\(repo)\u{0}\(head)\u{0}\(paths.sorted().joined(separator: "\u{1}"))"
+    init(readGit: (@Sendable (String, [String]) -> String?)? = nil) {
+        self.readGit = readGit ?? { repo, args in Self.git(repo, args) }
     }
 
-    func status(repo: String, head: String, paths: [String]) -> [String: PathAtHead]? {
-        results[Self.key(repo: repo, head: head, paths: paths)]
+    nonisolated static func key(repo: String, head: String, shown: String? = nil, paths: [String]) -> String {
+        "\(repo)\u{0}\(head)\u{0}\(shown ?? "")\u{0}\(paths.sorted().joined(separator: "\u{1}"))"
     }
 
-    func load(repo: String, head: String, shown: String?, paths: [String]) {
-        let key = Self.key(repo: repo, head: head, paths: paths)
-        guard !paths.isEmpty, !started.contains(key) else { return }
+    func status(repo: String, head: String, shown: String? = nil, paths: [String]) -> [String: PathAtHead]? {
+        results[Self.key(repo: repo, head: head, shown: shown, paths: paths)]
+    }
+
+    @discardableResult
+    func load(repo: String, head: String, shown: String?, paths: [String]) -> Task<Void, Never>? {
+        let key = Self.key(repo: repo, head: head, shown: shown, paths: paths)
+        guard !paths.isEmpty, results[key] == nil, !started.contains(key) else { return nil }
         started.insert(key)
-        Task.detached(priority: .utility) {
+        return Task.detached(priority: .utility) { [readGit] in
             let span = HubPerf.begin("review.headFiles", "\(paths.count) paths at \(head.prefix(8))")
-            guard let listed = Self.git(repo, ["ls-tree", "-r", "--name-only", head, "--"] + paths) else {
+            guard let listed = readGit(repo, ["ls-tree", "-r", "--name-only", head, "--"] + paths) else {
                 span.end("head not local")
+                await self.complete(key: key, result: nil)
                 return
             }
             let present = Set(listed.split(separator: "\n").map(String.init))
             let missing = paths.filter { !present.contains($0) }
             var renames: [String: String] = [:]
-            if !missing.isEmpty, let shown, let diff = Self.git(repo, ["diff", "--name-status", "-M", "--diff-filter=R", shown, head]) {
+            if !missing.isEmpty, let shown, let diff = readGit(repo, ["diff", "--name-status", "-M", "--diff-filter=R", shown, head]) {
                 renames = PRHeadPresence.renames(diff)
             }
             let decided = PRHeadPresence.decide(paths: paths, present: present, renames: renames)
             span.end("\(missing.count) not at head")
-            await MainActor.run {
-                PRHeadFiles.shared.results[key] = decided
-            }
+            await self.complete(key: key, result: decided)
         }
+    }
+
+    private func complete(key: String, result: [String: PathAtHead]?) {
+        started.remove(key)
+        if let result { results[key] = result }
     }
 
     /// Blocking: only from the detached task above.
