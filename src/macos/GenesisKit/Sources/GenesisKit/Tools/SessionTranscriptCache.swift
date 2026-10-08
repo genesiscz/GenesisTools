@@ -70,7 +70,7 @@ public final class SessionTranscriptCache {
 
     public func value(for query: Query) async throws -> TranscriptEnvelope {
         if let envelope = cached(query) {
-            PerfLog.mark("transcript.cache hit turns=\(envelope.turns.count)")
+            PerfLog.mark("transcript.cache hit identity=\(query.identity) turns=\(envelope.turns.count)")
             return envelope
         }
         let flight = begin(query)
@@ -110,11 +110,11 @@ public final class SessionTranscriptCache {
         cancelPending()
         let load = self.load
         let task = Task.detached(priority: .utility) {
-            try await PerfLog.spanAsync("transcript.cache load") { try await load(query) }
+            try await PerfLog.spanAsync("transcript.cache load identity=\(query.identity)") { try await load(query) }
         }
         let flight = Pending(id: UUID(), query: query, task: task)
         pending = flight
-        PerfLog.mark("transcript.cache start")
+        PerfLog.mark("transcript.cache start identity=\(query.identity) provider=\(query.provider)")
         return flight
     }
 

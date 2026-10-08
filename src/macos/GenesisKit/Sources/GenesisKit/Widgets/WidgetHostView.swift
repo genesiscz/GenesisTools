@@ -115,6 +115,7 @@ struct WidgetHostView: View {
                         }.buttonStyle(.genHoverPlain()).accessibilityLabel(
                             session.title + ", " + session.visualStatus.label)
                             .accessibilityIdentifier("widget.agent." + session.key)
+                            .onHover { model.hoverSession(session.key, on: surface, inside: $0) }
                     }
                 }
             }
@@ -240,6 +241,7 @@ struct WidgetHostView: View {
                         .instantTooltip(sessionSummary(session))
                         .accessibilityLabel(sessionSummary(session))
                         .accessibilityIdentifier("widget.agent." + session.key)
+                        .onHover { model.hoverSession(session.key, on: surface, inside: $0) }
                     }
                 }
             }
