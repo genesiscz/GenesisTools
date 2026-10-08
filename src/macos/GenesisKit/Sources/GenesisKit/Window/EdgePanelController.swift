@@ -155,7 +155,7 @@ public final class EdgePanelController<Content: View> {
             next.finished = { [weak self] summary in
                 guard let self else { return }
                 self.lastTransitionTiming = summary
-                PerfLog.mark("edge.transition edge=\(self.placement.rawValue) state=\(presentation) \(summary.description)")
+                PerfLog.mark("edge.transition pid=\(ProcessInfo.processInfo.processIdentifier) window=\(self.panel.windowNumber) edge=\(self.placement.rawValue) state=\(presentation) \(summary.description)")
             }
             animation = next
             next.start()
