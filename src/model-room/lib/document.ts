@@ -147,6 +147,24 @@ export function readModelDocument(input: unknown): ModelDocument {
         throw new Error("A presentation step is outside the model time range.");
     }
 
+    const quantities = new Set(document.quantities.map((quantity) => quantity.id));
+    for (const scenario of document.scenarios) {
+        const removed = new Set(scenario.removed);
+        for (const quantity of scenario.replacements) {
+            if (!removed.has(quantity.id)) {
+                quantities.add(quantity.id);
+            }
+        }
+    }
+
+    if (document.presentation.controls.some((id) => !quantities.has(id))) {
+        throw new Error("A presentation control names an unknown quantity.");
+    }
+
+    if (document.presentation.outputs.some((id) => !quantities.has(id))) {
+        throw new Error("A presentation output names an unknown quantity.");
+    }
+
     const scenarios = new Set(document.scenarios.map((scenario) => scenario.id));
 
     if (document.presentation.steps.some((step) => step.scenario !== undefined && !scenarios.has(step.scenario))) {

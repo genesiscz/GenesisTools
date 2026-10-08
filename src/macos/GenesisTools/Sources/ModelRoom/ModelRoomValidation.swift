@@ -86,6 +86,7 @@ extension ModelRoomFile {
         try unique(quantities.map(\.id)); try unique(scenarios.map(\.id)); try unique(subsystems.map(\.id))
         for item in quantities { try quantity(item) }
         var totalQuantities = quantities.count
+        var knownQuantities = Set(quantities.map(\.id))
         for scenario in scenarios {
             try text(scenario.label, maximum: 160, nonempty: true)
             try text(scenario.description, maximum: 8000)
@@ -103,6 +104,7 @@ extension ModelRoomFile {
             ids.formUnion(scenario.replacements.map(\.id)); ids.subtract(scenario.removed)
             try require(ids.count <= ModelRoomLimits.maximumQuantities, "A scenario exceeds 256 quantities.")
             totalQuantities += ids.count
+            knownQuantities.formUnion(ids)
         }
         try require((ratio.rounded() + 1) * Double(totalQuantities) <= 2_000_000, "The scenario comparison exceeds two million result values.")
         for subsystem in subsystems {
@@ -113,6 +115,8 @@ extension ModelRoomFile {
         }
         try require(presentation.controls.count <= 32 && presentation.outputs.count <= 32 && presentation.steps.count <= 64, "The presentation exceeds its supported control, output or step count.")
         try unique(presentation.controls); try unique(presentation.outputs)
+        try require(presentation.controls.allSatisfy { knownQuantities.contains($0) }, "A presentation control names an unknown quantity.")
+        try require(presentation.outputs.allSatisfy { knownQuantities.contains($0) }, "A presentation output names an unknown quantity.")
         for step in presentation.steps {
             try text(step.title, maximum: 160, nonempty: true)
             try text(step.text, maximum: 8000)

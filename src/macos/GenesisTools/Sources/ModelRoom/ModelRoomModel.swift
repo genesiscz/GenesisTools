@@ -334,8 +334,7 @@ final class ModelRoomModel: ObservableObject {
                 for intervention in file.scenarios[index].interventions.indices { file.scenarios[index].interventions[intervention].values.removeValue(forKey: id) }
             } else {
                 file.quantities.removeAll { $0.id == id }
-                file.presentation.controls.removeAll { $0 == id }
-                file.presentation.outputs.removeAll { $0 == id }
+
                 for index in file.subsystems.indices { file.subsystems[index].quantities.removeAll { $0 == id } }
                 file.subsystems.removeAll { $0.quantities.isEmpty }
                 for index in file.scenarios.indices {
@@ -346,6 +345,9 @@ final class ModelRoomModel: ObservableObject {
                     }
                 }
             }
+            let known = Set(file.quantities.map(\.id) + file.scenarios.flatMap { file.effectiveQuantities(scenarioID: $0.id).map(\.id) })
+            file.presentation.controls.removeAll { !known.contains($0) }
+            file.presentation.outputs.removeAll { !known.contains($0) }
         }
         normalizeSelection()
     }

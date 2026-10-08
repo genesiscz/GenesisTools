@@ -73,6 +73,49 @@ final class ModelRoomTests: XCTestCase {
         XCTAssertEqual(branch.last?.included, false)
     }
 
+    @MainActor
+    func testPresentationReferencesRejectUnknownAndAcceptBranchOnlyQuantities() throws {
+        let document = fixture()
+        defer { document.model.stop() }
+        let before = try XCTUnwrap(document.model.file)
+        var invalid = before
+        invalid.presentation.controls = ["missing_quantity"]
+        XCTAssertThrowsError(try invalid.validateForEditing())
+        invalid = before
+        invalid.presentation.outputs = ["missing_quantity"]
+        XCTAssertThrowsError(try document.read(from: JSONEncoder().encode(invalid), ofType: "public.json"))
+        XCTAssertEqual(document.model.file, before)
+
+        var valid = before
+        var added = valid.quantities[0]
+        added.id = "branch_only"
+        valid.scenarios = [ModelRoomScenario(id: "branch", label: "Branch", replacements: [added])]
+        valid.presentation.controls = ["branch_only"]
+        valid.presentation.outputs = ["branch_only"]
+        XCTAssertNoThrow(try valid.validateForEditing())
+        valid.scenarios[0].removed = ["branch_only"]
+        XCTAssertThrowsError(try valid.validateForEditing())
+
+        valid.scenarios[0].removed = []
+        valid.scenarios.append(ModelRoomScenario(id: "second_branch", label: "Second branch", replacements: [added]))
+        document.model.file = valid
+        document.model.selectedScenario = "branch"
+        document.model.selectedQuantity = "branch_only"
+        let undo = try XCTUnwrap(document.undoManager)
+        undo.beginUndoGrouping()
+        document.model.removeSelected()
+        undo.endUndoGrouping()
+        XCTAssertEqual(document.model.file?.presentation.outputs, ["branch_only"], "A reference stays while another branch supplies the quantity.")
+        document.model.selectedScenario = "second_branch"
+        document.model.selectedQuantity = "branch_only"
+        undo.beginUndoGrouping()
+        document.model.removeSelected()
+        undo.endUndoGrouping()
+        XCTAssertEqual(document.model.file?.presentation.controls, [])
+        XCTAssertEqual(document.model.file?.presentation.outputs, [])
+        XCTAssertFalse(document.model.effectiveQuantities.contains { $0.id == "branch_only" })
+    }
+
     func testProposalRoundTripKeepsNullEvidenceAndRequiresFiniteAnswers() throws {
         let source = #"""
         {"sourceText":"Use 10 days with a 1 day step.",

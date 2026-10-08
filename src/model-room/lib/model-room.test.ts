@@ -421,6 +421,29 @@ describe("document time conversion", () => {
 });
 
 describe("portable model exports", () => {
+    test("presentation quantity references reject missing IDs and retain scenario-only IDs", async () => {
+        const document = supportCapacityModel();
+        for (const field of ["controls", "outputs"] as const) {
+            const invalid = structuredClone(document);
+            invalid.presentation[field] = ["missing_quantity"];
+            expect(() => readModelDocument(invalid)).toThrow("unknown quantity");
+            await expect(evaluateDocument({ input: invalid })).rejects.toThrow("unknown quantity");
+        }
+
+        document.scenarios[0].replacements.push({
+            ...document.quantities[0],
+            id: "branch_only",
+            label: "Branch only",
+        });
+        document.presentation.controls = ["branch_only"];
+        document.presentation.outputs = ["branch_only"];
+        expect(readModelDocument(document).presentation.outputs).toEqual(["branch_only"]);
+        const evaluation = await evaluateDocument({ input: document });
+        expect(evaluation.scenarios[1].result?.frames[0].values.branch_only).toBeDefined();
+        document.scenarios[0].removed.push("branch_only");
+        expect(() => readModelDocument(document)).toThrow("unknown quantity");
+    });
+
     test("scenario metadata treats a removed inherited-name quantity as absent", async () => {
         const document = readModelDocument({
             format: "genesis-model-room",
