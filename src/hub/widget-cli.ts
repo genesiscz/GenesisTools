@@ -21,6 +21,7 @@ import {
 import { widgetSnapshot } from "./lib/widget/snapshot";
 import { watchWidget } from "./lib/widget/watch";
 import { registerWidgetTasks } from "./widget-tasks-cli";
+import { registerWidgetVoiceNotes } from "./widget-voice-notes-cli";
 
 const program = new Command().name("hub");
 const widget = program
@@ -28,6 +29,7 @@ const widget = program
     .description("Native widget data, media and ordered outgoing messages")
     .option("--state-root <directory>", "Widget state/assets directory, independent of shared session history");
 registerWidgetTasks(widget);
+registerWidgetVoiceNotes(widget);
 widget
     .command("pin <session>")
     .requiredOption("--provider <provider>")

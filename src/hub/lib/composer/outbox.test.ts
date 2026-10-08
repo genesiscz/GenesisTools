@@ -1,16 +1,27 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import * as files from "node:fs/promises";
 import { mkdir, mkdtemp, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
+import { livePaneTargets } from "@app/question/lib/decisions/deliver.fixtures";
+import { decisionFiles, deliverDecisions } from "@app/question/lib/decisions/read";
 import { postDecisions, readDecisions } from "@app/question/lib/decisions/store";
 import { postAskForm } from "@app/question/lib/pending/ask";
 import { MAX_ANSWER_IMAGE_BYTES } from "@app/question/lib/pending/form";
 import { getForm, listFormsSnapshot, openPendingStore } from "@app/question/lib/pending/store";
+import { openReadModel } from "@app/question/lib/read-model";
+import * as queueModule from "@genesiscz/utils/agent-sessions/message-queue";
+import {
+    acknowledgeSessionMessage,
+    listSessionMessages,
+    offerSessionMessage,
+} from "@genesiscz/utils/agent-sessions/message-queue";
 import * as transcripts from "@genesiscz/utils/ai/transcripts";
+import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as commands from "@genesiscz/utils/process/bounded-command";
@@ -18,9 +29,11 @@ import * as fileLock from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import * as videos from "@genesiscz/utils/video/probe";
 import { createCanvas } from "@napi-rs/canvas";
+import type { AgentNode } from "../agents/types";
 import { performWidgetAction } from "../widget/actions";
 import { readWidgetReceiptContext } from "../widget/context";
 import { createWidgetHandoff } from "../widget/handoff";
+import { WidgetRosterReader, type WidgetRosterReply } from "../widget/roster-reader";
 import {
     attachShelfItem,
     captureShelfImage,
@@ -31,14 +44,17 @@ import {
     stageShelfImage,
 } from "../widget/shelf";
 import {
+    discoverWidgetCatalog,
     readWidgetChanges,
     readWidgetDecisionEvents,
+    realWidgetSources,
     type WidgetSources,
     widgetForms,
     widgetSnapshot,
 } from "../widget/snapshot";
 import { MAX_WIDGET_STATE_BYTES, mutateWidgetState, readWidgetState } from "../widget/storage";
 import {
+    parseWidgetSessionKey,
     shownOutgoing,
     type WidgetAsset,
     type WidgetOutgoing,
@@ -47,11 +63,19 @@ import {
     widgetPreferencesSchema,
     widgetSessionKey,
 } from "../widget/types";
+import {
+    discardVoiceNote,
+    editVoiceNote,
+    listVoiceNotes,
+    recordVoiceNote,
+    transcribeVoiceNote,
+} from "../widget/voice-notes";
+import { watchWidget } from "../widget/watch";
 import { importWidgetAsset, reviseVideoAsset } from "./assets";
 import { widgetDeliveryReceipt, widgetDispatcher } from "./dispatch";
 import { processWidgetOutbox } from "./engine";
 import { changeOutgoing, enqueueWidgetMessage, messageReadiness, recoverWidgetOutbox } from "./outbox";
-import { serializeWidgetMessage } from "./serialize";
+import { serializeWidgetMedia, serializeWidgetMessage } from "./serialize";
 
 const target: WidgetTarget = {
     hostId: "local",
@@ -72,6 +96,216 @@ async function enqueue(directory: string, text: string, destination = target, as
         assetIds,
     });
 }
+
+describe("video dispatch media bounds", () => {
+    test("cancelling queued preparation aborts its actual worker job and permits a fresh queued attempt", async () => {
+        const directory = await root();
+        const id = randomUUID();
+        await mutateWidgetState(directory, (state) => {
+            state.assets[id] = {
+                id,
+                type: "video",
+                name: "source.mp4",
+                path: "/fixture/source.mp4",
+                sha256: "fixture",
+                width: 32,
+                height: 32,
+                durationUs: 1_000_000,
+                settings: { fps: 2, framesPerImage: 4, minimumDifferencePct: 0 },
+                revision: 1,
+                status: "pending",
+            };
+        });
+        const message = await enqueue(directory, "Preparing video", target, [id]);
+        let began!: () => void;
+        let aborted!: () => void;
+        let restarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+            began = resolve;
+        });
+        const stopped = new Promise<void>((resolve) => {
+            aborted = resolve;
+        });
+        const again = new Promise<void>((resolve) => {
+            restarted = resolve;
+        });
+        const controller = new AbortController();
+        let starts = 0;
+        let sends = 0;
+        const worker = watchWidget({
+            root: directory,
+            signal: controller.signal,
+            emit: () => {},
+            dependencies: {
+                discover: async () => {},
+                inboxPaths: {
+                    answerLog: join(directory, "question/log"),
+                    database: join(directory, "question/qa.db"),
+                    decisions: join(directory, "question/decisions.jsonl"),
+                },
+                snapshot: async () => ({
+                    version: 1,
+                    state: await readWidgetState(directory),
+                    activity: [],
+                    sessions: [],
+                    cards: [],
+                    manifests: {},
+                    changes: null,
+                    errors: [],
+                    selectedKey: null,
+                }),
+                dispatcher: {
+                    validate: async () => {},
+                    dispatch: async () => {
+                        sends++;
+                        return { delivered: true, channel: "fixture" };
+                    },
+                },
+                prepare: async ({ signal }) => {
+                    starts++;
+                    if (starts === 1) {
+                        began();
+                    } else {
+                        restarted();
+                    }
+                    await new Promise<void>((resolve) => {
+                        if (signal?.aborted) {
+                            resolve();
+                        } else {
+                            signal?.addEventListener("abort", () => resolve(), { once: true });
+                        }
+                    });
+                    if (starts === 1) {
+                        aborted();
+                    }
+                    signal?.throwIfAborted();
+                },
+            },
+        });
+        try {
+            await withTimeout(started, 3000);
+            await changeOutgoing({ root: directory, id: message.id, action: "cancel" });
+            await withTimeout(stopped, 3000);
+            expect((await readWidgetState(directory)).outgoing[0]?.state).toBe("cancelled");
+            expect(sends).toBe(0);
+            await enqueue(directory, "Fresh attempt", target, [id]);
+            await withTimeout(again, 3000);
+            expect(starts).toBe(2);
+            expect(sends).toBe(0);
+        } finally {
+            controller.abort();
+            await withTimeout(worker, 3000);
+        }
+    });
+    test("oversized video sheets cannot cross dispatch, while a small manifest still sends", async () => {
+        const directory = await root();
+        const id = randomUUID();
+        const manifestPath = join(directory, "manifest.json");
+        const source = {
+            path: "/fixture/source.mp4",
+            durationUs: 600_000_000,
+            width: 32,
+            height: 32,
+            displayWidth: 32,
+            displayHeight: 32,
+            rotation: 0,
+            bytes: 100,
+            codec: "fixture",
+            sha256: "fixture",
+        };
+        const settings = { fps: 4 as const, framesPerImage: 1 as const, minimumDifferencePct: 0 };
+        const sheets = Array.from({ length: 2400 }, (_, index) => ({
+            path: `/fixture/${"long-local-directory-".repeat(8)}/sheet-${index}.png`,
+            frameIds: [String(index)],
+            firstUs: index * 250_000,
+            lastUs: index * 250_000,
+            columns: 1,
+            rows: 1,
+        }));
+        const manifest = {
+            version: 1,
+            id: randomUUID(),
+            source,
+            settings,
+            createdAt: new Date().toISOString(),
+            manifestPath,
+            frames: sheets.map((sheet, index) => ({
+                id: String(index),
+                requestedUs: sheet.firstUs,
+                actualUs: sheet.firstUs,
+                sourceIndex: index,
+                path: `/fixture/frame-${index}.png`,
+                kept: true,
+                differencePct: index === 0 ? null : 100,
+                comparedToId: index === 0 ? null : String(index - 1),
+            })),
+            sheets,
+            counts: { candidates: 2400, kept: 2400, skipped: 0, images: 2400, lastImageFrames: 1 },
+        };
+        await Bun.write(manifestPath, SafeJSON.stringify(manifest));
+        await mutateWidgetState(directory, (state) => {
+            state.assets[id] = {
+                id,
+                type: "video",
+                name: "source.mp4",
+                path: source.path,
+                sha256: source.sha256,
+                width: 32,
+                height: 32,
+                durationUs: source.durationUs,
+                settings,
+                revision: 1,
+                status: "ready",
+                manifestPath,
+            };
+        });
+        const message = await enqueue(directory, "Inspect video", target, [id]);
+        let calls = 0;
+        const dispatcher = {
+            validate: async () => {},
+            dispatch: async () => {
+                calls++;
+                return { delivered: true, channel: "fixture" };
+            },
+        };
+        await processWidgetOutbox({ root: directory, dispatcher });
+        expect(calls).toBe(0);
+        expect((await readWidgetState(directory)).outgoing[0]?.state).toBe("failed");
+        expect((await readWidgetState(directory)).outgoing[0]?.error).toContain("media context");
+        await Bun.write(
+            manifestPath,
+            SafeJSON.stringify({
+                ...manifest,
+                sheets: sheets.slice(0, 1),
+                frames: manifest.frames.slice(0, 1),
+                counts: { candidates: 1, kept: 1, skipped: 0, images: 1, lastImageFrames: 1 },
+            })
+        );
+        await changeOutgoing({ root: directory, id: message.id, action: "retry" });
+        await processWidgetOutbox({ root: directory, dispatcher });
+        expect(calls).toBe(1);
+        expect((await readWidgetState(directory)).outgoing[0]?.state).toBe("sent");
+        const asset = (await readWidgetState(directory)).assets[id];
+        if (asset.type !== "video") {
+            throw new Error("Expected video fixture");
+        }
+
+        const selected = { ...settings, startUs: 2_000_000, endUs: 4_000_000 };
+        await Bun.write(
+            manifestPath,
+            SafeJSON.stringify({
+                ...manifest,
+                settings: selected,
+                sheets: sheets.slice(0, 1),
+                frames: manifest.frames.slice(0, 1),
+            })
+        );
+        const context = await serializeWidgetMedia([{ ...asset, settings: selected }]);
+        expect(context).toContain('"durationSeconds": 600');
+        expect(context).toContain('"selectedRangeSeconds": {\n    "start": 2,\n    "end": 4\n  }');
+        expect(context).toContain("Timestamps refer to the original video");
+    });
+});
 
 describe("durable widget outbox", () => {
     test("a slow enqueue preserves later typing and newly attached media", async () => {
@@ -312,7 +546,7 @@ describe("widget source and delivery contracts", () => {
                 codexWorkerFor: () => "fixture-worker",
                 runTool: async () => {
                     sends++;
-                    return { success: true, stdout: "", stderr: "" };
+                    return { success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}', stderr: "" };
                 },
             },
         });
@@ -351,6 +585,72 @@ describe("widget source and delivery contracts", () => {
         ).rejects.toThrow("changed");
     });
 
+    test("a media-only reply keeps the original session and card title in one literal message", async () => {
+        const directory = await root();
+        const files = { file: join(directory, "decisions.jsonl"), events: join(directory, "events.jsonl") };
+        const destination = { ...target, provider: "claude" as const, sessionId: "original-session", sourceHome: "" };
+        const [, row] = await postDecisions(
+            files.file,
+            files.events,
+            {
+                sessionId: destination.sessionId,
+                provider: destination.provider,
+                decisions: [
+                    { prompt: "Earlier item?", options: ["yes"] },
+                    { title: "Chat DECISION 4: next token kinds", prompt: "Where do they go?", options: ["yes"] },
+                ],
+            },
+            { env: {} }
+        );
+        const calls: string[][] = [];
+        const dispatcher = widgetDispatcher({
+            files,
+            deliver: {
+                findTargets: livePaneTargets,
+                runTool: async (args) => {
+                    calls.push(args);
+                    return { success: true, stdout: '{"sent":true}', stderr: "" };
+                },
+            },
+        });
+        const message = widgetOutgoingSchema.parse({
+            id: randomUUID(),
+            target: destination,
+            assetIds: [],
+            sequence: 1,
+            createdAt: Date.now(),
+            state: "queued",
+            payload: { kind: "decision", id: row.id, number: row.number, expectedRevision: 1, text: "" },
+        });
+        await expect(
+            dispatcher.validate({ ...message, target: { ...destination, sessionId: "different-session" } }, [])
+        ).rejects.toThrow("belongs to another session");
+        expect(calls).toHaveLength(0);
+        await dispatcher.validate(message, []);
+        const media = [
+            '<fromVideo>\n{\n  "path": "/fixture/video.mov",\n  "frames": ["first", "second"]\n}\n</fromVideo>',
+            '<fromImage>\n{\n  "path": "/fixture/c96d5e67-first.png"\n}\n</fromImage>',
+            '<fromImage>\n{\n  "path": "/fixture/second.png"\n}\n</fromImage>',
+        ].join("\n\n");
+        expect(await dispatcher.dispatch(message, media, [])).toMatchObject({ delivered: true, channel: "cmux" });
+        expect(calls).toEqual([
+            [
+                "claude",
+                "cmux",
+                "send",
+                "original-session",
+                `Reply to: Chat DECISION 4: next token kinds\nLedger decision 2 (${row.id})\n${media}`,
+                "--json",
+                "--paste",
+                "--exact-session",
+            ],
+        ]);
+        expect(readDecisions(files.file).map((entry) => [entry.sessionId, entry.number, entry.state])).toEqual([
+            ["original-session", 1, "open"],
+            ["original-session", 2, "sent"],
+        ]);
+    });
+
     test("a refused transport keeps the stored answer, and a Retry sends that same answer", async () => {
         const directory = await root();
         const files = { file: join(directory, "decisions.jsonl"), events: join(directory, "events.jsonl") };
@@ -368,13 +668,17 @@ describe("widget source and delivery contracts", () => {
                 codexWorkerFor: () => "fixture-worker",
                 runTool: async (args) => {
                     typed.push(args);
-                    return { success: accept, stdout: "", stderr: accept ? "" : "worker gone" };
+                    const receipt = accept
+                        ? { queued: false, turnId: "fixture-turn" }
+                        : { kind: "rejected", backend: "codex", name: "fixture-worker", error: "worker gone" };
+                    return { success: accept, stdout: SafeJSON.stringify(receipt), stderr: "" };
                 },
             },
         });
+        // No source home: a refusal has no durable session queue to fall back to, so the answer waits for a Retry.
         const message = widgetOutgoingSchema.parse({
             id: randomUUID(),
-            target,
+            target: { ...target, sourceHome: "" },
             assetIds: [],
             sequence: 1,
             createdAt: Date.now(),
@@ -392,7 +696,7 @@ describe("widget source and delivery contracts", () => {
         expect(readDecisions(files.file)[0]).toMatchObject({ state: "sent", option: "b" });
     });
 
-    test("a missing route leaves the canonical decision unmodified and never claims success", async () => {
+    test("a missing route saves one canonical queued answer without claiming success or replaying through the prompt hook", async () => {
         const directory = await root();
         const files = { file: join(directory, "decisions.jsonl"), events: join(directory, "events.jsonl") };
         const [row] = await postDecisions(
@@ -409,6 +713,7 @@ describe("widget source and delivery contracts", () => {
             files,
             deliver: {
                 codexWorkerFor: () => null,
+                queueRoot: join(directory, "session-queue"),
                 runTool: async () => {
                     throw new Error("No transport may run");
                 },
@@ -425,7 +730,16 @@ describe("widget source and delivery contracts", () => {
         });
         await dispatcher.validate(message, []);
         expect((await dispatcher.dispatch(message, "", [])).delivered).toBe(false);
-        expect(readDecisions(files.file)[0]).toEqual(row);
+        expect(readDecisions(files.file)[0]).toMatchObject({
+            id: row.id,
+            state: "answered",
+            delivery: { route: "queued", queueId: expect.any(String) },
+        });
+        expect(() =>
+            deliverDecisions(readDecisions(files.file), () => {
+                throw new Error("must not duplicate queue delivery");
+            })
+        ).toThrow("nothing to send");
     });
 
     test("form ownership is checked and an earlier answer is not a receipt for a new answer", async () => {
@@ -1301,17 +1615,58 @@ test("unchanged video settings preserve the prepared revision and a real change 
     expect(revised).toMatchObject({ revision: 4, status: "pending" });
     expect(revised).not.toHaveProperty("confirmedRevision");
     expect(revised).not.toHaveProperty("manifestPath");
-
+    const clipped = await reviseVideoAsset({
+        root: directory,
+        id,
+        settings: { ...settings, fps: 4, startUs: 250_000, endUs: 750_000 },
+    });
+    expect(clipped).toMatchObject({ revision: 5, status: "pending", settings: { startUs: 250_000, endUs: 750_000 } });
+    await expect(
+        reviseVideoAsset({ root: directory, id, settings: { ...settings, endUs: 1_000_001 } })
+    ).rejects.toThrow();
+    expect((await readWidgetState(directory)).assets[id]).toMatchObject({ revision: 5 });
+    const restored = await reviseVideoAsset({ root: directory, id, settings });
+    expect(restored).toMatchObject({ revision: 6, settings });
     await mutateWidgetState(directory, (state) => {
         const asset = state.assets[id];
         if (asset?.type === "video") {
             asset.status = "failed";
-            asset.error = "ffmpeg timed out";
+            asset.error = "synthetic preparation failure";
         }
     });
-    const retried = await reviseVideoAsset({ root: directory, id, settings: { ...settings, fps: 4 } });
-    expect(retried).toMatchObject({ revision: 5, status: "pending" });
+    const retried = await reviseVideoAsset({ root: directory, id, settings });
+    expect(retried).toMatchObject({ revision: 7, status: "pending", settings });
     expect(retried).not.toHaveProperty("error");
+});
+
+test("media of a message already saved in a session queue cannot change under it", async () => {
+    const directory = await root();
+    const id = randomUUID();
+    const settings = { fps: 2 as const, framesPerImage: 16 as const, minimumDifferencePct: 1 };
+    await mutateWidgetState(directory, (state) => {
+        state.assets[id] = {
+            id,
+            type: "video",
+            name: "video.mp4",
+            path: "/fixture/video.mp4",
+            sha256: "fixture",
+            durationUs: 1_000_000,
+            width: 128,
+            height: 80,
+            settings,
+            revision: 1,
+            status: "pending",
+        };
+    });
+    const message = await enqueue(directory, "Queued with media", target, [id]);
+    await mutateWidgetState(directory, (state) => {
+        const current = state.outgoing.find((entry) => entry.id === message.id)!;
+        current.state = "waiting-route";
+        current.receipt = { channel: "session-queue", delivered: false, entryId: "fixture-entry", at: 1 };
+    });
+    await expect(reviseVideoAsset({ root: directory, id, settings: { ...settings, fps: 4 } })).rejects.toThrow(
+        "immutable"
+    );
 });
 
 test("widget snapshots request a read-only roster and watch discovery may refresh intentionally", async () => {
@@ -1330,12 +1685,16 @@ test("widget snapshots request a read-only roster and watch discovery may refres
     await widgetSnapshot({ root: directory, sources });
     await widgetSnapshot({ root: directory, sources, refresh: true });
     expect(refreshes).toEqual([false, true]);
+    expect(await discoverWidgetCatalog(sources)).toEqual({ sessions: 0, agents: 0 });
+    expect(refreshes).toEqual([false, true, true]);
 });
 
 describe("widget transport receipts", () => {
     test("a cmux send that matched no pane is a certain not-sent, not an unknown outcome", () => {
         const stdout = SafeJSON.stringify({ sent: false, matches: [] });
-        expect(widgetDeliveryReceipt({ tool: "claude", result: { status: 1, stdout, stderr: "" } })).toEqual({
+        expect(
+            widgetDeliveryReceipt({ args: ["claude", "cmux", "send"], result: { status: 1, stdout, stderr: "" } })
+        ).toEqual({
             success: false,
             stdout,
             stderr: "",
@@ -1344,24 +1703,38 @@ describe("widget transport receipts", () => {
 
     test("a clean exit whose receipt says not sent is not a delivery", () => {
         const stdout = SafeJSON.stringify({ sent: false });
-        expect(widgetDeliveryReceipt({ tool: "claude", result: { status: 0, stdout, stderr: "" } }).success).toBe(
-            false
-        );
+        expect(
+            widgetDeliveryReceipt({ args: ["claude", "cmux", "send"], result: { status: 0, stdout, stderr: "" } })
+                .success
+        ).toBe(false);
     });
 
     test("a typed claude receipt succeeds and a failed or unreadable run stays unknown", () => {
         const sent = SafeJSON.stringify({ sent: true });
-        expect(widgetDeliveryReceipt({ tool: "claude", result: { status: 0, stdout: sent, stderr: "" } }).success).toBe(
-            true
-        );
+        expect(
+            widgetDeliveryReceipt({ args: ["claude", "cmux", "send"], result: { status: 0, stdout: sent, stderr: "" } })
+                .success
+        ).toBe(true);
+        const cmux = ["claude", "cmux", "send"];
         const cases = [
-            { tool: "claude", result: { status: 1, stdout: sent, stderr: "" } },
-            { tool: "claude", result: { status: 1, stdout: "not json", stderr: "" } },
-            { tool: "claude", result: { error: new Error("timed out"), status: null, stdout: "", stderr: "" } },
-            { tool: "codex", result: { status: 2, stdout: "", stderr: "boom" } },
+            { args: cmux, result: { status: 1, stdout: sent, stderr: "" } },
+            { args: cmux, result: { status: 1, stdout: "not json", stderr: "" } },
+            { args: cmux, result: { error: new Error("timed out"), status: null, stdout: "", stderr: "" } },
+            { args: ["claude", "resume"], result: { status: 2, stdout: "", stderr: "boom" } },
         ];
         for (const run of cases) {
             expect(() => widgetDeliveryReceipt(run)).toThrow(DeliveryUnknownError);
+        }
+    });
+
+    test("codex and native turns report a refusal through their exit status, not as an unknown outcome", () => {
+        for (const args of [
+            ["codex", "steer"],
+            ["claude", "worker", "send"],
+            ["grok", "steer"],
+        ]) {
+            const result = { status: 1, stdout: '{"rejected":true}', stderr: "" };
+            expect(widgetDeliveryReceipt({ args, result }).success).toBe(false);
         }
     });
 });
@@ -1851,6 +2224,690 @@ test("shelf attachment descriptors inspect metadata and draft without creating o
     expect(await Bun.file(join(absent, "state.json")).exists()).toBe(false);
 });
 
+describe("widget inbox notifications", () => {
+    test("global unread counts exceed selected-card limits without durable snapshot writes", async () => {
+        const directory = await root();
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
+            async () => {
+                const path = toolDataDir("question", "qa.db");
+                const db = openReadModel(path);
+                const insert = db.query(
+                    "INSERT INTO entries (id,ts,session_id,session_title,agent,question,answer_md,refs_json,project,cwd,source,tag) VALUES (?,? ,?,'Fixture','codex','Question','Answer','[]','Fixture','/fixture','mcp','question')"
+                );
+                for (let index = 0; index < 151; index++) {
+                    insert.run(`inbox-${index}`, index + 1, index === 150 ? "fixture-b" : "fixture-a");
+                }
+                db.close();
+                const before = await readFile(path);
+                const key = widgetSessionKey({ ...target, sessionId: "fixture-b", sourceHome: "" });
+                const sources: WidgetSources = {
+                    ...realWidgetSources,
+                    sessions: async () => [],
+                    decisions: () => [],
+                    forms: () => [],
+                    agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+                };
+                const snapshot = await widgetSnapshot({ root: directory, selectedKey: key, sources });
+                expect(snapshot.cards).toHaveLength(1);
+                expect(snapshot.notifications?.unread).toBe(151);
+                expect(snapshot.notifications?.complete).toBe(true);
+                expect(snapshot.notifications?.sessions.find((row) => row.unread === 150)).toBeDefined();
+                expect(await readFile(path)).toEqual(before);
+                await performWidgetAction({
+                    root: directory,
+                    input: { action: "inbox-read", kind: "answer", key, id: "answer:inbox-150", at: 151 },
+                });
+                expect(
+                    (await widgetSnapshot({ root: directory, selectedKey: key, sources })).notifications?.unread
+                ).toBe(150);
+                await expect(
+                    performWidgetAction({
+                        root: directory,
+                        input: { action: "inbox-read", kind: "answer", key, id: "answer:inbox-0", at: 1 },
+                    })
+                ).rejects.toThrow("different session");
+                const afterRead = await readFile(path);
+                const log = join(directory, "log");
+                await mkdir(log, { recursive: true });
+                await writeFile(
+                    join(log, "2026-01-01.jsonl"),
+                    `${SafeJSON.stringify({
+                        id: "fresh-jsonl",
+                        ts: Date.now(),
+                        sessionId: "fixture-b",
+                        sessionTitle: "Fixture",
+                        agent: "codex",
+                        question: "Fresh",
+                        answerMd: "Fresh answer",
+                        project: "Fixture",
+                        repoRoot: "/fixture",
+                        cwd: "/fixture",
+                        branch: null,
+                        commitSha: null,
+                        commitMessage: null,
+                        isWorktree: false,
+                        worktreePath: null,
+                        aiAgent: null,
+                        agentLabel: null,
+                        tag: "question",
+                        refs: [],
+                        source: "mcp",
+                        turnUuid: null,
+                        supersededBy: null,
+                        readAt: null,
+                    })}\n`
+                );
+                const fresh = await widgetSnapshot({ root: directory, selectedKey: key, sources });
+                expect(fresh.notifications?.unread).toBe(151);
+                expect(fresh.notifications?.sessions.find((entry) => entry.key === key)?.unreadItem?.id).toBe(
+                    "answer:fresh-jsonl"
+                );
+                expect(await readFile(path)).toEqual(afterRead);
+                await expect(
+                    performWidgetAction({
+                        root: directory,
+                        input: {
+                            action: "inbox-read",
+                            kind: "answer",
+                            key,
+                            id: "answer:fresh-jsonl",
+                            at: fresh.notifications!.sessions.find((entry) => entry.key === key)!.unreadItem!.at,
+                        },
+                    })
+                ).resolves.toEqual({ read: 1 });
+                expect(
+                    (await widgetSnapshot({ root: directory, selectedKey: key, sources })).notifications?.unread
+                ).toBe(150);
+            }
+        );
+    });
+
+    test("an old notified card stays in the selected window behind 100 newer cards", async () => {
+        const directory = await root();
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
+            async () => {
+                const db = openReadModel(toolDataDir("question", "qa.db"));
+                db.query(
+                    "INSERT INTO entries (id,ts,session_id,session_title,agent,question,answer_md,refs_json,project,cwd,source,tag) VALUES ('window-old',1,'fixture-window','Fixture','codex','Question','Answer','[]','Fixture','/fixture','mcp','question')"
+                ).run();
+                db.close();
+                const file = join(directory, "decisions.jsonl");
+                await postDecisions(file, join(directory, "events.jsonl"), {
+                    sessionId: "fixture-window",
+                    provider: "codex",
+                    decisions: Array.from({ length: 100 }, (_, index) => ({
+                        prompt: `Newer ${index}?`,
+                        options: ["yes"],
+                    })),
+                });
+                const key = widgetSessionKey({
+                    ...target,
+                    sessionId: "fixture-window",
+                    sourceHome: "",
+                    cwd: "/fixture",
+                });
+                const sources: WidgetSources = {
+                    ...realWidgetSources,
+                    sessions: async () => [],
+                    decisions: () => readDecisions(file),
+                    forms: () => [],
+                    agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+                };
+                const snapshot = await widgetSnapshot({ root: directory, selectedKey: key, sources });
+                const session = snapshot.notifications?.sessions.find((entry) => entry.key === key);
+                expect(session?.unreadItem?.id).toBe("answer:window-old");
+                expect(snapshot.cards).toHaveLength(101);
+                expect(snapshot.cards[0]?.id).toBe("answer:window-old");
+            }
+        );
+    });
+
+    test("an answer with an unknown agent counts on the indexed session that owns its id", async () => {
+        const directory = await root();
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
+            async () => {
+                const insertAnswer = (id: string, agent: string) => {
+                    const db = openReadModel(toolDataDir("question", "qa.db"));
+                    db.query(
+                        "INSERT INTO entries (id,ts,session_id,session_title,agent,question,answer_md,refs_json,project,cwd,source,tag) VALUES (?,1,'shared-fixture','Fixture',?,'Question','Answer','[]','Fixture','/fixture','mcp','question')"
+                    ).run(id, agent);
+                    db.close();
+                };
+                insertAnswer("agentless-answer", "unknown");
+                const sources: WidgetSources = {
+                    ...realWidgetSources,
+                    sessions: async () => [
+                        {
+                            provider: "codex",
+                            sessionId: "shared-fixture",
+                            title: "Indexed",
+                            cwd: "/fixture",
+                            cwdShort: "fixture",
+                            project: "Fixture",
+                            mtime: 1,
+                            model: null,
+                            account: null,
+                            filePath: "/fixture/shared.jsonl",
+                        },
+                    ],
+                    decisions: () => [],
+                    forms: () => [],
+                    agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+                };
+                const snapshot = await widgetSnapshot({ root: directory, sources });
+                const indexed = snapshot.sessions.find((session) => session.target.provider === "codex");
+                expect(indexed).toBeDefined();
+                expect(snapshot.sessions.some((session) => session.target.provider === "unknown")).toBe(false);
+                const owner = snapshot.notifications?.sessions.find((entry) => entry.key === indexed?.key);
+                expect(owner?.unreadItem?.id).toBe("answer:agentless-answer");
+                await performWidgetAction({
+                    root: directory,
+                    input: {
+                        action: "inbox-read",
+                        kind: "answer",
+                        key: indexed!.key,
+                        id: "answer:agentless-answer",
+                        at: 1,
+                    },
+                });
+                // Control: an answer from a known, different agent still cannot be read through this session.
+                insertAnswer("claude-answer", "claude");
+                await expect(
+                    performWidgetAction({
+                        root: directory,
+                        input: {
+                            action: "inbox-read",
+                            kind: "answer",
+                            key: indexed!.key,
+                            id: "answer:claude-answer",
+                            at: 1,
+                        },
+                    })
+                ).rejects.toThrow("different session");
+                const after = await widgetSnapshot({ root: directory, sources });
+                expect(after.notifications?.sessions.find((entry) => entry.key === indexed?.key)).toBeUndefined();
+                expect(after.notifications?.unread).toBe(1);
+            }
+        );
+    });
+
+    test("completed results count once and versioned acknowledgements survive reload", async () => {
+        const directory = await root();
+        const node: AgentNode = {
+            id: "fixture-worker",
+            harness: "codex",
+            kind: "worker",
+            name: "Fixture",
+            description: null,
+            agentType: null,
+            model: null,
+            account: null,
+            status: "completed",
+            startedAt: null,
+            lastAt: "2026-01-01T10:00:00Z",
+            toolCalls: 0,
+            unreadMail: 0,
+            team: null,
+            backendType: null,
+            filePath: null,
+            spawnPrompt: null,
+            spawnPromptPreview: null,
+            toolUseId: null,
+            spawnDepth: 0,
+            children: [],
+        };
+        const sources: WidgetSources = {
+            sessions: async () => [],
+            decisions: () => [],
+            forms: () => [],
+            answers: () => [],
+            agents: async () => ({ generatedAt: "", parents: [], orphans: [node, node] }),
+            inboxData: () => ({ answers: [], forms: [], complete: true, truncated: false }),
+        };
+        const snapshot = await widgetSnapshot({ root: directory, sources });
+        expect(snapshot.notifications?.unread).toBe(1);
+        const item = snapshot.notifications!.sessions[0].unreadItem!;
+        expect(
+            await performWidgetAction({
+                root: directory,
+                input: { action: "inbox-read", kind: "result", key: item.key, id: item.id, at: item.at },
+                sources,
+            })
+        ).toEqual({ saved: true });
+        expect(
+            await performWidgetAction({
+                root: directory,
+                input: { action: "inbox-read", kind: "result", key: item.key, id: item.id, at: item.at },
+                sources,
+            })
+        ).toEqual({ saved: false });
+        await expect(
+            performWidgetAction({
+                root: directory,
+                input: { action: "inbox-read", kind: "result", key: item.key, id: item.id, at: Number.MAX_VALUE },
+                sources,
+            })
+        ).rejects.toThrow("future");
+        await expect(
+            performWidgetAction({
+                root: directory,
+                input: { action: "inbox-read", kind: "result", key: item.key, id: item.id, at: item.at + 1 },
+                sources,
+            })
+        ).rejects.toThrow("newer than the result");
+        expect((await widgetSnapshot({ root: directory, sources })).notifications?.unread).toBe(0);
+        node.lastAt = "2026-01-01T10:00:01Z";
+        expect((await widgetSnapshot({ root: directory, sources })).notifications?.unread).toBe(1);
+    });
+
+    test("a worker mapped onto an indexed session keeps its result card, and an idle agent has none", async () => {
+        const directory = await root();
+        const worker: AgentNode = {
+            id: "fixture-mapped-worker",
+            harness: "codex",
+            kind: "worker",
+            name: "Mapped",
+            description: null,
+            agentType: null,
+            model: null,
+            account: null,
+            status: "completed",
+            startedAt: null,
+            lastAt: "2026-01-01T10:00:00Z",
+            toolCalls: 0,
+            unreadMail: 0,
+            team: null,
+            backendType: null,
+            filePath: "/fixture/mapped-worker.jsonl",
+            spawnPrompt: null,
+            spawnPromptPreview: null,
+            toolUseId: null,
+            spawnDepth: 0,
+            children: [],
+        };
+        const idle: AgentNode = { ...worker, id: "fixture-idle-worker", status: "idle", filePath: null };
+        const sources: WidgetSources = {
+            sessions: async () => [
+                {
+                    provider: "codex",
+                    sessionId: "fixture-indexed-thread",
+                    title: "Indexed",
+                    cwd: "/fixture",
+                    cwdShort: "fixture",
+                    project: "Fixture",
+                    mtime: 1,
+                    model: null,
+                    account: null,
+                    filePath: "/fixture/mapped-worker.jsonl",
+                },
+            ],
+            decisions: () => [],
+            forms: () => [],
+            answers: () => [],
+            agents: async () => ({ generatedAt: "", parents: [], orphans: [worker, idle] }),
+            inboxData: () => ({ answers: [], forms: [], complete: true, truncated: false }),
+        };
+        const snapshot = await widgetSnapshot({ root: directory, sources });
+        expect(snapshot.notifications?.unread).toBe(1);
+        const item = snapshot.notifications!.sessions[0].unreadItem!;
+        expect(parseWidgetSessionKey(item.key)?.sessionId).toBe("fixture-indexed-thread");
+        expect(snapshot.cards.filter((card) => card.kind === "result").map((card) => card.sourceId)).toEqual([
+            "fixture-mapped-worker",
+        ]);
+        expect(
+            await performWidgetAction({
+                root: directory,
+                input: { action: "inbox-read", kind: "result", key: item.key, id: item.id, at: item.at },
+                sources,
+            })
+        ).toEqual({ saved: true });
+        expect((await widgetSnapshot({ root: directory, sources })).notifications?.unread).toBe(0);
+        const foreign = widgetSessionKey({ ...target, sessionId: "fixture-other-thread", sourceHome: "" });
+        await expect(
+            performWidgetAction({
+                root: directory,
+                input: { action: "inbox-read", kind: "result", key: foreign, id: item.id, at: item.at },
+                sources,
+            })
+        ).rejects.toThrow("different session");
+    });
+
+    test("reading a pending question leaves its needs-answer state intact", async () => {
+        const directory = await root();
+        const key = widgetSessionKey({ ...target, sessionId: "pending-fixture", sourceHome: "" });
+        const sources: WidgetSources = {
+            sessions: async () => [],
+            decisions: () => [],
+            forms: () => [],
+            answers: () => [],
+            agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+            inboxData: () => ({
+                answers: [],
+                forms: [
+                    {
+                        id: "pending-one",
+                        sessionId: "pending-fixture",
+                        provider: "codex",
+                        title: "Question",
+                        project: "Fixture",
+                        cwd: "/fixture",
+                        at: 1,
+                        count: 1,
+                        total: 1,
+                    },
+                ],
+                complete: true,
+                truncated: false,
+            }),
+        };
+        expect((await widgetSnapshot({ root: directory, sources })).notifications?.needsAnswer).toBe(1);
+        await performWidgetAction({
+            root: directory,
+            input: { action: "inbox-read", kind: "form", key, id: "form:pending-one", at: 1 },
+        });
+        expect((await widgetSnapshot({ root: directory, sources })).notifications?.needsAnswer).toBe(1);
+        expect((await readWidgetState(directory)).inboxRead[`${key}|form:pending-one`]).toBe(1);
+    });
+
+    test("a full inbox read history forgets its oldest marks instead of refusing new reads", async () => {
+        const directory = await root();
+        const key = widgetSessionKey({ ...target, sessionId: "history-fixture", sourceHome: "" });
+        await mutateWidgetState(directory, (state) => {
+            for (let index = 0; index < 4096; index++) {
+                state.inboxRead[`${key}|form:old-${index}`] = index;
+            }
+        });
+        await performWidgetAction({
+            root: directory,
+            input: { action: "inbox-read", kind: "form", key, id: "form:newest", at: 10_000 },
+        });
+        const history = (await readWidgetState(directory)).inboxRead;
+        expect(history[`${key}|form:newest`]).toBe(10_000);
+        expect(history[`${key}|form:old-0`]).toBeUndefined();
+        expect(history[`${key}|form:old-4095`]).toBe(4095);
+        expect(Object.keys(history).length).toBeLessThan(4096);
+    });
+});
+
+describe("private Widget voice notes", () => {
+    async function fixture() {
+        const root = await mkdtemp(join(tmpdir(), "widget-voice-"));
+        const input = join(root, "synthetic.pcm");
+        await Bun.write(input, new Uint8Array(3200));
+        const note = await recordVoiceNote({ root, input });
+        return { root, input, note };
+    }
+    test("local record, explicit fixture transcription, edit and guarded discard use one private note", async () => {
+        const { root, input, note } = await fixture();
+        expect((await files.stat(note.clip.path)).mode & 0o777).toBe(0o600);
+        expect((await files.stat(join(root, "voice-notes"))).mode & 0o777).toBe(0o700);
+        expect((await files.stat(join(root, "voice-notes", "notes.json"))).mode & 0o777).toBe(0o600);
+        expect(note.transcription).toBe("none");
+        expect(note.text).toBe("");
+        expect((await listVoiceNotes(root)).notes).toHaveLength(1);
+        expect(await Bun.file(input).bytes()).toEqual(await Bun.file(note.clip.path).bytes());
+        const result = await transcribeVoiceNote({
+            root,
+            id: note.id,
+            expectedRevision: 1,
+            provider: "fixture",
+            events: [{ kind: "final", text: "Remember the test", isFinal: true, startedAtMs: 0 }],
+        });
+        expect(result.text).toBe("Remember the test");
+        const edited = await editVoiceNote({
+            root,
+            id: note.id,
+            expectedRevision: result.revision,
+            text: "Reviewed thought",
+        });
+        expect(edited.text).toBe("Reviewed thought");
+        await expect(editVoiceNote({ root, id: note.id, expectedRevision: 1, text: "stale" })).rejects.toThrow(
+            "changed"
+        );
+        await expect(discardVoiceNote({ root, id: note.id, expectedRevision: 1 })).rejects.toThrow("changed");
+        await discardVoiceNote({ root, id: note.id, expectedRevision: edited.revision });
+        expect((await listVoiceNotes(root)).notes).toEqual([]);
+        expect(await Bun.file(note.clip.path).exists()).toBe(false);
+        expect(await Bun.file(input).exists()).toBe(true);
+        const absent = join(root, "absent");
+        expect((await listVoiceNotes(absent)).notes).toEqual([]);
+        expect(await Bun.file(join(absent, "voice-notes", "notes.json")).exists()).toBe(false);
+    });
+    test("multibyte metadata stays readable near its byte limit and oversized edits preserve saved bytes", async () => {
+        const { root, note } = await fixture();
+        const limit = 16 * 1024 * 1024;
+        const notes = Array.from({ length: 100 }, (_, index) => ({
+            ...note,
+            id: randomUUID(),
+            text: index === 99 ? "" : "ž".repeat(42_000),
+            recognizedText: index === 99 ? "" : "ž".repeat(42_000),
+        }));
+        const target = notes[99];
+        const index = { revision: 1, notes };
+        const remaining = Math.floor((limit - 1024 - Buffer.byteLength(SafeJSON.stringify(index), "utf8")) / 2);
+        expect(remaining).toBeGreaterThan(0);
+        expect(remaining).toBeLessThanOrEqual(64_000);
+        target.recognizedText = "ž".repeat(remaining);
+        const path = join(root, "voice-notes", "notes.json");
+        await Bun.write(path, SafeJSON.stringify(index));
+        const saved = await editVoiceNote({ root, id: target.id, expectedRevision: 1, text: "ž".repeat(256) });
+        expect(saved.text).toBe("ž".repeat(256));
+        const before = await readFile(path);
+        expect(before.length).toBeGreaterThan(limit - 2048);
+        expect(before.length).toBeLessThanOrEqual(limit);
+        expect((await listVoiceNotes(root)).notes.find((item) => item.id === target.id)?.revision).toBe(2);
+        const rejected = await editVoiceNote({
+            root,
+            id: target.id,
+            expectedRevision: saved.revision,
+            text: "ž".repeat(64_000),
+        }).then(
+            () => false,
+            (error: unknown) => error instanceof Error && error.message.includes("metadata")
+        );
+        const after = await readFile(path);
+        const readable = await listVoiceNotes(root).then(
+            () => true,
+            () => false
+        );
+        expect({ rejected, unchangedBytes: before.equals(after), readable }).toEqual({
+            rejected: true,
+            unchangedBytes: true,
+            readable: true,
+        });
+    });
+
+    test("late transcription preserves a concurrent edit, failure keeps audio and retry works", async () => {
+        const { root, note } = await fixture();
+        let complete!: (text: string) => void;
+        let opened!: () => void;
+        const started = new Promise<void>((resolve) => {
+            opened = resolve;
+        });
+        const done = new Promise<string>((resolve) => {
+            complete = resolve;
+        });
+        const pending = transcribeVoiceNote({
+            root,
+            id: note.id,
+            expectedRevision: 1,
+            provider: "fixture",
+            createSession: async () => {
+                opened();
+                return { provider: "fixture", stop() {}, done };
+            },
+        });
+        await started;
+        await editVoiceNote({ root, id: note.id, expectedRevision: 1, text: "My concurrent edit" });
+        complete("Recognized words");
+        const result = await pending;
+        expect(result.text).toBe("My concurrent edit");
+        expect(result.recognizedText).toBe("Recognized words");
+        await expect(
+            transcribeVoiceNote({
+                root,
+                id: note.id,
+                expectedRevision: result.revision,
+                provider: "fixture",
+                createSession: async () => {
+                    throw new Error("synthetic service error");
+                },
+            })
+        ).rejects.toThrow("synthetic service error");
+        const failed = (await listVoiceNotes(root)).notes[0]!;
+        expect(failed.transcription).toBe("failed");
+        expect(await Bun.file(failed.clip.path).exists()).toBe(true);
+        const retry = await transcribeVoiceNote({
+            root,
+            id: note.id,
+            expectedRevision: failed.revision,
+            provider: "fixture",
+            events: [{ kind: "final", text: "Retry succeeds", isFinal: true, startedAtMs: 0 }],
+        });
+        expect(retry.text).toBe("Retry succeeds");
+        expect(retry.error).toBeUndefined();
+    });
+    test("a note whose clip was deleted outside the tool can still be discarded", async () => {
+        const { root, note } = await fixture();
+        await unlink(note.clip.path);
+        await expect(discardVoiceNote({ root, id: note.id, expectedRevision: note.revision })).resolves.toEqual({
+            discarded: true,
+            id: note.id,
+        });
+        expect((await listVoiceNotes(root)).notes).toHaveLength(0);
+    });
+    test("a clip that cannot be removed keeps its note listed so discard can be retried", async () => {
+        const { root, note } = await fixture();
+        const clips = join(root, "voice-notes", "clips");
+        await files.chmod(clips, 0o500);
+        try {
+            await expect(discardVoiceNote({ root, id: note.id, expectedRevision: note.revision })).rejects.toThrow();
+            expect((await listVoiceNotes(root)).notes.map((item) => item.id)).toEqual([note.id]);
+        } finally {
+            await files.chmod(clips, 0o700);
+        }
+
+        await discardVoiceNote({ root, id: note.id, expectedRevision: note.revision });
+        expect((await listVoiceNotes(root)).notes).toEqual([]);
+        expect(await Bun.file(note.clip.path).exists()).toBe(false);
+    });
+    test("a recording that loses the last notebook slot is discarded instead of orphaned", async () => {
+        const { root, input, note } = await fixture();
+        const full = { revision: 1, notes: Array.from({ length: 100 }, () => ({ ...note, id: randomUUID() })) };
+        const id = randomUUID();
+        await expect(
+            recordVoiceNote({
+                root,
+                id,
+                input,
+                onEvent: (event) => {
+                    if (event.kind === "recording") {
+                        writeFileSync(join(root, "voice-notes", "notes.json"), SafeJSON.stringify(full));
+                    }
+                },
+            })
+        ).rejects.toThrow("discarded");
+        expect(await Bun.file(join(root, "voice-notes", "clips", `${id}.pcm`)).exists()).toBe(false);
+        expect(await Bun.file(note.clip.path).exists()).toBe(true);
+    });
+    test("a late failure of an older transcription cannot replace a newer success", async () => {
+        const { root, note } = await fixture();
+        let fail!: (error: Error) => void;
+        let opened!: () => void;
+        const started = new Promise<void>((resolve) => {
+            opened = resolve;
+        });
+        const older = transcribeVoiceNote({
+            root,
+            id: note.id,
+            expectedRevision: 1,
+            provider: "fixture",
+            createSession: async () => {
+                opened();
+                const done = new Promise<string>((_, reject) => {
+                    fail = reject;
+                });
+                return { provider: "fixture", stop() {}, done };
+            },
+        });
+        await started;
+        const newer = await transcribeVoiceNote({
+            root,
+            id: note.id,
+            expectedRevision: 1,
+            provider: "fixture",
+            events: [{ kind: "final", text: "Newer words", isFinal: true, startedAtMs: 0 }],
+        });
+        expect(newer.transcription).toBe("ready");
+        fail(new Error("synthetic late failure"));
+        await expect(older).rejects.toThrow("synthetic late failure");
+        const saved = (await listVoiceNotes(root)).notes[0]!;
+        expect({ transcription: saved.transcription, text: saved.text, error: saved.error }).toEqual({
+            transcription: "ready",
+            text: "Newer words",
+            error: undefined,
+        });
+    });
+    test("redirected private clip paths cannot open a provider", async () => {
+        const { root, input, note } = await fixture();
+        await unlink(note.clip.path);
+        await files.symlink(input, note.clip.path);
+        let opened = 0;
+        await expect(
+            transcribeVoiceNote({
+                root,
+                id: note.id,
+                expectedRevision: 1,
+                provider: "fixture",
+                createSession: async () => {
+                    opened++;
+                    throw new Error("must never open");
+                },
+            })
+        ).rejects.toThrow("outside its private");
+        expect(opened).toBe(0);
+        expect(await Bun.file(input).exists()).toBe(true);
+    });
+    test("cancelled transcription cannot write and tampered audio cannot open a provider", async () => {
+        const { root, note } = await fixture();
+        const abort = new AbortController();
+        let opened = 0;
+        await expect(
+            transcribeVoiceNote({
+                root,
+                id: note.id,
+                expectedRevision: 1,
+                provider: "fixture",
+                signal: abort.signal,
+                createSession: async () => {
+                    opened++;
+                    abort.abort();
+                    return { provider: "fixture", stop() {}, done: Promise.resolve("late") };
+                },
+            })
+        ).rejects.toThrow();
+        expect(opened).toBe(1);
+        expect((await listVoiceNotes(root)).notes[0]?.revision).toBe(1);
+        await Bun.write(note.clip.path, new Uint8Array(3200).fill(2));
+        await expect(
+            transcribeVoiceNote({
+                root,
+                id: note.id,
+                expectedRevision: 1,
+                provider: "fixture",
+                createSession: async () => {
+                    opened++;
+                    throw new Error("must not open");
+                },
+            })
+        ).rejects.toThrow("audio changed");
+        expect(opened).toBe(1);
+    });
+});
+
 test("native capture exit classification keeps cancellation separate from permission and process failures", async () => {
     const directory = await root();
     expect(await captureShelfImage({ root: directory, capture: async () => ({ status: 0, stderr: "" }) })).toEqual({
@@ -1871,4 +2928,563 @@ test("native capture exit classification keeps cancellation separate from permis
     ).rejects.toThrow("Capture timed out");
     expect((await listWidgetShelf(directory)).items).toEqual([]);
     expect((await readWidgetState(directory)).drafts).toEqual({});
+});
+
+describe("portable session queue delivery", () => {
+    test("unowned sessions stay pending until exact consumer ACK, retain ordering, and cancel only their own unoffered payload", async () => {
+        const directory = await root();
+        const queueRoot = join(directory, "session-queue");
+        let transportCalls = 0;
+        const dispatcher = widgetDispatcher({
+            deliver: {
+                queueRoot,
+                codexWorkerFor: () => null,
+                runTool: async () => {
+                    transportCalls += 1;
+                    throw new Error("No owner: must not spawn another session");
+                },
+            },
+        });
+        const first = await enqueue(directory, "First queued payload");
+        const second = await enqueue(directory, "Second queued payload");
+        await processWidgetOutbox({ root: directory, dispatcher, queueRoot });
+        let state = await readWidgetState(directory);
+        expect(state.outgoing.map((message) => message.state)).toEqual(["waiting-route", "queued"]);
+        const queueTarget = { ...target, provider: "codex" as const };
+        const [queued] = listSessionMessages({ target: queueTarget, root: queueRoot });
+        expect(queued.text).toContain("First queued payload");
+        expect(state.outgoing[0].receipt?.delivered).toBe(false);
+        await offerSessionMessage({ target: queueTarget, root: queueRoot, id: queued.id, consumer: "fixture-agent" });
+        await processWidgetOutbox({ root: directory, dispatcher, queueRoot });
+        expect((await readWidgetState(directory)).outgoing[0].state).toBe("waiting-route");
+        await expect(changeOutgoing({ root: directory, id: first.id, action: "retry", queueRoot })).rejects.toThrow(
+            "may already have reached"
+        );
+        await expect(changeOutgoing({ root: directory, id: first.id, action: "cancel", queueRoot })).rejects.toThrow(
+            "may already have reached"
+        );
+        await acknowledgeSessionMessage({
+            target: queueTarget,
+            root: queueRoot,
+            id: queued.id,
+            consumer: "fixture-agent",
+        });
+        await processWidgetOutbox({ root: directory, dispatcher, queueRoot });
+        state = await readWidgetState(directory);
+        expect(state.outgoing.map((message) => message.state)).toEqual(["sent", "waiting-route"]);
+        expect(state.outgoing[0].receipt).toMatchObject({
+            delivered: true,
+            entryId: queued.id,
+            detail: "Received by fixture-agent",
+        });
+        await changeOutgoing({ root: directory, id: second.id, action: "cancel", queueRoot });
+        expect(listSessionMessages({ target: queueTarget, root: queueRoot }).map((message) => message.state)).toEqual([
+            "received",
+            "cancelled",
+        ]);
+        expect(transportCalls).toBe(0);
+    });
+
+    test("one unreadable session queue does not stop another session's acknowledgement", async () => {
+        const directory = await root();
+        const queueRoot = join(directory, "session-queue");
+        const dispatcher = widgetDispatcher({ deliver: { queueRoot, codexWorkerFor: () => null } });
+        const other = { ...target, sessionId: "other-session" };
+        await enqueue(directory, "Payload for the broken queue", other);
+        await enqueue(directory, "Payload for the healthy queue");
+        await processWidgetOutbox({ root: directory, dispatcher, queueRoot });
+        for (const name of await readdir(queueRoot)) {
+            const path = join(queueRoot, name);
+            if (name.endsWith(".json") && (await readFile(path, "utf8")).includes("broken queue")) {
+                await writeFile(path, "not a queue");
+            }
+        }
+        const queueTarget = { ...target, provider: "codex" as const };
+        const [queued] = listSessionMessages({ target: queueTarget, root: queueRoot });
+        await offerSessionMessage({ target: queueTarget, root: queueRoot, id: queued.id, consumer: "fixture-agent" });
+        await acknowledgeSessionMessage({
+            target: queueTarget,
+            root: queueRoot,
+            id: queued.id,
+            consumer: "fixture-agent",
+        });
+        await processWidgetOutbox({ root: directory, dispatcher, queueRoot });
+        expect((await readWidgetState(directory)).outgoing.map((message) => message.state)).toEqual([
+            "waiting-route",
+            "sent",
+        ]);
+    });
+
+    test("editing a queued message restores its draft even when a reconcile cancelled it first", async () => {
+        const directory = await root();
+        const queueRoot = join(directory, "session-queue");
+        const dispatcher = widgetDispatcher({ deliver: { queueRoot, codexWorkerFor: () => null } });
+        const message = await enqueue(directory, "Edit me after a racing reconcile");
+        await processWidgetOutbox({ root: directory, dispatcher, queueRoot });
+        const cancel = queueModule.cancelSessionMessage;
+        let raced: string | undefined;
+        const racing = spyOn(queueModule, "cancelSessionMessage").mockImplementation(async (input) => {
+            const cancelled = await cancel(input);
+            await processWidgetOutbox({ root: directory, dispatcher, queueRoot });
+            raced = (await readWidgetState(directory)).outgoing[0].state;
+            return cancelled;
+        });
+        try {
+            await changeOutgoing({ root: directory, id: message.id, action: "edit", queueRoot });
+        } finally {
+            racing.mockRestore();
+        }
+        expect(raced).toBe("cancelled");
+        const state = await readWidgetState(directory);
+        expect(state.outgoing[0].state).toBe("cancelled");
+        expect(state.drafts[widgetSessionKey(target)]?.text).toBe("Edit me after a racing reconcile");
+    });
+
+    test("an ACK cannot confirm a changed outgoing payload revision", async () => {
+        const directory = await root();
+        const queueRoot = join(directory, "session-queue");
+        const dispatcher = widgetDispatcher({ deliver: { queueRoot, codexWorkerFor: () => null } });
+        const message = await enqueue(directory, "Original payload");
+        await processWidgetOutbox({ root: directory, dispatcher, queueRoot });
+        const queueTarget = { ...target, provider: "codex" as const };
+        const [queued] = listSessionMessages({ target: queueTarget, root: queueRoot });
+        await offerSessionMessage({ target: queueTarget, root: queueRoot, id: queued.id, consumer: "fixture-agent" });
+        await mutateWidgetState(directory, (state) => {
+            const current = state.outgoing.find((entry) => entry.id === message.id)!;
+            if (current.payload.kind === "followup") {
+                current.payload.text = "Changed after offer";
+            }
+        });
+        await acknowledgeSessionMessage({
+            target: queueTarget,
+            root: queueRoot,
+            id: queued.id,
+            consumer: "fixture-agent",
+        });
+        await processWidgetOutbox({ root: directory, dispatcher, queueRoot });
+        expect((await readWidgetState(directory)).outgoing[0]).toMatchObject({
+            state: "unknown",
+            receipt: { delivered: false },
+        });
+    });
+});
+
+test("the Widget action can cancel a Decision answer it queued itself", async () => {
+    const directory = await root();
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {
+        const decisions = decisionFiles();
+        const [row] = await postDecisions(
+            decisions.file,
+            decisions.events,
+            { sessionId: target.sessionId, provider: "codex", decisions: [{ prompt: "Queued?", options: ["yes"] }] },
+            { env: {} }
+        );
+        const message = await enqueueWidgetMessage({
+            root: directory,
+            id: randomUUID(),
+            target,
+            assetIds: [],
+            payload: { kind: "decision", id: row.id, number: row.number, expectedRevision: 1, option: "a", text: "" },
+        });
+        const dispatcher = widgetDispatcher({ files: decisions, deliver: { codexWorkerFor: () => null } });
+        await processWidgetOutbox({ root: directory, dispatcher, decisions });
+        expect(readDecisions(decisions.file)[0].delivery?.queueId).toBeDefined();
+        await expect(
+            performWidgetAction({ root: directory, input: { action: "cancel", id: message.id } })
+        ).resolves.toEqual({ updated: true });
+        expect(readDecisions(decisions.file)[0].state).toBe("open");
+        expect((await readWidgetState(directory)).outgoing[0].state).toBe("cancelled");
+    });
+});
+
+test("queued Decision ACK and cancellation reconcile the exact canonical answer without prompt-hook replay", async () => {
+    const directory = await root();
+    const queueRoot = join(directory, "session-queue");
+    const decisions = { file: join(directory, "decisions.jsonl"), events: join(directory, "events.jsonl") };
+    const rows = await postDecisions(
+        decisions.file,
+        decisions.events,
+        {
+            sessionId: target.sessionId,
+            provider: "codex",
+            decisions: [
+                { prompt: "First?", options: ["yes"] },
+                { prompt: "Second?", options: ["no"] },
+            ],
+        },
+        { env: {} }
+    );
+    for (const row of rows) {
+        await enqueueWidgetMessage({
+            root: directory,
+            id: randomUUID(),
+            target,
+            assetIds: [],
+            payload: {
+                kind: "decision",
+                id: row.id,
+                number: row.number,
+                expectedRevision: 1,
+                option: "a",
+                text: "",
+            },
+        });
+    }
+    const dispatcher = widgetDispatcher({ files: decisions, deliver: { queueRoot, codexWorkerFor: () => null } });
+    await processWidgetOutbox({ root: directory, dispatcher, queueRoot, decisions });
+    const queueTarget = { ...target, provider: "codex" as const };
+    const [queued] = listSessionMessages({ target: queueTarget, root: queueRoot });
+    expect(queued.text).toContain("DECISION 1: a)");
+    expect(() => deliverDecisions(readDecisions(decisions.file), () => {})).toThrow("nothing to send");
+    await offerSessionMessage({ target: queueTarget, root: queueRoot, id: queued.id, consumer: "fixture-agent" });
+    await acknowledgeSessionMessage({ target: queueTarget, root: queueRoot, id: queued.id, consumer: "fixture-agent" });
+    await processWidgetOutbox({ root: directory, dispatcher, queueRoot, decisions });
+    expect(readDecisions(decisions.file).map((row) => row.state)).toEqual(["sent", "answered"]);
+    const second = (await readWidgetState(directory)).outgoing[1];
+    await changeOutgoing({ root: directory, id: second.id, action: "cancel", queueRoot, decisions });
+    expect(readDecisions(decisions.file).map((row) => row.state)).toEqual(["sent", "open"]);
+    expect(readDecisions(decisions.file)[1].delivery?.queueId).toBeUndefined();
+});
+
+test("widget agent tree reuses native identity, metadata and nested parent keys", async () => {
+    const node = (id: string, children: AgentNode[] = []): AgentNode => ({
+        id,
+        harness: "codex",
+        kind: "worker",
+        name: id,
+        description: null,
+        agentType: null,
+        model: "gpt-6.1-sol",
+        account: "work",
+        status: "running",
+        startedAt: "2026-01-01T10:00:00Z",
+        lastAt: "2026-01-01T10:01:00Z",
+        toolCalls: 17,
+        unreadMail: 0,
+        team: null,
+        backendType: null,
+        filePath: `/fixture/${id}.jsonl`,
+        spawnPrompt: null,
+        spawnPromptPreview: null,
+        toolUseId: null,
+        spawnDepth: 1,
+        children,
+    });
+    const child = node("worker-name", [node("nested")]);
+    const crossProvider = { ...node("cross-provider"), harness: "grok" as const };
+    const sources: WidgetSources = {
+        sessions: async () => [
+            {
+                ...target,
+                provider: "codex",
+                title: "Parent",
+                project: "Fixture",
+                cwdShort: "Fixture",
+                mtime: 1,
+                model: "gpt-6-astra",
+                account: "personal",
+                filePath: "/fixture/lead.jsonl",
+            },
+            {
+                ...target,
+                provider: "codex",
+                sessionId: "native-child-id",
+                sourceHome: "/fixture/child-home",
+                title: "Indexed child",
+                project: "Fixture",
+                cwdShort: "Fixture",
+                mtime: 1,
+                model: null,
+                account: null,
+                filePath: "/fixture/worker-name.jsonl",
+            },
+        ],
+        decisions: () => [],
+        forms: () => [],
+        answers: () => [],
+        agents: async () => ({
+            generatedAt: "",
+            orphans: [],
+            parents: [
+                {
+                    sessionId: target.sessionId,
+                    provider: "codex",
+                    title: "Parent",
+                    project: "Fixture",
+                    cwd: target.cwd,
+                    filePath: "/fixture/lead.jsonl",
+                    model: "gpt-6-astra",
+                    account: "personal",
+                    startedAt: null,
+                    lastAt: "2026-01-01T10:00:00Z",
+                    live: true,
+                    children: [child, crossProvider],
+                },
+            ],
+        }),
+    };
+    const snapshot = await widgetSnapshot({ root: await root(), sources });
+    const parent = snapshot.sessions.find((entry) => entry.target.sessionId === target.sessionId)!;
+    const worker = snapshot.sessions.find((entry) => entry.agentId === child.id)!;
+    const nested = snapshot.sessions.find((entry) => entry.agentId === "nested")!;
+    expect(snapshot.sessions).toHaveLength(4);
+    expect(parent).toMatchObject({ role: "lead", model: "gpt-6-astra", status: "working" });
+    expect(worker).toMatchObject({
+        title: "worker-name",
+        role: "worker",
+        model: "gpt-6.1-sol",
+        toolCalls: 17,
+        startedAt: Date.parse(child.startedAt!),
+        parentKey: parent.key,
+        target: { sessionId: "native-child-id", sourceHome: "/fixture/child-home" },
+    });
+    expect(nested.parentKey).toBe(worker.key);
+    expect(nested.parentSessionId).toBe("native-child-id");
+    expect(snapshot.sessions.find((entry) => entry.agentId === "cross-provider")?.target.sourceHome).toBe("");
+});
+
+test("incoming answer, Decision and pending-form writes wake the Widget without its safety poll", async () => {
+    const directory = await root();
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {
+        const controller = new AbortController();
+        const answerLog = join(directory, "question", "log");
+        const database = join(directory, "question", "qa.db");
+        const decisions = join(directory, "question", "decisions", "decisions.jsonl");
+        const subscriptions: { directory: string; notify: (path: string) => Promise<void>; closed: boolean }[] = [];
+        let releaseDiscovery!: () => void;
+        const discoveryGate = new Promise<void>((resolve) => {
+            releaseDiscovery = resolve;
+        });
+        let discoveryStarted = false;
+        let discoverySignal: AbortSignal | undefined;
+        let emitted = 0;
+        let ready!: () => void;
+        const started = new Promise<void>((resolve) => {
+            ready = resolve;
+        });
+        const worker = watchWidget({
+            root: directory,
+            signal: controller.signal,
+            emit: () => {
+                emitted++;
+                ready();
+            },
+            dependencies: {
+                discover: async (signal) => {
+                    discoveryStarted = true;
+                    discoverySignal = signal;
+                    await discoveryGate;
+                },
+                inboxPaths: { answerLog, database, decisions },
+                watchInbox: async (directory, callback, options) => {
+                    const subscription = {
+                        directory,
+                        closed: false,
+                        notify: async (path: string) => {
+                            const event = { path, type: "update" as const };
+                            if (options?.filter?.(event) !== false) {
+                                await callback([event]);
+                            }
+                        },
+                    };
+                    subscriptions.push(subscription);
+                    return {
+                        active: true,
+                        errorCount: 0,
+                        unsubscribe: async () => {
+                            subscription.closed = true;
+                        },
+                    };
+                },
+                snapshot: async (options) => {
+                    if (options.refresh) {
+                        await discoveryGate;
+                    }
+                    return {
+                        version: 1,
+                        state: await readWidgetState(directory),
+                        activity: [],
+                        sessions: [],
+                        cards: [],
+                        manifests: {},
+                        changes: null,
+                        errors: [],
+                        selectedKey: String(emitted),
+                    };
+                },
+                dispatcher: {
+                    validate: async () => {},
+                    dispatch: async () => ({ delivered: true, channel: "fixture" }),
+                },
+            },
+        });
+        try {
+            await withTimeout(started, 3000);
+            expect(subscriptions).toHaveLength(1);
+            expect(discoveryStarted).toBe(true);
+            expect(subscriptions[0].directory).toBe(join(directory, "question"));
+            for (const file of [join(answerLog, "2026-01-01.jsonl"), decisions, `${database}-wal`, database]) {
+                const before = emitted;
+                await subscriptions[0].notify(file);
+                expect(emitted).toBeGreaterThan(before);
+            }
+            const before = emitted;
+            await subscriptions[0].notify(`${database}-shm`);
+            await subscriptions[0].notify(join(directory, "question", "unrelated.json"));
+            expect(emitted).toBe(before);
+        } finally {
+            controller.abort();
+            releaseDiscovery();
+            await withTimeout(worker, 3000);
+        }
+        expect(discoverySignal?.aborted).toBe(true);
+        expect(subscriptions.every((subscription) => subscription.closed)).toBe(true);
+    });
+});
+
+describe("background Widget roster", () => {
+    function fixture() {
+        let now = 0;
+        let changes = 0;
+        const workers: Pick<Worker, "postMessage" | "terminate" | "onmessage" | "onerror">[] = [];
+        const requests: { id: number }[] = [];
+        let terminated = 0;
+        const reader = new WidgetRosterReader({
+            now: () => now,
+            changed: () => {
+                changes++;
+            },
+            createWorker: () => {
+                const worker: Pick<Worker, "postMessage" | "terminate" | "onmessage" | "onerror"> = {
+                    onmessage: null,
+                    onerror: null,
+                    postMessage: (request) => {
+                        requests.push(request);
+                    },
+                    terminate: () => {
+                        terminated++;
+                    },
+                };
+                workers.push(worker);
+                return worker;
+            },
+        });
+        const reply = (data: WidgetRosterReply, index = workers.length - 1) => {
+            workers[index].onmessage?.call(workers[index] as Worker, { data } as MessageEvent<WidgetRosterReply>);
+        };
+        return {
+            reader,
+            requests,
+            workers,
+            reply,
+            advance: () => {
+                now += 15_001;
+            },
+            changes: () => changes,
+            terminated: () => terminated,
+        };
+    }
+
+    test("inbox reads stay available while a cold roster is pending and refreshes coalesce", async () => {
+        const f = fixture();
+        try {
+            f.reader.refresh();
+            f.reader.refresh();
+            f.reader.refresh(true);
+            f.reader.refresh(true);
+            expect(f.requests).toEqual([{ id: 1 }]);
+            const snapshot = await widgetSnapshot({
+                root: await root(),
+                sources: {
+                    sessions: async () => f.reader.rows,
+                    agents: async () => f.reader.agents,
+                    decisions: () => [],
+                    forms: () => [],
+                    answers: () => [],
+                    rosterStatus: () => ({ loading: f.reader.loading }),
+                },
+            });
+            expect(snapshot.rosterLoading).toBe(true);
+            expect(snapshot.errors).toEqual([]);
+            expect(f.changes()).toBe(0);
+            f.reply({ id: 1, ok: true, rows: [], agents: { generatedAt: "first", parents: [], orphans: [] } });
+            expect(f.reader.agents.generatedAt).toBe("first");
+            expect(f.requests).toEqual([{ id: 1 }, { id: 2 }]);
+            f.reply({ id: 2, ok: true, rows: [], agents: { generatedAt: "second", parents: [], orphans: [] } });
+            expect(f.reader.loading).toBe(false);
+            expect(f.changes()).toBe(2);
+            f.reader.refresh();
+            expect(f.requests).toHaveLength(2);
+        } finally {
+            f.reader.stop();
+        }
+    });
+
+    test("a failed refresh retains the last tree and restarts only after the refresh interval", () => {
+        const f = fixture();
+        try {
+            f.reader.refresh();
+            f.reply({ id: 1, ok: true, rows: [], agents: { generatedAt: "complete", parents: [], orphans: [] } });
+            f.advance();
+            f.reader.refresh();
+            expect(f.workers).toHaveLength(1);
+            f.reply({ id: 2, ok: false, error: "index unavailable" });
+            expect(f.reader.agents.generatedAt).toBe("complete");
+            expect(f.reader.error).toBe("index unavailable");
+            expect(f.terminated()).toBe(1);
+            f.reader.refresh();
+            expect(f.workers).toHaveLength(1);
+            f.advance();
+            f.reader.refresh();
+            expect(f.workers).toHaveLength(2);
+            f.reply({ id: 2, ok: true, rows: [], agents: { generatedAt: "late", parents: [], orphans: [] } }, 0);
+            expect(f.reader.agents.generatedAt).toBe("complete");
+            f.reply({ id: 3, ok: true, rows: [], agents: { generatedAt: "recovered", parents: [], orphans: [] } });
+            expect(f.reader.agents.generatedAt).toBe("recovered");
+            expect(f.reader.error).toBeUndefined();
+        } finally {
+            f.reader.stop();
+        }
+    });
+
+    test("shutdown terminates the thread and rejects late publications", () => {
+        const f = fixture();
+        f.reader.refresh();
+        f.reader.stop();
+        f.reply({ id: 1, ok: true, rows: [], agents: { generatedAt: "late", parents: [], orphans: [] } });
+        f.reader.refresh(true);
+        expect(f.reader.agents.generatedAt).toBe("");
+        expect(f.changes()).toBe(0);
+        expect(f.requests).toHaveLength(1);
+        expect(f.terminated()).toBe(1);
+    });
+
+    test("a silent worker has a bounded deadline and an explicit error", async () => {
+        let notify!: () => void;
+        const changed = new Promise<void>((resolve) => {
+            notify = resolve;
+        });
+        let terminated = 0;
+        const reader = new WidgetRosterReader({
+            changed: notify,
+            timeoutMs: 5,
+            createWorker: () => ({
+                onmessage: null,
+                onerror: null,
+                postMessage: () => {},
+                terminate: () => {
+                    terminated++;
+                },
+            }),
+        });
+        try {
+            reader.refresh();
+            await withTimeout(changed, 1000);
+            expect(reader.loading).toBe(false);
+            expect(reader.error).toBe("Agent roster refresh timed out");
+            expect(terminated).toBe(1);
+        } finally {
+            reader.stop();
+        }
+    });
 });
