@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { readTaskNotifications, scanClaudeToolCalls, scanFileMatches } from "./file-scan";
+import { readTaskNotifications, scanAppendOnly, scanClaudeToolCalls, scanFileMatches } from "./file-scan";
 import type { ResolvedTranscript } from "./resolve";
 import { listSubagents, SPAWN_PROMPT_CHARS } from "./subagents";
 
@@ -112,6 +112,37 @@ describe("listSubagents", () => {
     });
 });
 
+describe("listSubagents: a row read again only when its files change", () => {
+    const cacheRoot = mkdtempSync(join(tmpdir(), "gt-subagents-cache-"));
+    const id = "33333333-2222-3333-4444-555555555555";
+    const cacheDir = join(cacheRoot, id, "subagents");
+    mkdirSync(cacheDir, { recursive: true });
+    writeFileSync(join(cacheRoot, `${id}.jsonl`), "");
+    const resolved: ResolvedTranscript = {
+        provider: "claude",
+        source: "native",
+        sessionId: id,
+        filePath: join(cacheRoot, `${id}.jsonl`),
+    };
+    const agentFile = join(cacheDir, "agent-acache.jsonl");
+    const metaFile = join(cacheDir, "agent-acache.meta.json");
+
+    test("an append, a meta edit and the clock all show up; nothing else is re-read", () => {
+        writeFileSync(agentFile, lines(prompt("2026-09-24T10:00:00.000Z"), toolCall));
+        writeFileSync(metaFile, SafeJSON.stringify({ name: "first" }));
+        const read = (now: number) => listSubagents(resolved, { scan: true, now, staleAfterMs: 60_000 }).subagents[0];
+        const mtime = statSync(agentFile).mtimeMs;
+
+        expect(read(mtime + 1000)).toMatchObject({ name: "first", state: "running", toolCalls: 1 });
+        // Same files, later clock: the cached row with a state worked out again.
+        expect(read(mtime + 120_000)).toMatchObject({ name: "first", state: "stopped", toolCalls: 1 });
+
+        appendFileSync(agentFile, lines(toolCall, reply));
+        writeFileSync(metaFile, SafeJSON.stringify({ name: "second", description: "renamed" }));
+        expect(read(Date.now())).toMatchObject({ name: "second", description: "renamed", state: "done", toolCalls: 2 });
+    });
+});
+
 describe("file scans", () => {
     const scanRoot = mkdtempSync(join(tmpdir(), "gt-file-scan-"));
 
@@ -129,6 +160,56 @@ describe("file scans", () => {
         const body = record.slice(1);
         expect(seen.map((slice) => slice.split("\n")[0])).toEqual([body, body.replace("toolu_split", "toolu_tail")]);
         expect(scanClaudeToolCalls(path)).toEqual({ toolCalls: 2, agentCalls: ["toolu_split", "toolu_tail"] });
+    });
+
+    test("a resumed scan of a growing file equals a full scan after every append, tail matches included", () => {
+        const path = join(scanRoot, "growing.jsonl");
+        const call = (id: string, name: string) =>
+            `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"${id}","name":"${name}"}]}}\n`;
+        writeFileSync(path, call("t1", "Bash"));
+        expect(scanClaudeToolCalls(path)).toEqual({ toolCalls: 1, agentCalls: [] });
+
+        let content = call("t1", "Bash");
+        for (let i = 2; i <= 40; i++) {
+            // Big appends commit most of the file; small ones leave the newest call in the uncommitted tail.
+            const piece = (i % 3 === 0 ? "x".repeat(5000) : "") + call(`t${i}`, i % 4 === 0 ? "Agent" : "Read");
+            appendFileSync(path, piece);
+            content += piece;
+            const fresh = join(scanRoot, `fresh-${i}.jsonl`);
+            writeFileSync(fresh, content);
+            expect(scanClaudeToolCalls(path)).toEqual(scanClaudeToolCalls(fresh));
+        }
+    });
+
+    test("a file rewritten in place, or replaced, is scanned from the start again", () => {
+        const path = join(scanRoot, "rewritten.jsonl");
+        const call = (id: string) => `{"type":"tool_use","id":"${id}","name":"Agent"}\n${"y".repeat(400)}\n`;
+        writeFileSync(path, call("a1") + call("a2"));
+        expect(scanClaudeToolCalls(path)?.agentCalls).toEqual(["a1", "a2"]);
+        // Same inode, longer, different bytes before the old end.
+        writeFileSync(path, call("b1") + call("b2") + call("b3"));
+        expect(scanClaudeToolCalls(path)?.agentCalls).toEqual(["b1", "b2", "b3"]);
+        const replacement = join(scanRoot, "replacement.jsonl");
+        writeFileSync(replacement, call("c1") + call("c2") + call("c3") + call("c4"));
+        renameSync(replacement, path);
+        expect(scanClaudeToolCalls(path)?.agentCalls).toEqual(["c1", "c2", "c3", "c4"]);
+    });
+
+    test("scanAppendOnly never keeps a match whose window can still grow", () => {
+        const path = join(scanRoot, "window.txt");
+        writeFileSync(path, `${"z".repeat(100)}NEEDLE-ab`);
+        const read = () =>
+            scanAppendOnly<string[]>({
+                path,
+                needle: "NEEDLE",
+                window: 12,
+                initial: () => [],
+                copy: (list) => [...list],
+                apply: (list, slice) => list.push(slice.toString("latin1")),
+            });
+        expect(read()).toEqual(["NEEDLE-ab"]);
+        appendFileSync(path, "cdefgh");
+        expect(read()).toEqual(["NEEDLE-abcde"]);
     });
 
     test("a quoted tool call inside a string is not counted", () => {

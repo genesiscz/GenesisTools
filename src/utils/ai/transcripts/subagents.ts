@@ -6,7 +6,7 @@
  * return says nothing about a background agent or a teammate that still works. The directory has
  * every agent, and each transcript's last record says whether that agent is still working.
  */
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -234,11 +234,98 @@ function readMeta(path: string): JsonRecord {
     }
 }
 
+interface ReadAgentEntry {
+    ino: number;
+    size: number;
+    mtimeMs: number;
+    metaMtimeMs: number;
+    working: boolean;
+    agent: Omit<SessionSubagent, "state">;
+}
+
+/** Most sub-agents kept: every agent of every parent a hub list shows, with room to spare. */
+const READ_AGENT_CACHE_LIMIT = 4000;
+const readAgentCache = new Map<string, ReadAgentEntry>();
+
+function metaMtime(path: string): number {
+    try {
+        return statSync(path).mtimeMs;
+    } catch {
+        // No meta file (older agents): its absence is part of the key.
+        return -1;
+    }
+}
+
+/**
+ * A sub-agent's row, from its transcript's head and tail and its meta file. A resident process (the hub
+ * server) reads it again only when the transcript or the meta changed: a finished agent's files never
+ * do, and parsing every agent's head and tail on each refresh was most of a hub agents call (2026-10-08).
+ * `state` depends on the clock, so it is worked out on every call.
+ */
 function readAgent(
     dir: string,
     entry: string,
-    { now, staleAfterMs, scan, promptChars }: { now: number; staleAfterMs: number; scan: boolean; promptChars: number }
+    options: { now: number; staleAfterMs: number; scan: boolean; promptChars: number }
 ): SessionSubagent | null {
+    const filePath = join(dir, entry);
+    const id = entry.slice("agent-".length, -".jsonl".length);
+    const stateOf = (working: boolean, mtimeMs: number): SubagentState =>
+        !working ? "done" : options.now - mtimeMs > options.staleAfterMs ? "stopped" : "running";
+    const key = `${filePath}\u0000${options.scan}\u0000${options.promptChars}`;
+    let stat: { ino: number; size: number; mtimeMs: number };
+    try {
+        stat = statSync(filePath);
+    } catch (error) {
+        logger.debug({ error, filePath }, "[transcripts] unreadable sub-agent transcript");
+        return null;
+    }
+
+    const metaMtimeMs = metaMtime(join(dir, `agent-${id}.meta.json`));
+    const cached = readAgentCache.get(key);
+    if (
+        cached &&
+        cached.ino === stat.ino &&
+        cached.size === stat.size &&
+        cached.mtimeMs === stat.mtimeMs &&
+        cached.metaMtimeMs === metaMtimeMs
+    ) {
+        return { ...cached.agent, state: stateOf(cached.working, cached.mtimeMs) };
+    }
+
+    const read = readAgentFresh(dir, entry, options);
+    if (!read) {
+        readAgentCache.delete(key);
+        return null;
+    }
+
+    readAgentCache.delete(key);
+    readAgentCache.set(key, {
+        ino: read.stat.ino,
+        size: read.stat.size,
+        mtimeMs: read.stat.mtimeMs,
+        metaMtimeMs,
+        working: read.working,
+        agent: read.agent,
+    });
+    if (readAgentCache.size > READ_AGENT_CACHE_LIMIT) {
+        const oldest = readAgentCache.keys().next().value;
+        if (oldest !== undefined) {
+            readAgentCache.delete(oldest);
+        }
+    }
+
+    return { ...read.agent, state: stateOf(read.working, read.stat.mtimeMs) };
+}
+
+function readAgentFresh(
+    dir: string,
+    entry: string,
+    { scan, promptChars }: { scan: boolean; promptChars: number }
+): {
+    agent: Omit<SessionSubagent, "state">;
+    working: boolean;
+    stat: { ino: number; size: number; mtimeMs: number };
+} | null {
     const filePath = join(dir, entry);
     const id = entry.slice("agent-".length, -".jsonl".length);
     let fd: number | null = null;
@@ -251,9 +338,8 @@ function readAgent(
         const { first, last } = firstAndLast(head, tail);
         const meta = readMeta(join(dir, `agent-${id}.meta.json`));
         const working = midWork(last);
-        const state: SubagentState = !working ? "done" : now - stat.mtimeMs > staleAfterMs ? "stopped" : "running";
         const scanned = scan ? scanClaudeToolCalls(filePath) : null;
-        return {
+        const agent: Omit<SessionSubagent, "state"> = {
             id,
             name: text(meta.name),
             description: text(meta.description),
@@ -269,11 +355,11 @@ function readAgent(
             spawnPrompt: promptText(first, promptChars),
             startedAt: text(first?.timestamp),
             lastAt: new Date(stat.mtimeMs).toISOString(),
-            state,
             bytes: stat.size,
             filePath,
             ...(scanned ? { toolCalls: scanned.toolCalls, agentCalls: scanned.agentCalls } : {}),
         };
+        return { agent, working, stat: { ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs } };
     } catch (error) {
         logger.debug({ error, filePath }, "[transcripts] unreadable sub-agent transcript");
         return null;
