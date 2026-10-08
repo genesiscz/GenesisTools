@@ -88,6 +88,9 @@ public final class FlowSession: ObservableObject {
     private var finishTask: Task<Void, Never>?
     private var pillHideTask: Task<Void, Never>?
     private let preRoll = FlowPreRoll()
+    var preRollEffect: ((Bool) -> Void)?
+    var recognitionStartEffect: (() throws -> Void)?
+    var hotkeyBindingEffect: (() -> Void)?
 
     /// Built lazily on first use so an app launch that never dictates pays
     /// nothing for it.
@@ -211,11 +214,18 @@ public final class FlowSession: ObservableObject {
 
     /// Start or stop the rolling capture to match the setting.
     private func applyPreRoll() {
-        guard started, remoteCommand == nil, isOn, config.preRoll else {
-            preRoll.stop()
+        guard started, remoteCommand == nil, isOn, config.preRoll,
+              phase == .idle || phase == .error else {
+            setPreRollRunning(false)
             return
         }
-        preRoll.start()
+        setPreRollRunning(true)
+    }
+
+    private func setPreRollRunning(_ running: Bool) {
+        if let preRollEffect { preRollEffect(running) }
+        else if running { preRoll.start() }
+        else { preRoll.stop() }
     }
 
     /// Show/hide the pill to match the phase.
@@ -249,7 +259,7 @@ public final class FlowSession: ObservableObject {
     public func stop() {
         started = false
         remoteCommand = nil
-        preRoll.stop()
+        setPreRollRunning(false)
         pillHideTask?.cancel()
         pillHideTask = nil
         pill.hide()
@@ -260,6 +270,7 @@ public final class FlowSession: ObservableObject {
     }
 
     private func applyHotkeyBinding() {
+        if let hotkeyBindingEffect { hotkeyBindingEffect(); return }
         guard started, remoteCommand == nil, isOn else {
             hotKey?.stop()
             hotKey = nil
@@ -359,19 +370,21 @@ public final class FlowSession: ObservableObject {
         // Release the device before the recogniser claims it. The ring survives
         // `stop()`, so the history is still handed over — two engines fighting
         // over one input node would buy nothing.
-        preRoll.stop()
+        setPreRollRunning(false)
 
         do {
             let locale = config.localeIdentifier.isEmpty
                 ? Locale.current
                 : Locale(identifier: config.localeIdentifier)
-            try recognizer.start(locale: locale, forceServer: config.forceServerRecognition)
+            if let recognitionStartEffect { try recognitionStartEffect() }
+            else { try recognizer.start(locale: locale, forceServer: config.forceServerRecognition) }
             phase = .listening
             FlowFocusLog.flow.info("turn begin target=\(self.target?.bundleIdentifier ?? "none")")
         } catch {
             phase = .error
             lastError = error.localizedDescription
             FlowFocusLog.flow.error("turn begin failed: \(error.localizedDescription)")
+            applyPreRoll()
         }
     }
 
@@ -406,9 +419,11 @@ public final class FlowSession: ObservableObject {
         phase = .idle
         target = nil
         startedAt = nil
+        applyPreRoll()
     }
 
-    private func completeTurn(raw: String) async {
+    func completeTurn(raw: String) async {
+        defer { applyPreRoll() }
         let duration = startedAt.map { Date().timeIntervalSince($0) } ?? 0
         startedAt = nil
 
@@ -455,7 +470,7 @@ public final class FlowSession: ObservableObject {
         lastInjected = text
         target = nil
         phase = .idle
-        applyPreRoll()   // reclaim the mic for the next turn's history
+
         FlowFocusLog.flow.info("turn done words=\(text.split(separator: " ").count) outcome=\(String(describing: outcome))")
     }
 

@@ -11,6 +11,54 @@ import XCTest
 /// semantics — the two places a mistake silently costs the first word.
 final class FlowPreRollTests: XCTestCase {
 
+    @MainActor
+    func testFailedSilentAndCancelledTurnsReturnTheMicToOptedInPreRoll() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-preroll-lifecycle-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = FlowStore(directory: root)
+        var config = FlowConfig()
+        config.showPill = false
+        config.preRoll = true
+        store.saveConfig(config)
+        let session = FlowSession(store: store)
+        var rolling = false
+        var recognitionStarts = 0
+        session.preRollEffect = { rolling = $0 }
+        session.hotkeyBindingEffect = {}
+        session.recognitionStartEffect = {
+            recognitionStarts += 1
+            XCTAssertFalse(rolling, "the recognizer must own the device exclusively")
+            throw CocoaError(.fileReadUnknown)
+        }
+        session.start()
+        XCTAssertTrue(rolling)
+        session.beginTurn(captureCurrentTarget: false)
+        XCTAssertEqual(session.phase, .error)
+        XCTAssertTrue(rolling, "failed recognition must resume opted-in pre-roll")
+        session.recognitionStartEffect = {
+            recognitionStarts += 1
+            XCTAssertFalse(rolling)
+        }
+        session.beginTurn(captureCurrentTarget: false)
+        XCTAssertEqual(session.phase, .listening)
+        XCTAssertFalse(rolling)
+        await session.completeTurn(raw: "  \n")
+        XCTAssertEqual(session.phase, .idle)
+        XCTAssertTrue(rolling, "silence must resume pre-roll for the next turn")
+        session.beginTurn(captureCurrentTarget: false)
+        session.cancelTurn()
+        XCTAssertTrue(rolling, "cancelling a turn also returns ownership")
+        session.beginTurn(captureCurrentTarget: false)
+        session.config.preRoll = false
+        session.config.preRoll = true
+        XCTAssertFalse(rolling, "changing the setting cannot start a second engine during a turn")
+        session.stop()
+        XCTAssertFalse(rolling, "shutdown must not restart the microphone")
+        session.cancelTurn()
+        XCTAssertFalse(rolling)
+        XCTAssertEqual(recognitionStarts, 4)
+    }
+
     private func format(_ rate: Double, channels: AVAudioChannelCount = 1) -> AVAudioFormat {
         AVAudioFormat(standardFormatWithSampleRate: rate, channels: channels)!
     }
