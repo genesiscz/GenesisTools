@@ -68,7 +68,7 @@ public enum FlowTransformRunner {
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let token = resolveToken(configured: configuredToken) {
+        if let token = resolveToken(configured: configuredToken, baseURL: base) {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
@@ -121,22 +121,35 @@ public enum FlowTransformRunner {
         """
     }
 
-    /// Explicit token wins; otherwise read the local ai-proxy key from disk,
-    /// the same way the companion's realtime transport does.
-    public static func resolveToken(configured: String) -> String? {
-        let trimmed = configured.trimmingCharacters(in: .whitespaces)
-        if !trimmed.isEmpty { return trimmed }
-        return proxyApiKeyFromDisk()
+    /// Explicit credentials belong to the configured backend. The implicit local proxy key
+    /// is only read for a loopback HTTP origin and only used on its configured listener port.
+    public static func resolveToken(configured: String, baseURL: String = "") -> String? {
+        resolveToken(configured: configured, baseURL: baseURL) {
+            let url = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".genesis-tools/ai-proxy/config.json")
+            return try? Data(contentsOf: url)
+        }
     }
 
-    private static func proxyApiKeyFromDisk() -> String? {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".genesis-tools/ai-proxy/config.json")
-        guard
-            let data = try? Data(contentsOf: url),
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return nil }
-        return (json["proxyApiKey"] as? String) ?? (json["apiKey"] as? String)
+    static func resolveToken(configured: String, baseURL: String, readProxyConfig: () -> Data?) -> String? {
+        let trimmed = configured.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return trimmed }
+        guard let endpoint = URLComponents(string: baseURL), endpoint.scheme?.lowercased() == "http",
+              let host = endpoint.host?.lowercased(), ["127.0.0.1", "localhost", "::1", "[::1]"].contains(host),
+              endpoint.user == nil, endpoint.password == nil else { return nil }
+        guard let data = readProxyConfig(),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let port: Int
+        if let listen = json["listen"] as? [String: Any] {
+            guard let configured = listen["port"] as? Int, (1 ... 65535).contains(configured) else { return nil }
+            port = configured
+        } else {
+            port = 8317
+        }
+        guard endpoint.port == port else { return nil }
+        let key = ((json["proxyApiKey"] as? String) ?? (json["apiKey"] as? String))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return key?.isEmpty == false ? key : nil
     }
 
     /// Pull the useful sentence out of an error body rather than showing raw JSON.

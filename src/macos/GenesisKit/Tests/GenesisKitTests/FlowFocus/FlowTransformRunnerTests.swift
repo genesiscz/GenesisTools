@@ -63,12 +63,28 @@ final class FlowTransformRunnerTests: XCTestCase {
         XCTAssertEqual(FlowTransformRunner.resolveToken(configured: "  explicit  "), "explicit")
     }
 
-    func testBlankConfiguredTokenFallsBackToDisk() {
-        // On this machine the ai-proxy config exists, so the fallback resolves;
-        // on a machine without it the honest answer is nil. Both are correct —
-        // what must not happen is returning the empty string as a bearer token.
-        let resolved = FlowTransformRunner.resolveToken(configured: "")
-        XCTAssertNotEqual(resolved, "")
+    func testBlankConfiguredTokenWithoutAnOriginDoesNotReadProxyCredentials() {
+        XCTAssertNil(FlowTransformRunner.resolveToken(configured: ""))
+    }
+
+    func testProxyCredentialIsNeverLoadedForAnExternalOrUnspecifiedBackend() {
+        var reads = 0
+        let load = { reads += 1; return Data(#"{"proxyApiKey":"fixture-proxy-key"}"#.utf8) as Data? }
+        for base in ["", "https://openrouter.ai/api/v1", "https://custom.example/v1", "http://127.0.0.1.evil.example:8317/v1"] {
+            XCTAssertNil(FlowTransformRunner.resolveToken(configured: "", baseURL: base, readProxyConfig: load))
+        }
+        XCTAssertEqual(reads, 0)
+        XCTAssertEqual(FlowTransformRunner.resolveToken(configured: " explicit-token ", baseURL: "https://custom.example/v1", readProxyConfig: load), "explicit-token")
+        XCTAssertEqual(reads, 0)
+    }
+
+    func testProxyCredentialOnlyGoesToTheConfiguredLocalListener() {
+        var reads = 0
+        let load = { reads += 1; return Data(#"{"listen":{"port":9099},"proxyApiKey":"fixture-proxy-key"}"#.utf8) as Data? }
+        XCTAssertNil(FlowTransformRunner.resolveToken(configured: "", baseURL: "http://127.0.0.1:8317/v1", readProxyConfig: load))
+        XCTAssertEqual(FlowTransformRunner.resolveToken(configured: "", baseURL: "http://127.0.0.1:9099/v1", readProxyConfig: load), "fixture-proxy-key")
+        XCTAssertEqual(FlowTransformRunner.resolveToken(configured: "", baseURL: "http://localhost:9099/v1", readProxyConfig: load), "fixture-proxy-key")
+        XCTAssertEqual(reads, 3)
     }
 
     // MARK: - Error surfacing
