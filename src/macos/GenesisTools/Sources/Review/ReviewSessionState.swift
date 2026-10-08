@@ -5,8 +5,8 @@ import WebKit
 /// What a standalone review window shows, kept on disk so the same review opens where it was: after a
 /// rebuild relaunches it (src/macos/lib/permissions/relaunch.ts), and on any later open of the same thing.
 ///
-/// Keyed by what the window shows (`ReviewSessionKey`): a proposal file, a PR, or a repository with the
-/// scope it was opened on and its session. Saved when something changes, one second after the last
+/// Keyed by what the window shows (`ReviewSessionKey`): a proposal file, a full PR URL, a repository
+/// with a PR reference, or a repository with its launch scope and session. Saved one second after the last
 /// change, encoded and written off the main thread, in `~/.genesis-tools/review/state/`.
 ///
 /// The diff page reports its part (`PageState`: the first visible line, unsent reply and comment text)
@@ -137,14 +137,18 @@ struct SavedScope: Codable, Equatable {
 }
 
 enum ReviewSessionKey {
-    /// What the window shows: a proposal file, else a PR, else a repository with the scope it was opened
-    /// on (not the one picked later, which is part of the state) and its session.
+    /// A full PR URL is globally identified; a short reference belongs to the launch repository.
+    /// Without a PR, use the launch scope and session, not the scope picked later in the window.
     static func key(proposalPath: String?, prTarget: String?, repo: String, launchScope: DiffScope, session: String?) -> String {
         if let proposalPath, !proposalPath.isEmpty {
             return "proposal:\(URL(fileURLWithPath: proposalPath).standardizedFileURL.path)"
         }
         if let prTarget, !prTarget.isEmpty {
-            return "pr:\(prTarget)"
+            if let url = URL(string: prTarget), let scheme = url.scheme, ["https", "http"].contains(scheme), url.host != nil {
+                return "pr:\(prTarget)"
+            }
+            let checkout = URL(fileURLWithPath: repo).standardizedFileURL.path
+            return "repo:\(checkout)|pr:\(prTarget)"
         }
         return "repo:\(repo)|scope:\(ReviewCache.scopeKey(launchScope, session: session))|session:\(session ?? "-")"
     }

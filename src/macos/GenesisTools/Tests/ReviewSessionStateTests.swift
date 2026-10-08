@@ -47,11 +47,39 @@ final class ReviewSessionStateTests: XCTestCase {
     func testTheKeyNamesWhatTheWindowShows() {
         let proposal = ReviewSessionKey.key(proposalPath: "/p/./a b.json", prTarget: "42", repo: "/r", launchScope: .uncommitted, session: nil)
         XCTAssertEqual(proposal, "proposal:/p/a b.json", "a proposal wins over the PR and the repo")
-        XCTAssertEqual(ReviewSessionKey.key(proposalPath: nil, prTarget: "group/app!7", repo: "/r", launchScope: .uncommitted, session: nil), "pr:group/app!7")
+        XCTAssertEqual(ReviewSessionKey.key(proposalPath: nil, prTarget: "group/app!7", repo: "/r", launchScope: .uncommitted, session: nil), "repo:/r|pr:group/app!7")
         let plain = ReviewSessionKey.key(proposalPath: nil, prTarget: nil, repo: "/r", launchScope: .branch, session: "s1")
         XCTAssertEqual(plain, "repo:/r|scope:branch|session:s1")
         XCTAssertNotEqual(plain, ReviewSessionKey.key(proposalPath: nil, prTarget: nil, repo: "/r", launchScope: .uncommitted, session: "s1"),
                           "a review opened on another scope is another window")
+    }
+
+    func testANumericPRCannotRestoreAnotherRepositorysWorktree() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("review-key-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let firstRepo = directory.appendingPathComponent("first")
+        let secondRepo = directory.appendingPathComponent("second")
+        try FileManager.default.createDirectory(at: firstRepo, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: secondRepo, withIntermediateDirectories: true)
+        let firstKey = ReviewSessionKey.key(proposalPath: nil, prTarget: "7", repo: firstRepo.path, launchScope: .branch, session: nil)
+        let secondKey = ReviewSessionKey.key(proposalPath: nil, prTarget: "7", repo: secondRepo.path, launchScope: .branch, session: nil)
+        XCTAssertNotEqual(firstKey, secondKey)
+        let cache = DiskCache(directory: directory.appendingPathComponent("state"), namespace: "window")
+        var saved = ReviewSessionState()
+        saved.worktree = firstRepo.path
+        saved.selectedFile = "first.ts"
+        cache.write(saved, key: firstKey)
+        let second = ReviewModel(repo: secondRepo, options: DiffViewOptions(), renderer: NullRenderer())
+        ReviewSessionPersistence.attach(model: second, key: secondKey, launchScope: .branch, cache: cache)
+        XCTAssertEqual(second.repo, secondRepo, "PR 7 in the second repo must keep its own checkout")
+        XCTAssertNil(second.selectedID, "the first repo's file selection must not cross the boundary")
+    }
+
+    func testAFullPRURLStillNamesTheSameReviewAcrossWorktrees() {
+        let url = "https://github.com/acme/app/pull/7"
+        let first = ReviewSessionKey.key(proposalPath: nil, prTarget: url, repo: "/work/main", launchScope: .branch, session: nil)
+        let second = ReviewSessionKey.key(proposalPath: nil, prTarget: url, repo: "/work/agent", launchScope: .branch, session: nil)
+        XCTAssertEqual(first, second)
     }
 
     // MARK: Page
