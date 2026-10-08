@@ -124,7 +124,7 @@ public struct ClickyPerformanceView: View {
                 ForEach(0..<7, id: \.self) { day in
                     Button(weekdayNames[day]) {
                         if weekdays.contains(day) { weekdays.remove(day) } else { weekdays.insert(day) }
-                    }.buttonStyle(.bordered).tint(weekdays.contains(day) ? .mint : .gray)
+                    }.buttonStyle(.borderedProminent).tint(weekdays.contains(day) ? .mint : .gray)
                         .accessibilityValue(weekdays.contains(day) ? "Included" : "Excluded")
                         .accessibilityIdentifier("clicky.performance.weekday.\(day)")
                 }
