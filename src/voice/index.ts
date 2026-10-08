@@ -72,6 +72,13 @@ program
                 throw new Error("PCM stdin and UI stop-on-stdin cannot share one input");
             }
 
+            const maxDurationMs = Number(options.maxSeconds) * 1000;
+            if (!Number.isFinite(maxDurationMs) || maxDurationMs < 100 || maxDurationMs > 3_600_000) {
+                out.log.error("--max-seconds must be between 0.1 and 3600 seconds");
+                process.exitCode = 1;
+                return;
+            }
+
             const provider = parseSttProvider(options.provider);
             const events = options.eventsFile
                 ? fixtureSchema.parse(SafeJSON.parse(await Bun.file(options.eventsFile).text()))
@@ -90,7 +97,7 @@ program
                             input: options.input,
                             signal,
                             events,
-                            maxDurationMs: Number(options.maxSeconds) * 1000,
+                            maxDurationMs,
                             onEvent: (event) => {
                                 capsuleEvent(capsule, event);
                                 if (options.json) {

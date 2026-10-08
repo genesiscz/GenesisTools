@@ -1,10 +1,13 @@
-import { expect, test } from "bun:test";
+import { expect, mock, spyOn, test } from "bun:test";
 import { accountEntrySchema } from "@genesiscz/utils/ai/config/schema";
 import { voiceConfiguration } from "@genesiscz/utils/ai/voice/configuration";
 import { createVoiceSession } from "@genesiscz/utils/ai/voice/session";
+import type { PcmSource } from "./capture/pcm-source";
+import * as capture from "./capture/pcm-source";
 import { createFixtureStt } from "./fixture";
+import * as stt from "./resolve";
 import { openLiveStt, parseSttProvider, selectSttAccount } from "./resolve";
-import { type LiveTranscriptEvent, STT_PROVIDER_IDS } from "./types";
+import { type LiveSttSession, type LiveTranscriptEvent, STT_PROVIDER_IDS } from "./types";
 import { LocalVad, pcmRms } from "./vad";
 import { canDispatchWake, WakeRateLimiter } from "./wake/jev";
 import { isStopUtterance, matchWake, parseWakePhrases } from "./wake/word";
@@ -200,4 +203,112 @@ test("explicit dictation account refuses disabled credentials and still accepts 
             },
         })
     ).toBe(account);
+});
+
+test("voice setup cancellation reaches a pending provider before it can open a capture", async () => {
+    const controller = new AbortController();
+    let signal: AbortSignal | undefined;
+    let release: (() => void) | undefined;
+    const close = mock(async () => {});
+    const fixture: LiveSttSession = { provider: "fixture", write() {}, end() {}, async *events() {}, close };
+    const provider = spyOn(stt, "openLiveStt").mockImplementation((options) => {
+        signal = options.signal;
+        return new Promise((resolve) => {
+            release = () => resolve(fixture);
+        });
+    });
+    const opening = createVoiceSession({ provider: "fixture", input: "none", signal: controller.signal, onEvent() {} });
+    const settled = opening.then((voice) => voice.done).catch(() => undefined);
+    try {
+        controller.abort(new Error("cancelled setup"));
+        expect(signal?.aborted).toBe(true);
+        release?.();
+        await expect(opening).rejects.toThrow("cancelled setup");
+        expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+        release?.();
+        await settled;
+        provider.mockRestore();
+    }
+});
+
+test("voice setup cancellation reaches pending PCM capture and closes both resources", async () => {
+    const controller = new AbortController();
+    let signal: AbortSignal | undefined;
+    let release: (() => void) | undefined;
+    const closeProvider = mock(async () => {});
+    const closeCapture = mock(async () => {});
+    const fixture: LiveSttSession = {
+        provider: "fixture",
+        write() {},
+        end() {},
+        async *events() {},
+        close: closeProvider,
+    };
+    const source: PcmSource = {
+        kind: "file",
+        label: "fixture",
+        sampleRateHz: 16000,
+        async *frames() {},
+        close: closeCapture,
+    };
+    const provider = spyOn(stt, "openLiveStt").mockResolvedValue(fixture);
+    const pcm = spyOn(capture, "openPcmSource").mockImplementation((options) => {
+        signal = options.signal;
+        return new Promise((resolve) => {
+            release = () => resolve(source);
+        });
+    });
+    const opening = createVoiceSession({
+        provider: "fixture",
+        input: "/fixture/raw.pcm",
+        signal: controller.signal,
+        onEvent() {},
+    });
+    const settled = opening.then((voice) => voice.done).catch(() => undefined);
+    try {
+        await Promise.resolve();
+        controller.abort(new Error("cancelled capture"));
+        expect(signal?.aborted).toBe(true);
+        release?.();
+        await expect(opening).rejects.toThrow("cancelled capture");
+        expect(closeProvider).toHaveBeenCalledTimes(1);
+        expect(closeCapture).toHaveBeenCalledTimes(1);
+    } finally {
+        release?.();
+        await settled;
+        pcm.mockRestore();
+        provider.mockRestore();
+    }
+});
+
+test("voice cleanup preserves the provider failure and always emits stopped", async () => {
+    const seen: string[] = [];
+    const fixture: LiveSttSession = {
+        provider: "fixture",
+        write() {},
+        end() {},
+        async *events() {
+            yield { kind: "error", text: "", isFinal: false, startedAtMs: 0, error: "provider failure" };
+        },
+        async close() {
+            throw new Error("cleanup failure");
+        },
+    };
+    const provider = spyOn(stt, "openLiveStt").mockResolvedValue(fixture);
+    try {
+        const voice = await createVoiceSession({
+            provider: "fixture",
+            input: "none",
+            onEvent(event) {
+                if (event.kind === "state") {
+                    seen.push(event.state);
+                }
+            },
+        });
+        await expect(voice.done).rejects.toThrow("provider failure");
+        expect(seen.at(-1)).toBe("stopped");
+    } finally {
+        provider.mockRestore();
+    }
 });

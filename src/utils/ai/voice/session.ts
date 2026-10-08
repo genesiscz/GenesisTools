@@ -1,6 +1,6 @@
 import { openPcmSource, type PcmSource } from "@genesiscz/utils/ai/stt/capture/pcm-source";
 import { openLiveStt } from "@genesiscz/utils/ai/stt/resolve";
-import type { LiveTranscriptEvent, OpenLiveSttOptions } from "@genesiscz/utils/ai/stt/types";
+import type { LiveSttSession, LiveTranscriptEvent, OpenLiveSttOptions } from "@genesiscz/utils/ai/stt/types";
 import { pcmRms } from "@genesiscz/utils/ai/stt/vad";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -14,6 +14,24 @@ export interface VoiceSession {
     accountId?: string;
     stop(): void;
     done: Promise<string>;
+}
+
+async function closeVoiceResources({
+    source,
+    session,
+}: {
+    source?: PcmSource;
+    session?: LiveSttSession;
+}): Promise<void> {
+    const closed = await Promise.allSettled([
+        Promise.resolve().then(() => source?.close()),
+        Promise.resolve().then(() => session?.close()),
+    ]);
+    for (const result of closed) {
+        if (result.status === "rejected") {
+            logger.debug({ error: result.reason }, "Voice resource cleanup failed");
+        }
+    }
 }
 
 export async function createVoiceSession(
@@ -32,9 +50,17 @@ export async function createVoiceSession(
 
     const capture = new AbortController();
     const transport = new AbortController();
-    const session = await openLiveStt({ ...options, signal: transport.signal });
+    const abortSetup = () => {
+        capture.abort(options.signal?.reason);
+        transport.abort(options.signal?.reason);
+    };
+    options.signal?.addEventListener("abort", abortSetup, { once: true });
+    let opened: LiveSttSession | undefined;
     let source: PcmSource | undefined;
     try {
+        options.signal?.throwIfAborted();
+        opened = await openLiveStt({ ...options, signal: transport.signal });
+        options.signal?.throwIfAborted();
         if (options.input !== "none") {
             source = await openPcmSource({
                 input: options.input,
@@ -42,13 +68,19 @@ export async function createVoiceSession(
                 realtime: options.realtime,
                 signal: capture.signal,
             });
-        } else if (session.provider !== "fixture") {
+        } else if (opened.provider !== "fixture") {
             throw new Error("Input none is reserved for fixture replay");
         }
+        options.signal?.throwIfAborted();
     } catch (error) {
-        await session.close();
+        capture.abort();
+        transport.abort();
+        await closeVoiceResources({ source, session: opened });
         throw error;
+    } finally {
+        options.signal?.removeEventListener("abort", abortSetup);
     }
+    const session = opened;
 
     let stopping = false;
     let draining: ReturnType<typeof setTimeout> | undefined;
@@ -129,7 +161,7 @@ export async function createVoiceSession(
             clearTimeout(deadline);
             clearTimeout(draining);
             options.signal?.removeEventListener("abort", stop);
-            await Promise.all([source?.close(), session.close()]);
+            await closeVoiceResources({ source, session });
             state("stopped");
         }
     })();
