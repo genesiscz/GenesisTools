@@ -7,6 +7,7 @@ public struct LiveWidgetView: View {
     let edge: EdgePanelPlacement
     let cutout: CGFloat
     let compactHeight: CGFloat
+    let embedded: Bool
     private var section: String {
         get { model.section }
         nonmutating set { model.section = newValue }
@@ -16,12 +17,14 @@ public struct LiveWidgetView: View {
     @FocusState private var editing: Bool
 
     public init(
-        model: WidgetModel, edge: EdgePanelPlacement, cutout: CGFloat = 0, compactHeight: CGFloat = 36
+        model: WidgetModel, edge: EdgePanelPlacement, cutout: CGFloat = 0, compactHeight: CGFloat = 36,
+        embedded: Bool = false
     ) {
         self.model = model
         self.edge = edge
         self.cutout = cutout
         self.compactHeight = compactHeight
+        self.embedded = embedded
     }
 
     private var items: [AgentWidgetItem] {
@@ -33,6 +36,30 @@ public struct LiveWidgetView: View {
     }
 
     public var body: some View {
+        Group {
+            if embedded {
+                content
+            } else {
+                legacySurface
+            }
+        }
+        .alert(
+            "Check the conversation before retrying",
+            isPresented: Binding(get: { retry != nil }, set: { if !$0 { retry = nil } })
+        ) {
+            Button("Cancel", role: .cancel) { retry = nil }
+            Button("I checked — retry") {
+                if let retry {
+                    model.action(["action": "retry", "id": .string(retry.id), "confirmedUnknown": true])
+                }
+                retry = nil
+            }
+        } message: {
+            Text("The previous transport did not return a receipt. Retrying may send a second copy.")
+        }
+    }
+
+    private var legacySurface: some View {
         AgentWidgetView(
             placement: edge, items: items, selectedID: model.selectedKey,
             expanded: model.expanded == edge,
@@ -49,21 +76,6 @@ public struct LiveWidgetView: View {
             reduceMotion: model.reduceMotion, reduceTransparency: model.reduceTransparency
         )
 
-        .alert(
-            "Check the conversation before retrying",
-            isPresented: Binding(
-                get: { retry != nil }, set: { if !$0 { retry = nil } })
-        ) {
-            Button("Cancel", role: .cancel) { retry = nil }
-            Button("I checked — retry") {
-                if let retry {
-                    model.action(["action": "retry", "id": .string(retry.id), "confirmedUnknown": true])
-                }
-                retry = nil
-            }
-        } message: {
-            Text("The previous transport did not return a receipt. Retrying may send a second copy.")
-        }
     }
 
     private var content: some View {
@@ -100,6 +112,7 @@ public struct LiveWidgetView: View {
             }
             Picker("View", selection: Binding(get: { section }, set: { section = $0 })) {
                 Text("Inbox").tag("Inbox")
+                Text("Sessions").tag("Sessions")
                 Text("Conversation").tag("Conversation")
                 if model.snapshot?.state.preferences.showChanges == true { Text("Changes").tag("Changes") }
             }.pickerStyle(.segmented)
@@ -122,17 +135,19 @@ public struct LiveWidgetView: View {
                     LazyVStack(alignment: .leading, spacing: 14) {
                         if section == "Inbox" {
                             inbox
+                        } else if section == "Sessions" {
+                            WidgetSessionBrowser(model: model)
                         } else if section == "Changes" {
                             changes
                         } else {
                             conversation
                         }
-                        if section != "Conversation" {
+                        if section == "Inbox" {
                             ForEach(model.outgoing) { message in outgoing(message) }
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
                 }.scrollIndicators(.hidden)
-                composer
+                if section != "Sessions" { composer }
             }
         }
         .padding(18).frame(width: 432).frame(maxHeight: .infinity)
@@ -412,8 +427,10 @@ public struct LiveWidgetView: View {
                 }
             }
         }
-        if model.transcript.isEmpty && model.transcriptError == nil {
-            Text("Loading recent conversation…").font(.caption).foregroundStyle(.secondary)
+        if model.transcriptLoading {
+            ProgressView("Loading recent conversation…").controlSize(.small)
+        } else if timeline.isEmpty && model.transcriptError == nil {
+            Text("There are no recorded messages for this session yet.").font(.caption).foregroundStyle(.secondary)
         }
     }
 

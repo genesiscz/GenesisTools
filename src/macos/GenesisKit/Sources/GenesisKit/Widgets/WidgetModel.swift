@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -9,28 +10,43 @@ public final class WidgetModel: ObservableObject {
     @Published public var selectedCardID: String? { didSet { presentationChanged?() } }
     @Published public var section = "Inbox" { didSet { presentationChanged?() } }
     @Published public var expanded: EdgePanelPlacement?
+    @Published public var activeSideGroup = 0
+    @Published public var hoveredSurface: WidgetSurfaceID?
+    @Published public var moduleSelections: [String: String] = [:]
+    @Published public var draggedSidePosition: Double?
+    @Published public var draggingSide = false
+    public var sideClusterHeight: CGFloat = 300
+    private var followedTranscript: String?
+    private var hoverTask: Task<Void, Never>?
     @Published public var error: String?
     @Published public var drafts: [String: WidgetDraft] = [:]
     @Published public var formAnswers: [String: [String: WidgetFormAnswer]] = [:] {
         didSet {
             do {
-                UserDefaults.standard.set(
+                defaults.set(
                     try JSONEncoder().encode(formAnswers), forKey: "widget.formDrafts")
             } catch { PerfLog.mark("widget.form draft save \(error.localizedDescription)") }
         }
     }
     @Published public var transcript: [TranscriptTurn] = []
     @Published public var transcriptError: String?
+    @Published public var transcriptLoading = false
     @Published public var importing = 0
     @Published public var voiceText = ""
     @Published public var voiceLevel = 0.0
     @Published public var voiceActive = false
     @Published public var reading = false
-    @Published public var reduceMotion = UserDefaults.standard.bool(forKey: "widget.reduceMotion") {
-        didSet { UserDefaults.standard.set(reduceMotion, forKey: "widget.reduceMotion") }
+    @Published public var reduceMotion = false {
+        didSet {
+            defaults.set(reduceMotion, forKey: "widget.reduceMotion")
+            appearance.reduceMotion = reduceMotion
+        }
     }
-    @Published public var reduceTransparency = UserDefaults.standard.bool(forKey: "widget.reduceTransparency") {
-        didSet { UserDefaults.standard.set(reduceTransparency, forKey: "widget.reduceTransparency") }
+    @Published public var reduceTransparency = false {
+        didSet {
+            defaults.set(reduceTransparency, forKey: "widget.reduceTransparency")
+            appearance.reduceTransparency = reduceTransparency
+        }
     }
     @Published public var dialogOpen = false
     public var presentationChanged: (() -> Void)?
@@ -41,6 +57,11 @@ public final class WidgetModel: ObservableObject {
     @Published public var notice: String?
     public private(set) var openedAt: TimeInterval = 0
     public let bridge: ToolsBridge
+    public let appearance: NativeSettingsAppearance
+    private let defaults: UserDefaults
+    private var appearanceSubscription: AnyCancellable?
+    private var settingsOnly = false
+    private var settingsTask: Task<Void, Never>?
     private let stateRoot: String?
     private let journal: URL
     private var watcher: ToolsLineStream?
@@ -60,7 +81,12 @@ public final class WidgetModel: ObservableObject {
     private var quietTask: Task<Void, Never>?
     private var quietSignature = ""
 
-    public init(binaryPath: String, stateRoot: String? = nil) {
+    public init(
+        binaryPath: String, stateRoot: String? = nil, defaults: UserDefaults = .standard,
+        appearance: NativeSettingsAppearance? = nil
+    ) {
+        self.defaults = defaults
+        self.appearance = appearance ?? .shared
         bridge = ToolsBridge(binaryPath: binaryPath)
         self.stateRoot = stateRoot
         let base =
@@ -68,7 +94,25 @@ public final class WidgetModel: ObservableObject {
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(Bundle.main.bundleIdentifier ?? "GenesisTools")
         journal = base.appendingPathComponent("native-submissions", isDirectory: true)
-        if let data = UserDefaults.standard.data(forKey: "widget.formDrafts") {
+        moduleSelections = defaults.dictionary(forKey: "widget.moduleSelections") as? [String: String] ?? [:]
+        self.appearance.migrateIfNeeded(
+            reduceMotion: defaults.bool(forKey: "widget.reduceMotion"),
+            reduceTransparency: defaults.bool(forKey: "widget.reduceTransparency"))
+        reduceMotion = self.appearance.reduceMotion
+        reduceTransparency = self.appearance.reduceTransparency
+        appearanceSubscription = self.appearance.objectWillChange.sink { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if self.reduceMotion != self.appearance.reduceMotion {
+                    self.reduceMotion = self.appearance.reduceMotion
+                }
+                if self.reduceTransparency != self.appearance.reduceTransparency {
+                    self.reduceTransparency = self.appearance.reduceTransparency
+                }
+                self.presentationChanged?()
+            }
+        }
+        if let data = defaults.data(forKey: "widget.formDrafts") {
             do {
                 formAnswers = try JSONDecoder().decode(
                     [String: [String: WidgetFormAnswer]].self, from: data)
@@ -121,6 +165,30 @@ public final class WidgetModel: ObservableObject {
 
     private var widgetArgs: [String] { ["widget"] + (stateRoot.map { ["--state-root", $0] } ?? []) }
 
+    public func startSettings() {
+        settingsOnly = true
+        do {
+            try FileManager.default.createDirectory(at: journal, withIntermediateDirectories: true)
+            refreshSettings()
+        } catch { report(error) }
+    }
+
+    public func refreshSettings() {
+        settingsTask?.cancel()
+        settingsTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await self.bridge.run(
+                    subcommand: "hub", args: self.widgetArgs + ["snapshot", "--json"], timeoutSeconds: 30)
+                guard result.exitCode == 0 else { throw ToolsBridgeError.refused(result.stderr) }
+                guard !Task.isCancelled else { return }
+                self.receive([result.stdout])
+            } catch {
+                if !Task.isCancelled { self.report(error) }
+            }
+        }
+    }
+
     public func start() {
         guard watcher == nil else { return }
         stopping = false
@@ -144,7 +212,10 @@ public final class WidgetModel: ObservableObject {
     }
 
     public func stop() {
+        settingsTask?.cancel()
+        followedTranscript = nil
         stopping = true
+        hoverTask?.cancel()
         watcher?.stop()
         watcher = nil
         let recording = voice
@@ -159,7 +230,7 @@ public final class WidgetModel: ObservableObject {
         for task in draftTasks.values { task.cancel() }
         for key in dirtyDrafts {
             if let draft = drafts[key] {
-                UserDefaults.standard.set(draft.text, forKey: "widget.recovered-draft." + key)
+                defaults.set(draft.text, forKey: "widget.recovered-draft." + key)
             }
         }
     }
@@ -169,6 +240,11 @@ public final class WidgetModel: ObservableObject {
             do {
                 let next = try JSONDecoder().decode(WidgetSnapshot.self, from: Data(line.utf8))
                 snapshot = next
+                if !draggingSide, let position = draggedSidePosition,
+                    abs((next.state.preferences.sidePosition ?? 0.5) - position) < 0.0001
+                {
+                    draggedSidePosition = nil
+                }
                 for message in next.state.outgoing where ["failed", "cancelled"].contains(message.state) {
                     if case .object(let fields) = message.payload,
                         case .string(let kind) = fields["kind"], case .string(let id) = fields["id"]
@@ -191,16 +267,16 @@ public final class WidgetModel: ObservableObject {
                     selectedKey = WidgetSelection.initial(
                         persisted: next.state.selectedKey, visibleKeys: next.sessions.filter(\.visible).map(\.key))
                     selectedCardID = nil
-                    if !selectedKey.isEmpty {
+                    if !selectedKey.isEmpty && !settingsOnly {
                         action(["action": "selection", "key": .string(selectedKey)])
                         resumeTranscript()
                     }
                 }
                 if !selectedKey.isEmpty,
-                    let recovered = UserDefaults.standard.string(
+                    let recovered = defaults.string(
                         forKey: "widget.recovered-draft." + selectedKey)
                 {
-                    UserDefaults.standard.removeObject(forKey: "widget.recovered-draft." + selectedKey)
+                    defaults.removeObject(forKey: "widget.recovered-draft." + selectedKey)
                     setText(recovered)
                 }
                 scheduleQuietReduction()
@@ -209,11 +285,84 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    public var layout: WidgetLayoutConfiguration {
+        snapshot?.state.preferences.layout ?? WidgetLayoutConfiguration()
+    }
+
+    public var sidePosition: Double { draggedSidePosition ?? layout.sidePosition }
+    public var activeModuleID: String {
+        let surface = WidgetSurfaceID(edge: expanded ?? side, group: expanded == .top ? 0 : activeSideGroup)
+        return moduleSelections[surface.key] ?? "agents"
+    }
+
+    func resolveModules(_ ids: [String], on surface: WidgetSurfaceID) {
+        let selected = moduleSelections[surface.key]
+        let resolved = ids.first(where: { $0 == selected }) ?? ids.first
+        guard selected != resolved else { return }
+        moduleSelections[surface.key] = resolved
+        defaults.set(moduleSelections, forKey: "widget.moduleSelections")
+        resumeTranscript()
+    }
+
+    public func presentation(for surface: WidgetSurfaceID) -> WidgetModulePresentation {
+        if expanded == surface.edge && (surface.edge == .top || activeSideGroup == surface.group) {
+            return .expanded
+        }
+        return hoveredSurface == surface ? .preview : .compact
+    }
+
+    public func openModule(_ moduleID: String, on surface: WidgetSurfaceID) {
+        moduleSelections[surface.key] = moduleID
+        defaults.set(moduleSelections, forKey: "widget.moduleSelections")
+        activeSideGroup = surface.group
+        hoveredSurface = nil
+        hoverTask?.cancel()
+        open(surface.edge)
+    }
+
+    public func hover(_ surface: WidgetSurfaceID, inside: Bool) {
+        guard layout.hoverPreviews, !dialogOpen, !draggingSide else { return }
+        hoverTask?.cancel()
+        if inside {
+            guard presentation(for: surface) != .expanded else { return }
+            hoverTask = Task { [weak self] in
+                do { try await Task.sleep(for: .milliseconds(160)) } catch { return }
+                guard let self, !self.dialogOpen else { return }
+                self.hoveredSurface = surface
+                self.presentationChanged?()
+            }
+        } else {
+            hoverTask = Task { [weak self] in
+                do { try await Task.sleep(for: .milliseconds(220)) } catch { return }
+                guard let self, self.hoveredSurface == surface else { return }
+                self.hoveredSurface = nil
+                self.presentationChanged?()
+            }
+        }
+    }
+
+    public func moveSide(position: Double, finished: Bool) {
+        let bounded = min(1, max(0, position))
+        draggedSidePosition = bounded
+        draggingSide = !finished
+        hoveredSurface = nil
+        hoverTask?.cancel()
+        presentationChanged?()
+        if finished {
+            action(
+                ["action": "preferences", "patch": ["sidePosition": .number(bounded)]],
+                failed: { [weak self] in
+                    guard let self, self.draggedSidePosition == bounded, !self.draggingSide else { return }
+                    self.draggedSidePosition = nil
+                    self.presentationChanged?()
+                })
+        }
+    }
+
     public func open(_ edge: EdgePanelPlacement) {
         openedAt = ProcessInfo.processInfo.systemUptime
-        let wasClosed = expanded == nil
         expanded = edge
-        if wasClosed { resumeTranscript() }
+        resumeTranscript()
         presentationChanged?()
         scheduleQuietReduction()
         if let card, card.kind == "answer", !card.read {
@@ -222,6 +371,9 @@ public final class WidgetModel: ObservableObject {
     }
 
     public func collapse() {
+        followedTranscript = nil
+        hoveredSurface = nil
+        hoverTask?.cancel()
         voice?.finishInput()
         speechTask?.cancel()
         reading = false
@@ -275,7 +427,9 @@ public final class WidgetModel: ObservableObject {
         scheduleQuietReduction()
     }
 
-    public func action(_ value: WidgetJSON, completed: (() -> Void)? = nil) {
+    public func action(
+        _ value: WidgetJSON, failed: (() -> Void)? = nil, completed: (() -> Void)? = nil
+    ) {
         let previous = mutationTask
         mutationTask = Task { [weak self] in
             await previous?.value
@@ -283,7 +437,11 @@ public final class WidgetModel: ObservableObject {
             do {
                 _ = try await self.call(value)
                 completed?()
-            } catch { self.report(error) }
+                if self.settingsOnly { self.refreshSettings() }
+            } catch {
+                failed?()
+                self.report(error)
+            }
         }
     }
 
@@ -605,17 +763,29 @@ public final class WidgetModel: ObservableObject {
     }
 
     private func resumeTranscript() {
+        let wanted = expanded != nil && activeModuleID == "agents" ? selected : nil
+        let identity = wanted.map { $0.key + "|" + ($0.transcriptPath ?? $0.target.sessionId) }
+        guard followedTranscript != identity else { return }
+        followedTranscript = identity
         tail?.stop()
         tail = nil
         transcriptTask?.cancel()
         transcript = []
         transcriptError = nil
-        guard expanded != nil, let session = selected, session.target.provider != "unknown" else {
+        transcriptLoading = false
+        guard let session = wanted else { return }
+        guard session.target.provider != "unknown" else {
+            transcriptError =
+                "This source has no live transcript. Its questions, answers and attachments remain in this timeline."
             return
         }
         let key = session.key
+        transcriptLoading = true
         transcriptTask = Task { [weak self] in
             guard let self else { return }
+            defer {
+                if self.followedTranscript == identity { self.transcriptLoading = false }
+            }
             do {
                 let result = try await self.bridge.run(
                     subcommand: "ai",
@@ -646,11 +816,12 @@ public final class WidgetModel: ObservableObject {
 
     private func scheduleQuietReduction() {
         let signature =
-            "\(hasActivity)|\(expanded?.rawValue ?? "")|\(selectedKey)|\(draft.text)|\(draft.assetIds)|\(voiceActive)|\(dialogOpen)"
+            "\(hasActivity)|\(expanded?.rawValue ?? "")|\(activeModuleID)|\(selectedKey)|\(draft.text)|\(draft.assetIds)|\(voiceActive)|\(dialogOpen)"
         guard signature != quietSignature else { return }
         quietSignature = signature
         quietTask?.cancel()
-        guard expanded != nil, !hasActivity, draft.text.isEmpty, draft.assetIds.isEmpty, !voiceActive,
+        guard expanded != nil, activeModuleID == "agents", !hasActivity, draft.text.isEmpty, draft.assetIds.isEmpty,
+            !voiceActive,
             !dialogOpen
         else { return }
         let delay = max(5, snapshot?.state.preferences.quietSeconds ?? 15)

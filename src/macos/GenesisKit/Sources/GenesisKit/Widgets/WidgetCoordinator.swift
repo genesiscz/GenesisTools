@@ -4,7 +4,10 @@ import SwiftUI
 @MainActor
 public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     public let model: WidgetModel
-    private var panels: [EdgePanelPlacement: EdgePanelController<LiveWidgetView>] = [:]
+    public let modules = WidgetModuleRegistry()
+    private var panels: [WidgetSurfaceID: EdgePanelController<WidgetHostView>] = [:]
+    private var display: NSScreen?
+    private var lastLayout: WidgetLayoutConfiguration?
     private var settings: NSWindow?
     private var mediaWindow: NSWindow?
     private var localMouse: Any?
@@ -13,6 +16,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     private var screenObserver: NSObjectProtocol?
     private var lastSide: EdgePanelPlacement?
     private var topHeaderHeight: CGFloat = 36
+    private var topCompactWidth: CGFloat = 360
     private var availableCardHeight: CGFloat = 660
     private var screenID: String {
         UserDefaults.standard.string(forKey: "widget.display") ?? ""
@@ -24,6 +28,13 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     ) {
         model = WidgetModel(binaryPath: binaryPath, stateRoot: stateRoot)
         super.init()
+        do {
+            try modules.register(
+                WidgetModuleDescriptor(
+                    id: "agents", title: "Agent Inbox", symbol: "bubble.left.and.bubble.right.fill", tint: .blue,
+                    summary: { [weak model] in model?.selected?.title ?? "Your local agents" }
+                ) { [model] presentation in AgentWidgetModuleView(model: model, presentation: presentation) })
+        } catch { model.error = error.localizedDescription }
         model.openHub = openHub
         model.openDestination =
             openDestination ?? { session, mode, file in
@@ -66,6 +77,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
 
     public func stop() {
         model.stop()
+        modules.removeAllSurfaces()
         for monitor in [localMouse, globalMouse, keyboard].compactMap({ $0 }) {
             NSEvent.removeMonitor(monitor)
         }
@@ -75,11 +87,36 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         mediaWindow?.close()
     }
 
+    public func registerModule(_ module: WidgetModuleDescriptor) throws {
+        try modules.register(module)
+        if display != nil { rebuildPanels() }
+    }
+
+    private func compactHeight(_ ids: [String]) -> CGFloat {
+        50 + CGFloat(max(1, ids.count)) * 39 + (ids.contains("agents") ? 76 : 0)
+    }
+
+    private func moduleIDs(for surface: WidgetSurfaceID) -> [String] {
+        let available = Set(modules.modules.map(\.id))
+        if surface.edge == .top { return model.layout.top(available: available) }
+        let groups = model.layout.groups(available: available)
+        return groups.indices.contains(surface.group) ? groups[surface.group] : []
+    }
+
+    private func selectedModule(for surface: WidgetSurfaceID) -> WidgetModuleDescriptor? {
+        let ids = moduleIDs(for: surface)
+        let selected = model.moduleSelections[surface.key]
+        return ids.first(where: { $0 == selected }).flatMap(modules.module)
+            ?? ids.first.flatMap(modules.module)
+    }
+
     private func rebuildPanels() {
+        let previous = Set(panels.keys)
         panels.values.forEach { $0.hide() }
         panels = [:]
         let requested = NSScreen.screens.first { Self.id($0) == screenID }
         guard let screen = requested ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        display = screen
         let cutout: CGFloat
         if screen.safeAreaInsets.top > 0, let left = screen.auxiliaryTopLeftArea,
             let right = screen.auxiliaryTopRightArea
@@ -88,27 +125,36 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         } else {
             cutout = 0
         }
-        let topHeight = max(36, screen.safeAreaInsets.top + 6)
-        topHeaderHeight = topHeight
+        topHeaderHeight = max(36, screen.safeAreaInsets.top + 6)
+        topCompactWidth = max(360, cutout + 260)
         availableCardHeight = min(660, screen.visibleFrame.height - 20)
-        let side = model.side
-        lastSide = side
-        panels[.top] = EdgePanelController(
-            placement: .top, screen: screen,
-            compactSize: CGSize(width: max(290, cutout + 180), height: topHeight),
-            expandedSize: CGSize(
-                width: 432, height: min(660, screen.visibleFrame.height - 20) + topHeight),
-            title: "Agents · top"
-        ) {
-            LiveWidgetView(model: model, edge: .top, cutout: cutout, compactHeight: topHeight)
+        lastSide = model.side
+        var layout = model.layout
+        layout.sidePosition = 0.5
+        lastLayout = layout
+        let sideGroups = layout.groups(available: Set(modules.modules.map(\.id)))
+        let surfaces =
+            [WidgetSurfaceID(edge: .top)]
+            + sideGroups.indices.map { WidgetSurfaceID(edge: model.side, group: $0) }
+        for surface in surfaces {
+            let ids = moduleIDs(for: surface)
+            model.resolveModules(ids, on: surface)
+            let top = surface.edge == .top
+            let compact = CGSize(
+                width: top ? topCompactWidth : 44,
+                height: top ? topHeaderHeight : compactHeight(ids))
+            panels[surface] = EdgePanelController(
+                placement: surface.edge, screen: screen, compactSize: compact,
+                expandedSize: CGSize(width: top ? 432 : 476, height: 600),
+                title: top ? "Widgets · top" : "Widgets · side \(surface.group + 1)"
+            ) {
+                WidgetHostView(
+                    model: model, registry: modules, surface: surface, moduleIDs: ids,
+                    cutout: cutout, headerHeight: topHeaderHeight,
+                    visibleHeight: screen.visibleFrame.height)
+            }
         }
-        panels[side] = EdgePanelController(
-            placement: side, screen: screen, compactSize: CGSize(width: 38, height: 300),
-            expandedSize: CGSize(width: 470, height: min(660, screen.visibleFrame.height - 20)),
-            title: "Agents · side"
-        ) {
-            LiveWidgetView(model: model, edge: side)
-        }
+        for surface in previous.subtracting(panels.keys) { modules.update(surface: surface, moduleID: nil) }
         sync()
     }
 
@@ -117,28 +163,61 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             settings?.orderOut(nil)
             model.dialogOpen = mediaWindow?.isVisible == true
         }
-        if lastSide != model.side {
+        var layout = model.layout
+        layout.sidePosition = 0.5
+        if lastSide != model.side || lastLayout != layout {
             rebuildPanels()
             return
         }
-        for (edge, controller) in panels {
-            let visible =
-                model.placement == "both" || (model.placement == "top" ? edge == .top : edge != .top)
-            if visible {
-                if edge != .top { controller.setCompactSize(CGSize(width: 38, height: model.hasActivity ? 300 : 78)) }
-                if !model.dialogOpen {
-                    controller.setExpandedSize(
-                        CGSize(
-                            width: edge == .top ? 432 : 470,
-                            height: min(model.preferredHeight, availableCardHeight)
-                                + (edge == .top ? topHeaderHeight : 0)))
-                }
-                controller.show()
-                controller.setExpanded(model.expanded == edge, reduceMotion: model.effectiveReduceMotion)
-            } else {
-                controller.hide()
-                if model.expanded == edge { model.collapse() }
+        guard let screen = display else { return }
+        let sideSurfaces = panels.keys.filter { $0.edge != .top }.sorted { $0.group < $1.group }
+        var sideHeights = sideSurfaces.map { surface -> CGFloat in
+            let compact = compactHeight(moduleIDs(for: surface))
+            let module = selectedModule(for: surface)
+            switch model.presentation(for: surface) {
+            case .compact: return compact
+            case .preview: return max(compact, 245)
+            case .expanded:
+                let height = module?.id == "agents" ? model.preferredHeight : (module?.expandedSize.height ?? 440)
+                return max(compact, min(availableCardHeight, height + 40))
             }
+        }
+        let gaps = CGFloat(max(0, sideSurfaces.count - 1)) * 12
+        let total = sideHeights.reduce(0, +) + gaps
+        if total > screen.visibleFrame.height {
+            let scale = (screen.visibleFrame.height - gaps) / max(1, sideHeights.reduce(0, +))
+            sideHeights = sideHeights.map { max(1, $0 * scale) }
+        }
+        model.sideClusterHeight = sideHeights.reduce(0, +) + gaps
+        let centers = WidgetClusterGeometry.centers(
+            heights: sideHeights, position: model.sidePosition, visible: screen.visibleFrame)
+        for (surface, controller) in panels {
+            let top = surface.edge == .top
+            let visible = model.placement == "both" || (model.placement == "top" ? top : !top)
+            guard visible else {
+                controller.hide()
+                modules.update(surface: surface, moduleID: nil)
+                continue
+            }
+            let module = selectedModule(for: surface)
+            let presentation = model.presentation(for: surface)
+            let contentHeight = module?.id == "agents" ? model.preferredHeight : (module?.expandedSize.height ?? 440)
+            let width = module?.expandedSize.width ?? 432
+            if top {
+                controller.setExpandedSize(
+                    CGSize(
+                        width: max(topCompactWidth, width),
+                        height: min(availableCardHeight, contentHeight + 40) + topHeaderHeight))
+                controller.setPreviewSize(CGSize(width: max(topCompactWidth, width), height: 245 + topHeaderHeight))
+            } else if let index = sideSurfaces.firstIndex(of: surface) {
+                controller.setSideCenterY(centers[index])
+                controller.setCompactSize(CGSize(width: 44, height: sideHeights[index]))
+                controller.setPreviewSize(CGSize(width: 324, height: sideHeights[index]))
+                controller.setExpandedSize(CGSize(width: width + 44, height: sideHeights[index]))
+            }
+            controller.show()
+            controller.setPresentation(presentation, reduceMotion: model.effectiveReduceMotion || model.draggingSide)
+            modules.update(surface: surface, moduleID: module?.id, presentation: presentation)
         }
     }
 
@@ -171,7 +250,9 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
 
     private func showMedia(_ selection: WidgetMediaSelection) {
         mediaWindow?.close()
-        let anchor = panels[model.expanded ?? model.side]?.panel
+        let surface = WidgetSurfaceID(
+            edge: model.expanded ?? model.side, group: model.expanded == .top ? 0 : model.activeSideGroup)
+        let anchor = panels[surface]?.panel
         guard let screen = anchor?.screen ?? NSScreen.main else { return }
         let frame = EdgePanelGeometry.mediaFrame(
             anchor: anchor?.frame ?? screen.visibleFrame, visible: screen.visibleFrame)
@@ -222,10 +303,14 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func handleKey(_ event: NSEvent) -> NSEvent? {
-        guard let expanded = model.expanded, let panel = panels[expanded]?.panel,
+        guard let expanded = model.expanded,
+            let panel = panels[WidgetSurfaceID(edge: expanded, group: expanded == .top ? 0 : model.activeSideGroup)]?
+                .panel,
             event.window === panel, panel.isKeyWindow
         else { return event }
-        if event.modifierFlags.contains(.command),
+        let active = WidgetSurfaceID(edge: expanded, group: expanded == .top ? 0 : model.activeSideGroup)
+        let isAgent = selectedModule(for: active)?.id == "agents"
+        if isAgent, event.modifierFlags.contains(.command),
             event.charactersIgnoringModifiers?.lowercased() == "v"
         {
             return model.pasteMedia() ? nil : event
@@ -237,6 +322,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             model.collapse()
             return nil
         }
+        guard isAgent else { return event }
         if panel.firstResponder is NSTextView { return event }
         if let control = panel.firstResponder as? NSControl, control.currentEditor() != nil {
             return event

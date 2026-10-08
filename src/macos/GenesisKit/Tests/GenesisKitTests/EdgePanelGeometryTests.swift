@@ -171,3 +171,65 @@ final class WidgetModuleTests: XCTestCase {
                 starting: 0.5, translationDown: -2000, clusterHeight: 400, visibleHeight: 900), 0)
     }
 }
+
+final class WidgetInteractionTests: XCTestCase {
+    @MainActor
+    private func model(defaults: UserDefaults) -> WidgetModel {
+        WidgetModel(
+            binaryPath: "/fixture/no-process", defaults: defaults,
+            appearance: NativeSettingsAppearance(
+                defaults: defaults, notificationNamespace: UUID().uuidString, observeExternalChanges: false))
+    }
+
+    @MainActor
+    func testEachSurfaceRestoresItsOwnModuleAndRemovedModulesFallBack() {
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = model(defaults: defaults)
+        let top = WidgetSurfaceID(edge: .top)
+        let side = WidgetSurfaceID(edge: .right, group: 2)
+        value.openModule("voice", on: side)
+        XCTAssertEqual(value.activeModuleID, "voice")
+        XCTAssertEqual(value.presentation(for: side), .expanded)
+        XCTAssertEqual(value.presentation(for: top), .compact)
+        value.openModule("tasks", on: top)
+        XCTAssertEqual(value.presentation(for: side), .compact)
+        XCTAssertEqual(value.activeModuleID, "tasks")
+        value.collapse()
+
+        let restored = model(defaults: defaults)
+        XCTAssertEqual(restored.moduleSelections[top.key], "tasks")
+        XCTAssertEqual(restored.moduleSelections[side.key], "voice")
+        restored.resolveModules(["capture", "agents"], on: top)
+        XCTAssertEqual(restored.moduleSelections[top.key], "capture")
+        restored.resolveModules([], on: side)
+        XCTAssertNil(restored.moduleSelections[side.key])
+        value.stop()
+        restored.stop()
+    }
+
+    @MainActor
+    func testHoverStaysPassiveAndAnExplicitClickCancelsPendingHover() async throws {
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        let top = WidgetSurfaceID(edge: .top)
+        let side = WidgetSurfaceID(edge: .right)
+        value.hover(side, inside: true)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(value.presentation(for: side), .preview)
+        XCTAssertNil(value.expanded)
+        value.hover(top, inside: true)
+        value.openModule("tasks", on: side)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertNil(value.hoveredSurface)
+        XCTAssertEqual(value.presentation(for: side), .expanded)
+        XCTAssertEqual(value.presentation(for: top), .compact)
+        value.collapse()
+        XCTAssertNil(value.hoveredSurface)
+        XCTAssertNil(value.expanded)
+    }
+}

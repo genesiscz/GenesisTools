@@ -26,6 +26,10 @@ public final class EdgePanelController<Content: View> {
     private let screen: NSScreen
     private var compactSize: CGSize
     private var expandedSize: CGSize
+    private var previewSize = CGSize(width: 300, height: 240)
+    private var sideCenterY: CGFloat?
+    private var lastTarget: CGRect?
+    private var lastPresentation: WidgetModulePresentation?
     private var animation: EdgeFrameAnimation?
     private var generation = 0
     public private(set) var isExpanded = false
@@ -60,10 +64,15 @@ public final class EdgePanelController<Content: View> {
 
     public func setCompactSize(_ size: CGSize) { compactSize = size }
     public func setExpandedSize(_ size: CGSize) { expandedSize = size }
+    public func setPreviewSize(_ size: CGSize) { previewSize = size }
+    public func setSideCenterY(_ value: CGFloat) { sideCenterY = value }
 
-    public func show() { panel.orderFrontRegardless() }
+    public func show() {
+        if !panel.isVisible { panel.orderFrontRegardless() }
+    }
 
     public func hide() {
+        lastTarget = nil
         generation += 1
         animation?.stop()
         animation = nil
@@ -71,15 +80,29 @@ public final class EdgePanelController<Content: View> {
     }
 
     public func setExpanded(_ expanded: Bool, reduceMotion: Bool) {
+        setPresentation(expanded ? .expanded : .compact, reduceMotion: reduceMotion)
+    }
+
+    public func setPresentation(_ presentation: WidgetModulePresentation, reduceMotion: Bool) {
+        let expanded = presentation == .expanded
         let becameExpanded = expanded && !isExpanded
+        let size: CGSize
+        switch presentation {
+        case .compact: size = compactSize
+        case .preview: size = previewSize
+        case .expanded: size = expandedSize
+        }
+        let target = EdgePanelGeometry.frame(
+            placement: placement, size: size,
+            screen: screen.frame, visible: screen.visibleFrame,
+            sideCenterY: sideCenterY ?? screen.visibleFrame.midY + 55)
+        if lastTarget == target, lastPresentation == presentation, !reduceMotion { return }
+        lastTarget = target
+        lastPresentation = presentation
         generation += 1
         let token = generation
         animation?.stop()
         isExpanded = expanded
-        let target = EdgePanelGeometry.frame(
-            placement: placement, size: expanded ? expandedSize : compactSize,
-            screen: screen.frame, visible: screen.visibleFrame,
-            sideCenterY: screen.visibleFrame.midY + 55)
         if reduceMotion || !panel.isVisible || panel.frame == target {
             panel.setFrame(target, display: true)
         } else {
