@@ -2647,6 +2647,15 @@ const probe = {
     stuckFrames: 0,
     corrections: 0,
     renderedMax: 0,
+    /** Frames where the code under the viewport moved by a different amount than the scroll did. */
+    jumps: 0,
+    maxJump: 0,
+    /** Jumps the page undid by scrolling the same amount (scroll anchoring). */
+    anchored: 0,
+    jumpNotes: [] as string[],
+    /** Each drawn file's element height at the last frame, to name the file that grew or shrank in a jump. */
+    heights: new Map<string, number>(),
+    tracked: null as { el: Element; line: string | null; file: string | null; top: number; scroll: number } | null,
     samples: [] as { time: number; top: number }[],
 };
 
@@ -2678,6 +2687,12 @@ function probeBegin(now: number): void {
     probe.maxGap = 0;
     probe.lastFrame = now;
     probe.stuckFrames = 0;
+    probe.jumps = 0;
+    probe.maxJump = 0;
+    probe.anchored = 0;
+    probe.jumpNotes = [];
+    probe.heights = new Map();
+    probe.tracked = null;
     probe.corrections = 0;
     probe.renderedMax = 0;
     probe.samples = [];
@@ -2708,6 +2723,7 @@ function probeFrame(now: number): void {
     probe.wheelSinceFrame = 0;
     probe.frameTop = top;
     probe.renderedMax = Math.max(probe.renderedMax, viewer.getRenderedItems().length);
+    trackJump(top);
 
     if (now - probe.lastEvent > 250) {
         probeEnd(now);
@@ -2796,6 +2812,93 @@ function heightDrift(): string {
         .join("; ");
 }
 
+/** The code line under a point of the viewport, through the file's shadow root; null over a header or a gap. */
+function lineAt(x: number, y: number): Element | null {
+    const outer = document.elementFromPoint(x, y);
+    const inner = outer?.shadowRoot?.elementFromPoint(x, y) ?? outer;
+    return inner?.closest("[data-line]") ?? null;
+}
+
+/**
+ * A jump is the code moving under the reader by something other than the scroll: a line that sat at y
+ * should sit at y - Δscroll one frame later. More than 4 px off counts (a row re-measured, a file swapped
+ * in, a correction). Reported with the scroll line, so a "it jumps" report has a number.
+ */
+/** The file a code line belongs to: its file element is reused for other files while the page scrolls. */
+function fileOf(el: Element): string | null {
+    const root = el.getRootNode();
+    const owner = root instanceof ShadowRoot ? root.host : null;
+    return viewer.getRenderedItems().find((item) => item.element === owner || item.element.contains(el))?.id ?? null;
+}
+
+function trackJump(scroll: number): void {
+    const box = host.getBoundingClientRect();
+    const tracked = probe.tracked;
+    const heights = new Map(
+        viewer
+            .getRenderedItems()
+            .map((item) => [item.id, Math.round(item.element.getBoundingClientRect().height)] as const)
+    );
+    const resized = Array.from(heights)
+        .filter(([id, height]) => probe.heights.has(id) && probe.heights.get(id) !== height)
+        .map(
+            ([id, height]) =>
+                `${id.split("/").pop()} ${(probe.heights.get(id) ?? 0) < height ? "+" : ""}${height - (probe.heights.get(id) ?? 0)}px`
+        );
+    probe.heights = heights;
+
+    // The same element showing the same line: the library reuses row elements for other lines while it scrolls.
+    if (
+        tracked?.el.isConnected &&
+        tracked.el.getAttribute("data-line") === tracked.line &&
+        fileOf(tracked.el) === tracked.file
+    ) {
+        const now = tracked.el.getBoundingClientRect().top;
+        const shift = Math.abs(now - tracked.top + (scroll - tracked.scroll));
+
+        if (shift > 4) {
+            probe.jumps += 1;
+            probe.maxJump = Math.max(probe.maxJump, shift);
+            // Scroll anchoring, which WebKit lacks and pierre turns off on its root: put the line back where the
+            // reader's eye was. The page scrolls by the same amount the code moved, in the same frame.
+            const signed = now - tracked.top + (scroll - tracked.scroll);
+            host.scrollTop += signed;
+            probe.anchored += 1;
+
+            if (probe.jumpNotes.length < 6) {
+                const scrollingUp = scroll < tracked.scroll;
+                const items = viewer.getRenderedItems().map((item) => {
+                    const cache: unknown = Reflect.get(item.instance, "cache");
+                    const estimate: unknown =
+                        cache instanceof Object
+                            ? Reflect.get(
+                                  cache,
+                                  options.diffStyle === "split" ? "estimatedSplitHeight" : "estimatedUnifiedHeight"
+                              )
+                            : undefined;
+                    const real = Math.round(item.element.getBoundingClientRect().height);
+                    return `${item.id.split("/").pop()} ${real}px${typeof estimate === "number" ? ` (estimate ${Math.round(estimate)}px)` : ""}`;
+                });
+                probe.jumpNotes.push(
+                    `${Math.round(now - tracked.top + (scroll - tracked.scroll))}px while scrolling ${scrollingUp ? "up" : "down"} ${Math.round(Math.abs(scroll - tracked.scroll))}px, on ${items.join("+")}${resized.length > 0 ? `, resized ${resized.join(" ")}` : ", no file resized"}`
+                );
+            }
+        }
+    }
+
+    // Below the sticky file header, left of the middle: inside the code of whatever file is on top.
+    const el = lineAt(box.left + box.width * 0.3, box.top + Math.min(120, box.height / 3));
+    probe.tracked = el
+        ? {
+              el,
+              line: el.getAttribute("data-line"),
+              file: fileOf(el),
+              top: el.getBoundingClientRect().top,
+              scroll: host.scrollTop,
+          }
+        : null;
+}
+
 function probeEnd(now: number): void {
     probe.active = false;
     runDeferredLoad();
@@ -2822,6 +2925,7 @@ function probeEnd(now: number): void {
             `diff.scroll ${Math.round(probe.travelled)}px in ${Math.round(seconds * 1000)}ms (${Math.round(probe.travelled / seconds)} px/s), ` +
             `wheel ${Math.round(probe.wheel)}px in ${probe.wheelEvents} events, ${probe.scrollEvents} scroll events, ` +
             `frames ${probe.frames} (max gap ${Math.round(probe.maxGap)}ms, ${probe.slowFrames} over 34ms), stuck ${probe.stuckFrames}, ` +
+            `jumps ${probe.jumps}${probe.jumps > 0 ? ` (max ${Math.round(probe.maxJump)}px, ${probe.anchored} put back: ${probe.jumpNotes.join("; ")})` : ""}, ` +
             `corrections ${probe.corrections}, end speed ${endSpeed.toFixed(2)} px/ms, items on page ${probe.renderedMax}, ${files.length} files` +
             `${now - probe.lastEvent > 1000 ? " (ended late)" : ""}`,
     });
