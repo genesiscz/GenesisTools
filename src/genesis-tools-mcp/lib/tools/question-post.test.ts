@@ -652,6 +652,30 @@ describe("question_post inline tokens and superseding", () => {
     });
 });
 
+test("oversized media context is rejected without resolving the form or losing bytes", async () => {
+    const posted = await handleQuestionPost(
+        { projectPath: "/tmp/gt-mcp-fixture", question: "Review video?", choices: [{ id: "c1", label: "yes" }] },
+        deps
+    );
+    const id = idIn(posted);
+    const oversized = "ž".repeat(128_001);
+    const refused = await handleQuestionRespond(
+        { id, answers: [{ itemId: "q1", selectedChoices: ["c1"], mediaContext: oversized }] },
+        deps
+    );
+    expect(refused).toContain("media context");
+    expect(getAskForm(id, deps)?.status).toBe("pending");
+    expect(getAskForm(id, deps)?.answers).toBeUndefined();
+    const accepted = "ž".repeat(128_000);
+    await handleQuestionRespond(
+        { id, answers: [{ itemId: "q1", selectedChoices: ["c1"], mediaContext: accepted }] },
+        deps
+    );
+    expect(getAskForm(id, deps)?.status).toBe("answered");
+    expect(getAskForm(id, deps)?.answers?.q1.mediaContext?.length).toBe(accepted.length);
+    expect(getAskForm(id, deps)?.answers?.q1.mediaContext === accepted).toBe(true);
+});
+
 test("media context supplements a typed answer and reaches the waiting consumer", async () => {
     const posted = await handleQuestionPost(
         {

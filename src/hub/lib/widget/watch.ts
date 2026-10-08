@@ -6,7 +6,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { prepareWidgetAsset } from "../composer/assets";
 import { widgetDispatcher } from "../composer/dispatch";
-import { processWidgetOutbox } from "../composer/engine";
+import { type OutboxDispatcher, processWidgetOutbox } from "../composer/engine";
 import { recoverWidgetOutbox } from "../composer/outbox";
 import { widgetSnapshot } from "./snapshot";
 import { readWidgetState, widgetRoot } from "./storage";
@@ -16,11 +16,17 @@ export async function watchWidget({
     selectedKey,
     signal,
     emit,
+    dependencies = {},
 }: {
     root?: string;
     selectedKey?: string;
     signal: AbortSignal;
     emit: (snapshot: Awaited<ReturnType<typeof widgetSnapshot>>) => void;
+    dependencies?: {
+        prepare?: typeof prepareWidgetAsset;
+        snapshot?: typeof widgetSnapshot;
+        dispatcher?: OutboxDispatcher;
+    };
 }): Promise<void> {
     const directory = widgetRoot(root);
     await mkdir(directory, { recursive: true });
@@ -29,7 +35,9 @@ export async function watchWidget({
         async () => {
             await recoverWidgetOutbox(directory);
             const jobs = new Map<string, { revision: number; controller: AbortController; done: Promise<void> }>();
-            const dispatcher = widgetDispatcher({ signal });
+            const dispatcher = dependencies.dispatcher ?? widgetDispatcher({ signal });
+            const prepare = dependencies.prepare ?? prepareWidgetAsset;
+            const readSnapshot = dependencies.snapshot ?? widgetSnapshot;
             let dispatchTask: Promise<void> | undefined;
             let last = "";
             let lastDiscovery = 0;
@@ -65,7 +73,7 @@ export async function watchWidget({
                     const done = (async () => {
                         await old?.done;
                         if (!controller.signal.aborted) {
-                            await prepareWidgetAsset({ root: directory, id, signal: controller.signal });
+                            await prepare({ root: directory, id, signal: controller.signal });
                         }
                     })()
                         .catch((error) => {
@@ -90,7 +98,7 @@ export async function watchWidget({
                 if (discover) {
                     lastDiscovery = Date.now();
                 }
-                const snapshot = await widgetSnapshot({ root: directory, selectedKey, refresh: discover });
+                const snapshot = await readSnapshot({ root: directory, selectedKey, refresh: discover });
                 const fingerprint = SafeJSON.stringify(snapshot);
                 if (fingerprint !== last && !signal.aborted) {
                     last = fingerprint;

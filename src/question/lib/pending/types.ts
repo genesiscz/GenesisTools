@@ -118,6 +118,7 @@ export const MAX_IMAGE_BASE64_CHARS = 2_000_000;
 export const MAX_IMAGES_PER_ANSWER = 4;
 export const MAX_FILE_TAGS_PER_ANSWER = 20;
 export const MAX_FREE_TEXT_CHARS = 16_000;
+export const MAX_MEDIA_CONTEXT_CHARS = 128_000;
 /** What a `wait` with no explicit budget gives up after. Matches the Genesis default. */
 export const DEFAULT_WAIT_BUDGET_MS = 120_000;
 /**

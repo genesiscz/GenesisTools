@@ -8,7 +8,7 @@ import { loadConfig } from "../config";
 import { recordAnswer } from "../record";
 import type { RecordResult } from "../types";
 import { appendPendingEvent } from "./events";
-import { createAskForm, missingRequiredItems, sanitizeAnswer } from "./form";
+import { answerMediaContextError, createAskForm, missingRequiredItems, sanitizeAnswer } from "./form";
 import { notifyPendingForm, retractPendingNotification } from "./notify";
 import { renderFormAnswer, renderFormQuestion } from "./render";
 import {
@@ -212,6 +212,10 @@ export function checkAskAnswer(id: string, answers: AskAnswer[], deps: AskDeps =
         }
 
         if (form.items.some((item) => item.id === answer.itemId)) {
+            const mediaError = answerMediaContextError(answer);
+            if (mediaError) {
+                return { ok: false, code: "incomplete", error: mediaError };
+            }
             sanitized[answer.itemId] = sanitizeAnswer(answer, form);
         }
     }

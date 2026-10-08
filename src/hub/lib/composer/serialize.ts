@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { MAX_MEDIA_CONTEXT_CHARS } from "@app/question/lib/pending/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { videoManifestSchema } from "@genesiscz/utils/video/types";
 import type { WidgetAsset, WidgetOutgoing, WidgetState } from "../widget/types";
@@ -64,7 +65,13 @@ export async function serializeWidgetMedia(assets: WidgetAsset[]): Promise<strin
                 "\nThe referenced files are local media evidence. For different frames use the video-review reference; for a new capture use capture.md.\n</fromVideo>"
         );
     }
-    return blocks.join("\n\n");
+    const context = blocks.join("\n\n");
+    if (context.length > MAX_MEDIA_CONTEXT_CHARS) {
+        throw new Error(
+            `The media context exceeds ${MAX_MEDIA_CONTEXT_CHARS} characters. Reduce attachments or use more frames per image, then retry.`
+        );
+    }
+    return context;
 }
 
 export async function serializeWidgetMessage(message: WidgetOutgoing, state: WidgetState): Promise<string> {

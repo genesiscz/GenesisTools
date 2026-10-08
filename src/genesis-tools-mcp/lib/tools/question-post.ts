@@ -21,7 +21,7 @@ import {
 } from "@app/question/lib/pending/ask";
 import { summarizeForm } from "@app/question/lib/pending/render";
 import type { AskAnswer, AskChoice, AskForm } from "@app/question/lib/pending/types";
-import { DEFAULT_WAIT_BUDGET_MS } from "@app/question/lib/pending/types";
+import { DEFAULT_WAIT_BUDGET_MS, MAX_MEDIA_CONTEXT_CHARS } from "@app/question/lib/pending/types";
 import { questionTokenRegistry, transcludeItems, transclusionReport } from "@app/question/lib/transclude";
 import { callerCwd } from "@genesiscz/utils/agent/runtime";
 import { SOURCE_MESSAGE_INPUT_SCHEMA, type SourceMessage } from "@genesiscz/utils/agent/source-anchor";
@@ -420,7 +420,7 @@ export const QUESTION_RESPOND_INPUT_SCHEMA = {
                     fileTags: { type: "array", items: { type: "string" } },
                     mediaContext: {
                         type: "string",
-                        maxLength: 128000,
+                        maxLength: MAX_MEDIA_CONTEXT_CHARS,
                         description:
                             "Additional user-provided local image/video paths and prepared evidence; does not replace typed answers.",
                     },
