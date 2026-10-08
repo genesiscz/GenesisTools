@@ -201,9 +201,9 @@ const NEXT: Record<DecisionKind, Record<DecisionState, DecisionState[]>> = {
         drafted: [],
         answered: [],
         sent: [],
-        acknowledged: ["implemented"],
-        implemented: [],
-        dismissed: [],
+        acknowledged: ["implemented", "dismissed"],
+        implemented: ["open"],
+        dismissed: ["open"],
     },
 };
 
@@ -549,7 +549,7 @@ export async function updateDecision(
     now = () => new Date().toISOString()
 ): Promise<DecisionRecord> {
     const patch = parseDecisionInput(decisionPatchSchema, payload, "decision update");
-    const [row] = await applyUpdates(file, events, [{ ...patch, id }], now);
+    const [row] = await applyUpdates({ file, events, updates: [{ ...patch, id }], now });
 
     if (!row) {
         throw new Error(`no decision ${id}`);
@@ -569,16 +569,87 @@ export async function updateDecisions(
     now = () => new Date().toISOString()
 ): Promise<DecisionRecord[]> {
     const { updates } = parseDecisionInput(decisionBatchUpdateSchema, payload, "question update");
-    return applyUpdates(file, events, updates, now);
+    return applyUpdates({ file, events, updates, now });
 }
 
-function applyUpdates(
-    file: string,
-    events: string,
-    updates: DecisionUpdate[],
-    now: () => string
-): Promise<DecisionRecord[]> {
+export interface TodoUpdateSnapshot {
+    revision: number;
+    state: DecisionState;
+    updatedTs: string;
+    sessionId: string;
+    provider: string;
+}
+
+/** An explicit local TODO action against the exact version and state the user saw. */
+export async function updateTodo({
+    file,
+    events,
+    id,
+    state,
+    expected,
+    signal,
+    now = () => new Date().toISOString(),
+}: {
+    file: string;
+    events: string;
+    id: string;
+    state: "acknowledged" | "implemented" | "dismissed" | "open";
+    expected: TodoUpdateSnapshot;
+    signal?: AbortSignal;
+    now?: () => string;
+}): Promise<DecisionRecord> {
+    const patch = parseDecisionInput(
+        decisionPatchSchema,
+        { state, expectedRevision: expected.revision },
+        "todo update"
+    );
+    const [row] = await applyUpdates({
+        file,
+        events,
+        updates: [{ ...patch, id }],
+        signal,
+        now: () => {
+            const requested = Date.parse(now());
+            const previous = Date.parse(expected.updatedTs);
+            return new Date(Math.max(requested, Number.isFinite(previous) ? previous + 1 : requested)).toISOString();
+        },
+        beforeUpdate: (current) => {
+            if (
+                kindOf(current) !== "todo" ||
+                current.sessionId !== expected.sessionId ||
+                (providerName(current.provider) ?? "unknown") !== expected.provider
+            ) {
+                throw new Error("This task belongs to a different source or is not a TODO");
+            }
+            if (current.state !== expected.state || current.updatedTs !== expected.updatedTs) {
+                throw new Error("This task changed since it was shown. Refresh before trying again.");
+            }
+        },
+    });
+    if (!row) {
+        throw new Error(`no todo ${id}`);
+    }
+    return row;
+}
+
+function applyUpdates({
+    file,
+    events,
+    updates,
+    now,
+    signal,
+    beforeUpdate,
+}: {
+    file: string;
+    events: string;
+    updates: DecisionUpdate[];
+    now: () => string;
+    signal?: AbortSignal;
+    beforeUpdate?: (row: DecisionRecord) => void;
+}): Promise<DecisionRecord[]> {
+    signal?.throwIfAborted();
     return withDecisionsLock(file, () => {
+        signal?.throwIfAborted();
         const rows = readDecisions(file);
         const byId = new Map(rows.map((row) => [row.id, row]));
         const ts = now();
@@ -590,9 +661,11 @@ function applyUpdates(
                 throw new Error(`no decision ${id}`);
             }
 
+            beforeUpdate?.(row);
             byId.set(id, patched(row, patch, ts));
         }
 
+        signal?.throwIfAborted();
         const changed = new Set(updates.map((update) => update.id));
         rewrite(
             file,

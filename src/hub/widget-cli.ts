@@ -20,12 +20,14 @@ widget
     .command("pin <session>")
     .requiredOption("--provider <provider>")
     .action(async (session: string, options, command) => {
+import { registerWidgetTasks } from "./widget-tasks-cli";
         const root = command.optsWithGlobals().stateRoot;
         const snapshot = await widgetSnapshot({ root });
         const candidates = snapshot.sessions.filter(
             (entry) => entry.target.sessionId === session && entry.target.provider === options.provider
         );
         if (candidates.length !== 1) {
+registerWidgetTasks(widget);
             throw new Error("Choose the exact session in Widget sessions; its identity is unavailable or ambiguous.");
         }
         out.result(

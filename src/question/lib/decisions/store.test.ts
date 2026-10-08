@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { listWidgetTasks, updateWidgetTask, widgetTask } from "@app/hub/lib/widget/tasks";
 import { runAsCaller } from "@genesiscz/utils/agent/runtime";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
@@ -31,6 +32,7 @@ import {
     readDecisions,
     updateDecision,
     updateDecisions,
+    updateTodo,
 } from "./store";
 
 /** A row another process wrote, appended while the test holds the decisions lock. */
@@ -1010,4 +1012,190 @@ test("a multiplexed decision uses the explicitly provided worktree for repositor
     expect(row.repoRoot).toBe("/fixture/agent-worktree");
     expect(row.project).toBe("agent-worktree");
     expect(row.transcriptAnchor).toMatchObject({ kind: "receipt-time", sessionId: "known-thread", provider: "codex" });
+});
+
+describe("Widget Tasks use the canonical TODO ledger", () => {
+    function fixture() {
+        const dir = mkdtempSync(join(tmpdir(), "widget-tasks-"));
+        const files = { file: join(dir, "decisions.jsonl"), events: join(dir, "events.jsonl") };
+        const row: DecisionRecord = {
+            id: "t_1_fixture",
+            sessionId: "fixture",
+            provider: "codex",
+            type: "todo",
+            number: 1,
+            prompt: "Run the local checks",
+            title: "Verify changes",
+            options: [],
+            state: "open",
+            revision: 1,
+            project: "Fixture",
+            cwd: "/fixture/worktree",
+            branch: "feat/example",
+            for: "agent",
+            blocking: true,
+            updatedTs: "2026-01-01T10:00:00.000Z",
+        };
+        writeFileSync(files.file, `${SafeJSON.stringify(row)}\n`);
+        return { files, row };
+    }
+    const expected = (row: DecisionRecord) => ({
+        revision: row.revision ?? 1,
+        state: row.state,
+        updatedTs: row.updatedTs,
+        sessionId: row.sessionId,
+        provider: row.provider ?? "unknown",
+    });
+
+    test("acknowledge, complete, reopen and dismiss append ordinary audit receipts", async () => {
+        const { files, row } = fixture();
+        let current = row;
+        for (const state of ["acknowledged", "implemented", "open", "acknowledged", "dismissed", "open"] as const) {
+            const next = await updateTodo({
+                ...files,
+                id: row.id,
+                state,
+                expected: expected(current),
+                now: () => row.updatedTs,
+            });
+            expect(next.state).toBe(state);
+            expect(Date.parse(next.updatedTs)).toBeGreaterThan(Date.parse(current.updatedTs));
+            current = next;
+        }
+        const events = readFileSync(files.events, "utf8")
+            .trim()
+            .split("\n")
+            .map((entry) => SafeJSON.parse(entry));
+        expect(events.map((event) => event.state)).toEqual([
+            "acknowledged",
+            "implemented",
+            "open",
+            "acknowledged",
+            "dismissed",
+            "open",
+        ]);
+        expect(events.every((event) => event.ev === "updated" && event.id === row.id)).toBe(true);
+        writeFileSync(files.file, `${SafeJSON.stringify({ ...current, type: "decision", state: "implemented" })}\n`);
+        await expect(updateDecision(files.file, files.events, row.id, { state: "open" })).rejects.toThrow(
+            "cannot move"
+        );
+    });
+
+    test("stale state, updated stamp, revision and foreign source never overwrite the saved TODO", async () => {
+        const { files, row } = fixture();
+        const acknowledged = await updateTodo({ ...files, id: row.id, state: "acknowledged", expected: expected(row) });
+        const before = readFileSync(files.file, "utf8");
+        for (const guard of [
+            expected(row),
+            { ...expected(acknowledged), updatedTs: row.updatedTs },
+            { ...expected(acknowledged), revision: 9 },
+            { ...expected(acknowledged), provider: "grok" },
+            { ...expected(acknowledged), sessionId: "other" },
+        ]) {
+            await expect(updateTodo({ ...files, id: row.id, state: "implemented", expected: guard })).rejects.toThrow();
+            expect(readFileSync(files.file, "utf8")).toBe(before);
+        }
+    });
+
+    test("cancellation while waiting for the canonical lock cannot reach mutation", async () => {
+        const { files, row } = fixture();
+        const before = readFileSync(files.file, "utf8");
+        const controller = new AbortController();
+        let pending: Promise<unknown> | undefined;
+        await withFileLock(`${files.file}.lock`, async () => {
+            pending = updateTodo({
+                ...files,
+                id: row.id,
+                state: "implemented",
+                expected: expected(row),
+                signal: controller.signal,
+            }).catch((error: unknown) => error);
+            controller.abort();
+        });
+        expect(await pending).toBeInstanceOf(Error);
+        expect(readFileSync(files.file, "utf8")).toBe(before);
+        expect(existsSync(files.events)).toBe(false);
+        const normal = await updateTodo({ ...files, id: row.id, state: "implemented", expected: expected(row) });
+        expect(normal.state).toBe("implemented");
+        expect(existsSync(files.events)).toBe(true);
+    });
+
+    test("listed provider aliases round-trip through the canonical source guard without blocking normal updates", async () => {
+        for (const [alias, provider] of [
+            ["codex-cli", "codex"],
+            ["grok-cli", "grok"],
+            ["claude_code", "claude"],
+            ["claudecode", "claude"],
+            ["claude-cli", "claude"],
+            ["  ClAuDe  ", "claude"],
+            ["codex", "codex"],
+            ["custom", "custom"],
+        ]) {
+            const { files, row } = fixture();
+            writeFileSync(files.file, `${SafeJSON.stringify({ ...row, provider: alias })}\n`);
+            const task = listWidgetTasks({ file: files.file }).tasks[0];
+            expect(task.provider).toBe(provider);
+            const result = await updateWidgetTask({
+                files,
+                input: {
+                    id: task.id,
+                    action: "complete",
+                    expected: {
+                        revision: task.revision,
+                        state: task.state,
+                        updatedTs: task.updatedTs,
+                        sessionId: task.sessionId,
+                        provider: task.provider,
+                    },
+                },
+            });
+            expect(result.task.provider).toBe(provider);
+            expect(result.receipt).toMatchObject({ state: "implemented", saved: true });
+        }
+    });
+
+    test("metadata defaults, project/session/state filters, bounds and cache invalidation preserve source fields", async () => {
+        const { files, row } = fixture();
+        const rows = [
+            row,
+            { ...row, id: "t_2_fixture", state: "implemented", project: "Other", blocking: false },
+            { ...row, id: "t_3_fixture", provider: "grok", state: "dismissed" },
+            { ...row, id: "d_1_fixture", type: "decision" },
+        ];
+        writeFileSync(files.file, rows.map((entry) => SafeJSON.stringify(entry)).join("\n") + "\n");
+        const active = listWidgetTasks({ file: files.file });
+        expect(active.tasks.map((task) => task.id)).toEqual([row.id]);
+        expect(active.tasks[0]?.sourceContext).toMatchObject({
+            project: "Fixture",
+            cwd: "/fixture/worktree",
+            branch: "feat/example",
+        });
+        expect(active.tasks[0]?.owner).toBe("agent");
+        expect(active.projects).toEqual(["Fixture", "Other"]);
+        expect(listWidgetTasks({ file: files.file, filters: { scope: "all", limit: 1 } })).toMatchObject({
+            total: 3,
+            truncated: true,
+        });
+        expect(
+            listWidgetTasks({ file: files.file, filters: { scope: "completed", projects: ["Other"] } }).tasks
+        ).toHaveLength(1);
+        expect(
+            listWidgetTasks({ file: files.file, filters: { scope: "all", sessions: ["grok:fixture"] } }).tasks[0]?.state
+        ).toBe("dismissed");
+        expect(listWidgetTasks({ file: files.file, filters: { projects: ["absent"] } }).tasks).toEqual([]);
+        const response = await updateWidgetTask({
+            files,
+            input: { id: row.id, action: "complete", expected: expected(row) },
+        });
+        expect(response.receipt).toMatchObject({ action: "complete", from: "open", state: "implemented", saved: true });
+        expect(listWidgetTasks({ file: files.file }).tasks).toEqual([]);
+        expect(widgetTask({ ...row, prompt: "x".repeat(3000) }).truncated).toBe(true);
+        const missing = join(files.file, "absent");
+        expect(listWidgetTasks({ file: missing }).tasks).toEqual([]);
+        expect(existsSync(missing)).toBe(false);
+        expect(() => listWidgetTasks({ file: files.file, filters: { limit: 999 } })).toThrow();
+        const controller = new AbortController();
+        controller.abort();
+        expect(() => listWidgetTasks({ file: files.file, signal: controller.signal })).toThrow();
+    });
 });
