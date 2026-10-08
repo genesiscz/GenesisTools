@@ -413,6 +413,11 @@ function openComposer(fileId: string, range: SelectedLineRange): void {
 
 const themes = { light: "pierre-light", dark: "pierre-dark" } as const;
 
+/** Space below an open file. The unsafeCSS rule on `[data-code]` and `itemMetrics.paddingBottom` must agree. */
+const FILE_GAP = 12;
+/** pierre's own bottom padding of a file with code (`DEFAULT_CODE_VIEW_FILE_METRICS.paddingBottom`). */
+const PIERRE_PADDING_BOTTOM = 8;
+
 function viewOptions(): CodeViewOptions<AnnotationMeta, undefined> {
     return {
         theme: themes,
@@ -426,14 +431,18 @@ function viewOptions(): CodeViewOptions<AnnotationMeta, undefined> {
         // it z-index 1 and the line-number gutter 3 (thread cards 2, decoration bars up to 4), so during a fast
         // scroll the code was drawn over the file's name for a moment (Martin, 2026-10-08).
         unsafeCSS:
-            "[data-diffs-header] { cursor: pointer; } [data-diffs-header][data-sticky] { z-index: 10; } [data-diffs-header] [data-title], [data-diffs-header] [data-prev-name] { -webkit-user-select: all; user-select: all; cursor: text; }",
+            "[data-diffs-header] { cursor: pointer; } [data-diffs-header][data-sticky] { z-index: 10; } [data-diffs-header] [data-title], [data-diffs-header] [data-prev-name] { -webkit-user-select: all; user-select: all; cursor: text; }" +
+            ` [data-code] { padding-bottom: calc(max(0px, calc(var(--diffs-gap-block, var(--diffs-gap-fallback)) - var(--diffs-scrollbar-gutter))) + ${FILE_GAP}px); }`,
         lineDiffType: "word-alt",
         hunkSeparators: "line-info",
         lineHoverHighlight: "both",
         enableGutterUtility: true,
         enableLineSelection: true,
-        // No top inset: the files run edge to edge with the pane, like the file list beside them.
-        layout: { paddingTop: 0, paddingBottom: 32, gap: 12 },
+        // No top inset: the files run edge to edge with the pane, like the file list beside them. No gap either:
+        // pierre's gap is one number for every pair of files, so folded files stood apart (Martin, 2026-10-08).
+        // The space below an open file is its bottom padding instead, which pierre counts only when code shows.
+        layout: { paddingTop: 0, paddingBottom: 32, gap: 0 },
+        itemMetrics: { paddingBottom: PIERRE_PADDING_BOTTOM + FILE_GAP },
         // About 280 ms to settle (pierre's default is 440): a click in the file list glides, but briefly.
         smoothScrollSettings: { omega: 0.024, positionEpsilon: 0.5, velocityEpsilon: 0.05 },
         onLineClick: openOnCommandClick,
