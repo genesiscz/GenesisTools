@@ -1952,6 +1952,27 @@ extension ClickyTests {
         XCTAssertEqual(ClickyDictationEstimate(totals: totals, wordsPerMinute: 140, setupPerBurst: 3).differenceSeconds, -46)
     }
 
+    func testPreparedPerformanceReportPreservesTotalsAndRejectsCancellation() async {
+        var stats = ClickyStatistics()
+        stats.record(keyCode: 0, release: false, at: date(12))
+        stats.record(keyCode: 0, release: false, at: date(12).addingTimeInterval(2))
+        let filter = ClickyPerformanceFilter(start: date(0), end: date(23, 59))
+        let calendar = self.calendar
+        let expected = ClickyPerformanceReport(statistics: stats, filter: filter, grouping: .minute, calendar: calendar)
+        let prepared = await ClickyPerformanceReport.prepare(statistics: stats, filter: filter, grouping: .minute, calendar: calendar)
+        XCTAssertEqual(prepared?.total, expected.total)
+        XCTAssertEqual(prepared?.hours, expected.hours)
+        XCTAssertEqual(prepared?.weekdays, expected.weekdays)
+        XCTAssertEqual(prepared?.timeline.map(\.date), expected.timeline.map(\.date))
+        XCTAssertEqual(prepared?.timeline.map(\.totals), expected.timeline.map(\.totals))
+        let cancelled = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await ClickyPerformanceReport.prepare(statistics: stats, filter: filter, grouping: .minute, calendar: calendar)
+        }
+        let stale = await cancelled.value
+        XCTAssertNil(stale)
+    }
+
     func testPerformanceRetentionDoesNotInventLegacyTiming() throws {
         var stats = try JSONDecoder().decode(ClickyStatistics.self, from: Data("{\"presses\":12000}".utf8))
         XCTAssertTrue(stats.performanceMinutes.isEmpty)

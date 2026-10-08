@@ -15,6 +15,8 @@ public struct ClickyPerformanceView: View {
     @State private var comparison = "Time of day"
     @State private var example: ClickyStatistics?
     @State private var exampleTime: Date?
+    @State private var preparedReport = ClickyPerformanceReport()
+    @State private var preparing = false
     @AppStorage private var spokenWPM: Int
     @AppStorage private var setupSeconds: Int
     private let weekdayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -40,8 +42,24 @@ public struct ClickyPerformanceView: View {
         return ClickyPerformanceFilter(start: first, end: last, weekdays: weekdays, fromHour: fromHour, untilHour: untilHour)
     }
 
+    private struct Query: Equatable {
+        let revision: UInt64
+        let range: String
+        let start: Date
+        let end: Date
+        let grouping: ClickyPerformanceGrouping
+        let weekdays: Set<Int>
+        let fromHour: Int
+        let untilHour: Int
+        let exampleTime: Date?
+    }
+    private var query: Query {
+        Query(revision: example == nil ? store.revision : 0, range: range, start: start, end: end,
+            grouping: grouping, weekdays: weekdays, fromHour: fromHour, untilHour: untilHour, exampleTime: exampleTime)
+    }
+
     public var body: some View {
-        let report = ClickyPerformanceReport(statistics: data, filter: filter, grouping: grouping)
+        let report = preparedReport
         VStack(alignment: .leading, spacing: 18) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
@@ -50,6 +68,7 @@ public struct ClickyPerformanceView: View {
                         .font(.caption).foregroundStyle(example == nil ? Color.secondary : .orange)
                 }
                 Spacer()
+                if preparing { ProgressView().controlSize(.small).help("Preparing the selected time range") }
                 Button(example == nil ? "Explore sample data" : "Back to my data") {
                     if example == nil {
                         let reference = Date()
@@ -95,6 +114,13 @@ public struct ClickyPerformanceView: View {
                     Text("Timing history since \(since.formatted(date: .abbreviated, time: .shortened))")
                 }
             }.font(.caption).foregroundStyle(.secondary)
+        }
+        .task(id: query) {
+            preparing = true
+            let result = await ClickyPerformanceReport.prepare(statistics: data, filter: filter, grouping: grouping)
+            guard !Task.isCancelled else { return }
+            if let result { preparedReport = result }
+            preparing = false
         }
     }
 

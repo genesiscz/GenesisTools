@@ -20,6 +20,7 @@ public enum ClickyTimeResolution: String, CaseIterable, Identifiable {
 @MainActor
 public final class ClickyAnalyticsStore: ObservableObject {
     @Published public private(set) var snapshot = ClickyStatistics()
+    public private(set) var revision: UInt64 = 0
     private var publishTask: Task<Void, Never>?
 
     func stage(_ source: @escaping @MainActor () -> ClickyStatistics?) {
@@ -33,7 +34,10 @@ public final class ClickyAnalyticsStore: ObservableObject {
     func flush(_ statistics: ClickyStatistics?) {
         publishTask?.cancel()
         publishTask = nil
-        if let statistics { snapshot = statistics }
+        if let statistics {
+            revision &+= 1
+            snapshot = statistics
+        }
     }
 }
 
