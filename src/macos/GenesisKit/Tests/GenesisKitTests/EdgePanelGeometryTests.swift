@@ -979,6 +979,64 @@ final class WidgetRosterTests: XCTestCase {
         }
     }
 
+    func testConversationStartsAtRecentMessagesAndKeepsOlderReadingPosition() async throws {
+        guard #available(macOS 15, *) else { throw XCTSkip("Role-specific scroll anchors require macOS 15") }
+        _ = NSApplication.shared
+        try await withFixture(sessionCount: 1) { model, _, original in
+            model.selectedKey = original.sessions[0].key
+            model.section = "Conversation"
+            func turn(_ index: Int) -> TranscriptTurn {
+                TranscriptTurn(id: "turn-\(index)", role: "assistant",
+                    at: ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: 1_700_000_000 + Double(index))),
+                    text: String(repeating: "Message \(index) fixture content. ", count: 30))
+            }
+            model.transcript = (0..<12).map(turn)
+            let host = NSHostingView(rootView: LiveWidgetView(model: model, edge: .right, embedded: true))
+            host.sizingOptions = []
+            let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 432, height: 600),
+                styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.alphaValue = 0
+            window.ignoresMouseEvents = true
+            defer { window.close() }
+            window.contentView = host
+            window.orderBack(nil)
+            host.layoutSubtreeIfNeeded()
+            func scrollViews(_ view: NSView) -> [NSScrollView] {
+                if let scroll = view as? NSScrollView { return [scroll] }
+                return view.subviews.flatMap(scrollViews)
+            }
+            let scroll = try XCTUnwrap(scrollViews(host).first)
+            let document = try XCTUnwrap(scroll.documentView)
+            func settleAtEnd() async throws {
+                let deadline = ContinuousClock.now + .seconds(2)
+                repeat {
+                    try await Task.sleep(for: .milliseconds(100))
+                    host.layoutSubtreeIfNeeded()
+                } while abs(scroll.contentView.bounds.maxY - document.bounds.maxY) > 2 && ContinuousClock.now < deadline
+            }
+            try await settleAtEnd()
+            XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0, "Conversation must open on recent messages")
+            XCTAssertEqual(scroll.contentView.bounds.maxY, document.bounds.maxY, accuracy: 2)
+            model.transcript.append(turn(12))
+            try await settleAtEnd()
+            XCTAssertEqual(scroll.contentView.bounds.maxY, document.bounds.maxY, accuracy: 2,
+                "A reader at the end follows a newly arrived message")
+
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: 120))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            try await Task.sleep(for: .milliseconds(100))
+            host.layoutSubtreeIfNeeded()
+            let readingY = scroll.contentView.bounds.minY
+            XCTAssertLessThan(readingY, document.bounds.height / 2)
+            model.transcript.append(turn(13))
+            try await Task.sleep(for: .milliseconds(200))
+            host.layoutSubtreeIfNeeded()
+            XCTAssertEqual(scroll.contentView.bounds.minY, readingY, accuracy: 2,
+                "An arriving message must not pull the reader away from older history")
+        }
+    }
+
     func testNewOutgoingMessageScrollsItsReceiptIntoTheViewport() async throws {
         _ = NSApplication.shared
         try await withFixture(sessionCount: 1) { model, _, original in
@@ -998,8 +1056,11 @@ final class WidgetRosterTests: XCTestCase {
             let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 432, height: 600),
                 styleMask: [.borderless], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
+            window.alphaValue = 0
+            window.ignoresMouseEvents = true
             defer { window.close() }
             window.contentView = host
+            window.orderBack(nil)
             host.layoutSubtreeIfNeeded()
             func scrollViews(_ view: NSView) -> [NSScrollView] {
                 if let scroll = view as? NSScrollView { return [scroll] }
@@ -1012,7 +1073,7 @@ final class WidgetRosterTests: XCTestCase {
             snapshot.state.outgoing.append(message(8))
             model.receive([String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)])
             let deadline = ContinuousClock.now + .seconds(2)
-            while scroll.contentView.bounds.minY < 1 && ContinuousClock.now < deadline {
+            while abs(scroll.contentView.bounds.maxY - document.bounds.maxY) > 2 && ContinuousClock.now < deadline {
                 try await Task.sleep(for: .milliseconds(100))
                 host.layoutSubtreeIfNeeded()
             }
