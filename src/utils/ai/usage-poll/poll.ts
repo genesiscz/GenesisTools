@@ -12,6 +12,7 @@ import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types"
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { pluginsWithUsage } from "@genesiscz/utils/ai/providers/registry";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { readerMaxStaleMs, usageDaemonAgeMs } from "./daemon-heartbeat";
 import type { SnapshotsCacheProvider } from "./legacy-cache";
 import { projectRoundIntoLegacyCache, writeSnapshotsCache } from "./legacy-cache";
@@ -92,8 +93,16 @@ export async function pollAccounts(opts: PollAccountsOptions = {}): Promise<Acco
         return [];
     }
 
-    const store = await AiConfigStore.load();
-    const results = await Promise.all(plugins.map((entry) => pollProvider(entry, store.accounts(), opts)));
+    const prof = profiler.scope("ai-usage");
+    const store = await prof.measureAsync("poll.config-load", () => AiConfigStore.load());
+    const results = await Promise.all(
+        plugins.map((entry) =>
+            prof.measureAsync("poll.provider", () => pollProvider(entry, store.accounts(), opts), {
+                provider: entry.plugin.id,
+                force: opts.force === true,
+            })
+        )
+    );
     const out: AccountUsageSnapshot[] = [];
     const byProvider: Record<string, SnapshotsCacheProvider> = {};
 
@@ -112,7 +121,9 @@ export async function pollAccounts(opts: PollAccountsOptions = {}): Promise<Acco
     // merges per provider, so a call that polled one provider never drops the others. A
     // FILTERED round also merges inside its own slice, under the same lock: doing it out
     // here against a pre-lock read let two same-provider rounds overwrite each other.
-    await writeSnapshotsCache(byProvider, latestFetchedAt(out), { mergeAccounts: opts.accountFilter !== undefined });
+    await prof.measureAsync("poll.write-snapshots", () =>
+        writeSnapshotsCache(byProvider, latestFetchedAt(out), { mergeAccounts: opts.accountFilter !== undefined })
+    );
 
     return out;
 }
