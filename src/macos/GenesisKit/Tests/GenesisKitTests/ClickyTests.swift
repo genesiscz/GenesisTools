@@ -2,6 +2,7 @@ import AVFoundation
 import Combine
 import Foundation
 import SwiftUI
+import UserNotifications
 import XCTest
 
 @testable import GenesisKit
@@ -535,15 +536,69 @@ final class ClickyTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         let model = ClickyModel(defaults: defaults, previewOnly: true)
         let sections = ClickySettingsPages.sections(model: model)
-        XCTAssertEqual(sections.map(\.id), ["general", "settings", "clicky", "about"])
-        XCTAssertEqual(sections[1].pages.map(\.id), ["clicky.sound", "clicky.sleep", "clicky.notifications"])
-        XCTAssertEqual(sections[2].pages.map(\.id), ["clicky.stats", "clicky.visualizer"])
+        XCTAssertEqual(sections.map(\.id), ["general", "clicky", "about"])
+        XCTAssertEqual(sections[1].title, "Clicky")
+        XCTAssertEqual(sections[1].pages.map(\.id),
+            ["clicky.sound", "clicky.sleep", "clicky.notifications", "clicky.stats", "clicky.visualizer"])
         XCTAssertFalse(model.enabled)
         let controller = ClickyWindowController(model: model)
         XCTAssertTrue(controller.model === model)
         XCTAssertTrue(controller.settings.store.appearance === model.appearance)
         XCTAssertNil(controller.window)
         model.shutdown()
+    }
+
+    @MainActor
+    func testNotificationPermissionRoutesDeniedToSettingsAndRetainsActivationPreference() async {
+        let suite = "dev.genesis.clicky.notifications.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var authorization: UNAuthorizationStatus = .denied
+        var requests = 0
+        var settingsOpens = 0
+        let client = NativeNotificationClient(status: { authorization }, request: {
+            requests += 1
+            authorization = .authorized
+            return true
+        }, openSettings: { settingsOpens += 1; return true })
+        let model = ClickyModel(defaults: defaults, observeSystemEvents: false, notificationClient: client)
+        defer { model.shutdown() }
+        await model.refreshNotificationPermission()
+        model.setActivationNotifications(true)
+        XCTAssertTrue(model.preferences.notifications, "Blocked permission must not silently reset the preference")
+        XCTAssertEqual(model.notificationActionTitle, "Open Notification Settings")
+        await model.performNotificationAction()
+        XCTAssertEqual(requests, 0, "A denied permission cannot display another prompt")
+        XCTAssertEqual(settingsOpens, 1)
+        XCTAssertTrue(model.preferences.notifications)
+        authorization = .authorized
+        await model.refreshNotificationPermission()
+        XCTAssertEqual(model.notificationStatus, "Allowed")
+        model.setActivationNotifications(false)
+        XCTAssertFalse(model.preferences.notifications)
+        authorization = .notDetermined
+        await model.refreshNotificationPermission()
+        await model.performNotificationAction()
+        XCTAssertEqual(requests, 1, "First-time permission must still be requested")
+        XCTAssertEqual(model.notificationStatus, "Allowed")
+        XCTAssertFalse(model.preferences.notifications, "Permission alone does not change the activation preference")
+        XCTAssertFalse(model.notificationBusy)
+    }
+
+    @MainActor
+    func testNotificationSettingsFailureIsActionable() async {
+        let suite = "dev.genesis.clicky.notifications.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = ClickyModel(defaults: defaults, observeSystemEvents: false,
+            notificationClient: NativeNotificationClient(status: { .denied }, request: {
+                XCTFail("Denied authorization must not be requested again")
+                return false
+            }, openSettings: { false }))
+        defer { model.shutdown() }
+        await model.performNotificationAction()
+        XCTAssertTrue(model.error?.contains("System Settings") == true)
+        XCTAssertFalse(model.notificationBusy)
     }
 
     func testRestoredSettingsGeometryKeepsReachableWindowsAcrossDisplays() {

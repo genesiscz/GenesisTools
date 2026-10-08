@@ -22,7 +22,25 @@ public final class ClickyModel: ObservableObject {
     @Published public private(set) var sleepingUntil: Date?
     @Published public private(set) var pulse = 0
     @Published public private(set) var lastPan: Float = 0
-    @Published public private(set) var notificationStatus = "Not requested"
+    @Published public private(set) var notificationAuthorization: UNAuthorizationStatus = .notDetermined
+    @Published public private(set) var notificationBusy = false
+    public var notificationStatus: String {
+        switch notificationAuthorization {
+        case .authorized, .provisional, .ephemeral: return "Allowed"
+        case .denied: return "Blocked in System Settings"
+        case .notDetermined: return "Not requested"
+        @unknown default: return "Unknown"
+        }
+    }
+    public var notificationActionTitle: String {
+        notificationAuthorization == .notDetermined ? "Allow notifications" : "Open Notification Settings"
+    }
+    public var notificationHelp: String {
+        if notificationAuthorization == .denied {
+            return "macOS is blocking notifications for \(applicationName). Open Notification Settings and turn on Allow notifications. Your activation preference is saved separately."
+        }
+        return "Activation notifications are sent when you enable Clicky. Banner style and sound are controlled in System Settings."
+    }
     @Published public private(set) var error: String?
     public var stateDidChange: (() -> Void)?
     private let defaults: UserDefaults
@@ -41,14 +59,17 @@ public final class ClickyModel: ObservableObject {
     private var pendingStats = false
     private var persistenceWork: DispatchWorkItem?
     private let previewOnly: Bool
+    private let notificationClient: NativeNotificationClient
 
     public init(
         defaults: UserDefaults = .standard, previewOnly: Bool = false, appearance: NativeSettingsAppearance? = nil,
-        inputMonitor: (any ClickyInputMonitoring)? = nil, observeSystemEvents: Bool = true
+        inputMonitor: (any ClickyInputMonitoring)? = nil, observeSystemEvents: Bool = true,
+        notificationClient: NativeNotificationClient? = nil
     ) {
         self.defaults = defaults
         soundLibrary = ClickySoundLibrary(defaults: defaults)
         self.previewOnly = previewOnly
+        self.notificationClient = notificationClient ?? .system
         self.inputMonitor = inputMonitor ?? SystemClickyInputMonitor()
         self.appearance =
             appearance ?? NativeSettingsAppearance(defaults: defaults, observeExternalChanges: !previewOnly)
@@ -107,16 +128,12 @@ public final class ClickyModel: ObservableObject {
             ) { [weak self] _ in
                 MainActor.assumeIsolated { self?.shutdown() }
             })
-        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
-            Task { @MainActor in
-                switch settings.authorizationStatus {
-                case .authorized, .provisional, .ephemeral: self?.notificationStatus = "Allowed"
-                case .denied: self?.notificationStatus = "Not allowed"
-                case .notDetermined: self?.notificationStatus = "Not requested"
-                @unknown default: self?.notificationStatus = "Unknown"
-                }
-            }
-        }
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in await self?.refreshNotificationPermission() }
+        })
+        Task { [weak self] in await self?.refreshNotificationPermission() }
         refreshContext()
     }
 
@@ -252,18 +269,37 @@ public final class ClickyModel: ObservableObject {
         flushStatistics()
     }
 
+    public func refreshNotificationPermission() async {
+        guard !previewOnly, !notificationBusy else { return }
+        notificationAuthorization = await notificationClient.status()
+    }
+
+    public func setActivationNotifications(_ enabled: Bool) {
+        preferences.notifications = enabled
+        if enabled && notificationAuthorization == .notDetermined { requestNotifications() }
+    }
+
     public func requestNotifications() {
-        guard !previewOnly else {
-            notificationStatus = "Unavailable in preview"
-            return
-        }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) {
-            [weak self] granted, error in
-            Task { @MainActor in
-                self?.notificationStatus = granted ? "Allowed" : "Not allowed"
-                self?.preferences.notifications = granted
-                if let error { self?.error = error.localizedDescription }
+        Task { await performNotificationAction() }
+    }
+
+    public func performNotificationAction() async {
+        guard !previewOnly, !notificationBusy else { return }
+        notificationBusy = true
+        defer { notificationBusy = false }
+        error = nil
+        notificationAuthorization = await notificationClient.status()
+        if notificationAuthorization == .notDetermined {
+            do {
+                let granted = try await notificationClient.request()
+                notificationAuthorization = granted ? .authorized : .denied
+                if !granted { error = "Notifications are blocked. You can enable them in Notification Settings." }
+            } catch {
+                self.error = "Could not request notifications: \(error.localizedDescription)"
+                log.error("Notification permission failed: \(error.localizedDescription, privacy: .public)")
             }
+        } else if !notificationClient.openSettings() {
+            error = "Could not open Notification Settings. Open System Settings → Notifications → \(applicationName)."
         }
     }
 
