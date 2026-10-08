@@ -79,7 +79,7 @@ extension ClickyStatistics {
     }
 }
 
-struct ClickyPerformanceFilter: Equatable {
+struct ClickyPerformanceFilter: Equatable, Sendable {
     var start: Date
     var end: Date
     var weekdays: Set<Int> = Set(0..<7)
@@ -94,7 +94,7 @@ struct ClickyPerformanceFilter: Equatable {
     }
 }
 
-enum ClickyPerformanceGrouping: Int, CaseIterable, Identifiable {
+enum ClickyPerformanceGrouping: Int, CaseIterable, Identifiable, Sendable {
     case minute = 60, fiveMinutes = 300, fifteenMinutes = 900, hour = 3600, day = 86400
     var id: Self { self }
     var label: String {
@@ -108,17 +108,35 @@ enum ClickyPerformanceGrouping: Int, CaseIterable, Identifiable {
     }
 }
 
-struct ClickyPerformancePoint: Identifiable {
+struct ClickyPerformancePoint: Identifiable, Sendable {
     let date: Date
     var totals: ClickyPerformanceBucket
     var id: Date { date }
 }
 
-struct ClickyPerformanceReport {
+struct ClickyPerformanceReport: Sendable {
     var total = ClickyPerformanceBucket()
     var timeline: [ClickyPerformancePoint] = []
     var hours = Array(repeating: ClickyPerformanceBucket(), count: 24)
     var weekdays = Array(repeating: ClickyPerformanceBucket(), count: 7)
+
+    init() {}
+
+    static func prepare(statistics: ClickyStatistics, filter: ClickyPerformanceFilter,
+        grouping: ClickyPerformanceGrouping, calendar: Calendar = .current) async -> Self? {
+        guard !Task.isCancelled else { return nil }
+        let worker = Task.detached(priority: .userInitiated) {
+            PerfLog.span("clicky.performance.report", over: PerfLog.frameMs) {
+                Self(statistics: statistics, filter: filter, grouping: grouping, calendar: calendar)
+            }
+        }
+        let report = await withTaskCancellationHandler {
+            await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
+        return Task.isCancelled ? nil : report
+    }
 
     init(statistics: ClickyStatistics, filter: ClickyPerformanceFilter,
         grouping: ClickyPerformanceGrouping, calendar: Calendar = .current) {

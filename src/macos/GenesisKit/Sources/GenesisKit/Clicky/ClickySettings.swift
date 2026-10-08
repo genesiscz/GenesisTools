@@ -90,7 +90,7 @@ public struct ClickyPreferences: Codable, Equatable {
     }
 }
 
-public struct ClickyStatistics: Codable, Equatable {
+public struct ClickyStatistics: Codable, Equatable, Sendable {
     public var presses: Int = 0
     public var releases: Int = 0
     public var sessions: Int = 0
