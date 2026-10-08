@@ -2798,6 +2798,7 @@ function heightDrift(): string {
 
 function probeEnd(now: number): void {
     probe.active = false;
+    runDeferredLoad();
     reportInnerScrollers();
     const drift = heightDrift();
 
@@ -2935,8 +2936,25 @@ let loadBatches = 0;
 let loadFirstPaint = 0;
 let incomingFiles: ShownFile[] = [];
 let incomingItems: CodeViewItem<AnnotationMeta>[] = [];
+/**
+ * A refresh of the same diff that arrived while the reader scrolled: it swaps in when the scroll ends. During a
+ * scroll the page's scroll position lags what is on screen (measured 2026-10-08: the page still read c.ts while
+ * d.ts was drawn), so a swap then worked from a stale position and threw the reader files back (recording 02:01).
+ */
+let deferredLoad: (() => void) | null = null;
+
+function runDeferredLoad(): void {
+    const load = deferredLoad;
+    deferredLoad = null;
+    load?.();
+}
 
 function addFiles(batch: FilesBatch): void {
+    if (batch.first) {
+        // A newer load replaces one that still waits for a scroll to end.
+        deferredLoad = null;
+    }
+
     if (batch.first) {
         loadGeneration = batch.generation;
         // Only an empty page fills batch by batch. A new set over a shown one swaps in whole at the end:
@@ -2967,6 +2985,10 @@ function addFiles(batch: FilesBatch): void {
         }
 
         if (batch.first) {
+            if (!loadFresh) {
+                reviewState.beforeRefresh();
+            }
+
             viewer.setItems(items);
             viewer.render(true);
         } else {
@@ -2976,7 +2998,24 @@ function addFiles(batch: FilesBatch): void {
         incomingFiles.push(...shown);
         incomingItems.push(...items);
 
+        if (batch.last && !loadFresh && probe.active) {
+            // Taken back off the queue: the deferred call runs this batch again and queues it then.
+            incomingFiles.splice(incomingFiles.length - shown.length);
+            incomingItems.splice(incomingItems.length - items.length);
+            const waiting = batch;
+            deferredLoad = () => {
+                post({ type: "log", message: "diff.refresh swapped in after the scroll ended" });
+                addFiles(waiting);
+                reviewState.afterFiles(true);
+            };
+            return;
+        }
+
         if (batch.last) {
+            if (!loadFresh) {
+                reviewState.beforeRefresh();
+            }
+
             files = incomingFiles;
             viewer.setItems(incomingItems);
             // Now, not at the next frame: setItems takes the old rows off at once, so a frame that
@@ -3041,6 +3080,7 @@ const reviewState = installReviewState({
         composer = next;
     },
     refresh: refreshAnnotations,
+    log: (message) => post({ type: "log", message }),
 });
 
 window.genesisDiff = {

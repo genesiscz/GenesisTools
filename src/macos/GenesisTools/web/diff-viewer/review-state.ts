@@ -76,10 +76,14 @@ export interface ReviewStateDeps {
     composer: () => ComposerLike | null;
     setComposer: (next: ComposerLike) => void;
     refresh: (fileIds: string[]) => void;
+    /** A line for app-perf.log. */
+    log?: (message: string) => void;
 }
 
 /** What main.ts calls from its bridge, so a restore lands once the files and threads it needs arrive. */
 export interface ReviewStateHooks {
+    /** Before a refresh of the same diff replaces its files: note the line on screen to keep it there. */
+    beforeRefresh(): void;
     afterFiles(last: boolean): void;
     afterComments(): void;
     changed(): void;
@@ -150,7 +154,10 @@ export function installReviewState(deps: ReviewStateDeps): ReviewStateHooks {
     let pendingComposer: SavedComposer | null = null;
     let reportTimer = 0;
 
-    function firstVisibleLine(fileId: string): { line: number; side: Side } | null {
+    /** The line on screen when a refresh began, with how far its top sat above the viewport's top. */
+    let refreshAnchor: { anchor: SavedAnchor; offset: number } | null = null;
+
+    function firstVisibleLine(fileId: string): { line: number; side: Side; offset: number } | null {
         const rendered = viewer.getRenderedItems().find((item) => item.id === fileId);
 
         if (!rendered) {
@@ -182,7 +189,38 @@ export function installReviewState(deps: ReviewStateDeps): ReviewStateHooks {
             }
         }
 
-        return best ? { line: best.line, side: best.side } : null;
+        return best ? { line: best.line, side: best.side, offset: best.top - hostTop } : null;
+    }
+
+    /** Where one line of a drawn file sits, relative to the viewport's top; null when it is not drawn. */
+    function lineOffset(fileId: string, line: number, side: Side): number | null {
+        const rendered = viewer.getRenderedItems().find((item) => item.id === fileId);
+
+        if (!rendered) {
+            return null;
+        }
+
+        const root: ParentNode = rendered.element.shadowRoot ?? rendered.element;
+        const hostTop = host.getBoundingClientRect().top;
+        let fallback: number | null = null;
+
+        for (const el of root.querySelectorAll<HTMLElement>(`[data-line="${line}"]`)) {
+            const rect = el.getBoundingClientRect();
+
+            if (rect.height === 0) {
+                continue;
+            }
+
+            const elSide: Side = (el.dataset.lineType ?? "").includes("deletion") ? "deletions" : "additions";
+
+            if (elSide === side) {
+                return rect.top - hostTop;
+            }
+
+            fallback ??= rect.top - hostTop;
+        }
+
+        return fallback;
     }
 
     function captureAnchor(): SavedAnchor | null {
@@ -243,7 +281,54 @@ export function installReviewState(deps: ReviewStateDeps): ReviewStateHooks {
         reportTimer = window.setTimeout(report, REPORT_DELAY_MS);
     }
 
+    /**
+     * A refresh swaps every file for a fresh copy with fresh height estimates, so the old scroll offset
+     * lands on other code: a live agent's write moved the reader several files up in the middle of a
+     * fast scroll (recording 2026-10-08 02:01). The same line goes back to the same pixel instead.
+     */
+    function applyRefreshAnchor(): void {
+        const saved = refreshAnchor;
+        refreshAnchor = null;
+
+        if (!saved || !viewer.getItem(saved.anchor.fileId)) {
+            return;
+        }
+
+        const { anchor, offset } = saved;
+
+        if (anchor.line === null) {
+            viewer.scrollTo({ type: "item", id: anchor.fileId, align: "start", behavior: "instant" });
+            viewer.render(true);
+            return;
+        }
+
+        viewer.scrollTo({
+            type: "line",
+            id: anchor.fileId,
+            lineNumber: anchor.line,
+            side: anchor.side ?? "additions",
+            align: "start",
+            behavior: "instant",
+        });
+        viewer.render(true);
+        const side = anchor.side ?? "additions";
+        const now = lineOffset(anchor.fileId, anchor.line, side);
+
+        if (now !== null) {
+            host.scrollTop += now - offset;
+        }
+
+        const landed = lineOffset(anchor.fileId, anchor.line, side);
+        deps.log?.(
+            `diff.refresh kept ${anchor.fileId.split("/").pop()}:${anchor.line} at ${Math.round(offset)}px; after the swap ${now === null ? "not drawn" : `${Math.round(now)}px`}, landed ${landed === null ? "not drawn" : `${Math.round(landed)}px`}`
+        );
+    }
+
     function applyAnchor(last: boolean): void {
+        if (last && refreshAnchor) {
+            applyRefreshAnchor();
+        }
+
         if (!pendingAnchor) {
             return;
         }
@@ -344,6 +429,26 @@ export function installReviewState(deps: ReviewStateDeps): ReviewStateHooks {
     handler?.postMessage({ type: "ready" });
 
     return {
+        beforeRefresh() {
+            if (pendingAnchor || deps.files().length === 0) {
+                deps.log?.(`diff.refresh no anchor kept (${pendingAnchor ? "a restore is pending" : "no files yet"})`);
+                return;
+            }
+
+            const anchor = captureAnchor();
+            const line = anchor ? firstVisibleLine(anchor.fileId) : null;
+            refreshAnchor = anchor ? { anchor, offset: line?.offset ?? 0 } : null;
+            const hostTop = host.getBoundingClientRect().top;
+            deps.log?.(
+                `diff.refresh scrollTop ${Math.round(viewer.getScrollTop())}, drawn ${viewer
+                    .getRenderedItems()
+                    .map((item) => {
+                        const rect = item.element.getBoundingClientRect();
+                        return `${item.id.split("/").pop()} ${Math.round(rect.top - hostTop)}..${Math.round(rect.bottom - hostTop)} (top ${Math.round(viewer.getTopForItem(item.id) ?? -1)})`;
+                    })
+                    .join(", ")}`
+            );
+        },
         afterFiles(last) {
             applyAnchor(last);
             applyComposer();
