@@ -1249,7 +1249,7 @@ final class WidgetRosterTests: XCTestCase {
         }
     }
 
-    func testInboxDoesNotParseTranscriptAndLeavingConversationStopsTail() async throws {
+    func testInboxPrefetchIsReusedAndLeavingConversationStopsTail() async throws {
         try await withFixture { model, snapshotFile, _ in
             let directory = snapshotFile.deletingLastPathComponent()
             let calls = directory.appendingPathComponent("calls.txt")
@@ -1272,9 +1272,15 @@ final class WidgetRosterTests: XCTestCase {
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
             model.select("fixture-0")
             model.open(.top)
-            try await Task.sleep(for: .milliseconds(100))
-            let inboxCalls = try String(contentsOf: calls, encoding: .utf8)
-            XCTAssertFalse(inboxCalls.contains("ai sessions tail"), "Inbox must not launch the full transcript parser")
+            let preloadDeadline = ContinuousClock.now + .seconds(3)
+            var inboxCalls = ""
+            repeat {
+                try await Task.sleep(for: .milliseconds(100))
+                inboxCalls = try String(contentsOf: calls, encoding: .utf8)
+            } while !inboxCalls.contains("ai sessions tail") && ContinuousClock.now < preloadDeadline
+            XCTAssertEqual(inboxCalls.components(separatedBy: "ai sessions tail").count - 1, 1,
+                "Opening Inbox must prepare one bounded transcript load; calls: \(inboxCalls)")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: tailPID.path), "Inbox must not start a live follow process")
             XCTAssertFalse(model.transcriptLoading)
             model.section = "Conversation"
             let deadline = ContinuousClock.now + .seconds(5)
@@ -1283,6 +1289,9 @@ final class WidgetRosterTests: XCTestCase {
                 try await Task.sleep(for: .milliseconds(100))
             }
             XCTAssertEqual(model.transcript.first?.text, "Fixture conversation")
+            let allCalls = try String(contentsOf: calls, encoding: .utf8)
+            let initialLoads = allCalls.components(separatedBy: "\n").filter { $0.contains("ai sessions tail") && !$0.contains(" --live ") }
+            XCTAssertEqual(initialLoads.count, 1, "Conversation must reuse the initial preload; calls: \(allCalls)")
             let pidText = try String(contentsOf: tailPID, encoding: .utf8)
             let pid = try XCTUnwrap(Int32(pidText))
             XCTAssertEqual(kill(pid, 0), 0, "The live follow process must have started")
