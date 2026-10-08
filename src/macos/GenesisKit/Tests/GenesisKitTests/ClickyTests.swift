@@ -100,6 +100,15 @@ final class ClickyTests: XCTestCase {
         XCTAssertGreaterThan(statistics.hours.count, statistics.minutes.count)
     }
 
+    func testPhysicalKeyChartIncludesFunctionKeysAndKeepsPositionsDistinct() {
+        let keys = ClickyKeyLayout.rows.flatMap { $0 }
+        XCTAssertEqual(Set(keys.map(\.code)).count, keys.count)
+        XCTAssertEqual(ClickyKeyLayout.label(53), "Esc")
+        XCTAssertEqual(ClickyKeyLayout.label(122), "F1")
+        XCTAssertEqual(ClickyKeyLayout.label(111), "F12")
+        XCTAssertNotEqual(ClickyKeyLayout.label(55), ClickyKeyLayout.label(54))
+    }
+
     func testChartBinningBoundsWorkWithoutLosingCounts() {
         let points = (0..<10000).map { NativeTimePoint(date: Date(timeIntervalSince1970: Double($0) * 60), value: 1) }
         let bins = NativeChartSampling.bins(points: points, start: Date(timeIntervalSince1970: 0),

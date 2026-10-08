@@ -92,10 +92,10 @@ public struct NativeTimeSeriesChart: View {
                     ForEach(Style.allCases) { Text($0.rawValue).tag($0) }
                 }.pickerStyle(.segmented).labelsHidden().frame(width: 210, alignment: .leading)
                 Spacer()
-                Button { zoom = max(0.25, zoom / 2) } label: { Image(systemName: "minus.magnifyingglass") }
+                Button { zoom = max(0.25, zoom / 2) } label: { Image(systemName: "minus.magnifyingglass").frame(width: 26, height: 26).contentShape(Rectangle()) }
                     .accessibilityLabel("Zoom out chart")
                 Slider(value: $zoom, in: 0.25...8).frame(width: 90).accessibilityLabel("Chart zoom")
-                Button { zoom = min(8, zoom * 2) } label: { Image(systemName: "plus.magnifyingglass") }
+                Button { zoom = min(8, zoom * 2) } label: { Image(systemName: "plus.magnifyingglass").frame(width: 26, height: 26).contentShape(Rectangle()) }
                     .accessibilityLabel("Zoom in chart")
                 Button("Latest") { position = max(domain.lowerBound, end.addingTimeInterval(-window)) }
             }.buttonStyle(.borderless)
@@ -207,7 +207,7 @@ public struct NativeCategoryChart: View {
     public init(values: [NativeCategoryValue]) { self.values = values }
     public var body: some View {
         Chart(values) { point in
-            BarMark(x: .value("Presses", point.value), y: .value("Category", point.label))
+            BarMark(x: .value("Presses", point.value), y: .value("Category", point.label), height: .fixed(12))
                 .foregroundStyle(.mint.gradient).cornerRadius(4)
                 .annotation(position: .trailing) { Text(Int(point.value).formatted()).font(.caption2).foregroundStyle(.secondary) }
         }
