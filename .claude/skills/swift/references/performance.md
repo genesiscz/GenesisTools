@@ -139,5 +139,5 @@ are in [genesistools.md](genesistools.md)). Add a new entry at the end of its se
   reach needs the window stacking), and keep the check itself to a syscall or two.
 
 ### Polling watchers
-- A safety refresh every 5 s that runs a full snapshot (~1 s CPU) is ~15% CPU on its own. Refresh on
+- A safety refresh every 5 s that runs a full snapshot (~1 s CPU) averages ~20% of one core. Refresh on
   the event; keep the safety interval long and the safety check cheap.

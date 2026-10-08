@@ -23,7 +23,7 @@ look exactly like the live hub's (`since-launch` phases and `hub.bench` marks te
 ## 2. Process CPU over a window — "it uses 40%"
 
 `ps %cpu` is a decaying average and `top` one snapshot; neither attributes a process tree. Sum CPU-time
-deltas of a root and its children (children that come and go included), e.g. a 30-line Bun script
+deltas of a root and its children (short-lived children between samples may be missed), e.g. a 30-line Bun script
 polling `ps -Ao pid=,ppid=,time=,command=` every 500 ms. Measure 30-120 s; say what the user and the
 agents were doing meanwhile. Activity Monitor's "GenesisTools" can be `GenesisTools Preview`
 (the widget preview) or any `tools` child, because the launcher owns them.

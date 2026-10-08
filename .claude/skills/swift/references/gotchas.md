@@ -18,13 +18,14 @@
 - **`ps -o time` vs `%cpu`:** use CPU-time deltas; `%cpu` is a lifetime-decayed average.
 - **"Main busy" can be WindowServer, not you.** A stall stack whose time sits in `SLSFindWindowAndOwner`
   (under `FindWindowOfClass`, the hit test of every mouse event) or in `SLSDisplayGetPreferHDR10` (WebKit's
-  `screenPropertiesChanged`) is a synchronous call into an overloaded WindowServer. In one 16 s sample, 783 of
+  `screenPropertiesChanged`) is a synchronous call into an overloaded WindowServer. In one 16-second sample, 783 of
   ~1980 busy main-thread samples were that hit test. Check `WindowServer` CPU (80-100% here, with a screen
   recording and a computer-use agent running) before optimizing a view that only looks slow.
 
 ## SwiftUI / AppKit
 
-- **`repeatForever` = per-frame layout of the window.** See performance.md; use a layer animation.
+- **A `repeatForever` animation can repeatedly invalidate layout.** Measure the affected view and
+  animated properties; use a layer animation for a measured hot path (see performance.md).
 - **`withAnimation` around a first load** animates every row; skip it when nothing was on screen.
 - **`Process.waitUntilExit()` inside a body** spins the run loop and can double-free StackLayout
   (crash). Load in a store on a background queue (CLAUDE.md of the app).
