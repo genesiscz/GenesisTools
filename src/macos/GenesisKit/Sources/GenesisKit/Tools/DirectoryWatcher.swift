@@ -43,7 +43,7 @@ public final class DirectoryWatcher {
         let callback: FSEventStreamCallback = { _, info, count, rawPaths, _, _ in
             guard let info, let watcher = Unmanaged<Box>.fromOpaque(info).takeUnretainedValue().watcher else { return }
             let list = (unsafeBitCast(rawPaths, to: NSArray.self) as? [String] ?? []).prefix(count)
-            let accepted = list.filter(watcher.accepts)
+            let accepted = list.map(DirectoryWatcher.normalizedEventPath).filter(watcher.accepts)
             if !accepted.isEmpty {
                 watcher.onChange(Array(accepted))
             }
@@ -61,6 +61,16 @@ public final class DirectoryWatcher {
             FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
             FSEventStreamStart(stream)
         }
+    }
+
+    // FSEvents uses /private aliases that Foundation file URLs collapse. Normalize the spelling
+    // without resolving symlinks (and restatting the filesystem) for every event in a busy stream.
+    static func normalizedEventPath(_ path: String) -> String {
+        if path == "/private/var" || path.hasPrefix("/private/var/")
+            || path == "/private/tmp" || path.hasPrefix("/private/tmp/") {
+            return String(path.dropFirst("/private".count))
+        }
+        return path
     }
 
     public func stop() {

@@ -566,3 +566,205 @@ final class WidgetShelfDraftOrderingTests: XCTestCase {
         XCTAssertEqual(backend.calls, ["shelf-attachment"])
     }
 }
+
+@MainActor
+final class WidgetTasksStoreTests: XCTestCase {
+    private func task(state: String = "open", revision: Int = 1) -> WidgetTask {
+        WidgetTask(id: "t_1_fixture", number: 1, title: "Run local checks", summary: "Run the project checks before publishing.",
+                   truncated: false, revision: revision, state: state, updatedTs: "2026-01-01T10:00:00.000Z",
+                   blocking: true, owner: "agent", sessionId: "fixture", provider: "codex", sessionTitle: "Fixture session",
+                   sourceContext: WidgetSourceContext(sessionId: "fixture", agent: "codex", project: "Fixture", cwd: "/fixture/project"))
+    }
+
+    private func data(_ tasks: [WidgetTask] = [], sourcePath: String = "/fixture/tasks/decisions.jsonl") throws -> Data {
+        try JSONEncoder().encode(WidgetTaskSnapshot(tasks: tasks, total: tasks.count,
+            activeCount: tasks.filter { ["open", "acknowledged"].contains($0.state) }.count, truncated: false,
+            sourcePath: sourcePath, sourceStamp: tasks.first?.state ?? "empty", projects: ["Fixture"],
+            sessions: [.init(id: "codex:fixture", title: "Fixture session")]))
+    }
+
+    private func loaded(_ store: WidgetTasksStore, action: () -> Void) async {
+        let finished = expectation(description: "Task metadata load finishes")
+        let subscription = store.$isLoading.dropFirst().filter { !$0 }.prefix(1).sink { _ in finished.fulfill() }
+        action()
+        await fulfillment(of: [finished], timeout: 3)
+        withExtendedLifetime(subscription) {}
+    }
+
+    private func mutated(_ store: WidgetTasksStore, action: () -> Void) async {
+        let finished = expectation(description: "Task mutation finishes")
+        let subscription = store.$mutatingID.dropFirst().filter { $0 == nil }.prefix(1).sink { _ in finished.fulfill() }
+        action()
+        await fulfillment(of: [finished], timeout: 3)
+        withExtendedLifetime(subscription) {}
+        if store.isLoading { await loaded(store) {} }
+    }
+
+    func testDefaultMetadataAndWarmSurfacesReuseOneCacheWhileFiltersStayScoped() async throws {
+        var calls: [[String]] = []
+        let source = task()
+        let store = WidgetTasksStore(request: { args in
+            calls.append(args)
+            return try self.data(args.contains("completed") ? [] : [source])
+        })
+        defer { store.stop() }
+        await loaded(store) { store.visibilityChanged(.compact) }
+        XCTAssertEqual(calls, [["list", "--json", "--scope", "active", "--limit", "200"]])
+        XCTAssertEqual(store.tasks.first?.sourceContext.project, "Fixture")
+        for _ in 0..<1000 {
+            store.visibilityChanged(.preview)
+            store.visibilityChanged(.expanded)
+            _ = store.taskModule().summary()
+        }
+        XCTAssertEqual(calls.count, 1, "Warm surface changes must not spawn commands")
+        await loaded(store) { store.scope = "completed" }
+        XCTAssertTrue(store.tasks.isEmpty)
+        XCTAssertEqual(calls.count, 2)
+        store.scope = "active"
+        XCTAssertEqual(store.tasks.first?.id, source.id)
+        XCTAssertEqual(calls.count, 2, "Returning to a cached filter is immediate")
+        await loaded(store) { store.project = "Other" }
+        XCTAssertTrue(calls.last?.contains("--project") == true)
+        XCTAssertTrue(calls.last?.contains("Other") == true)
+        await loaded(store) { store.session = "codex:fixture" }
+        XCTAssertTrue(calls.last?.contains("codex:fixture") == true)
+        await loaded(store) { store.sourceChanged() }
+        XCTAssertEqual(calls.count, 5, "An event invalidates cached metadata")
+    }
+
+    func testReadFailureIsExplicitAndRetryRecoversWithoutInventedTasks() async throws {
+        var fails = true
+        let store = WidgetTasksStore(request: { _ in
+            if fails { throw ToolsBridgeError.refused("Fixture ledger unavailable") }
+            return try self.data()
+        })
+        defer { store.stop() }
+        await loaded(store) { store.refresh() }
+        XCTAssertTrue(store.tasks.isEmpty)
+        XCTAssertTrue(store.error?.contains("unavailable") == true)
+        fails = false
+        await loaded(store) { store.refresh(force: true) }
+        XCTAssertNil(store.error)
+        XCTAssertTrue(store.tasks.isEmpty)
+    }
+
+    func testMutationCarriesExactGuardsAndRequiresASavedReceipt() async throws {
+        let original = task()
+        var changed = original
+        changed.state = "implemented"
+        changed.updatedTs = "2026-01-01T10:00:00.001Z"
+        var calls: [[String]] = []
+        let store = WidgetTasksStore(request: { args in
+            calls.append(args)
+            if args.first == "update" {
+                return try JSONEncoder().encode(WidgetTaskUpdate(task: changed, receipt: .init(
+                    id: original.id, action: "complete", from: "open", state: "implemented", revision: 1,
+                    at: changed.updatedTs, saved: true)))
+            }
+            return try self.data()
+        })
+        defer { store.stop() }
+        await mutated(store) {
+            store.perform(.complete, on: original)
+            store.perform(.dismiss, on: original)
+        }
+        XCTAssertEqual(calls.filter { $0.first == "update" }, [["update", original.id, "--action", "complete",
+            "--revision", "1", "--state", "open", "--updated-at", original.updatedTs, "--session", "fixture", "--provider", "codex"]])
+        XCTAssertTrue(store.receipt?.contains("Completed") == true)
+        XCTAssertNil(store.error)
+        XCTAssertTrue(store.tasks.isEmpty)
+    }
+
+    func testStaleFailureRemainsVisibleAfterReloadAndCannotClaimCompletion() async throws {
+        let original = task()
+        let store = WidgetTasksStore(request: { args in
+            if args.first == "update" { throw ToolsBridgeError.refused("Task changed since it was shown") }
+            return try self.data([self.task(revision: 2)])
+        })
+        defer { store.stop() }
+        await mutated(store) { store.perform(.complete, on: original) }
+        XCTAssertTrue(store.error?.contains("changed") == true)
+        XCTAssertNil(store.receipt)
+        XCTAssertEqual(store.tasks.first?.revision, 2)
+    }
+
+    func testCancellationRefreshesActualStateWithoutClaimingThatNothingWasSaved() async throws {
+        let started = expectation(description: "Update starts")
+        let store = WidgetTasksStore(request: { args in
+            if args.first == "update" {
+                started.fulfill()
+                try await Task.sleep(for: .seconds(30))
+            }
+            return try self.data()
+        })
+        defer { store.stop() }
+        store.perform(.complete, on: task())
+        await fulfillment(of: [started], timeout: 2)
+        await mutated(store) { store.cancelUpdate() }
+        XCTAssertNil(store.receipt)
+        XCTAssertTrue(store.error?.contains("Refreshing") == true)
+        XCTAssertFalse(store.isMutating)
+    }
+
+    func testDirectoryEventsNormalizeOnlySystemAliasesBeforeFiltering() {
+        XCTAssertEqual(DirectoryWatcher.normalizedEventPath("/private/var/folders/fixture/decisions.jsonl"), "/var/folders/fixture/decisions.jsonl")
+        XCTAssertEqual(DirectoryWatcher.normalizedEventPath("/private/tmp/fixture/state.json"), "/tmp/fixture/state.json")
+        XCTAssertEqual(DirectoryWatcher.normalizedEventPath("/Users/fixture/decisions.jsonl"), "/Users/fixture/decisions.jsonl")
+        XCTAssertEqual(DirectoryWatcher.normalizedEventPath("/private/variable/file"), "/private/variable/file")
+        XCTAssertEqual(DirectoryWatcher.normalizedEventPath("/private/tmp-other/file"), "/private/tmp-other/file")
+    }
+
+    func testARealLedgerFileEventRefreshesVisibleMetadataWithoutPolling() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("widget-tasks-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            do { try FileManager.default.removeItem(at: directory) } catch { XCTFail("Fixture cleanup: \(error)") }
+        }
+        let file = directory.appendingPathComponent("decisions.jsonl")
+        try "1".write(to: file, atomically: true, encoding: .utf8)
+        var calls = 0
+        let store = WidgetTasksStore(request: { _ in
+            calls += 1
+            let revision = Int(try String(contentsOf: file, encoding: .utf8)) ?? 0
+            return try self.data([self.task(revision: revision)], sourcePath: file.path)
+        })
+        defer { store.stop() }
+        await loaded(store) { store.visibilityChanged(.expanded) }
+        let changed = expectation(description: "FSEvents refreshes changed ledger")
+
+        let subscription = store.$snapshot.compactMap { $0?.tasks.first?.revision }.filter { $0 == 2 }.prefix(1)
+            .sink { _ in changed.fulfill() }
+        try "2".write(to: file, atomically: true, encoding: .utf8)
+        await fulfillment(of: [changed], timeout: 3)
+        withExtendedLifetime(subscription) {}
+        XCTAssertGreaterThanOrEqual(calls, 2)
+        XCTAssertEqual(store.tasks.first?.revision, 2)
+    }
+
+    func testSourceSessionMatchingIsProviderSpecificAndStopCancelsPendingWork() async throws {
+        let codex = WidgetSession(key: "codex", target: .init(hostId: "local", provider: "codex", sessionId: "fixture", sourceHome: "", cwd: "/fixture"),
+                                  title: "Fixture", project: "Fixture", activityAt: 0, status: "recent", pinned: true, visible: true, hiddenByFilter: false)
+        var grok = codex
+        grok.key = "grok"
+        grok.target.provider = "grok"
+        let started = expectation(description: "Read starts")
+        let cancelled = expectation(description: "Read cancellation reaches request")
+        var opened: [String] = []
+        let store = WidgetTasksStore(request: { _ in
+            started.fulfill()
+            defer { cancelled.fulfill() }
+            try await Task.sleep(for: .seconds(30))
+            return try self.data([self.task()])
+        }, sessions: { [grok, codex] }, openSession: { session, card in opened.append(session.key + ":" + card) })
+        XCTAssertEqual(store.sourceSession(for: task())?.key, "codex")
+        store.openSource(task())
+        XCTAssertEqual(opened, ["codex:decision:t_1_fixture"])
+        store.refresh()
+        await fulfillment(of: [started], timeout: 2)
+        store.stop()
+        await fulfillment(of: [cancelled], timeout: 2)
+        XCTAssertFalse(store.isLoading)
+        XCTAssertTrue(store.tasks.isEmpty)
+        XCTAssertNil(store.error)
+    }
+}
