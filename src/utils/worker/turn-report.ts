@@ -6,6 +6,8 @@ import type { WorkerBackend } from "./capabilities";
 export interface WorkerTurnReport {
     backend: WorkerBackend;
     name: string;
+    sessionId?: string;
+    sourceHome?: string;
     turn: number;
     /** A clean terminal event was seen (grok `end`, claude `result`). */
     ended: boolean;
