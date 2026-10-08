@@ -1,5 +1,29 @@
 import { describe, expect, test } from "bun:test";
-import { classifyPerfLine, classifyRelayLine, describeCrash, formatEvent } from "./dev-monitor";
+import {
+    classifyPerfLine,
+    classifyRelayLine,
+    type DevEvent,
+    describeCrash,
+    EventBatcher,
+    formatEvent,
+} from "./dev-monitor";
+
+describe("EventBatcher", () => {
+    test("the first event goes out at once, later ones wait for the delay and go out together", () => {
+        const batches: DevEvent[][] = [];
+        const batcher = new EventBatcher(10_000, (events) => batches.push(events));
+        const event = (text: string): DevEvent => ({ kind: "stall", time: "", text });
+
+        batcher.add(event("a"));
+        expect(batcher.flush(1_000)).toBe(1);
+        batcher.add(event("b"));
+        batcher.add(event("c"));
+        expect(batcher.flush(5_000)).toBe(0);
+        expect(batcher.flush(11_000)).toBe(2);
+        expect(batcher.flush(30_000)).toBe(0);
+        expect(batches.map((batch) => batch.map((item) => item.text))).toEqual([["a"], ["b", "c"]]);
+    });
+});
 
 describe("classifyPerfLine", () => {
     test("a wedge, a hang sample and its stacks are events, with the file to read", () => {

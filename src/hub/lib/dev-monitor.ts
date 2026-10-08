@@ -182,8 +182,42 @@ export interface DevMonitorOptions extends ClassifyOptions {
     fromStart: boolean;
     /** How often the files are read. */
     intervalMs: number;
+    /**
+     * At most one batch per this many ms: events wait and go out together, so an agent running this under
+     * the Monitor tool is woken once per batch, not once per line (Martin, 2026-10-08: default 10 s).
+     * The first event after a quiet stretch goes out at once.
+     */
+    minDelayMs: number;
     signal: AbortSignal;
-    emit: (event: DevEvent) => void;
+    emit: (events: DevEvent[]) => void;
+}
+
+/** Holds events until `minDelayMs` has passed since the last batch went out. */
+export class EventBatcher {
+    private pending: DevEvent[] = [];
+    private lastFlush = Number.NEGATIVE_INFINITY;
+
+    constructor(
+        private readonly minDelayMs: number,
+        private readonly emit: (events: DevEvent[]) => void
+    ) {}
+
+    add(event: DevEvent): void {
+        this.pending.push(event);
+    }
+
+    /** Sends what waits when the delay has passed; returns how many went out. */
+    flush(now: number): number {
+        if (this.pending.length === 0 || now - this.lastFlush < this.minDelayMs) {
+            return 0;
+        }
+
+        const batch = this.pending;
+        this.pending = [];
+        this.lastFlush = now;
+        this.emit(batch);
+        return batch.length;
+    }
 }
 
 /** The files the monitor reads, for its start line and for tests. */
@@ -206,6 +240,7 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
     // process could not log any more, which is the case worth a separate event.
     const hangs = new FolderWatch(sources.hangs, (name) => name.startsWith("hang-"));
     const announced = new Set<string>();
+    const batcher = new EventBatcher(options.minDelayMs, options.emit);
 
     while (!options.signal.aborted) {
         for (const line of perf.read()) {
@@ -215,20 +250,20 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
                     announced.add(basename(event.file));
                 }
 
-                options.emit(event);
+                batcher.add(event);
             }
         }
 
         for (const line of relay.read()) {
             const event = classifyRelayLine(line);
             if (event) {
-                options.emit(event);
+                batcher.add(event);
             }
         }
 
         for (const path of hangs.fresh()) {
             if (!announced.has(basename(path))) {
-                options.emit({
+                batcher.add({
                     kind: "hang",
                     time: "",
                     text: "a hang sample was written with no app-perf.log line",
@@ -239,13 +274,14 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
 
         for (const path of crashes.fresh()) {
             try {
-                options.emit(describeCrash(path, await Bun.file(path).text()));
+                batcher.add(describeCrash(path, await Bun.file(path).text()));
             } catch (error) {
                 log.debug({ path, error }, "dev monitor: crash report not readable yet");
-                options.emit({ kind: "crash", time: "", text: `${basename(path)} written`, file: path });
+                batcher.add({ kind: "crash", time: "", text: `${basename(path)} written`, file: path });
             }
         }
 
+        batcher.flush(Date.now());
         await Bun.sleep(options.intervalMs);
     }
 }

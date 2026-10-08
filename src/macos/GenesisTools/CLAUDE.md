@@ -82,7 +82,7 @@ Martin, 2026-10-08: hangs and crashes reached him as a "GenesisTools is not resp
 session on this app, start the stream under the Monitor tool (not as a Bash call that waits):
 
 ```bash
-tools hub dev monitor            # one line per event, from now on
+tools hub dev monitor            # one line per event, from now on, batched: at most one print per 10 s (--min-delay-ms)
 tools hub dev monitor --json     # the same as JSON objects
 tools hub dev monitor --from-start --min-stall-ms 1000   # replay today's log first
 ```
