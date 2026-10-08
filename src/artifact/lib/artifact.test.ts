@@ -15,6 +15,7 @@ import { runInNewContext } from "node:vm";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import * as storage from "@genesiscz/utils/storage";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import {
     buildSingleFile,
@@ -173,7 +174,12 @@ describe("running tracker", () => {
         // A fixed 50 ms was not enough on a loaded CI runner; wait for the
         // record itself, with a ceiling so a broken write still fails fast.
         const deadline = Date.now() + 2000;
-        while (!listRunning().some((s) => s.name === "held") && Date.now() < deadline) {
+        while (
+            (!listRunning().some((s) => s.name === "held") ||
+                process.listenerCount("SIGINT") !== sigint + 1 ||
+                process.listenerCount("SIGTERM") !== sigterm + 1) &&
+            Date.now() < deadline
+        ) {
             await Bun.sleep(20);
         }
 
@@ -214,14 +220,29 @@ describe("running tracker", () => {
             while (!done() && Date.now() < deadline) {
                 await Bun.sleep(20);
             }
+
+            if (!done()) {
+                throw new Error("Held-server fixture did not reach its expected state before the deadline");
+            }
         };
 
         try {
             void holdServer({ port: 3994, dir, ...input });
-            await waitFor(() => listRunning().some((s) => s.name === input.name));
+            await waitFor(
+                () =>
+                    listRunning().some((s) => s.name === input.name) &&
+                    process.listeners("SIGINT").some((listener) => !known.SIGINT.has(listener)) &&
+                    process.listeners("SIGTERM").some((listener) => !known.SIGTERM.has(listener))
+            );
 
             const started = Date.now();
-            process.listeners("SIGTERM").find((listener) => !known.SIGTERM.has(listener))?.("SIGTERM");
+            const terminate = process.listeners("SIGTERM").find((listener) => !known.SIGTERM.has(listener));
+
+            if (!terminate) {
+                throw new Error("Held-server fixture has no owned SIGTERM listener");
+            }
+
+            terminate("SIGTERM");
             await waitFor(() => exits.length > 0);
 
             return {
@@ -269,6 +290,75 @@ describe("running tracker", () => {
         expect(result.elapsedMs).toBeLessThan(1_500);
         expect(result.warnings.some((message) => message.includes("did not close"))).toBe(false);
         expect(result.stillRecorded).toBe(false);
+    });
+
+    test("shutdown waits for its owned signal listener after the running record becomes visible", async () => {
+        await recordRunning({ pid: process.pid, port: 3993, dir, name: "warm", startedAt: new Date().toISOString() });
+        await removeRunning(process.pid);
+        const actualLock = storage.withFileLock;
+        const actualListeners = process.listeners.bind(process);
+        let written!: () => void;
+        let queried!: () => void;
+        let release!: () => void;
+        const registrationWritten = new Promise<void>((resolve) => {
+            written = resolve;
+        });
+        const listenerQueried = new Promise<void>((resolve) => {
+            queried = resolve;
+        });
+        const registrationGate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let held = false;
+        const lockSpy = spyOn(storage, "withFileLock").mockImplementation(async (file, work, timeout) => {
+            const value = await actualLock(file, work, timeout);
+            if (!held && listRunning().some((row) => row.name === "registration-gap")) {
+                held = true;
+                written();
+                await registrationGate;
+            }
+            return value;
+        });
+        const listenersSpy = spyOn(process, "listeners").mockImplementation((signal) => {
+            if (held && (signal === "SIGINT" || signal === "SIGTERM")) {
+                queried();
+            }
+            return Reflect.apply(actualListeners, process, [signal]);
+        });
+        const pending = signalHeldServer({
+            name: "registration-gap",
+            close: () => new Promise<void>(() => {}),
+            closeDeadlineMs: 100,
+        });
+        const timeout = AbortSignal.timeout(3000);
+        const bounded = async (operation: Promise<void>) => {
+            await Promise.race([
+                operation,
+                new Promise<never>((_resolve, reject) => {
+                    timeout.addEventListener(
+                        "abort",
+                        () => reject(new Error("Fixture registration gate did not advance")),
+                        { once: true }
+                    );
+                }),
+            ]);
+        };
+        try {
+            await bounded(registrationWritten);
+            expect(listRunning().some((row) => row.name === "registration-gap")).toBe(true);
+            await bounded(listenerQueried);
+            release();
+            const result = await pending;
+            expect(result.exits).toEqual([0]);
+            expect(result.elapsedMs).toBeGreaterThanOrEqual(100);
+            expect(result.warnings.some((message) => message.includes("did not close"))).toBe(true);
+            expect(result.stillRecorded).toBe(false);
+        } finally {
+            release();
+            listenersSpy.mockRestore();
+            lockSpy.mockRestore();
+            await pending;
+        }
     });
 
     /**
