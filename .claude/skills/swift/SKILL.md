@@ -1,62 +1,64 @@
 ---
 name: swift
-description: Swift, SwiftUI and AppKit work on GenesisTools.app (hub, review window, link relay, widget preview) and the shared GenesisKit package — above all performance work. Use it whenever you edit or debug anything under src/macos/ (GenesisTools, GenesisKit, GenesisWidgetPreview, GenesisClickyPreview), chase a hang, stall, "not responding", high CPU, frame drops, a slow click or a layout loop in the app, add a SwiftUI animation, a WKWebView, a List or a custom Layout, or need to measure, bench, sample or A/B a Swift change — even when the user only says "the hub is slow", "it jumps", "it uses 40% CPU" or "click around the hub".
+description: Swift, SwiftUI and AppKit work on macOS apps, above all performance — and the data layer behind them. Use it whenever you edit or debug a SwiftUI/AppKit app (here GenesisTools.app, its hub, review window, widget preview and the shared GenesisKit package under src/macos/), chase a hang, stall, "not responding", high CPU, high memory, frame drops, a slow click or a layout loop, add a SwiftUI animation, a WKWebView, a List or a custom Layout, or need to measure, bench, sample or A/B a change — even when the user only says "the hub is slow", "it jumps", "it uses 40% CPU" or "click around the app". Also use it when the slow part is the CLI or server process that feeds the app data.
 ---
 
-# Swift work on GenesisTools.app and GenesisKit
+# Swift app performance
 
-The app is SwiftUI on AppKit, with WKWebView panes and a `tools` CLI (Bun) behind most data. Most of
-its performance bugs are not slow algorithms. They are work the frameworks do on the main thread
-because of how a view was written: an animation that lays out the window on every frame, a list that
-builds every row, a web view created on a click, an accessibility client that multiplies every update.
-So the loop is always the same: **see it in a measurement, find the frame that owns it, change the
-shape of the code, measure again with the same harness.**
+Most performance bugs in a SwiftUI/AppKit app are not slow algorithms. They are work the frameworks do
+on the main thread because of how a view was written (an animation that lays the window out every
+frame, a list that builds every row, a web view created on a click, an accessibility client that
+multiplies every update), or work the data layer repeats because nothing remembered the last answer
+(re-reading files that did not change, parsing a whole log for one new line, a process per call).
 
-Rules that are already in `src/macos/GenesisTools/CLAUDE.md` (read it before an edit there) are not
-repeated here; this skill holds the techniques, the evidence behind them and the traps.
+So the loop is always: **see it in a measurement, find the frame or the call that owns it, change the
+shape of the code, measure again with the same instrument, and prove the output did not change.**
 
 ## The loop
 
-1. **Arm the monitor first.** Run `tools hub dev monitor --min-delay-ms 30000` under the Monitor tool
-   (timeout 30 min, re-arm on expiry). It reports app hangs, stalls, layout loops, frame drops,
-   crashes, and every CLI profiling timer of 1 s or more with the process that ran it. Details:
-   [references/measuring.md](references/measuring.md).
-2. **Attribute before you fix.** A `stall`/`hang` event names a stack file; read its app frames
-   (`rg "^\s+[0-9.]+%\s+\[GenesisTools"`). A CPU complaint: measure per process tree over 30-120 s
-   (`tree-cpu`), then `sample <pid> 10` and rank the main thread's frames. Know which process it is
-   before you touch code: another session's preview app looks like "GenesisTools" in Activity Monitor.
-3. **Reproduce off screen.** `GenesisTools --hub --bench` drives the hub's own views (opens, resizes,
-   folds, mode switches) with `GENESIS_HUB_BENCH_AX=1` so the cost matches the live hub. For a single
-   view technique, build a 40-line A/B harness (old vs new view in a tiny non-activating panel,
-   15 s each, interleaved, two runs each) and compare process CPU time.
-4. **Fix the shape, not the symptom.** The catalogue of fixes with numbers is in
-   [references/performance.md](references/performance.md); the traps that cost hours are in
-   [references/gotchas.md](references/gotchas.md).
-5. **Prove it the same way you found it**: same bench, same harness, before/after numbers, plus a
-   screenshot that the thing still looks and behaves the same. Never trade output quality for speed.
-6. **Build, install, re-verify**: `bun run app` (it installs, signs and reaps stale faces), then the
-   monitor again. Build traps: [references/build.md](references/build.md).
-7. **Write down what you learnt here**: a new trick goes in `performance.md` with its numbers, a new
-   trap in `gotchas.md` with its fix. This skill is meant to grow with every Swift fix.
+1. **Watch continuously.** Stream hangs, stalls, layout loops, frame drops, crashes and slow CLI
+   timers while you work, so a regression reaches you before the user sees a "not responding" banner.
+2. **Rank before you fix.** Measure per process tree over 30-120 s (CPU-time deltas, not `%cpu`), rank
+   the app's calls into its data layer by total time, and find which process it is before touching code:
+   another app or a helper often carries the name the user sees in Activity Monitor.
+3. **Attribute.** A stall: read the app frames of its stack. CPU: `sample <pid> 10` and rank the main
+   thread's frames (inclusive counts contain children). A data call: `bun --cpu-prof`/a profiler on the
+   call alone, not wall-time timers inside a busy process.
+4. **Reproduce off screen.** A bench that drives the real views (opens, resizes, folds, mode switches)
+   with an accessibility client attached, or a 40-line A/B harness for one view technique (old vs new in
+   a tiny non-activating panel, interleaved runs, CPU time).
+5. **Fix the shape.** Techniques with numbers: [references/performance.md](references/performance.md).
+   Traps that cost hours: [references/gotchas.md](references/gotchas.md).
+6. **Prove it.** Same instrument, before/after numbers, and **parity**: byte-identical output on real
+   data (not only fixtures), screenshots that it still looks and moves the same. Never trade output
+   quality for speed. Plant a regression to prove a new test catches it.
+7. **Work in batches.** Take the baseline, make 10-20 minutes of changes, then build and install once,
+   measure again, and report before/after with the commits.
+8. **Write down what you learnt here**, generically: a technique in performance.md with its numbers, a
+   trap in gotchas.md with its fix, codebase specifics in the project's reference file.
 
-## The ten things that mattered most (2026-10-08)
+## The highest-yield fixes (measured)
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| Idle app at 5-25% CPU | SwiftUI `.repeatForever` animation (spinner, pulsing dots, shimmer) lays out the window every frame | Core Animation layer animation: `SpinningArc`, `PulsingDots` (GenesisKit/Controls) |
-| Click costs 10-20× more in the live hub | An accessibility client is attached; SwiftUI walks responders per changed AX node | Bench with `GENESIS_HUB_BENCH_AX=1`; keep dense rows value-typed, controls only on hover |
-| 140 ms - 1.2 s on opening a session's changes | `WKWebView` creation starts a web content process on the main thread | `PierreWebDiffRenderer.make()` hands out a spare made in a quiet moment |
-| 1.4 s stall when a PR's threads arrive | `withAnimation(.spring)` around the first payload builds an animated insertion for every row | Animate only small changes to a list already on screen |
-| A tool row costs 2.5 s CPU per new transcript line | CLI recomputed the whole 200 MB session for one call | Scope the computation (`onlyTools`) and prove parity on real data |
-| Layout pass sizes a whole subtree again | Custom `Layout` asks a fixed-width child `sizeThatFits(width: nil)` | Use the known width |
-| Width read into state writes 30×/s | `onGeometryChange` → state → layout → new width | `measuredWidth(label:)` rounds to whole points and logs `layout.loop` |
-| Code drawn over a sticky header while scrolling | Third-party z-index (pierre gutter 3 vs header 1) | Raise the header in injected CSS |
-| Diff jumps while scrolling fast | WebKit has no scroll anchoring; virtualizer re-places files | Manual anchoring on the same line of the same file |
-| Hub "frozen" for seconds | One `Process.waitUntilExit()`/sync spawn on main, or a hand-off waiting for an answer | Background queue store; fire-and-forget hand-off |
+| Idle window at 5-25% CPU | SwiftUI `repeatForever` animation lays the window out every frame | Core Animation layer animation in an `NSViewRepresentable` |
+| Click 2-18× slower in real use than in tests | An accessibility client is attached | Bench with one attached; value rows; controls only on hover |
+| 140 ms - 1.2 s on opening a pane | `WKWebView` created on the click | A fresh spare made in a quiet moment |
+| 1.4 s stall when a list arrives | `withAnimation` around a first load | Animate only small changes to a list on screen |
+| Refresh re-reads unchanged files | No memory of the last answer | File-identity caches; resume append-only files |
+| Seconds of CPU per new log line | Whole-file parse per change | Parse only appended lines; scope to what was asked |
+| GBs of memory for a 200 MB file | `readFileSync` + split, side files all at once | Chunked line reader, lazy per file |
+| Every call ~250 ms even when cached | A process per call (runtime startup) | Resident server door, byte-identical output |
+| One slow call makes all calls slow | Serial server queue | Fix the slowest door first, re-rank |
+| Width state writes 30×/s | Geometry → state → layout feedback | Whole points + a loop detector |
 
-## Where things live
+## Measuring
 
-- App: `src/macos/GenesisTools/Sources/` (Hub/, Review/, App/), tests `swift test` there.
-- Shared: `src/macos/GenesisKit/Sources/GenesisKit/` (Sessions/, Controls/, Perf/, Window/), tests `swift test` there. A generic component belongs here, never as an app-local copy.
-- Perf plumbing: `HubPerf` (spans, `SLOW` at 100 ms), `HubMainBusy.measure(label)` (main busy over the next 600 ms), `PerfLog` → `~/.genesis-tools/logs/app-perf.log`, `HangWatch` → `~/.genesis-tools/logs/hangs/`, `LayoutLoopWatch`, `RenderProbe` (`GENESIS_RENDER_PROBE=1`).
-- CLI side: `[profile:<scope>]` lines in `~/.genesis-tools/logs/<date>-profiling.log`, one `[profile:cli]` line per `tools` run.
+Instruments, what each answers and the traps in reading them: [references/measuring.md](references/measuring.md).
+Build, install and verify: [references/build.md](references/build.md).
+
+## This codebase
+
+GenesisTools paths, tools (dev monitor, HubBench, server doors), what was done and what is open:
+[references/genesistools.md](references/genesistools.md). Read it before working on src/macos/ or on the
+CLI paths the app calls.

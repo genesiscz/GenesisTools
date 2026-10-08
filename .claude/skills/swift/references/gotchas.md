@@ -41,8 +41,22 @@
 - **The widget preview (`GenesisTools Preview.app`) is built by `scripts/build-widget-preview.ts`**
   in its worktree and is not relaunched by it: `kill -TERM <pid>` then `open -g` the bundle.
 - **`swiftc` with top-level code:** do not pass `-parse-as-library`.
+- **`swift build --scratch-path "$S"` with an empty `$S`** builds into the package folder itself
+  (`.lock`, `build.db`, `arm64-apple-macosx/`, `debug.yaml` next to `Package.swift`). Check the variable,
+  or spell the path out (`--scratch-path .build/opt`).
 - **Swift test suites:** `swift test` in GenesisTools (368 tests) and in GenesisKit; run both after a
   GenesisKit change, because the app compiles against it.
+
+## Tests
+
+- **A test that spies on one I/O primitive breaks when the code switches primitives.** A snapshot test
+  counted `fs.readFileSync` calls; after the switch to `openSync`/`readSync` it saw 0. Keep the test's
+  intent (one read per snapshot) and spy on what the code now calls.
+- **An in-memory cache makes a fixture rewritten in place look unchanged** (same inode, larger size).
+  Test caches with a rewrite, a replacement (rename over) and an append; the rewrite test is the one that
+  catches a weak identity check.
+- **A new test file has a fixed cost on CI** (here ~0.37 s of runner time before it asserts). Fold small
+  test sets into the neighbouring test file.
 
 ## Process and repo
 
