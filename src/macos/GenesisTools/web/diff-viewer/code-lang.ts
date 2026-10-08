@@ -62,15 +62,34 @@ export function fenceLanguage(info: string): string | null {
 
 /** "```tsx title=x" → the info after the backticks or tildes; null when the line opens no fence. */
 export function fenceInfo(line: string): string | null {
-    const match = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
-    return match ? match[2].trim() : null;
+    return fenceMarker(line)?.language ?? null;
+}
+
+export interface CodeFence {
+    mark: string;
+    width: number;
+    language: string;
+}
+
+export function fenceMarker(line: string): CodeFence | null {
+    const opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (!opening || (opening[1][0] === "`" && opening[2].includes("`"))) {
+        return null;
+    }
+
+    return { mark: opening[1][0], width: opening[1].length, language: opening[2].trim() };
+}
+
+export function fenceCloses(line: string, fence: CodeFence): boolean {
+    const closing = /^ {0,3}(`{3,}|~{3,})\s*$/.exec(line);
+    return closing !== null && closing[1][0] === fence.mark && closing[1].length >= fence.width;
 }
 
 export type FencedPart = { kind: "prose"; text: string } | { kind: "code"; text: string; language: string };
 
 export function fencedParts(text: string): FencedPart[] {
     const result: FencedPart[] = [];
-    let fence: { mark: string; width: number; language: string } | null = null;
+    let fence: CodeFence | null = null;
     let pending: string[] = [];
     const flush = () => {
         const body = pending.join("\n");
@@ -86,20 +105,18 @@ export function fencedParts(text: string): FencedPart[] {
 
     for (const line of text.split("\n")) {
         if (fence) {
-            const closing = /^ {0,3}(`{3,}|~{3,})\s*$/.exec(line);
-
-            if (closing && closing[1][0] === fence.mark && closing[1].length >= fence.width) {
+            if (fenceCloses(line, fence)) {
                 flush();
                 fence = null;
             } else {
                 pending.push(line);
             }
         } else {
-            const opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+            const opening = fenceMarker(line);
 
-            if (opening && !(opening[1][0] === "`" && opening[2].includes("`"))) {
+            if (opening) {
                 flush();
-                fence = { mark: opening[1][0], width: opening[1].length, language: opening[2].trim() };
+                fence = opening;
             } else {
                 pending.push(line);
             }

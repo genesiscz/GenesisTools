@@ -16,7 +16,7 @@ import {
     type SupportedLanguages,
 } from "@pierre/diffs";
 import { WorkerPoolManager } from "@pierre/diffs/worker";
-import { fencedParts, fenceInfo, fenceLanguage } from "./code-lang";
+import { fenceCloses, fencedParts, fenceLanguage, fenceMarker } from "./code-lang";
 import { parseFileDiff } from "./file-diff";
 import { installReviewState } from "./review-state";
 
@@ -1837,7 +1837,7 @@ function markdown(text: string): HTMLElement {
     for (let index = 0; index < lines.length; index++) {
         const raw = lines[index];
 
-        const opened = fenceInfo(raw);
+        const opened = fenceMarker(raw);
 
         if (opened !== null) {
             flush();
@@ -1845,12 +1845,12 @@ function markdown(text: string): HTMLElement {
             const code: string[] = [];
             index++;
 
-            while (index < lines.length && fenceInfo(lines[index]) === null) {
+            while (index < lines.length && !fenceCloses(lines[index], opened)) {
                 code.push(lines[index]);
                 index++;
             }
 
-            root.appendChild(codeBlock(code.join("\n"), opened));
+            root.appendChild(codeBlock(code.join("\n"), opened.language));
             continue;
         }
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { fencedParts, fenceInfo, fenceLanguage } from "./code-lang";
+import { fenceCloses, fencedParts, fenceInfo, fenceLanguage, fenceMarker } from "./code-lang";
 
 describe("fenceLanguage", () => {
     test("the names GitLab and GitHub notes use map to shiki's", () => {
@@ -72,5 +72,26 @@ test("tilde fences and mismatched marker lines follow the same code-block contra
     expect(fencedParts("before\n```ts\nline\n``` not a close\nlast")).toEqual([
         { kind: "prose", text: "before" },
         { kind: "code", text: "line\n``` not a close\nlast", language: "ts" },
+    ]);
+});
+
+test("Markdown and proposal code use the same matching closing-fence contract", () => {
+    const opened = fenceMarker("````swift");
+    expect(opened).not.toBeNull();
+    if (!opened) {
+        throw new Error("missing opening fence");
+    }
+
+    for (const line of ["~~~", "```", "````swift", "```` info", "    ````"]) {
+        expect(fenceCloses(line, opened)).toBe(false);
+    }
+    expect(fenceCloses("````", opened)).toBe(true);
+    expect(fenceCloses("  `````  ", opened)).toBe(true);
+    expect(fenceMarker("    ```swift")).toBeNull();
+    expect(fenceMarker("```swift `invalid`")).toBeNull();
+    const lines = ["````swift", "~~~", "```", "````swift", "keep this", "````", "after"];
+    expect(fencedParts(lines.join("\n"))).toEqual([
+        { kind: "code", language: "swift", text: "~~~\n```\n````swift\nkeep this" },
+        { kind: "prose", text: "after" },
     ]);
 });
