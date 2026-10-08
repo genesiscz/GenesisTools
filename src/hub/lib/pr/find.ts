@@ -49,6 +49,31 @@ function baseShas(json: string, provider: ProjectRef["kind"]): Map<number, strin
     return byNumber;
 }
 
+/**
+ * The PR author's picture. GitLab rows carry `author.avatar_url`; `gh pr list/view --json author` has no
+ * avatar field, so GitHub falls back to the profile's `https://<host>/<login>.png`, which redirects to the
+ * picture. A bot login (`app/dependabot`) has no such page.
+ */
+export function authorAvatar({
+    project,
+    author,
+    url,
+}: {
+    project: ProjectRef;
+    author: string | null;
+    url: string | null | undefined;
+}): string | null {
+    if (url) {
+        return url;
+    }
+
+    if (project.kind !== "github" || !author || author.includes("/")) {
+        return null;
+    }
+
+    return `https://${project.host}/${encodeURIComponent(author)}.png`;
+}
+
 /** Open first, then the most recently updated. */
 function pickPr(prs: PrSummary[]): PrSummary | null {
     const sorted = [...prs].sort(
@@ -229,6 +254,7 @@ export async function findBranchPr({
         state: pr.state,
         draft: pr.draft,
         author: pr.author,
+        authorAvatarUrl: authorAvatar({ project, author: pr.author, url: pr.authorAvatarUrl }),
         sourceBranch: pr.headBranch,
         targetBranch: pr.baseBranch,
         headSha: pr.headSha,
@@ -298,6 +324,7 @@ export async function findPrByRef({
         state: pr.state,
         draft: pr.draft,
         author: pr.author,
+        authorAvatarUrl: authorAvatar({ project, author: pr.author, url: pr.authorAvatarUrl }),
         sourceBranch: pr.headBranch,
         targetBranch: pr.baseBranch,
         headSha: pr.headSha,

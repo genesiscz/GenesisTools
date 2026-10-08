@@ -151,6 +151,8 @@ struct PRInfo: Decodable, Equatable {
     let state: String?
     let draft: Bool?
     let author: String?
+    /// The author's picture on the host (GitLab `avatar_url`, GitHub's profile `.png`); nil from an older `tools`.
+    var authorAvatarUrl: String? = nil
     let sourceBranch: String?
     let targetBranch: String?
     /// The head branch lives in a fork; `headRepo` is its `owner/repo` when the host named it. Both

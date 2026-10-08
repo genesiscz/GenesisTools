@@ -29,12 +29,19 @@ struct PRReviewBar: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Image(systemName: "bubble.left.and.bubble.right")
-                    .foregroundColor(ReviewPalette.renamed)
+                if let pr = store.pr, let forge = Forge(kind: pr.provider) {
+                    // "GitLab !7528" with the forge's mark, the same pill as the hub's PR overview.
+                    ForgeBadge(forge: forge, number: pr.number, url: URL(string: pr.webUrl ?? pr.url)) { ExternalOpener.open($0) }
+                } else {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .foregroundColor(ReviewPalette.renamed)
+                }
                 if let pr = store.pr {
-                    ExternalLink(text: pr.identity.label, url: URL(string: pr.webUrl ?? pr.url), font: .system(size: 12, weight: .semibold),
-                                 color: Color(red: 0.62, green: 0.78, blue: 1), glyph: .onHover, tooltip: pr.title)
-                        .fixedSize()
+                    if Forge(kind: pr.provider) == nil {
+                        ExternalLink(text: pr.identity.label, url: URL(string: pr.webUrl ?? pr.url), font: .system(size: 12, weight: .semibold),
+                                     color: Color(red: 0.62, green: 0.78, blue: 1), glyph: .onHover, tooltip: pr.title)
+                            .fixedSize()
+                    }
                     // Inside the hub the PR header above already links the author and both branches.
                     if !model.embedded {
                         // The first to shrink: "Submit review…" at the row's end was cut off by the window edge.
@@ -289,9 +296,13 @@ private struct PRBarLinks: View {
         let forge = pr.forge
         let font = Font.system(size: 11.5)
         if let author = pr.author, !author.isEmpty {
-            ExternalLink(text: author, url: forge?.user(author), font: font, icon: "person.crop.circle", glyph: .onHover,
-                         tooltip: "\(author) opened \(pr.identity.label)")
-                .frame(minWidth: 40)
+            HStack(spacing: 4) {
+                // The author's picture; the generic person glyph while it loads or when the host has none.
+                UserAvatar(url: pr.authorAvatarUrl, username: author, size: 16, fallback: .person)
+                ExternalLink(text: author, url: forge?.user(author), font: font, glyph: .onHover,
+                             tooltip: "\(author) opened \(pr.identity.label)")
+            }
+            .frame(minWidth: 40)
         }
         if let source = pr.sourceBranch, let target = pr.targetBranch {
             ExternalLink(text: source, url: pr.sourceBranchURL, font: .system(size: 11.5, design: .monospaced), glyph: .onHover,
@@ -1072,7 +1083,7 @@ private struct PRThreadRow: View {
     private var foldedSummary: some View {
         HStack(spacing: 6) {
             if let first = thread.comments.first {
-                PRAvatar(name: first.author.name, username: first.author.username, url: first.author.avatarUrl, size: 16)
+                UserAvatar(url: first.author.avatarUrl, name: first.author.name, username: first.author.username, size: 16)
                 Text(verbatim: first.author.name)
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundColor(Color.white.opacity(0.85))
@@ -1217,7 +1228,7 @@ private struct PRThreadRow: View {
     private func commentView(_ comment: PRThreadComment, reply: Bool) -> some View {
         let isNew = fresh.contains(comment.id)
         HStack(alignment: .top, spacing: 8) {
-            PRAvatar(name: comment.author.name, username: comment.author.username, url: comment.author.avatarUrl, size: reply ? 18 : 22)
+            UserAvatar(url: comment.author.avatarUrl, name: comment.author.name, username: comment.author.username, size: reply ? 18 : 22)
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {

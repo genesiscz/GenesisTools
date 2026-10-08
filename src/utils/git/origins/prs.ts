@@ -38,6 +38,8 @@ export interface PrSummary {
     state: PrState;
     draft: boolean;
     author: string | null;
+    /** The author's picture (GitLab `author.avatar_url`, GitHub GraphQL `author.avatarUrl`); absent when the call did not return it. */
+    authorAvatarUrl?: string | null;
     headBranch: string;
     baseBranch: string;
     url: string;
@@ -436,6 +438,7 @@ function ghSummary(row: Record<string, unknown>): PrSummary | null {
         state: ghState(str(row.state) ?? ""),
         draft: row.isDraft === true,
         author: login(row.author),
+        authorAvatarUrl: login(row.author, "avatarUrl"),
         headBranch: str(row.headRefName) ?? "",
         baseBranch: str(row.baseRefName) ?? "",
         url,
@@ -491,7 +494,7 @@ export function ghUpdatedQuery(state: PrListState, first: number): string {
       pageInfo { hasNextPage endCursor }
       nodes {
         number title state isDraft url createdAt updatedAt reviewDecision
-        author { login }
+        author { login avatarUrl }
         headRefName baseRefName headRefOid isCrossRepository
         headRepository { name }
         headRepositoryOwner { login }
@@ -723,6 +726,7 @@ function glabSummary(row: Record<string, unknown>, ciBySha: Map<string, CheckSta
         state: glabState(str(row.state) ?? ""),
         draft: row.draft === true || row.work_in_progress === true,
         author: login(row.author, "username"),
+        authorAvatarUrl: login(row.author, "avatar_url"),
         headBranch: str(row.source_branch) ?? "",
         baseBranch: str(row.target_branch) ?? "",
         url,

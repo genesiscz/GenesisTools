@@ -105,23 +105,8 @@ struct PushAvatar: View {
     var size: CGFloat = 26
 
     var body: some View {
-        let initial = String((author?.username ?? "?").prefix(1)).uppercased()
-        ZStack {
-            Circle().fill(pushOrange.opacity(0.85))
-            Text(verbatim: initial)
-                .font(.system(size: size * 0.46, weight: .semibold))
-                .foregroundColor(.black.opacity(0.8))
-            if let raw = author?.avatarUrl, let url = URL(string: raw) {
-                AsyncImage(url: url) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFill()
-                    }
-                }
-                .clipShape(Circle())
-            }
-        }
-        .frame(width: size, height: size)
-        .instantTooltip(author.map { "\($0.name) (@\($0.username))" } ?? "The host did not say who pushed")
+        UserAvatar(url: author?.avatarUrl, username: author?.username ?? "?", size: size, tint: pushOrange.opacity(0.85))
+            .instantTooltip(author.map { "\($0.name) (@\($0.username))" } ?? "The host did not say who pushed")
     }
 }
 

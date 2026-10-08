@@ -586,7 +586,7 @@ final class PRThreadsTests: XCTestCase {
     func testTheAuthorsPictureReachesTheDiffCard() throws {
         let live = PRThreadRendering.live(try thread("1", path: "src/a.ts", line: 3))
         XCTAssertEqual(live.notes.map(\.avatarUrl), ["https://example.com/a.png"])
-        XCTAssertEqual(PRAvatar.tint(for: "alice"), PRAvatar.tint(for: "alice"), "one tint per person, run after run")
+        XCTAssertEqual(UserAvatar.tint(for: "alice"), UserAvatar.tint(for: "alice"), "one tint per person, run after run")
     }
 
     // MARK: code blocks in notes

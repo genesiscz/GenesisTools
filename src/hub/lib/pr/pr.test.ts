@@ -107,6 +107,8 @@ describe("findBranchPr", () => {
             headSha: "head5",
             baseSha: "base5",
             author: "alice",
+            // gh's author has no avatar field: the profile picture URL stands in.
+            authorAvatarUrl: "https://github.com/alice.png",
         });
     });
 
@@ -117,7 +119,7 @@ describe("findBranchPr", () => {
             title: "Fix y",
             state: "merged",
             draft: false,
-            author: { username: "bob" },
+            author: { username: "bob", avatar_url: "https://gitlab.example.com/uploads/bob.png" },
             source_branch: "feat/x",
             target_branch: "main",
             sha: "headsha",
@@ -153,6 +155,7 @@ describe("findBranchPr", () => {
             state: "MERGED",
             headSha: "headsha",
             baseSha: "basesha",
+            authorAvatarUrl: "https://gitlab.example.com/uploads/bob.png",
         });
     });
 

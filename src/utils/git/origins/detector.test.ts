@@ -367,6 +367,7 @@ describe("gh PR list and view", () => {
             state: "OPEN",
             draft: true,
             author: "alice",
+            authorAvatarUrl: null,
             headBranch: "feat/x",
             baseBranch: "master",
             url: "https://github.com/o/r/pull/15",

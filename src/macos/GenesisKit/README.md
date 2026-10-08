@@ -17,7 +17,7 @@ One target, folders by job. A file goes where its job is, not where its first ca
 | Folder | What |
 |---|---|
 | `Style/` | hover styles (`.genHover*`, `.genHoverEffect`), `.instantTooltip` + `TooltipGuard`, `.rowButton` / `RowButtonStyle`, `KitPalette` / `KitTheme`, `GenesisKitHost`, `SWR` (stale-while-revalidate: `changed`, `fade`, `rowTransition`, `animation`) + `.swrFlash` |
-| `Controls/` | `IconButton`, `GhostButton`, `MenuButton`, `CopyChip`, `NoticePill`, `NewItemsPill` ("3 new ↓" over a live list while the reader is scrolled up) and `RowArrival` (a new row fades in and rises 8 pt, fade only under Reduce Motion), `InfoStrip`, `EmptyState`, `Badge` / `CountBadge`, `ProviderBadge`, `.kicker`, `RefreshingMark` (the spinner over last known data) |
+| `Controls/` | `IconButton`, `GhostButton`, `MenuButton`, `CopyChip`, `NoticePill`, `NewItemsPill` ("3 new ↓" over a live list while the reader is scrolled up) and `RowArrival` (a new row fades in and rises 8 pt, fade only under Reduce Motion), `InfoStrip`, `EmptyState`, `Badge` / `CountBadge`, `ProviderBadge`, `ForgeBadge` ("GitLab !7528" with the forge's mark, opens the PR/MR), `UserAvatar` (a person's picture on a host, one fetch per URL, initial or person-glyph fallback), `.kicker`, `RefreshingMark` (the spinner over last known data) |
 | `Paths/` | `PathOpener` (folder in Finder by bundle id, file in Cursor at a line), `PathLabel`, `PathActionsMenu`, `Clipboard` + `CopyToast` |
 | `Time/` | `LiveTime`, `LiveAgo`, `LiveTimeFormat` |
 | `Cmux/` | `CmuxTree`, `CmuxTarget`, `CmuxTargetPicker` (Tree / Layout), `CmuxSessionPanel` |

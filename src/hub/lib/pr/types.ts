@@ -14,6 +14,8 @@ export interface FoundPr {
     state: PrState;
     draft: boolean;
     author: string | null;
+    /** The author's picture on the host; the review window's PR bar shows it, a generic icon when absent. */
+    authorAvatarUrl?: string | null;
     sourceBranch: string;
     targetBranch: string;
     headSha: string | null;
