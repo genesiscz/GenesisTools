@@ -11,7 +11,12 @@ public final class WidgetModel: ObservableObject {
     private var sessionRoster = WidgetSessionRoster()
     @Published public var selectedKey = ""
     @Published public var selectedCardID: String? { didSet { presentationChanged?() } }
-    @Published public var section = "Inbox" { didSet { presentationChanged?() } }
+    @Published public var section = "Inbox" {
+        didSet {
+            resumeTranscript()
+            presentationChanged?()
+        }
+    }
     @Published public var expanded: EdgePanelPlacement?
     @Published public var activeSideGroup = 0
     @Published public var hoveredSurface: WidgetSurfaceID?
@@ -20,6 +25,7 @@ public final class WidgetModel: ObservableObject {
     @Published public var draggingSide = false
     public var sideClusterHeight: CGFloat = 300
     private var followedTranscript: String?
+    private var receiptContextCache: [String: (at: Date, value: WidgetReceiptContext)] = [:]
     private var hoverTask: Task<Void, Never>?
     @Published public var error: String?
     @Published public var drafts: [String: WidgetDraft] = [:]
@@ -896,8 +902,27 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    public func receiptContext(for card: WidgetCard) async throws -> WidgetReceiptContext {
+        let key = card.sessionKey + "|" + card.id + "|" + String(card.at)
+        if let cached = receiptContextCache[key], Date().timeIntervalSince(cached.at) < 15 {
+            return cached.value
+        }
+        let result = try await bridge.run(
+            subcommand: "hub",
+            args: widgetArgs + ["context", card.id, "--key", card.sessionKey, "--json"],
+            timeoutSeconds: 8)
+        try Task.checkCancellation()
+        guard result.exitCode == 0 else { throw ToolsBridgeError.refused(String(result.stderr.suffix(1000))) }
+        let value = try JSONDecoder().decode(WidgetReceiptContext.self, from: Data(result.stdout.utf8))
+        if receiptContextCache.count >= 12, let oldest = receiptContextCache.min(by: { $0.value.at < $1.value.at }) {
+            receiptContextCache.removeValue(forKey: oldest.key)
+        }
+        receiptContextCache[key] = (Date(), value)
+        return value
+    }
+
     private func resumeTranscript() {
-        let wanted = expanded != nil && activeModuleID == "agents" ? selected : nil
+        let wanted = expanded != nil && activeModuleID == "agents" && section == "Conversation" ? selected : nil
         let identity = wanted.map { $0.key + "|" + ($0.transcriptPath ?? $0.target.sessionId) }
         guard followedTranscript != identity else { return }
         followedTranscript = identity

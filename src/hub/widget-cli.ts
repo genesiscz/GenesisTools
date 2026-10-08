@@ -7,6 +7,7 @@ import { prepareWidgetAsset } from "./lib/composer/assets";
 import { widgetDispatcher } from "./lib/composer/dispatch";
 import { processWidgetOutbox } from "./lib/composer/engine";
 import { performWidgetAction } from "./lib/widget/actions";
+import { readWidgetReceiptContext } from "./lib/widget/context";
 import { readWidgetText } from "./lib/widget/readback";
 import { widgetSnapshot } from "./lib/widget/snapshot";
 import { watchWidget } from "./lib/widget/watch";
@@ -50,6 +51,30 @@ widget
             async (signal) => {
                 const result = await performWidgetAction({ root: command.optsWithGlobals().stateRoot, input, signal });
                 out.result(result ?? { ok: true });
+            },
+            { handleTermination: true }
+        );
+    });
+widget
+    .command("context <id>")
+    .description("Read the stored receipt source and a bounded nearby transcript window")
+    .requiredOption("--key <key>", "Exact Widget provider/session key")
+    .option("--before <turns>", "Context turns before the match (0–10)", Number, 2)
+    .option("--after <turns>", "Context turns after the match (0–10)", Number, 2)
+    .option("--json")
+    .action(async (id: string, options, command) => {
+        await withInterrupt(
+            async (signal) => {
+                out.result(
+                    await readWidgetReceiptContext({
+                        id,
+                        key: options.key,
+                        root: command.optsWithGlobals().stateRoot,
+                        before: options.before,
+                        after: options.after,
+                        signal,
+                    })
+                );
             },
             { handleTermination: true }
         );

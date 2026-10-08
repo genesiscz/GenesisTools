@@ -208,6 +208,15 @@ function provider(value: string | null | undefined): WidgetTarget["provider"] {
     }
     return value === "codex" || value === "grok" ? value : "unknown";
 }
+function formProvider(form: AskForm): string | undefined {
+    if (form.poster?.agent && form.poster.agent !== "unknown") {
+        return form.poster.agent;
+    }
+    return form.transcriptAnchor && form.transcriptAnchor.kind !== "unanchored"
+        ? form.transcriptAnchor.provider
+        : undefined;
+}
+
 function targetOf(
     row: { provider?: string | null; sessionId?: string | null; sourceHome?: string; cwd?: string | null },
     fallback: string
@@ -422,11 +431,11 @@ export async function widgetSnapshot({
         }
     }
     for (const form of waitingForms) {
-        const session = form.sessionHint ? findSession(form.sessionHint) : undefined;
+        const session = form.sessionHint ? findSession(form.sessionHint, formProvider(form)) : undefined;
         const current =
             session ??
             addSession(
-                targetOf({ sessionId: form.sessionHint, cwd: form.cwd }, form.id),
+                targetOf({ sessionId: form.sessionHint, cwd: form.cwd, provider: formProvider(form) }, form.id),
                 form.source ?? "Agent question",
                 form.projectPath,
                 form.createdAt
@@ -461,8 +470,13 @@ export async function widgetSnapshot({
     ]);
     for (const form of forms) {
         const id = form.sessionHint || form.id;
-        if (!findSession(id)) {
-            const identity = persistedTarget?.sessionId === id ? persistedTarget : targetOf({ sessionId: id }, form.id);
+        const sourceProvider = formProvider(form);
+        if (!findSession(id, sourceProvider)) {
+            const identity =
+                persistedTarget?.sessionId === id &&
+                (!sourceProvider || persistedTarget.provider === provider(sourceProvider))
+                    ? persistedTarget
+                    : targetOf({ sessionId: id, provider: sourceProvider }, form.id);
             const session = addSession(
                 { ...identity, cwd: form.cwd },
                 form.source ?? id,
@@ -558,7 +572,7 @@ export async function widgetSnapshot({
     }
     for (const form of forms) {
         const session =
-            (form.sessionHint ? findSession(form.sessionHint) : undefined) ??
+            (form.sessionHint ? findSession(form.sessionHint, formProvider(form)) : undefined) ??
             [...sessions.values()].find((entry) => entry.target.sessionId === form.id);
         if (!session || (selectedKey && session.key !== selectedKey)) {
             continue;

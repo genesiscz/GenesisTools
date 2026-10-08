@@ -1,7 +1,8 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import * as files from "node:fs/promises";
-import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
@@ -9,12 +10,25 @@ import { postDecisions, readDecisions } from "@app/question/lib/decisions/store"
 import { postAskForm } from "@app/question/lib/pending/ask";
 import { getForm, listFormsSnapshot, openPendingStore } from "@app/question/lib/pending/store";
 import * as transcripts from "@genesiscz/utils/ai/transcripts";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as commands from "@genesiscz/utils/process/bounded-command";
+import * as fileLock from "@genesiscz/utils/storage/file-lock";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import * as videos from "@genesiscz/utils/video/probe";
 import { createCanvas } from "@napi-rs/canvas";
 import { performWidgetAction } from "../widget/actions";
+import { readWidgetReceiptContext } from "../widget/context";
 import { createWidgetHandoff } from "../widget/handoff";
+import {
+    attachShelfItem,
+    captureShelfImage,
+    importShelfFile,
+    listWidgetShelf,
+    readShelfAttachment,
+    removeShelfItem,
+    stageShelfImage,
+} from "../widget/shelf";
 import {
     readWidgetChanges,
     readWidgetDecisionEvents,
@@ -1296,4 +1310,479 @@ describe("widget transport receipts", () => {
             expect(() => widgetDeliveryReceipt(run)).toThrow(DeliveryUnknownError);
         }
     });
+});
+
+describe("durable capture and file shelf", () => {
+    test("list is read-only and import persists a general file independently of a recipient", async () => {
+        const directory = await root();
+        expect((await listWidgetShelf(directory)).items).toEqual([]);
+        expect(await Bun.file(join(directory, "shelf", "state.json")).exists()).toBe(false);
+        const input = join(directory, "notes.txt");
+        await writeFile(input, "Keep the original file");
+        const result = await importShelfFile({ root: directory, input });
+        expect(result.item.kind).toBe("file");
+        expect(result.item.path).not.toBe(input);
+        expect(await readFile(result.item.path, "utf8")).toBe("Keep the original file");
+        expect((await listWidgetShelf(directory)).items).toEqual([result.item]);
+        const state = await readWidgetState(directory);
+        expect(state.assets).toEqual({});
+        expect(state.drafts).toEqual({});
+        expect(state.outgoing).toEqual([]);
+    });
+
+    test("concurrent duplicates produce one inventory item and changed bytes produce a new version", async () => {
+        const directory = await root();
+        const input = join(directory, "report.pdf");
+        await writeFile(input, "arbitrary file bytes are not an image");
+        const results = await Promise.all(Array.from({ length: 4 }, () => importShelfFile({ root: directory, input })));
+        expect(new Set(results.map((result) => result.item.id)).size).toBe(1);
+        expect((await listWidgetShelf(directory)).items).toHaveLength(1);
+        await writeFile(input, "updated source contents");
+        const updated = await importShelfFile({ root: directory, input });
+        expect(updated.duplicate).toBe(false);
+        expect(updated.item.id).not.toBe(results[0].item.id);
+        expect(await readFile(results[0].item.path, "utf8")).toBe("arbitrary file bytes are not an image");
+    });
+
+    test("missing originals do not invalidate a managed file reference or send a message", async () => {
+        const directory = await root();
+        const input = join(directory, "draft.md");
+        await writeFile(input, "Durable draft");
+        const { item } = await importShelfFile({ root: directory, input });
+        await unlink(input);
+        const key = widgetSessionKey(target);
+        expect(await attachShelfItem({ root: directory, id: item.id, key })).toEqual({
+            added: true,
+            mode: "file-reference",
+        });
+        expect(await attachShelfItem({ root: directory, id: item.id, key })).toEqual({
+            added: false,
+            mode: "file-reference",
+        });
+        const state = await readWidgetState(directory);
+        expect(state.drafts[key].text).toContain(item.path);
+        expect(state.drafts[key].assetIds).toEqual([]);
+        expect(state.outgoing).toEqual([]);
+        expect(await readFile(item.path, "utf8")).toBe("Durable draft");
+    });
+
+    test("removing from the shelf never deletes an original or an already referenced managed file", async () => {
+        const directory = await root();
+        const input = join(directory, "source.txt");
+        await writeFile(input, "Preserve both");
+        const { item } = await importShelfFile({ root: directory, input });
+        await attachShelfItem({ root: directory, id: item.id, key: widgetSessionKey(target) });
+        await removeShelfItem({ root: directory, id: item.id });
+        expect((await listWidgetShelf(directory)).items).toEqual([]);
+        expect(await readFile(input, "utf8")).toBe("Preserve both");
+        expect(await readFile(item.path, "utf8")).toBe("Preserve both");
+    });
+
+    test("import failures and pre-cancellation leave the inventory unchanged", async () => {
+        const directory = await root();
+        await expect(importShelfFile({ root: directory, input: directory })).rejects.toThrow("regular file");
+        await expect(importShelfFile({ root: directory, input: join(directory, "missing.txt") })).rejects.toThrow();
+        const controller = new AbortController();
+        controller.abort();
+        await expect(
+            importShelfFile({ root: directory, input: directory, signal: controller.signal })
+        ).rejects.toThrow();
+        expect((await listWidgetShelf(directory)).items).toEqual([]);
+    });
+
+    test("an import withdrawn while it waits for the shelf lock commits nothing", async () => {
+        const directory = await root();
+        const input = join(directory, "notes.txt");
+        await writeFile(input, "Withdrawn while another writer held the shelf");
+        const controller = new AbortController();
+        const realLock = fileLock.withFileLock;
+        // The caller withdraws while another shelf writer holds the lock.
+        const waiting = spyOn(fileLock, "withFileLock").mockImplementation((path, fn, timeout) => {
+            if (path.endsWith(join("shelf", "state.lock"))) {
+                controller.abort();
+            }
+
+            return realLock(path, fn, timeout);
+        });
+        try {
+            await expect(importShelfFile({ root: directory, input, signal: controller.signal })).rejects.toThrow();
+            expect((await listWidgetShelf(directory)).items).toEqual([]);
+            expect(
+                await readdir(join(directory, "shelf", "files", (await readdir(join(directory, "shelf", "files")))[0]))
+            ).toEqual([]);
+            const imported = await importShelfFile({ root: directory, input });
+            expect((await listWidgetShelf(directory)).items).toEqual([imported.item]);
+        } finally {
+            waiting.mockRestore();
+        }
+    });
+
+    test("a cancelled capture can be followed by a capture staged without a recipient", async () => {
+        const directory = await root();
+        await expect(
+            captureShelfImage({
+                root: directory,
+                capture: async () => {
+                    throw new Error("Cancelled fixture");
+                },
+            })
+        ).rejects.toThrow("Cancelled fixture");
+        expect((await listWidgetShelf(directory)).items).toEqual([]);
+        const png = Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9h8AAAAASUVORK5CYII=",
+            "base64"
+        );
+        const item = await captureShelfImage({
+            root: directory,
+            capture: async ({ output }) => {
+                await writeFile(output, png);
+                return { status: 0 };
+            },
+        });
+        if ("cancelled" in item) {
+            throw new Error("Expected the image fixture to be captured");
+        }
+
+        expect(item.kind).toBe("capture");
+        expect((await readWidgetState(directory)).drafts).toEqual({});
+        const key = widgetSessionKey(target);
+        expect(await attachShelfItem({ root: directory, id: item.id, key })).toEqual({ added: true, mode: "image" });
+        const state = await readWidgetState(directory);
+        expect(state.drafts[key].assetIds).toEqual([item.assetId!]);
+        expect(state.outgoing).toEqual([]);
+    });
+
+    test("a missing managed file produces a truthful failure instead of a broken draft", async () => {
+        const directory = await root();
+        const input = join(directory, "available.txt");
+        await writeFile(input, "temporary fixture");
+        const { item } = await importShelfFile({ root: directory, input });
+        await unlink(item.path);
+        await expect(attachShelfItem({ root: directory, id: item.id, key: widgetSessionKey(target) })).rejects.toThrow(
+            "unavailable"
+        );
+        expect((await readWidgetState(directory)).drafts).toEqual({});
+    });
+});
+
+test("receipt context reads only its stored source and exact provider/session", async () => {
+    const directory = await root();
+    const project = join(directory, "projects", "fixture-project");
+    await mkdir(project, { recursive: true });
+    await writeFile(
+        join(project, "fixture-session.jsonl"),
+        `${SafeJSON.stringify({
+            type: "user",
+            uuid: "native-message",
+            timestamp: "2026-01-01T10:00:00Z",
+            message: { role: "user", content: "stored native context" },
+        })}\n`
+    );
+    const receipt: ReturnType<WidgetSources["answers"]>[number] = {
+        id: "fixture-answer",
+        ts: Date.parse("2026-01-01T10:00:00Z"),
+        sessionId: "fixture-session",
+        sessionTitle: "Fixture",
+        project: "Fixture project",
+        repoRoot: "/fixture/project",
+        cwd: "/fixture/project",
+        branch: "feat/example",
+        commitSha: "abc123",
+        commitMessage: null,
+        agent: "claude-code",
+        isWorktree: true,
+        worktreePath: "/fixture/worktree",
+        aiAgent: null,
+        agentLabel: "Worker",
+        tag: "question",
+        question: "Question",
+        answerMd: "Unrelated large answer body",
+        refs: [],
+        source: "mcp",
+        turnUuid: null,
+        supersededBy: null,
+        readAt: null,
+        transcriptAnchor: {
+            kind: "native" as const,
+            provider: "claude" as const,
+            sessionId: "fixture-session",
+            receivedAt: Date.parse("2026-01-01T10:00:00Z"),
+            messageId: "native-message",
+        },
+    };
+    const sources: Pick<WidgetSources, "answers" | "decisions" | "forms"> = {
+        answers: (session) => {
+            expect(session).toBe("fixture-session");
+            return [receipt];
+        },
+        decisions: () => {
+            throw new Error("Must not scan other receipt stores");
+        },
+        forms: () => {
+            throw new Error("Must not scan other receipt stores");
+        },
+    };
+    const key = widgetSessionKey({
+        ...target,
+        provider: "claude",
+        sessionId: "fixture-session",
+        sourceHome: directory,
+    });
+    const context = await readWidgetReceiptContext({ key, id: "answer:fixture-answer", sources });
+    expect(context.error).toBeUndefined();
+    expect(context.sourceContext).toMatchObject({
+        agentLabel: "Worker",
+        branch: "feat/example",
+        worktreePath: "/fixture/worktree",
+    });
+    expect(context.sourceContext).not.toHaveProperty("answerMd");
+    expect(context.transcript?.status).toBe("native");
+    expect(context.transcript?.around[0]?.text).toBe("stored native context");
+    const foreignKey = widgetSessionKey({
+        ...target,
+        provider: "codex",
+        sessionId: "fixture-session",
+        sourceHome: directory,
+    });
+    await expect(readWidgetReceiptContext({ key: foreignKey, id: "answer:fixture-answer", sources })).rejects.toThrow(
+        "provider/session"
+    );
+    await expect(readWidgetReceiptContext({ key, id: "answer:missing", sources })).rejects.toThrow("not found");
+    // An agent the Widget has no session kind for (copilot) is the "unknown" session the snapshot showed, not a mismatch.
+    const unknownKey = widgetSessionKey({
+        ...target,
+        provider: "unknown",
+        sessionId: "fixture-session",
+        sourceHome: directory,
+    });
+    const cursorSources = {
+        ...sources,
+        answers: () => [
+            {
+                ...receipt,
+                agent: "copilot" as const,
+                transcriptAnchor: { kind: "unanchored" as const, receivedAt: receipt.ts },
+            },
+        ],
+    };
+    expect(
+        (await readWidgetReceiptContext({ key: unknownKey, id: "answer:fixture-answer", sources: cursorSources }))
+            .sourceContext
+    ).toMatchObject({ agent: "copilot" });
+    await expect(readWidgetReceiptContext({ key, id: "answer:fixture-answer", before: 20, sources })).rejects.toThrow(
+        "between 0 and 10"
+    );
+});
+
+test("receipt inspection reads an old stored answer without creating tables, ingesting or applying a history cap", async () => {
+    const directory = await root();
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {
+        const dbPath = toolDataDir("question", "qa.db");
+        await mkdir(toolDataDir("question"), { recursive: true });
+        const db = new Database(dbPath);
+        db.exec("CREATE TABLE entries (id TEXT PRIMARY KEY, ts INTEGER, session_id TEXT, agent TEXT, refs_json TEXT)");
+        const insert = db.query("INSERT INTO entries VALUES (?, ?, 'fixture-session', 'unknown', '[]')");
+        for (let index = 0; index < 100; index++) {
+            insert.run(`fixture-${index}`, index + 1);
+        }
+        db.close();
+        const before = await readFile(dbPath);
+        const key = widgetSessionKey({ ...target, provider: "unknown", sessionId: "fixture-session" });
+        const context = await readWidgetReceiptContext({ key, id: "answer:fixture-0" });
+        expect(context.id).toBe("answer:fixture-0");
+        expect(context.sourceContext?.sessionId).toBe("fixture-session");
+        expect(context.transcriptAnchor.kind).toBe("unanchored");
+        expect(await readFile(dbPath)).toEqual(before);
+        const inspected = new Database(dbPath, { readonly: true });
+        try {
+            const tables = inspected.query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all();
+            expect(tables).toEqual([{ name: "entries" }]);
+        } finally {
+            inspected.close();
+        }
+    });
+});
+
+test("explicit shelf images deduplicate while general image files remain file references", async () => {
+    const directory = await root();
+    const input = join(directory, "clipboard.png");
+    await writeFile(
+        input,
+        Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9h8AAAAASUVORK5CYII=",
+            "base64"
+        )
+    );
+    const first = await stageShelfImage({ root: directory, input });
+    const second = await stageShelfImage({ root: directory, input });
+    expect(second.id).toBe(first.id);
+    const general = await importShelfFile({ root: directory, input });
+    expect(general.item.kind).toBe("file");
+    expect(general.item.assetId).toBeUndefined();
+    expect((await listWidgetShelf(directory)).items).toHaveLength(2);
+    expect((await readWidgetState(directory)).drafts).toEqual({});
+    await mutateWidgetState(directory, (state) => {
+        delete state.assets[first.assetId!];
+    });
+    const recovered = await stageShelfImage({ root: directory, input });
+    expect(recovered.id).not.toBe(first.id);
+    expect((await listWidgetShelf(directory)).items).toHaveLength(2);
+    expect(await attachShelfItem({ root: directory, id: recovered.id, key: widgetSessionKey(target) })).toEqual({
+        added: true,
+        mode: "image",
+    });
+    const bad = join(directory, "not-an-image.png");
+    await writeFile(bad, "not image bytes");
+    await expect(stageShelfImage({ root: directory, input: bad })).rejects.toThrow();
+    expect((await listWidgetShelf(directory)).items).toHaveLength(2);
+});
+
+test("cancel after producing a capture cleans temporary bytes and allows restart", async () => {
+    const directory = await root();
+    const controller = new AbortController();
+    let temporary = "";
+    await expect(
+        captureShelfImage({
+            root: directory,
+            signal: controller.signal,
+            capture: async ({ output }) => {
+                temporary = output;
+                await writeFile(output, "partial capture");
+                controller.abort();
+                return { status: 0 };
+            },
+        })
+    ).rejects.toThrow();
+    expect(await Bun.file(temporary).exists()).toBe(false);
+    expect((await listWidgetShelf(directory)).items).toEqual([]);
+    expect((await readWidgetState(directory)).assets).toEqual({});
+});
+
+test("orphan forms retain stored providers and their receipt context accepts the snapshot identity", async () => {
+    const directory = await root();
+    const forms: ReturnType<WidgetSources["forms"]> = [
+        {
+            id: "codex-form",
+            sessionHint: "orphan-codex",
+            status: "pending",
+            createdAt: 1,
+            projectPath: "/fixture",
+            cwd: "/fixture",
+            items: [],
+            poster: {
+                agent: "codex",
+                sessionId: "orphan-codex",
+                isInAgent: true,
+                aiAgent: null,
+                sessionTitle: null,
+                project: "Fixture",
+                repoRoot: "/fixture",
+                cwd: "/fixture",
+                isWorktree: false,
+                worktreePath: null,
+                branch: null,
+                commitSha: null,
+                commitMessage: null,
+            },
+            transcriptAnchor: { kind: "unanchored", receivedAt: 1 },
+        },
+        {
+            id: "grok-form",
+            sessionHint: "orphan-grok",
+            status: "pending",
+            createdAt: 2,
+            projectPath: "/fixture",
+            cwd: "/fixture",
+            items: [],
+            transcriptAnchor: { kind: "receipt-time", provider: "grok", sessionId: "orphan-grok", receivedAt: 2 },
+        },
+        {
+            id: "unknown-form",
+            sessionHint: "orphan-unknown",
+            status: "pending",
+            createdAt: 3,
+            projectPath: "/fixture",
+            cwd: "/fixture",
+            items: [],
+        },
+    ];
+    const sources: WidgetSources = {
+        sessions: async () => [],
+        decisions: () => [],
+        answers: () => [],
+        agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+        forms: (session) => forms.filter((form) => !session || form.sessionHint === session),
+    };
+    const snapshot = await widgetSnapshot({ root: directory, sources });
+    expect(snapshot.sessions.map((session) => session.target.provider).sort()).toEqual(["codex", "grok", "unknown"]);
+    const card = snapshot.cards.find((entry) => entry.sourceId === "codex-form");
+    expect(card).toBeDefined();
+    const context = await readWidgetReceiptContext({ key: card!.sessionKey, id: card!.id, sources });
+    expect(context.transcriptAnchor.kind).toBe("unanchored");
+    expect(context.sourceContext?.agent).toBe("codex");
+    const selectedKey = widgetSessionKey({ ...target, provider: "grok", sessionId: "orphan-grok", sourceHome: "" });
+    const selected = await widgetSnapshot({
+        root: directory,
+        selectedKey,
+        sources: { ...sources, forms: (session) => (session ? [forms[1]] : []) },
+    });
+    expect(selected.sessions[0]?.target.provider).toBe("grok");
+    expect(selected.cards[0]?.sessionKey).toBe(selectedKey);
+});
+
+test("shelf attachment descriptors inspect metadata and draft without creating or changing durable state", async () => {
+    const directory = await root();
+    const input = join(directory, "notes.txt");
+    await writeFile(input, "Shelf descriptor fixture");
+    const { item } = await importShelfFile({ root: directory, input });
+    const shelfBefore = await readFile(join(directory, "shelf", "state.json"));
+    const stateFile = Bun.file(join(directory, "state.json"));
+    expect(await stateFile.exists()).toBe(false);
+    const descriptor = await readShelfAttachment({ root: directory, id: item.id, key: "chosen" });
+    expect(descriptor).toEqual({
+        mode: "file-reference",
+        reference: `File: notes.txt\nLocal path: ${item.path}`,
+        draft: { text: "", assetIds: [] },
+    });
+    expect(
+        await performWidgetAction({
+            root: directory,
+            input: { action: "shelf-attachment", id: item.id, key: "chosen" },
+        })
+    ).toEqual(descriptor);
+    expect(await stateFile.exists()).toBe(false);
+    expect(await readFile(join(directory, "shelf", "state.json"))).toEqual(shelfBefore);
+    await mutateWidgetState(directory, (state) => {
+        state.drafts.chosen = { text: "Existing draft", assetIds: [] };
+    });
+    const before = await stateFile.bytes();
+    expect((await readShelfAttachment({ root: directory, id: item.id, key: "chosen" })).draft.text).toBe(
+        "Existing draft"
+    );
+    expect(await stateFile.bytes()).toEqual(before);
+    const absent = join(directory, "not-created");
+    await expect(readShelfAttachment({ root: absent, id: "missing", key: "chosen" })).rejects.toThrow("unavailable");
+    expect(await Bun.file(join(absent, "state.json")).exists()).toBe(false);
+});
+
+test("native capture exit classification keeps cancellation separate from permission and process failures", async () => {
+    const directory = await root();
+    expect(await captureShelfImage({ root: directory, capture: async () => ({ status: 0, stderr: "" }) })).toEqual({
+        cancelled: true,
+    });
+    expect((await listWidgetShelf(directory)).items).toEqual([]);
+    await expect(
+        captureShelfImage({
+            root: directory,
+            capture: async () => ({ status: 1, stderr: "could not create image from window\n" }),
+        })
+    ).rejects.toThrow("Screenshot capture failed: could not create image from window");
+    await expect(
+        captureShelfImage({
+            root: directory,
+            capture: async () => ({ status: 0, error: new Error("Capture timed out") }),
+        })
+    ).rejects.toThrow("Capture timed out");
+    expect((await listWidgetShelf(directory)).items).toEqual([]);
+    expect((await readWidgetState(directory)).drafts).toEqual({});
 });

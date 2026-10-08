@@ -259,6 +259,8 @@ public struct LiveWidgetView: View {
                 .buttonStyle(.plain).help(model.reading ? "Stop reading" : "Read aloud")
                 .accessibilityLabel(model.reading ? "Stop reading" : "Read aloud")
             }
+            WidgetReceiptContextView(card: card, model: model)
+                .id(card.id + "|" + String(card.at))
             if card.kind != "form" || (card.formItems?.count ?? 0) != 1 {
                 Text(card.title).font(.system(size: 16, weight: .semibold)).textSelection(.enabled)
             }

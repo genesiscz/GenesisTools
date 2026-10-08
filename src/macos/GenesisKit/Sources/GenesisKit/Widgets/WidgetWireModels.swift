@@ -128,6 +128,8 @@ public struct WidgetReference: Codable, Equatable, Sendable {
     public var value: String
 }
 public struct WidgetCard: Codable, Identifiable, Equatable, Sendable {
+    public var sourceContext: WidgetSourceContext? = nil
+    public var transcriptAnchor: WidgetTranscriptAnchor? = nil
     public var id: String
     public var kind: String
     public var sessionKey: String
@@ -335,4 +337,48 @@ public enum WidgetSelection {
         if let persisted, !persisted.isEmpty { return persisted }
         return visibleKeys.first ?? ""
     }
+}
+
+public struct WidgetSourceContext: Codable, Equatable, Sendable {
+    public var sessionId: String
+    public var agent: String?
+    public var agentLabel: String?
+    public var aiAgent: String?
+    public var project: String?
+    public var cwd: String?
+    public var repoRoot: String?
+    public var branch: String?
+    public var commitSha: String?
+    public var isWorktree: Bool?
+    public var worktreePath: String?
+}
+
+public struct WidgetTranscriptAnchor: Codable, Equatable, Sendable {
+    public var kind: String
+    public var provider: String?
+    public var sessionId: String?
+    public var receivedAt: Double
+    public var messageId: String?
+    public var turnId: String?
+    public var toolCallId: String?
+}
+
+public struct WidgetReceiptContext: Codable, Equatable, Sendable {
+    public struct Window: Codable, Equatable, Sendable {
+        public var status: String
+        public var detail: String
+        public var before: [TranscriptTurn]
+        public var around: [TranscriptTurn]
+        public var after: [TranscriptTurn]
+        public var bytesRead: Int
+        public var fileSize: Int
+        public var truncated: Bool
+        public var skippedLines: Int
+        public var anchorOffset: Int?
+    }
+    public var id: String
+    public var sourceContext: WidgetSourceContext?
+    public var transcriptAnchor: WidgetTranscriptAnchor
+    public var transcript: Window?
+    public var error: String?
 }
