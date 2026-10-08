@@ -209,9 +209,9 @@ struct ComparePushesSheet: View {
     private func row(_ version: PRVersion, number: Int) -> some View {
         let onScreen = model.scope.pinnedHead.map { PRThreadRendering.sameCommit(version.headSha, $0) } ?? false
         return HStack(spacing: 0) {
-            radio(selected: fromID == version.id) { fromID = version.id }
+            radio(selected: fromID == version.id, label: "From push \(version.headSha.prefix(8))") { fromID = version.id }
                 .frame(width: 44)
-            radio(selected: toID == version.id) { toID = version.id }
+            radio(selected: toID == version.id, label: "To push \(version.headSha.prefix(8))") { toID = version.id }
                 .frame(width: 34)
             PushAvatar(author: version.pushedBy, size: 18)
                 .padding(.trailing, 8)
@@ -255,13 +255,15 @@ struct ComparePushesSheet: View {
         .background(RoundedRectangle(cornerRadius: 6).fill(fromID == version.id || toID == version.id ? Color.white.opacity(0.05) : .clear))
     }
 
-    private func radio(selected: Bool, action: @escaping () -> Void) -> some View {
+    private func radio(selected: Bool, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: selected ? "largecircle.fill.circle" : "circle")
                 .font(.system(size: 13))
                 .foregroundColor(selected ? pushOrange : ReviewPalette.dim)
         }
         .buttonStyle(.genHoverPlain())
-        .instantTooltip(selected ? "Picked" : "Pick this push")
+        .accessibilityLabel(label)
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .instantTooltip("\(label)\(selected ? " · Selected" : "")")
     }
 }
