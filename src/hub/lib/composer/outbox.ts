@@ -1,5 +1,8 @@
+import { decisionFiles as defaultDecisionFiles } from "@app/question/lib/decisions/read";
+import { reconcileQueuedDecision } from "@app/question/lib/decisions/store";
+import { cancelSessionMessage, listSessionMessages } from "@genesiscz/utils/agent-sessions/message-queue";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { mutateWidgetState } from "../widget/storage";
+import { mutateWidgetState, readWidgetState } from "../widget/storage";
 import {
     type WidgetOutgoing,
     type WidgetPayload,
@@ -140,12 +143,62 @@ export async function changeOutgoing({
     id,
     action,
     confirmedUnknown = false,
+    queueRoot,
+    decisions = defaultDecisionFiles(),
 }: {
     root?: string;
     id: string;
     action: "retry" | "cancel" | "edit";
     confirmedUnknown?: boolean;
+    queueRoot?: string;
+    decisions?: { file: string; events: string };
 }): Promise<void> {
+    const before = await readWidgetState(root);
+    const pending = before.outgoing.find((entry) => entry.id === id);
+    if (
+        pending?.receipt?.channel === "session-queue" &&
+        pending.receipt.entryId &&
+        pending.target.provider !== "unknown"
+    ) {
+        if (pending.state === "sent" || pending.state === "dispatching" || pending.state === "cancelled") {
+            throw new Error("This message has already entered delivery or was cancelled.");
+        }
+        if (pending.state === "unknown" && !confirmedUnknown) {
+            throw new Error("Delivery is unknown. Explicitly confirm after checking the conversation.");
+        }
+        const draft = before.drafts[widgetSessionKey(pending.target)];
+        if (action === "edit" && (draft?.text || draft?.assetIds.length)) {
+            throw new Error("Save or clear your current draft before editing an earlier message.");
+        }
+        const queueTarget = { ...pending.target, provider: pending.target.provider };
+        const queued = listSessionMessages({ target: queueTarget, root: queueRoot }).find(
+            (entry) => entry.id === pending.receipt?.entryId
+        );
+        if (!queued || queued.state === "offered" || queued.state === "received") {
+            throw new Error(
+                "This queued message may already have reached its consumer; wait for acknowledgement before editing, cancelling or retrying."
+            );
+        }
+        if (action === "retry") {
+            throw new Error(
+                "This message is already saved for its exact destination; it will remain pending until a consumer acknowledges it."
+            );
+        }
+        await cancelSessionMessage({ target: queueTarget, id: queued.id, root: queueRoot });
+        if (pending.payload.kind === "decision") {
+            const matched = await reconcileQueuedDecision({
+                ...decisions,
+                id: pending.payload.id,
+                session: pending.target.sessionId,
+                revision: pending.payload.expectedRevision,
+                queueId: queued.id,
+                received: false,
+            });
+            if (!matched) {
+                throw new Error("The decision changed while cancelling its queued answer; refresh before editing it.");
+            }
+        }
+    }
     await mutateWidgetState(root, (state) => {
         const message = state.outgoing.find((entry) => entry.id === id);
         if (!message) {

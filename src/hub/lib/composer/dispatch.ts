@@ -1,10 +1,5 @@
 import { resolve } from "node:path";
-import {
-    type DeliverDeps,
-    DeliveryUnknownError,
-    deliverToSession,
-    resolveDeliveryTarget,
-} from "@app/question/lib/decisions/deliver";
+import { type DeliverDeps, DeliveryUnknownError, deliverToSession } from "@app/question/lib/decisions/deliver";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
 import { type DecisionRecord, kindOf, readDecisions } from "@app/question/lib/decisions/store";
@@ -20,24 +15,27 @@ import type { WidgetAsset, WidgetOutgoing } from "../widget/types";
 import type { OutboxDispatcher } from "./engine";
 
 async function runWidgetDelivery({ args, signal }: { args: string[]; signal?: AbortSignal }) {
+    const nativeTurn = (args[0] === "claude" && args[1] === "worker") || args[0] === "grok";
     const result = await boundedCommand({
         command: [process.execPath, resolve(import.meta.dir, "../../../../widget-tools"), ...args],
-        timeoutMs: 60_000,
+        timeoutMs: nativeTurn ? 15 * 60_000 : 60_000,
         signal,
     });
-    return widgetDeliveryReceipt({ tool: args[0], result });
+    return widgetDeliveryReceipt({ args, result });
 }
 
 /**
  * Turns one transport run into a receipt, or throws DeliveryUnknownError when nobody can tell whether text
  * reached the agent. `claude cmux send --json` exits 1 with `{"sent":false}` when no pane matched: nothing was
- * typed, so that is a certain "not sent" (the message waits for a route) rather than an unknown outcome.
+ * typed, so that is a certain "not sent" (the message waits for a route) rather than an unknown outcome. A native
+ * turn (`claude worker`, `grok`) and `codex` report a refusal through a nonzero exit with a readable answer, so
+ * their exit status is the receipt.
  */
 export function widgetDeliveryReceipt({
-    tool,
+    args,
     result,
 }: {
-    tool: string | undefined;
+    args: readonly string[];
     result: { error?: Error; status: number | null; stdout: string; stderr: string };
 }): { success: boolean; stdout: string; stderr: string } {
     const unknown = new DeliveryUnknownError(
@@ -47,12 +45,13 @@ export function widgetDeliveryReceipt({
         throw unknown;
     }
 
-    if (tool !== "claude") {
-        if (result.status !== 0) {
+    const nativeTurn = (args[0] === "claude" && args[1] === "worker") || args[0] === "grok";
+    if (!(args[0] === "claude" && args[1] === "cmux")) {
+        if (result.status !== 0 && !nativeTurn && args[0] !== "codex") {
             throw unknown;
         }
 
-        return { success: true, stdout: result.stdout, stderr: result.stderr };
+        return { success: result.status === 0, stdout: result.stdout, stderr: result.stderr };
     }
 
     let raw: unknown;
@@ -226,19 +225,15 @@ export function widgetDispatcher({
                         detail: "Decision changed elsewhere. Refresh it before answering.",
                     };
                 }
-                const route = await resolveDeliveryTarget(
-                    { session: message.target.sessionId, provider: message.target.provider },
-                    deliver
-                );
-                if (route.kind === "none") {
-                    return { delivered: false, certainty: "not-sent", channel: "queued", detail: route.reason };
-                }
                 // An earlier attempt stored the answer and the transport refused it: send that same answer again.
+                // Without a live route both paths save it for this exact session (sourceHome, deliveryKey).
                 const sent = resend
                     ? await sendAnsweredDecisions({
                           ids: [row.id],
                           session: message.target.sessionId,
                           provider: message.target.provider,
+                          sourceHome: message.target.sourceHome,
+                          deliveryKey: message.id,
                           files,
                           deps: deliver,
                       })
@@ -247,6 +242,8 @@ export function widgetDispatcher({
                               session: message.target.sessionId,
                               provider: message.target.provider,
                               cwd: message.target.cwd,
+                              sourceHome: message.target.sourceHome,
+                              deliveryKey: message.id,
                               number: payload.number,
                               expectedRevision: payload.expectedRevision,
                               option: payload.option,
@@ -256,25 +253,29 @@ export function widgetDispatcher({
                       );
                 return {
                     delivered: sent.delivered === true,
-                    channel: sent.channel ?? "queued",
+                    channel: sent.queueId ? "session-queue" : (sent.channel ?? "queued"),
+                    entryId: sent.queueId,
+                    payloadHash: sent.queueTextHash,
                     certainty: sent.delivered ? undefined : "not-sent",
                     detail: sent.target ?? sent.error ?? "Queued in Decisions for this session",
                 };
             }
-            const target = await resolveDeliveryTarget(
-                { session: message.target.sessionId, provider: message.target.provider },
-                deliver
-            );
-            if (target.kind === "none") {
-                return { delivered: false, certainty: "not-sent", channel: "queued", detail: target.reason };
-            }
+
             const sent = await deliverToSession(
-                { session: message.target.sessionId, provider: message.target.provider, text },
+                {
+                    session: message.target.sessionId,
+                    provider: message.target.provider,
+                    sourceHome: message.target.sourceHome,
+                    text,
+                    deliveryKey: message.id,
+                },
                 deliver
             );
             return {
                 delivered: sent.delivered,
-                channel: sent.channel,
+                channel: sent.queueId ? "session-queue" : sent.channel,
+                entryId: sent.queueId,
+                payloadHash: sent.queueTextHash,
                 certainty: sent.delivered ? undefined : "not-sent",
                 detail: sent.target ?? sent.error,
             };

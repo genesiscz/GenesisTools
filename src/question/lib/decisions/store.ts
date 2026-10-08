@@ -57,6 +57,7 @@ export interface DecisionRef {
  */
 export interface DecisionDelivery {
     uncertain?: boolean;
+    queueId?: string;
     /** `resume`: the answers went as the first prompt of the session resumed in a new pane. */
     route: "cmux" | "codex" | "prompt" | "queued" | "resume";
     /** A short human place: `cmux · agents-window · pane 1`, `codex worker w1`. Never an error text. */
@@ -830,19 +831,33 @@ export async function markNotified(
  * `answered`, the one backward move the store allows, and only from `sent`. The next send then
  * delivers them again instead of reporting "nothing to send" for answers nobody received.
  */
-export async function restoreUndelivered(
-    file: string,
-    events: string,
-    ids: string[],
-    now = () => new Date().toISOString()
-): Promise<void> {
+export async function restoreUndelivered({
+    file,
+    events,
+    ids,
+    delivery,
+    now = () => new Date().toISOString(),
+}: {
+    file: string;
+    events: string;
+    ids: string[];
+    delivery?: Omit<DecisionDelivery, "at">;
+    now?: () => string;
+}): Promise<void> {
     const wanted = new Set(ids);
 
     await withDecisionsLock(file, () => {
         const ts = now();
         const rows = readDecisions(file);
         const restored = rows.map((row) =>
-            wanted.has(row.id) && row.state === "sent" ? { ...row, state: "answered" as const, updatedTs: ts } : row
+            wanted.has(row.id) && row.state === "sent"
+                ? {
+                      ...row,
+                      state: "answered" as const,
+                      updatedTs: ts,
+                      ...(delivery ? { delivery: { ...delivery, at: ts } } : {}),
+                  }
+                : row
         );
         rewrite(file, restored);
 
@@ -854,11 +869,62 @@ export async function restoreUndelivered(
     });
 }
 
-/**
- * Moves several decisions to one state as ONE transition: one lock, every move validated before
- * any is written, one rewrite. A send that delivered a batch must mark the whole batch, or none,
- * so a crash between rows cannot leave answers that the next send delivers again.
- */
+/** Reconcile only the exact answer revision reserved by this queue message. */
+export async function reconcileQueuedDecision({
+    file,
+    events,
+    id,
+    session,
+    revision,
+    queueId,
+    received,
+    consumer,
+}: {
+    file: string;
+    events: string;
+    id: string;
+    session: string;
+    revision: number;
+    queueId: string;
+    received: boolean;
+    consumer?: string;
+}): Promise<boolean> {
+    return withDecisionsLock(file, () => {
+        const rows = readDecisions(file);
+        const row = rows.find((entry) => entry.id === id);
+        if (!row || row.sessionId !== session || (row.revision ?? 1) !== revision) {
+            return false;
+        }
+        if (!received && row.state === "open" && !row.delivery?.queueId) {
+            return true;
+        }
+        if (row.delivery?.queueId !== queueId || !["answered", "sent"].includes(row.state)) {
+            return false;
+        }
+        if (received && row.state === "sent") {
+            return true;
+        }
+        const ts = new Date().toISOString();
+        row.state = received ? "sent" : "open";
+        row.updatedTs = ts;
+        if (received) {
+            row.delivery = {
+                route: "queued",
+                queueId,
+                at: ts,
+                target: `Received by ${consumer ?? "session consumer"}`,
+            };
+        } else {
+            delete row.delivery;
+            delete row.answer;
+            delete row.option;
+        }
+        rewrite(file, rows);
+        appendEvent(events, { ev: received ? "sent" : "queue_cancelled", id, ts, state: row.state });
+        return true;
+    });
+}
+
 export async function moveDecisions(
     file: string,
     events: string,
@@ -878,6 +944,11 @@ export async function moveDecisions(
         }
 
         for (const row of moving) {
+            if (state === "sent" && row.delivery?.queueId) {
+                throw new Error(
+                    `Decision ${row.id} is reserved by a queued message; wait for its consumer acknowledgement.`
+                );
+            }
             if (!canMove(row, state)) {
                 throw new Error(`cannot move ${row.id} from ${row.state} to ${state}`);
             }

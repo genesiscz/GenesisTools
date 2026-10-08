@@ -1,11 +1,21 @@
+import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { type FocusTarget, isUnambiguous } from "@app/claude/lib/cmux/focus";
 import { findSessionTargets, type SessionTargetsResult, SOFT_SOURCES } from "@app/claude/lib/cmux/resolve";
+import { ClaudeWorkerStore, claudeWorkerSourceHome } from "@app/claude/lib/worker/store";
 import { CodexSessionStore } from "@app/codex/lib/store";
+import { GrokSessionStore } from "@app/grok/lib/store";
+import { enqueueSessionMessage } from "@genesiscz/utils/agent-sessions/message-queue";
 import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type CmuxLiveSnapshot, fetchCmuxLiveSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import { deliverySentence } from "./delivery-text";
 
 const { log } = logger.scoped("question-deliver");
@@ -25,6 +35,8 @@ export interface DeliveryResult {
     error?: string;
     /** The tool's raw output behind the sentence; logged, shown behind a disclosure, never stored. */
     raw?: string;
+    queueId?: string;
+    queueTextHash?: string;
 }
 
 export interface ToolRun {
@@ -45,13 +57,76 @@ export type DeliveryTarget =
           surfaceId: string;
       }
     | { kind: "codex"; label: string; worker: string }
+    | { kind: "worker"; label: string; worker: NativeDeliveryWorker }
     | { kind: "none"; reason: string };
+
+export interface NativeDeliveryWorker {
+    provider: "claude" | "grok";
+    name: string;
+    sessionId: string;
+    sourceHome: string;
+    turns: number;
+    ready: boolean;
+    reason?: string;
+}
+
+function nativeWorkers(provider: "claude" | "grok"): NativeDeliveryWorker[] {
+    const busy = (active?: { ownerPid: number; childPid?: number }) =>
+        Boolean(active && (isProcessAlive(active.ownerPid) || (active.childPid && isProcessAlive(active.childPid))));
+    if (provider === "claude") {
+        const store = new ClaudeWorkerStore();
+        return store.listNames().flatMap((name) => {
+            const meta = store.readMeta(name);
+            if (!meta) {
+                return [];
+            }
+            const running = busy(meta.activeTurn);
+            return [
+                {
+                    provider,
+                    name,
+                    sessionId: meta.sessionId,
+                    sourceHome: claudeWorkerSourceHome(meta),
+                    turns: meta.turns,
+                    ready: !running && meta.turns > 0,
+                    reason: running
+                        ? "The Claude worker is busy; the answer remains queued for a later turn."
+                        : "The original Claude worker session has not started.",
+                },
+            ];
+        });
+    }
+    const store = new GrokSessionStore();
+    return store.listNames().flatMap((name) => {
+        const meta = store.readMeta(name);
+        if (!meta) {
+            return [];
+        }
+        const running = busy(meta.activeTurn);
+        const started = meta.sessionStarted ?? (meta.turns > 0 && meta.lastTurn?.ended === true);
+        return [
+            {
+                provider,
+                name,
+                sessionId: meta.sessionId,
+                sourceHome: meta.workerHome,
+                turns: meta.turns,
+                ready: !running && started,
+                reason: running
+                    ? "The Grok worker is busy; the answer remains queued for a later turn."
+                    : "The original Grok worker session has not started.",
+            },
+        ];
+    });
+}
 
 export interface DeliverDeps {
     /** Runs `tools <args>`; tests replace it with a spy. */
     runTool?: (args: string[]) => Promise<ToolRun>;
+    queueRoot?: string;
     /** The `tools codex` worker name that runs this Codex thread, or null. */
-    codexWorkerFor?: (sessionId: string) => string | null;
+    codexWorkerFor?: (sessionId: string, sourceHome?: string) => string | null;
+    nativeWorkers?: (provider: "claude" | "grok") => NativeDeliveryWorker[];
     /** The cmux panes a session runs in; tests pass a fake. */
     findTargets?: (sessionId: string, opts: { skipRecorded?: boolean }) => Promise<SessionTargetsResult>;
     /** The panes that exist right now, to check a recorded ref against. */
@@ -74,7 +149,7 @@ export class NotDeliveredError extends Error {
     }
 }
 
-function codexWorkerFor(sessionId: string): string | null {
+function codexWorkerFor(sessionId: string, sourceHome?: string): string | null {
     const store = new CodexSessionStore();
 
     for (const name of store.listNames()) {
@@ -84,7 +159,11 @@ function codexWorkerFor(sessionId: string): string | null {
             continue;
         }
 
-        if (meta.threadId === sessionId || meta.name === sessionId) {
+        const sameHome =
+            !sourceHome ||
+            workerSourceHome(sourceHome) ===
+                workerSourceHome(meta.home ?? env.codex.getHomeOverride() ?? join(env.paths.getHome(), ".codex"));
+        if (meta.threadId === sessionId && sameHome) {
             return name;
         }
     }
@@ -93,7 +172,8 @@ function codexWorkerFor(sessionId: string): string | null {
 }
 
 async function runTool(args: string[]): Promise<ToolRun> {
-    return execTool(args, { timeout: 60_000 });
+    const resumed = (args[0] === "claude" && args[1] === "worker") || args[0] === "grok";
+    return execTool(args, { timeout: resumed ? 15 * 60_000 : 60_000 });
 }
 
 const LABEL_MAX = 40;
@@ -152,14 +232,39 @@ function named(target: FocusTarget, snapshot: CmuxLiveSnapshot | undefined): Del
  * agent is worse than not typing.
  */
 export async function resolveDeliveryTarget(
-    { session, provider }: { session: string; provider?: string },
+    { session, provider, sourceHome }: { session: string; provider?: string; sourceHome?: string },
     deps: DeliverDeps = {}
 ): Promise<DeliveryTarget> {
     if (provider === "codex") {
-        const worker = (deps.codexWorkerFor ?? codexWorkerFor)(session);
+        const worker = (deps.codexWorkerFor ?? codexWorkerFor)(session, sourceHome);
         return worker
             ? { kind: "codex", label: `codex worker ${worker}`, worker }
             : { kind: "none", reason: `no live ${toolCommand("codex")} worker runs this thread` };
+    }
+
+    const nativeProvider = provider === "claude-code" ? "claude" : provider;
+    if (nativeProvider === "claude" || nativeProvider === "grok") {
+        const owned = (deps.nativeWorkers ?? nativeWorkers)(nativeProvider).filter(
+            (worker) => worker.provider === nativeProvider && worker.sessionId === session
+        );
+        const matching = owned.filter(
+            (worker) => !sourceHome || workerSourceHome(worker.sourceHome) === workerSourceHome(sourceHome)
+        );
+        if (owned.length > 0 && matching.length !== 1) {
+            return {
+                kind: "none",
+                reason:
+                    matching.length > 1
+                        ? "Several owned workers match this session; none was picked."
+                        : "The owned worker belongs to another source home; no prompt was sent.",
+            };
+        }
+        const worker = matching[0];
+        if (worker) {
+            return worker.ready
+                ? { kind: "worker", label: `${worker.provider} worker ${worker.name}`, worker }
+                : { kind: "none", reason: worker.reason ?? "The worker is not ready for another turn." };
+        }
     }
 
     const find = deps.findTargets ?? ((id, opts) => findSessionTargets(id, opts));
@@ -212,37 +317,183 @@ export function paneText(text: string): string {
 }
 
 /**
- * Delivers composed decision text to one session. The target is resolved first
- * (`resolveDeliveryTarget`); nothing is typed when it is `none`. Codex sessions driven by
- * `tools codex` are steered; every other provider (Claude, Grok) gets the text typed into its
- * cmux pane through `tools claude cmux send`. When no route works the result is `queued` with one
- * sentence: the answers stay `answered`, and the session's next prompt pulls them through the
- * UserPromptSubmit hook when that is enabled.
+ * Resolve an exact owned worker before the optional cmux route. Claude/Grok receipts require a
+ * completed same-session turn; Codex requires a provider input acknowledgement. With a source
+ * home and stable delivery key, a proven pre-input refusal persists a portable queue entry.
+ * An attempted transport with no valid acknowledgement is unknown and must not be resent.
  */
 export async function deliverToSession(
-    { session, provider, text }: { session: string; provider?: string; text: string },
+    {
+        session,
+        provider,
+        sourceHome,
+        text,
+        deliveryKey,
+    }: { session: string; provider?: string; sourceHome?: string; text: string; deliveryKey?: string },
     deps: DeliverDeps = {}
 ): Promise<DeliveryResult> {
     const run = deps.runTool ?? runTool;
-    const target = await resolveDeliveryTarget({ session, provider }, deps);
+    const undelivered = async (reason: string): Promise<DeliveryResult> => {
+        const nativeProvider = provider === "claude-code" ? "claude" : provider;
+        if (
+            deliveryKey &&
+            sourceHome &&
+            (nativeProvider === "claude" || nativeProvider === "codex" || nativeProvider === "grok")
+        ) {
+            const queued = await enqueueSessionMessage({
+                target: { provider: nativeProvider, sessionId: session, sourceHome },
+                text,
+                idempotencyKey: deliveryKey,
+                root: deps.queueRoot,
+            });
+            return {
+                channel: "queued",
+                delivered: false,
+                queueId: queued.id,
+                queueTextHash: createHash("sha256").update(queued.text).digest("hex"),
+                error: `${reason} Saved for this exact session; awaiting a consumer acknowledgement.`,
+            };
+        }
+        return { channel: "queued", delivered: false, error: reason };
+    };
+    const target = await resolveDeliveryTarget({ session, provider, sourceHome }, deps);
 
     if (target.kind === "none") {
         log.info({ session, provider, reason: target.reason }, "no live target; the answers stay queued");
-        return { channel: "queued", delivered: false, error: target.reason };
+        return undelivered(target.reason);
+    }
+
+    if (target.kind === "worker") {
+        const { worker } = target;
+        const directory = mkdtempSync(join(tmpdir(), "worker-delivery-"));
+        const promptFile = join(directory, "prompt.txt");
+        writeFileSync(promptFile, text, { mode: 0o600 });
+        try {
+            const prefix = worker.provider === "claude" ? ["claude", "worker", "steer"] : ["grok", "steer"];
+            const result = await run([
+                ...prefix,
+                "--name",
+                worker.name,
+                "--prompt-file",
+                promptFile,
+                "--json",
+                "--expect-session",
+                worker.sessionId,
+                "--expect-home",
+                worker.sourceHome,
+                "--expect-turn",
+                String(worker.turns),
+            ]);
+            let receipt: unknown;
+            try {
+                receipt = SafeJSON.parse(result.stdout, { strict: true });
+            } catch (error) {
+                log.warn({ error, session, provider }, "Native worker returned no machine receipt");
+                throw new DeliveryUnknownError(
+                    "The resumed worker returned no readable receipt. Check its conversation before retrying."
+                );
+            }
+            if (typeof receipt !== "object" || receipt === null) {
+                throw new DeliveryUnknownError(
+                    "The resumed worker returned an invalid receipt. Check its conversation before retrying."
+                );
+            }
+            const value = receipt as Record<string, unknown>;
+            const sameWorker = value.backend === worker.provider && value.name === worker.name;
+            if (sameWorker && value.kind === "rejected" && typeof value.error === "string") {
+                return undelivered(value.error);
+            }
+            if (
+                result.success &&
+                sameWorker &&
+                value.kind === "turn" &&
+                value.completed === true &&
+                value.exitCode === 0 &&
+                value.sessionId === worker.sessionId &&
+                typeof value.sourceHome === "string" &&
+                workerSourceHome(value.sourceHome) === workerSourceHome(worker.sourceHome) &&
+                value.turn === worker.turns + 1
+            ) {
+                log.info(
+                    { session, provider, worker: worker.name, turn: value.turn },
+                    "Answer acknowledged by completed same-session worker turn"
+                );
+                return { channel: "resume", delivered: true, target: `${target.label} · resumed turn ${value.turn}` };
+            }
+            throw new DeliveryUnknownError(
+                "The resumed worker did not acknowledge this exact session and turn. Check its conversation before retrying."
+            );
+        } finally {
+            rmSync(directory, { recursive: true, force: true });
+        }
     }
 
     if (target.kind === "codex") {
-        const steered = await run(["codex", "steer", "--name", target.worker, "--prompt", text]);
+        const directory = mkdtempSync(join(tmpdir(), "worker-delivery-"));
+        const promptFile = join(directory, "prompt.txt");
+        let steered: ToolRun;
+        try {
+            writeFileSync(promptFile, text, { mode: 0o600 });
+            steered = await run([
+                "codex",
+                "steer",
+                "--name",
+                target.worker,
+                "--json",
+                "--prompt-file",
+                promptFile,
+                ...(sourceHome ? ["--expect-session", session, "--expect-home", sourceHome] : []),
+            ]);
+        } finally {
+            rmSync(directory, { recursive: true, force: true });
+        }
         log.info({ session, worker: target.worker, ok: steered.success }, "decision answers steered into codex");
 
-        return steered.success
-            ? { channel: "codex", delivered: true, target: target.label }
-            : {
-                  channel: "queued",
-                  delivered: false,
-                  error: `the codex worker ${target.worker} did not take the answers`,
-                  raw: steered.stderr || steered.stdout,
-              };
+        let receipt: unknown;
+        try {
+            receipt = SafeJSON.parse(steered.stdout, { strict: true });
+        } catch (error) {
+            log.warn({ error, session }, "Codex transport returned no readable acknowledgement");
+            throw new DeliveryUnknownError(
+                "Codex returned no input acknowledgement. Check the conversation before retrying."
+            );
+        }
+        if (
+            typeof receipt === "object" &&
+            receipt !== null &&
+            "kind" in receipt &&
+            receipt.kind === "rejected" &&
+            "backend" in receipt &&
+            receipt.backend === "codex" &&
+            "name" in receipt &&
+            receipt.name === target.worker &&
+            "error" in receipt &&
+            typeof receipt.error === "string"
+        ) {
+            return undelivered(receipt.error);
+        }
+        if (steered.success && typeof receipt === "object" && receipt !== null && "queued" in receipt) {
+            if (
+                receipt.queued === false &&
+                "turnId" in receipt &&
+                typeof receipt.turnId === "string" &&
+                receipt.turnId
+            ) {
+                return {
+                    channel: "codex",
+                    delivered: true,
+                    target: `${target.label} · input acknowledged (turn ${receipt.turnId})`,
+                };
+            }
+            if (receipt.queued === true) {
+                throw new DeliveryUnknownError(
+                    "Codex accepted the message into its daemon queue, but has not acknowledged a provider turn. Do not resend before checking the conversation."
+                );
+            }
+        }
+        throw new DeliveryUnknownError(
+            "Codex did not return a valid input acknowledgement. Check the conversation before retrying."
+        );
     }
 
     const sent = await run(["claude", "cmux", "send", session, paneText(text), "--json"]);

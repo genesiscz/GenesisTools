@@ -28,6 +28,8 @@ export interface DecisionAnswer {
 export interface AnswerDecisionsInput {
     session: string;
     provider?: string;
+    sourceHome?: string;
+    deliveryKey?: string;
     cwd?: string;
     answers: DecisionAnswer[];
     /** Print the lines and the route; change nothing. */
@@ -41,7 +43,7 @@ export interface AnswerDecisionDeps {
     events: string;
     /** The `❓ DECISION N` block of the session's last reply, for a decision the store does not have yet. */
     block: (session: string, number: number) => Promise<HarvestedDecision | null>;
-    /** The delivery's `tools` runner and codex lookup; tests replace them. */
+    /** Provider-worker discovery, queue location and the tools runner; tests replace them. */
     deliver?: DeliverDeps;
 }
 
@@ -57,6 +59,8 @@ export interface InboxAnswerResult {
     target?: string;
     /** One sentence saying why nothing was delivered. */
     error?: string;
+    queueId?: string;
+    queueTextHash?: string;
 }
 
 function findRow(rows: DecisionRecord[], session: string, number: number): DecisionRecord | undefined {
@@ -200,6 +204,8 @@ export async function answerInboxDecisions(
         ids: updates.map((update) => update.id),
         session: input.session,
         ...(input.provider ? { provider: input.provider } : {}),
+        ...(input.sourceHome ? { sourceHome: input.sourceHome } : {}),
+        ...(input.deliveryKey ? { deliveryKey: input.deliveryKey } : {}),
         files: deps,
         deps: deps.deliver ?? {},
     });
@@ -214,6 +220,7 @@ export async function answerInboxDecisions(
         ...(detail ? { detail } : {}),
         ...(sent.target ? { target: sent.target } : {}),
         ...(sent.error ? { error: sent.error } : {}),
+        ...(sent.queueId ? { queueId: sent.queueId, queueTextHash: sent.queueTextHash } : {}),
     };
 }
 

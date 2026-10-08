@@ -1,5 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
+import { decisionFiles as defaultDecisionFiles } from "@app/question/lib/decisions/read";
+import { reconcileQueuedDecision } from "@app/question/lib/decisions/store";
+import { listSessionMessages } from "@genesiscz/utils/agent-sessions/message-queue";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { LockTimeoutError, withFileLock } from "@genesiscz/utils/storage/file-lock";
@@ -14,6 +17,7 @@ export interface DispatchReceipt {
     certainty?: "not-sent" | "unknown";
     detail?: string;
     entryId?: string;
+    payloadHash?: string;
 }
 export interface OutboxDispatcher {
     /** `assets`: the message's attachments, resolved from the widget state it was serialized from. */
@@ -21,17 +25,118 @@ export interface OutboxDispatcher {
     dispatch(message: WidgetOutgoing, text: string, assets: WidgetAsset[]): Promise<DispatchReceipt>;
 }
 
+function deliveryRevision(message: WidgetOutgoing, state: WidgetState): string {
+    const assets = message.assetIds.map((id) => {
+        const asset = state.assets[id];
+        return asset?.type === "video"
+            ? {
+                  id,
+                  sha256: asset.sha256,
+                  path: asset.path,
+                  revision: asset.revision,
+                  settings: asset.settings,
+                  confirmedRevision: asset.confirmedRevision,
+                  manifestPath: asset.manifestPath,
+              }
+            : { id, sha256: asset?.sha256, path: asset?.path };
+    });
+    return createHash("sha256")
+        .update(SafeJSON.stringify({ payload: message.payload, assets }))
+        .digest("hex");
+}
+
+async function reconcileSessionQueue({
+    root,
+    queueRoot,
+    decisions,
+}: {
+    root: string;
+    queueRoot?: string;
+    decisions: { file: string; events: string };
+}): Promise<void> {
+    const state = await readWidgetState(root);
+    for (const candidate of state.outgoing) {
+        if (
+            !["waiting-route", "unknown"].includes(candidate.state) ||
+            candidate.receipt?.channel !== "session-queue" ||
+            !candidate.receipt.entryId ||
+            candidate.target.provider === "unknown"
+        ) {
+            continue;
+        }
+        const queued = listSessionMessages({
+            target: { ...candidate.target, provider: candidate.target.provider },
+            root: queueRoot,
+        }).find((entry) => entry.id === candidate.receipt?.entryId);
+        if (!queued || !["received", "cancelled"].includes(queued.state)) {
+            continue;
+        }
+        if (
+            candidate.payload.kind === "decision" &&
+            candidate.receipt.payloadHash === createHash("sha256").update(queued.text).digest("hex") &&
+            candidate.receipt.payloadRevision === deliveryRevision(candidate, state)
+        ) {
+            const matched = await reconcileQueuedDecision({
+                ...decisions,
+                id: candidate.payload.id,
+                session: candidate.target.sessionId,
+                revision: candidate.payload.expectedRevision,
+                queueId: queued.id,
+                received: queued.state === "received",
+                consumer: queued.consumer,
+            });
+            if (!matched) {
+                await updateOutgoing(root, candidate.id, (message) => {
+                    message.state = "unknown";
+                    message.error = "The decision changed before its queue acknowledgement; inspect the conversation.";
+                });
+                continue;
+            }
+        }
+        await updateOutgoing(root, candidate.id, (message, current) => {
+            if (
+                !["waiting-route", "unknown"].includes(message.state) ||
+                message.receipt?.entryId !== queued.id ||
+                widgetSessionKey(message.target) !== widgetSessionKey(candidate.target)
+            ) {
+                return;
+            }
+            const exactPayload =
+                message.receipt.payloadHash === createHash("sha256").update(queued.text).digest("hex") &&
+                message.receipt.payloadRevision === deliveryRevision(message, current);
+            if (!exactPayload) {
+                message.state = "unknown";
+                message.error = "The queued payload changed; its acknowledgement cannot confirm this revision.";
+                return;
+            }
+            message.state = queued.state === "received" ? "sent" : "cancelled";
+            message.receipt.delivered = queued.state === "received";
+            message.receipt.at = Date.parse(queued.updatedAt);
+            message.receipt.detail =
+                queued.state === "received"
+                    ? `Received by ${queued.consumer}`
+                    : "Cancelled before a consumer received it";
+            delete message.error;
+        });
+    }
+}
+
 export async function processWidgetOutbox({
     root,
     dispatcher,
     signal,
+    queueRoot,
+    decisions = defaultDecisionFiles(),
 }: {
     root?: string;
     dispatcher: OutboxDispatcher;
     signal?: AbortSignal;
+    queueRoot?: string;
+    decisions?: { file: string; events: string };
 }): Promise<void> {
     signal?.throwIfAborted();
     const directory = widgetRoot(root);
+    await reconcileSessionQueue({ root: directory, queueRoot, decisions });
     const state = await readWidgetState(directory);
     if (!state.outgoing.some((message) => ["preparing", "review", "queued"].includes(message.state))) {
         return;
@@ -108,7 +213,13 @@ export async function processWidgetOutbox({
                                 : receipt.certainty === "not-sent"
                                   ? "waiting-route"
                                   : "unknown";
-                            message.receipt = { ...receipt, at: Date.now() };
+                            message.receipt = {
+                                ...receipt,
+                                at: Date.now(),
+                                ...(receipt.channel === "session-queue"
+                                    ? { payloadRevision: deliveryRevision(first, current) }
+                                    : {}),
+                            };
                             message.error = receipt.delivered ? undefined : receipt.detail;
                         });
                     } catch (error) {
