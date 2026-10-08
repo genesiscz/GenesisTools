@@ -240,12 +240,51 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
                       prompt: @escaping () async throws -> VoiceMicrophonePermission = { XCTFail("unexpected permission request"); return .denied },
                       activate: @escaping () -> Void = {},
                       acquire: @escaping () async throws -> any VoiceRecordingLease = { FixtureVoiceLease() },
-                      openSettings: @escaping () -> Void = {}) -> WidgetVoiceNotesStore {
+                      openSettings: @escaping () -> Void = {},
+                      recipients: [WidgetSession]? = nil) -> WidgetVoiceNotesStore {
         WidgetVoiceNotesStore(micLauncher: "/fixture/Preview.app/Contents/MacOS/launcher", request: request,
             execute: execute, finishCapture: {}, cancelCommand: {}, acquireAudio: acquire,
             settings: { WidgetVoiceNoteSettings(provider: "fixture", model: "test-model", language: "en") },
-            sessions: { [self.recipient] }, attachDraft: attach, readMicrophonePermission: permission,
+            sessions: { recipients ?? [self.recipient] }, attachDraft: attach, readMicrophonePermission: permission,
             requestMicrophonePermission: prompt, activateForMicrophone: activate, openMicrophoneSettings: openSettings)
+    }
+
+    func testOpeningVoiceNotesDoesNotBuildHundredsOfRecipientMenuItems() async throws {
+        _ = NSApplication.shared
+        let recipients = (0..<800).map { index in
+            var session = recipient
+            session.key = "fixture-\(index)"
+            session.title = "Fixture \(index)"
+            return session
+        }
+        let store = make(request: { _ in
+            try self.data(["revision": 0, "notes": [self.note()], "statePath": "/fixture/widget/voice-notes/notes.json"])
+        }, recipients: recipients)
+        defer { store.stop() }
+        store.refresh()
+        await store.waitForRefresh()
+        XCTAssertEqual(store.sessions.count, 800)
+        XCTAssertNotNil(store.selected)
+        let host = NSHostingView(rootView: store.voiceNotesModule().content(.expanded))
+        host.sizingOptions = []
+        let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 432, height: 540),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.level = NSWindow.Level(rawValue: -1000)
+        window.contentView = host
+        defer { window.close() }
+        window.order(.below, relativeTo: 0)
+        host.layoutSubtreeIfNeeded()
+        func menus(_ view: NSView) -> [NSPopUpButton] {
+            if let popup = view as? NSPopUpButton { return [popup] }
+            return view.subviews.flatMap(menus)
+        }
+        let popups = menus(host)
+        XCTAssertFalse(popups.isEmpty, "The recording selector proves the native controls were instantiated")
+        let itemCounts = popups.map { $0.numberOfItems }
+        XCTAssertLessThanOrEqual(itemCounts.max() ?? 0, 2, "A closed recipient picker must not build the whole roster")
+        print("VOICE_RECIPIENT_MENU_COUNTS recipients=800 counts=\(itemCounts)")
     }
 
     func testKnownDeniedAndRestrictedPermissionsNeverAcquireAudioOrSpawn() async throws {

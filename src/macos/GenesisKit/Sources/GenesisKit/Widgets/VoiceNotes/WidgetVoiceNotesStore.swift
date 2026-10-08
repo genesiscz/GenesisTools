@@ -25,6 +25,7 @@ public final class WidgetVoiceNotesStore: ObservableObject {
     @Published public var recipientKey = ""
     @Published private var drafts: [String: String] = [:]
     public let meter = WidgetVoiceRecordingMeter()
+    public var recipientPickerVisibilityChanged: (Bool) -> Void = { _ in }
     private let request: ([String]) async throws -> Data
     private let execute: ([String], (any VoiceRecordingLease)?, @escaping (VoiceCommandEvent) -> Void) async throws -> Data
     private let finishCapture: () -> Void
