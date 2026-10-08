@@ -33,7 +33,8 @@ the calling skill describes. Exit 0 means continue.
 - GitLab, when the review was judged in a judgements file (`review skeleton`, `review check`):
   `tools gitlab pr <iid> review render --file <judgements.md> --proposal | tools hub proposal push -`
   builds the whole proposal from it (new findings as drafts, threads with verdicts and replies), so
-  there is nothing to fill by hand.
+  there is nothing to fill by hand. It runs `review check` first: an error exits 1 and prints no
+  proposal, so read stderr when the push gets nothing.
 - GitHub: `tools github review <pr> --llm` for existing threads; `tools github pr <pr>` for details.
   A GitHub thread's `threadId` is its review-thread node id (`PRRT_…`, the `threadId` field of
   `tools github review <pr> --json`): the window replies with `tools github review comment --thread`.
