@@ -168,7 +168,7 @@ struct HubRequest {
 
     /// The flags a link may carry. Never `--snapshot`, `--bench`, `--set` or `--menu`: a link is a place to
     /// show, not a file to write or a command to run.
-    static let linkKeys: Set<String> = ["mode", "session", "agent", "pr", "reveal", "tab", "filter", "worktree", "decision", "question", "widget-destination", "widget-context", "widget-cwd", "widget-provider"]
+    static let linkKeys: Set<String> = ["mode", "session", "agent", "pr", "reveal", "tab", "filter", "worktree", "decision", "question"]
 
     /// `genesis-tools://hub?session=<parent>&agent=<child>` (any of `linkKeys`) as `--hub` arguments, the
     /// same ones `tools hub open` passes; nil for any other URL.

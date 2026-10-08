@@ -16,6 +16,18 @@ final class ReviewSessionStateTests: XCTestCase {
         defaults.removePersistentDomain(forName: suite)
     }
 
+    func testExternalHubLinksCannotSupplyWidgetLaunchArguments() {
+        let arguments = HubRequest.arguments(fromLink:
+            "genesis-tools://hub?mode=sessions&session=fixture&widget-destination=new&widget-context=/fixture/instructions.md&widget-cwd=/fixture&widget-provider=codex")
+        XCTAssertEqual(arguments, ["--mode", "sessions", "--session", "fixture"])
+        let internalRequest = HubRequest([
+            "--widget-destination", "new", "--widget-context", "/fixture/handoff.md",
+            "--widget-cwd", "/fixture", "--widget-provider", "codex",
+        ])
+        XCTAssertEqual(internalRequest.widgetDestination, "new")
+        XCTAssertEqual(internalRequest.widgetContext, "/fixture/handoff.md")
+    }
+
     // MARK: Scope
 
     func testEveryScopeSurvivesTheDiskForm() throws {

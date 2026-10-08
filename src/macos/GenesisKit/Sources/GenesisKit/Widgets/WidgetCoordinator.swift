@@ -40,16 +40,22 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         } catch { model.error = error.localizedDescription }
         model.openHub = openHub
         model.openDestination =
-            openDestination ?? { session, mode, file in
-                var components = URLComponents(string: "genesis-tools://hub")!
-                components.queryItems = [
-                    .init(name: "mode", value: "sessions"), .init(name: "session", value: session.target.sessionId),
-                    .init(name: "widget-destination", value: mode),
-                    .init(name: "widget-cwd", value: session.target.cwd),
-                    .init(name: "widget-provider", value: session.target.provider),
-                ]
-                if let file { components.queryItems?.append(.init(name: "widget-context", value: file)) }
-                if let url = components.url { NSWorkspace.shared.open(url) }
+            openDestination ?? { [weak model] session, mode, file in
+                guard let executable = Bundle.main.executableURL else { return }
+                let child = Process()
+                child.executableURL = executable
+                child.arguments = [
+                    "--hub", "--mode", "sessions", "--session", session.target.sessionId,
+                    "--widget-destination", mode, "--widget-cwd", session.target.cwd,
+                    "--widget-provider", session.target.provider,
+                ] + (file.map { ["--widget-context", $0] } ?? [])
+                child.standardInput = FileHandle.nullDevice
+                child.standardOutput = FileHandle.nullDevice
+                child.standardError = FileHandle.nullDevice
+                do { try child.run() } catch {
+                    model?.error = "Could not open the destination: " + error.localizedDescription
+                    PerfLog.mark("widget.destination launch \(error.localizedDescription)")
+                }
             }
         model.presentationChanged = { [weak self] in self?.sync() }
         model.showSettings = { [weak self] in self?.showSettings() }
