@@ -534,7 +534,7 @@ test("routing lease rejects another tab and releases only the owning browser ses
             catch (error) { process.exitCode = error instanceof Refusal ? 42 : 44; }
             finally { await browser.close(); }`;
         const competingProcess = Bun.spawn([process.execPath, "--eval", script], {
-            env: { GENESIS_TOOLS_HOME: dirname(genesisToolsDir()) },
+            env: { ...process.env, GENESIS_TOOLS_HOME: dirname(genesisToolsDir()) },
             stdout: "ignore",
             stderr: "pipe",
             signal: AbortSignal.timeout(3000),
@@ -657,7 +657,7 @@ test("CLI Ctrl-C cancels attachment and active recording without saving a recipe
                 "--seconds",
                 "300",
             ],
-            { cwd: join(import.meta.dir, "../../.."), stdout: "pipe", stderr: "pipe" }
+            { cwd: join(import.meta.dir, "../../.."), env: process.env, stdout: "pipe", stderr: "pipe" }
         );
         const output = new Response(child.stdout).text();
         let errors = "";
