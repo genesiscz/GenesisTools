@@ -80,9 +80,11 @@ export function tmuxPaneArgv(command: string): { argv: string[]; commandLine: bo
         return { argv: [...argv, trimmed], commandLine: false };
     }
 
-    // The tmux client splits its argv at any word that ENDS in `;`, so a trailing `;`
-    // would cut the line. Dropping it does not change what the shell runs.
-    return { argv: [...argv, resolveLoginShell(), "-lic", trimmed.replace(/[\s;]+$/, "")], commandLine: true };
+    // The tmux client splits its argv at any word that ENDS in `;`, eating that `;`. Dropping it
+    // broke `find … -exec … \;`, so the word gets a trailing space instead: the shell ignores it.
+    const line = trimmed.endsWith(";") ? `${trimmed} ` : trimmed;
+
+    return { argv: [...argv, resolveLoginShell(), "-lic", line], commandLine: true };
 }
 
 /** How long a command-line session is watched for an immediate death before it counts as started. */

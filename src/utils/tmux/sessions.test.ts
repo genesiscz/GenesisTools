@@ -327,8 +327,10 @@ describe("tmux sessions", () => {
         expect(pane.argv[0]).toBe("/usr/bin/env");
         expect(pane.argv.slice(-3)).toEqual([shell, "-lic", "echo hi; sleep 1"]);
         expect(tmuxPaneArgv("FOO=1 bun test").argv.slice(-2)).toEqual(["-lic", "FOO=1 bun test"]);
-        // tmux splits its own argv at a word ending in `;`, so a trailing one is dropped.
-        expect(tmuxPaneArgv("npm test;").argv.at(-1)).toBe("npm test");
+        // tmux splits its own argv at a word ending in `;`, so such a word gets a trailing space.
+        expect(tmuxPaneArgv("npm test;").argv.at(-1)).toBe("npm test; ");
+        expect(tmuxPaneArgv("find . -exec echo {} ;").argv.at(-1)).toBe("find . -exec echo {} ; ");
+        expect(tmuxPaneArgv("echo hi; sleep 300").argv.at(-1)).toBe("echo hi; sleep 300");
     });
 
     test("a bare executable or an empty command keeps the plain shell pane (ttyd, snapshot restore)", () => {
