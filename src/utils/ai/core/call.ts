@@ -97,6 +97,8 @@ export interface CallLLMStructuredOptions<T> {
      * the provider rejects streaming before the first chunk.
      */
     onPartial?: (partial: unknown) => void;
+    /** Cancels both structured streaming and its non-streaming fallback. */
+    abortSignal?: AbortSignal;
 }
 
 export interface CallLLMStructuredResult<T> {
@@ -491,9 +493,11 @@ export async function streamLLM(
 }
 
 export async function callLLMStructured<T>(options: CallLLMStructuredOptions<T>): Promise<CallLLMStructuredResult<T>> {
+    options.abortSignal?.throwIfAborted();
     const target = await resolveCallTarget(options);
 
     try {
+        options.abortSignal?.throwIfAborted();
         return await runStructured(target, options);
     } finally {
         target.dispose?.();
@@ -504,29 +508,34 @@ async function runStructured<T>(
     target: CallTarget,
     options: CallLLMStructuredOptions<T>
 ): Promise<CallLLMStructuredResult<T>> {
-    const { schema, maxTokens, temperature, onPartial } = options;
+    const { schema, maxTokens, temperature, onPartial, abortSignal } = options;
 
     const callArgs = {
         system: effectiveSystemPrompt(target.systemPromptPrefix, options.systemPrompt),
         prompt: options.userPrompt,
         schema,
         providerOptions: buildProviderOptions(target.providerType),
+        ...(abortSignal ? { abortSignal } : {}),
         ...(maxTokens ? { maxOutputTokens: maxTokens } : {}),
         ...(temperature !== undefined ? { temperature } : {}),
     };
 
     if (onPartial) {
-        const streamed = await tryStreamObject<T>({ model: target.model, callArgs, onPartial });
+        const streamed = await tryStreamObject<T>({ target, callArgs, onPartial });
 
         if (streamed) {
             return streamed;
         }
     }
 
+    abortSignal?.throwIfAborted();
     const result = await generateObject({
         model: target.model as unknown as Parameters<typeof generateObject>[0]["model"],
         ...callArgs,
     });
+    const costUsd = upstreamCostUsd(result.providerMetadata);
+    logUsage({ target, usage: result.usage, ...(costUsd === undefined ? {} : { costUsd }) });
+    abortSignal?.throwIfAborted();
 
     return {
         object: result.object as T,
@@ -536,12 +545,13 @@ async function runStructured<T>(
 }
 
 interface TryStreamObjectOpts<T> {
-    model: LanguageModel;
+    target: CallTarget;
     callArgs: {
         system: string | undefined;
         prompt: string;
         schema: z.ZodType<T>;
         providerOptions: ReturnType<typeof buildProviderOptions>;
+        abortSignal?: AbortSignal;
         maxOutputTokens?: number;
         temperature?: number;
     };
@@ -558,23 +568,35 @@ async function tryStreamObject<T>(opts: TryStreamObjectOpts<T>): Promise<CallLLM
 
     try {
         const result = streamObject({
-            model: opts.model as unknown as Parameters<typeof streamObject>[0]["model"],
+            model: opts.target.model as unknown as Parameters<typeof streamObject>[0]["model"],
             ...opts.callArgs,
         });
 
         for await (const partial of result.partialObjectStream) {
+            opts.callArgs.abortSignal?.throwIfAborted();
             sawChunk = true;
             opts.onPartial(partial);
+            opts.callArgs.abortSignal?.throwIfAborted();
         }
 
         const object = (await result.object) as T;
+        const usage = await result.usage;
+        const costUsd = upstreamCostUsd(await result.providerMetadata);
+        logUsage({ target: opts.target, usage, ...(costUsd === undefined ? {} : { costUsd }) });
+        opts.callArgs.abortSignal?.throwIfAborted();
 
         return {
             object,
             content: SafeJSON.stringify(object, null, 2),
-            usage: await result.usage,
+            usage,
         };
     } catch (error) {
+        opts.callArgs.abortSignal?.throwIfAborted();
+
+        if (error instanceof Error && error.name === "AbortError") {
+            throw error;
+        }
+
         if (!sawChunk) {
             logger.debug({ err: error }, "streamObject failed before first chunk — falling back to generateObject");
             return null;
