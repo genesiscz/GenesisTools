@@ -91,6 +91,15 @@ final class ReviewKeysTests: XCTestCase {
         XCTAssertNil(ReviewKeyNav.stepFile([], from: nil, by: 1))
     }
 
+    func testSnapshotDragStopsWaitingForUnsettledPRsAndMissingLists() {
+        XCTAssertEqual(ReviewSnapshotDemo.dragReadiness(settled: false, hasAnchor: false, waited: 19.5), .waiting)
+        XCTAssertEqual(ReviewSnapshotDemo.dragReadiness(settled: false, hasAnchor: true, waited: 20), .timedOut)
+        XCTAssertEqual(ReviewSnapshotDemo.dragReadiness(settled: false, hasAnchor: false, waited: 21), .timedOut)
+        XCTAssertEqual(ReviewSnapshotDemo.dragReadiness(settled: true, hasAnchor: false, waited: 20), .timedOut)
+        XCTAssertEqual(ReviewSnapshotDemo.dragReadiness(settled: true, hasAnchor: true, waited: 0), .ready)
+        XCTAssertEqual(ReviewSnapshotDemo.dragReadiness(settled: true, hasAnchor: true, waited: 20), .ready)
+    }
+
     func testACardIdNamesItsThread() {
         XCTAssertEqual(ReviewKeyNav.threadID(ofCard: "live:PRRT_1"), "PRRT_1")
         XCTAssertEqual(ReviewKeyNav.threadID(ofCard: "thread:PRRT_1"), "PRRT_1")

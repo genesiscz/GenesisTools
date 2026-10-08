@@ -55,7 +55,7 @@ struct ReviewSnapshotDemo {
             return
         }
         if let dragContext {
-            return MainActor.assumeIsolated { applyDrag(dragContext, to: model, done: done) }
+            return MainActor.assumeIsolated { applyDrag(dragContext, to: model, waited: waited, done: done) }
         }
         guard needsPR else { return applyBlame(to: model, done: done) }
         // A standalone window attaches its branch's PR once the repo facts load, after the first render.
@@ -156,14 +156,28 @@ enum ReviewKeyNav {
 }
 
 extension ReviewSnapshotDemo {
+    enum DragReadiness { case waiting, ready, timedOut }
+
+    static func dragReadiness(settled: Bool, hasAnchor: Bool, waited: Double) -> DragReadiness {
+        if settled && hasAnchor { return .ready }
+        return waited >= 20 ? .timedOut : .waiting
+    }
+
     /// The Context panel's drag, scripted as HubBench does: the list scrolled to `dragScroll`, then the edge
     /// moved by `dx` in steps and released. Before and after: the list's top row and its y, and the diff's
     /// scroll position and frame, on stderr and in app-perf.log.
     @MainActor
     fileprivate func applyDrag(_ dx: CGFloat, to model: ReviewModel, waited: Double = 0, done: @escaping () -> Void) {
-        guard model.pr?.settled == true, PRListAnchor.current != nil || waited >= 20 else {
+        switch Self.dragReadiness(settled: model.pr?.settled == true, hasAnchor: PRListAnchor.current != nil, waited: waited) {
+        case .waiting:
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { applyDrag(dx, to: model, waited: waited + 0.5, done: done) }
             return
+        case .timedOut:
+            HubPerf.log("review drag: PR or list not ready within 20 s; snapshot continues without drag")
+            done()
+            return
+        case .ready:
+            break
         }
 
         var heldID: String?
