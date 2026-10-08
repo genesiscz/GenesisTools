@@ -11,7 +11,7 @@
  * the live-pid cases are as load-bearing as the rejection cases.
  */
 import { describe, expect, test } from "bun:test";
-import { ocrReport, typeOutcome, validateToPid } from "./interact";
+import { ocrReport, scrollTimeoutMs, typeOutcome, validateToPid } from "./interact";
 
 describe("validateToPid", () => {
     test("undefined is fine — the flag is optional", () => {
@@ -126,5 +126,15 @@ describe("ocrReport", () => {
         });
 
         expect(lines[0]).toBe("OCR of /tmp/shot.png (800x600 px): 1 text block");
+    });
+});
+
+describe("scrollTimeoutMs", () => {
+    test("only pauses between repeats count, with finite defaults for malformed values", () => {
+        expect(scrollTimeoutMs({ time: "1", repeat: "1", pause: "30" })).toBe(11_000);
+        expect(scrollTimeoutMs({ time: "2", repeat: "3", pause: "0.5" })).toBe(17_000);
+        expect(scrollTimeoutMs({ time: "NaN", repeat: "oops", pause: "Infinity" })).toBe(10_000);
+        expect(scrollTimeoutMs({ time: "1e308", repeat: "200" })).toBe(10_000);
+        expect(scrollTimeoutMs({})).toBe(10_000);
     });
 });

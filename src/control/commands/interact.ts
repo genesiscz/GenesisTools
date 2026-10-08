@@ -83,6 +83,17 @@ function noteLegacyKeyboardVerb(verb: string): void {
     );
 }
 
+export function scrollTimeoutMs(options: { time?: string; repeat?: string; pause?: string }): number {
+    const finite = (value: string | undefined, fallback: number): number => {
+        const number = Number(value);
+        return value !== undefined && Number.isFinite(number) ? number : fallback;
+    };
+    const repeat = finite(options.repeat, 1);
+    const seconds = finite(options.time, 0) * repeat + finite(options.pause, 0.3) * Math.max(0, repeat - 1);
+
+    return Number.isFinite(seconds * 1000) ? Math.max(10_000, Math.ceil(seconds * 1000) + 10_000) : 10_000;
+}
+
 export function registerInteractCommands(program: Command): void {
     addTargetOptions(
         program
@@ -388,10 +399,7 @@ export function registerInteractCommands(program: Command): void {
             }
 
             // A timed, repeated scroll runs for as long as it was asked to, plus the usual margin.
-            const seconds =
-                Number(opts.time ?? 0) * Number(opts.repeat ?? 1) +
-                Number(opts.pause ?? 0.3) * Number(opts.repeat ?? 1);
-            const result = runAx(axArgs, Math.max(10_000, Math.ceil(seconds * 1000) + 10_000));
+            const result = runAx(axArgs, scrollTimeoutMs(opts));
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 process.exit(result.ok === false ? 1 : 0);

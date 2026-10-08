@@ -75,6 +75,7 @@ func cmdScroll(appName: String) {
     let repeats = argValue("--repeat").flatMap { Int($0) } ?? 1
     guard (1...200).contains(repeats) else { errorExit("--repeat must be 1–200") }
     let pause = argValue("--pause").flatMap { Double($0) } ?? 0.3
+    guard (0...30).contains(pause) else { errorExit("--pause must be 0–30 seconds") }
     let alternate = args.contains("--alternate")
     let foreground = args.contains("--foreground")
 
