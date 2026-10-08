@@ -182,7 +182,7 @@ async function main(): Promise<void> {
                 }
 
                 const answer = await callHubServer({ argv, timeoutMs: Math.max(1000, Math.min(20_000, budgetMs / 2)) });
-                if (!answer || answer.exit !== 0) {
+                if (answer?.exit !== 0) {
                     return null;
                 }
 
