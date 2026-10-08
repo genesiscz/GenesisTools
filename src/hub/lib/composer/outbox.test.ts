@@ -477,3 +477,39 @@ test("a separate handoff saves the unsent draft without dispatching or clearing 
     expect((await readWidgetState(directory)).drafts[key].text).toContain("Keep this independent");
     expect((await readWidgetState(directory)).outgoing).toHaveLength(0);
 });
+
+test("editing an unsent message restores its draft without reviving its cancelled send", async () => {
+    const directory = await root();
+    const message = await enqueue(directory, "Needs correction");
+    await mutateWidgetState(directory, (state) => {
+        state.outgoing[0].state = "failed";
+    });
+    await changeOutgoing({ root: directory, id: message.id, action: "edit" });
+    const state = await readWidgetState(directory);
+    expect(state.outgoing[0].state).toBe("cancelled");
+    expect(state.drafts[widgetSessionKey(target)].text).toBe("Needs correction");
+    await expect(changeOutgoing({ root: directory, id: message.id, action: "retry" })).rejects.toThrow("cancelled");
+    const newer = await enqueue(directory, "newer");
+    await mutateWidgetState(directory, (state) => {
+        state.drafts[widgetSessionKey(target)] = { text: "another draft", assetIds: [] };
+    });
+    await expect(changeOutgoing({ root: directory, id: newer.id, action: "edit" })).rejects.toThrow("current draft");
+});
+
+test("a failing preflight cannot overwrite a concurrent cancellation", async () => {
+    const directory = await root();
+    const message = await enqueue(directory, "Cancel me");
+    await processWidgetOutbox({
+        root: directory,
+        dispatcher: {
+            validate: async () => {
+                await changeOutgoing({ root: directory, id: message.id, action: "cancel" });
+                throw new Error("stale source");
+            },
+            dispatch: async () => {
+                throw new Error("No transport may run");
+            },
+        },
+    });
+    expect((await readWidgetState(directory)).outgoing[0].state).toBe("cancelled");
+});

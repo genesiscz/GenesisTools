@@ -3,11 +3,13 @@ import { existsSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveTranscript, transcriptEnvelope } from "@genesiscz/utils/ai/transcripts";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { serializeWidgetMedia } from "../composer/serialize";
 import { composeHandoff } from "../insights/handoff";
 import { type WidgetSources, widgetSnapshot } from "./snapshot";
 import { widgetRoot } from "./storage";
+import { widgetSessionKey } from "./types";
 
 export async function createWidgetHandoff({
     root,
@@ -52,6 +54,30 @@ export async function createWidgetHandoff({
         paragraphs.push(`## ${card.kind}: ${card.title}`, `State: ${card.status}`, card.body);
         for (const image of card.attachments) {
             paragraphs.push(`Image: ${image.path}`);
+        }
+    }
+    for (const message of snapshot.state.outgoing
+        .filter((message) => widgetSessionKey(message.target) === key && message.state !== "cancelled")
+        .slice(-20)) {
+        paragraphs.push(`## Outgoing message · ${message.state}`);
+        paragraphs.push(
+            message.payload.kind === "form"
+                ? SafeJSON.stringify(message.payload.answers, null, 2)
+                : message.payload.text
+        );
+        if (message.state === "unknown") {
+            paragraphs.push("Delivery is uncertain. Check the source conversation before repeating this message.");
+        }
+        for (const id of message.assetIds) {
+            const asset = snapshot.state.assets[id];
+            if (!asset) {
+                continue;
+            }
+            if (asset.type === "image" || asset.status === "ready") {
+                paragraphs.push(await serializeWidgetMedia([asset]));
+            } else {
+                paragraphs.push(`Original video (preparation incomplete): ${asset.path}`);
+            }
         }
     }
     const draft = snapshot.state.drafts[key];

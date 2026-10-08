@@ -66,8 +66,10 @@ export async function processWidgetOutbox({
                         await dispatcher.validate(first);
                     } catch (error) {
                         await updateOutgoing(directory, first.id, (message) => {
-                            message.state = "failed";
-                            message.error = error instanceof Error ? error.message : String(error);
+                            if (message.state === "queued") {
+                                message.state = "failed";
+                                message.error = error instanceof Error ? error.message : String(error);
+                            }
                         });
                         return;
                     }

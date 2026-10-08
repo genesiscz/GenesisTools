@@ -46,6 +46,7 @@ export const widgetActionSchema = z.discriminatedUnion("action", [
     }),
     z.object({ action: z.literal("retry"), id: z.string(), confirmedUnknown: z.boolean().default(false) }),
     z.object({ action: z.literal("cancel"), id: z.string(), confirmedUnknown: z.boolean().default(false) }),
+    z.object({ action: z.literal("edit"), id: z.string() }),
     z.object({ action: z.literal("read"), id: z.string() }),
 ]);
 
@@ -156,7 +157,8 @@ export async function performWidgetAction({
             return enqueueWidgetMessage({ root, ...request });
         case "retry":
         case "cancel":
-            if (request.action === "cancel") {
+        case "edit":
+            if (request.action === "cancel" || request.action === "edit") {
                 const message = (await readWidgetState(root)).outgoing.find((entry) => entry.id === request.id);
                 if (message?.payload.kind === "decision" && message.dispatchedAt) {
                     const id = message.payload.id;

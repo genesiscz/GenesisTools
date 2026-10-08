@@ -74,7 +74,7 @@ export async function enqueueWidgetMessage({
             if (!state.assets[assetId]) {
                 throw new Error("An attachment is missing; reattach it before sending");
             }
-            if (state.outgoing.some((message) => message.assetIds.includes(assetId))) {
+            if (state.outgoing.some((message) => message.state !== "cancelled" && message.assetIds.includes(assetId))) {
                 throw new Error("Attach a fresh copy when reusing media in another message");
             }
         }
@@ -143,7 +143,7 @@ export async function changeOutgoing({
 }: {
     root?: string;
     id: string;
-    action: "retry" | "cancel";
+    action: "retry" | "cancel" | "edit";
     confirmedUnknown?: boolean;
 }): Promise<void> {
     await mutateWidgetState(root, (state) => {
@@ -157,7 +157,22 @@ export async function changeOutgoing({
         if (message.state === "unknown" && !confirmedUnknown) {
             throw new Error("Delivery is unknown. Explicitly confirm after checking the conversation.");
         }
-        if (action === "cancel") {
+        if (message.state === "cancelled") {
+            throw new Error("A cancelled message cannot be retried; submit a new message.");
+        }
+        if (action === "edit") {
+            const key = widgetSessionKey(message.target);
+            const draft = state.drafts[key];
+            if (draft?.text || draft?.assetIds.length) {
+                throw new Error("Save or clear your current draft before editing an earlier message.");
+            }
+            state.drafts[key] = {
+                text: message.payload.kind === "form" ? "" : message.payload.text,
+                assetIds: [...message.assetIds],
+            };
+            state.selectedKey = key;
+            message.state = "cancelled";
+        } else if (action === "cancel") {
             message.state = "cancelled";
         } else {
             message.state = messageReadiness(message, state);
