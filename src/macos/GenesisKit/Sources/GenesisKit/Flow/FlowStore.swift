@@ -26,6 +26,22 @@ public final class FlowStore {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private var writeFailure: Error?
+    private var committingHistory = false
+    var beforeHistoryJournalRemoval: (() throws -> Void)?
+    var beforeOwnedWrite: ((String) throws -> Void)?
+    var betweenHistoryAndStatsRead: (() throws -> Void)?
+
+    struct HistorySnapshot: Equatable {
+        let history: [FlowEntry]
+        let stats: FlowStats
+    }
+
+    private struct HistoryMutation: Codable {
+        let previousHistory: [FlowEntry]
+        let previousStats: FlowStats
+        let history: [FlowEntry]
+        let stats: FlowStats
+    }
 
     public init(directory: URL? = nil, writesEnabled: Bool = true) {
         self.directory = directory ?? FileManager.default.homeDirectoryForCurrentUser
@@ -49,6 +65,8 @@ public final class FlowStore {
     private var snippetsURL: URL { directory.appendingPathComponent("snippets.json") }
     private var transformsURL: URL { directory.appendingPathComponent("transforms.json") }
     private var statsURL: URL { directory.appendingPathComponent("stats.json") }
+    private var historyMutationURL: URL { directory.appendingPathComponent("history-pending.json") }
+    private var historyRevisionURL: URL { directory.appendingPathComponent("history-revision") }
     private var scratchpadURL: URL { directory.appendingPathComponent("scratchpad.md") }
 
     // MARK: - Typed accessors
@@ -60,24 +78,13 @@ public final class FlowStore {
         try writeOwned(encoder.encode(value), to: configURL)
     }
 
-    public func loadHistory() -> [FlowEntry] { load(historyURL) ?? [] }
-    public func saveHistory(_ value: [FlowEntry]) {
-        do {
-            guard writesEnabled else {
-                throw FlowFocusMailbox.Failure.unavailable("Only the active Flow and Focus owner can save changes.")
-            }
-            let encoded = try encoder.encode(value)
-            let previousIDs = Set(loadHistory().map(\.id))
-            let retainedIDs = Set(value.map(\.id))
-            if value.isEmpty || !previousIDs.isSubset(of: retainedIDs) {
-                try FlowEvents.retain(entryIDs: retainedIDs, at: directory.appendingPathComponent("events.jsonl"))
-            }
-            try writeOwned(encoded, to: historyURL)
-        } catch {
-            writeFailure = error
-            onFailure?(error.localizedDescription)
-            FlowFocusLog.flow.error("FlowStore: history retention failed: \(error.localizedDescription)")
-        }
+    public func loadHistory() -> [FlowEntry] {
+        pendingHistoryForRead()?.previousHistory ?? load(historyURL) ?? []
+    }
+    @discardableResult
+    public func saveHistory(_ value: [FlowEntry]) -> Bool {
+        guard recoverPendingHistory() else { return false }
+        return saveHistoryAndStats(history: value, stats: loadStats())
     }
 
     public func loadDictionary() -> [FlowDictionaryRule] { load(dictionaryURL) ?? [] }
@@ -92,8 +99,111 @@ public final class FlowStore {
     public func loadTransforms() -> [FlowTransform] { load(transformsURL) ?? FlowStore.defaultTransforms }
     public func saveTransforms(_ value: [FlowTransform]) { save(value, to: transformsURL) }
 
-    public func loadStats() -> FlowStats { load(statsURL) ?? FlowStats() }
-    public func saveStats(_ value: FlowStats) { save(value, to: statsURL) }
+    public func loadStats() -> FlowStats {
+        pendingHistoryForRead()?.previousStats ?? load(statsURL) ?? FlowStats()
+    }
+    public func saveStats(_ value: FlowStats) {
+        guard recoverPendingHistory() else { return }
+        saveHistoryAndStats(history: loadHistory(), stats: value)
+    }
+
+    /// Legacy files remain readable by other tools. Until both projections succeed, readers
+    /// use the journal's prior pair; the next owner or mutation replays the intended pair.
+    @discardableResult
+    func saveHistoryAndStats(history: [FlowEntry], stats: FlowStats) -> Bool {
+        guard recoverPendingHistory() else { return false }
+        do {
+            let previous = try loadHistoryAndStats()
+            let pending = HistoryMutation(previousHistory: previous.history, previousStats: previous.stats,
+                                          history: history, stats: stats)
+            committingHistory = true
+            defer { committingHistory = false }
+            try writeOwned(encoder.encode(pending), to: historyMutationURL)
+            try finishHistoryMutation(pending)
+            didWrite?()
+            return true
+        } catch {
+            reportHistoryFailure(error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func recoverPendingHistory() -> Bool {
+        guard FileManager.default.fileExists(atPath: historyMutationURL.path) else { return true }
+        do {
+            guard writesEnabled else {
+                throw FlowFocusMailbox.Failure.unavailable("Only the active owner can finish the pending history update.")
+            }
+            let pending = try decoder.decode(HistoryMutation.self, from: Data(contentsOf: historyMutationURL))
+            committingHistory = true
+            defer { committingHistory = false }
+            try finishHistoryMutation(pending)
+            didWrite?()
+            return true
+        } catch {
+            reportHistoryFailure(error)
+            return false
+        }
+    }
+
+    /// A bounded optimistic read. The journal protects in-progress writes; its commit revision
+    /// catches a writer that completely settles between the two legacy-file reads.
+    func loadHistoryAndStats() throws -> HistorySnapshot {
+        func revision() throws -> Data {
+            guard FileManager.default.fileExists(atPath: historyRevisionURL.path) else { return Data() }
+            return try Data(contentsOf: historyRevisionURL)
+        }
+        func pending() throws -> HistorySnapshot? {
+            guard FileManager.default.fileExists(atPath: historyMutationURL.path) else { return nil }
+            do {
+                let value = try decoder.decode(HistoryMutation.self, from: Data(contentsOf: historyMutationURL))
+                return HistorySnapshot(history: value.previousHistory, stats: value.previousStats)
+            } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+                return nil // The owner settled after the existence check; revision catches it.
+            }
+        }
+        for _ in 0 ..< 4 {
+            if let previous = try pending() { return previous }
+            let before = try revision()
+            if let previous = try pending() { return previous }
+            let history: [FlowEntry] = load(historyURL) ?? []
+            try betweenHistoryAndStatsRead?()
+            let stats: FlowStats = load(statsURL) ?? FlowStats()
+            if let previous = try pending() { return previous }
+            if before == (try revision()) { return HistorySnapshot(history: history, stats: stats) }
+        }
+        throw FlowFocusMailbox.Failure.unavailable("Dictation history changed while loading. Try again shortly.")
+    }
+
+    private func pendingHistoryForRead() -> HistoryMutation? {
+        guard FileManager.default.fileExists(atPath: historyMutationURL.path) else { return nil }
+        do {
+            return try decoder.decode(HistoryMutation.self, from: Data(contentsOf: historyMutationURL))
+        } catch {
+            FlowFocusLog.flow.error("FlowStore: pending history cannot be read: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func finishHistoryMutation(_ pending: HistoryMutation) throws {
+        let previousIDs = Set(pending.previousHistory.map(\.id))
+        let retainedIDs = Set(pending.history.map(\.id))
+        if pending.history.isEmpty || !previousIDs.isSubset(of: retainedIDs) {
+            try FlowEvents.retain(entryIDs: retainedIDs, at: directory.appendingPathComponent("events.jsonl"))
+        }
+        try writeOwned(encoder.encode(pending.history), to: historyURL)
+        try writeOwned(encoder.encode(pending.stats), to: statsURL)
+        try writeOwned(Data(UUID().uuidString.utf8), to: historyRevisionURL)
+        try beforeHistoryJournalRemoval?()
+        try FileManager.default.removeItem(at: historyMutationURL)
+    }
+
+    private func reportHistoryFailure(_ error: Error) {
+        writeFailure = error
+        onFailure?(error.localizedDescription)
+        FlowFocusLog.flow.error("FlowStore: history update remains pending: \(error.localizedDescription)")
+    }
 
     public func loadScratchpad() -> String {
         (try? String(contentsOf: scratchpadURL, encoding: .utf8)) ?? ""
@@ -196,6 +306,7 @@ public final class FlowStore {
             throw FlowFocusMailbox.Failure.unavailable("Only the active Flow and Focus owner can save changes.")
         }
         try ensureDirectory()
+        try beforeOwnedWrite?(url.lastPathComponent)
         let temp = directory.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
         do {
             try data.write(to: temp, options: .atomic)
@@ -203,7 +314,7 @@ public final class FlowStore {
             guard rename(temp.path, url.path) == 0 else {
                 throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
             }
-            didWrite?()
+            if !committingHistory { didWrite?() }
         } catch {
             try? FileManager.default.removeItem(at: temp)
             throw error

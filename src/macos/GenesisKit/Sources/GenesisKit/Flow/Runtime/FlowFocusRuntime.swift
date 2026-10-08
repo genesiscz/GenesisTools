@@ -217,6 +217,8 @@ public final class FlowFocusRuntime: ObservableObject {
 
     private func becomeOwner(_ lease: FlowFocusLease) throws {
         configureModels(owner: true)
+        try flowStore.verifyingWrites { flowStore.recoverPendingHistory() }
+        flow.reloadStoredState()
         _ = dnd.recoverIfNeeded()
         dnd.installTerminateHook()
         focus.ownsRuntime = true

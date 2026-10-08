@@ -101,6 +101,7 @@ public final class FlowSession: ObservableObject {
     public init(store: FlowStore? = nil) {
         let store = store ?? .shared
         self.store = store
+        if store.writesEnabled { store.recoverPendingHistory() }
         let loaded = store.loadConfig()
         let migrated = loaded.migratingLegacyChord()
         if migrated != loaded {
@@ -109,12 +110,19 @@ public final class FlowSession: ObservableObject {
             FlowFocusLog.flow.info("dictation chord moved off ⌃⌥D (Magnet/Rectangle own it) to \(FlowKeyNames.describe(keyCode: migrated.keyCode, modifiers: migrated.modifiers))")
         }
         config = migrated
-        history = store.loadHistory()
-        stats = store.loadStats()
+        do {
+            let snapshot = try store.loadHistoryAndStats()
+            history = snapshot.history
+            stats = snapshot.stats
+        } catch {
+            lastError = error.localizedDescription
+            FlowFocusLog.flow.error("Flow history could not be loaded: \(error.localizedDescription)")
+        }
         dictionary = store.loadDictionary()
         snippets = store.loadSnippets()
         transforms = store.loadTransforms()
         suggestions = store.loadSuggestions()
+        observeStoreFailures()
     }
 
     // MARK: - Lifecycle
@@ -122,6 +130,8 @@ public final class FlowSession: ObservableObject {
     /// Register the global hotkey. Safe to call more than once.
     public func start() {
         guard store.writesEnabled, remoteCommand == nil else { return }
+        guard store.recoverPendingHistory() else { return }
+        reloadStoredState()
         started = true
         labEnabled = configuration.dictationEnabled
         activate()
@@ -477,6 +487,10 @@ public final class FlowSession: ObservableObject {
     func configure(store: FlowStore) {
         self.store = store
         reloadStoredState()
+        observeStoreFailures()
+    }
+
+    private func observeStoreFailures() {
         store.onFailure = { [weak self] message in
             self?.reloadStoredState(preserveConfiguration: true)
             self?.reportFailure(message)
@@ -490,10 +504,14 @@ public final class FlowSession: ObservableObject {
             let next = store.loadConfig().migratingLegacyChord()
             if config != next { config = next }
         }
-        let entries = store.loadHistory()
-        if history != entries { history = entries }
-        let nextStats = store.loadStats()
-        if stats != nextStats { stats = nextStats }
+        do {
+            let snapshot = try store.loadHistoryAndStats()
+            if history != snapshot.history { history = snapshot.history }
+            if stats != snapshot.stats { stats = snapshot.stats }
+        } catch {
+            reportFailure(error.localizedDescription)
+            FlowFocusLog.flow.error("Flow history could not be reloaded: \(error.localizedDescription)")
+        }
         let rules = store.loadDictionary()
         if dictionary != rules { dictionary = rules }
         let nextSnippets = store.loadSnippets()
@@ -524,6 +542,8 @@ public final class FlowSession: ObservableObject {
     // MARK: - Persistence
 
     private func record(raw: String, final: String, duration: Double, injected: Bool) {
+        guard store.recoverPendingHistory() else { return }
+        reloadStoredState(preserveConfiguration: true)
         let words = final.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
         let entry = FlowEntry(
             text: final,
@@ -539,15 +559,13 @@ public final class FlowSession: ObservableObject {
         if history.count > config.historyLimit {
             history.removeLast(history.count - config.historyLimit)
         }
-        store.saveHistory(history)
-        FlowEvents.publish(entry)
-
         stats.totalWords += words
         stats.totalSeconds += duration
         stats.sessionCount += 1
         stats.dayStreak = Self.streak(endingAt: entry.createdAt, previous: stats.lastDictationAt, current: stats.dayStreak)
         stats.lastDictationAt = entry.createdAt
-        store.saveStats(stats)
+        guard store.saveHistoryAndStats(history: history, stats: stats) else { return }
+        FlowEvents.publish(entry)
 
         guard config.dictionaryLearning else { return }
         let raised = FlowDictionary.learn(
@@ -620,14 +638,20 @@ public final class FlowSession: ObservableObject {
 
     public func deleteEntry(_ id: UUID) {
         if forward("flow.history.delete", id) { return }
+        guard store.recoverPendingHistory() else { return }
+        reloadStoredState(preserveConfiguration: true)
+        guard let removed = history.first(where: { $0.id == id }) else { return }
         history.removeAll { $0.id == id }
-        store.saveHistory(history)
+        stats = stats.removing(removed, remainingHistory: history)
+        store.saveHistoryAndStats(history: history, stats: stats)
     }
 
     public func clearHistory() {
         if forward("flow.history.clear") { return }
+        guard store.recoverPendingHistory() else { return }
         history.removeAll()
-        store.saveHistory(history)
+        stats = FlowStats()
+        store.saveHistoryAndStats(history: history, stats: stats)
     }
 
     public func copyEntry(_ entry: FlowEntry) {

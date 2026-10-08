@@ -120,8 +120,8 @@ public struct FlowTransform: Codable, Identifiable, Equatable {
 
 // MARK: - Stats
 
-/// Aggregate counters shown in Insights. Derived from history, but cached so
-/// the header does not re-reduce the whole array on every view update.
+/// Lifetime counters shown in Insights. Automatic history retention does not reduce them;
+/// explicit deletion subtracts the selected turn, and Clear resets the aggregate.
 public struct FlowStats: Codable, Equatable {
     public var totalWords: Int = 0
     public var totalSeconds: Double = 0
@@ -130,6 +130,31 @@ public struct FlowStats: Codable, Equatable {
     /// most recent day that had one.
     public var dayStreak: Int = 0
     public var lastDictationAt: Date?
+
+    func removing(_ entry: FlowEntry, remainingHistory: [FlowEntry], calendar: Calendar = .current) -> FlowStats {
+        var result = self
+        result.totalWords = max(0, totalWords - max(0, entry.wordCount))
+        result.totalSeconds = max(0, totalSeconds - max(0, entry.durationSeconds))
+        result.sessionCount = max(0, sessionCount - 1)
+        guard let last = lastDictationAt else { return result }
+        let removedDay = calendar.startOfDay(for: entry.createdAt)
+        let lastDay = calendar.startOfDay(for: last)
+        let remainingLast = remainingHistory.map(\.createdAt).max()
+        if entry.createdAt >= last { result.lastDictationAt = remainingLast }
+        let anotherOnDay = remainingHistory.contains { calendar.isDate($0.createdAt, inSameDayAs: removedDay) }
+        let daysAfter = calendar.dateComponents([.day], from: removedDay, to: lastDay).day ?? 0
+        if !anotherOnDay, daysAfter >= 0, daysAfter < dayStreak {
+            if daysAfter > 0 {
+                result.dayStreak = daysAfter
+            } else if let remainingLast {
+                let removedDays = calendar.dateComponents([.day], from: calendar.startOfDay(for: remainingLast), to: lastDay).day ?? 0
+                result.dayStreak = max(0, dayStreak - removedDays)
+            } else {
+                result.dayStreak = 0
+            }
+        }
+        return result
+    }
 
     /// Average words per minute across all turns long enough to count.
     public var averageWpm: Double {

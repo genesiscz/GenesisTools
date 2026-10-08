@@ -93,6 +93,228 @@ final class FlowTests: XCTestCase {
         XCTAssertFalse(try Data(contentsOf: FlowEvents.logURL).isEmpty)
     }
 
+    @MainActor
+    func testDeletingAndClearingHistoryAdjustsLifetimeInsights() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-insights-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = FlowStore(directory: root)
+        let older = FlowEntry(text: "Older fixture", rawText: "Older fixture", targetBundleId: nil,
+                              targetAppName: nil, createdAt: Date(timeIntervalSince1970: 1_800_000_000),
+                              durationSeconds: 2, injected: false, wordCount: 2)
+        let newer = FlowEntry(text: "Newer fixture words", rawText: "Newer fixture words", targetBundleId: nil,
+                              targetAppName: nil, createdAt: older.createdAt.addingTimeInterval(86_400),
+                              durationSeconds: 3, injected: false, wordCount: 3)
+        store.saveHistory([newer, older])
+        store.saveStats(FlowStats(totalWords: 5, totalSeconds: 5, sessionCount: 2, dayStreak: 2, lastDictationAt: newer.createdAt))
+        let session = FlowSession(store: store)
+        session.deleteEntry(older.id)
+        XCTAssertEqual(session.stats.totalWords, 3)
+        XCTAssertEqual(session.stats.totalSeconds, 3)
+        XCTAssertEqual(session.stats.sessionCount, 1)
+        XCTAssertEqual(session.stats.dayStreak, 1)
+        session.clearHistory()
+        XCTAssertEqual(session.stats, FlowStats())
+        XCTAssertEqual(store.loadStats(), FlowStats())
+    }
+
+    @MainActor
+    func testAutomaticRetentionAndReloadPreserveAgedOutLifetimeCounters() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-lifetime-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = FlowStore(directory: root)
+        let retained = FlowEntry(text: "Retained fixture words", rawText: "Retained fixture words", targetBundleId: nil,
+                                 targetAppName: nil, createdAt: Date(timeIntervalSince1970: 1_800_000_000),
+                                 durationSeconds: 3, injected: false, wordCount: 3)
+        let agedOut = FlowEntry(text: "Older fixture", rawText: "Older fixture", targetBundleId: nil,
+                                targetAppName: nil, createdAt: retained.createdAt.addingTimeInterval(-86_400),
+                                durationSeconds: 2, injected: false, wordCount: 2)
+        let lifetime = FlowStats(totalWords: 1_000, totalSeconds: 100, sessionCount: 500,
+                                 dayStreak: 12, lastDictationAt: retained.createdAt)
+        store.saveHistory([retained, agedOut])
+        store.saveStats(lifetime)
+        let session = FlowSession(store: store)
+        XCTAssertEqual(session.stats, lifetime)
+        store.saveHistory([retained])
+        session.reloadStoredState()
+        XCTAssertEqual(session.stats, lifetime, "trimming old transcript text is not an Insights reset")
+        session.deleteEntry(retained.id)
+        XCTAssertEqual(session.stats.totalWords, 997)
+        XCTAssertEqual(session.stats.totalSeconds, 97)
+        XCTAssertEqual(session.stats.sessionCount, 499)
+        session.clearHistory()
+        XCTAssertEqual(session.stats, FlowStats())
+    }
+
+    @MainActor
+    func testHistoryAndStatsRecoverTogetherAfterEveryPersistenceBoundary() throws {
+        for operation in ["append", "delete", "clear"] {
+            for boundary in ["history-pending.json", "history.json", "stats.json", "history-revision", "journal-removal"] {
+                let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-transaction-\(UUID())")
+                defer { try? FileManager.default.removeItem(at: root) }
+                let store = FlowStore(directory: root)
+                let first = FlowEntry(text: "First fixture", rawText: "First fixture", targetBundleId: nil,
+                                      targetAppName: nil, createdAt: Date(timeIntervalSince1970: 1_800_000_000),
+                                      durationSeconds: 2, injected: false, wordCount: 2)
+                let second = FlowEntry(text: "Second fixture", rawText: "Second fixture", targetBundleId: nil,
+                                       targetAppName: nil, createdAt: first.createdAt.addingTimeInterval(5),
+                                       durationSeconds: 3, injected: false, wordCount: 2)
+                let oldHistory = [first]
+                let oldStats = FlowStats(totalWords: 1_002, totalSeconds: 102, sessionCount: 501,
+                                         dayStreak: 1, lastDictationAt: first.createdAt)
+                store.saveHistory(oldHistory)
+                store.saveStats(oldStats)
+                let session = FlowSession(store: store)
+                var changeNotifications = 0
+                store.didWrite = { changeNotifications += 1 }
+                let nextHistory = operation == "append" ? [second, first] : []
+                let nextStats: FlowStats
+                if operation == "append" {
+                    nextStats = FlowStats(totalWords: 1_004, totalSeconds: 105, sessionCount: 502,
+                                          dayStreak: 1, lastDictationAt: second.createdAt)
+                } else if operation == "delete" {
+                    nextStats = oldStats.removing(first, remainingHistory: [])
+                } else {
+                    nextStats = FlowStats()
+                }
+                let blocked = root.appendingPathComponent(boundary)
+                let backup = root.appendingPathComponent("original-\(boundary)")
+                if boundary == "journal-removal" {
+                    store.beforeHistoryJournalRemoval = { throw CocoaError(.fileWriteNoPermission) }
+                } else {
+                    var obstructed = false
+                    store.beforeOwnedWrite = { name in
+                        guard name == boundary, !obstructed else { return }
+                        obstructed = true
+                        if FileManager.default.fileExists(atPath: blocked.path) {
+                            try FileManager.default.moveItem(at: blocked, to: backup)
+                        }
+                        try FileManager.default.createDirectory(at: blocked, withIntermediateDirectories: false)
+                    }
+                }
+                func mutate() {
+                    switch operation {
+                    case "delete": session.deleteEntry(first.id)
+                    case "clear": session.clearHistory()
+                    default: store.saveHistoryAndStats(history: nextHistory, stats: nextStats)
+                    }
+                }
+                XCTAssertThrowsError(try store.verifyingWrites { mutate() }, "\(operation) / \(boundary)")
+                XCTAssertEqual(changeNotifications, 0, "failed multi-file updates do not publish partial snapshots")
+                if boundary != "history-pending.json" {
+                    let pendingURL = root.appendingPathComponent("history-pending.json")
+                    let savedPending = try Data(contentsOf: pendingURL)
+                    XCTAssertFalse(store.saveHistoryAndStats(history: [], stats: FlowStats()), "an unrepaired pending update cannot be replaced")
+                    XCTAssertEqual(try Data(contentsOf: pendingURL), savedPending)
+                    let attrs = try FileManager.default.attributesOfItem(atPath: pendingURL.path)
+                    XCTAssertEqual((attrs[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+                }
+                let passiveRestart = FlowStore(directory: root, writesEnabled: false)
+                XCTAssertEqual(passiveRestart.loadHistory(), oldHistory, "pending readers see the prior complete pair")
+                XCTAssertEqual(passiveRestart.loadStats(), oldStats)
+                if boundary != "history-pending.json" {
+                    let pair = try passiveRestart.loadHistoryAndStats()
+                    XCTAssertEqual(pair.history, oldHistory)
+                    XCTAssertEqual(pair.stats, oldStats)
+                    let passiveSession = FlowSession(store: passiveRestart)
+                    XCTAssertEqual(passiveSession.history, oldHistory)
+                    XCTAssertEqual(passiveSession.stats, oldStats)
+                    XCTAssertNil(passiveSession.lastError)
+                }
+                if boundary == "journal-removal" {
+                    store.beforeHistoryJournalRemoval = nil
+                } else {
+                    try FileManager.default.removeItem(at: blocked)
+                    if FileManager.default.fileExists(atPath: backup.path) {
+                        try FileManager.default.moveItem(at: backup, to: blocked)
+                    }
+                }
+                store.beforeOwnedWrite = nil
+                if boundary == "history-pending.json" {
+                    try store.verifyingWrites { mutate() }
+                }
+                let restarted = FlowSession(store: FlowStore(directory: root))
+                XCTAssertEqual(restarted.history, nextHistory, "\(operation) / \(boundary)")
+                XCTAssertEqual(restarted.stats, nextStats, "\(operation) / \(boundary)")
+                XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("history-pending.json").path))
+                if operation == "delete" {
+                    restarted.deleteEntry(first.id)
+                    XCTAssertEqual(restarted.stats, nextStats, "retry never subtracts the same turn twice")
+                }
+                if operation == "clear" {
+                    restarted.clearHistory()
+                    XCTAssertEqual(restarted.stats, nextStats)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    func testSuccessfulHistoryPairPublishesOnceAndKeepsLegacyFilesReadable() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-pair-success-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = FlowStore(directory: root)
+        let entry = FlowEntry(text: "Fixture", rawText: "Fixture", targetBundleId: nil,
+                              targetAppName: nil, createdAt: Date(timeIntervalSince1970: 1_800_000_000),
+                              durationSeconds: 2, injected: false, wordCount: 1)
+        let stats = FlowStats(totalWords: 101, totalSeconds: 102, sessionCount: 51,
+                              dayStreak: 1, lastDictationAt: entry.createdAt)
+        var notifications = 0
+        store.didWrite = { notifications += 1 }
+        XCTAssertTrue(store.saveHistoryAndStats(history: [entry], stats: stats))
+        XCTAssertEqual(notifications, 1)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        XCTAssertEqual(try decoder.decode([FlowEntry].self, from: Data(contentsOf: root.appendingPathComponent("history.json"))), [entry])
+        XCTAssertEqual(try decoder.decode(FlowStats.self, from: Data(contentsOf: root.appendingPathComponent("stats.json"))), stats)
+    }
+
+    @MainActor
+    func testPairedReadRetriesWhenOwnerSettlesBetweenTheLegacyReads() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-coherent-read-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let owner = FlowStore(directory: root)
+        let first = FlowEntry(text: "Old fixture", rawText: "Old fixture", targetBundleId: nil,
+                              targetAppName: nil, createdAt: Date(timeIntervalSince1970: 1_800_000_000),
+                              durationSeconds: 2, injected: false, wordCount: 2)
+        let next = FlowEntry(text: "Next fixture", rawText: "Next fixture", targetBundleId: nil,
+                             targetAppName: nil, createdAt: first.createdAt.addingTimeInterval(5),
+                             durationSeconds: 3, injected: false, wordCount: 2)
+        let oldStats = FlowStats(totalWords: 1_002, totalSeconds: 102, sessionCount: 501)
+        let newStats = FlowStats(totalWords: 1_004, totalSeconds: 105, sessionCount: 502)
+        XCTAssertTrue(owner.saveHistoryAndStats(history: [first], stats: oldStats))
+        let reader = FlowStore(directory: root, writesEnabled: false)
+        var reads = 0
+        reader.betweenHistoryAndStatsRead = {
+            reads += 1
+            if reads == 1 { XCTAssertTrue(owner.saveHistoryAndStats(history: [next, first], stats: newStats)) }
+        }
+        let snapshot = try reader.loadHistoryAndStats()
+        XCTAssertEqual(reads, 2)
+        XCTAssertEqual(snapshot.history, [next, first])
+        XCTAssertEqual(snapshot.stats, newStats)
+        XCTAssertTrue(owner.saveHistoryAndStats(history: [first], stats: oldStats))
+        reads = 0
+        let session = FlowSession(store: reader)
+        XCTAssertEqual(session.history, [next, first], "initialization uses the paired read")
+        XCTAssertEqual(session.stats, newStats)
+        XCTAssertTrue(owner.saveHistoryAndStats(history: [first], stats: oldStats))
+        reads = 0
+        session.reloadStoredState()
+        XCTAssertEqual(session.history, [next, first], "reload uses the paired read")
+        XCTAssertEqual(session.stats, newStats)
+        reads = 0
+        reader.betweenHistoryAndStatsRead = {
+            reads += 1
+            XCTAssertTrue(owner.saveHistoryAndStats(history: [first], stats: oldStats))
+        }
+        XCTAssertThrowsError(try reader.loadHistoryAndStats())
+        XCTAssertEqual(reads, 4, "contention has a fixed read budget, never a wait loop")
+        session.reloadStoredState()
+        XCTAssertEqual(session.history, [next, first], "an exhausted snapshot preserves the previously complete UI pair")
+        XCTAssertEqual(session.stats, newStats)
+        XCTAssertNotNil(session.lastError)
+    }
+
     // MARK: - Starting a turn
 
     /// eve on PR #85 t3: the menu bar and the palette reached `beginTurn` with Flow's own Enabled

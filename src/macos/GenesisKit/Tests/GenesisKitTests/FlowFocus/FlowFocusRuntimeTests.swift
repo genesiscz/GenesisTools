@@ -36,6 +36,36 @@ final class FlowFocusRuntimeTests: XCTestCase {
         XCTAssertEqual((raw["app"] as? [String: Any])?["focusWhileListening"] as? Bool, false)
     }
 
+    func testOwnerReplaysPendingHistoryBeforeStartingAnyServices() async throws {
+        let root = directory.appendingPathComponent("flow")
+        let store = FlowStore(directory: root)
+        let entry = FlowEntry(text: "Recovery fixture", rawText: "Recovery fixture", targetBundleId: nil,
+                              targetAppName: nil, durationSeconds: 2, injected: false, wordCount: 2)
+        store.saveHistory([entry])
+        store.saveStats(FlowStats(totalWords: 2, totalSeconds: 2, sessionCount: 1))
+        let statsURL = root.appendingPathComponent("stats.json")
+        store.beforeOwnedWrite = { name in
+            guard name == "stats.json" else { return }
+            try FileManager.default.removeItem(at: statsURL)
+            try FileManager.default.createDirectory(at: statsURL, withIntermediateDirectories: false)
+        }
+        XCTAssertFalse(store.saveHistoryAndStats(history: [], stats: FlowStats()))
+        let blocked = FlowFocusRuntime(dataRoot: directory, hostID: "test.blocked-recovery", liveServices: false, presentsWindows: false)
+        await blocked.start()
+        XCTAssertFalse(blocked.role.isOwner)
+        XCTAssertNil(blocked.focus.engine, "failed recovery must precede timer and recorder construction")
+        XCTAssertNotNil(blocked.lastError)
+        await blocked.stop()
+        try FileManager.default.removeItem(at: statsURL)
+        let recovered = FlowFocusRuntime(dataRoot: directory, hostID: "test.recovered", liveServices: false, presentsWindows: false)
+        await recovered.start()
+        XCTAssertTrue(recovered.role.isOwner)
+        XCTAssertTrue(recovered.flow.history.isEmpty)
+        XCTAssertEqual(recovered.flow.stats, FlowStats())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("history-pending.json").path))
+        await recovered.stop()
+    }
+
     func testTwoHostsShareOneClockAndClientCommandsReachItsOwner() async throws {
         let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.owner", liveServices: false, presentsWindows: false)
         let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.client", liveServices: false, presentsWindows: false)
