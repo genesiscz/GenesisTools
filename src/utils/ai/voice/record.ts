@@ -1,9 +1,29 @@
 import { statSync } from "node:fs";
 import { mkdir, open, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
-import { type OpenPcmSourceOptions, openPcmSource, type PcmSource } from "@genesiscz/utils/ai/stt/capture/pcm-source";
+import {
+    type OpenPcmSourceOptions,
+    openPcmSource,
+    PcmCaptureError,
+    type PcmSource,
+} from "@genesiscz/utils/ai/stt/capture/pcm-source";
 import { pcmRms } from "@genesiscz/utils/ai/stt/vad";
 import { logger } from "@genesiscz/utils/logger";
+
+export class VoiceRecordingError extends Error {
+    constructor(readonly code: "no_audio") {
+        super("The recording contains no audio. Check the microphone and try again.");
+        this.name = "VoiceRecordingError";
+    }
+}
+
+/** Stable machine failure codes; diagnostics and arbitrary stderr never become UI text. */
+export function recordingFailure(error: unknown) {
+    return {
+        kind: "error" as const,
+        code: error instanceof VoiceRecordingError || error instanceof PcmCaptureError ? error.code : "capture_failed",
+    };
+}
 
 export interface RecordedPcmClip {
     path: string;
@@ -130,7 +150,7 @@ export async function recordPcmClip({
         signal?.throwIfAborted();
         await close();
         if (!bytes) {
-            throw new Error("The recording contains no audio. Check the microphone and try again.");
+            throw new VoiceRecordingError("no_audio");
         }
         await file.sync();
         signal?.throwIfAborted();

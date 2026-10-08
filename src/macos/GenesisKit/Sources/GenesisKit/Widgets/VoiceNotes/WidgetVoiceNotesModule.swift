@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 public extension WidgetVoiceNotesStore {
@@ -40,6 +41,15 @@ private struct WidgetVoiceNotesView: View {
             }
         }
         .accessibilityIdentifier("voice-notes-widget")
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            store.refreshMicrophonePermission()
+        }
+        .alert("Microphone access needed", isPresented: $store.presentsMicrophoneAlert) {
+            Button("Open Microphone Settings", action: store.openMicrophoneSettings)
+            Button("Not now", role: .cancel) { }
+        } message: {
+            Text(store.microphonePermission.guidance ?? "Microphone access was unavailable to the recorder. Review settings and try again.")
+        }
     }
 
     @ViewBuilder private var expanded: some View {
@@ -63,6 +73,17 @@ private struct WidgetVoiceNotesView: View {
                 Text(phase).font(.caption)
                 if phase == "Recording" { WidgetVoiceNoteMeterView(meter: store.meter) }
             }
+        }
+        if let guidance = store.microphoneGuidance {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(guidance, systemImage: "mic.slash").font(.system(size: 11))
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Open Microphone Settings", action: store.openMicrophoneSettings)
+                    .font(.caption).buttonStyle(.borderless)
+            }
+            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            .background(.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityIdentifier("voice-microphone-permission")
         }
         if let error = store.error {
             Text(error).font(.system(size: 11)).foregroundStyle(KitPalette.removed).textSelection(.enabled)

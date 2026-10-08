@@ -1,5 +1,5 @@
 import { STT_PROVIDER_IDS } from "@genesiscz/utils/ai/stt/types";
-import { recordingControl } from "@genesiscz/utils/ai/voice/record";
+import { recordingControl, recordingFailure } from "@genesiscz/utils/ai/voice/record";
 import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -60,6 +60,11 @@ export function registerWidgetVoiceNotes(widget: Command): void {
                             onEvent: (event) => out.print(`${SafeJSON.stringify(event)}\n`),
                         });
                         out.result({ kind: "recorded", note });
+                    } catch (error) {
+                        out.print(
+                            `${SafeJSON.stringify(signal.aborted ? { kind: "error", code: "cancelled" } : recordingFailure(error))}\n`
+                        );
+                        throw error;
                     } finally {
                         await control?.close();
                     }

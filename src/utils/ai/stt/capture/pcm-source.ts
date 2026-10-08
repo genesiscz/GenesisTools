@@ -8,6 +8,19 @@ import { STT_DEFAULT_SAMPLE_RATE_HZ } from "../types";
 const prof = profiler.scope("stt");
 const log = logger.child({ component: "ai-stt-capture" });
 
+export class PcmCaptureError extends Error {
+    constructor(readonly code: "microphone_permission" | "capture_interrupted" | "capture_failed") {
+        super(
+            code === "microphone_permission"
+                ? "Microphone access is unavailable to the recorder."
+                : code === "capture_interrupted"
+                  ? "Audio capture was interrupted."
+                  : "Audio capture failed."
+        );
+        this.name = "PcmCaptureError";
+    }
+}
+
 export const PCM_SOURCE_KINDS = ["file", "stdin", "mic", "ffmpeg"] as const;
 export type PcmSourceKind = (typeof PCM_SOURCE_KINDS)[number];
 
@@ -184,9 +197,11 @@ function spawnSource(options: {
         stderr: "pipe",
     });
     stopSpawn();
-    void child.exited.then(async (code) => {
-        const stderr = child.stderr ? await new Response(child.stderr).text() : "";
+    const diagnostics = child.stderr ? new Response(child.stderr).text() : Promise.resolve("");
+    const completion = child.exited.then(async (code) => {
+        const stderr = await diagnostics;
         log.info({ pid: child.pid, code, stderr: stderr.trim().slice(0, 500) }, "PCM capture process exited");
+        return code;
     });
     const source = streamSource({
         kind: options.kind,
@@ -215,10 +230,34 @@ function spawnSource(options: {
             }
         },
     });
+    let closed = false;
+    const close = async () => {
+        closed = true;
+        await source.close();
+    };
     options.signal?.addEventListener("abort", () => {
-        void source.close();
+        void close().catch((error) => log.debug({ error }, "Capture abort cleanup failed"));
     });
-    return source;
+    return {
+        ...source,
+        async *frames() {
+            yield* source.frames();
+            if (closed || options.signal?.aborted) {
+                return;
+            }
+            const code = await Promise.race([completion, Bun.sleep(1_000).then(() => null)]);
+            if (code !== 0) {
+                throw new PcmCaptureError(
+                    options.kind === "mic" && code === 77
+                        ? "microphone_permission"
+                        : code === 143
+                          ? "capture_interrupted"
+                          : "capture_failed"
+                );
+            }
+        },
+        close,
+    };
 }
 
 /**

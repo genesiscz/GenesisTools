@@ -1,4 +1,6 @@
+import AppKit
 import Combine
+import SwiftUI
 import XCTest
 @testable import GenesisKit
 
@@ -135,6 +137,31 @@ final class VoiceCommandTransportTests: XCTestCase {
         XCTAssertTrue(String(decoding: result, as: UTF8.self).contains("widget --state-root /fixture/isolated voice-notes transcribe fixture"))
     }
 
+    func testStructuredFailuresNeverExposeDiagnosticStderr() async throws {
+        for code in ["microphone_permission", "no_audio", "capture_interrupted", "capture_failed"] {
+            let (binary, directory) = try fixture("echo '[ai-stt-capture] private fixture diagnostic' >&2; echo '{\"kind\":\"error\",\"code\":\"\(code)\",\"text\":\"untrusted raw diagnostic\"}'; exit 1\n")
+            defer { try? FileManager.default.removeItem(at: directory) }
+            do { _ = try await VoiceCommandTransport(binaryPath: binary).run(args: ["record"]); XCTFail("must fail") }
+            catch {
+                XCTAssertEqual(error as? VoiceCommandFailure, VoiceCommandFailure(rawValue: code))
+                XCTAssertFalse(error.localizedDescription.contains("diagnostic"))
+                XCTAssertFalse(error.localizedDescription.contains("ai-stt"))
+            }
+        }
+    }
+
+    func testUnexpectedTerminationIsNotPermissionDenialOrUserCancellation() async throws {
+        let (binary, directory) = try fixture("echo '[ai-stt-capture] code143 bytes0' >&2; exit 143\n")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        do { _ = try await VoiceCommandTransport(binaryPath: binary).run(args: ["record"]); XCTFail("must fail") }
+        catch {
+            XCTAssertEqual(error as? VoiceCommandFailure, .interrupted)
+            XCTAssertFalse(error is CancellationError)
+            XCTAssertFalse(error.localizedDescription.contains("permission"))
+            XCTAssertFalse(error.localizedDescription.contains("143"))
+        }
+    }
+
     func testAdmissionPrecedesGateAndReleaseFollowsRealExit() async throws {
         let (binary, directory) = try fixture("echo '{\"kind\":\"ready\",\"pid\":'$$'}'; read gate; [ \"$gate\" = start ] || exit 4; echo '{\"kind\":\"recorded\",\"note\":{}}'\n")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -189,11 +216,147 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
     }
     private func make(request: @escaping ([String]) async throws -> Data,
                       execute: @escaping ([String], (any VoiceRecordingLease)?, @escaping (VoiceCommandEvent) -> Void) async throws -> Data = { _, _, _ in throw ToolsBridgeError.refused("unexpected provider") },
-                      attach: @escaping (WidgetSession, WidgetVoiceNote) async throws -> String = { _, _ in "Draft saved" }) -> WidgetVoiceNotesStore {
+                      attach: @escaping (WidgetSession, WidgetVoiceNote) async throws -> String = { _, _ in "Draft saved" },
+                      permission: @escaping () -> VoiceMicrophonePermission = { .authorized },
+                      prompt: @escaping () async throws -> VoiceMicrophonePermission = { XCTFail("unexpected permission request"); return .denied },
+                      activate: @escaping () -> Void = {},
+                      acquire: @escaping () async throws -> any VoiceRecordingLease = { FixtureVoiceLease() },
+                      openSettings: @escaping () -> Void = {}) -> WidgetVoiceNotesStore {
         WidgetVoiceNotesStore(micLauncher: "/fixture/Preview.app/Contents/MacOS/launcher", request: request,
-            execute: execute, finishCapture: {}, cancelCommand: {}, acquireAudio: { FixtureVoiceLease() },
+            execute: execute, finishCapture: {}, cancelCommand: {}, acquireAudio: acquire,
             settings: { WidgetVoiceNoteSettings(provider: "fixture", model: "test-model", language: "en") },
-            sessions: { [self.recipient] }, attachDraft: attach)
+            sessions: { [self.recipient] }, attachDraft: attach, readMicrophonePermission: permission,
+            requestMicrophonePermission: prompt, activateForMicrophone: activate, openMicrophoneSettings: openSettings)
+    }
+
+    func testKnownDeniedAndRestrictedPermissionsNeverAcquireAudioOrSpawn() async throws {
+        for state in [VoiceMicrophonePermission.denied, .restricted] {
+            var activated = 0
+            var settingsOpened = 0
+            let store = make(request: { _ in try self.data(["revision": 0, "notes": [], "statePath": "/fixture/widget/voice-notes/notes.json"]) },
+                execute: { _, _, _ in XCTFail("must not spawn capture"); throw CancellationError() },
+                permission: { state }, activate: { activated += 1 },
+                acquire: { XCTFail("must not acquire microphone lease"); return FixtureVoiceLease() },
+                openSettings: { settingsOpened += 1 })
+            XCTAssertEqual(activated, 0)
+            XCTAssertEqual(settingsOpened, 0)
+            store.record()
+            await store.waitForOperation()
+            await store.waitForRefresh()
+            XCTAssertEqual(store.microphonePermission, state)
+            XCTAssertTrue(store.presentsMicrophoneAlert)
+            XCTAssertNotNil(store.microphonePermission.guidance)
+            XCTAssertEqual(activated, 1)
+            store.openMicrophoneSettings()
+            XCTAssertEqual(settingsOpened, 1)
+            store.stop()
+        }
+    }
+
+    func testExplicitRecordPromptsOnceBeforeLeaseAndAuthorizedCaptureStillWorks() async throws {
+        var calls: [String] = []
+        var permission = VoiceMicrophonePermission.notDetermined
+        let store = make(request: { _ in try self.data(["revision": 0, "notes": [], "statePath": "/fixture/widget/voice-notes/notes.json"]) },
+            execute: { _, lease, _ in
+                calls.append("capture")
+                try await lease?.release()
+                return try self.data(["kind": "recorded", "note": self.note()])
+            }, permission: { permission }, prompt: {
+                calls.append("prompt")
+                permission = .authorized
+                return permission
+            }, activate: { calls.append("activate") }, acquire: { calls.append("lease"); return FixtureVoiceLease() })
+        XCTAssertTrue(calls.isEmpty)
+        store.record()
+        store.record()
+        await store.waitForOperation()
+        XCTAssertEqual(calls, ["activate", "prompt", "lease", "capture"])
+        XCTAssertEqual(store.microphonePermission, .authorized)
+        XCTAssertNil(store.error)
+        XCTAssertEqual(store.notes.count, 1)
+        store.record()
+        await store.waitForOperation()
+        XCTAssertEqual(calls, ["activate", "prompt", "lease", "capture", "lease", "capture"])
+        store.stop()
+    }
+
+    func testDecliningFirstUseRemainsVisibleAndDoesNotStartCapture() async throws {
+        var permission = VoiceMicrophonePermission.notDetermined
+        let store = make(request: { _ in try self.data(["revision": 0, "notes": [], "statePath": "/fixture/widget/voice-notes/notes.json"]) },
+            permission: { permission }, prompt: { permission = .denied; return permission },
+            acquire: { XCTFail("declined permission must not acquire capture"); return FixtureVoiceLease() })
+        store.record()
+        await store.waitForOperation()
+        await store.waitForRefresh()
+        XCTAssertEqual(store.microphonePermission, .denied)
+        XCTAssertTrue(store.presentsMicrophoneAlert)
+        XCTAssertTrue(store.microphoneGuidance?.contains("Microphone") == true)
+        permission = .authorized
+        store.refreshMicrophonePermission()
+        XCTAssertNil(store.microphoneGuidance)
+        store.stop()
+    }
+
+    func testCancellationDuringPermissionCannotStartLateCapture() async throws {
+        let waiting = expectation(description: "permission request")
+        var finish: CheckedContinuation<VoiceMicrophonePermission, Error>?
+        let store = make(request: { _ in try self.data(["revision": 0, "notes": [], "statePath": "/fixture/widget/voice-notes/notes.json"]) },
+            permission: { .notDetermined }, prompt: {
+                try await withCheckedThrowingContinuation { continuation in finish = continuation; waiting.fulfill() }
+            }, acquire: { XCTFail("cancelled prompt must not acquire audio"); return FixtureVoiceLease() })
+        store.record()
+        await fulfillment(of: [waiting], timeout: 2)
+        XCTAssertEqual(store.phase, "Waiting for microphone permission")
+        store.cancel()
+        finish?.resume(returning: .authorized)
+        await store.waitForOperation()
+        XCTAssertNil(store.error)
+        XCTAssertTrue(store.receipt?.contains("Stopped") == true)
+        store.stop()
+    }
+
+    func testSyntheticCaptureBypassesMicrophonePermissionAndNoAudioDoesNotClaimDenial() async throws {
+        let store = make(request: { _ in try self.data(["revision": 0, "notes": [], "statePath": "/fixture/widget/voice-notes/notes.json"]) },
+            execute: { _, lease, _ in try await lease?.release(); throw VoiceCommandFailure.noAudio },
+            permission: { .authorized }, activate: { XCTFail("no permission UI for fixture") })
+        store.record(input: "/fixture/synthetic.pcm")
+        await store.waitForOperation()
+        XCTAssertEqual(store.microphonePermission, .authorized)
+        XCTAssertFalse(store.presentsMicrophoneAlert)
+        XCTAssertTrue(store.error?.contains("No audio") == true)
+        store.stop()
+    }
+
+    func testRenderPersistentPermissionAndCaptureErrorStates() async throws {
+        guard let directory = ProcessInfo.processInfo.environment["VOICE_PERMISSION_SCREENSHOT_DIR"] else {
+            throw XCTSkip("Set VOICE_PERMISSION_SCREENSHOT_DIR for isolated rendering")
+        }
+        let prefix = ProcessInfo.processInfo.environment["VOICE_PERMISSION_SCREENSHOT_PREFIX"] ?? "VoiceNotes"
+        for state in [VoiceMicrophonePermission.notDetermined, .denied, .authorized] {
+            let store = make(request: { _ in try self.data(["revision": 0, "notes": [], "statePath": "/fixture/widget/voice-notes/notes.json"]) },
+                execute: { _, lease, _ in try await lease?.release(); throw VoiceCommandFailure.noAudio }, permission: { state })
+            if state == .authorized {
+                store.record(input: "/fixture/synthetic.pcm")
+                await store.waitForOperation()
+            }
+            let host = NSHostingView(rootView: store.voiceNotesModule().content(.expanded)
+                .background(Color.settingsBackground).environment(\.colorScheme, .dark))
+            host.frame = NSRect(x: 0, y: 0, width: 432, height: 580)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(prefix)-\(state).png"))
+            var bright = 0
+            for y in stride(from: 0, to: bitmap.pixelsHigh, by: 8) {
+                for x in stride(from: 0, to: bitmap.pixelsWide, by: 8) {
+                    if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                       color.redComponent + color.greenComponent + color.blueComponent > 1.5 { bright += 1 }
+                }
+            }
+            XCTAssertGreaterThan(bright, 10)
+            store.stop()
+        }
     }
 
     func testWarmCacheAndReadOnlyEmptyView() async throws {
