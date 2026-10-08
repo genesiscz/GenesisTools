@@ -8,6 +8,9 @@ export const RECAST_LIMITS = {
     pages: 100,
     audioMs: 15 * 60 * 1000,
     records: 2000,
+    corrections: 10000,
+    journal: 10000,
+    renderings: 32,
     anchors: 20000,
     links: 5000,
     readings: 20000,
@@ -253,8 +256,8 @@ export const documentSchema = z
         readings: z.array(readingSchema).max(RECAST_LIMITS.readings),
         collections: z.array(collectionSchema).min(1).max(32),
         records: z.array(recordSchema).max(RECAST_LIMITS.records),
-        corrections: z.array(correctionSchema).max(10000),
-        renderings: z.array(renderingReceiptSchema).max(32).default([]),
+        corrections: z.array(correctionSchema).max(RECAST_LIMITS.corrections),
+        renderings: z.array(renderingReceiptSchema).max(RECAST_LIMITS.renderings).default([]),
         reconciliations: z.array(reconciliationSchema).max(128).default([]),
         contradictions: z.array(contradictionSchema).max(256),
         journal: z
@@ -269,7 +272,7 @@ export const documentSchema = z
                     })
                     .strict()
             )
-            .max(10000),
+            .max(RECAST_LIMITS.journal),
     })
     .strict();
 export type RecastDocument = z.infer<typeof documentSchema>;

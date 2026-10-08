@@ -281,6 +281,69 @@ describe("Recast correction and acceptance", () => {
         expect(() => set(example(), "value", " ")).not.toThrow();
     });
 
+    test("archived records cannot be edited or accepted through ordinary operations", () => {
+        const active = apply(set(example(), "name", "Reviewed"), {
+            kind: "accept-records",
+            recordIds: ["record_fixture"],
+        });
+        const archived = apply(active, { kind: "archive-records", recordIds: ["record_fixture"] });
+        const before = SafeJSON.stringify(archived);
+        expect(() => set(archived, "name", "Changed")).toThrow("archived");
+        expect(() => apply(archived, { kind: "accept-records", recordIds: ["record_fixture"] })).toThrow("archived");
+        expect(SafeJSON.stringify(archived)).toBe(before);
+        expect(set(active, "name", "Changed").records[0].cells.name.value).toBe("Changed");
+        expect(apply(active, { kind: "accept-records", recordIds: ["record_fixture"] }).records[0].state).toBe(
+            "accepted"
+        );
+    });
+
+    test("history capacity errors preserve all prior corrections and document bytes", () => {
+        const document = set(example(), "name", "Original");
+        const template = document.corrections[0];
+        document.corrections = Array.from({ length: 10000 }, (_, index) => ({
+            ...template,
+            id: `correction_${index}`,
+        }));
+        const before = SafeJSON.stringify(document);
+        expect(() => set(document, "name", "New")).toThrow("Correction history");
+        expect(SafeJSON.stringify(document)).toBe(before);
+        document.corrections.pop();
+        const full = set(document, "name", "New");
+        expect(full.corrections).toHaveLength(10000);
+        expect(full.corrections[0].id).toBe("correction_0");
+        document.revision = 10000;
+        document.journal = Array.from({ length: 10000 }, (_, index) => ({
+            id: `operation_${index}`,
+            revision: index + 1,
+            at: AT,
+            action: "rename",
+            recordIds: [],
+        }));
+        const journalBefore = SafeJSON.stringify(document);
+        expect(() => apply(document, { kind: "rename", title: "New" })).toThrow("Operation journal");
+        expect(SafeJSON.stringify(document)).toBe(journalBefore);
+    });
+
+    test("bulk correction refuses projected history overflow before changing any record", () => {
+        let document = set(example(), "name", "Original");
+        document = apply(document, { kind: "add-record", collectionId: document.collections[0].id, id: "other" });
+        const template = document.corrections[0];
+        document.corrections = Array.from({ length: 9999 }, (_, index) => ({ ...template, id: `correction_${index}` }));
+        const before = SafeJSON.stringify(document);
+        expect(() =>
+            apply(document, {
+                kind: "bulk-correct",
+                collectionId: document.collections[0].id,
+                fieldId: "name",
+                recordIds: ["record_fixture", "other"],
+                value: "Changed",
+                reason: "Reviewed batch",
+                note: "",
+            })
+        ).toThrow("needs 2");
+        expect(SafeJSON.stringify(document)).toBe(before);
+    });
+
     test("batch acceptance is atomic and stale changes fail without input mutation", () => {
         let document = set(example(), "name", "Reviewed");
         document = apply(document, {
@@ -961,6 +1024,55 @@ describe("Recast CSV round-trip proposals", () => {
         document = apply(document, { kind: "record-rendering", receipt: rendering.receipt });
         return { document, rendering };
     }
+
+    test("CSV history overflow is refused atomically before applying any selected field", () => {
+        let { document } = exported("Original");
+        document = apply(document, { kind: "add-record", collectionId: document.collections[0].id, id: "other" });
+        document = apply(document, {
+            kind: "set-cell",
+            recordId: "other",
+            fieldId: "name",
+            cell: cell("Other"),
+            reason: "Reviewed",
+        });
+        document = apply(document, { kind: "accept-records", recordIds: ["other"] });
+        const rendering = renderRecastCollection({
+            input: document,
+            collectionId: document.collections[0].id,
+            format: "csv",
+            at: AT,
+        });
+        document = apply(document, { kind: "record-rendering", receipt: rendering.receipt });
+        const template = document.corrections[0];
+        document.corrections = Array.from({ length: 9999 }, (_, index) => ({ ...template, id: `correction_${index}` }));
+        const csv = rendering.text.replace("Original", "First change").replace("Other", "Second change");
+        const preview = previewRoundTrip({ input: document, receiptId: rendering.receipt.id, csv });
+        const before = SafeJSON.stringify(document);
+        expect(preview.changes).toHaveLength(2);
+        expect(() =>
+            apply(document, {
+                kind: "apply-roundtrip",
+                receiptId: rendering.receipt.id,
+                csv,
+                importChangeIds: preview.changes.map((change) => change.id),
+            })
+        ).toThrow("needs 2");
+        expect(SafeJSON.stringify(document)).toBe(before);
+    });
+
+    test("export receipt retention keeps the newest 32 and rejects duplicate identities", () => {
+        const { document, rendering } = exported("Original");
+        document.renderings = Array.from({ length: 32 }, (_, index) => ({
+            ...rendering.receipt,
+            id: `receipt_${index}`,
+        }));
+        const next = apply(document, { kind: "record-rendering", receipt: rendering.receipt });
+        expect(next.renderings).toHaveLength(32);
+        expect(next.renderings[0].id).toBe("receipt_1");
+        expect(next.renderings.at(-1)?.id).toBe(rendering.receipt.id);
+        expect(document.renderings[0].id).toBe("receipt_0");
+        expect(() => apply(next, { kind: "record-rendering", receipt: rendering.receipt })).toThrow("already recorded");
+    });
 
     test("an unchanged CSV preserves newer local corrections and protected formula strings", () => {
         const { document, rendering } = exported("=SUM(A1:A3)");

@@ -178,6 +178,7 @@ final class RecastTests: XCTestCase {
         for block in extraction.blocks { XCTAssertTrue(block.bounds?.isValid == true) }
     }
 
+    @MainActor
     func testPackageRetainsExportBaselinesAndPendingReconciliations() throws {
         var document = try file()
         let value = Data("Original evidence".utf8)
@@ -201,6 +202,41 @@ final class RecastTests: XCTestCase {
         XCTAssertEqual(roundTrip.file.renderings?.first?.rows.first?.values["name"], .string("Original"))
         XCTAssertEqual(roundTrip.file.reconciliations?.first?.items.first?.status, "pending")
         XCTAssertEqual(roundTrip.file.records.first?.cells["name"]?.value, .string("Edited"))
+        let model = RecastModel(toolsPath: "/fixture/tools")
+        defer { model.stop() }
+        model.install(roundTrip)
+        model.reconciliationJobId = "review"
+        model.reconciliationPreview = RecastReconciliationPreview(documentId: document.id, revision: 0,
+            oldSourceId: original.id, newSourceId: replacement.id, jobId: "review", items: [])
+        model.showReconciliation = true
+        var completed = roundTrip
+        completed.file.reconciliations?[0].items[0].status = "kept"
+        model.install(completed)
+        XCTAssertEqual(model.reconciliationJobId, "review", "Completed saved reviews remain available")
+        XCTAssertNotNil(model.reconciliationPreview)
+        completed.file.reconciliations = []
+        model.install(completed)
+        XCTAssertNil(model.reconciliationJobId)
+        XCTAssertNil(model.reconciliationPreview)
+        XCTAssertFalse(model.showReconciliation)
+    }
+
+    @MainActor
+    func testSelectedAudioEvidenceClampsMillisecondRoundTripAtSourceEnd() throws {
+        let model = RecastModel(toolsPath: "/fixture/tools")
+        defer { model.stop() }
+        var document = try file()
+        var audioSource = source(Data())
+        audioSource.kind = "audio"; audioSource.textLength = nil; audioSource.durationMs = 2007
+        document.sources = [audioSource]
+        document.records = [RecastRecord(id: "record", collectionId: "table", state: "draft",
+            cells: ["name": RecastCell(value: .string("Manual"), state: "proposed")], createdAt: "2026-01-01T12:00:00Z")]
+        model.install(RecastState(file: document, assets: [:]))
+        model.audio.volume = 0
+        model.audio.load(data: Data(), fileExtension: "wav", identity: "fixture", duration: 2007 / 1000)
+        XCTAssertGreaterThan(model.audio.selectionEnd * 1000, 2007)
+        model.attachSelectedRegion()
+        XCTAssertEqual(model.evidenceDraft?.addedAnchor?.region.endMs, 2007)
     }
 
     @MainActor

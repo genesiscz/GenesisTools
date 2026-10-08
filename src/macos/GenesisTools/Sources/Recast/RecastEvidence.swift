@@ -175,7 +175,8 @@ extension RecastModel {
                 region = .rectangle(selectedRegion, page: page)
             } else if source.kind == "audio" {
                 guard audio.selectionEnd > audio.selectionStart else { throw recastError("Choose an audio interval to attach.") }
-                region = RecastRegion(kind: "audio", startMs: audio.selectionStart * 1000, endMs: audio.selectionEnd * 1000)
+                let interval = selectedAudioInterval
+                region = RecastRegion(kind: "audio", startMs: interval.start, endMs: interval.end)
             } else if source.kind == "unsupported" {
                 region = RecastRegion(kind: "whole")
             } else { throw recastError("Choose a text, image, PDF, audio or preserved unsupported source.") }

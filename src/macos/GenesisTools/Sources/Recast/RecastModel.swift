@@ -152,6 +152,12 @@ final class RecastModel: ObservableObject {
         bulkDraft = nil; showBulkSheet = false
         correctionExamples = nil; correctionExampleScope = nil; showCorrectionExamples = false
         file = state.file
+        if let jobId = reconciliationJobId,
+           !(state.file.reconciliations?.contains { $0.id == jobId } ?? false) {
+            reconciliationJobId = nil
+            reconciliationPreview = nil
+            showReconciliation = false
+        }
         assets = state.assets
         normalizeSelection()
         owner?.displayName = state.file.title

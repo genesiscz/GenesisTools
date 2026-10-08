@@ -37,7 +37,7 @@ Records have `id`, `collectionId`, `state` (`draft`, `accepted`, `archived`), `c
 
 Acceptance validates field types, required values and evidence separately. A schema-valid inferred value with missing evidence or only an opaque attachment cannot be accepted. Optional unknown fields may remain null. Unresolved replacement or competing-evidence reviews block affected records. Editing a field or its attachments returns it to review.
 
-Corrections retain `before` and `after` cells, `recordId`, `fieldId`, human `reason` and `createdAt`. Source-local reuse recomputes the match against current frozen sources, kind/type/label, regions and complete readings. It creates an inferred proposal and retains the current field's evidence.
+Corrections retain `before` and `after` cells, `recordId`, `fieldId`, human `reason` and `createdAt`. Corrections and journal entries each have a hard limit of 10,000. Operations fail atomically with a capacity error when they would exceed these limits; human history is never silently pruned. Source-local reuse recomputes the match against current frozen sources, kind/type/label, regions and complete readings. It creates an inferred proposal and retains the current field's evidence.
 
 Reconciliations retain old/new source IDs and per-anchor `pending`, `kept` or `relinked` decisions. Contradictions retain a chosen collection/field, two to eight record/cell snapshots, contexts, reason, status and optional `keep-both`, `prefer` or `context` decision. Different strings alone never create a contradiction. Prefer-one archives the other entire records; context decisions require each context. Changes to compared evidence reopen the decision.
 

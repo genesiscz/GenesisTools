@@ -25,9 +25,14 @@ struct RecastTranscriptReview: Codable, Identifiable {
 }
 
 extension RecastModel {
+    var selectedAudioInterval: (start: Double, end: Double) {
+        let end = audio.selectionEnd * 1000
+        return (audio.selectionStart * 1000, min(end, source?.durationMs ?? end))
+    }
+
     func transcribeAudio(modelRef: String, language: String) {
         guard let source, source.kind == "audio", let data = assets[source.assetName] else { return }
-        let start = audio.selectionStart * 1000, end = audio.selectionEnd * 1000
+        let (start, end) = selectedAudioInterval
         guard end > start else { error = "Choose an audio interval first."; return }
         audio.pause()
         perform("Transcribing selected audio") { model in

@@ -7,6 +7,7 @@ import {
     cellValueSchema,
     collectionSchema,
     newRecastID,
+    RECAST_LIMITS,
     type RecastCell,
     type RecastDocument,
     type RecastRecord,
@@ -155,6 +156,17 @@ function ownedRecord(document: RecastDocument, id: string): RecastRecord {
     return record;
 }
 
+function requireCorrectionCapacity(document: RecastDocument, count: number): void {
+    const remaining = RECAST_LIMITS.corrections - document.corrections.length;
+    if (count > remaining) {
+        throw new Error(
+            remaining === 0
+                ? "Correction history is full (10,000 entries). Save this conversion and start a new conversion to continue."
+                : `Correction history has room for ${remaining} more entries; this operation needs ${count}. Reduce the selected batch to ${remaining} records or fields.`
+        );
+    }
+}
+
 function correction({
     document,
     record,
@@ -170,6 +182,7 @@ function correction({
     reason: string;
     at: string;
 }): void {
+    requireCorrectionCapacity(document, 1);
     cell.state = cell.value === null ? "unknown" : "proposed";
     document.corrections.push({
         id: newRecastID("correction"),
@@ -199,6 +212,12 @@ export function applyRecastOperation({
     const document = readRecastDocument(input);
     if (document.revision !== expectedRevision) {
         throw new Error("The conversion changed. Review this operation against the latest revision.");
+    }
+
+    if (document.journal.length >= RECAST_LIMITS.journal) {
+        throw new Error(
+            "Operation journal is full (10,000 entries). Save this conversion and start a new conversion to continue."
+        );
     }
 
     const affected: string[] = [];
@@ -262,6 +281,9 @@ export function applyRecastOperation({
             break;
         case "set-cell": {
             const record = ownedRecord(document, operation.recordId);
+            if (record.state === "archived") {
+                throw new Error("An archived record cannot change its fields.");
+            }
             const collection = document.collections.find((entry) => entry.id === record.collectionId);
             const field = collection?.fields.find((entry) => entry.id === operation.fieldId);
             if (!field) {
@@ -344,6 +366,7 @@ export function applyRecastOperation({
             if (records.some((record) => record.collectionId !== collection.id || record.state === "archived")) {
                 throw new Error("Bulk correction requires active records in the same collection.");
             }
+            requireCorrectionCapacity(document, records.length);
             for (const record of records) {
                 const cell = structuredClone(record.cells[field.id] ?? unknownCell());
                 cell.value = operation.value;
@@ -377,6 +400,9 @@ export function applyRecastOperation({
             const pendingAnchors = pendingReconciliationAnchors(document);
             for (const id of new Set(operation.recordIds)) {
                 const record = ownedRecord(document, id);
+                if (record.state === "archived") {
+                    throw new Error("Restore an archived record before accepting it.");
+                }
                 const issues = recordIssues({ document, record, requireAccepted: false, pendingAnchors });
                 if (issues.length) {
                     throw new Error(issues.map((issue) => issue.message).join("\n"));
@@ -514,7 +540,7 @@ export function applyRecastOperation({
             if (document.renderings.some((entry) => entry.id === receipt.id)) {
                 throw new Error("This export was already recorded.");
             }
-            document.renderings.push(receipt);
+            document.renderings = [...document.renderings, receipt].slice(-RECAST_LIMITS.renderings);
             break;
         }
         case "forget-rendering":
@@ -532,7 +558,9 @@ export function applyRecastOperation({
             ) {
                 throw new Error("Choose unique changes from the current CSV comparison.");
             }
-            for (const change of preview.changes.filter((entry) => selected.has(entry.id))) {
+            const changes = preview.changes.filter((entry) => selected.has(entry.id));
+            requireCorrectionCapacity(document, changes.filter((entry) => entry.kind === "field").length);
+            for (const change of changes) {
                 const record = ownedRecord(document, change.recordId);
                 if (change.status === "invalid") {
                     throw new Error(change.message);
