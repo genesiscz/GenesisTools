@@ -94,17 +94,32 @@ export function copyBlock(text: string, language = "markdown"): string {
     return json2md({ code: { content: body, language } }).trimEnd();
 }
 
-const PATH_LINE = /(?<![\w/.@-])((?:[\w@.-]+\/)*[\w@.-]+\.[A-Za-z0-9]+):(\d+)(?:-(\d+))?\b/g;
+// A link inside a code span is not clickable, so a backticked path loses its backticks; without a line it links the file.
+const PATH_LINE =
+    /`((?:[\w@.-]+\/)*[\w@.-]+\.[A-Za-z0-9]+)(?::(\d+)(?:-(\d+))?)?`|(?<![\w/.@-])((?:[\w@.-]+\/)*[\w@.-]+\.[A-Za-z0-9]+):(\d+)(?:-(\d+))?\b/g;
 
 /** Each `path:line` or `path:start-end` of a file in the checkout becomes a clickable link; the rest stays as written. */
 export function linkify(text: string, repoPath: string): string {
-    return text.replace(PATH_LINE, (whole, path: string, line: string, end: string | undefined) => {
-        const abs = join(repoPath, path);
+    return text.replace(
+        PATH_LINE,
+        (
+            whole,
+            quotedPath: string | undefined,
+            quotedLine: string | undefined,
+            quotedEnd: string | undefined,
+            path: string | undefined,
+            line: string | undefined,
+            lineEnd: string | undefined
+        ) => {
+            const abs = join(repoPath, quotedPath ?? path ?? "");
+            const at = quotedLine ?? line;
+            const to = quotedEnd ?? lineEnd;
 
-        return existsSync(abs)
-            ? fileLink(abs, Number(line), { root: repoPath, endLine: end ? Number(end) : null })
-            : whole;
-    });
+            return existsSync(abs)
+                ? fileLink(abs, at ? Number(at) : null, { root: repoPath, endLine: to ? Number(to) : null })
+                : whole;
+        }
+    );
 }
 
 /** The text an item's action sends, signed for an answer in my own thread. */

@@ -260,6 +260,28 @@ describe("judgements render", () => {
             `[package.json:2-4](${pathToFileURL(process.cwd()).pathname}/package.json#L2-L4)`
         );
     });
+
+    test("a backticked path loses its backticks, because a link inside a code span is not clickable", () => {
+        const root = pathToFileURL(process.cwd()).pathname;
+
+        expect(linkify("`package.json:3` and `package.json:2-4` reject", process.cwd())).toBe(
+            `[package.json:3](${root}/package.json#L3) and [package.json:2-4](${root}/package.json#L2-L4) reject`
+        );
+        expect(linkify("`src/gitlab/README.md` passes", process.cwd())).toBe(
+            `[src/gitlab/README.md](${root}/src/gitlab/README.md) passes`
+        );
+    });
+
+    test("a backticked or bare path that is not in the checkout stays as written", () => {
+        const text = "`README.md:63` and `src/gone.ts:4` and src/gone.ts:5 and `gone.ts`";
+
+        expect(linkify(text, `${process.cwd()}/src/gitlab`)).toBe(
+            text.replace(
+                "`README.md:63`",
+                `[README.md:63](${pathToFileURL(process.cwd()).pathname}/src/gitlab/README.md#L63)`
+            )
+        );
+    });
 });
 
 describe("the digest and GitLab's own notes", () => {
