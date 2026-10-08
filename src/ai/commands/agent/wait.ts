@@ -2,7 +2,7 @@ import { transcriptEnvelope } from "@genesiscz/utils/ai/transcripts/load";
 import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { findSessionsByTitle } from "@genesiscz/utils/ai/transcripts/session-title";
 import { readTurnState, type TurnProvider, type TurnSnapshot } from "@genesiscz/utils/ai/transcripts/turn-state";
-import { type TurnWaitOutcome, waitForTurn } from "@genesiscz/utils/ai/transcripts/turn-wait";
+import { type TurnWaitOutcome, watchTurn } from "@genesiscz/utils/ai/transcripts/turn-wait";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { formatDuration } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -22,7 +22,8 @@ export const WAIT_EXIT_TIMEOUT = 124;
 
 /** Default silence that counts as a stall. A long tool call (a test run) is silent too, so this is generous. */
 export const DEFAULT_WAIT_STALL_SECONDS = 900;
-const POLL_MS = 1000;
+/** Writes wake the wait at once (shared file watcher); this poll only notices silence and the deadline. */
+const POLL_MS = 5000;
 
 export interface WaitOptions {
     timeout?: string;
@@ -172,6 +173,8 @@ interface WaitReport {
     lastText: string;
     asksQuestion: boolean;
     interrupted: boolean;
+    /** Questions the agent asked while it kept working (it did not stop for an answer). */
+    questions: string[];
     durationMs: number;
     silenceMs: number | null;
     lastEventAt: string | null;
@@ -183,6 +186,7 @@ function reportOf(args: {
     resolved: ResolvedTranscript;
     provider: TurnProvider;
     waitedMs: number;
+    questions: string[];
 }): WaitReport {
     const { snapshot } = args;
 
@@ -195,6 +199,7 @@ function reportOf(args: {
         lastText: snapshot?.lastText ?? "",
         asksQuestion: snapshot?.asksQuestion ?? false,
         interrupted: snapshot?.interrupted ?? false,
+        questions: args.questions,
         durationMs: args.waitedMs,
         silenceMs: snapshot?.silenceMs ?? null,
         lastEventAt: snapshot?.lastEventAt ? new Date(snapshot.lastEventAt).toISOString() : null,
@@ -240,7 +245,8 @@ export async function waitCommand(alias: TurnProvider, query: string, options: W
             "waiting for a turn"
         );
 
-        const result = await waitForTurn({
+        const result = await watchTurn({
+            path: resolved.filePath,
             read,
             next: options.next === true,
             timeoutMs: timeoutSeconds === undefined ? undefined : timeoutSeconds * 1000,
@@ -258,6 +264,10 @@ export async function waitCommand(alias: TurnProvider, query: string, options: W
         } else {
             if (report.outcome === "done" && !streamer && report.lastText) {
                 out.println(report.lastText);
+            }
+
+            for (const question of report.questions) {
+                out.printlnErr(pc.yellow(`asked while working (did not wait for an answer): ${question}`));
             }
 
             out.printlnErr(statusLine(report));
@@ -286,7 +296,10 @@ export function registerAgentWaitCommand(program: Command, alias: TurnProvider):
         )
         .option("--next", "If the session is idle now, wait for the NEXT turn to end instead of returning at once")
         .option("--stream", "Print the agent's output while the turn runs (stdout; stderr with --json)")
-        .option("--json", "Print {outcome,state,sessionId,lastText,asksQuestion,durationMs,...} instead of the text")
+        .option(
+            "--json",
+            "Print {outcome,state,sessionId,lastText,asksQuestion,interrupted,questions,durationMs,...} instead of the text"
+        )
         .option("--first", "When a title matches several sessions, take the newest instead of failing")
         .addHelpText(
             "after",
@@ -294,7 +307,9 @@ export function registerAgentWaitCommand(program: Command, alias: TurnProvider):
 <session> is a session id (8+ characters is enough), a transcript path, or a /rename title.
 Without --json the final assistant message goes to stdout and one status line to stderr.
 An idle session returns at once. A turn that ended on a question for the user exits 0 too:
-read "asksQuestion" in --json and never answer a design question for the human.`
+read "asksQuestion" in --json and never answer a design question for the human.
+A question the agent asks while it keeps working (Codex and Grok do this) does not end the wait;
+it is listed in "questions" (and on stderr) when the turn ends.`
         )
         .action(async (session: string, options: WaitOptions) => {
             await waitCommand(alias, session, options);

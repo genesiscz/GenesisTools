@@ -1,18 +1,96 @@
 /**
- * Wait until a session's current turn ends. The clock, the sleep and the reader arrive as arguments, so
- * every branch is a unit test with no file and no real wait.
+ * Wait until a session's current turn ends.
  *
  * - `done`:    the turn ended (the session is at its prompt, or finished).
  * - `stalled`: the turn is running but nothing has been written for longer than the stall limit.
  * - `timeout`: the caller's deadline passed first.
  *
  * `next` waits for a turn that ENDS AFTER the call started: a session already idle at the start is not
- * a finished turn. A turn that starts and ends between two polls still counts, because the marker that
+ * a finished turn. A turn that starts and ends between two reads still counts, because the marker that
  * moves is the time of the newest turn-level record, not the state.
+ *
+ * A question the agent asks in passing (a message that ends in `?` while the turn keeps running, which is
+ * how Codex and Grok ask) does not end the wait. It is collected in `questions`, so the caller still sees
+ * it when the turn ends. A blocking question (Claude `AskUserQuestion`) ends the turn and the wait.
+ *
+ * `TurnJudge` decides from one snapshot at a time. `waitForTurn` drives it with an injected clock and
+ * sleep (the unit tests); `watchTurn` drives it with the shared file watcher, so a write to the transcript
+ * wakes it at once and the slow poll only exists to notice silence (a stall) and the deadline.
  */
+import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import type { TurnSnapshot } from "./turn-state";
 
 export type TurnWaitOutcome = "done" | "stalled" | "timeout";
+
+export interface TurnWaitResult {
+    outcome: TurnWaitOutcome;
+    /** The last snapshot read. Null when the transcript never held a record. */
+    snapshot: TurnSnapshot | null;
+    /** How long this call waited. */
+    waitedMs: number;
+    /** Questions the agent asked while the turn ran and then went on working, oldest first. */
+    questions: string[];
+}
+
+/** True when the text's last paragraph asks something: it ends in `?`, or it carries a `❓` marker. */
+export function looksLikeQuestion(text: string): boolean {
+    const last =
+        text
+            .trim()
+            .split(/\n\s*\n/)
+            .at(-1)
+            ?.trim() ?? "";
+
+    return last.endsWith("?") || last.includes("❓");
+}
+
+function endedTurn(snapshot: TurnSnapshot): boolean {
+    return snapshot.state === "AWAITING-INPUT" || snapshot.state === "FINISHED";
+}
+
+export class TurnJudge {
+    readonly questions: string[] = [];
+    private snapshot: TurnSnapshot | null = null;
+
+    constructor(
+        private readonly options: { next: boolean; baselineEnd: number | null; startedAt: number; now: () => number }
+    ) {}
+
+    /** The outcome this snapshot settles, or null to keep waiting. */
+    step(snapshot: TurnSnapshot | null): TurnWaitResult | null {
+        this.snapshot = snapshot;
+
+        if (!snapshot) {
+            return null;
+        }
+
+        const ended = endedTurn(snapshot);
+        const isNew = !this.options.next || (snapshot.lastEventAt ?? 0) > (this.options.baselineEnd ?? 0);
+
+        if (ended && isNew) {
+            return this.result("done");
+        }
+
+        if (!ended && snapshot.lastText && looksLikeQuestion(snapshot.lastText)) {
+            const question = snapshot.lastText.trim();
+
+            if (this.questions.at(-1) !== question) {
+                this.questions.push(question);
+            }
+        }
+
+        return snapshot.state === "STALLED" ? this.result("stalled") : null;
+    }
+
+    result(outcome: TurnWaitOutcome): TurnWaitResult {
+        return {
+            outcome,
+            snapshot: this.snapshot,
+            waitedMs: this.options.now() - this.options.startedAt,
+            questions: [...this.questions],
+        };
+    }
+}
 
 export interface WaitForTurnOptions {
     read: () => TurnSnapshot | null;
@@ -29,49 +107,90 @@ export interface WaitForTurnOptions {
     onSnapshot?: (snapshot: TurnSnapshot) => void | Promise<void>;
 }
 
-export interface TurnWaitResult {
-    outcome: TurnWaitOutcome;
-    /** The last snapshot read. Null when the transcript never held a record. */
-    snapshot: TurnSnapshot | null;
-    /** How long this call waited. */
-    waitedMs: number;
+function judgeFor(options: { read: () => TurnSnapshot | null; next?: boolean; now: () => number }): TurnJudge {
+    return new TurnJudge({
+        next: options.next === true,
+        baselineEnd: options.next ? (options.read()?.lastEventAt ?? 0) : null,
+        startedAt: options.now(),
+        now: options.now,
+    });
 }
 
-function endedTurn(snapshot: TurnSnapshot): boolean {
-    return snapshot.state === "AWAITING-INPUT" || snapshot.state === "FINISHED";
-}
-
+/** The polling form, with an injected clock and sleep. */
 export async function waitForTurn(options: WaitForTurnOptions): Promise<TurnWaitResult> {
     const now = options.now ?? Date.now;
     const sleep = options.sleep ?? ((ms: number) => Bun.sleep(ms));
-    const startedAt = now();
-    const deadline = options.timeoutMs === undefined ? Number.POSITIVE_INFINITY : startedAt + options.timeoutMs;
-    const baselineEnd = options.next ? (options.read()?.lastEventAt ?? 0) : null;
-    let snapshot: TurnSnapshot | null = null;
+    const judge = judgeFor({ read: options.read, next: options.next, now });
+    const deadline = options.timeoutMs === undefined ? Number.POSITIVE_INFINITY : now() + options.timeoutMs;
 
     while (true) {
-        snapshot = options.read();
+        const snapshot = options.read();
 
         if (snapshot) {
             await options.onSnapshot?.(snapshot);
         }
 
-        const waitedMs = now() - startedAt;
+        const settled = judge.step(snapshot);
 
-        if (snapshot && endedTurn(snapshot) && (baselineEnd === null || (snapshot.lastEventAt ?? 0) > baselineEnd)) {
-            return { outcome: "done", snapshot, waitedMs };
-        }
-
-        if (snapshot?.state === "STALLED") {
-            return { outcome: "stalled", snapshot, waitedMs };
+        if (settled) {
+            return settled;
         }
 
         const remaining = deadline - now();
 
         if (remaining <= 0 || options.signal?.aborted) {
-            return { outcome: "timeout", snapshot, waitedMs };
+            return judge.result("timeout");
         }
 
         await sleep(Math.min(options.pollMs, remaining));
     }
+}
+
+export interface WatchTurnOptions {
+    /** The transcript file to watch. */
+    path: string;
+    read: () => TurnSnapshot | null;
+    next?: boolean;
+    timeoutMs?: number;
+    /** The safety poll: how soon silence (a stall) and the deadline are noticed. Writes wake at once. */
+    pollMs: number;
+    signal?: AbortSignal;
+    onSnapshot?: (snapshot: TurnSnapshot) => void | Promise<void>;
+}
+
+/** The event-driven form: the shared file watcher wakes it on every write to the transcript. */
+export async function watchTurn(options: WatchTurnOptions): Promise<TurnWaitResult> {
+    const judge = judgeFor({ read: options.read, next: options.next, now: Date.now });
+    let settled: TurnWaitResult | null = null;
+    // The watcher checks its deadline only on a write or a poll, so a quiet transcript would overrun
+    // `--timeout` by up to one poll. A timer aborts it on time instead.
+    const deadline = new AbortController();
+    const timer = options.timeoutMs === undefined ? null : setTimeout(() => deadline.abort(), options.timeoutMs);
+    const signals = options.signal ? [deadline.signal, options.signal] : [deadline.signal];
+
+    try {
+        await watchFileFeed({
+            path: options.path,
+            debounceMs: 100,
+            pollFallbackMs: options.pollMs,
+            signal: AbortSignal.any(signals),
+            onChange: async () => {
+                const snapshot = options.read();
+
+                if (snapshot) {
+                    await options.onSnapshot?.(snapshot);
+                }
+
+                settled = judge.step(snapshot);
+
+                return settled ? { done: true } : undefined;
+            },
+        });
+    } finally {
+        if (timer) {
+            clearTimeout(timer);
+        }
+    }
+
+    return settled ?? judge.result("timeout");
 }

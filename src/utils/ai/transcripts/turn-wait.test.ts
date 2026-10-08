@@ -1,7 +1,12 @@
 import { describe, expect, it } from "bun:test";
+import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { ActivityState } from "./activity";
 import type { TurnSnapshot } from "./turn-state";
-import { waitForTurn } from "./turn-wait";
+import { readTurnState } from "./turn-state";
+import { looksLikeQuestion, waitForTurn, watchTurn } from "./turn-wait";
 
 function snap(state: ActivityState, lastEventAt: number | null): TurnSnapshot {
     return {
@@ -116,5 +121,85 @@ describe("waitForTurn", () => {
         const result = await waitForTurn({ read: reader.read, pollMs: 1000, signal: controller.signal, ...clock() });
 
         expect(result.outcome).toBe("timeout");
+    });
+});
+
+describe("questions asked while the turn keeps running", () => {
+    it("are collected once each and returned with the finished turn, without ending the wait", async () => {
+        const asking = (text: string, at: number): TurnSnapshot => ({ ...snap("RUNNING", at), lastText: text });
+        const reader = script(
+            asking("Should I also update the README?", 10),
+            asking("Should I also update the README?", 11),
+            asking("Working on it.", 12),
+            snap("AWAITING-INPUT", 20)
+        );
+        const result = await waitForTurn({ read: reader.read, pollMs: 1000, ...clock() });
+
+        expect(result.outcome).toBe("done");
+        expect(result.questions).toEqual(["Should I also update the README?"]);
+    });
+
+    it("recognises a question in the last paragraph only", () => {
+        expect(looksLikeQuestion("Done with A.\n\nShall I do B?")).toBe(true);
+        expect(looksLikeQuestion("❓ DECISION 3: pick a or b")).toBe(true);
+        expect(looksLikeQuestion("Is it? No.\n\nIt is fixed.")).toBe(false);
+    });
+});
+
+describe("watchTurn on a real transcript", () => {
+    const line = (record: Record<string, unknown>): string => `${SafeJSON.stringify(record)}\n`;
+    const at = (offsetMs: number): string => new Date(Date.now() + offsetMs).toISOString();
+
+    it("wakes on the write that ends the turn, long before the safety poll", async () => {
+        const file = join(mkdtempSync(join(tmpdir(), "turn-watch-")), "s.jsonl");
+        writeFileSync(file, line({ type: "user", timestamp: at(0), message: { role: "user", content: "go" } }));
+        setTimeout(() => {
+            appendFileSync(
+                file,
+                line({
+                    type: "assistant",
+                    timestamp: at(0),
+                    message: {
+                        id: "m1",
+                        role: "assistant",
+                        content: [{ type: "text", text: "done" }],
+                        stop_reason: "end_turn",
+                    },
+                })
+            );
+        }, 150);
+        const started = Date.now();
+
+        const result = await watchTurn({
+            path: file,
+            read: () => readTurnState("claude", file, { stallTimeoutMs: 60_000 }),
+            pollMs: 20_000,
+            timeoutMs: 10_000,
+        });
+
+        expect(result.outcome).toBe("done");
+        expect(result.snapshot?.lastText).toBe("done");
+        expect(Date.now() - started).toBeLessThan(5_000);
+    });
+});
+
+describe("watchTurn deadline", () => {
+    it("times out on time even when the transcript stays quiet and the poll is slow", async () => {
+        const file = join(mkdtempSync(join(tmpdir(), "turn-watch-")), "quiet.jsonl");
+        writeFileSync(
+            file,
+            `${SafeJSON.stringify({ type: "user", timestamp: new Date().toISOString(), message: { role: "user", content: "go" } })}\n`
+        );
+        const started = Date.now();
+
+        const result = await watchTurn({
+            path: file,
+            read: () => readTurnState("claude", file, { stallTimeoutMs: 60_000 }),
+            pollMs: 20_000,
+            timeoutMs: 300,
+        });
+
+        expect(result.outcome).toBe("timeout");
+        expect(Date.now() - started).toBeLessThan(2_000);
     });
 });

@@ -127,7 +127,10 @@ tools claude wait <id|title> [--timeout S] [--next] [--stream] [--json]   # bloc
 ```
 
 `tree` (`--json` for machines) enumerates every cmux window and annotates each surface with
-`wait` reads the session's transcript, never the pane, and exits when the current turn ends: 0 when the
+`wait` reads the session's transcript, never the pane, and exits when the current turn ends. The shared
+file watcher (`watchFileFeed`) wakes it on every write; a 5 s poll only notices silence and the deadline. A
+question the agent asks while it keeps working is listed in `questions` (and on stderr) and does not end
+the wait. Exit codes: 0 when the
 session is back at its prompt (the final assistant message goes to stdout, a status line to stderr),
 3 when a running turn has written nothing for `--stall-timeout` seconds (default 900, `0` never),
 124 on `--timeout`, 1 when no session matches. An idle session returns at once; `--next` waits for the
