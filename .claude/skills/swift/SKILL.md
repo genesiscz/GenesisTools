@@ -60,6 +60,9 @@ It covers intermediate-frame anchoring, intrinsic content sizing, screen-coordin
 window-level hit tests and build-specific screenshot evidence. Check interrupted transitions as well
 as settled states. For a pane that pauses before moving, also inspect native menu construction in
 [performance.md](references/performance.md#defer-large-recipient-menus-until-the-user-opens-them).
+For the exact window-only recording and contact-sheet recipe, use
+[recording-animations.md](references/recording-animations.md). It keeps actions inside the capture
+interval and distinguishes window isolation, Retina detail, callback timing and video sampling.
 
 ## Measuring
 
