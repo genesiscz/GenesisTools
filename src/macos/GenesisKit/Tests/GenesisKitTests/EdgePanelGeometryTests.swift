@@ -44,10 +44,12 @@ final class EdgePanelGeometryTests: XCTestCase {
 
     func testSideJoinsPhysicalBezelWhenVisibleFrameIsInset() {
         let inset = CGRect(x: -1560, y: 150, width: 1520, height: 920)
-        let right = EdgePanelGeometry.frame(placement: .right, size: CGSize(width: 38, height: 200),
-                                            screen: screen, visible: inset, sideCenterY: 600)
-        let left = EdgePanelGeometry.frame(placement: .left, size: CGSize(width: 38, height: 200),
-                                           screen: screen, visible: inset, sideCenterY: 600)
+        let right = EdgePanelGeometry.frame(
+            placement: .right, size: CGSize(width: 38, height: 200),
+            screen: screen, visible: inset, sideCenterY: 600)
+        let left = EdgePanelGeometry.frame(
+            placement: .left, size: CGSize(width: 38, height: 200),
+            screen: screen, visible: inset, sideCenterY: 600)
         XCTAssertEqual(right.maxX, screen.maxX)
         XCTAssertEqual(left.minX, screen.minX)
         XCTAssertGreaterThanOrEqual(right.minY, inset.minY)
@@ -80,9 +82,20 @@ final class EdgePanelGeometryTests: XCTestCase {
 }
 
 final class WidgetSelectionTests: XCTestCase {
+    func testPresentationMetadataDoesNotChangeConversationIdentity() {
+        let target = WidgetTarget(
+            hostId: "local", provider: "codex", sessionId: "fixture", sourceHome: "/fixture/home", cwd: "/old")
+        var updated = target
+        updated.cwd = "/new"
+        XCTAssertTrue(target.hasSameIdentity(as: updated))
+        updated.sourceHome = "/another/home"
+        XCTAssertFalse(target.hasSameIdentity(as: updated))
+    }
+
     func testRelaunchRestoresItsDestinationEvenWhenFilteredOrTemporarilyMissing() {
-        XCTAssertEqual(WidgetSelection.initial(persisted: "local:codex:chosen:home", visibleKeys: ["another"]),
-                       "local:codex:chosen:home")
+        XCTAssertEqual(
+            WidgetSelection.initial(persisted: "local:codex:chosen:home", visibleKeys: ["another"]),
+            "local:codex:chosen:home")
         XCTAssertEqual(WidgetSelection.initial(persisted: nil, visibleKeys: ["first", "second"]), "first")
         XCTAssertEqual(WidgetSelection.initial(persisted: nil, visibleKeys: []), "")
     }

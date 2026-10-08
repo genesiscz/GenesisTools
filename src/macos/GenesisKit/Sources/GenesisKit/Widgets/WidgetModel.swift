@@ -6,7 +6,8 @@ import UniformTypeIdentifiers
 public final class WidgetModel: ObservableObject {
     @Published public private(set) var snapshot: WidgetSnapshot?
     @Published public var selectedKey = ""
-    @Published public var selectedCardID: String?
+    @Published public var selectedCardID: String? { didSet { presentationChanged?() } }
+    @Published public var section = "Inbox" { didSet { presentationChanged?() } }
     @Published public var expanded: EdgePanelPlacement?
     @Published public var error: String?
     @Published public var drafts: [String: WidgetDraft] = [:]
@@ -25,12 +26,18 @@ public final class WidgetModel: ObservableObject {
     @Published public var voiceLevel = 0.0
     @Published public var voiceActive = false
     @Published public var reading = false
-    @Published public var reduceMotion = false
-    @Published public var reduceTransparency = false
+    @Published public var reduceMotion = UserDefaults.standard.bool(forKey: "widget.reduceMotion") {
+        didSet { UserDefaults.standard.set(reduceMotion, forKey: "widget.reduceMotion") }
+    }
+    @Published public var reduceTransparency = UserDefaults.standard.bool(forKey: "widget.reduceTransparency") {
+        didSet { UserDefaults.standard.set(reduceTransparency, forKey: "widget.reduceTransparency") }
+    }
     @Published public var dialogOpen = false
     public var presentationChanged: (() -> Void)?
     public var showSettings: (() -> Void)?
     public var openHub: ((WidgetSession?) -> Void)?
+    public var openDestination: ((WidgetSession, String, String?) -> Void)?
+    @Published public var notice: String?
     public private(set) var openedAt: TimeInterval = 0
     public let bridge: ToolsBridge
     private let stateRoot: String?
@@ -79,8 +86,18 @@ public final class WidgetModel: ObservableObject {
     }
     public var draft: WidgetDraft { drafts[selectedKey] ?? WidgetDraft() }
     public var outgoing: [WidgetOutgoing] {
-        snapshot?.state.outgoing.filter { $0.target == selected?.target }.suffix(20).map { $0 } ?? []
+        snapshot?.state.outgoing.filter { $0.target.hasSameIdentity(as: selected?.target) }.suffix(20).map { $0 } ?? []
     }
+    public var cardPending: Bool {
+        guard let card else { return false }
+        return outgoing.contains { message in
+            guard !["failed", "cancelled"].contains(message.state), case .object(let payload) = message.payload else {
+                return false
+            }
+            return payload["id"] == .string(card.sourceId)
+        }
+    }
+
     public var effectiveReduceMotion: Bool {
         reduceMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
@@ -91,6 +108,16 @@ public final class WidgetModel: ObservableObject {
     public var hasActivity: Bool {
         sessions.contains { $0.status == "working" || $0.status == "waiting" }
     }
+    public var preferredHeight: CGFloat {
+        if section != "Inbox" { return 660 }
+        guard let card else { return 440 }
+        let bodyLines = min(8, card.body.count / 65)
+        let choices = card.choices.count * 38
+        let forms = (card.formItems ?? []).reduce(0) { $0 + 48 + ($1.choices?.count ?? 0) * 32 }
+        let media = card.attachments.isEmpty ? 0 : 110
+        return CGFloat(min(660, max(440, 330 + bodyLines * 16 + choices + forms + media)))
+    }
+
     private var widgetArgs: [String] { ["widget"] + (stateRoot.map { ["--state-root", $0] } ?? []) }
 
     public func start() {
@@ -119,7 +146,9 @@ public final class WidgetModel: ObservableObject {
         stopping = true
         watcher?.stop()
         watcher = nil
-        voice?.stop()
+        let recording = voice
+        finishVoice()
+        recording?.stop()
         voice = nil
         tail?.stop()
         tail = nil
@@ -139,6 +168,13 @@ public final class WidgetModel: ObservableObject {
             do {
                 let next = try JSONDecoder().decode(WidgetSnapshot.self, from: Data(line.utf8))
                 snapshot = next
+                for message in next.state.outgoing where ["failed", "cancelled"].contains(message.state) {
+                    if case .object(let fields) = message.payload,
+                        case .string(let kind) = fields["kind"], case .string(let id) = fields["id"]
+                    {
+                        submittedCards.remove(kind + ":" + id)
+                    }
+                }
                 for (key, value) in next.state.drafts where !dirtyDrafts.contains(key) {
                     drafts[key] = value
                 }
@@ -185,6 +221,9 @@ public final class WidgetModel: ObservableObject {
     }
 
     public func collapse() {
+        voice?.finishInput()
+        speechTask?.cancel()
+        reading = false
         expanded = nil
         tail?.stop()
         tail = nil
@@ -394,6 +433,61 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    public func editOutgoing(_ message: WidgetOutgoing) {
+        Task {
+            do {
+                _ = try await call(["action": "edit", "id": .string(message.id)])
+                let key = snapshot?.sessions.first { $0.target.hasSameIdentity(as: message.target) }?.key ?? selectedKey
+                dirtyDrafts.remove(key)
+                submittedAssets.subtract(message.assetIds)
+                if case .object(let fields) = message.payload, case .string(let id) = fields["id"] {
+                    selectedCardID = (fields["kind"] == .string("form") ? "form:" : "decision:") + id
+                    submittedCards.remove(selectedCardID ?? "")
+                    if let answers = fields["answers"] {
+                        let decoded = try JSONDecoder().decode(
+                            [WidgetFormAnswer].self, from: JSONEncoder().encode(answers))
+                        formAnswers["form:" + id] = Dictionary(uniqueKeysWithValues: decoded.map { ($0.itemId, $0) })
+                    }
+                }
+                selectedKey = key
+                notice = "Message restored as a draft."
+            } catch { report(error) }
+        }
+    }
+
+    public func ledger(_ card: WidgetCard, state: String) {
+        guard let selected, let revision = card.revision else { return }
+        var fields: [String: WidgetJSON] = [
+            "action": "ledger", "id": .string(card.sourceId), "sessionId": .string(selected.target.sessionId),
+            "expectedRevision": .number(Double(revision)), "state": .string(state),
+        ]
+        if state == "drafted" { fields["draft"] = .string(draft.text) }
+        action(.object(fields))
+    }
+
+    public func destination(_ mode: String) {
+        guard let selected else { return }
+        if mode == "resume" {
+            openDestination?(selected, mode, nil)
+            return
+        }
+        let key = selected.key
+        Task {
+            do {
+                let result = try await call(["action": "handoff", "key": .string(key)])
+                guard case .object(let fields) = result, case .string(let file) = fields["path"] else {
+                    throw ToolsBridgeError.refused("The handoff returned no file.")
+                }
+                if mode == "new" {
+                    openDestination?(selected, mode, file)
+                } else {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: file))
+                    notice = "Handoff saved. It has not been sent."
+                }
+            } catch { report(error) }
+        }
+    }
+
     public func capture() {
         collapse()
         action(["action": "capture", "key": .string(selectedKey)])
@@ -471,9 +565,11 @@ public final class WidgetModel: ObservableObject {
                 text: [existing, text].filter { !$0.isEmpty }.joined(separator: " "),
                 assetIds: drafts[key]?.assetIds ?? [])
             dirtyDrafts.insert(key)
-            action([
-                "action": "draft-text", "key": .string(key), "text": .string(drafts[key]?.text ?? ""),
-            ])
+            if !stopping {
+                action([
+                    "action": "draft-text", "key": .string(key), "text": .string(drafts[key]?.text ?? ""),
+                ])
+            }
         }
         voiceKey = nil
         voiceText = ""

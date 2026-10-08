@@ -24,8 +24,8 @@ public final class EdgePanelController<Content: View> {
     public let panel: NSPanel
     public let placement: EdgePanelPlacement
     private let screen: NSScreen
-    private let compactSize: CGSize
-    private let expandedSize: CGSize
+    private var compactSize: CGSize
+    private var expandedSize: CGSize
     private var animation: EdgeFrameAnimation?
     private var generation = 0
     public private(set) var isExpanded = false
@@ -57,6 +57,9 @@ public final class EdgePanelController<Content: View> {
         panel.contentView = NSHostingView(rootView: content())
         self.panel = panel
     }
+
+    public func setCompactSize(_ size: CGSize) { compactSize = size }
+    public func setExpandedSize(_ size: CGSize) { expandedSize = size }
 
     public func show() { panel.orderFrontRegardless() }
 

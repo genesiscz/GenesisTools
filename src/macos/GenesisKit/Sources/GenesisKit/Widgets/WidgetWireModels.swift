@@ -55,6 +55,11 @@ public struct WidgetTarget: Codable, Equatable, Sendable {
     public var sessionId: String
     public var sourceHome: String
     public var cwd: String
+    public func hasSameIdentity(as other: WidgetTarget?) -> Bool {
+        guard let other else { return false }
+        return hostId == other.hostId && provider == other.provider && sessionId == other.sessionId
+            && sourceHome == other.sourceHome
+    }
 }
 public struct WidgetSession: Codable, Identifiable, Equatable, Sendable {
     public var key: String
@@ -258,6 +263,14 @@ public struct WidgetState: Codable, Equatable, Sendable {
     public var drafts: [String: WidgetDraft]
     public var outgoing: [WidgetOutgoing]
 }
+public struct WidgetActivityEvent: Codable, Equatable, Identifiable, Sendable {
+    public var id: String
+    public var sourceId: String
+    public var at: Double
+    public var title: String
+    public var body: String
+}
+
 public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public struct Changes: Codable, Equatable, Sendable {
         public struct File: Codable, Identifiable, Equatable, Sendable {
@@ -273,6 +286,7 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public var state: WidgetState
     public var sessions: [WidgetSession]
     public var cards: [WidgetCard]
+    public var activity: [WidgetActivityEvent]?
     public var manifests: [String: WidgetVideoManifest]
     public var changes: Changes?
     public var errors: [String]

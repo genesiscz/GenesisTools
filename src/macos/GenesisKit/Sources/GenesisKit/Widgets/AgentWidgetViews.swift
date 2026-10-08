@@ -14,8 +14,11 @@ public struct GenesisWidgetMark: View {
             context.addFilter(.alphaThreshold(min: 0.45, color: .white))
             context.addFilter(.blur(radius: 2))
             context.drawLayer { layer in
-                for center in [CGPoint(x: 0.34, y: 0.4), CGPoint(x: 0.63, y: 0.38), CGPoint(x: 0.5, y: 0.65)] {
-                    let rect = CGRect(x: size.width * center.x - 4, y: size.height * center.y - 4, width: 8, height: 8)
+                for center in [
+                    CGPoint(x: 0.34, y: 0.4), CGPoint(x: 0.63, y: 0.38), CGPoint(x: 0.5, y: 0.65),
+                ] {
+                    let rect = CGRect(
+                        x: size.width * center.x - 4, y: size.height * center.y - 4, width: 8, height: 8)
                     layer.fill(Path(ellipseIn: rect), with: .color(.white))
                 }
             }
@@ -29,13 +32,17 @@ private struct WidgetWorkingRing: View {
     @State private var spinning = false
 
     var body: some View {
-        Circle().trim(from: 0.12, to: 0.78).stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-            .frame(width: 9, height: 9)
-            .rotationEffect(.degrees(spinning ? 360 : 0))
-            .animation(animated ? .linear(duration: 1.65).repeatForever(autoreverses: false) : nil, value: spinning)
-            .onAppear { spinning = animated }
-            .onChange(of: animated) { _, value in spinning = value }
-            .onDisappear { spinning = false }
+        Circle().trim(from: 0.12, to: 0.78).stroke(
+            color, style: StrokeStyle(lineWidth: 2, lineCap: .round)
+        )
+        .frame(width: 9, height: 9)
+        .rotationEffect(.degrees(spinning ? 360 : 0))
+        .animation(
+            animated ? .linear(duration: 1.65).repeatForever(autoreverses: false) : nil, value: spinning
+        )
+        .onAppear { spinning = animated }
+        .onChange(of: animated) { _, value in spinning = value }
+        .onDisappear { spinning = false }
     }
 }
 
@@ -116,6 +123,7 @@ public struct AgentWidgetView: View {
     public let sending: Bool
     public let selectedChoice: String?
     public let actions: AgentWidgetActions
+    private let liveContent: AnyView?
     @Binding private var draft: String
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.widgetReduceMotion) private var requestedReduceMotion
@@ -128,9 +136,11 @@ public struct AgentWidgetView: View {
 
     public init(
         placement: EdgePanelPlacement, items: [AgentWidgetItem], selectedID: String, expanded: Bool,
-        isPreview: Bool = false, animationsActive: Bool = true, cutoutWidth: CGFloat = 0, compactHeight: CGFloat = 36,
+        isPreview: Bool = false, animationsActive: Bool = true, cutoutWidth: CGFloat = 0,
+        compactHeight: CGFloat = 36,
         receipt: String? = nil, sending: Bool = false,
-        selectedChoice: String? = nil, draft: Binding<String>, actions: AgentWidgetActions
+        selectedChoice: String? = nil, draft: Binding<String>, actions: AgentWidgetActions,
+        liveContent: AnyView? = nil
     ) {
         self.placement = placement
         self.items = items
@@ -145,6 +155,7 @@ public struct AgentWidgetView: View {
         self.selectedChoice = selectedChoice
         self._draft = draft
         self.actions = actions
+        self.liveContent = liveContent
     }
 
     private var current: AgentWidgetItem? { items.first { $0.id == selectedID } }
@@ -170,7 +181,8 @@ public struct AgentWidgetView: View {
                         rail
                     }
                 }.frame(
-                    maxWidth: .infinity, maxHeight: .infinity, alignment: placement == .right ? .trailing : .leading)
+                    maxWidth: .infinity, maxHeight: .infinity,
+                    alignment: placement == .right ? .trailing : .leading)
             }
         }
         .background {
@@ -180,16 +192,20 @@ public struct AgentWidgetView: View {
                 WidgetInk.shell.opacity(0.97)
             }
         }
-        .clipShape(EdgePanelShape(placement: placement, shoulder: expanded ? 10 : 7, corner: expanded ? 20 : 12))
+        .clipShape(
+            EdgePanelShape(placement: placement, shoulder: expanded ? 10 : 7, corner: expanded ? 20 : 12)
+        )
         .overlay(
-            EdgePanelShape(placement: placement, shoulder: expanded ? 10 : 7, corner: expanded ? 20 : 12).stroke(
-                .white.opacity(0.10), lineWidth: 0.7)
+            EdgePanelShape(placement: placement, shoulder: expanded ? 10 : 7, corner: expanded ? 20 : 12)
+                .stroke(
+                    .white.opacity(0.10), lineWidth: 0.7)
         )
         .foregroundStyle(.white)
         .preferredColorScheme(.dark)
         .clipped()
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: expanded)
-        .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.78), value: selectedID)
+        .animation(
+            reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.78), value: selectedID)
     }
 
     private var topStrip: some View {
@@ -209,7 +225,16 @@ public struct AgentWidgetView: View {
                 Spacer(minLength: 8)
             }
             HStack(spacing: 4) {
-                ForEach(items) { item in dotButton(item) }
+                HStack(spacing: 4) {
+                    ForEach(Array(items.prefix(3))) { item in dotButton(item) }
+                }.background(
+                    WidgetBubbleField(
+                        position: CGFloat(min(2, items.firstIndex { $0.id == selectedID } ?? 0)),
+                        count: min(3, items.count), horizontal: true, enabled: expanded && !reduceMotion))
+                if items.count > 3 {
+                    Button("+\(items.count - 3)", action: actions.settings)
+                        .font(.system(size: 10)).buttonStyle(.plain).accessibilityLabel("Show all agents")
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -218,10 +243,26 @@ public struct AgentWidgetView: View {
 
     private var rail: some View {
         VStack(spacing: 9) {
-            IconButton(systemName: "tray", tooltip: "Open agent inbox", size: 13, tint: .white, action: actions.expand)
-                .padding(.top, 13)
+            IconButton(
+                systemName: "tray", tooltip: "Open agent inbox", size: 13, tint: .white,
+                action: actions.expand
+            )
+            .padding(.top, 13)
             Rectangle().fill(.white.opacity(0.08)).frame(width: 15, height: 1)
-            ForEach(items) { item in dotButton(item) }
+            if expanded || items.contains(where: { $0.status == .working || $0.status == .waiting }) {
+                VStack(spacing: 9) {
+                    ForEach(Array(items.prefix(6))) { item in dotButton(item) }
+                }.background(
+                    WidgetBubbleField(
+                        position: CGFloat(min(5, items.firstIndex { $0.id == selectedID } ?? 0)),
+                        count: min(6, items.count), horizontal: false, enabled: expanded && !reduceMotion))
+            }
+            if items.count > 6
+                && (expanded || items.contains(where: { $0.status == .working || $0.status == .waiting }))
+            {
+                Button("+\(items.count - 6)", action: actions.settings)
+                    .font(.system(size: 9)).buttonStyle(.plain).accessibilityLabel("Show all agents")
+            }
             Rectangle().fill(.white.opacity(0.08)).frame(width: 15, height: 1)
             IconButton(
                 systemName: "slider.horizontal.3", tooltip: "Widget settings", size: 12,
@@ -247,7 +288,9 @@ public struct AgentWidgetView: View {
     }
 
     @ViewBuilder private var card: some View {
-        if let item = current {
+        if let liveContent {
+            liveContent
+        } else if let item = current {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 8) {
                     Text(item.provider.lowercased()).font(.system(size: 11, weight: .semibold))
@@ -318,7 +361,8 @@ public struct AgentWidgetView: View {
                         .onSubmit(actions.submit)
                         .accessibilityLabel("Reply to selected agent")
                     IconButton(
-                        systemName: "arrow.up", tooltip: isPreview ? "Save preview reply" : "Send reply", size: 12,
+                        systemName: "arrow.up", tooltip: isPreview ? "Save preview reply" : "Send reply",
+                        size: 12,
                         tint: draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             ? WidgetInk.muted : WidgetInk.blue,
                         action: actions.submit)
