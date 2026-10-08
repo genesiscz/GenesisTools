@@ -289,6 +289,20 @@ describe("structured cancellation and binding lifetime", () => {
         expect(generateObjectMock).not.toHaveBeenCalled();
     });
 
+    it("does not retry a provider AbortError object before the first partial", async () => {
+        const { callLLMStructured } = await import("@genesiscz/utils/ai/core/call");
+        const abort = { name: "AbortError", message: "Provider cancelled" };
+        streamObjectMock.mockImplementationOnce(() => ({
+            partialObjectStream: partialsOf(),
+            get object() {
+                return Promise.reject(abort);
+            },
+            usage: Promise.resolve(undefined),
+        }));
+        await expect(callLLMStructured({ ...options, onPartial: () => {} })).rejects.toEqual(abort);
+        expect(generateObjectMock).not.toHaveBeenCalled();
+    });
+
     it("stops partial delivery when a callback cancels and does not return a final object", async () => {
         const { callLLMStructured } = await import("@genesiscz/utils/ai/core/call");
         const controller = new AbortController();

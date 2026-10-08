@@ -593,7 +593,7 @@ async function tryStreamObject<T>(opts: TryStreamObjectOpts<T>): Promise<CallLLM
     } catch (error) {
         opts.callArgs.abortSignal?.throwIfAborted();
 
-        if (error instanceof Error && error.name === "AbortError") {
+        if (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError") {
             throw error;
         }
 
