@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><title>Show Once report fixture</title>
+<style>body{font:18px system-ui;max-width:650px;margin:60px auto;background:#f1f4f8;color:#172337}label{display:block;margin:20px 0}input,select,button{font:inherit;padding:10px;margin-left:20px}button{margin-left:0;background:#145cde;color:white;border:0;border-radius:6px}#status{margin-top:25px}</style></head>
+<body><h1>Monthly customer report</h1><p>Choose the report inputs, download its CSV, then rename and move it.</p>
+<label>Customer <input data-testid="customer" aria-label="Customer" value="shop"></label>
+<label>Month <input data-testid="month" aria-label="Month" value="2026-10"></label>
+<label>Report <select data-testid="report" aria-label="Report"><option value="sales">Sales</option><option value="orders">Orders</option></select></label>
+<button data-testid="download" type="button">Download report</button><div id="status" role="status">Ready</div>
+<script>
+const input=name=>document.querySelector(`[data-testid="${name}"]`).value;
+document.querySelector('[data-testid="download"]').addEventListener('click',()=>{
+ const customer=input('customer'),month=input('month'),report=input('report');
+ const query=new URLSearchParams({customer,month,report});
+ const link=document.createElement('a');link.href='/report.csv?'+query;link.download=customer+'-'+month+'-'+report+'.csv';
+ document.body.append(link);link.click();link.remove();document.querySelector('#status').textContent='Downloaded '+customer+' '+month+' '+report;
+});
+</script></body></html>
