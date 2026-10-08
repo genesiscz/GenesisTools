@@ -1152,7 +1152,7 @@ export function registerStartCommand(program: Command): void {
         )
         .option(
             "--cross-messages",
-            'Deliver messages from other sessions and scripts (`tools claude message`) without asking: passes --settings {"crossSessionInbound":"accept"}'
+            `Deliver messages from other sessions and scripts (\`${toolCommand("claude message")}\`) without asking: passes --settings {"crossSessionInbound":"accept"}`
         )
         .action(async (name: string | undefined, opts: StartOptions, command: Command) => {
             const split = splitStartOperands({ name, operands: command.args, argv: process.argv });

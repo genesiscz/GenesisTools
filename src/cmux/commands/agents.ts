@@ -4,6 +4,7 @@ import { basename, resolve } from "node:path";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { type AccountBudget, accountChoiceMessage, liveAccountBudgets } from "../lib/account-budgets";
@@ -304,7 +305,7 @@ function addNewOptions(command: Command): Command {
         .option("--focus [value]", "Focus the new workspace: true or false (default: false)")
         .option(
             "--no-cross-messages",
-            "Claude: do not pass --cross-messages (messages from tools claude message then wait for approval in bypass mode)"
+            `Claude: do not pass --cross-messages (messages from ${toolCommand("claude message")} then wait for approval in bypass mode)`
         )
         .option("--json", "Print name, agent, account, workspace, surface, window, tmuxSession, cwd, command as JSON");
 }
@@ -341,7 +342,7 @@ export function registerAgentsCommand(program: Command): void {
         if (!name || !isSessionAgentId(name)) {
             out.error(
                 `${name ? `"${name}" is not an agent. ` : ""}Choose one of: ${SESSION_AGENT_IDS.join(", ")}\n` +
-                    `  tools cmux agents new ${SESSION_AGENT_IDS[0]} --repo <name>`
+                    `  ${toolCommand("cmux agents new", SESSION_AGENT_IDS[0], "--repo", "<name>")}`
             );
             process.exitCode = 2;
             return;

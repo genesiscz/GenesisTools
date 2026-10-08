@@ -1,4 +1,5 @@
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
 import type { AccountChoice, SessionAgentId } from "./session-agents";
@@ -85,7 +86,7 @@ export function accountChoiceMessage(input: {
     });
 
     return [
-        `--account is required: tools cmux agents new never picks a ${input.agent} account by itself.`,
+        `--account is required: ${toolCommand("cmux agents new")} never picks a ${input.agent} account by itself.`,
         input.budgets.length > 0 ? `${input.agent} accounts:` : `no enabled ${input.agent} account.`,
         ...rows,
         "",

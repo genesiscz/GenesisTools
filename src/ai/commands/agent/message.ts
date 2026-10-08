@@ -8,6 +8,7 @@ import {
     readPeerToken,
     sendClaudePeerMessage,
 } from "@genesiscz/utils/claude/peer-message";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { resolveWaitTranscript, waitCommand } from "./wait";
@@ -146,7 +147,7 @@ export function pickClaudeSession(query: string, sessions: readonly ClaudeLiveSe
         if (hits.length > 1) {
             throw new MessageError(
                 `"${query}" matches ${hits.length} running Claude sessions:\n${hits.map((hit) => `  ${describe(hit)}`).join("\n")}`,
-                hits.map((hit) => `tools claude message ${hit.sessionId} "<text>"`)
+                hits.map((hit) => toolCommand("claude message", hit.sessionId, '"<text>"'))
             );
         }
     }
@@ -200,7 +201,7 @@ export function claudeMessageDriver(
                                   .slice(0, 5)
                                   .map(
                                       (session) =>
-                                          `tools claude message ${session.sessionId} "<text>"   # ${session.name ?? ""}`
+                                          `${toolCommand("claude message", session.sessionId, '"<text>"')}   # ${session.name ?? ""}`
                                   )
                             : []
                     );
@@ -489,7 +490,7 @@ Channels:
   grok    no structured channel: the TUI listens on no socket. --allow-keystrokes pastes into its cmux
           tab instead (cmux paste --submit refuses over a draft or an open dialog).
 
-Not the agents bus: \`tools agents message\` sends to agents logged into a bus session.`
+Not the agents bus: \`${toolCommand("agents message")}\` sends to agents logged into a bus session.`
         )
         .action(async (session: string, parts: string[], flags: MessageFlags) => {
             await messageCommand(alias, session, parts, flags);

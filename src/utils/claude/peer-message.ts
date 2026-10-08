@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { classifyPid } from "@genesiscz/utils/process-identity";
 
 /**
  * Claude Code's cross-session messaging (2.1.224+): every interactive session listens on a Unix socket
@@ -46,14 +47,16 @@ function text(value: unknown): string | null {
     return typeof value === "string" && value !== "" ? value : null;
 }
 
+/** A registry entry outlives its process; a recycled pid that runs something other than Claude is gone too. */
 function isAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (error) {
-        log.debug({ error, pid }, "registry entry's process is gone");
+    const identity = classifyPid(pid, (command) => /claude/i.test(command));
+
+    if (identity.status === "dead" || identity.status === "foreign") {
+        log.debug({ pid, status: identity.status, command: identity.command }, "registry entry's process is gone");
         return false;
     }
+
+    return true;
 }
 
 /** Parse one `<pid>.json` registry file; null when it is not a messaging-capable session. */

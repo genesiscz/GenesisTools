@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { sessionAgent } from "./session-agents";
 import { openSessions, type SessionCreatedRecord, type SessionStore } from "./session-store";
 
@@ -127,7 +128,7 @@ export function resolveCloseTarget(query: string, records: readonly SessionCreat
     return {
         kind: "none",
         reason: "not-found",
-        note: `no open session named "${trimmed}" (see: tools cmux agents list --all)`,
+        note: `no open session named "${trimmed}" (see: ${toolCommand("cmux agents list", "--all")})`,
     };
 }
 

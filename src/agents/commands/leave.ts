@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { deriveRegistry, findByName } from "../lib/derived-registry";
@@ -15,7 +16,10 @@ interface LeaveOpts {
 
 async function runLeaveImpl(opts: LeaveOpts): Promise<void> {
     if (!opts.agentName) {
-        throw new FriendlyError("--agent-name is required", "tools agents leave --agent-name <me> --session <s>");
+        throw new FriendlyError(
+            "--agent-name is required",
+            toolCommand("agents leave", "--agent-name", "<me>", "--session", "<s>")
+        );
     }
 
     const paths = sessionPaths(resolveSession(opts.session).session);

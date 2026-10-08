@@ -7,6 +7,7 @@ import { loadAllSessionCmuxRefs, resolveRefsProvider } from "@genesiscz/utils/cm
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { classifyPid } from "@genesiscz/utils/process-identity";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import { type LiveAgentSurface, liveAgentSurfaces, parseCmuxTree, pickAdoptable, ttyRunsAgent } from "./session-adopt";
 import {
@@ -76,14 +77,18 @@ function readPid(record: SessionCreatedRecord): number | null {
     return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
+const SHELL_COMMAND = /(^|\/|-)(zsh|bash|sh|fish|login)(\s|$)/;
+
+/** The pid file holds the workspace shell (`printf '%s' $$`); a recycled pid running something else is gone. */
 function isAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (error) {
-        log.debug({ error, pid }, "session shell is gone");
+    const identity = classifyPid(pid, (command) => SHELL_COMMAND.test(command));
+
+    if (identity.status === "dead" || identity.status === "foreign") {
+        log.debug({ pid, status: identity.status, command: identity.command }, "session shell is gone");
         return false;
     }
+
+    return true;
 }
 
 async function liveTree() {
