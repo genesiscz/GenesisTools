@@ -173,6 +173,8 @@ final class BugToTestModel: ObservableObject {
             let content = try await command("workspace", args: ["--workspace", workspace, "--input", recordingURL.path], as: BugToTestWorkspace.self)
             guard self.workspace == workspace, epoch == identity else { return }
             source = content.source; result = content.result
+        } catch is CancellationError {
+            return
         } catch {
             guard self.workspace == workspace, epoch == identity else { return }
             recording?.workspace = nil; source = ""; result = nil

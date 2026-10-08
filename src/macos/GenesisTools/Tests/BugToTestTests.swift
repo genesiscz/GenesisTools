@@ -72,6 +72,32 @@ final class BugToTestTests: XCTestCase {
         XCTAssertTrue(model.error?.contains("does not match") == true)
     }
     @MainActor
+    func testCancellationOfWorkspaceInspectionPreservesPriorVerifiedState() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("bug-to-test-restore-cancel-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let ready = folder.appendingPathComponent("ready")
+        let tools = folder.appendingPathComponent("tools")
+        try "#!/bin/sh\ntouch \"\(ready.path)\"\nexec /bin/sleep 30\n".write(to: tools, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: tools.path)
+        let model = BugToTestModel(toolsPath: tools.path, storageDirectory: folder)
+        model.install(try recording())
+        let prior = BugToTestResult(status: "passed", message: "Prior verified assertion", testHash: "prior", report: "fixture", durationMs: 1, exitCode: 0)
+        model.result = prior; model.source = "prior source"
+        let workspace = model.workspace!
+        let task = Task { await model.loadWorkspace(workspace) }
+        let deadline = Date().addingTimeInterval(3)
+        while !FileManager.default.fileExists(atPath: ready.path) && Date() < deadline {
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: ready.path))
+        task.cancel()
+        await task.value
+        XCTAssertEqual(model.workspace, workspace)
+        XCTAssertEqual(model.result, prior)
+        XCTAssertEqual(model.source, "prior source")
+        XCTAssertNil(model.error)
+    }
+    @MainActor
     func testEditingAnExpectationInvalidatesPriorWorkspaceAndGreenResult() throws {
         let model = BugToTestModel(toolsPath: "/fixture/tools")
         model.install(try recording())
