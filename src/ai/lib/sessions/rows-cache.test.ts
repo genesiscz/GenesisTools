@@ -117,6 +117,31 @@ describe("refreshSessionRowsCache", () => {
         expect(result).toEqual({ refreshed: false, reason: "no query has been asked yet" });
     });
 
+    test("takes the rows a warm process answers with, and still keeps lastRequestedAt; null falls back to listing", async () => {
+        const path = await scratch();
+        await writeSessionRowsCache(entry({ lastRequestedAt: 10_000, fetchedAt: 10_000 }), path);
+        let listed = 0;
+        const listRows = async () => {
+            listed++;
+            return [row(1)];
+        };
+
+        const served = await refreshSessionRowsCache(listRows, {
+            now: 20_000,
+            path,
+            remote: async () => [row(7), row(8)],
+        });
+        expect(served).toEqual({ refreshed: true, reason: "refreshed", rows: 2, via: "server" });
+        expect(listed).toBe(0);
+        const stored = await readSessionRowsCache(path);
+        expect(stored?.lastRequestedAt).toBe(10_000);
+        expect(stored?.rows.map((item) => item.sessionId)).toEqual(["s-7", "s-8"]);
+
+        const local = await refreshSessionRowsCache(listRows, { now: 30_000, path, remote: async () => null });
+        expect(local).toEqual({ refreshed: true, reason: "refreshed", rows: 1, via: "local" });
+        expect(listed).toBe(1);
+    });
+
     test("recomputes the stored query and keeps lastRequestedAt", async () => {
         const path = await scratch();
         const seen: AgentSessionRowsOptions[] = [];
@@ -130,7 +155,7 @@ describe("refreshSessionRowsCache", () => {
             { now: 20_000, path }
         );
 
-        expect(result).toEqual({ refreshed: true, reason: "refreshed", rows: 1 });
+        expect(result).toEqual({ refreshed: true, reason: "refreshed", rows: 1, via: "local" });
         expect(seen).toEqual([{ hours: 24, minRows: 10 }]);
 
         const stored = await readSessionRowsCache(path);

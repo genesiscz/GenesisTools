@@ -1,3 +1,4 @@
+import type { AgentSessionRow, AgentSessionRowsOptions } from "@app/ai/lib/sessions/agent-session-rows";
 import { processExtraUsageNotifications } from "@app/claude/lib/usage/extra-usage-notify";
 import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage";
 import { releaseCodexUsageHomes } from "@genesiscz/utils/ai/providers/plugins/openai-sub/usage";
@@ -11,6 +12,7 @@ import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/usage-poll/types"
 import { withTimeout } from "@genesiscz/utils/async";
 import { recordRunOnExit } from "@genesiscz/utils/cli/run-record";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 
 const ANTHROPIC_SUB = "anthropic-sub";
@@ -145,8 +147,40 @@ async function main(): Promise<void> {
         try {
             const { listAgentSessionRows } = await import("@app/ai/lib/sessions/agent-session-rows");
             const { refreshSessionRowsCache } = await import("@app/ai/lib/sessions/rows-cache");
+            const { callHubServer } = await import("@app/hub/server/client");
+            // The resident hub server answers with warm caches (directory walk, metadata, rows); this process
+            // starts cold every minute. Its `--fresh` answer is the same `sessionRowsJson` the CLI prints.
+            const remote = async (query: AgentSessionRowsOptions): Promise<AgentSessionRow[] | null> => {
+                if (query.providers && query.providers.length > 0) {
+                    return null;
+                }
+
+                const argv = ["ai", "usage", "sessions", "--json", "--fresh"];
+                for (const [flag, value] of [
+                    ["--hours", query.hours],
+                    ["--min", query.minRows],
+                    ["--limit", query.limit],
+                ] as const) {
+                    if (value !== undefined) {
+                        argv.push(flag, String(value));
+                    }
+                }
+
+                const answer = await callHubServer({ argv, timeoutMs: Math.max(1000, Math.min(20_000, budgetMs / 2)) });
+                if (!answer || answer.exit !== 0) {
+                    return null;
+                }
+
+                try {
+                    const parsed = SafeJSON.parse(answer.stdout, { strict: true }) as { rows?: AgentSessionRow[] };
+                    return Array.isArray(parsed.rows) ? parsed.rows : null;
+                } catch (err) {
+                    logger.debug({ err }, "[ai-usage] hub server rows unreadable; computing locally");
+                    return null;
+                }
+            };
             const outcome = await withTimeout(
-                refreshSessionRowsCache(listAgentSessionRows),
+                refreshSessionRowsCache(listAgentSessionRows, { remote }),
                 Math.max(0, budgetMs),
                 new Error(`session rows walk passed the tick's budget (${Math.round(budgetMs / 1000)} s left)`)
             );

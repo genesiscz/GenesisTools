@@ -108,8 +108,21 @@ export function cacheIsUsable(
  */
 export async function refreshSessionRowsCache(
     listRows: (options: AgentSessionRowsOptions) => Promise<AgentSessionRow[]>,
-    { now = Date.now(), path = sessionRowsCachePath() }: { now?: number; path?: string } = {}
-): Promise<{ refreshed: boolean; reason: string; rows?: number }> {
+    {
+        now = Date.now(),
+        path = sessionRowsCachePath(),
+        remote,
+    }: {
+        now?: number;
+        path?: string;
+        /**
+         * Rows from a process that already has warm caches (the resident hub server), or null when it cannot
+         * answer; `listRows` runs only then. Whichever answers, this writes the file the same way and keeps the
+         * last real ask's stamp, so the daemon's own refresh never counts as an ask.
+         */
+        remote?: (options: AgentSessionRowsOptions) => Promise<AgentSessionRow[] | null>;
+    } = {}
+): Promise<{ refreshed: boolean; reason: string; rows?: number; via?: "server" | "local" }> {
     const entry = await readSessionRowsCache(path);
 
     if (!entry) {
@@ -120,10 +133,11 @@ export async function refreshSessionRowsCache(
         return { refreshed: false, reason: "nobody has asked for an hour" };
     }
 
-    const rows = await listRows(entry.query);
+    const served = remote ? await remote(entry.query) : null;
+    const rows = served ?? (await listRows(entry.query));
     await writeSessionRowsCache({ ...entry, fetchedAt: now, rows }, path);
 
-    return { refreshed: true, reason: "refreshed", rows: rows.length };
+    return { refreshed: true, reason: "refreshed", rows: rows.length, via: served ? "server" : "local" };
 }
 
 /**
