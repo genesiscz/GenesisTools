@@ -53,3 +53,52 @@ public enum ScrollMotion {
         return 2
     }
 }
+
+public enum ScrollNumericError: Error, Equatable, CustomStringConvertible {
+    case invalidValue(String)
+    case outOfRange(String)
+
+    public var description: String {
+        switch self {
+        case .invalidValue(let flag): return "\(flag) must be a valid number"
+        case .outOfRange(let message): return message
+        }
+    }
+}
+
+/// Numeric scroll options are parsed before looking up a target or posting an event.
+public struct ScrollNumericOptions {
+    public let amount: Int
+    public let pixels: Int
+    public let seconds: Double?
+    public let repeats: Int
+    public let pause: Double
+
+    public init(_ values: [String: String]) throws {
+        func integer(_ flag: String) throws -> Int? {
+            guard let raw = values[flag] else { return nil }
+            guard let number = Int(raw) else { throw ScrollNumericError.invalidValue(flag) }
+            return number
+        }
+        func decimal(_ flag: String) throws -> Double? {
+            guard let raw = values[flag] else { return nil }
+            guard let number = Double(raw), number.isFinite else { throw ScrollNumericError.invalidValue(flag) }
+            return number
+        }
+        let explicitPixels = try integer("--pixels")
+        amount = try integer("--amount") ?? 3
+        if let explicitPixels {
+            pixels = explicitPixels
+        } else {
+            guard (1...2500).contains(amount) else { throw ScrollNumericError.outOfRange("--amount must be 1–2500") }
+            pixels = amount * 40
+        }
+        guard (1...100_000).contains(pixels) else { throw ScrollNumericError.outOfRange("--pixels must be 1–100000") }
+        seconds = try decimal("--time")
+        if let seconds, !(0.05...30).contains(seconds) { throw ScrollNumericError.outOfRange("--time must be 0.05–30 seconds") }
+        repeats = try integer("--repeat") ?? 1
+        guard (1...200).contains(repeats) else { throw ScrollNumericError.outOfRange("--repeat must be 1–200") }
+        pause = try decimal("--pause") ?? 0.3
+        guard (0...30).contains(pause) else { throw ScrollNumericError.outOfRange("--pause must be 0–30 seconds") }
+    }
+}

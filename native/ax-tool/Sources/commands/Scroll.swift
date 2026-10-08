@@ -8,10 +8,20 @@ import Vision
 // MARK: - Scroll
 
 func cmdScroll(appName: String) {
+    var rawNumbers: [String: String] = [:]
+    for flag in ["--amount", "--pixels", "--time", "--repeat", "--pause"] where args.contains(flag) {
+        guard let value = argValue(flag) else { errorExit("\(flag) requires a numeric value") }
+        rawNumbers[flag] = value
+    }
+    let numeric: ScrollNumericOptions
+    do {
+        numeric = try ScrollNumericOptions(rawNumbers)
+    } catch {
+        errorExit(String(describing: error))
+    }
     let pid = resolveApp(appName)
     let app = AXUIElementCreateApplication(pid)
     let direction = argValue("--direction")
-    let amount = Int(argValue("--amount") ?? "3") ?? 3
 
     let hasTarget = argValue("--id") != nil || argValue("--q") != nil || argValue("--role") != nil ||
                     argValue("--title") != nil || argValue("--desc") != nil || argValue("--subrole") != nil
@@ -65,17 +75,13 @@ func cmdScroll(appName: String) {
     guard let point else { errorExit("no window of \(appName) to scroll in; pass --coords or a target") }
 
     // Distance: --pixels, else --amount wheel lines at 40 px each (what a wheel click scrolls in WebKit).
-    let pixels = argValue("--pixels").flatMap { Int($0) } ?? amount * 40
-    guard (1...100_000).contains(pixels) else { errorExit("--pixels must be 1–100000") }
-    let seconds = argValue("--time").flatMap { Double($0) }
-    if let seconds, !(0.05...30).contains(seconds) { errorExit("--time must be 0.05–30 seconds") }
+    let pixels = numeric.pixels
+    let seconds = numeric.seconds
     let ease = ScrollEase(rawValue: argValue("--ease") ?? "flick") ?? {
         errorExit("--ease must be \(ScrollEase.allCases.map(\.rawValue).joined(separator: " or "))")
     }()
-    let repeats = argValue("--repeat").flatMap { Int($0) } ?? 1
-    guard (1...200).contains(repeats) else { errorExit("--repeat must be 1–200") }
-    let pause = argValue("--pause").flatMap { Double($0) } ?? 0.3
-    guard (0...30).contains(pause) else { errorExit("--pause must be 0–30 seconds") }
+    let repeats = numeric.repeats
+    let pause = numeric.pause
     let alternate = args.contains("--alternate")
     let foreground = args.contains("--foreground")
 
@@ -137,7 +143,7 @@ func cmdScroll(appName: String) {
     }
 
     var result: [String: Any] = ["ok": true, "action": "scroll", "method": foreground ? "wheel-foreground" : "wheel-window",
-                                  "direction": direction!, "amount": amount, "pixels": pixels, "events": sent,
+                                  "direction": direction!, "amount": numeric.amount, "pixels": pixels, "events": sent,
                                   "repeat": repeats, "ease": ease.rawValue, "x": point.x, "y": point.y]
     if let seconds { result["time"] = seconds }
     if alternate { result["alternate"] = true }

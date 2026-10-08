@@ -2,6 +2,34 @@ import XCTest
 @testable import SnapshotSupport
 
 final class ScrollMotionTests: XCTestCase {
+    func testNumericDefaultsApplyOnlyWhenOptionsAreAbsent() throws {
+        let defaults = try ScrollNumericOptions([:])
+        XCTAssertEqual(defaults.pixels, 120)
+        XCTAssertEqual(defaults.amount, 3)
+        XCTAssertNil(defaults.seconds)
+        XCTAssertEqual(defaults.repeats, 1)
+        XCTAssertEqual(defaults.pause, 0.3)
+        let explicit = try ScrollNumericOptions(["--pixels": "200", "--time": "0.5", "--repeat": "2", "--pause": "0"])
+        XCTAssertEqual(explicit.pixels, 200)
+        XCTAssertEqual(explicit.seconds, 0.5)
+        XCTAssertEqual(explicit.repeats, 2)
+        XCTAssertEqual(explicit.pause, 0)
+        XCTAssertEqual(try ScrollNumericOptions(["--amount": "5"]).pixels, 200)
+    }
+
+    func testSuppliedInvalidNumbersNeverBecomeDefaultScrolls() {
+        for (flag, raw) in [("--time", "1sec"), ("--pixels", "many"), ("--repeat", "2x"), ("--pause", "soon"),
+                            ("--repeat", "1.5"), ("--time", "nan"), ("--pause", "inf")] {
+            XCTAssertThrowsError(try ScrollNumericOptions([flag: raw])) { error in
+                XCTAssertEqual(error as? ScrollNumericError, .invalidValue(flag))
+            }
+        }
+        for values in [["--pixels": "0"], ["--time": "31"], ["--repeat": "201"], ["--pause": "-1"],
+                       ["--amount": String(Int.max)]] {
+            XCTAssertThrowsError(try ScrollNumericOptions(values))
+        }
+    }
+
     func testTheDeltasSumToTheDistanceInBothDirections() {
         for ease in ScrollEase.allCases {
             XCTAssertEqual(ScrollMotion.deltas(total: 2000, count: 37, ease: ease).reduce(0, +), 2000)
