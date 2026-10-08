@@ -53,6 +53,22 @@ are in [genesistools.md](genesistools.md)). Add a new entry at the end of its se
 - A plain `VStack` is right for tens of rows when exact heights matter (anchoring that survives a width
   change); a lazy stack estimates rows above the viewport and moves the visible ones as it measures.
 
+### Defer large recipient menus until the user opens them
+
+- **Symptom:** a pane hangs before its opening animation starts, despite low idle CPU.
+- **Why:** a SwiftUI menu Picker materializes AppKit menu items and their accessibility state while
+  the containing pane is built. Sampling found `AppKitMenuCore.Child.value` and
+  `AppKitPopUpAdaptor.updateMenu` on the main thread.
+- **Fix:** keep the closed control cheap; construct a searchable chooser only on request. Reuse the
+  shared agent-tree projection and roster rows, bound the first batch, and preserve exact child-agent
+  identity. Keep the enclosing panel open while the chooser is presented.
+- **Measured, 2026-10-08:** an actual hosted view with 800 recipients constructed native menus of
+  1 and 801 items before the fix, versus only the unrelated 1-item menu afterward. The planted old
+  implementation failed that regression. A synchronized old live opening delayed its first callback
+  by 899 ms; three new openings measured 94.3 / 37.9 / 57.2 ms to first callback and 414.5 / 412.3 /
+  411.4 ms total transition time. These are callback timings, not compositor frames or proof that
+  search, selection and dismissal all work; verify those interactions separately.
+
 ## Web views
 
 ### Never create a `WKWebView` on a click
@@ -77,6 +93,20 @@ are in [genesistools.md](genesistools.md)). Add a new entry at the end of its se
   only the part the request names, and still read what can feed it (a script written earlier and run
   now). Prove parity on real data (hundreds of cases, 0 differences) and plant a regression to prove
   the parity check catches. **Measured:** 2.5 s → 1.4 s CPU per new row on a 218 MB transcript.
+
+### Index the bounded active slice before loading large bodies
+
+- **Symptom:** requesting the latest 100 inbox records scans and sorts historical rows containing
+  large answer bodies, delaying a native update even though only a small result is needed.
+- **Fix:** use an index matching the active-row predicate and descending timestamp. In SQLite the
+  measured case uses `ON entries(ts DESC) WHERE superseded_by IS NULL`. Inspect the production
+  query's plan; a final bounded sort may remain without bringing back the historical full scan.
+- **Measured, 2026-10-08:** three alternating pairs on fresh copies of one frozen database, 20 reads
+  per arm, used median 488 ms CPU without the index and 6 ms with it (98.77% less). All six output
+  hashes matched. Index creation took 0.353–0.380 ms on this fixture. A subsequent native inbox
+  receipt applied in 198.279 ms; that single receipt is not a general 500 ms guarantee.
+- Keep benchmarks isolated from the live database. Retain ordering and superseded-row exclusion
+  tests, and show that removing the index fails the query-plan regression.
 
 ### A resident process remembers what did not change
 - Key caches by **file identity**: inode + size + exact mtime (a float; a value rebuilt from an ISO

@@ -41,6 +41,26 @@ sample <pid> 10 -file /tmp/cc/<…>/x.sample.txt
 - Framework-only time (AttributeGraph, `NSDisplayCycleFlush`, `CA::Transaction::commit` every frame)
   with no app frame on top usually means an animation or a layout invalidation loop, not slow code.
 
+## Interaction latency is separate from idle CPU
+
+A compact Widget used about 0.10% of a core over 30 seconds yet stalled on opening a pane. Start
+sampling before the triggering interaction and retain the action timestamp: an idle-only sample
+cannot attribute a short opening stall. Keep app and helper-process costs separate.
+
+For an animated transition, record request-to-first-callback, total duration, callback count and gap
+statistics. One callback arriving 899 ms late can report no large *inter-callback* gap because there
+was no earlier callback. None of these numbers is compositor FPS. See
+[animation-verification.md](animation-verification.md#separate-three-different-measurements).
+
+Record whether the user, an accessibility client, or another test was interacting. Preserve the
+user's position and drafts; do not classify their concurrent movement as an application regression.
+Store screenshots as `<datetime>-<native-commit>-<state>.png` with PID, native source digest, build
+time and measured window bounds. Inspect them rather than accepting a successful capture command.
+
+For data-layer A/B tests, freeze one input and create fresh copies for alternating old/new arms.
+Measure CPU time and output hashes as well as elapsed time. Repeated queries in one already-warmed
+process and one inbox receipt under 500 ms do not establish an end-to-end latency guarantee.
+
 ## 4. HubBench — the hub's own views, off screen
 
 ```bash

@@ -35,6 +35,25 @@
 - **A SwiftUI `List` viewport moved inside a row insert's resize** stops AppKit re-measuring rows (see
   the app CLAUDE.md, `TranscriptScrollAnchor.remeasureVisibleRows`).
 
+## Expanding surfaces and input
+
+- **Stable endpoints can hide jumping icons.** A centered stack can overflow an intermediate window
+  width. Give the rail an independent edge overlay and test actual hosted control rectangles during
+  open, close and interrupted transitions. See [animation-verification.md](animation-verification.md#icons-stay-anchored-during-expansion).
+- **A badge overlay does not enlarge its parent.** Include size-changing badges in intrinsic layout;
+  use the measured size as the target, not the currently animated window width. Round measurements,
+  ignore unchanged values and schedule native updates after the layout transaction.
+- **Window-local drag translation changes as the window moves.** Track pointer events in screen
+  coordinates from mouse-down; hold presentation height stable during the drag. Give the native
+  handle its own accessibility identity rather than identifying the image behind it.
+- **A closed SwiftUI Picker can still build every native menu item.** Thousands of choices can stall
+  the pane that contains it before the picker is opened. Sample the opening and inspect native menu
+  construction; defer a searchable, bounded chooser until requested.
+- **An uncertain accessibility action may have executed.** Re-read the live window after an AX error
+  before retrying. Otherwise a second press can close what the first press opened.
+- **A perfect window capture can still be unclickable.** Verify the system hit-test at the control's
+  screen coordinates. Set a top panel's final level after `isFloatingPanel`, whose setter can reset it.
+
 ## Build and install
 
 - **`bun run app` says "cannot find '<NewType>' in scope"** right after you added a file to GenesisKit,
