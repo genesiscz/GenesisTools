@@ -1,5 +1,6 @@
 // Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Sources/Genesis/Flow/FlowEvents.swift at 2026-10-08T05:04:08+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
 import Foundation
+import Darwin
 
 extension Notification.Name {
     /// Posted on the main queue after a dictation turn lands. `userInfo`
@@ -21,9 +22,8 @@ extension Notification.Name {
 /// 2. **Out-of-process** — a JSON line appended to
 ///    `~/.genesis/flow/events.jsonl`, which anything can `tail -f`.
 ///
-/// The file is a **log, not a mailbox**: it is append-only and callers are
-/// expected to follow it. That keeps the writer trivial and means a crashed
-/// consumer cannot lose events it never read.
+/// Consumers can follow appended events. The log shares history's retention:
+/// deleting or trimming turns removes their raw and final transcripts here too.
 @MainActor
 public enum FlowEvents {
 
@@ -77,35 +77,44 @@ public enum FlowEvents {
         append(payload)
     }
 
-    /// Append one JSON line. Best effort: a dictation must never fail because
-    /// a log write did.
+    /// A best-effort notification log must never make a completed dictation fail.
     private static func append(_ payload: Payload) {
-        guard var data = try? encoder.encode(payload) else { return }
-        data.append(0x0A) // \n
-
-        let url = logURL
-        let fm = FileManager.default
         do {
-            try fm.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
-        } catch {
-            // Directory may already exist; only a real failure matters below.
-        }
-
-        if !fm.fileExists(atPath: url.path) {
-            fm.createFile(atPath: url.path, contents: data, attributes: [.posixPermissions: 0o600])
-            return
-        }
-        guard let handle = try? FileHandle(forWritingTo: url) else { return }
-        defer { try? handle.close() }
-        do {
-            try handle.seekToEnd()
+            var data = try encoder.encode(payload)
+            data.append(0x0A)
+            let parent = logURL.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true,
+                                                     attributes: [.posixPermissions: 0o700])
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: parent.path)
+            let descriptor = open(logURL.path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            guard descriptor >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            defer { try? handle.close() }
+            guard fchmod(descriptor, 0o600) == 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
             try handle.write(contentsOf: data)
         } catch {
             FlowFocusLog.flow.error("events: append failed: \(error.localizedDescription)")
+        }
+    }
+
+    static func retain(entryIDs: Set<UUID>, at url: URL) throws {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try PerfLog.span("flow.events.retain") {
+            var retained = Data()
+            if !entryIDs.isEmpty {
+                let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+                guard descriptor >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+                let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+                defer { try? handle.close() }
+                let contents = try handle.readToEnd() ?? Data()
+                for line in contents.split(separator: 0x0A) {
+                    guard let raw = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                          let textID = raw["id"] as? String, let id = UUID(uuidString: textID), entryIDs.contains(id) else { continue }
+                    retained.append(contentsOf: line)
+                    retained.append(0x0A)
+                }
+            }
+            try FlowFocusLease.writePrivate(retained, to: url)
         }
     }
 }

@@ -12,6 +12,87 @@ import XCTest
 /// paths need a live machine and are covered by the UI harness instead.
 final class FlowTests: XCTestCase {
 
+    @MainActor
+    func testDeletingHistoryAlsoRemovesTheRawTranscriptEvents() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-retention-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let previousURL = FlowEvents.logURL
+        FlowEvents.logURL = root.appendingPathComponent("events.jsonl")
+        defer { FlowEvents.logURL = previousURL }
+        let store = FlowStore(directory: root)
+        let first = FlowEntry(text: "First output", rawText: "First raw fixture", targetBundleId: nil,
+                              targetAppName: nil, durationSeconds: 2, injected: false, wordCount: 2)
+        let second = FlowEntry(text: "Second output", rawText: "Second raw fixture", targetBundleId: nil,
+                               targetAppName: nil, durationSeconds: 3, injected: false, wordCount: 2)
+        store.saveHistory([first, second])
+        FlowEvents.publish(first)
+        FlowEvents.publish(second)
+        let session = FlowSession(store: store)
+        session.deleteEntry(first.id)
+        let remaining = try String(contentsOf: FlowEvents.logURL, encoding: .utf8)
+        XCTAssertFalse(remaining.contains(first.rawText))
+        XCTAssertTrue(remaining.contains(second.rawText), "deleting one turn preserves other event consumers' data")
+        session.clearHistory()
+        XCTAssertTrue(try Data(contentsOf: FlowEvents.logURL).isEmpty)
+        XCTAssertTrue(store.loadHistory().isEmpty)
+    }
+
+    @MainActor
+    func testFailedEventRetentionKeepsHistoryRetryableAfterRepair() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-retention-retry-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let previousURL = FlowEvents.logURL
+        FlowEvents.logURL = root.appendingPathComponent("events.jsonl")
+        defer { FlowEvents.logURL = previousURL }
+        let store = FlowStore(directory: root)
+        let entry = FlowEntry(text: "Retry fixture", rawText: "Raw retry fixture", targetBundleId: nil,
+                              targetAppName: nil, durationSeconds: 2, injected: false, wordCount: 2)
+        let kept = FlowEntry(text: "Kept fixture", rawText: "Raw kept fixture", targetBundleId: nil,
+                             targetAppName: nil, durationSeconds: 1, injected: false, wordCount: 2)
+        store.saveHistory([entry, kept])
+        FlowEvents.publish(entry)
+        FlowEvents.publish(kept)
+        let saved = try Data(contentsOf: FlowEvents.logURL)
+        FlowStore(directory: root, writesEnabled: false).saveHistory([])
+        XCTAssertEqual(try Data(contentsOf: FlowEvents.logURL), saved, "a passive writer cannot compact the event log")
+        XCTAssertEqual(store.loadHistory().map(\.id), [entry.id, kept.id])
+        try FileManager.default.removeItem(at: FlowEvents.logURL)
+        try FileManager.default.createDirectory(at: FlowEvents.logURL, withIntermediateDirectories: false)
+        let session = FlowSession(store: store)
+        session.configure(store: store)
+        XCTAssertThrowsError(try store.verifyingWrites { session.deleteEntry(entry.id) })
+        XCTAssertEqual(store.loadHistory().map(\.id), [entry.id, kept.id], "failed compaction keeps the primary history and its retry identity")
+        XCTAssertEqual(session.history.map(\.id), [entry.id, kept.id])
+        XCTAssertNotNil(session.lastError)
+        try FileManager.default.removeItem(at: FlowEvents.logURL)
+        try saved.write(to: FlowEvents.logURL)
+        try store.verifyingWrites { session.deleteEntry(entry.id) }
+        XCTAssertEqual(store.loadHistory().map(\.id), [kept.id])
+        let remaining = try String(contentsOf: FlowEvents.logURL, encoding: .utf8)
+        XCTAssertFalse(remaining.contains(entry.rawText))
+        XCTAssertTrue(remaining.contains(kept.rawText))
+    }
+
+    @MainActor
+    func testAppendingAnEventHardensAnExistingLogAndDirectory() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-event-mode-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let previousURL = FlowEvents.logURL
+        FlowEvents.logURL = root.appendingPathComponent("events.jsonl")
+        defer { FlowEvents.logURL = previousURL }
+        try Data().write(to: FlowEvents.logURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: FlowEvents.logURL.path)
+        FlowEvents.publish(FlowEntry(text: "Fixture", rawText: "Fixture", targetBundleId: nil,
+                                     targetAppName: nil, durationSeconds: 1, injected: false, wordCount: 1))
+        let file = try FileManager.default.attributesOfItem(atPath: FlowEvents.logURL.path)
+        let folder = try FileManager.default.attributesOfItem(atPath: root.path)
+        XCTAssertEqual((file[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+        XCTAssertEqual((folder[.posixPermissions] as? NSNumber)?.intValue, 0o700)
+        XCTAssertFalse(try Data(contentsOf: FlowEvents.logURL).isEmpty)
+    }
+
     // MARK: - Starting a turn
 
     /// eve on PR #85 t3: the menu bar and the palette reached `beginTurn` with Flow's own Enabled

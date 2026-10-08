@@ -61,7 +61,24 @@ public final class FlowStore {
     }
 
     public func loadHistory() -> [FlowEntry] { load(historyURL) ?? [] }
-    public func saveHistory(_ value: [FlowEntry]) { save(value, to: historyURL) }
+    public func saveHistory(_ value: [FlowEntry]) {
+        do {
+            guard writesEnabled else {
+                throw FlowFocusMailbox.Failure.unavailable("Only the active Flow and Focus owner can save changes.")
+            }
+            let encoded = try encoder.encode(value)
+            let previousIDs = Set(loadHistory().map(\.id))
+            let retainedIDs = Set(value.map(\.id))
+            if value.isEmpty || !previousIDs.isSubset(of: retainedIDs) {
+                try FlowEvents.retain(entryIDs: retainedIDs, at: directory.appendingPathComponent("events.jsonl"))
+            }
+            try writeOwned(encoded, to: historyURL)
+        } catch {
+            writeFailure = error
+            onFailure?(error.localizedDescription)
+            FlowFocusLog.flow.error("FlowStore: history retention failed: \(error.localizedDescription)")
+        }
+    }
 
     public func loadDictionary() -> [FlowDictionaryRule] { load(dictionaryURL) ?? [] }
     public func saveDictionary(_ value: [FlowDictionaryRule]) { save(value, to: dictionaryURL) }
