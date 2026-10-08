@@ -2073,6 +2073,11 @@ private struct SessionListView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.plain).padding(.horizontal, 14).padding(.bottom, 9)
+                Button { ClickyLaunch.openSettings() } label: {
+                    Label("Clicky", systemImage: "keyboard")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain).padding(.horizontal, 14).padding(.bottom, 9)
                 AgentsListView(model: model, agents: model.agents)
             } else {
                 ScrollView {

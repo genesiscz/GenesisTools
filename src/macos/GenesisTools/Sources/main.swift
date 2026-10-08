@@ -24,7 +24,7 @@ let wantsWindow = arguments.isEmpty || firstArgument == "--window" || firstArgum
 // The launcher passes its caller's environment through untouched.
 if wantsWindow || firstArgument.hasPrefix("-") || firstArgument.contains("://") {
     let hubLink = firstArgument.hasPrefix("genesis-tools://hub")
-    let windowFace = wantsWindow || firstArgument == "--hub" || firstArgument == "--review" || firstArgument == "--widget" || hubLink
+    let windowFace = wantsWindow || firstArgument == "--hub" || firstArgument == "--review" || firstArgument == "--widget" || firstArgument == "--clicky" || hubLink
     ChildEnvironment.install(loginShell: windowFace, refresh: arguments.first == "--hub" || hubLink)
     // A face that is (or runs under) this bundle's responsible process tells its `tools` children to
     // skip the launcher; one started from a plain terminal clears the markers (App/FaceMarker.swift).
@@ -104,6 +104,10 @@ if firstArgument == "--hub" {
 
 if firstArgument == "--widget" {
     runAgentWidget(Array(arguments.dropFirst()))
+}
+
+if firstArgument == "--clicky" {
+    runClicky()
 }
 
 // GenesisTools --review [--repo <path>] [--style split|unified] [--snapshot <png>]: the diff review
