@@ -70,7 +70,11 @@ export function createListenerFilter(options: ListenerFilterOptions): (event: Fe
     const expressionFilter = options.expression ? compileExpression(options.expression) : null;
 
     return (event) => {
-        if (kinds.size > 0) {
+        // A join or a leave opens or closes the channel: one event each, so `--kinds message` (meant to hide
+        // per-login noise) must not hide the moment a peer starts or stops listening.
+        const presence = event.type === "agent_joined" || event.type === "agent_left";
+
+        if (kinds.size > 0 && !presence) {
             const body = messageBody(event);
             const bodyKind =
                 typeof body?.op === "string" ? body.op : typeof body?.event === "string" ? body.event : null;

@@ -563,6 +563,17 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
                 if (!received && late === 0 && timeoutSeconds !== undefined) {
                     timedOut = true;
                     process.exitCode = LOGIN_TIMEOUT_EXIT;
+
+                    // Nobody is listening once this returns, unless the agent starts it again (then that is a join).
+                    if (!leaveAnnounced) {
+                        leaveAnnounced = true;
+                        await announceLeave(paths, {
+                            agent_id: record.agent_id,
+                            agent_name: record.agent_name,
+                            reason: "timeout",
+                        });
+                    }
+
                     await writeLoginJsonLine({
                         type: "timeout",
                         agent_name: record.agent_name,

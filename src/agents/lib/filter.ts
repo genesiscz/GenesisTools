@@ -14,8 +14,9 @@ export function isVisibleToAgent(event: FeedEvent, agent: AgentRecord, meta?: Se
         return Boolean(meta?.debug);
     }
 
+    // Presence from before this agent registered is not news to it, and must not wake its first `--once`.
     if (event.type === "agent_left" || event.type === "agent_joined") {
-        return event.agent_id !== agent.agent_id;
+        return event.agent_id !== agent.agent_id && event.ts > agent.registered_at;
     }
 
     return false;

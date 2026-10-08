@@ -36,9 +36,10 @@ the bus (its first login, or its first after leaving). A `--once` receiver's lat
 channel costs one event at each end and nothing per message.
 
 **Leaving.** `{"type":"agent_left","agent_name":…,"reason":…,"remaining":[…]}` reaches every other agent (it wakes a
-`--once` receiver) when an agent runs `leave`, when a stream login ends, when any login is killed by a signal, and when a
-dead login is reaped. One `--once` cycle (a message or a timeout) is not leaving. `remaining` names the agents that
-logged in and have not left since.
+`--once` receiver) when an agent runs `leave`, when a stream login ends, when any login is killed by a signal, when a
+`--once --timeout` receiver expires with no mail, and when a dead login is reaped. A `--once` cycle that ends on mail is
+not leaving. `remaining` names the agents that logged in and have not left since. Joins and leaves pass any `--kinds`
+filter, and an agent never receives presence from before it registered.
 
 ## Session resolution
 

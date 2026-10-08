@@ -35,6 +35,29 @@ describe("agents listener filter", () => {
         expect(filter(lifecycle)).toBe(false);
     });
 
+    test("a join and a leave pass --kinds message; per-login lifecycle does not", () => {
+        const filter = createListenerFilter({ kinds: "message" });
+        const left: FeedEvent = {
+            type: "agent_left",
+            seq: 2,
+            ts: "now",
+            agent_id: "agt_0002",
+            agent_name: "peer",
+            reason: "timeout",
+            remaining: [],
+        };
+        const loggedOut: FeedEvent = {
+            type: "logged_out",
+            seq: 3,
+            ts: "now",
+            agent_id: "agt_0002",
+            reason: "clean_exit",
+        };
+
+        expect(filter(left)).toBe(true);
+        expect(filter(loggedOut)).toBe(false);
+    });
+
     test("supports the documented jq-ish equality expression", () => {
         const filter = createListenerFilter({ expression: '.op=="approval_request"' });
 
