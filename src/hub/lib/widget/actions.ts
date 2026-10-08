@@ -1,0 +1,156 @@
+import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { decisionFiles } from "@app/question/lib/decisions/read";
+import { readDecisions } from "@app/question/lib/decisions/store";
+import { markEntriesRead, openReadModel } from "@app/question/lib/read-model";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { videoSettingsSchema } from "@genesiscz/utils/video/types";
+import { z } from "zod";
+import { confirmVideoAsset, importWidgetAsset, reviseVideoAsset } from "../composer/assets";
+import { changeOutgoing, enqueueWidgetMessage } from "../composer/outbox";
+import { mutateWidgetState, readWidgetState, widgetRoot } from "./storage";
+import { widgetDraftSchema, widgetPayloadSchema, widgetPreferencesSchema, widgetTargetSchema } from "./types";
+
+export const widgetActionSchema = z.discriminatedUnion("action", [
+    z.object({ action: z.literal("selection"), key: z.string().nullable() }),
+    z.object({ action: z.literal("preferences"), patch: widgetPreferencesSchema.partial() }),
+    z.object({ action: z.literal("visibility"), key: z.string(), pinned: z.boolean() }),
+    z.object({ action: z.literal("draft"), key: z.string(), draft: widgetDraftSchema }),
+    z.object({ action: z.literal("draft-text"), key: z.string(), text: z.string().max(64_000) }),
+    z.object({ action: z.literal("append-draft"), key: z.string(), text: z.string().max(64_000) }),
+    z.object({ action: z.literal("import"), key: z.string(), input: z.string(), type: z.enum(["image", "video"]) }),
+    z.object({ action: z.literal("capture"), key: z.string() }),
+    z.object({ action: z.literal("remove-asset"), key: z.string(), id: z.string() }),
+    z.object({ action: z.literal("video-settings"), id: z.string(), settings: videoSettingsSchema }),
+    z.object({ action: z.literal("confirm-video"), id: z.string(), revision: z.number().int() }),
+    z.object({
+        action: z.literal("enqueue"),
+        id: z.string().uuid(),
+        target: widgetTargetSchema,
+        payload: widgetPayloadSchema,
+        assetIds: z.array(z.string()).default([]),
+        draftSnapshot: widgetDraftSchema.optional(),
+    }),
+    z.object({ action: z.literal("retry"), id: z.string(), confirmedUnknown: z.boolean().default(false) }),
+    z.object({ action: z.literal("cancel"), id: z.string(), confirmedUnknown: z.boolean().default(false) }),
+    z.object({ action: z.literal("read"), id: z.string() }),
+]);
+
+export async function performWidgetAction({
+    root,
+    input,
+    signal,
+}: {
+    root?: string;
+    input: unknown;
+    signal?: AbortSignal;
+}): Promise<unknown> {
+    const request = widgetActionSchema.parse(input);
+    switch (request.action) {
+        case "selection":
+            return mutateWidgetState(root, (state) => {
+                state.selectedKey = request.key;
+            });
+        case "preferences":
+            return mutateWidgetState(root, (state) => {
+                state.preferences = widgetPreferencesSchema.parse({ ...state.preferences, ...request.patch });
+                return state.preferences;
+            });
+        case "visibility":
+            return mutateWidgetState(root, (state) => {
+                const excluded = new Set(state.preferences.excludedKeys);
+                if (request.pinned) {
+                    excluded.delete(request.key);
+                } else {
+                    excluded.add(request.key);
+                }
+                state.preferences.excludedKeys = [...excluded];
+                return state.preferences;
+            });
+        case "draft":
+            return mutateWidgetState(root, (state) => {
+                state.drafts[request.key] = request.draft;
+                return request.draft;
+            });
+        case "draft-text":
+            return mutateWidgetState(root, (state) => {
+                const draft = state.drafts[request.key] ?? { text: "", assetIds: [] };
+                draft.text = request.text;
+                state.drafts[request.key] = draft;
+                return draft;
+            });
+        case "append-draft":
+            return mutateWidgetState(root, (state) => {
+                const draft = state.drafts[request.key] ?? { text: "", assetIds: [] };
+                draft.text = [draft.text, request.text].filter(Boolean).join(" ");
+                state.drafts[request.key] = draft;
+                return draft;
+            });
+        case "import": {
+            const asset = await importWidgetAsset({ root, input: request.input, type: request.type });
+            await mutateWidgetState(root, (state) => {
+                const draft = state.drafts[request.key] ?? { text: "", assetIds: [] };
+                draft.assetIds.push(asset.id);
+                state.drafts[request.key] = draft;
+            });
+            return asset;
+        }
+        case "capture": {
+            await mkdir(widgetRoot(root), { recursive: true });
+            const input = join(widgetRoot(root), `capture-${randomUUID()}.png`);
+            const result = await boundedCommand({
+                command: ["/usr/sbin/screencapture", "-i", "-x", input],
+                signal,
+                timeoutMs: 120_000,
+            });
+            if (result.error || result.status !== 0 || !(await Bun.file(input).exists())) {
+                throw new Error("Screenshot selection cancelled or capture permission unavailable");
+            }
+            return performWidgetAction({
+                root,
+                input: { action: "import", key: request.key, type: "image", input },
+                signal,
+            });
+        }
+        case "remove-asset":
+            return mutateWidgetState(root, (state) => {
+                const draft = state.drafts[request.key];
+                if (draft) {
+                    draft.assetIds = draft.assetIds.filter((id) => id !== request.id);
+                }
+            });
+        case "video-settings":
+            return reviseVideoAsset({ root, id: request.id, settings: request.settings });
+        case "confirm-video":
+            await confirmVideoAsset({ root, id: request.id, revision: request.revision });
+            return { confirmed: true };
+        case "enqueue":
+            return enqueueWidgetMessage({ root, ...request });
+        case "retry":
+        case "cancel":
+            if (request.action === "cancel") {
+                const message = (await readWidgetState(root)).outgoing.find((entry) => entry.id === request.id);
+                if (message?.payload.kind === "decision" && message.dispatchedAt) {
+                    const id = message.payload.id;
+                    const decision = readDecisions(decisionFiles().file).find((row) => row.id === id);
+                    if (decision && !["open", "drafted"].includes(decision.state)) {
+                        throw new Error(
+                            "This answer is now owned by Decisions. Manage its delivery in Hub; cancelling here would not withdraw it."
+                        );
+                    }
+                }
+            }
+            await changeOutgoing({ root, ...request });
+            return { updated: true };
+        case "read": {
+            const db = openReadModel(toolDataDir("question", "qa.db"));
+            try {
+                return { read: markEntriesRead(db, [request.id]) };
+            } finally {
+                db.close();
+            }
+        }
+    }
+}

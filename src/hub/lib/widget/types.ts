@@ -1,0 +1,130 @@
+import { videoSettingsSchema } from "@genesiscz/utils/video/types";
+import { z } from "zod";
+
+export const widgetTargetSchema = z.object({
+    hostId: z.literal("local").default("local"),
+    provider: z.enum(["claude", "codex", "grok", "unknown"]),
+    sessionId: z.string().min(1),
+    sourceHome: z.string().default(""),
+    cwd: z.string().default(""),
+});
+export type WidgetTarget = z.infer<typeof widgetTargetSchema>;
+export function widgetSessionKey(target: WidgetTarget): string {
+    return [target.hostId, target.provider, target.sessionId, target.sourceHome].map(encodeURIComponent).join(":");
+}
+
+export const widgetPreferencesSchema = z.object({
+    excludedKeys: z.array(z.string()).default([]),
+    projects: z.array(z.string()).default([]),
+    sessions: z.array(z.string()).default([]),
+    showChanges: z.boolean().default(true),
+    placement: z.enum(["top", "side", "both"]).default("both"),
+    side: z.enum(["left", "right"]).default("right"),
+    quietSeconds: z.number().int().min(3).max(300).default(15),
+    voiceProvider: z.string().default("xai"),
+    voiceAccount: z.string().nullable().optional(),
+    voiceLanguage: z.string().default(""),
+});
+
+const attachmentBase = {
+    id: z.string().uuid(),
+    name: z.string(),
+    path: z.string(),
+    sha256: z.string(),
+};
+export const widgetAssetSchema = z.discriminatedUnion("type", [
+    z.object({
+        ...attachmentBase,
+        type: z.literal("image"),
+        mimeType: z.string(),
+        width: z.number(),
+        height: z.number(),
+        bytes: z.number(),
+    }),
+    z.object({
+        ...attachmentBase,
+        type: z.literal("video"),
+        durationUs: z.number(),
+        width: z.number(),
+        height: z.number(),
+        settings: videoSettingsSchema,
+        revision: z.number().int().positive(),
+        confirmedRevision: z.number().int().optional(),
+        status: z.enum(["pending", "preparing", "ready", "failed"]),
+        manifestPath: z.string().optional(),
+        error: z.string().optional(),
+        progress: z.object({ phase: z.string(), completed: z.number(), total: z.number() }).optional(),
+    }),
+]);
+export type WidgetAsset = z.infer<typeof widgetAssetSchema>;
+
+export const widgetPayloadSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("followup"), text: z.string().max(64_000) }),
+    z.object({
+        kind: z.literal("decision"),
+        id: z.string(),
+        number: z.number().int().positive(),
+        expectedRevision: z.number().int().positive(),
+        option: z.string().optional(),
+        text: z.string().max(64_000).default(""),
+    }),
+    z.object({
+        kind: z.literal("form"),
+        id: z.string(),
+        answers: z.array(
+            z.object({
+                itemId: z.string(),
+                freeText: z.string().optional(),
+                selectedChoices: z.array(z.string()).optional(),
+                fileTags: z.array(z.string()).optional(),
+            })
+        ),
+    }),
+]);
+export type WidgetPayload = z.infer<typeof widgetPayloadSchema>;
+export const outgoingStates = [
+    "preparing",
+    "review",
+    "queued",
+    "dispatching",
+    "sent",
+    "waiting-route",
+    "unknown",
+    "failed",
+    "cancelled",
+] as const;
+export const widgetOutgoingSchema = z.object({
+    id: z.string().uuid(),
+    target: widgetTargetSchema,
+    payload: widgetPayloadSchema,
+    assetIds: z.array(z.string()).max(24),
+    createdAt: z.number(),
+    sequence: z.number().int(),
+    state: z.enum(outgoingStates),
+    error: z.string().optional(),
+    receipt: z
+        .object({
+            channel: z.string(),
+            delivered: z.boolean(),
+            at: z.number(),
+            detail: z.string().optional(),
+            entryId: z.string().optional(),
+        })
+        .optional(),
+    dispatchedAt: z.number().optional(),
+});
+export type WidgetOutgoing = z.infer<typeof widgetOutgoingSchema>;
+export const widgetDraftSchema = z.object({
+    text: z.string().max(64_000).default(""),
+    assetIds: z.array(z.string()).max(24).default([]),
+});
+export const widgetStateSchema = z.object({
+    selectedKey: z.string().nullable().default(null),
+    version: z.literal(1).default(1),
+    revision: z.number().int().default(0),
+    preferences: widgetPreferencesSchema.prefault({}),
+    assets: z.record(z.string(), widgetAssetSchema).default({}),
+    drafts: z.record(z.string(), widgetDraftSchema).default({}),
+    outgoing: z.array(widgetOutgoingSchema).default([]),
+});
+export type WidgetState = z.infer<typeof widgetStateSchema>;

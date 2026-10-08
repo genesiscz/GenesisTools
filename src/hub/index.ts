@@ -7,6 +7,8 @@ import { requestedCommandFromArgv } from "@genesiscz/utils/cli/lazy-registrars";
 const requested = requestedCommandFromArgv(process.argv);
 if (requested === "agents") {
     await import("./agents-cli");
+} else if (requested === "widget") {
+    await import("./widget-cli");
 } else if (requested === "serve") {
     // The resident server: its memory is held for hours, so it loads only its doors.
     await import("./server-cli");

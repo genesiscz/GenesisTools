@@ -1,0 +1,12 @@
+#!/usr/bin/env bun
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const [tool, ...args] = process.argv.slice(2);
+const allowed = new Set(["hub", "ai", "voice", "video", "say", "question", "agents", "claude", "codex"]);
+if (!tool || !allowed.has(tool)) {
+    throw new Error("Unsupported native widget bridge command");
+}
+const entry = resolve(import.meta.dir, "src", tool, "index.ts");
+process.argv = [process.execPath, entry, ...args];
+await import(pathToFileURL(entry).href);

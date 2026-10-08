@@ -179,6 +179,7 @@ export function getForm(db: Database, id: string): AskForm | null {
 }
 
 export interface ListFormsOpts {
+    sessionHint?: string;
     status?: AskFormStatus;
     limit?: number;
 }
@@ -190,8 +191,18 @@ export interface ListFormsOpts {
  * re-orders that capped set to ascending for display.
  */
 export function listForms(db: Database, opts: ListFormsOpts = {}): AskForm[] {
-    const where = opts.status ? "WHERE status = ?" : "";
-    const params: (string | number)[] = opts.status ? [opts.status] : [];
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (opts.status) {
+        clauses.push("status = ?");
+        params.push(opts.status);
+    }
+
+    if (opts.sessionHint) {
+        clauses.push("session_hint = ?");
+        params.push(opts.sessionHint);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     params.push(opts.limit ?? 50);
     const rows = db
         .query(

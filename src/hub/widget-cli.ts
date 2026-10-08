@@ -1,0 +1,124 @@
+import { runTool } from "@genesiscz/utils/cli";
+import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
+import { Command } from "commander";
+import { prepareWidgetAsset } from "./lib/composer/assets";
+import { widgetDispatcher } from "./lib/composer/dispatch";
+import { processWidgetOutbox } from "./lib/composer/engine";
+import { performWidgetAction } from "./lib/widget/actions";
+import { readWidgetText } from "./lib/widget/readback";
+import { widgetSnapshot } from "./lib/widget/snapshot";
+import { watchWidget } from "./lib/widget/watch";
+
+const program = new Command().name("hub");
+const widget = program
+    .command("widget")
+    .description("Native widget data, media and ordered outgoing messages")
+    .option("--state-root <directory>", "Widget state/assets directory, independent of shared session history");
+widget
+    .command("pin <session>")
+    .requiredOption("--provider <provider>")
+    .action(async (session: string, options, command) => {
+        const root = command.optsWithGlobals().stateRoot;
+        const snapshot = await widgetSnapshot({ root });
+        const candidates = snapshot.sessions.filter(
+            (entry) => entry.target.sessionId === session && entry.target.provider === options.provider
+        );
+        if (candidates.length !== 1) {
+            throw new Error("Choose the exact session in Widget sessions; its identity is unavailable or ambiguous.");
+        }
+        out.result(
+            await performWidgetAction({ root, input: { action: "visibility", key: candidates[0].key, pinned: true } })
+        );
+    });
+widget
+    .command("snapshot")
+    .option("--selected <key>")
+    .option("--json")
+    .action(async (options, command) => {
+        out.result(await widgetSnapshot({ root: command.optsWithGlobals().stateRoot, selectedKey: options.selected }));
+    });
+widget
+    .command("call")
+    .requiredOption("--input <file>", "JSON action request")
+    .action(async (options, command) => {
+        const input: unknown = SafeJSON.parse(await Bun.file(options.input).text());
+        await withInterrupt(
+            async (signal) => {
+                const result = await performWidgetAction({ root: command.optsWithGlobals().stateRoot, input, signal });
+                out.result(result ?? { ok: true });
+            },
+            { handleTermination: true }
+        );
+    });
+widget.command("prepare <id>").action(async (id: string, _options, command) => {
+    await withInterrupt(
+        async (signal) => {
+            await prepareWidgetAsset({ root: command.optsWithGlobals().stateRoot, id, signal });
+            out.result({ prepared: true });
+        },
+        { handleTermination: true }
+    );
+});
+widget.command("dispatch").action(async (_options, command) => {
+    await withInterrupt(
+        async (signal) => {
+            await processWidgetOutbox({
+                root: command.optsWithGlobals().stateRoot,
+                dispatcher: widgetDispatcher({ signal }),
+                signal,
+            });
+            out.result({ processed: true });
+        },
+        { handleTermination: true }
+    );
+});
+widget
+    .command("watch")
+    .option("--selected <key>")
+    .option("--stop-on-stdin")
+    .action(async (options, command) => {
+        await withInterrupt(
+            async (signal) => {
+                const owner = new AbortController();
+                const abort = () => owner.abort();
+                signal.addEventListener("abort", abort, { once: true });
+                if (options.stopOnStdin) {
+                    process.stdin.on("end", abort);
+                    process.stdin.resume();
+                    if (process.stdin.readableEnded) {
+                        owner.abort();
+                    }
+                }
+                try {
+                    await watchWidget({
+                        root: command.optsWithGlobals().stateRoot,
+                        selectedKey: options.selected,
+                        signal: owner.signal,
+                        emit: (snapshot) => out.print(`${SafeJSON.stringify(snapshot)}\n`),
+                    });
+                } finally {
+                    signal.removeEventListener("abort", abort);
+                    process.stdin.removeListener("end", abort);
+                    if (options.stopOnStdin) {
+                        process.stdin.pause();
+                    }
+                }
+            },
+            { handleTermination: true }
+        );
+    });
+widget
+    .command("readback")
+    .requiredOption("--input <file>", "UTF-8 visible card text")
+    .action(async (options) => {
+        await withInterrupt(
+            async (signal) => {
+                await readWidgetText({ text: await Bun.file(options.input).text(), signal });
+                out.result({ finished: true });
+            },
+            { handleTermination: true }
+        );
+    });
+await runTool(program, { tool: "hub" });
