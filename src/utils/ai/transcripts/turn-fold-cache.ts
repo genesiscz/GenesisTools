@@ -23,6 +23,9 @@ interface FoldEntry {
 
 /** Smaller files are parsed whole: a full parse of 8 MB costs ~10 ms. */
 const FOLD_MIN_BYTES = 8 * 1024 * 1024;
+/** Bound transient raw input; only a single unusually long JSONL record may exceed this. */
+const FOLD_CHUNK_BYTES = 256 * 1024;
+const FOLD_BATCH_RECORDS = 256;
 /** Files kept: a live follow reads one or two at a time. A parser holds its turns (~17 MB for a 163 MB rollout). */
 const FOLD_FILES = 3;
 /** A parser nobody read for this long is dropped, so a transcript nobody watches holds no memory. */
@@ -108,34 +111,64 @@ export function foldTurnsAppendOnly(
             return null;
         }
 
-        const fresh = Buffer.allocUnsafe(size - entry.consumed);
-        let read = 0;
-        while (read < fresh.length) {
-            const got = readSync(fd, fresh, read, fresh.length - read, entry.consumed + read);
+        const buffer = Buffer.allocUnsafe(Math.min(FOLD_CHUNK_BYTES, size - entry.consumed));
+        let position = entry.consumed;
+        let fragments: Buffer[] = [];
+        let fragmentBytes = 0;
+        while (position < size) {
+            const got = readSync(fd, buffer, 0, Math.min(buffer.length, size - position), position);
             if (got === 0) {
                 break;
             }
-            read += got;
-        }
 
-        const bytes = fresh.subarray(0, read);
-        const lastNewline = bytes.lastIndexOf(10);
-        if (lastNewline !== -1) {
-            const records: Record<string, unknown>[] = [];
-            for (const line of bytes
-                .subarray(0, lastNewline + 1)
-                .toString("utf8")
-                .split("\n")) {
+            position += got;
+            const bytes = buffer.subarray(0, got);
+            let start = 0;
+            let newline = bytes.indexOf(10);
+            let records: Record<string, unknown>[] = [];
+            while (newline !== -1) {
+                const part = bytes.subarray(start, newline);
+                const line =
+                    fragments.length > 0
+                        ? Buffer.concat([...fragments, part], fragmentBytes + part.length).toString("utf8")
+                        : part.toString("utf8");
+                if (fragmentBytes > 0) {
+                    for (const fragment of fragments) {
+                        prefix.update(fragment);
+                    }
+
+                    entry.consumed += fragmentBytes;
+                    fragments = [];
+                    fragmentBytes = 0;
+                }
+
                 const record = parseTranscriptLine(line);
                 if (record) {
                     records.push(record);
                     entry.events ||= "method" in record;
                 }
+
+                if (records.length >= FOLD_BATCH_RECORDS) {
+                    entry.fold.push(records);
+                    records = [];
+                }
+
+                start = newline + 1;
+                newline = bytes.indexOf(10, start);
             }
 
-            entry.fold.push(records);
-            entry.consumed += lastNewline + 1;
-            prefix.update(bytes.subarray(0, lastNewline + 1));
+            if (records.length > 0) {
+                entry.fold.push(records);
+            }
+
+            prefix.update(bytes.subarray(0, start));
+            entry.consumed += start;
+            if (start < got) {
+                // Copy before the next read overwrites the reusable buffer. Decode only once the whole line is present.
+                const fragment = Buffer.from(bytes.subarray(start));
+                fragments.push(fragment);
+                fragmentBytes += fragment.length;
+            }
         }
 
         const checkpoint = prefix.finish();
@@ -150,7 +183,7 @@ export function foldTurnsAppendOnly(
             return null;
         }
 
-        const unfinished = bytes.subarray(lastNewline + 1).toString("utf8");
+        const unfinished = Buffer.concat(fragments, fragmentBytes).toString("utf8");
         if (parseTranscriptLine(unfinished)) {
             return null;
         }
