@@ -336,6 +336,9 @@ Two cleanly separated layers (the 2026-05 logger+out overhaul):
 
 ## 🛑 Changing Swift under `src/macos/GenesisTools/` — always `bun run app`
 
+**While you work on the app, keep `tools hub dev monitor` running under the Monitor tool** (hangs, stalls,
+layout loops, link-relay trouble and crash reports as events; `src/macos/GenesisTools/CLAUDE.md`).
+
 `swift build` alone proves nothing: it writes `.build/`, and the thing answering on your Mac is the
 installed bundle at `~/Applications/GenesisTools.app`. **After ANY edit to `Sources/**` or
 `Info.plist`, run `bun run app`** (alias of `tools macos permissions build`). It builds, assembles,

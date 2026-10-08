@@ -75,6 +75,27 @@ stat goes through a store that loads on a background queue (see `RepoFactsStore`
 To find a cycle: `AG_TRAP_CYCLES=1 GenesisTools --hub … --snapshot /tmp/x.png`, then read the
 newest `~/Library/Logs/DiagnosticReports/GenesisTools-*.ips` stack.
 
+## 🛑 Run `tools hub dev monitor` under the Monitor tool while you work on the app
+
+Martin, 2026-10-08: hangs and crashes reached him as a "GenesisTools is not responding" banner and an
+"unexpectedly quit" dialog while the agent changing the app saw nothing. Before the first edit of a
+session on this app, start the stream under the Monitor tool (not as a Bash call that waits):
+
+```bash
+tools hub dev monitor            # one line per event, from now on
+tools hub dev monitor --json     # the same as JSON objects
+tools hub dev monitor --from-start --min-stall-ms 1000   # replay today's log first
+```
+
+It follows `~/.genesis-tools/logs/app-perf.log` (wedges, hang samples and their stacks, stalls of
+500 ms or more, `layout.loop`, main-thread spans of 400 ms or more, heavy frame drops, failures),
+`~/.genesis-tools/app/link-relay.log` (only lines that say the relay is not doing its job), new hang
+files with no log line, and new `Genesis*` crash reports in `~/Library/Logs/DiagnosticReports`
+(GenesisTools, Genesis, Genesis Markdown, GenesisTools Preview). Each line names the file to read
+(the hang sample, the stack file, the `.ips`). An event during your own test is your bug until
+the stack says otherwise; read the file before you change anything else. Source:
+src/hub/lib/dev-monitor.ts.
+
 ## Measure every load
 
 Every load that can be slow runs in a span: `HubPerf.begin("area.what", detail)` then

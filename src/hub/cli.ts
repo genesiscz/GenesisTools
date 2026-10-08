@@ -18,6 +18,7 @@ import { Command } from "commander";
 import { registerAgentsCommand } from "./commands/agents";
 import { registerCheckLogCommand } from "./commands/checks";
 import { registerConfigCommands } from "./commands/config";
+import { registerDevCommands } from "./commands/dev";
 import { registerDigestCommand } from "./commands/digest";
 import { registerForecastCommand } from "./commands/forecast";
 import { registerInsightsCommands } from "./commands/insights";
@@ -1227,5 +1228,6 @@ registerProcsCommand(program);
 registerPromptsCommand(program);
 registerAgentsCommand(program);
 registerServeCommand(program);
+registerDevCommands(program);
 
 await runTool(program, { tool: "hub" });
