@@ -44,16 +44,29 @@ public enum ClickyPage: String, CaseIterable, Identifiable {
     }
 }
 
+private struct ClickyWindowBackdrop: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .underWindowBackground
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
 private struct ClickyGlass: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var systemOpaque
     let opaque: Bool
     var radius: CGFloat = 18
     func body(content: Content) -> some View {
         if systemOpaque || opaque {
-            content.background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: radius))
+            content.background(Color(white: 0.17), in: RoundedRectangle(cornerRadius: radius))
+                .overlay(RoundedRectangle(cornerRadius: radius).stroke(.white.opacity(0.08), lineWidth: 1))
         } else if #available(macOS 26, *) {
             content.foregroundStyle(Color.white).glassEffect(
-                .regular.tint(.black.opacity(0.14)), in: RoundedRectangle(cornerRadius: radius))
+                .regular.tint(.white.opacity(0.035)), in: RoundedRectangle(cornerRadius: radius))
         } else {
             content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: radius))
         }
@@ -92,8 +105,12 @@ public struct ClickySettingsView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         if let error = model.error {
-                            Label(error, systemImage: "exclamationmark.triangle.fill")
-                                .font(.system(size: 12)).foregroundStyle(.orange).padding(14)
+                            HStack(alignment: .top, spacing: 12) {
+                                Label(error, systemImage: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 12)).foregroundStyle(.orange)
+                                Spacer(minLength: 0)
+                                IconButton(systemName: "xmark", tooltip: "Dismiss message", action: model.dismissError)
+                            }.padding(14)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .modifier(ClickyGlass(opaque: model.preferences.reduceTransparency))
                         }
@@ -102,25 +119,24 @@ public struct ClickySettingsView: View {
                 }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background {
-            if systemOpaque || model.preferences.reduceTransparency {
-                Color(nsColor: .windowBackgroundColor)
-            } else {
-                ZStack {
-                    Color(nsColor: .windowBackgroundColor)
-                    LinearGradient(
-                        colors: [.purple.opacity(0.12), .clear, .pink.opacity(0.06)],
-                        startPoint: .topTrailing, endPoint: .bottomLeading)
-                }
-            }
-        }
-        .frame(minWidth: 760, minHeight: 610)
+        .titlebarBackground(windowBackdrop)
+        .titlebarZone()
+        .frame(minWidth: 860, minHeight: 650)
         .preferredColorScheme(.dark)
         .alert("Reset Clicky statistics?", isPresented: $confirmReset) {
             Button("Cancel", role: .cancel) {}
             Button("Reset", role: .destructive) { model.resetStatistics() }
         } message: {
             Text("This removes your saved aggregate counts from this Mac.")
+        }
+    }
+
+    @ViewBuilder private var windowBackdrop: some View {
+        if systemOpaque || model.preferences.reduceTransparency {
+            Color(nsColor: .windowBackgroundColor)
+        } else {
+            ClickyWindowBackdrop()
+                .overlay(Color.black.opacity(0.08))
         }
     }
 
@@ -145,14 +161,8 @@ public struct ClickySettingsView: View {
                     if model.enabled { model.deactivate() } else { model.activate() }
                 }.buttonStyle(.bordered).controlSize(.small)
             }.padding(14)
-        }.padding(.horizontal, 12).frame(width: 184)
-            .background {
-                if systemOpaque || model.preferences.reduceTransparency {
-                    Color(nsColor: .windowBackgroundColor)
-                } else {
-                    Rectangle().fill(.thinMaterial)
-                }
-            }
+        }.padding(.horizontal, 14).frame(width: 228)
+            .titlebarBackground(Color.white.opacity(systemOpaque || model.preferences.reduceTransparency ? 0 : 0.025))
     }
 
     private func pageRow(_ item: ClickyPage) -> some View {
@@ -283,7 +293,7 @@ public struct ClickySettingsView: View {
                         HStack(spacing: 12) {
                             Button {
                                 model.preferences.selectedSwitch = profile
-                                model.preview(profile)
+                                model.previewStroke(profile)
                             } label: {
                                 HStack(spacing: 12) {
                                     RoundedRectangle(cornerRadius: 8).fill(switchColor(index).gradient)
@@ -304,7 +314,7 @@ public struct ClickySettingsView: View {
                             }.buttonStyle(.genHoverRow())
                                 .accessibilityLabel("Select \(profile.name) switch")
                             IconButton(systemName: "play.fill", tooltip: "Preview \(profile.name)") {
-                                model.preview(profile)
+                                model.previewStroke(profile)
                             }
                         }
                     }
@@ -387,7 +397,7 @@ public struct ClickySettingsView: View {
         Binding(
             get: {
                 let minute = model.preferences[keyPath: path]
-                return Calendar.current.startOfDay(for: Date()).addingTimeInterval(Double(minute * 60))
+                return ClickyPreferences.clockTime(minute: minute)
             },
             set: { date in
                 let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
@@ -526,13 +536,14 @@ private struct ClickyDemoKeys: View {
         HStack(spacing: 9) {
             ForEach(Array(["C", "L", "Y"].enumerated()), id: \.offset) { index, label in
                 Button {
-                    model.preview(position: Float(index - 1) * 0.65)
+                    model.previewStroke(position: Float(index - 1) * 0.65)
                 } label: {
                     Text(label).font(.system(size: 21, weight: .semibold, design: .rounded))
                         .frame(width: 49, height: 49)
                         .modifier(ClickyGlass(opaque: model.preferences.reduceTransparency, radius: 12))
                         .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.14), lineWidth: 1))
-                }.buttonStyle(.genHoverPlain()).instantTooltip("Preview a key press")
+                }.buttonStyle(.genHoverPlain()).instantTooltip("Preview key press and release")
+                    .accessibilityIdentifier("clicky.demo.\(label)")
                     .contextMenu {
                         Button("Preview key release") {
                             model.preview(release: true, position: Float(index - 1) * 0.65)
@@ -611,7 +622,7 @@ public struct ClickyPopoverView: View {
             ForEach(ClickySwitch.allCases) { profile in
                 Button {
                     model.preferences.selectedSwitch = profile
-                    model.preview(profile)
+                    model.previewStroke(profile)
                 } label: {
                     HStack {
                         Text(profile.name)

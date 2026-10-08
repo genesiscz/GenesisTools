@@ -75,6 +75,10 @@ public struct ClickyPreferences: Codable, Equatable {
         return minute >= quietStart || minute < quietEnd
     }
 
+    public static func clockTime(minute: Int, on date: Date = Date(), calendar: Calendar = .current) -> Date {
+        calendar.date(bySettingHour: minute / 60, minute: minute % 60, second: 0, of: date) ?? date
+    }
+
     public func nextQuietBoundary(after date: Date, calendar: Calendar = .current) -> Date? {
         guard quietHours, quietStart != quietEnd else { return nil }
         return [quietStart, quietEnd].compactMap { minute in
@@ -114,5 +118,30 @@ public enum ClickyEventPolicy {
             }
         }
         return 0
+    }
+}
+
+struct ClickyKeyTransition: Equatable {
+    let release: Bool
+    let countsPress: Bool
+}
+
+struct ClickyInputState {
+    private var held: Set<UInt16> = []
+
+    mutating func clear() { held.removeAll() }
+
+    mutating func transition(keyCode: UInt16, release: Bool, repeated: Bool, repeatSounds: Bool) -> ClickyKeyTransition?
+    {
+        if release {
+            guard held.remove(keyCode) != nil else { return nil }
+            return ClickyKeyTransition(release: true, countsPress: false)
+        }
+        if repeated {
+            guard repeatSounds, held.contains(keyCode) else { return nil }
+            return ClickyKeyTransition(release: false, countsPress: false)
+        }
+        guard held.insert(keyCode).inserted else { return nil }
+        return ClickyKeyTransition(release: false, countsPress: true)
     }
 }

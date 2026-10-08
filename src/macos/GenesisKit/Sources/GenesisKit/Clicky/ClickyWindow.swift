@@ -11,13 +11,16 @@ public final class ClickyWindowController {
     public func prepare(page: ClickyPage = .sound) -> NSWindow {
         if let window { return window }
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 860, height: 760),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            contentRect: NSRect(x: 0, y: 0, width: 960, height: 760),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
         window.title = "Clicky settings"
         window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isOpaque = false
+        window.backgroundColor = .clear
         window.isReleasedWhenClosed = false
-        window.contentMinSize = NSSize(width: 760, height: 610)
+        window.contentMinSize = NSSize(width: 860, height: 650)
         window.contentView = NSHostingView(rootView: ClickySettingsView(model: model, page: page))
         window.appearance = NSAppearance(named: .darkAqua)
         window.setFrameAutosaveName("Clicky.settings.window")

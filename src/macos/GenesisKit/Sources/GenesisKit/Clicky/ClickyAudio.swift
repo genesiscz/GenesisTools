@@ -30,14 +30,15 @@ public enum ClickySynthesis {
 
 @MainActor
 final class ClickyAudio {
-    private let engine = AVAudioEngine()
+    private let engine: AVAudioEngine
     private let format = AVAudioFormat(standardFormatWithSampleRate: ClickySynthesis.sampleRate, channels: 1)!
     private var voices: [(AVAudioPlayerNode, AVAudioUnitVarispeed)] = []
     private var buffers: [String: AVAudioPCMBuffer] = [:]
     private var cursor = 0
     private var idleStop: DispatchWorkItem?
 
-    init() {
+    init(engine: AVAudioEngine = AVAudioEngine()) {
+        self.engine = engine
         for _ in 0..<12 {
             let player = AVAudioPlayerNode()
             let rate = AVAudioUnitVarispeed()

@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import XCTest
 
@@ -93,6 +94,84 @@ final class ClickyTests: XCTestCase {
             signatures.insert(Array(down.prefix(100)))
         }
         XCTAssertEqual(signatures.count, 7)
+    }
+
+    @MainActor
+    func testRenderedAudioActuallyPansAndRespectsVolume() throws {
+        func render(pan: Float, volume: Double, spatial: Bool = true) throws -> (Double, Double) {
+            let engine = AVAudioEngine()
+            let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)!
+            try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 8192)
+            let audio = ClickyAudio(engine: engine)
+            defer { audio.stop() }
+            var preferences = ClickyPreferences()
+            preferences.volume = volume
+            preferences.randomizedPitch = false
+            preferences.spatialAudio = spatial
+            try audio.play(profile: .basalt, release: false, preferences: preferences, pan: pan)
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8192)!
+            let status = try engine.renderOffline(8192, to: buffer)
+            XCTAssertEqual(status, .success)
+            let left = UnsafeBufferPointer(start: buffer.floatChannelData![0], count: Int(buffer.frameLength))
+            let right = UnsafeBufferPointer(start: buffer.floatChannelData![1], count: Int(buffer.frameLength))
+            return (left.reduce(0) { $0 + Double($1 * $1) }, right.reduce(0) { $0 + Double($1 * $1) })
+        }
+        let left = try render(pan: -0.75, volume: 1)
+        let right = try render(pan: 0.75, volume: 1)
+        let quiet = try render(pan: -0.75, volume: 0.25)
+        let centered = try render(pan: -0.75, volume: 1, spatial: false)
+        XCTAssertGreaterThan(left.0, left.1 * 3)
+        XCTAssertGreaterThan(right.1, right.0 * 3)
+        XCTAssertGreaterThan(left.0, quiet.0 * 10)
+        XCTAssertGreaterThan(centered.0, 0)
+        XCTAssertEqual(centered.0, centered.1, accuracy: 0.00001)
+    }
+
+    func testPhysicalTransitionsRejectUnmatchedAndDuplicateEvents() {
+        var input = ClickyInputState()
+        XCTAssertNil(input.transition(keyCode: 56, release: true, repeated: false, repeatSounds: true))
+        XCTAssertEqual(
+            input.transition(keyCode: 56, release: false, repeated: false, repeatSounds: true),
+            ClickyKeyTransition(release: false, countsPress: true))
+        XCTAssertNil(input.transition(keyCode: 56, release: false, repeated: false, repeatSounds: true))
+        XCTAssertNotNil(input.transition(keyCode: 60, release: false, repeated: false, repeatSounds: true))
+        XCTAssertNotNil(input.transition(keyCode: 56, release: true, repeated: false, repeatSounds: true))
+        XCTAssertNotNil(input.transition(keyCode: 60, release: true, repeated: false, repeatSounds: true))
+        XCTAssertNil(input.transition(keyCode: 60, release: true, repeated: false, repeatSounds: true))
+    }
+
+    func testSuppressedRepeatsPreserveThePhysicalReleaseAndDoNotInflateCounts() {
+        var input = ClickyInputState()
+        XCTAssertNil(input.transition(keyCode: 0, release: false, repeated: true, repeatSounds: true))
+        XCTAssertNotNil(input.transition(keyCode: 0, release: false, repeated: false, repeatSounds: false))
+        XCTAssertNil(input.transition(keyCode: 0, release: false, repeated: true, repeatSounds: false))
+        XCTAssertEqual(
+            input.transition(keyCode: 0, release: false, repeated: true, repeatSounds: true),
+            ClickyKeyTransition(release: false, countsPress: false))
+        XCTAssertEqual(
+            input.transition(keyCode: 0, release: true, repeated: false, repeatSounds: false),
+            ClickyKeyTransition(release: true, countsPress: false))
+    }
+
+    func testClearingAtAMuteBoundaryDiscardsOldReleasesAndRepeats() {
+        var input = ClickyInputState()
+        XCTAssertNotNil(input.transition(keyCode: 0, release: false, repeated: false, repeatSounds: true))
+        input.clear()
+        XCTAssertNil(input.transition(keyCode: 0, release: true, repeated: false, repeatSounds: true))
+        XCTAssertNil(input.transition(keyCode: 0, release: false, repeated: true, repeatSounds: true))
+        XCTAssertNotNil(input.transition(keyCode: 0, release: false, repeated: false, repeatSounds: true))
+    }
+
+    func testQuietHourClockUsesWallTimeAcrossDaylightSavingChanges() {
+        for components in [
+            DateComponents(year: 2026, month: 3, day: 29, hour: 12),
+            DateComponents(year: 2026, month: 10, day: 25, hour: 12),
+        ] {
+            let day = calendar.date(from: components)!
+            let clock = ClickyPreferences.clockTime(minute: 22 * 60 + 15, on: day, calendar: calendar)
+            XCTAssertEqual(calendar.component(.hour, from: clock), 22)
+            XCTAssertEqual(calendar.component(.minute, from: clock), 15)
+        }
     }
 
     func testPreferenceSanitizationAndRoundTrip() throws {

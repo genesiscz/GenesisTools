@@ -41,6 +41,7 @@ private final class ClickyPreviewDelegate: NSObject, NSApplicationDelegate {
                         NSApp.terminate(nil)
                         return
                     }
+                    print("Clicky titlebar: \(WindowTitlebar.audit(window).line)")
                     view.cacheDisplay(in: view.bounds, to: bitmap)
                     do {
                         guard let data = bitmap.representation(using: .png, properties: [:]) else {

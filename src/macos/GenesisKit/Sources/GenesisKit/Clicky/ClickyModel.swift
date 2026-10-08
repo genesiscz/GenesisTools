@@ -21,11 +21,12 @@ public final class ClickyModel: ObservableObject {
     private let defaults: UserDefaults
     private let log = Logger(subsystem: "dev.genesis.tools", category: "Clicky")
     private var audio: ClickyAudio?
+    private var previewGeneration = 0
     private var eventTap: CFMachPort?
     private var eventSource: CFRunLoopSource?
     private var observers: [NSObjectProtocol] = []
     private var boundaryTimer: Timer?
-    private var pressed: Set<UInt16> = []
+    private var inputState = ClickyInputState()
     private var systemSleeping = false
     private var excluded = false
     private var pendingStats = false
@@ -136,6 +137,7 @@ public final class ClickyModel: ObservableObject {
     }
 
     public func deactivate() {
+        previewGeneration &+= 1
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
             CFMachPortInvalidate(tap)
@@ -143,7 +145,7 @@ public final class ClickyModel: ObservableObject {
         if let source = eventSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         eventTap = nil
         eventSource = nil
-        pressed.removeAll()
+        inputState.clear()
         enabled = false
         audio?.stop()
         flushStatistics()
@@ -166,10 +168,22 @@ public final class ClickyModel: ObservableObject {
         play(profile: profile ?? preferences.selectedSwitch, release: release, pan: position)
     }
 
+    public func previewStroke(_ profile: ClickySwitch? = nil, position: Float = 0) {
+        let chosen = profile ?? preferences.selectedSwitch
+        preview(chosen, position: position)
+        guard preferences.releaseSounds else { return }
+        let generation = previewGeneration
+        Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .milliseconds(85)) } catch { return }
+            guard let self, self.previewGeneration == generation, self.preferences.releaseSounds else { return }
+            self.preview(chosen, release: true, position: position)
+        }
+    }
+
     public func snooze(minutes: Int) {
         sleepingUntil = Date().addingTimeInterval(Double(minutes) * 60)
         audio?.stop()
-        pressed.removeAll()
+        inputState.clear()
         refreshContext()
     }
 
@@ -177,6 +191,8 @@ public final class ClickyModel: ObservableObject {
         sleepingUntil = nil
         refreshContext()
     }
+
+    public func dismissError() { error = nil }
 
     public func resetStatistics() {
         statistics = ClickyStatistics()
@@ -235,7 +251,7 @@ public final class ClickyModel: ObservableObject {
     private func workspaceChanged(_ note: Notification) {
         if note.name == NSWorkspace.willSleepNotification || note.name == NSWorkspace.screensDidSleepNotification {
             systemSleeping = true
-            pressed.removeAll()
+            inputState.clear()
             audio?.stop()
             flushStatistics()
         } else if note.name == NSWorkspace.didWakeNotification || note.name == NSWorkspace.screensDidWakeNotification {
@@ -262,7 +278,7 @@ public final class ClickyModel: ObservableObject {
             status = "Listening for key presses"
         }
         if isPaused {
-            pressed.removeAll()
+            inputState.clear()
             audio?.stop()
         }
         boundaryTimer?.invalidate()
@@ -283,30 +299,33 @@ public final class ClickyModel: ObservableObject {
             return
         }
         guard !IsSecureEventInputEnabled() else {
-            pressed.removeAll()
+            inputState.clear()
             return
         }
         let repeated = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
         guard
             ClickyEventPolicy.accepts(
                 enabled: enabled, secureInput: false, sleeping: isPaused,
-                quiet: false, excluded: excluded, repeated: repeated,
+                quiet: false, excluded: excluded, repeated: false,
                 repeatSounds: preferences.repeatSounds)
-        else { return }
+        else {
+            inputState.clear()
+            return
+        }
         let code = UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode))
         let release: Bool
         if type == .flagsChanged {
-            release = pressed.contains(code)
+            release = !CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(code))
         } else {
             release = type == .keyUp
         }
-        if release {
-            guard pressed.remove(code) != nil else { return }
-        } else {
-            pressed.insert(code)
-        }
-        if preferences.collectStats {
-            if release { statistics.releases += 1 } else { statistics.presses += 1 }
+        guard
+            let transition = inputState.transition(
+                keyCode: code, release: release, repeated: repeated,
+                repeatSounds: preferences.repeatSounds)
+        else { return }
+        if preferences.collectStats && (transition.countsPress || transition.release) {
+            if transition.release { statistics.releases += 1 } else { statistics.presses += 1 }
             pendingStats = true
             if persistenceWork == nil {
                 let work = DispatchWorkItem { [weak self] in
