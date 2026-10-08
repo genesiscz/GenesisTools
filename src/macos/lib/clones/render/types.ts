@@ -83,6 +83,9 @@ export interface DuplicateSet {
     /** Bytes the volume really gains when apply rewrites this set (private bytes of
      *  the rewritten copies, see `freeable.ts`). Absent when not measured. */
     freeable?: number;
+    /** `freeable` plus shared blocks that come back only if no tree outside the scan clones the same
+     *  store file (see `freeable.ts`). An upper bound. Absent when not measured. */
+    freeableUpTo?: number;
 }
 
 export interface DuplicatesReport {
@@ -165,6 +168,8 @@ export interface PlanReport {
     totalReclaimable: number;
     /** Sum of `freeable` over `sets`. Absent on reports that did not measure it. */
     totalFreeable?: number;
+    /** Sum of `freeableUpTo` over `sets`. */
+    totalFreeableUpTo?: number;
     /** Sets left out because they free nothing. */
     dropped?: { sets: number; naiveBytes: number };
     fromSnapshot: boolean;

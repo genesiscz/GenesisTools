@@ -125,7 +125,8 @@ describe("planReclaim", () => {
             expect(seenRoots.length).toBe(1);
             expect(seenRoots[0].length).toBe(2);
             expect(plan.fromSnapshot).toBe(true);
-            expect(plan.sets).toEqual(canned.map((s) => ({ ...s, freeable: 0 })));
+            // The canned paths do not exist, so no probe answers: the sets stay, unmeasured.
+            expect(plan.sets).toEqual(canned);
             expect(plan.totalReclaimable).toBe(7);
             expect(readReclaimEvents(plan.runId).map((e) => e.phase)).toEqual(["start", "discover", "plan"]);
         } finally {

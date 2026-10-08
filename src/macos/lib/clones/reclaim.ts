@@ -51,6 +51,8 @@ export interface ReclaimPlan {
     totalReclaimable: number;
     /** Measured bytes the volume gains when `sets` are applied. */
     totalFreeable: number;
+    /** Upper bound: `totalFreeable` plus store-family blocks that a tree outside the scan may still hold. */
+    totalFreeableUpTo: number;
     /** Sets measured at zero freeable and left out. */
     dropped: { sets: number; naiveBytes: number };
     /** True when the sets came from a fresh plan snapshot instead of a scan. */
@@ -154,11 +156,13 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
         });
         const totalReclaimable = sumReclaimable(sets);
         const totalFreeable = sets.reduce((s, x) => s + (x.freeable ?? 0), 0);
+        const totalFreeableUpTo = sets.reduce((s, x) => s + (x.freeableUpTo ?? x.freeable ?? 0), 0);
         appendReclaimEvent(runId, {
             phase: "plan",
             sets: sets.length,
             totalReclaimable,
             totalFreeable,
+            totalFreeableUpTo,
             dropped,
             fromSnapshot,
         });
@@ -172,6 +176,7 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
                 sets: sets.length,
                 totalReclaimable,
                 totalFreeable,
+                totalFreeableUpTo,
                 dropped,
                 fromSnapshot,
                 deniedDirs,
@@ -189,6 +194,7 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
             sets,
             totalReclaimable,
             totalFreeable,
+            totalFreeableUpTo,
             dropped,
             fromSnapshot,
             deniedDirs,

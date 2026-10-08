@@ -179,8 +179,13 @@ export class TableRenderer implements CloneRenderer {
         lines.push("");
         if (measured) {
             const freeable = r.sets.reduce((s, x) => s + (x.freeable ?? 0), 0);
+            const upTo = r.sets.reduce((s, x) => s + (x.freeableUpTo ?? x.freeable ?? 0), 0);
             lines.push(
                 pc.bold(`projected free: ${formatBytes(freeable)}`) +
+                    (upTo > freeable
+                        ? pc.bold(` (up to ${formatBytes(upTo)})`) +
+                          pc.dim(", the rest only if no tree outside the scan clones the same store files")
+                        : "") +
                     pc.dim(`  (naive ${formatBytes(r.totalReclaimable)}: every copy counted as fully private)`)
             );
         } else {

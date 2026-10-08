@@ -62,7 +62,11 @@ describe.skipIf(skip.unlessMac)("measureSetFreeable on real APFS clones", () => 
         try {
             const f = fixture(dir);
             const set = fileSet(f.x, [f.x, f.cloned], [f.y]);
-            expect(measureSetFreeable({ set, fixedRoots: [f.store], storeRoots: [f.store] })).toBe(0);
+            expect(measureSetFreeable({ set, fixedRoots: [f.store], storeRoots: [f.store] })).toEqual({
+                proven: 0,
+                upTo: 0,
+                measured: true,
+            });
 
             const { sets, dropped } = annotateFreeable({ sets: [set], fixedRoots: [f.store], storeRoots: [f.store] });
             expect(sets).toEqual([]);
@@ -77,19 +81,27 @@ describe.skipIf(skip.unlessMac)("measureSetFreeable on real APFS clones", () => 
         try {
             const f = fixture(dir);
             const set = fileSet(f.x, [f.x, f.cloned, f.copied], [f.y]);
-            expect(measureSetFreeable({ set, fixedRoots: [f.store], storeRoots: [f.store] })).toBe(alloc(f.copied));
+            expect(measureSetFreeable({ set, fixedRoots: [f.store], storeRoots: [f.store] })).toEqual({
+                proven: alloc(f.copied),
+                upTo: alloc(f.copied),
+                measured: true,
+            });
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
     });
 
-    it("with the store rewritten, the Y family is wholly in the set and frees too", () => {
+    it("with the store rewritten, the Y family is wholly in view: proven is the private copy, up-to adds Y", () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-cl-free-"));
         try {
             const f = fixture(dir);
             const set = fileSet(f.x, [f.x, f.y, f.cloned, f.copied]);
             const expected = alloc(f.copied) + alloc(f.y);
-            expect(measureSetFreeable({ set, fixedRoots: [], storeRoots: [f.store] })).toBe(expected);
+            expect(measureSetFreeable({ set, fixedRoots: [], storeRoots: [f.store] })).toEqual({
+                proven: alloc(f.copied),
+                upTo: expected,
+                measured: true,
+            });
 
             // Apply agrees: each swap credits what the copy held privately just
             // before it, so Y frees 0 and its last clone frees the shared blocks.
@@ -116,7 +128,7 @@ describe.skipIf(skip.unlessMac)("measureSetFreeable on real APFS clones", () => 
             clone(origin, a);
             clone(origin, b);
             const set = fileSet(keep, [keep, a, b]);
-            expect(measureSetFreeable({ set, fixedRoots: [], storeRoots: [] })).toBe(0);
+            expect(measureSetFreeable({ set, fixedRoots: [], storeRoots: [] })).toMatchObject({ proven: 0, upTo: 0 });
 
             const report = runOptimize({ roots: [dir], sets: [set], planCacheHit: false });
             expect(report.totals.cloned).toBe(2);
@@ -124,6 +136,37 @@ describe.skipIf(skip.unlessMac)("measureSetFreeable on real APFS clones", () => 
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
+    });
+});
+
+describe.skipIf(skip.unlessMac)("a store file cloned by a tree outside the scan", () => {
+    it("frees only the proven bytes: the up-to part stays held by the outside clone", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-cl-free-"));
+        try {
+            const f = fixture(dir);
+            const outside = join(dir, "other-project", "node_modules", "lib.a");
+            clone(f.y, outside);
+            const set = fileSet(f.x, [f.x, f.y, f.cloned, f.copied]);
+            const freeable = measureSetFreeable({ set, fixedRoots: [], storeRoots: [f.store] });
+
+            const report = runOptimize({ roots: [dir], sets: [set], planCacheHit: false });
+            expect(report.totals.bytesReclaimed).toBe(freeable.proven);
+            expect(freeable.upTo).toBeGreaterThan(freeable.proven);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("annotateFreeable without APFS", () => {
+    it("keeps every set unmeasured instead of dropping it as freeing nothing", () => {
+        const blind: BlockProbe = { privateBytes: () => null, cloneId: () => null, allocatedBytes: () => null };
+        const set = fileSet("/a/lib.a", ["/a/lib.a", "/b/lib.a"]);
+        const { sets, dropped } = annotateFreeable({ sets: [set], fixedRoots: [], storeRoots: [], probe: blind });
+
+        expect(sets).toHaveLength(1);
+        expect(sets[0].freeable).toBeUndefined();
+        expect(dropped).toEqual({ sets: 0, naiveBytes: 0 });
     });
 });
 

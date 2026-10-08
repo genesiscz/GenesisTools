@@ -60,23 +60,39 @@ function unitsOf(set: DuplicateSet): Unit[] {
     return units;
 }
 
+/** What rewriting one set gives back. */
+export interface SetFreeable {
+    /** Private bytes of the rewritten copies: freed whatever else exists on the volume. */
+    proven: number;
+    /** `proven` plus the shared blocks of clone families that are wholly rewritten and hold a store
+     *  file. Those blocks come back only if no tree OUTSIDE the scan clones the same store file, and
+     *  the bun cache is shared by every project, so this is an upper bound, never a promise. */
+    upTo: number;
+    /** False when no rewritten copy could be probed (not APFS, not macOS): nothing is known. */
+    measured: boolean;
+}
+
 /** Bytes the volume gains when apply rewrites this set.
  *
- *  A rewritten copy frees its private bytes and nothing else: a block it
- *  shares with anyone stays allocated. The one exception is a clone family
- *  (one APFS clone id) whose every holder is rewritten in the same set, so
- *  its shared blocks lose their last reference too. That is only proven when
- *  the family's origin is in view, which means a rewritten store file: a
- *  family of worktree files alone was cloned from a store file this scan did
- *  not see, and counting it is exactly the 3 GB that never came back. */
-export function measureSetFreeable({ set, fixedRoots, storeRoots, probe = apfsProbe }: FreeableArgs): number {
-    let freeable = 0;
+ *  A rewritten copy frees its private bytes and nothing else: a block it shares with anyone stays
+ *  allocated. A clone family (one APFS clone id) whose every holder in view is rewritten can free its
+ *  shared blocks too, but only when no clone outside the scan still holds them, which this cannot
+ *  see. That part is reported as `upTo`. A family of worktree files alone (origin a store file the
+ *  scan did not see) adds nothing even there: counting it is the 3 GB that never came back. */
+export function measureSetFreeable({ set, fixedRoots, storeRoots, probe = apfsProbe }: FreeableArgs): SetFreeable {
+    let proven = 0;
+    let shared = 0;
+    let measured = false;
     for (const unit of unitsOf(set)) {
         const writable = (h: string): boolean => h !== unit.keep && !isUnderAny(h, fixedRoots);
         const families = new Map<bigint, string[]>();
         for (const h of unit.holders) {
             if (writable(h)) {
-                freeable += probe.privateBytes(h) ?? 0;
+                const privateBytes = probe.privateBytes(h);
+                if (privateBytes !== null) {
+                    measured = true;
+                    proven += privateBytes;
+                }
             }
 
             const id = probe.cloneId(h);
@@ -90,20 +106,20 @@ export function measureSetFreeable({ set, fixedRoots, storeRoots, probe = apfsPr
                 continue;
             }
 
-            let shared = 0;
+            let familyShared = 0;
             for (const m of members) {
                 const alloc = probe.allocatedBytes(m);
                 const priv = probe.privateBytes(m);
                 if (alloc !== null && priv !== null) {
-                    shared = Math.max(shared, alloc - priv);
+                    familyShared = Math.max(familyShared, alloc - priv);
                 }
             }
 
-            freeable += shared;
+            shared += familyShared;
         }
     }
 
-    return freeable;
+    return { proven, upTo: proven + shared, measured };
 }
 
 export interface AnnotateArgs {
@@ -131,13 +147,21 @@ export function annotateFreeable({
     probe,
 }: AnnotateArgs): AnnotatedSets {
     return clonesProfile.measure("freeable", () => {
-        const measured = sets.map((set) => ({
-            ...set,
-            freeable: measureSetFreeable({ set, fixedRoots, storeRoots, ...(probe !== undefined ? { probe } : {}) }),
-        }));
-        const kept = measured.filter((s) => keepUnfreeable || s.freeable > 0);
-        const droppedSets = measured.filter((s) => !keepUnfreeable && s.freeable === 0);
-        kept.sort((a, b) => b.freeable - a.freeable || b.reclaimable - a.reclaimable);
+        const annotated = sets.map((set) => {
+            const m = measureSetFreeable({ set, fixedRoots, storeRoots, ...(probe !== undefined ? { probe } : {}) });
+
+            // Off APFS nothing is known, so nothing is dropped and no number is shown.
+            return m.measured ? { ...set, freeable: m.proven, freeableUpTo: m.upTo } : { ...set };
+        });
+        const frees = (s: DuplicateSet): boolean => s.freeable === undefined || (s.freeableUpTo ?? 0) > 0;
+        const kept = annotated.filter((s) => keepUnfreeable || frees(s));
+        const droppedSets = annotated.filter((s) => !keepUnfreeable && !frees(s));
+        kept.sort(
+            (a, b) =>
+                (b.freeable ?? -1) - (a.freeable ?? -1) ||
+                (b.freeableUpTo ?? -1) - (a.freeableUpTo ?? -1) ||
+                b.reclaimable - a.reclaimable
+        );
         const result = {
             sets: kept,
             dropped: { sets: droppedSets.length, naiveBytes: droppedSets.reduce((s, x) => s + x.reclaimable, 0) },
@@ -146,8 +170,10 @@ export function annotateFreeable({
             {
                 sets: sets.length,
                 kept: kept.length,
+                unmeasured: annotated.filter((s) => s.freeable === undefined).length,
                 dropped: result.dropped,
-                freeable: kept.reduce((s, x) => s + x.freeable, 0),
+                freeable: kept.reduce((s, x) => s + (x.freeable ?? 0), 0),
+                freeableUpTo: kept.reduce((s, x) => s + (x.freeableUpTo ?? 0), 0),
             },
             "freeable measured"
         );
