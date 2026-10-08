@@ -147,3 +147,12 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
 - Multiple processes with the same bundle identity can confuse app-name-based automation. Use exact
   PID/window identities where supported. If temporarily closing an owned preview to disambiguate,
   preserve user state and restore it; do not treat a refused automation action as an app failure.
+
+## Calculated dashboards and bounded number controls
+
+- Measure aggregate work at the actual retention limit. The Clicky fixture populated 43,200 minute buckets. Five debug samples per grouping took 84.4–103.7 ms for minute grouping, 36.4–41.5 ms for 15-minute grouping and 74.0–77.5 ms for daily grouping. This measured calculation cost, not presented FPS. MAIN .claude/plans/widget-v1-evidence/ClickyPerformanceBench.swift reproduces it using GenesisKit PerfLog and an isolated log folder.
+- A query can meet a 500 ms loading target while still blocking several animation frames. Prepare large immutable reports away from the main actor, publish the result on the view's actor, and use the existing profiler for slow spans. ClickyPerformanceReport.prepare is the shared example; its calculation rules remain identical to the synchronous version.
+- Use a stable snapshot revision and explicit filter values for .task(id:). Do not put a fresh Date() in the task identity: publishing its result would create another identity and repeat the query. Clock-dependent range bounds are sampled when the query runs.
+- Cancellation must prevent stale publication. Tie cancellation to the detached worker and discard its result if the requesting task was cancelled. A short bounded calculation may finish after cancellation; that is different from applying its stale result to a newer filter. The async Clicky regression checks both normal totals and cancelled preparation.
+- Large numeric ranges should support typed values and bounded increments instead of hundreds of menu rows. Commit and clamp edits on Return or focus loss. A focused text field must also reflect stepper changes, or it displays the old value and can overwrite the increment when focus leaves. Live QA caught this 140/141 mismatch; the shared control now synchronizes both.
+- Distinguish selected filters visually and through accessibility values. On macOS, a tint on a bordered weekday button did not make its selected state clear. Prominent selected buttons and Included/Excluded values made the filter state observable in the installed UI.
