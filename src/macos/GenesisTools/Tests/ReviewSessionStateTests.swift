@@ -225,6 +225,7 @@ final class ReviewSessionStateTests: XCTestCase {
         XCTAssertTrue(FaceRecord.isWindowFace([]))
         XCTAssertTrue(FaceRecord.isWindowFace(["--window"]))
         XCTAssertTrue(FaceRecord.isWindowFace(["--hub"]))
+        XCTAssertTrue(FaceRecord.isWindowFace(["--widget", "--settings"]))
         XCTAssertTrue(FaceRecord.isWindowFace(["--review", "--repo", "/a b"]))
         XCTAssertFalse(FaceRecord.isWindowFace(["--review", "--snapshot", "/tmp/x.png"]))
         XCTAssertFalse(FaceRecord.isWindowFace(["--hub", "--bench", "/tmp/b.json"]))

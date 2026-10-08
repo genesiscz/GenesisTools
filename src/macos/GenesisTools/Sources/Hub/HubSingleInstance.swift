@@ -7,15 +7,15 @@ import Foundation
 /// holder (a distributed notification, answered within `ackTimeout`) and exits, so `tools hub` twice
 /// never opens two windows, even when both launches start at the same moment.
 enum HubSingleInstance {
-    private static let request = Notification.Name("com.genesiscz.genesistools.hub.request")
-    private static let ack = Notification.Name("com.genesiscz.genesistools.hub.ack")
+    private static let request = Notification.Name(NativePreview.namespace + ".hub.request")
+    private static let ack = Notification.Name(NativePreview.namespace + ".hub.ack")
     private static let ackTimeout: TimeInterval = 1.5
     /// The holder may still be starting (it serves right after its window exists, ~0.5 s in).
     private static let forwardAttempts = 3
     private nonisolated(unsafe) static var lockDescriptor: Int32 = -1
 
     private static var lockFile: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/hub/hub.lock")
+        NativePreview.hubFile("hub.lock")
     }
 
     /// True when this process is now THE hub. Call once, before the window is built.

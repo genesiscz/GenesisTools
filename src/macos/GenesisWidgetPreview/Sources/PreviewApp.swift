@@ -357,7 +357,8 @@ private final class PreviewDelegate: NSObject, NSApplicationDelegate {
 private struct GenesisWidgetPreviewMain {
     @MainActor static func main() {
         let app = NSApplication.shared
-        let delegate = PreviewDelegate()
+        let delegate: any NSApplicationDelegate = CommandLine.arguments.contains("--samples")
+            ? PreviewDelegate() : LivePreviewDelegate()
         app.delegate = delegate
         app.setActivationPolicy(.regular)
         app.run()

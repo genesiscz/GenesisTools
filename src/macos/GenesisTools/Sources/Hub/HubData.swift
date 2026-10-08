@@ -30,7 +30,7 @@ enum HubSource {
     /// The resident hub server (`tools hub serve`, src/hub/server): the hub asks it first and runs a `tools`
     /// process only when it cannot answer. Started on demand; `GENESIS_HUB_SERVER=0` turns it off.
     static let server: ToolsServerClient? = {
-        guard ProcessInfo.processInfo.environment["GENESIS_HUB_SERVER"] != "0" else { return nil }
+        guard !NativePreview.enabled, ProcessInfo.processInfo.environment["GENESIS_HUB_SERVER"] != "0" else { return nil }
         return ToolsServerClient(startServer: { HubServerStarter.start() })
     }()
 

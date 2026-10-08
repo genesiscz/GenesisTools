@@ -477,7 +477,7 @@ async function buildAppSteps(step: (message: string) => void, relaunch: boolean)
  * only the languages a diff needs; the app serves the folder through its own URL scheme
  * because ES module chunks do not load from file://.
  */
-async function buildDiffViewer(contents: string, step: (message: string) => void): Promise<void> {
+export async function buildDiffViewer(contents: string, step: (message: string) => void): Promise<void> {
     const source = join(APP_SOURCE_DIR, DIFF_VIEWER_SOURCE);
     const out = join(contents, "Resources", "diff-viewer");
     step("bundle diff viewer");

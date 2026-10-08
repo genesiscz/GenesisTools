@@ -1,12 +1,18 @@
 #!/usr/bin/env bun
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { existsSync } from "node:fs";
 
 const [tool, ...args] = process.argv.slice(2);
-const allowed = new Set(["hub", "ai", "voice", "video", "say", "question", "agents", "claude", "codex"]);
-if (!tool || !allowed.has(tool)) {
-    throw new Error("Unsupported native widget bridge command");
+if (!tool || !/^[a-z][a-z0-9-]*$/.test(tool)) {
+    throw new Error("Unsupported native bridge command");
 }
-const entry = resolve(import.meta.dir, "src", tool, "index.ts");
+const entry = [
+    resolve(import.meta.dir, "src", tool, "index.ts"),
+    resolve(import.meta.dir, "src", tool, "index.tsx"),
+    resolve(import.meta.dir, "src", tool + ".ts"),
+    resolve(import.meta.dir, "src", tool + ".tsx"),
+].find(existsSync);
+if (!entry) { throw new Error("Native bridge tool is unavailable: " + tool); }
 process.argv = [process.execPath, entry, ...args];
 await import(pathToFileURL(entry).href);

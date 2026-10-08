@@ -1205,6 +1205,9 @@ struct AgentsListView: View {
             }
             .padding(.leading, 6)
             .padding(.top, 4)
+            .contextMenu {
+                Button("Show in Widget") { WidgetLaunch.pin(session: parent.sessionId, provider: parent.provider) }
+            }
         case .main(let parent):
             AgentMainRow(parent: parent, live: agents.isLive(parent), selected: agents.selectedID == AgentTree.mainKey(parent.sessionId))
                 .rowButton {

@@ -47,7 +47,7 @@ public struct ToolsBridge: Sendable {
         "HOME", "PATH", "SHELL", "LANG", "USER", "LOGNAME", "TERM",
         "SSH_AUTH_SOCK", "GITHUB_TOKEN", "ANTHROPIC_API_KEY", "TZ",
         "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR",
-        "PROFILE", "GENESIS_TOOLS_APP_BUNDLE_ID", "GENESIS_TOOLS_APP_INODE",
+        "PROFILE", "GENESIS_TOOLS_APP_BUNDLE_ID", "GENESIS_TOOLS_APP_INODE", "GENESIS_TOOLS_NO_APP",
         ToolsCallTrace.environmentKey,
     ]
 
@@ -104,6 +104,9 @@ public struct ToolsBridge: Sendable {
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
         isExecutable: (String) -> Bool = ToolsBridge.isExecutableFile
     ) -> String {
+        if Bundle.main.object(forInfoDictionaryKey: "GenesisToolsPreview") as? Bool == true,
+           let binary = Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetCLI") as? String,
+           isExecutable(binary) { return binary }
         let candidates = [
             home.appendingPathComponent(".bun/bin/tools").path,
             home.appendingPathComponent(".local/bin/tools").path,
@@ -211,6 +214,9 @@ public struct ToolsBridge: Sendable {
             path += ":\(extra)"
         }
         out["PATH"] = path
+        if Bundle.main.object(forInfoDictionaryKey: "GenesisToolsPreview") as? Bool == true {
+            out["GENESIS_TOOLS_NO_APP"] = "1"
+        }
         return out
     }
 

@@ -58,6 +58,10 @@ struct HubRequest {
     /// the `--session` session (`--handoff`, Hub/HubHandoffComposer.swift).
     var prompts = false
     var handoff = false
+    var widgetDestination: String?
+    var widgetContext: String?
+    var widgetCwd: String?
+    var widgetProvider: String?
     /// Selects this worktree path in the Worktrees mode, or the cleanup panel (`--worktree cleanup`).
     var worktree: String?
     /// Inbox mode: opens the resume dialog (`--inbox-resume <id>`) or the session info popover
@@ -127,6 +131,10 @@ struct HubRequest {
             case "--rules": rules = true
             case "--prompts": prompts = true
             case "--handoff": handoff = true
+            case "--widget-destination": widgetDestination = value; index += 1
+            case "--widget-context": widgetContext = value; index += 1
+            case "--widget-cwd": widgetCwd = value; index += 1
+            case "--widget-provider": widgetProvider = value; index += 1
             case "--worktree": worktree = value; index += 1
             case "--inbox-resume": inboxResume = value; index += 1
             case "--inbox-info": inboxInfo = value; index += 1
@@ -160,7 +168,7 @@ struct HubRequest {
 
     /// The flags a link may carry. Never `--snapshot`, `--bench`, `--set` or `--menu`: a link is a place to
     /// show, not a file to write or a command to run.
-    static let linkKeys: Set<String> = ["mode", "session", "agent", "pr", "reveal", "tab", "filter", "worktree", "decision", "question"]
+    static let linkKeys: Set<String> = ["mode", "session", "agent", "pr", "reveal", "tab", "filter", "worktree", "decision", "question", "widget-destination", "widget-context", "widget-cwd", "widget-provider"]
 
     /// `genesis-tools://hub?session=<parent>&agent=<child>` (any of `linkKeys`) as `--hub` arguments, the
     /// same ones `tools hub open` passes; nil for any other URL.
@@ -1348,6 +1356,13 @@ final class HubModel: ObservableObject {
 
     /// `--filter`, `--palette`, `--find`: the list filter and the two overlays, first launch or later.
     func applyOverlays(_ request: HubRequest) {
+        if let mode = request.widgetDestination, ["new", "resume"].contains(mode) {
+            MainActor.assumeIsolated {
+                HubWidgetDestinationStore.shared.request = HubWidgetDestinationRequest(
+                    mode: mode, session: request.session, provider: request.widgetProvider,
+                    context: request.widgetContext, cwd: request.widgetCwd)
+            }
+        }
         if let text = request.filter {
             filter = text
         }
@@ -1836,6 +1851,7 @@ struct HubRootView: View {
         .hubPrompts(model: model)
         // `tools hub --handoff`: the composer over every pane (Hub/HubHandoffComposer.swift).
         .hubHandoff(model: model)
+        .widgetDestination(model: model)
     }
 }
 
@@ -2052,6 +2068,11 @@ private struct SessionListView: View {
             } else if model.mode == .timeline {
                 TimelineListView(model: model, timeline: model.timeline)
             } else if model.mode == .agents {
+                Button { WidgetLaunch.start() } label: {
+                    Label("Widget sessions", systemImage: "rectangle.rightthird.inset.filled")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain).padding(.horizontal, 14).padding(.bottom, 9)
                 AgentsListView(model: model, agents: model.agents)
             } else {
                 ScrollView {

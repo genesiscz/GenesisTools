@@ -16,7 +16,7 @@ struct HubPlace: Codable, Equatable {
 
     /// Under `genesisHome()` (GENESIS_TOOLS_HOME), as the face records a rebuild reads beside it.
     static var url: URL {
-        URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/hub/place.json")
+        NativePreview.hubFile("place.json")
     }
 
     init(mode: String, selection: String?, tab: String?) {

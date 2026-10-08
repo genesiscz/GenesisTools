@@ -1,5 +1,6 @@
 import { cp, mkdir, readFile, rename } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { buildDiffViewer } from "@app/macos/lib/permissions/app";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -7,7 +8,7 @@ import { toolDataDir } from "@genesiscz/utils/storage/root";
 const bundleId = "com.genesiscz.genesistools.widget-preview";
 const appName = "GenesisTools Preview.app";
 const repo = resolve(import.meta.dir, "..");
-const packagePath = join(repo, "src/macos/GenesisWidgetPreview");
+const packagePath = join(repo, "src/macos/GenesisTools");
 
 async function command(argv: string[]): Promise<string> {
     logger.info({ argv }, "widget preview build command");
@@ -64,7 +65,9 @@ async function buildPreview(): Promise<void> {
     const stage = join(repo, ".build", `widget-preview-${stamp}`, appName);
     const contents = join(stage, "Contents");
     await mkdir(join(contents, "MacOS"), { recursive: true });
-    await cp(join(binPath, "GenesisWidgetPreview"), join(contents, "MacOS", "GenesisWidgetPreview"));
+    await cp(join(binPath, "GenesisTools"), join(contents, "MacOS", "GenesisWidgetPreview"));
+    await buildDiffViewer(contents, (step) => logger.info(step));
+    await cp(join(packagePath, "scripts/AppIcon.icns"), join(contents, "Resources/AppIcon.icns"));
     const plist =
         '<?xml version="1.0" encoding="UTF-8"?>\n' +
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' +
@@ -74,7 +77,16 @@ async function buildPreview(): Promise<void> {
         "</string>" +
         "<key>CFBundleExecutable</key><string>GenesisWidgetPreview</string>" +
         "<key>CFBundleName</key><string>GenesisTools Preview</string>" +
+        "<key>CFBundleIconFile</key><string>AppIcon</string>" +
         "<key>CFBundleDisplayName</key><string>GenesisTools Preview</string>" +
+        "<key>GenesisToolsPreview</key><true/>" +
+        "<key>NSMicrophoneUsageDescription</key><string>Transcribe speech that you explicitly record.</string>" +
+        "<key>GenesisToolsWidgetCLI</key><string>" +
+        join(repo, "widget-tools").replaceAll("&", "&amp;").replaceAll("<", "&lt;") +
+        "</string>" +
+        "<key>GenesisToolsWidgetStateRoot</key><string>" +
+        toolDataDir("widget-preview", "data").replaceAll("&", "&amp;").replaceAll("<", "&lt;") +
+        "</string>" +
         "<key>CFBundlePackageType</key><string>APPL</string>" +
         "<key>CFBundleVersion</key><string>" +
         stamp +

@@ -12,7 +12,8 @@
 
 import Foundation
 
-let arguments = Array(CommandLine.arguments.dropFirst())
+let suppliedArguments = Array(CommandLine.arguments.dropFirst())
+let arguments = suppliedArguments.isEmpty && NativePreview.enabled ? ["--widget", "--settings"] : suppliedArguments
 // "" when there is none, so no check below can trap on an argument-less launch.
 let firstArgument = arguments.first ?? ""
 let wantsWindow = arguments.isEmpty || firstArgument == "--window" || firstArgument.hasPrefix("-psn_")
@@ -23,22 +24,23 @@ let wantsWindow = arguments.isEmpty || firstArgument == "--window" || firstArgum
 // The launcher passes its caller's environment through untouched.
 if wantsWindow || firstArgument.hasPrefix("-") || firstArgument.contains("://") {
     let hubLink = firstArgument.hasPrefix("genesis-tools://hub")
-    let windowFace = wantsWindow || firstArgument == "--hub" || firstArgument == "--review" || hubLink
+    let windowFace = wantsWindow || firstArgument == "--hub" || firstArgument == "--review" || firstArgument == "--widget" || hubLink
     ChildEnvironment.install(loginShell: windowFace, refresh: arguments.first == "--hub" || hubLink)
     // A face that is (or runs under) this bundle's responsible process tells its `tools` children to
     // skip the launcher; one started from a plain terminal clears the markers (App/FaceMarker.swift).
-    FaceMarker.install()
+    if !NativePreview.enabled { FaceMarker.install() }
     // A rebuild reopens the hub, review and settings windows with these exact arguments (App/FaceRecord.swift).
-    FaceRecord.write(arguments)
+    if !NativePreview.enabled { FaceRecord.write(arguments) }
 }
 
 // GenesisTools --link-relay: the windowless face that takes every link Launch Services delivers to a running
 // instance, so no window face is raised by a click (LinkRelay.swift). Each window face starts it first.
 if firstArgument == LinkRelay.argument {
+    if NativePreview.enabled { exit(0) }
     LinkRelay.run()
 }
 
-if LinkRelay.shouldEnsure(arguments) {
+if !NativePreview.enabled && LinkRelay.shouldEnsure(arguments) {
     LinkRelay.ensure(arguments)
 }
 
@@ -98,6 +100,10 @@ if firstArgument == "--capsule" {
 // every agent session with its transcript, changes, files and decisions (see Hub/HubWindow.swift).
 if firstArgument == "--hub" {
     runHub(Array(arguments.dropFirst()))
+}
+
+if firstArgument == "--widget" {
+    runAgentWidget(Array(arguments.dropFirst()))
 }
 
 // GenesisTools --review [--repo <path>] [--style split|unified] [--snapshot <png>]: the diff review
