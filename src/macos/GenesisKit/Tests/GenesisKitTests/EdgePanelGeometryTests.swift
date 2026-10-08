@@ -888,6 +888,15 @@ private struct EdgeSizingFixtureContent: View {
     }
 }
 
+private actor WidgetHoverTranscriptProbe {
+    private(set) var identities: [String] = []
+    func load(_ query: SessionTranscriptCache.Query) -> TranscriptEnvelope {
+        identities.append(query.identity)
+        return TranscriptEnvelope(provider: query.provider, sessionId: query.identity, filePath: query.query,
+            byteSize: 1, truncated: false, nextOffset: 0, turns: [])
+    }
+}
+
 @MainActor
 final class WidgetRosterTests: XCTestCase {
     private func fixtureSessions() -> [WidgetSession] {
@@ -915,7 +924,7 @@ final class WidgetRosterTests: XCTestCase {
     }
 
     private func withFixture(
-        sessionCount: Int? = nil, sideStyle: String = "modular",
+        sessionCount: Int? = nil, sideStyle: String = "modular", transcriptCache: SessionTranscriptCache? = nil,
         _ body: (WidgetModel, URL, WidgetSnapshot) async throws -> Void
     ) async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("widget-roster-" + UUID().uuidString)
@@ -943,7 +952,8 @@ final class WidgetRosterTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: domain) }
         let model = WidgetModel(
             binaryPath: binary.path, stateRoot: directory.path, defaults: defaults,
-            appearance: NativeSettingsAppearance(defaults: defaults, notificationNamespace: domain, observeExternalChanges: false))
+            appearance: NativeSettingsAppearance(defaults: defaults, notificationNamespace: domain, observeExternalChanges: false),
+            transcriptCache: transcriptCache)
         defer { model.stop() }
         model.startSettings()
         let deadline = ContinuousClock.now + .seconds(5)
@@ -952,6 +962,32 @@ final class WidgetRosterTests: XCTestCase {
         }
         XCTAssertNotNil(model.snapshot)
         try await body(model, snapshotFile, snapshot)
+    }
+
+    func testHoverWarmsThePointedAgentWithoutChangingTheSelectedConversation() async throws {
+        for edge in [EdgePanelPlacement.right, .top] {
+            let probe = WidgetHoverTranscriptProbe()
+            let cache = SessionTranscriptCache { await probe.load($0) }
+            try await withFixture(sessionCount: 2, transcriptCache: cache) { model, _, original in
+                let selected = original.sessions[0].key
+                let pointed = original.sessions[1]
+                let surface = WidgetSurfaceID(edge: edge)
+                model.selectedKey = selected
+                model.hover(surface, inside: true)
+                model.hoverSession(pointed.key, on: surface, inside: true)
+                let deadline = ContinuousClock.now + .seconds(2)
+                while await probe.identities.isEmpty, ContinuousClock.now < deadline {
+                    try await Task.sleep(for: .milliseconds(100))
+                }
+                let hovered = await probe.identities
+                XCTAssertEqual(hovered, [pointed.key], "Hover must not warm the previously selected agent")
+                XCTAssertEqual(model.selectedKey, selected, "Pointer movement must not change the reply destination")
+                _ = try await cache.value(for: .init(identity: pointed.key, query: pointed.target.sessionId, provider: "codex"))
+                let opened = await probe.identities
+                XCTAssertEqual(opened, [pointed.key], "Opening must reuse the hovered agent's load")
+                model.hoverSession(pointed.key, on: surface, inside: false)
+            }
+        }
     }
 
     func testSessionSwitchWaitsForItsMatchingInboxBeforeClaimingItIsEmpty() async throws {
