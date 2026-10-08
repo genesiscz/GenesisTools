@@ -129,3 +129,21 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   interval semantics. The Studio fixture fell from64 to4 prepared statements for30sessions
   and90segments by sharing grouped segments and a cumulative input index; boundary tests
   still require inclusive starts and exclusive ends, plus whole-session picker data.
+
+## Permission and settings controls
+
+- A denied notification authorization is remembered by macOS; another request does not prompt
+  again. Offer the app-specific Notification Settings link, refresh on application activation,
+  and keep the user's feature preference separate from OS authorization. Test both denied recovery
+  and the first-time request, including failure to open Settings.
+- A window face needs the shared notification presentation delegate too. Without `willPresent`,
+  an activation banner can be suppressed while its own settings window is frontmost.
+- Make a disclosure header one button with a full-width content shape and a useful minimum height.
+  Verify a click near the far edge, not only an accessibility press on its chevron. The live fixture
+  expanded from a click12pt inside the far end of a634×36pt header.
+- Native menu pickers may ignore the intended value font size. Inspect the installed UI; a shared
+  number-menu label with an explicit text size and hit area can preserve readable hour/minute values.
+  Verify a value changes, persists and can be restored, rather than only that the menu appears.
+- Multiple processes with the same bundle identity can confuse app-name-based automation. Use exact
+  PID/window identities where supported. If temporarily closing an owned preview to disambiguate,
+  preserve user state and restore it; do not treat a refused automation action as an app failure.
