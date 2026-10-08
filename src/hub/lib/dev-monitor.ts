@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { logger } from "@genesiscz/utils/logger";
+import { listPsRows } from "@genesiscz/utils/process/ps";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 const log = logger.child({ component: "hub:dev-monitor" });
@@ -43,7 +44,10 @@ const profilePattern = /^\[profile:([^\]]+)\] (.*?) (\d+(?:\.\d+)?)(ms|s)(?: tra
  * A line of the day's profiling log as an event when it took at least `minProfileMs`: a timer inside a
  * `tools` command, or the `cli` line of a whole command run. Summary rows and `@` marks are not durations.
  */
-export function classifyProfileLine(line: string, options: ClassifyOptions = DEFAULT_CLASSIFY): DevEvent | null {
+export function classifyProfileLine(
+    line: string,
+    options: ClassifyOptions & { processNames?: ReadonlyMap<number, string> } = DEFAULT_CLASSIFY
+): DevEvent | null {
     const match = line.match(profilePattern);
 
     if (!match || match[2].startsWith("@") || /^\s|── /.test(match[2])) {
@@ -63,7 +67,7 @@ export function classifyProfileLine(line: string, options: ClassifyOptions = DEF
 
     const [, scope, label, , , trace, pid] = match;
     const duration = ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`;
-    const who = pid ? ` [${processName(Number(pid))}]` : "";
+    const who = pid ? ` [${options.processNames?.get(Number(pid)) ?? `pid ${pid}`}]` : "";
     return {
         kind: "slow",
         time: "",
@@ -73,22 +77,30 @@ export function classifyProfileLine(line: string, options: ClassifyOptions = DEF
     };
 }
 
-const processNames = new Map<number, string>();
+/** One process snapshot for a polling pass, only when a qualifying timer names a PID. */
+export async function classifyProfileLines({
+    lines,
+    options = DEFAULT_CLASSIFY,
+    readProcesses = listPsRows,
+}: {
+    lines: string[];
+    options?: ClassifyOptions;
+    readProcesses?: typeof listPsRows;
+}): Promise<DevEvent[]> {
+    const eligible = lines.filter((line) => classifyProfileLine(line, options) !== null);
 
-/** `pid 123 hub serve`: the process's tool and verbs, looked up once per pid (gone: the pid alone). */
-function processName(pid: number): string {
-    const known = processNames.get(pid);
-
-    if (known) {
-        return known;
+    if (!eligible.some((line) => profilePattern.exec(line)?.[6])) {
+        return eligible
+            .map((line) => classifyProfileLine(line, options))
+            .filter((event): event is DevEvent => event !== null);
     }
 
-    const command = Bun.spawnSync(["ps", "-o", "command=", "-p", String(pid)])
-        .stdout.toString()
-        .trim();
-    const name = command ? `pid ${pid} ${shortCommand(command)}` : `pid ${pid}`;
-    processNames.set(pid, name);
-    return name;
+    const processNames = new Map(
+        (await readProcesses()).map((row) => [row.pid, `pid ${row.pid} ${shortCommand(row.command)}`])
+    );
+    return eligible
+        .map((line) => classifyProfileLine(line, { ...options, processNames }))
+        .filter((event): event is DevEvent => event !== null);
 }
 
 /** `bun …/src/hub/index.ts serve --x` and `gt-hub --preload … serve` both read `hub serve`. */
@@ -388,11 +400,8 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
             }
         }
 
-        for (const line of profile.read()) {
-            const event = classifyProfileLine(line, options);
-            if (event) {
-                batcher.add({ ...event, time: new Date().toTimeString().slice(0, 8) });
-            }
+        for (const event of await classifyProfileLines({ lines: profile.read(), options })) {
+            batcher.add({ ...event, time: new Date().toTimeString().slice(0, 8) });
         }
 
         for (const line of relay.read()) {

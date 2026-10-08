@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import {
     classifyPerfLine,
     classifyProfileLine,
+    classifyProfileLines,
     classifyRelayLine,
     collapse,
     DEFAULT_CLASSIFY,
@@ -161,3 +162,38 @@ test("aborting interrupts a long monitor interval", async () => {
     controller.abort();
     await run;
 }, 1000);
+
+test("profile classification never launches a per-PID subprocess", () => {
+    const spawn = spyOn(Bun, "spawnSync").mockImplementation(() => {
+        throw new Error("pure classification must not spawn ps");
+    });
+
+    try {
+        expect(classifyProfileLine("[profile:a] walk 1.5s pid=1001")?.text).toBe("a walk 1.50s [pid 1001]");
+        expect(spawn).not.toHaveBeenCalled();
+    } finally {
+        spawn.mockRestore();
+    }
+});
+
+test("a burst of profile PIDs uses one process snapshot and retains names and missing PIDs", async () => {
+    let snapshots = 0;
+    const lines = Array.from({ length: 100 }, (_, index) => `[profile:a] walk 1.5s pid=${1000 + index}`);
+    const events = await classifyProfileLines({
+        lines,
+        readProcesses: async () => {
+            snapshots += 1;
+            return [{ pid: 1000, cpu: 0, rssKb: 0, command: "/r/gt-hub /r/src/hub/index.ts serve" }];
+        },
+    });
+    expect(snapshots).toBe(1);
+    expect(events).toHaveLength(100);
+    expect(events[0].text).toBe("a walk 1.50s [pid 1000 hub serve]");
+    expect(events[99].text).toBe("a walk 1.50s [pid 1099]");
+    await classifyProfileLines({
+        lines: ["[profile:a] fast 1ms pid=1000", "[profile:a] walk 1.5s"],
+        readProcesses: async () => {
+            throw new Error("no qualifying PID: do not query ps");
+        },
+    });
+});
