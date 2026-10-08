@@ -11,7 +11,7 @@ const HAS_CHROME = process.platform === "darwin" && existsSync(CHROME);
  * the test wrapper points TMPDIR at a scratch folder.
  */
 function clonesDir(): string {
-    const temp = Bun.spawnSync(["getconf", "DARWIN_USER_TEMP_DIR"]).stdout.toString().trim();
+    const temp = Bun.spawnSync(["getconf", "DARWIN_USER_TEMP_DIR"], { env: process.env }).stdout.toString().trim();
     return join(temp, "..", "X", "com.google.Chrome.code_sign_clone");
 }
 
