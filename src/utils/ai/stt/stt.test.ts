@@ -1,9 +1,13 @@
 import { expect, mock, spyOn, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { accountEntrySchema } from "@genesiscz/utils/ai/config/schema";
 import { voiceConfiguration } from "@genesiscz/utils/ai/voice/configuration";
+import { recordingControl, recordPcmClip } from "@genesiscz/utils/ai/voice/record";
 import { createVoiceSession } from "@genesiscz/utils/ai/voice/session";
-import type { PcmSource } from "./capture/pcm-source";
 import * as capture from "./capture/pcm-source";
+import { openPcmSource, type PcmSource } from "./capture/pcm-source";
 import { createFixtureStt } from "./fixture";
 import * as stt from "./resolve";
 import { openLiveStt, parseSttProvider, selectSttAccount } from "./resolve";
@@ -323,4 +327,152 @@ test("voice cleanup preserves the provider failure and always emits stopped", as
     } finally {
         provider.mockRestore();
     }
+});
+
+test("local recording bounds synthetic PCM, preserves its source and creates a private clip", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "voice-record-"));
+    const input = join(directory, "input.pcm");
+    const output = join(directory, "clip.pcm");
+    const pcm = Buffer.alloc(6400);
+    for (let index = 0; index < pcm.length; index += 2) {
+        pcm.writeInt16LE(4000, index);
+    }
+    writeFileSync(input, pcm);
+    const kinds: string[] = [];
+    const clip = await recordPcmClip({ input, output, maxDurationMs: 100, onEvent: (event) => kinds.push(event.kind) });
+    expect(clip).toMatchObject({ bytes: 3200, durationMs: 100, channels: 1, encoding: "s16le", endedBy: "limit" });
+    expect(clip.peakRms).toBeGreaterThan(0);
+    expect(statSync(output).mode & 0o777).toBe(0o600);
+    expect(readFileSync(output)).toEqual(pcm.subarray(0, 3200));
+    expect(readFileSync(input)).toEqual(pcm);
+    expect(kinds).toEqual(["recording", "level"]);
+    await expect(recordPcmClip({ input, output })).rejects.toThrow();
+    expect(readFileSync(output)).toEqual(pcm.subarray(0, 3200));
+});
+
+test("recording cancellation and source errors close capture and remove only unfinished output", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "voice-record-cancel-"));
+    const input = join(directory, "input.pcm");
+    const output = join(directory, "clip.pcm");
+    writeFileSync(input, Buffer.alloc(6400));
+    const controller = new AbortController();
+    let closed = 0;
+    await expect(
+        recordPcmClip({
+            input,
+            output,
+            signal: controller.signal,
+            openSource: async () => ({
+                kind: "file",
+                label: input,
+                sampleRateHz: 16000,
+                async *frames() {
+                    yield new Uint8Array(3200);
+                    controller.abort();
+                    yield new Uint8Array(3200);
+                },
+                close: async () => {
+                    closed++;
+                },
+            }),
+        })
+    ).rejects.toThrow();
+    expect(closed).toBe(1);
+    expect(existsSync(output)).toBe(false);
+    await expect(
+        recordPcmClip({
+            input,
+            output,
+            openSource: async () => ({
+                kind: "file",
+                label: input,
+                sampleRateHz: 16000,
+                async *frames() {
+                    yield await Promise.reject(new Error("fixture capture failed"));
+                },
+                close: async () => {
+                    closed++;
+                },
+            }),
+        })
+    ).rejects.toThrow("fixture capture failed");
+    expect(existsSync(output)).toBe(false);
+    expect((await recordPcmClip({ input, output })).bytes).toBe(6400);
+});
+
+test("graceful owner stop retains captured audio while empty recordings stay retryable", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "voice-record-stop-"));
+    const input = join(directory, "input.pcm");
+    const output = join(directory, "clip.pcm");
+    writeFileSync(input, Buffer.alloc(6400));
+    const stop = new AbortController();
+    const clip = await recordPcmClip({
+        input,
+        output,
+        stopSignal: stop.signal,
+        openSource: async () => ({
+            kind: "file",
+            label: input,
+            sampleRateHz: 16000,
+            async *frames() {
+                yield new Uint8Array(3200);
+                stop.abort();
+                yield new Uint8Array(3200);
+            },
+            close: async () => {},
+        }),
+    });
+    expect(clip).toMatchObject({ bytes: 3200, endedBy: "stop" });
+    const empty = join(directory, "empty.pcm");
+    writeFileSync(empty, "");
+    const emptyOutput = join(directory, "empty-output.pcm");
+    await expect(recordPcmClip({ input: empty, output: emptyOutput })).rejects.toThrow("no audio");
+    expect(existsSync(emptyOutput)).toBe(false);
+});
+
+test("microphone recording requires an explicit available host and never falls back", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "voice-record-launcher-"));
+    const output = join(directory, "clip.pcm");
+    await expect(recordPcmClip({ output })).rejects.toThrow("explicit --mic-launcher");
+    await expect(openPcmSource({ input: "mic", micLauncher: join(directory, "missing-preview") })).rejects.toThrow(
+        "no production fallback"
+    );
+    await expect(openPcmSource({ input: "mic", micLauncher: "relative-launcher" })).rejects.toThrow(
+        "absolute executable"
+    );
+    expect(existsSync(output)).toBe(false);
+});
+
+test("recording gate waits for complete explicit start and observes owner EOF", async () => {
+    let pipe!: ReadableStreamDefaultController<Uint8Array>;
+    const input = new ReadableStream<Uint8Array>({
+        start(controller) {
+            pipe = controller;
+        },
+    });
+    const owner = recordingControl({ input, signal: new AbortController().signal, waitForStart: true });
+    let started = false;
+    const ready = owner.ready.then(() => {
+        started = true;
+    });
+    pipe.enqueue(new TextEncoder().encode("sta"));
+    await Promise.resolve();
+    expect(started).toBe(false);
+    pipe.enqueue(new TextEncoder().encode("rt\n"));
+    await ready;
+    expect(started).toBe(true);
+    pipe.close();
+    await owner.close();
+    expect(owner.stopSignal.aborted).toBe(true);
+    const earlyEOF = recordingControl({
+        input: new ReadableStream({
+            start(controller) {
+                controller.close();
+            },
+        }),
+        signal: new AbortController().signal,
+        waitForStart: true,
+    });
+    await expect(earlyEOF.ready).rejects.toThrow("closed before start");
+    await earlyEOF.close();
 });

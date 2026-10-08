@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// One long-running child whose stdout arrives as whole lines on the main queue: a `tools … --live`
 /// follow, which prints a line per change and runs until it is stopped. Nothing polls: the pipe's
@@ -29,6 +30,7 @@ public final class ToolsLineStream: @unchecked Sendable {
     private var stderrTail = Data()
     private var stopRequested = false
     private var outputClosed = false
+    private var inputClosed = false
     private var exited = false
     private let onLines: @MainActor ([String]) -> Void
     private let onExit: @MainActor (Exit) -> Void
@@ -110,8 +112,31 @@ public final class ToolsLineStream: @unchecked Sendable {
         }
     }
 
+    /// A small control message, written atomically without blocking the UI or raising SIGPIPE.
+    public func sendInput(_ text: String) throws {
+        let data = Data(text.utf8)
+        guard !data.isEmpty, data.count <= 512 else { throw POSIXError(.EMSGSIZE) }
+        lock.lock()
+        defer { lock.unlock() }
+        guard !inputClosed, !exited, !stopRequested else { throw POSIXError(.EPIPE) }
+        let descriptor = input.fileHandleForWriting.fileDescriptor
+        guard fcntl(descriptor, F_SETNOSIGPIPE, 1) != -1 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        let flags = fcntl(descriptor, F_GETFL)
+        guard flags != -1, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) != -1 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        let written = data.withUnsafeBytes { Darwin.write(descriptor, $0.baseAddress, $0.count) }
+        guard written == data.count else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    }
+
     /// Requests an EOF-driven finish while retaining final stdout events.
     public func finishInput() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !inputClosed else { return }
+        inputClosed = true
         do { try input.fileHandleForWriting.close() }
         catch { PerfLog.mark("tools.follow input close \(error.localizedDescription)") }
     }
@@ -123,7 +148,7 @@ public final class ToolsLineStream: @unchecked Sendable {
         stopRequested = true
         lock.unlock()
         guard first else { return }
-        try? input.fileHandleForWriting.close()
+        finishInput()
         if process.isRunning {
             process.terminate()
         }

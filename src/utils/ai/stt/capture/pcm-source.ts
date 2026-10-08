@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { accessSync, constants, existsSync, statSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { installedGenesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
 import { profiler } from "@genesiscz/utils/profile";
@@ -25,6 +26,8 @@ export interface PcmSource {
 }
 
 export interface OpenPcmSourceOptions {
+    /** Explicit host launcher; when supplied it is authoritative, including Preview. Never falls back. */
+    micLauncher?: string;
     /** `-` = stdin, an existing path = raw s16le file, `mic` = GenesisTools.app microphone face, `ffmpeg[:<device>]` = avfoundation. */
     input: string;
     sampleRateHz?: number;
@@ -47,7 +50,7 @@ export async function openPcmSource(options: OpenPcmSourceOptions): Promise<PcmS
     }
 
     if (input === "mic") {
-        return micSource({ sampleRateHz, signal: options.signal });
+        return micSource({ sampleRateHz, signal: options.signal, launcher: options.micLauncher });
     }
 
     if (input === "ffmpeg" || input.startsWith("ffmpeg:")) {
@@ -201,6 +204,13 @@ function spawnSource(options: {
                 await Promise.race([child.exited, Bun.sleep(1_000)]);
                 if (child.exitCode === null) {
                     child.kill("SIGKILL");
+                    const killed = await Promise.race([
+                        child.exited.then(() => true),
+                        Bun.sleep(1_000).then(() => false),
+                    ]);
+                    if (!killed) {
+                        throw new Error("Capture process did not exit after forced shutdown");
+                    }
                 }
             }
         },
@@ -215,8 +225,21 @@ function spawnSource(options: {
  * The GenesisTools.app `--mic` face: the signed bundle owns the microphone TCC grant, so the
  * prompt names GenesisTools, not the terminal. Streams s16le mono PCM at `--rate` on stdout.
  */
-function micSource(options: { sampleRateHz: number; signal?: AbortSignal }): PcmSource {
-    const launcher = installedGenesisAppLauncher();
+function micSource(options: { sampleRateHz: number; signal?: AbortSignal; launcher?: string }): PcmSource {
+    const launcher = options.launcher ?? installedGenesisAppLauncher();
+    if (options.launcher !== undefined) {
+        if (!isAbsolute(options.launcher)) {
+            throw new Error("The microphone launcher must be an absolute executable path");
+        }
+        try {
+            accessSync(options.launcher, constants.X_OK);
+            if (!statSync(options.launcher).isFile()) {
+                throw new Error("Microphone launcher is not a file");
+            }
+        } catch {
+            throw new Error("The explicit microphone launcher is unavailable; no production fallback was started");
+        }
+    }
     if (!launcher) {
         throw new Error(
             "GenesisTools.app is not installed, so there is no microphone face. Build it with: bun run app " +
