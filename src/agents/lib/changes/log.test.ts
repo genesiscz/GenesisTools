@@ -6,15 +6,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { computeSessionChanges, gitBlobOid } from "@genesiscz/utils/session-changes";
-import {
-    changeStatus,
-    diffsFor,
-    rawLogFiles,
-    rawTransition,
-    resolveSessionArgument,
-    selectTurns,
-    toolCallFiles,
-} from "../../commands/changes";
+import { rawLogFiles, rawTransition, resolveSessionArgument } from "../../commands/changes";
 import { fileDiff, readBlobs } from "./diff";
 import {
     type ChangeEvent,
@@ -27,6 +19,7 @@ import {
     sessionChangesPath,
 } from "./log";
 import { gitObjectSink } from "./objects";
+import { changeStatus, diffsFor, selectTurns, toolCallFiles } from "./tool-changes";
 
 describe("the changes command, as the hub calls it", () => {
     test("a session with no log and no transcript, and --tool beside --tools, exit 1 with a reason", () => {
