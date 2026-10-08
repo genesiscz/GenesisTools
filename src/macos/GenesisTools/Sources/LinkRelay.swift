@@ -155,6 +155,8 @@ enum LinkRelay {
         MainActor.assumeIsolated {
             // A hung relay holds every link: its stalls and samples land in app-perf.log and logs/hangs/.
             HangWatch.start()
+            // The relay was found regular with a Dock tile of its own (2026-10-08): keep it an accessory.
+            DockTile.keep(.windowless)
         }
         startHeartbeat()
         note("running as pid \(getpid()), version \(bundleVersion()), parent pid \(getppid())")
@@ -251,6 +253,8 @@ private final class LinkRelayDelegate: NSObject, NSApplicationDelegate {
     /// `open -a GenesisTools` and a Dock click reach the relay: the main window opens in its own face.
     @MainActor
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // A reopen turns the relay regular before this runs (App/DockTile.swift): back to accessory first.
+        DockTile.enforce("reopen")
         if (AppMainWindow.current == .hub || HubSingleInstance.isRunningElsewhere), AppDock.showHub(nil) {
             LinkRelay.note("reopen, showing the hub")
         } else if let executable = Bundle.main.executablePath {
@@ -260,7 +264,6 @@ private final class LinkRelayDelegate: NSObject, NSApplicationDelegate {
             child.arguments = ["--window"]
             try? child.run()
         }
-        NSApp.setActivationPolicy(.accessory)
         return false
     }
 

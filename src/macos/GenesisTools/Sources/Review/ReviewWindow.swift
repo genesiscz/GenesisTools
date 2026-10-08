@@ -83,7 +83,8 @@ func runReview(_ args: [String]) -> Never {
 
     let app = NSApplication.shared
     // A snapshot run must never become the active app: it would take the keystrokes of whoever is typing.
-    app.setActivationPolicy(snapshotPath == nil ? .regular : .prohibited)
+    // A live review window is an accessory while the hub owns the Dock tile (App/DockTile.swift).
+    app.setActivationPolicy(snapshotPath == nil ? MainActor.assumeIsolated { DockTile.policy(for: .window) } : .prohibited)
     let delegate = ReviewAppDelegate()
     app.delegate = delegate
     installBrowserURLForwarder()
@@ -174,6 +175,7 @@ func runReview(_ args: [String]) -> Never {
         if activate {
             app.activate(ignoringOtherApps: true)
         }
+        MainActor.assumeIsolated { DockTile.keep(.window) }
     }
 
     MainActor.assumeIsolated { HangWatch.start() }
@@ -199,10 +201,12 @@ private final class ReviewAppDelegate: NSObject, NSApplicationDelegate {
         ReviewSessionPersistence.flushBeforeExit()
     }
 
-    /// Every face shares one Dock tile: a click that lands here goes on to the running hub too.
+    /// A reopen reaches this face when it owns the Dock tile (no hub runs) or through `open`; the
+    /// running hub comes forward too. A reopen turns the process regular, so the rule goes back first.
     @MainActor
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        AppDock.reopenFromOtherFace()
+        DockTile.enforce("reopen")
+        return AppDock.reopenFromOtherFace()
     }
 
     @MainActor

@@ -1,10 +1,10 @@
 import AppKit
 
 /// The Dock tile of the window faces (hub, review, settings). Every face is its own process of the
-/// same bundle, and the Dock shows ONE GenesisTools tile for all of them: a click on it reaches one
-/// process only, often an older review window, never necessarily the hub. With five faces running,
-/// the hub was unreachable from the Dock once hidden or behind other apps (2026-09-30). So each face
-/// sends a Dock click on to the hub when one runs, and every face's Dock menu offers the hub.
+/// same bundle, and the Dock shows one tile per `.regular` process (nine faces showed nine tiles,
+/// measured 2026-10-08). So only one face is `.regular` at a time: the hub when it runs, else one
+/// window face (App/DockTile.swift has the rule). A Dock click reaches that one process only. When it
+/// is not the hub, it sends the click on to the hub if one runs, and every face's Dock menu offers the hub.
 @MainActor
 enum AppDock {
     /// For a face that is not the hub: bring the running hub forward too. Returns what

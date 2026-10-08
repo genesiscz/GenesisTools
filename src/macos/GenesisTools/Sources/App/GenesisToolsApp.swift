@@ -18,7 +18,8 @@ func runWindowApp(showWindowImmediately: Bool) -> Never {
     let app = NSApplication.shared
     let delegate = GenesisAppDelegate(showWindowImmediately: showWindowImmediately)
     app.delegate = delegate
-    app.setActivationPolicy(showWindowImmediately ? .regular : .accessory)
+    // No Dock tile until a window shows: `showWindow` applies the one-tile rule (App/DockTile.swift).
+    app.setActivationPolicy(.accessory)
     app.run()
     exit(0)
 }
@@ -99,11 +100,16 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
         !browserLinkReceived
     }
 
-    /// The Dock tile: the running hub comes forward beside the settings window (Sources/App/AppDock.swift).
-    /// A face without a window (a notification click) is not in the Dock and ignores it.
+    /// A reopen: the running hub comes forward beside the settings window (Sources/App/AppDock.swift).
+    /// A reopen turns the process regular, so the one-tile rule goes back first (App/DockTile.swift).
+    /// A face without a window (a notification click) stays an accessory and ignores it.
     @MainActor
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        guard window != nil else { return false }
+        guard window != nil else {
+            NSApp.setActivationPolicy(.accessory)
+            return false
+        }
+        DockTile.enforce("reopen")
         return AppDock.reopenFromOtherFace()
     }
 
@@ -114,7 +120,7 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
 
     private func showWindow() {
         quitAfterNotificationClick = false
-        NSApp.setActivationPolicy(.regular)
+        MainActor.assumeIsolated { DockTile.keep(.window) }
 
         let controller = NSHostingController(rootView: RootView())
         let window = NSWindow(contentViewController: controller)
