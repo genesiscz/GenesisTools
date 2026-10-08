@@ -820,7 +820,7 @@ final class PRsModel: ObservableObject {
         reviewPRID = pr.id
         reviewProposalStamp = pr.proposalStamp
         reviewHeadSha = pr.headSha
-        let next = ReviewModel(repo: URL(fileURLWithPath: path), options: DiffViewOptions())
+        let next = ReviewModel(repo: URL(fileURLWithPath: path), options: DiffViewOptions.remembered())
         next.embedded = true
         // Only the proposal changed (a review landed, no push): the commit the reader picked still exists.
         if samePR, let previous = review, previous.repo.path == URL(fileURLWithPath: path).path, sameHead {

@@ -23,7 +23,7 @@ func runReview(_ args: [String]) -> Never {
     var range: (base: String, head: String)?
     var commit: String?
     var rangeLabel: String?
-    var options = DiffViewOptions()
+    var style: DiffViewOptions.Style?
     var activate = true
     var snapshotHeight: CGFloat?
     var demo = ReviewSnapshotDemo()
@@ -57,7 +57,7 @@ func runReview(_ args: [String]) -> Never {
             index += 1
         case "--no-activate": activate = false
         case "--snapshot-height": snapshotHeight = Double(value ?? "").map { CGFloat($0) }; index += 1
-        case "--style": options.diffStyle = DiffViewOptions.Style(rawValue: value ?? "") ?? .split; index += 1
+        case "--style": style = DiffViewOptions.Style(rawValue: value ?? "") ?? .split; index += 1
         case "--set":
             // Snapshot runs only, on the scratch settings: `--set panel.review.context.collapsed=false`.
             let pair = (value ?? "").split(separator: "=", maxSplits: 1).map(String.init)
@@ -76,6 +76,10 @@ func runReview(_ args: [String]) -> Never {
         for (key, value) in settings { HubDefaults.store.set(value, forKey: key) }
     }
     ReviewContextPanel.registerDefaults()
+    var options = DiffViewOptions.remembered()
+    if let style {
+        options.diffStyle = style
+    }
 
     let app = NSApplication.shared
     // A snapshot run must never become the active app: it would take the keystrokes of whoever is typing.
@@ -1106,6 +1110,7 @@ final class ReviewModel: ObservableObject {
 
     func setStyle(_ style: DiffViewOptions.Style) {
         options.diffStyle = style
+        DiffViewOptions.remember(style)
         renderer.apply(options)
     }
 
@@ -2175,7 +2180,7 @@ private struct ReviewHeader: View {
             }
             Spacer(minLength: 8)
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { controls(styleWidth: 140) }
+                HStack(spacing: 10) { controls }
                 HStack(spacing: 6) { compactControls }
                 HStack(spacing: 4) { minimalControls }
             }
@@ -2262,7 +2267,7 @@ private struct ReviewHeader: View {
     }
 
     @ViewBuilder
-    private func controls(styleWidth: CGFloat) -> some View {
+    private var controls: some View {
             if model.commentCount > 0 {
                 Label {
                     Text(verbatim: "\(model.commentCount)")
@@ -2283,13 +2288,14 @@ private struct ReviewHeader: View {
             .popover(isPresented: $pickingAgent, arrowEdge: .bottom) {
                 AgentSendForm(model: model) { pickingAgent = false }
             }
-            Picker("", selection: Binding(get: { model.options.diffStyle }, set: { model.setStyle($0) })) {
-                Text("Split").tag(DiffViewOptions.Style.split)
-                Text("Unified").tag(DiffViewOptions.Style.unified)
+            Button {
+                model.setStyle(model.options.diffStyle == .split ? .unified : .split)
+            } label: {
+                Text(verbatim: model.options.diffStyle == .split ? "Split" : "Unified")
+                    .font(.system(size: 12, weight: .semibold))
+                    .fixedSize()
             }
-            .pickerStyle(.segmented)
-            .frame(width: styleWidth)
-            .instantTooltip("Side by side, or one column")
+            .instantTooltip(model.options.diffStyle == .split ? "Side by side (click for one column)" : "One column (click for side by side)")
             HStack(spacing: 0) {
                 IconButton(systemName: "textformat.size.smaller", tooltip: "Smaller diff text") { model.stepFont(-1) }
                 Text(verbatim: "\(Int(model.options.fontSize))")

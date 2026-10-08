@@ -624,7 +624,7 @@ struct TimelinePushDetailView: View {
                                 guard let repo = event.repo else { return }
                                 model.setMode(.worktrees)
                                 model.selectedWorktree = repo
-                                let next = ReviewModel(repo: URL(fileURLWithPath: repo), options: DiffViewOptions())
+                                let next = ReviewModel(repo: URL(fileURLWithPath: repo), options: DiffViewOptions.remembered())
                                 next.embedded = true
                                 next.setScope(.commit(sha: commit.sha, title: commit.subject))
                                 model.review = next

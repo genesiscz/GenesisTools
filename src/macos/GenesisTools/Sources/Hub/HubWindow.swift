@@ -901,7 +901,7 @@ final class HubModel: ObservableObject {
         selectedWorktree = worktree.path
         notice = nil
         if review?.home.path != worktree.path {
-            let next = ReviewModel(repo: URL(fileURLWithPath: worktree.path), options: DiffViewOptions(), session: sessions(for: worktree).first?.sessionId)
+            let next = ReviewModel(repo: URL(fileURLWithPath: worktree.path), options: DiffViewOptions.remembered(), session: sessions(for: worktree).first?.sessionId)
             next.embedded = true
             next.scope = worktree.isMain ? .uncommitted : .branch
             review = next
@@ -1479,7 +1479,7 @@ final class HubModel: ObservableObject {
             // `home`, not `repo`: the Worktree choice moves `repo` to another checkout, and comparing that with
             // the session's folder made every refresh build a new review on the main checkout again.
             if review?.home.path != cwd || review?.session != session.sessionId {
-                let next = ReviewModel(repo: URL(fileURLWithPath: cwd), options: DiffViewOptions(), session: session.sessionId)
+                let next = ReviewModel(repo: URL(fileURLWithPath: cwd), options: DiffViewOptions.remembered(), session: session.sessionId)
                 next.embedded = true
                 let worktreeKey = "hub.reviewWorktree.\(session.sessionId)"
                 if let picked = HubDefaults.store.string(forKey: worktreeKey), FileManager.default.fileExists(atPath: picked) {

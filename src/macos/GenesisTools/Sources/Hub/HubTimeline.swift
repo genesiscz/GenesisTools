@@ -654,7 +654,7 @@ extension HubModel {
         }
         setMode(.worktrees)
         selectedWorktree = repo
-        let next = ReviewModel(repo: URL(fileURLWithPath: repo), options: DiffViewOptions())
+        let next = ReviewModel(repo: URL(fileURLWithPath: repo), options: DiffViewOptions.remembered())
         next.embedded = true
         next.setScope(.commit(sha: sha, title: title))
         review = next

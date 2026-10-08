@@ -157,6 +157,26 @@ final class ReviewSessionStateTests: XCTestCase {
         XCTAssertEqual(other.scope, .uncommitted, "another key restores nothing")
     }
 
+    // MARK: Diff style
+
+    func testTheDiffStylePickedLastIsTheNextReviewsStyle() {
+        XCTAssertEqual(DiffViewOptions.remembered(in: defaults).diffStyle, .split, "nothing picked yet: side by side")
+        DiffViewOptions.remember(.unified, in: defaults)
+        XCTAssertEqual(DiffViewOptions.remembered(in: defaults).diffStyle, .unified)
+        defaults.set("diagonal", forKey: DiffViewOptions.styleKey)
+        XCTAssertEqual(DiffViewOptions.remembered(in: defaults).diffStyle, .split, "an unknown value falls back")
+    }
+
+    func testAReviewsStylePickReachesTheStore() {
+        HubDefaults.isolate()
+        defer { HubDefaults.store.removeObject(forKey: DiffViewOptions.styleKey) }
+        let model = ReviewModel(repo: URL(fileURLWithPath: "/w"), options: DiffViewOptions.remembered(), renderer: NullRenderer())
+        model.setStyle(.unified)
+        XCTAssertEqual(DiffViewOptions.remembered().diffStyle, .unified)
+        model.setStyle(.split)
+        XCTAssertEqual(DiffViewOptions.remembered().diffStyle, .split)
+    }
+
     // MARK: Hub place
 
     func testAHubPlaceOpensWithTheFlagsOfItsMode() {

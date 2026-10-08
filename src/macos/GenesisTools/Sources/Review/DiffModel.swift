@@ -37,6 +37,22 @@ struct DiffViewOptions: Codable, Equatable {
     var diffStyle: Style = .split
     var wrap = false
     var fontSize: Double = 13
+
+    /// The layout picked last in any review (its header button, the View menu): every new review window
+    /// and hub review opens with it, after a relaunch too.
+    static let styleKey = "review.diffStyle"
+
+    static func remembered(in store: UserDefaults = HubDefaults.store) -> DiffViewOptions {
+        var options = DiffViewOptions()
+        if let saved = store.string(forKey: styleKey).flatMap(Style.init(rawValue:)) {
+            options.diffStyle = saved
+        }
+        return options
+    }
+
+    static func remember(_ style: Style, in store: UserDefaults = HubDefaults.store) {
+        store.set(style.rawValue, forKey: styleKey)
+    }
 }
 
 enum DiffSide: String, Codable {
