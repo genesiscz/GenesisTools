@@ -411,6 +411,10 @@ jobs:
         timeout-minutes: 2
         run: bun run lint:dashboard
 
+      # ⚠️ OFF since 2026-10-09 (Martin): the src/dashboard and DevDashboard steps below are
+      # disabled with `if: ${{ false }}`. Together they took about 70 s of the ~140 s checks job
+      # (median over the last 10 runs) for trees nobody is changing now. Delete an `if:` line to
+      # turn a step back on.
       # src/dashboard is a SEPARATE bun workspace with its own lockfile and its
       # own vitest suite, and nothing above reaches it — the step named
       # "dashboard" right above lints src/claude-history-dashboard, a different
@@ -419,14 +423,17 @@ jobs:
       # it: the frozen install proves package.json and bun.lock agree, then the
       # app's own check-types and vitest run.
       - name: Install src/dashboard (frozen lockfile)
+        if: ${{ false }}
         timeout-minutes: 5
         run: bun run install:dashboard-web
 
       - name: TypeScript check (src/dashboard/apps/web)
+        if: ${{ false }}
         timeout-minutes: 3
         run: bun run typecheck:dashboard-web
 
       - name: Vitest (src/dashboard/apps/web)
+        if: ${{ false }}
         timeout-minutes: 5
         run: bun run test:dashboard-web
 
@@ -446,26 +453,32 @@ jobs:
       # never writes `[test] suite complete`); do not "optimize" it onto the
       # parallel runner.
       - name: Install DevDashboard cloud (frozen lockfile)
+        if: ${{ false }}
         timeout-minutes: 5
         run: bun run install:dd-cloud
 
       - name: TypeScript check (DevDashboard cloud)
+        if: ${{ false }}
         timeout-minutes: 3
         run: bun run typecheck:dd-cloud
 
       - name: Tests (DevDashboard cloud — shared + vitest)
+        if: ${{ false }}
         timeout-minutes: 5
         run: bun run test:dd-cloud
 
       - name: Install DevDashboard mobile (frozen lockfile)
+        if: ${{ false }}
         timeout-minutes: 8
         run: bun run install:dd-mobile
 
       - name: TypeScript check (DevDashboard mobile)
+        if: ${{ false }}
         timeout-minutes: 5
         run: bun run typecheck:dd-mobile
 
       - name: Tests (DevDashboard mobile — unit, serial)
+        if: ${{ false }}
         timeout-minutes: 5
         run: bun run test:dd-mobile
 
