@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import * as p from "@clack/prompts";
 import { env } from "@genesiscz/utils/env";
 import { getGenesisToolsConfigPath, getProfilingConfig } from "@genesiscz/utils/GenesisTools";
+import { PROFILER_SCOPE_NAMES } from "@genesiscz/utils/profile/scopes";
 import * as facade from "@genesiscz/utils/prompts/p";
 import { isInside, realGenesisToolsRoot, rmTestPath } from "@genesiscz/utils/storage/real-home-guard";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -141,9 +142,10 @@ describe("runProfilingCommand enumerated flags", () => {
             throw new Error("expected missing-enum");
         }
 
-        expect(result.help).toContain("Possible: claude-history");
+        expect(result.help).toContain(`Possible: ${PROFILER_SCOPE_NAMES[0]}`);
+        expect(result.help).toContain("claude-history");
         expect(result.help).toContain("du");
-        expect(result.help).toContain("--scopes claude-history");
+        expect(result.help).toContain(`--scopes ${PROFILER_SCOPE_NAMES[0]}`);
         expect(existsSync(getGenesisToolsConfigPath())).toBe(false);
     });
 
