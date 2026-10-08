@@ -9,6 +9,8 @@ struct WidgetHostView: View {
     let cutout: CGFloat
     let headerHeight: CGFloat
     let visibleHeight: CGFloat
+    var topSizeChanged: (CGSize) -> Void = { _ in }
+    @State private var measuredHeaderHeight: CGFloat = 0
     @State private var dragOrigin: Double?
     @State private var dragClusterHeight: CGFloat?
     @Environment(\.nativeSettingsReduceMotion) private var reduceMotion
@@ -36,21 +38,18 @@ struct WidgetHostView: View {
     }
 
     var body: some View {
-        Group {
-            if surface.edge == .top {
-                VStack(spacing: 0) {
-                    topStrip.frame(width: WidgetClusterGeometry.topWidth(cutout: cutout, moduleCount: moduleIDs.count))
-                    if presentation != .compact { content }
-                }
-            } else {
-                HStack(spacing: 0) {
-                    if surface.edge == .left { sideStrip }
-                    if presentation != .compact { content }
-                    if surface.edge == .right { sideStrip }
+        Color.clear
+            .overlay(alignment: surface.edge == .top ? .top : (surface.edge == .right ? .trailing : .leading)) {
+                if presentation != .compact {
+                    content
+                        .padding(.top, surface.edge == .top ? max(headerHeight, measuredHeaderHeight) : 0)
+                        .padding(surface.edge == .right ? .trailing : .leading,
+                            surface.edge == .top ? 0 : WidgetSideStripMetrics.width)
                 }
             }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: surface.edge == .top ? .top : (surface.edge == .right ? .trailing : .leading)) {
+                if surface.edge == .top { topStrip } else { sideStrip }
+            }
         .nativeGlassSurface(in: shape, tint: .black.opacity(0.30), opaqueColor: Color(white: 0.09))
         .clipShape(shape)
         .overlay(shape.stroke(.white.opacity(0.035), lineWidth: 0.5))
@@ -63,11 +62,10 @@ struct WidgetHostView: View {
         .nativeSettingsAppearance(model.appearance)
         .widgetAccessibility(reduceMotion: model.reduceMotion, reduceTransparency: model.reduceTransparency)
         .onHover { model.hover(surface, inside: $0) }
-        .animation(reduceMotion || model.effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: presentation)
     }
 
     private var topStrip: some View {
-        HStack(spacing: 8) {
+        WidgetTopBarLayout(cutout: cutout) {
             Button {
                 if selected?.id == "agents", model.inboxCount > 0 { model.openInboxNotification(on: surface) }
                 else { expand() }
@@ -83,58 +81,64 @@ struct WidgetHostView: View {
                         Text(selected?.id == "agents" ? "Agents" : selected?.title ?? "Widgets")
                             .font(.system(size: 12, weight: .semibold))
                     }
-                }.frame(maxWidth: cutout == 0 ? 110 : 24, alignment: .leading)
+                    if selected?.id == "agents", model.inboxCount > 0 {
+                        WidgetInboxCount(count: model.inboxCount, needsAnswer: model.inbox.needsAnswer > 0,
+                            pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
+                    }
+                }.fixedSize()
             }
             .buttonStyle(.genHoverPlain())
             .accessibilityLabel("Open " + (selected?.title ?? "widgets"))
-            .overlay(alignment: .topTrailing) {
-                if selected?.id == "agents", model.inboxCount > 0 {
-                    WidgetInboxCount(count: model.inboxCount, needsAnswer: model.inbox.needsAnswer > 0,
-                        pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
-                        .allowsHitTesting(false)
-                }
-            }
             .instantTooltip("Inbox: \(model.inbox.unread) unread, \(model.inbox.needsAnswer) need an answer")
-            if cutout > 0 { Spacer(minLength: cutout) } else { Spacer(minLength: 8) }
-            if selected?.id == "agents" {
-                HStack(spacing: 5) {
-                    ForEach(Array(model.railSessions.prefix(3))) { session in
-                        Button {
-                            model.openInboxNotification(on: surface, key: session.key)
-                        } label: {
-                            WidgetActivityIndicator(status: session.visualStatus, animate: !model.effectiveReduceMotion)
-                                .overlay(alignment: .topTrailing) {
-                                    if let inbox = model.inboxFor(session.key), inbox.unread + inbox.needsAnswer > 0 {
-                                        WidgetInboxCount(count: inbox.unread + inbox.needsAnswer,
-                                            needsAnswer: inbox.needsAnswer > 0, pulse: model.inboxPulseFor(session.key),
-                                            reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
-                                            .allowsHitTesting(false).offset(x: 8, y: -7)
-                                    }
-                                }
-                                .frame(width: 18, height: 22)
-                        }.buttonStyle(.genHoverPlain()).accessibilityLabel(
-                            session.title + ", " + session.visualStatus.label)
-                            .accessibilityIdentifier("widget.agent." + session.key)
-                            .onHover { model.hoverSession(session.key, on: surface, inside: $0) }
+            HStack(spacing: 8) {
+                if selected?.id == "agents" {
+                    HStack(spacing: 5) {
+                        ForEach(Array(model.railSessions.prefix(3))) { session in
+                            Button {
+                                model.openInboxNotification(on: surface, key: session.key)
+                            } label: {
+                                HStack(spacing: 3) {
+                                    WidgetActivityIndicator(status: session.visualStatus, animate: !model.effectiveReduceMotion)
+                                        .frame(width: 10)
+                                        if let inbox = model.inboxFor(session.key), inbox.unread + inbox.needsAnswer > 0 {
+                                            WidgetInboxCount(count: inbox.unread + inbox.needsAnswer,
+                                                needsAnswer: inbox.needsAnswer > 0, pulse: model.inboxPulseFor(session.key),
+                                                reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
+                                                .allowsHitTesting(false)
+                                        }
+                                }.frame(minWidth: 18, minHeight: 22).fixedSize()
+                            }.buttonStyle(.genHoverPlain()).accessibilityLabel(
+                                session.title + ", " + session.visualStatus.label)
+                                .accessibilityIdentifier("widget.agent." + session.key)
+                                .onHover { model.hoverSession(session.key, on: surface, inside: $0) }
+                        }
                     }
                 }
-            }
-            ForEach(Array(moduleIDs.filter { $0 != selected?.id }.prefix(4)), id: \.self) { id in
-                moduleButton(id, size: 25)
-            }
-            if moduleIDs.count > 5 {
-                Button {
-                    model.showSettings?()
-                } label: {
-                    Text("+\(moduleIDs.count - 5)").font(.caption2)
-                }.buttonStyle(.genHoverPlain()).accessibilityLabel("Choose widgets")
-            }
-            if selected?.id == "agents" {
-                Text(String(model.waitingSessionCount))
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.orange).accessibilityLabel("Agents needing an answer")
-            }
-        }.padding(.horizontal, 16).frame(height: headerHeight)
+                ForEach(Array(moduleIDs.filter { $0 != selected?.id }.prefix(4)), id: \.self) { id in
+                    moduleButton(id, size: 25)
+                }
+                if moduleIDs.count > 5 {
+                    Button {
+                        model.showSettings?()
+                    } label: {
+                        Text("+\(moduleIDs.count - 5)").font(.caption2)
+                    }.buttonStyle(.genHoverPlain()).accessibilityLabel("Choose widgets")
+                }
+                if selected?.id == "agents" {
+                    Text(String(model.waitingSessionCount))
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.orange).accessibilityLabel("Agents needing an answer")
+                }
+            }.fixedSize()
+        }
+        .padding(.horizontal, 16).padding(.vertical, 8)
+        .frame(minHeight: headerHeight).fixedSize()
+        .onGeometryChange(for: CGSize.self) { geometry in
+            CGSize(width: ceil(geometry.size.width), height: ceil(geometry.size.height))
+        } action: { size in
+            measuredHeaderHeight = size.height
+            topSizeChanged(size)
+        }
     }
 
     private var dragHandle: some View {
@@ -143,30 +147,24 @@ struct WidgetHostView: View {
                 .frame(width: WidgetSideStripMetrics.dragWidth, height: WidgetSideStripMetrics.dragHeight)
                 .contentShape(Rectangle())
                 .accessibilityLabel("Drag widgets vertically")
-                .gesture(
-                    DragGesture(minimumDistance: 4)
-                        .onChanged { value in
-                            if dragOrigin == nil {
-                                dragOrigin = model.sidePosition
-                                dragClusterHeight = model.sideClusterHeight
-                            }
-                            model.moveSide(
-                                position: WidgetClusterGeometry.position(
-                                    starting: dragOrigin ?? 0.5, translationDown: value.translation.height,
-                                    clusterHeight: dragClusterHeight ?? model.sideClusterHeight,
-                                    visibleHeight: visibleHeight),
-                                finished: false)
+                .overlay {
+                    ScreenVerticalDragArea { translation, finished in
+                        if dragOrigin == nil {
+                            dragOrigin = model.sidePosition
+                            dragClusterHeight = model.sideClusterHeight
                         }
-                        .onEnded { value in
-                            model.moveSide(
-                                position: WidgetClusterGeometry.position(
-                                    starting: dragOrigin ?? 0.5, translationDown: value.translation.height,
-                                    clusterHeight: dragClusterHeight ?? model.sideClusterHeight,
-                                    visibleHeight: visibleHeight),
-                                finished: true)
+                        model.moveSide(
+                            position: WidgetClusterGeometry.position(
+                                starting: dragOrigin ?? 0.5, translationDown: translation,
+                                clusterHeight: dragClusterHeight ?? model.sideClusterHeight,
+                                visibleHeight: visibleHeight),
+                            finished: finished)
+                        if finished {
                             dragOrigin = nil
                             dragClusterHeight = nil
-                        })
+                        }
+                    }
+                }
     }
 
     private var sideStrip: some View {
@@ -304,29 +302,23 @@ struct WidgetHostView: View {
             if id == "agents", model.inboxCount > 0 { model.openInboxNotification(on: surface) }
             else { model.openModule(id, on: surface) }
         } label: {
-            VStack(spacing: 0) {
+            let layout = surface.edge == .top ? AnyLayout(HStackLayout(spacing: 3)) : AnyLayout(VStackLayout(spacing: 0))
+            layout {
                 Image(systemName: classicSide && id == "agents" ? "tray" : registry.module(id)?.symbol ?? "square.dashed")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(classicSide ? Color.white : registry.module(id)?.tint ?? .secondary)
-                if surface.edge != .top, id == "agents", model.inboxCount > 0 {
+                if id == "agents", model.inboxCount > 0 {
                     WidgetInboxCount(count: model.inboxCount, needsAnswer: model.inbox.needsAnswer > 0,
                         pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion,
                         complete: model.inbox.complete, compact: true)
                 }
             }
-                .frame(width: size, height: size)
+                .frame(minWidth: size, minHeight: size)
                 .background(
                     selected?.id == id && presentation != .compact ? Color.white.opacity(0.09) : .clear,
                     in: RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.genHoverPlain())
-        .overlay(alignment: .topTrailing) {
-            if surface.edge == .top, id == "agents", model.inboxCount > 0 {
-                WidgetInboxCount(count: model.inboxCount, needsAnswer: model.inbox.needsAnswer > 0,
-                        pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
-                        .allowsHitTesting(false)
-            }
-        }
         .instantTooltip(id == "agents" ? "Inbox: \(model.inbox.unread) unread, \(model.inbox.needsAnswer) need an answer" : registry.module(id)?.title ?? id)
         .accessibilityLabel("Open " + (registry.module(id)?.title ?? id))
     }
