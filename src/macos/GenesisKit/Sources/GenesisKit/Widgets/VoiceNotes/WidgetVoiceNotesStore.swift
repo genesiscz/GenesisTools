@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -18,6 +19,8 @@ public final class WidgetVoiceNotesStore: ObservableObject {
     @Published public private(set) var phase: String?
     @Published public private(set) var error: String?
     @Published public private(set) var receipt: String?
+    @Published public private(set) var microphonePermission: VoiceMicrophonePermission
+    @Published public var presentsMicrophoneAlert = false
     @Published public var selectedID: String?
     @Published public var recipientKey = ""
     @Published private var drafts: [String: String] = [:]
@@ -31,6 +34,10 @@ public final class WidgetVoiceNotesStore: ObservableObject {
     private let sessionsSource: () -> [WidgetSession]
     private let attachDraft: (WidgetSession, WidgetVoiceNote) async throws -> String
     private let micLauncher: String
+    private let readMicrophonePermission: () -> VoiceMicrophonePermission
+    private let requestMicrophonePermission: () async throws -> VoiceMicrophonePermission
+    private let activateForMicrophone: () -> Void
+    private let openMicrophoneSettingsAction: () -> Void
     private var operation: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var watcher: DirectoryWatcher?
@@ -50,7 +57,10 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         let prefix = ["widget"] + (stateRoot.map { ["--state-root", $0] } ?? []) + ["voice-notes"]
         self.init(micLauncher: micLauncher, request: { args in
             let result = try await bridge.run(subcommand: "hub", args: prefix + args, timeoutSeconds: 15)
-            guard result.exitCode == 0 else { throw ToolsBridgeError.refused(String(result.stderr.suffix(1200))) }
+            guard result.exitCode == 0 else {
+                PerfLog.mark("voice.request exit=\(result.exitCode) \(result.stderr.suffix(1200))")
+                throw VoiceCommandFailure.operationFailed
+            }
             return Data(result.stdout.utf8)
         }, execute: { args, lease, event in try await transport.run(args: args, lease: lease, onEvent: event) },
         finishCapture: { transport.finishRecording() }, cancelCommand: { transport.cancel() },
@@ -62,8 +72,21 @@ public final class WidgetVoiceNotesStore: ObservableObject {
          finishCapture: @escaping () -> Void, cancelCommand: @escaping () -> Void,
          acquireAudio: @escaping () async throws -> any VoiceRecordingLease,
          settings: @escaping () -> WidgetVoiceNoteSettings, sessions: @escaping () -> [WidgetSession],
-         attachDraft: @escaping (WidgetSession, WidgetVoiceNote) async throws -> String) {
+         attachDraft: @escaping (WidgetSession, WidgetVoiceNote) async throws -> String,
+         readMicrophonePermission: @escaping () -> VoiceMicrophonePermission = { .current },
+         requestMicrophonePermission: @escaping () async throws -> VoiceMicrophonePermission = { try await VoiceMicrophonePermission.request() },
+         activateForMicrophone: @escaping () -> Void = { NSApp?.activate(ignoringOtherApps: true) },
+         openMicrophoneSettings: @escaping () -> Void = {
+             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                 NSWorkspace.shared.open(url)
+             }
+         }) {
         self.micLauncher = micLauncher
+        self.readMicrophonePermission = readMicrophonePermission
+        self.requestMicrophonePermission = requestMicrophonePermission
+        self.activateForMicrophone = activateForMicrophone
+        openMicrophoneSettingsAction = openMicrophoneSettings
+        microphonePermission = readMicrophonePermission()
         self.request = request
         self.execute = execute
         self.finishCapture = finishCapture
@@ -85,7 +108,7 @@ public final class WidgetVoiceNotesStore: ObservableObject {
 
     func visibilityChanged(_ value: WidgetModulePresentation?) {
         visible = value != nil
-        if visible { refresh() }
+        if visible { refreshMicrophonePermission(); refresh() }
     }
 
     public func refresh(force: Bool = false) {
@@ -132,9 +155,42 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         }
     }
 
+    public var microphoneGuidance: String? {
+        if phase == "Waiting for microphone permission" {
+            return "Waiting for the macOS microphone prompt. Allow access to record, or cancel and review Microphone settings."
+        }
+        return microphonePermission.guidance
+    }
+
+    public func refreshMicrophonePermission() {
+        microphonePermission = readMicrophonePermission()
+    }
+
+    public func openMicrophoneSettings() {
+        openMicrophoneSettingsAction()
+    }
+
+    private func prepareMicrophone() async throws {
+        refreshMicrophonePermission()
+        guard microphonePermission != .authorized else { return }
+        activateForMicrophone()
+        if microphonePermission == .notDetermined {
+            phase = "Waiting for microphone permission"
+            microphonePermission = try await requestMicrophonePermission()
+            try Task.checkCancellation()
+        }
+        guard microphonePermission == .authorized else {
+            presentsMicrophoneAlert = true
+            throw VoiceCommandFailure.microphonePermission
+        }
+    }
+
     public func record(input: String = "mic") {
-        begin("Recording") { [self] in
+        begin(input == "mic" ? "Checking microphone access" : "Recording") { [self] in
             meter.reset()
+            if input == "mic" { try await prepareMicrophone() }
+            try Task.checkCancellation()
+            phase = "Recording"
             let lease = try await acquireAudio()
             if Task.isCancelled {
                 try await lease.release()
@@ -244,7 +300,9 @@ public final class WidgetVoiceNotesStore: ObservableObject {
             defer { self.phase = nil; operation = nil }
             do { try Task.checkCancellation(); try await work() }
             catch {
-                if Task.isCancelled { receipt = "Stopped. Existing recordings are kept locally." }
+                if Task.isCancelled || error is CancellationError || (error as? VoiceCommandFailure) == .cancelled {
+                    receipt = "Stopped. Existing recordings are kept locally."
+                }
                 else { report(error) }
                 cached = false
                 refresh(force: true)
@@ -269,6 +327,10 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         watcher = nil
     }
     private func report(_ error: Error) {
+        if (error as? VoiceCommandFailure) == .microphonePermission {
+            refreshMicrophonePermission()
+            presentsMicrophoneAlert = microphonePermission != .authorized
+        }
         self.error = error.localizedDescription
         PerfLog.mark("widget.voice-notes \(error.localizedDescription)")
     }

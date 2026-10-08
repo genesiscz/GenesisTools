@@ -1,10 +1,10 @@
 import { expect, mock, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { accountEntrySchema } from "@genesiscz/utils/ai/config/schema";
 import { voiceConfiguration } from "@genesiscz/utils/ai/voice/configuration";
-import { recordingControl, recordPcmClip } from "@genesiscz/utils/ai/voice/record";
+import { recordingControl, recordingFailure, recordPcmClip } from "@genesiscz/utils/ai/voice/record";
 import { createVoiceSession } from "@genesiscz/utils/ai/voice/session";
 import * as capture from "./capture/pcm-source";
 import { openPcmSource, type PcmSource } from "./capture/pcm-source";
@@ -475,4 +475,31 @@ test("recording gate waits for complete explicit start and observes owner EOF", 
     });
     await expect(earlyEOF.ready).rejects.toThrow("closed before start");
     await earlyEOF.close();
+});
+
+test("capture child permission, interruption, failure and empty success remain distinct", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "voice-capture-errors-"));
+    for (const [status, code] of [
+        [77, "microphone_permission"],
+        [143, "capture_interrupted"],
+        [70, "capture_failed"],
+        [0, "no_audio"],
+    ] as const) {
+        const launcher = join(directory, `launcher-${status}`);
+        const output = join(directory, `clip-${status}.pcm`);
+        writeFileSync(launcher, `#!/bin/sh\necho 'fixture diagnostic only' >&2\nexit ${status}\n`);
+        chmodSync(launcher, 0o700);
+        try {
+            await recordPcmClip({ output, micLauncher: launcher });
+            throw new Error("capture unexpectedly succeeded");
+        } catch (error) {
+            expect(recordingFailure(error)).toEqual({ kind: "error", code });
+            expect(error instanceof Error ? error.message : "").not.toContain("fixture diagnostic");
+        }
+        expect(existsSync(output)).toBe(false);
+    }
+    const launcher = join(directory, "launcher-success");
+    writeFileSync(launcher, "#!/bin/sh\nhead -c 3200 /dev/zero\n");
+    chmodSync(launcher, 0o700);
+    expect((await recordPcmClip({ output: join(directory, "success.pcm"), micLauncher: launcher })).bytes).toBe(3200);
 });

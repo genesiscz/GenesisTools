@@ -1,4 +1,4 @@
-import { recordingControl, recordPcmClip } from "@genesiscz/utils/ai/voice/record";
+import { recordingControl, recordingFailure, recordPcmClip } from "@genesiscz/utils/ai/voice/record";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -44,6 +44,13 @@ export function registerVoiceRecording(program: Command): void {
                             onEvent: options.json ? (event) => out.print(`${SafeJSON.stringify(event)}\n`) : undefined,
                         });
                         out.result({ kind: "recorded", clip });
+                    } catch (error) {
+                        if (options.json) {
+                            out.print(
+                                `${SafeJSON.stringify(signal.aborted ? { kind: "error", code: "cancelled" } : recordingFailure(error))}\n`
+                            );
+                        }
+                        throw error;
                     } finally {
                         await control?.close();
                     }

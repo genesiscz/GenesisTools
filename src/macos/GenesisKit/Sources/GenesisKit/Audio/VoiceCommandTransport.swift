@@ -14,6 +14,7 @@ public struct VoiceCommandEvent: Decodable, Sendable {
     public let rms: Double?
     public let durationMs: Double?
     public let text: String?
+    public let code: String?
 }
 
 /// Uses the shared CLI pipe lifecycle. A recording can start only after its actual PID is admitted.
@@ -68,6 +69,9 @@ public final class VoiceCommandTransport {
                                         }
                                     }
                                 }
+                                if event.kind == "error" {
+                                    failure = event.code.flatMap(VoiceCommandFailure.init(rawValue:)) ?? VoiceCommandFailure.operationFailed
+                                }
                                 if event.kind == "recorded" || event.kind == "transcribed" { finalData = data }
                                 onEvent(event)
                             }
@@ -84,9 +88,11 @@ public final class VoiceCommandTransport {
                                 if cancelled { completion?.resume(throwing: CancellationError()) }
                                 else if let failure { completion?.resume(throwing: failure) }
                                 else if report.status != 0 {
-                                    completion?.resume(throwing: ToolsBridgeError.refused(String(report.stderr.suffix(1200))))
+                                    PerfLog.mark("voice.command exit=\(report.status) \(report.stderr.suffix(1200))")
+                                    completion?.resume(throwing: report.status == 143
+                                        ? VoiceCommandFailure.interrupted : VoiceCommandFailure.operationFailed)
                                 } else if let finalData { completion?.resume(returning: finalData) }
-                                else { completion?.resume(throwing: ToolsBridgeError.refused("Voice operation ended without a saved note")) }
+                                else { completion?.resume(throwing: VoiceCommandFailure.operationFailed) }
                             }
                         })
                 } catch {
