@@ -84,3 +84,19 @@ sheet. A successful PNG write is not visual proof of the sheet. Inspect the imag
 licence-sheet capture used the live AX sheet's global rectangle with screen capture; its receipt
 records those bounds, parent window ID, PID, installed build and PNG hash. Preserve rejected
 parent-only captures separately instead of labeling them as the completed UI.
+
+## Stable rail controls and narrow scroll viewports — 2026-10-08
+
+A rail must not fill the expanding conversation's height. The joined Widget previously moved its
+controls about 95 points when the window grew from 354 to 544 points. Keeping sideStripContents at its measured
+compact height, centered beside the content, produced identical global AX control coordinates through
+354 → 608 → 354 point windows. Check control rectangles, not only the window's anchored right edge.
+Keep known session IDs in stable order while status and activity metadata refresh; an unchanged icon
+position is unsafe if its underlying recipient silently changes.
+
+SwiftUI's narrow vertical ScrollView can report a viewport 61 points wide for content 44 points wide when
+scrollbar space is added. Check the actual NSScrollView bounds against its host and prove that the
+last control remains reachable. OverlayScrollViewport uses an explicit sizeThatFits proposal, overlay
+scroller and measured document height; WidgetRosterTests covers both sides, styles and short heights.
+Do not copy the frame-owned window root's sizingOptions=[] onto the measured NSHostingView document:
+its fitting height became 0 in this experiment. Retain document sizing and update its frame from fittingSize.
