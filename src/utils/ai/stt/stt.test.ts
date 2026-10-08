@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
+import { accountEntrySchema } from "@genesiscz/utils/ai/config/schema";
+import { voiceConfiguration } from "@genesiscz/utils/ai/voice/configuration";
 import { createVoiceSession } from "@genesiscz/utils/ai/voice/session";
 import { createFixtureStt } from "./fixture";
-import { openLiveStt, parseSttProvider } from "./resolve";
+import { openLiveStt, parseSttProvider, selectSttAccount } from "./resolve";
 import { type LiveTranscriptEvent, STT_PROVIDER_IDS } from "./types";
 import { LocalVad, pcmRms } from "./vad";
 import { canDispatchWake, WakeRateLimiter } from "./wake/jev";
@@ -126,4 +128,76 @@ test("general voice session refuses cancellation before opening a provider", asy
     await expect(
         createVoiceSession({ provider: "fixture", input: "none", signal: controller.signal, onEvent: () => {} })
     ).rejects.toThrow();
+});
+
+test("dictation inventory projects account metadata without reading any credential", async () => {
+    const account = accountEntrySchema.parse({
+        id: "acc_work",
+        name: "work",
+        label: "Speech",
+        provider: "xai",
+        enabled: true,
+        billing: { mode: "metered" },
+        credentials: {},
+    });
+    Object.defineProperty(account, "credentials", {
+        get() {
+            throw new Error("Inventory must never inspect credentials");
+        },
+    });
+    const result = await voiceConfiguration({
+        readStore: async () => ({
+            accounts: (filter) => {
+                expect(filter).toEqual({ enabled: true });
+                return [
+                    account,
+                    {
+                        ...accountEntrySchema.parse({
+                            id: "acc_personal",
+                            name: "personal",
+                            provider: "openai-subscription",
+                            enabled: true,
+                            billing: { mode: "subscription" },
+                            credentials: {},
+                        }),
+                    },
+                ];
+            },
+        }),
+    });
+    expect(result.providers.find((provider) => provider.id === "xai")?.accounts).toEqual([
+        { id: "acc_work", name: "Speech" },
+    ]);
+    expect(result.providers.flatMap((provider) => provider.accounts)).toHaveLength(1);
+    expect(result.providers.every((provider) => provider.models.includes(provider.defaultModel))).toBe(true);
+});
+
+test("explicit dictation account refuses disabled credentials and still accepts an enabled account", () => {
+    const account = accountEntrySchema.parse({
+        id: "acc_work",
+        name: "work",
+        provider: "xai",
+        enabled: true,
+        billing: { mode: "metered" },
+        credentials: {},
+    });
+    const options = { provider: "xai" as const, account: account.id };
+    expect(() =>
+        selectSttAccount({
+            ...options,
+            store: {
+                account: () => ({ ...account, enabled: false }),
+                accounts: () => [],
+            },
+        })
+    ).toThrow("disabled");
+    expect(
+        selectSttAccount({
+            ...options,
+            store: {
+                account: () => account,
+                accounts: () => [account],
+            },
+        })
+    ).toBe(account);
 });

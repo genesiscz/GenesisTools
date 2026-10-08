@@ -51,7 +51,15 @@ export function parseSttProvider(value: unknown): SttProviderId {
  */
 export async function resolveSttAccount(options: { provider: CloudProvider; account?: string }): Promise<AccountEntry> {
     registerBuiltInPlugins();
-    const store = await AiConfigStore.readOnly();
+    return selectSttAccount({ ...options, store: await AiConfigStore.readOnly() });
+}
+
+export function selectSttAccount(options: {
+    provider: CloudProvider;
+    account?: string;
+    store: Pick<AiConfigStore, "account" | "accounts">;
+}): AccountEntry {
+    const { store } = options;
     if (options.account) {
         const account = store.account(options.account);
         if (!account) {
@@ -62,6 +70,10 @@ export async function resolveSttAccount(options: { provider: CloudProvider; acco
 
         if (account.provider !== options.provider) {
             throw new Error(`Account '${options.account}' is a ${account.provider} account, not ${options.provider}.`);
+        }
+
+        if (!store.accounts({ provider: options.provider, enabled: true }).some((entry) => entry.id === account.id)) {
+            throw new Error("The selected dictation account is disabled or unavailable for ordinary use.");
         }
 
         return account;

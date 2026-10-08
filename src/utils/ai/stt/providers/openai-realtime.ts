@@ -1,11 +1,12 @@
 import { SafeJSON } from "@genesiscz/utils/json";
+import { LIVE_STT_MODELS } from "../models";
 import { resamplePcm16 } from "../pcm";
 import { openSocketSession } from "../socket-session";
 import type { LiveSttSession, LiveTranscriptEvent, ProviderSessionOptions } from "../types";
 import { LocalVad } from "../vad";
 
 const OPENAI_REALTIME_URL = "wss://api.openai.com/v1/realtime?intent=transcription";
-const DEFAULT_MODEL = "gpt-live-transcribe";
+const DEFAULT_MODEL = LIVE_STT_MODELS.openai;
 /** OpenAI rejects `audio/pcm` below this rate; lower capture rates are resampled on the way in. */
 export const OPENAI_REALTIME_MIN_RATE_HZ = 24000;
 

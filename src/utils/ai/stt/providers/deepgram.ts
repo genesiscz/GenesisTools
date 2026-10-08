@@ -1,10 +1,11 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { LIVE_STT_MODELS } from "../models";
 import { openSocketSession } from "../socket-session";
 import type { LiveSttSession, LiveTranscriptEvent, ProviderSessionOptions } from "../types";
 
 const DEEPGRAM_LISTEN_HOST = "wss://api.deepgram.com/v1/listen";
-const DEFAULT_MODEL = "nova-3";
+const DEFAULT_MODEL = LIVE_STT_MODELS.deepgram;
 const KEEPALIVE_MS = 8_000;
 
 interface DeepgramMessage {

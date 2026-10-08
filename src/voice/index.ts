@@ -1,5 +1,6 @@
 import { parseSttProvider } from "@genesiscz/utils/ai/stt/resolve";
 import { parseLanguages, STT_PROVIDER_IDS } from "@genesiscz/utils/ai/stt/types";
+import { voiceConfiguration } from "@genesiscz/utils/ai/voice/configuration";
 import { createVoiceSession, type VoiceEvent } from "@genesiscz/utils/ai/voice/session";
 import { runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
@@ -124,4 +125,13 @@ program
             );
         }
     );
+program
+    .command("configuration")
+    .description(
+        "Read live dictation providers, supported model defaults and enabled account labels without credentials"
+    )
+    .option("--json", "Emit metadata as JSON")
+    .action(async () => {
+        out.result(await voiceConfiguration());
+    });
 await runTool(program, { tool: "voice" });

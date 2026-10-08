@@ -1,10 +1,11 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { LIVE_STT_MODELS } from "../models";
 import { openSocketSession, type SocketSpec } from "../socket-session";
 import type { LiveSttSession, LiveTranscriptEvent, ProviderSessionOptions } from "../types";
 
 const ELEVENLABS_REALTIME_HOST = "wss://api.elevenlabs.io/v1/speech-to-text/realtime";
-const DEFAULT_MODEL = "scribe_v2_realtime";
+const DEFAULT_MODEL = LIVE_STT_MODELS.elevenlabs;
 
 /** `AudioFormatEnum` from the realtime AsyncAPI spec, minus the ulaw variant we never send. */
 export const ELEVENLABS_PCM_SAMPLE_RATES = [8000, 16000, 22050, 24000, 44100, 48000] as const;

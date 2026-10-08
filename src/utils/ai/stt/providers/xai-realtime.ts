@@ -1,9 +1,10 @@
 import { SafeJSON } from "@genesiscz/utils/json";
+import { LIVE_STT_MODELS } from "../models";
 import { openSocketSession } from "../socket-session";
 import type { LiveSttSession, LiveTranscriptEvent, ProviderSessionOptions } from "../types";
 
 const XAI_STT_HOST = "wss://api.x.ai/v1/stt";
-const DEFAULT_MODEL = "grok-voice-transcribe-2.0";
+const DEFAULT_MODEL = LIVE_STT_MODELS.xai;
 
 interface XaiSttEvent {
     type?: string;
