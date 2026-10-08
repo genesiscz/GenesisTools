@@ -68,6 +68,32 @@ describe("read-model", () => {
         expect(queryEntries(db, { logBase, unread: true }).length).toBe(2);
     });
 
+    it("indexes the newest active window before materializing answer bodies", () => {
+        const root = mkdtempSync(join(tmpdir(), "qa-window-index-"));
+        const logBase = join(root, "log");
+        for (let i = 0; i < 25; i++) {
+            appendEntry(e(`entry-${i}`, { ts: 1779000000000 + i * 3000 }), logBase);
+        }
+        const db = openReadModel(join(root, "qa.db"));
+        const queries = spyOn(db, "query");
+        try {
+            queryEntries(db, { logBase });
+            db.exec("UPDATE entries SET superseded_by='entry-23' WHERE id='entry-24'");
+            const rows = queryEntries(db, { logBase, limit: 5 });
+            expect(rows.map((row) => row.id)).toEqual(["entry-19", "entry-20", "entry-21", "entry-22", "entry-23"]);
+            const sql = queries.mock.calls
+                .map((args) => args[0])
+                .find((sql) => sql.includes("SELECT * FROM entries WHERE"));
+            expect(sql).toBeDefined();
+            const plan = db.query<{ detail: string }, [number]>(`EXPLAIN QUERY PLAN ${sql}`).all(5);
+            expect(plan.some((row) => row.detail.includes("entries USING INDEX idx_entries_active_ts"))).toBe(true);
+            expect(plan.filter((row) => row.detail.includes("TEMP B-TREE"))).toHaveLength(1);
+        } finally {
+            queries.mockRestore();
+            db.close();
+        }
+    });
+
     it("returns last N entries oldest→newest", () => {
         const logBase = mkdtempSync(join(tmpdir(), "qa-log-"));
         const dbPath = join(mkdtempSync(join(tmpdir(), "qa-db-")), "qa.db");
