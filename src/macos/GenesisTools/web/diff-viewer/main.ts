@@ -639,7 +639,9 @@ function refreshAnnotations(fileIds: string[]): void {
 
 const css = {
     card: "margin:6px 12px 10px 12px;border:1px solid rgba(255,255,255,.10);border-radius:10px;background:#16171a;font:13px/1.45 -apple-system,BlinkMacSystemFont,sans-serif;color:#e6e6e6;overflow:hidden;white-space:normal",
-    row: "display:flex;gap:10px;padding:10px 12px",
+    row: "display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:10px;align-items:center;padding:10px 12px",
+    /** The avatar row's second column; with `underAvatar` only the header stays beside the avatar. */
+    main: "display:contents",
     avatar: "flex:none;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:12px;color:#111",
     head: "display:flex;align-items:center;gap:6px;flex-wrap:wrap",
     name: "font-weight:600",
@@ -684,7 +686,7 @@ const severityStyle: Record<string, { label: string; color: string }> = {
 function renderMeta(meta: NonNullable<BridgeComment["meta"]>): HTMLElement {
     const box = element(
         "div",
-        "margin:0 12px 10px 48px;border:1px dashed rgba(138,180,255,.35);border-radius:8px;padding:8px 10px;background:rgba(138,180,255,.05);font-size:12.5px"
+        "margin:0 12px 10px 12px;border:1px dashed rgba(138,180,255,.35);border-radius:8px;padding:8px 10px;background:rgba(138,180,255,.05);font-size:12.5px"
     );
     const head = element("div", "display:flex;gap:8px;align-items:baseline;flex-wrap:wrap");
     head.appendChild(
@@ -830,7 +832,7 @@ function renderDraft(comment: BridgeComment): HTMLElement {
     const wrap = element("div", comment.state === "rejected" ? "opacity:.45" : "");
     const row = element("div", css.row);
     row.appendChild(element("div", `${css.avatar};background:#8ab4ff`, "✦"));
-    const main = element("div", "flex:1;min-width:0");
+    const main = element("div", css.main);
     const head = element("div", css.head);
     head.appendChild(element("span", css.name, comment.author));
     const severity = severityStyle[comment.severity ?? "minor"] ?? severityStyle.minor;
@@ -868,7 +870,7 @@ function renderDraft(comment: BridgeComment): HTMLElement {
         main.appendChild(sendRow(act, false));
     }
 
-    row.appendChild(main);
+    row.appendChild(underAvatar(main));
     wrap.appendChild(row);
 
     if (comment.meta) {
@@ -942,6 +944,20 @@ function element<K extends keyof HTMLElementTagNameMap>(
     }
 
     return node;
+}
+
+/**
+ * A card's header sits beside its avatar; the text, buttons and boxes after it take the card's whole
+ * width instead of a column indented past the avatar.
+ */
+function underAvatar(main: HTMLElement): HTMLElement {
+    for (const child of main.children) {
+        if (child !== main.firstElementChild && child instanceof HTMLElement) {
+            child.style.gridColumn = "1 / -1";
+        }
+    }
+
+    return main;
 }
 
 function button(label: string, onClick: () => void, primary = false, title?: string): HTMLButtonElement {
@@ -1044,7 +1060,7 @@ function renderThread(comment: BridgeComment): HTMLElement {
     const wrap = element("div", resolved ? "opacity:.62" : "");
     const row = element("div", css.row);
     row.appendChild(avatar(comment.author.replace(/^@/, ""), true));
-    const main = element("div", "flex:1;min-width:0");
+    const main = element("div", css.main);
     const head = element("div", css.head);
     head.appendChild(element("span", css.name, comment.author));
     head.appendChild(element("span", `${css.badge};border-color:#8ab4ff;color:#8ab4ff`, "PR thread"));
@@ -1059,7 +1075,7 @@ function renderThread(comment: BridgeComment): HTMLElement {
     head.appendChild(element("span", css.dim, `L${comment.endLine}${comment.when}`));
     main.appendChild(head);
     main.appendChild(richText(comment.body));
-    row.appendChild(main);
+    row.appendChild(underAvatar(main));
     wrap.appendChild(row);
 
     if (comment.meta) {
@@ -1083,7 +1099,7 @@ function renderThread(comment: BridgeComment): HTMLElement {
 function renderReply(comment: BridgeComment, reply: string): HTMLElement {
     const box = element(
         "div",
-        "margin:0 12px 10px 48px;border:1px solid rgba(255,161,31,.35);border-radius:8px;padding:8px 10px;background:rgba(255,161,31,.05);font-size:12.5px;opacity:1"
+        "margin:0 12px 10px 12px;border:1px solid rgba(255,161,31,.35);border-radius:8px;padding:8px 10px;background:rgba(255,161,31,.05);font-size:12.5px;opacity:1"
     );
     const head = element("div", "display:flex;gap:8px;align-items:center;flex-wrap:wrap");
     head.appendChild(
@@ -1568,7 +1584,7 @@ function renderNote(threadId: string, note: LiveNote, busy: boolean, reply = fal
             username: note.username,
         })
     );
-    const main = element("div", "flex:1;min-width:0");
+    const main = element("div", css.main);
     const head = element("div", css.head);
     const name = note.author || note.username;
     const nameNode = note.authorUrl ? quietLink(name, note.authorUrl) : element("span", "", name);
@@ -1649,13 +1665,13 @@ function renderNote(threadId: string, note: LiveNote, busy: boolean, reply = fal
         main.appendChild(foldedBody(note.id, note.display ?? note.body));
     }
 
-    row.appendChild(main);
+    row.appendChild(underAvatar(main));
     return row;
 }
 
 /** GitLab's "Reply…" field: a click opens the box with Save as draft and Post (Swift asks first). */
 function renderReplyBox(threadId: string): HTMLElement {
-    const footer = element("div", "padding:8px 12px 10px 48px;border-top:1px solid rgba(255,255,255,.06)");
+    const footer = element("div", "padding:8px 12px 10px 12px;border-top:1px solid rgba(255,255,255,.06)");
     const box = threadBoxes.get(threadId);
 
     if (box?.kind !== "reply") {
@@ -2025,14 +2041,14 @@ function renderComment(comment: BridgeComment): HTMLElement {
     if (comment.remote) {
         const row = element("div", css.row);
         row.appendChild(avatar(comment.author, comment.remote));
-        const main = element("div", "flex:1;min-width:0");
+        const main = element("div", css.main);
         const head = element("div", css.head);
         head.appendChild(element("span", css.name, comment.author));
         head.appendChild(element("span", css.dim, comment.when));
         head.appendChild(element("span", css.badge, stateLabel[comment.state] ?? comment.state));
         main.appendChild(head);
         main.appendChild(richText(comment.body));
-        row.appendChild(main);
+        row.appendChild(underAvatar(main));
         return row;
     }
 
@@ -2071,7 +2087,7 @@ function renderLocal(
 ): HTMLElement {
     const row = element("div", `${css.row}${options.reply ? ";border-top:1px solid rgba(255,255,255,.06)" : ""}`);
     row.appendChild(avatar("You", false));
-    const main = element("div", "flex:1;min-width:0");
+    const main = element("div", css.main);
     const head = element("div", css.head);
     head.appendChild(element("span", css.name, "You"));
     head.appendChild(element("span", css.dim, local.when));
@@ -2168,13 +2184,13 @@ function renderLocal(
         }
     }
 
-    row.appendChild(main);
+    row.appendChild(underAvatar(main));
     return row;
 }
 
 function renderComposer(current: Composer): HTMLElement {
     const card = element("div", css.card);
-    const row = element("div", `${css.row};flex-direction:column`);
+    const row = element("div", "display:flex;flex-direction:column;gap:10px;padding:10px 12px");
     const range =
         current.startLine === current.endLine
             ? `line ${current.endLine}`
