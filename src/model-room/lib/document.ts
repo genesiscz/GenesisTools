@@ -143,6 +143,13 @@ export type ModelDocument = z.infer<typeof modelDocumentSchema>;
 export function readModelDocument(input: unknown): ModelDocument {
     const document = modelDocumentSchema.parse(input);
 
+    if (
+        new Set(document.presentation.controls).size !== document.presentation.controls.length ||
+        new Set(document.presentation.outputs).size !== document.presentation.outputs.length
+    ) {
+        throw new Error("Presentation controls and outputs must use unique quantity identifiers.");
+    }
+
     if (document.presentation.steps.some((step) => step.time !== undefined && step.time > document.time.duration)) {
         throw new Error("A presentation step is outside the model time range.");
     }

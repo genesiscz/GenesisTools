@@ -421,6 +421,16 @@ describe("document time conversion", () => {
 });
 
 describe("portable model exports", () => {
+    test("presentation quantity references must be unique before validation or editable export", () => {
+        const document = supportCapacityModel();
+        for (const field of ["controls", "outputs"] as const) {
+            const invalid = structuredClone(document);
+            invalid.presentation[field] = [document.quantities[0].id, document.quantities[0].id];
+            expect(() => readModelDocument(invalid)).toThrow("unique quantity identifiers");
+            expect(() => serializedModel(invalid)).toThrow("unique quantity identifiers");
+        }
+    });
+
     test("presentation quantity references reject missing IDs and retain scenario-only IDs", async () => {
         const document = supportCapacityModel();
         for (const field of ["controls", "outputs"] as const) {
