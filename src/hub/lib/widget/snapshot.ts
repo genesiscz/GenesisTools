@@ -4,11 +4,12 @@ import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { type DecisionRecord, kindOf, readDecisions } from "@app/question/lib/decisions/store";
 import { renderFormAnswer } from "@app/question/lib/pending/render";
-import { listFormsSnapshot } from "@app/question/lib/pending/store";
+import { listFormsSnapshot, PENDING_MIGRATIONS } from "@app/question/lib/pending/store";
 import type { AskForm, AskItem } from "@app/question/lib/pending/types";
-import { type QaRow, queryEntriesSnapshot } from "@app/question/lib/read-model";
+import { type QaRow, queryEntriesSnapshot, readQuestionSnapshot } from "@app/question/lib/read-model";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { resolveTranscript, transcriptEnvelope } from "@genesiscz/utils/ai/transcripts";
+import { runMigrations } from "@genesiscz/utils/database/migrations";
 import type { ImageAttachment } from "@genesiscz/utils/image/attachments";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
@@ -85,7 +86,108 @@ export interface WidgetSources {
     answers(session?: string): QaRow[];
     agents(refresh?: boolean): Promise<AgentsTree>;
     events?(ids: string[]): WidgetActivityEvent[];
+    inboxData?(): WidgetInboxData;
 }
+export interface WidgetInboxGroup {
+    id: string;
+    sessionId: string;
+    provider: string;
+    title: string;
+    project: string;
+    cwd: string;
+    at: number;
+    count: number;
+    total: number;
+}
+export interface WidgetInboxData {
+    answers: WidgetInboxGroup[];
+    forms: WidgetInboxGroup[];
+    complete: boolean;
+    truncated: boolean;
+}
+export interface WidgetInboxItem {
+    id: string;
+    sourceId: string;
+    kind: "answer" | "result" | "decision" | "form";
+    key: string;
+    at: number;
+    needsAnswer: boolean;
+}
+export interface WidgetInboxSession {
+    key: string;
+    unread: number;
+    needsAnswer: number;
+    latest?: WidgetInboxItem;
+    unreadItem?: WidgetInboxItem;
+    pendingItem?: WidgetInboxItem;
+}
+export interface WidgetInboxSummary {
+    unread: number;
+    needsAnswer: number;
+    complete: boolean;
+    truncated: boolean;
+    sessions: WidgetInboxSession[];
+    profile?: { hostId: "local" };
+}
+
+function readInboxData(): WidgetInboxData {
+    return readQuestionSnapshot({
+        dbPath: toolDataDir("question", "qa.db"),
+        read: (db) => {
+            runMigrations(db, PENDING_MIGRATIONS, { tableName: "qa_pending" });
+            const answers = db
+                .query<WidgetInboxGroup, []>(`
+                WITH unseen AS (
+                    SELECT id, COALESCE(NULLIF(session_id,''),id) AS sessionId,
+                        CASE WHEN agent IN ('claude','claude-code') THEN 'claude'
+                             WHEN agent IN ('codex','grok') THEN agent ELSE 'unknown' END AS provider,
+                        COALESCE(session_title,session_id,id) AS title, COALESCE(project,'') AS project,
+                        COALESCE(cwd,'') AS cwd, ts AS at,
+                        COUNT(*) OVER () AS total
+                    FROM entries WHERE read_at IS NULL AND superseded_by IS NULL
+                        AND NOT EXISTS (SELECT 1 FROM qa_pending WHERE entry_id=entries.id)
+                ), ranked AS (
+                    SELECT *, COUNT(*) OVER (PARTITION BY sessionId,provider) AS count,
+                        ROW_NUMBER() OVER (PARTITION BY sessionId,provider ORDER BY at DESC,id DESC) AS position
+                    FROM unseen
+                ) SELECT id,sessionId,provider,title,project,cwd,at,count,total
+                  FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
+            `)
+                .all();
+            const hasForms = db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='qa_pending'").get();
+            const forms = hasForms
+                ? db
+                      .query<WidgetInboxGroup, []>(`
+                WITH pending AS (
+                    SELECT id, COALESCE(NULLIF(session_hint,''),id) AS sessionId,
+                        CASE WHEN json_valid(poster_json) THEN NULLIF(json_extract(poster_json,'$.agent'),'unknown') END AS poster,
+                        CASE WHEN json_valid(transcript_anchor_json) THEN json_extract(transcript_anchor_json,'$.provider') END AS anchor,
+                        COALESCE(source,'Question') AS title, project_path AS project, cwd, created_at AS at,
+                        COUNT(*) OVER () AS total
+                    FROM qa_pending WHERE status='pending'
+                ), normalized AS (
+                    SELECT *, CASE WHEN COALESCE(poster,anchor) IN ('claude','claude-code') THEN 'claude'
+                        WHEN COALESCE(poster,anchor) IN ('codex','grok') THEN COALESCE(poster,anchor)
+                        ELSE 'unknown' END AS provider FROM pending
+                ), ranked AS (
+                    SELECT *, COUNT(*) OVER (PARTITION BY sessionId,provider) AS count,
+                        ROW_NUMBER() OVER (PARTITION BY sessionId,provider ORDER BY at DESC,id DESC) AS position
+                    FROM normalized
+                ) SELECT id,sessionId,provider,title,project,cwd,at,count,total
+                  FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
+            `)
+                      .all()
+                : [];
+            return {
+                answers: answers.slice(0, 256),
+                forms: forms.slice(0, 256),
+                complete: true,
+                truncated: answers.length > 256 || forms.length > 256,
+            };
+        },
+    });
+}
+
 export interface WidgetActivityEvent {
     id: string;
     sourceId: string;
@@ -199,6 +301,7 @@ export const realWidgetSources: WidgetSources = {
             opts: { sessionId, limit: sessionId ? 80 : 100 },
         }),
     agents: (refresh) => widgetAgents({ refresh }),
+    inboxData: readInboxData,
     events: (ids) => readWidgetDecisionEvents({ ids }),
 };
 
@@ -332,6 +435,36 @@ export async function widgetSnapshot({
         read("agents", () => sources.agents(refresh), { generatedAt: "", parents: [], orphans: [] }),
         read("answer sessions", () => sources.answers(), []),
     ]);
+    const inboxData = sources.inboxData
+        ? await read("inbox metadata", sources.inboxData, { answers: [], forms: [], complete: false, truncated: false })
+        : {
+              answers: answerRoster
+                  .filter((row) => row.readAt === null)
+                  .map((row) => ({
+                      id: row.id,
+                      sessionId: row.sessionId,
+                      provider: row.agent,
+                      title: row.sessionTitle ?? row.sessionId,
+                      project: row.project,
+                      cwd: row.cwd,
+                      at: row.ts,
+                      count: 1,
+                      total: answerRoster.filter((entry) => entry.readAt === null).length,
+                  })),
+              forms: waitingForms.map((form) => ({
+                  id: form.id,
+                  sessionId: form.sessionHint || form.id,
+                  provider: formProvider(form) ?? "unknown",
+                  title: form.source ?? "Question",
+                  project: form.projectPath,
+                  cwd: form.cwd,
+                  at: form.createdAt,
+                  count: 1,
+                  total: waitingForms.length,
+              })),
+              complete: false,
+              truncated: true,
+          };
     const sessions = new Map<string, WidgetSession>();
     const addSession = (target: WidgetTarget, title: string, project: string, activityAt: number): WidgetSession => {
         const key = widgetSessionKey(target);
@@ -462,6 +595,119 @@ export async function widgetSnapshot({
             addSession(target, target.sessionId, target.cwd, 0);
         }
     }
+    const inboxSessions = new Map<string, WidgetInboxSession>();
+    const putInbox = (session: WidgetSession, item: WidgetInboxItem, count: number) => {
+        const entry = inboxSessions.get(session.key) ?? { key: session.key, unread: 0, needsAnswer: 0 };
+        if (item.needsAnswer) {
+            entry.needsAnswer += count;
+        } else {
+            entry.unread += count;
+        }
+        if (
+            !entry.latest ||
+            (item.needsAnswer && !entry.latest.needsAnswer) ||
+            (item.needsAnswer === entry.latest.needsAnswer && item.at > entry.latest.at)
+        ) {
+            entry.latest = item;
+        }
+        const target = item.needsAnswer ? "pendingItem" : "unreadItem";
+        if (!entry[target] || item.at > entry[target].at) {
+            entry[target] = item;
+        }
+        inboxSessions.set(session.key, entry);
+    };
+    for (const [kind, groups] of [
+        ["answer", inboxData.answers],
+        ["form", inboxData.forms],
+    ] as const) {
+        for (const row of groups) {
+            const session =
+                findSession(row.sessionId, row.provider) ??
+                addSession(
+                    targetOf({ sessionId: row.sessionId, provider: row.provider, cwd: row.cwd }, row.id),
+                    row.title,
+                    row.project,
+                    row.at
+                );
+            if (kind === "form") {
+                session.status = "waiting";
+            }
+            putInbox(
+                session,
+                {
+                    id: `${kind}:${row.id}`,
+                    sourceId: row.id,
+                    kind,
+                    key: session.key,
+                    at: row.at,
+                    needsAnswer: kind === "form",
+                },
+                row.count
+            );
+        }
+    }
+    let pendingDecisions = 0;
+    for (const row of decisions) {
+        if (kindOf(row) !== "decision" || !["open", "drafted"].includes(row.state) || row.delivery?.uncertain) {
+            continue;
+        }
+        const session = findSession(row.sessionId, row.provider);
+        if (!session) {
+            continue;
+        }
+        pendingDecisions += 1;
+        putInbox(
+            session,
+            {
+                id: `decision:${row.id}`,
+                sourceId: row.id,
+                kind: "decision",
+                key: session.key,
+                at: Date.parse(row.updatedTs),
+                needsAnswer: true,
+            },
+            1
+        );
+    }
+    let unreadResults = 0;
+    const resultNodes = new Map<string, AgentNode>();
+    for (const node of [
+        ...agents.parents.flatMap((parent) => flattenAgents(parent.children)),
+        ...flattenAgents(agents.orphans),
+    ]) {
+        const id = `${node.harness}:${node.id}`;
+        const previous = resultNodes.get(id);
+        if (!previous || Date.parse(node.lastAt) > Date.parse(previous.lastAt)) {
+            resultNodes.set(id, node);
+        }
+    }
+    for (const node of resultNodes.values()) {
+        if (node.status === "running") {
+            continue;
+        }
+        const session = findSession(node.id, node.harness);
+        const at = Date.parse(node.lastAt);
+        if (!session || !Number.isFinite(at)) {
+            continue;
+        }
+        const id = `result:${node.harness}:${node.id}`;
+        if ((state.inboxRead[`${session.key}|${id}`] ?? -1) >= at) {
+            continue;
+        }
+        unreadResults += 1;
+        putInbox(session, { id, sourceId: node.id, kind: "result", key: session.key, at, needsAnswer: false }, 1);
+    }
+    const notifications: WidgetInboxSummary = {
+        unread: (inboxData.answers[0]?.total ?? 0) + unreadResults,
+        needsAnswer: (inboxData.forms[0]?.total ?? 0) + pendingDecisions,
+        complete: inboxData.complete && errors.length === 0,
+        truncated: inboxData.truncated || inboxSessions.size > 512,
+        sessions: [...inboxSessions.values()]
+            .sort((a, b) => b.needsAnswer - a.needsAnswer || b.unread - a.unread)
+            .slice(0, 512),
+        ...(prof.enabled ? { profile: { hostId: "local" as const } } : {}),
+    };
+    const inboxMetadata: { notifications?: WidgetInboxSummary } = { notifications };
     const selected = selectedKey ? sessions.get(selectedKey) : undefined;
     const persistedTarget = selectedKey ? parseWidgetSessionKey(selectedKey) : undefined;
     const selectedId = selected?.target.sessionId ?? persistedTarget?.sessionId;
@@ -631,7 +877,8 @@ export async function widgetSnapshot({
             choices: [],
             attachments: [],
             refs: node.filePath ? [{ type: "file", value: node.filePath }] : [],
-            read: false,
+            read:
+                (state.inboxRead[`${session.key}|result:${node.harness}:${node.id}`] ?? -1) >= Date.parse(node.lastAt),
         });
     }
     // Only the videos the widget can show: those in a draft, and those of the selected session's shown outgoing
@@ -673,6 +920,7 @@ export async function widgetSnapshot({
     return {
         version: 1,
         state,
+        ...inboxMetadata,
         activity,
         sessions: [...sessions.values()].sort(
             (a, b) => Number(b.status === "waiting") - Number(a.status === "waiting") || b.activityAt - a.activityAt

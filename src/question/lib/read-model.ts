@@ -69,6 +69,25 @@ function initializeReadModel(db: Database): void {
     db.exec("CREATE INDEX IF NOT EXISTS idx_entries_missing_images ON entries(id) WHERE attachments_json IS NULL");
 }
 
+export function readQuestionSnapshot<T>({
+    dbPath,
+    logBase,
+    read,
+}: {
+    dbPath: string;
+    logBase?: string;
+    read: (db: Database) => T;
+}): T {
+    return withDatabaseReadSnapshot({
+        path: dbPath,
+        initialize: initializeReadModel,
+        read: (db) => {
+            catchUp(db, logBase);
+            return read(db);
+        },
+    });
+}
+
 export function queryEntriesSnapshot({ dbPath, opts = {} }: { dbPath: string; opts?: QueryOpts }): QaRow[] {
     return withDatabaseReadSnapshot({
         path: dbPath,

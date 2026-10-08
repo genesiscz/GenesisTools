@@ -3,7 +3,7 @@ import { mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { readDecisions, updateDecision } from "@app/question/lib/decisions/store";
-import { markEntriesRead, openReadModel } from "@app/question/lib/read-model";
+import { getStoredEntryById, markEntriesRead, openReadModel } from "@app/question/lib/read-model";
 import { logger } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -13,8 +13,9 @@ import { confirmVideoAsset, importWidgetAsset, reviseVideoAsset } from "../compo
 import { changeOutgoing, enqueueWidgetMessage } from "../composer/outbox";
 import { createWidgetHandoff } from "./handoff";
 import { readShelfAttachment } from "./shelf";
-import { mutateWidgetState, readWidgetState, widgetRoot } from "./storage";
+import { acknowledgeWidgetInbox, mutateWidgetState, readWidgetState, widgetRoot } from "./storage";
 import {
+    parseWidgetSessionKey,
     widgetDraftSchema,
     widgetPayloadSchema,
     widgetPreferencesPatchSchema,
@@ -57,6 +58,13 @@ export const widgetActionSchema = z.discriminatedUnion("action", [
     z.object({ action: z.literal("cancel"), id: z.string(), confirmedUnknown: z.boolean().default(false) }),
     z.object({ action: z.literal("edit"), id: z.string() }),
     z.object({ action: z.literal("read"), id: z.string() }),
+    z.object({
+        action: z.literal("inbox-read"),
+        key: z.string(),
+        id: z.string(),
+        kind: z.enum(["answer", "result", "form", "decision"]),
+        at: z.number().finite().nonnegative(),
+    }),
 ]);
 
 export async function performWidgetAction({
@@ -191,6 +199,43 @@ export async function performWidgetAction({
             }
             await changeOutgoing({ root, ...request });
             return { updated: true };
+        case "inbox-read": {
+            signal?.throwIfAborted();
+            const target = parseWidgetSessionKey(request.key);
+            if (!target || !request.id.startsWith(`${request.kind}:`)) {
+                throw new Error("The notification identity is invalid.");
+            }
+
+            const sourceId = request.id.slice(request.kind.length + 1);
+            if (request.kind === "answer") {
+                const db = openReadModel(toolDataDir("question", "qa.db"));
+                try {
+                    const row = getStoredEntryById(db, sourceId);
+                    const provider = row?.agent === "claude-code" ? "claude" : row?.agent;
+                    if (!row || (row.sessionId || row.id) !== target.sessionId || provider !== target.provider) {
+                        throw new Error("The answer belongs to a different session.");
+                    }
+
+                    return { read: markEntriesRead(db, [sourceId]) };
+                } finally {
+                    db.close();
+                }
+            }
+
+            if (request.kind === "result") {
+                const separator = sourceId.indexOf(":");
+                const provider = sourceId.slice(0, separator);
+                if (
+                    separator < 0 ||
+                    provider !== target.provider ||
+                    sourceId.slice(separator + 1) !== target.sessionId
+                ) {
+                    throw new Error("The result belongs to a different session.");
+                }
+            }
+
+            return acknowledgeWidgetInbox({ root, key: request.key, id: request.id, at: request.at, signal });
+        }
         case "read": {
             const db = openReadModel(toolDataDir("question", "qa.db"));
             try {

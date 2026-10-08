@@ -69,7 +69,8 @@ struct WidgetHostView: View {
     private var topStrip: some View {
         HStack(spacing: 8) {
             Button {
-                expand()
+                if selected?.id == "agents", model.inboxCount > 0 { model.openInboxNotification(on: surface) }
+                else { expand() }
             } label: {
                 HStack(spacing: 7) {
                     if selected?.id == "agents" {
@@ -86,16 +87,30 @@ struct WidgetHostView: View {
             }
             .buttonStyle(.genHoverPlain())
             .accessibilityLabel("Open " + (selected?.title ?? "widgets"))
+            .overlay(alignment: .topTrailing) {
+                if selected?.id == "agents", model.inboxCount > 0 {
+                    WidgetInboxCount(count: model.inboxCount, needsAnswer: model.inbox.needsAnswer > 0,
+                        pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
+                        .allowsHitTesting(false).offset(x: 3, y: -3)
+                }
+            }
+            .instantTooltip("Inbox: \(model.inbox.unread) unread, \(model.inbox.needsAnswer) need an answer")
             if cutout > 0 { Spacer(minLength: cutout) } else { Spacer(minLength: 8) }
             if selected?.id == "agents" {
                 HStack(spacing: 5) {
                     ForEach(Array(model.previewSessions.prefix(3))) { session in
                         Button {
-                            model.select(session.key)
-                            model.section = "Inbox"
-                            model.openModule("agents", on: surface)
+                            model.openInboxNotification(on: surface, key: session.key)
                         } label: {
                             WidgetActivityIndicator(status: session.visualStatus, animate: !model.effectiveReduceMotion)
+                                .overlay(alignment: .topTrailing) {
+                                    if let inbox = model.inboxFor(session.key), inbox.unread + inbox.needsAnswer > 0 {
+                                        WidgetInboxCount(count: inbox.unread + inbox.needsAnswer,
+                                            needsAnswer: inbox.needsAnswer > 0, pulse: model.inboxPulseFor(session.key),
+                                            reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
+                                            .allowsHitTesting(false).offset(x: 8, y: -7)
+                                    }
+                                }
                                 .frame(width: 18, height: 22)
                         }.buttonStyle(.genHoverPlain()).accessibilityLabel(
                             session.title + ", " + session.visualStatus.label)
@@ -206,9 +221,7 @@ struct WidgetHostView: View {
                 VStack(spacing: WidgetSideStripMetrics.sessionSpacing) {
                     ForEach(Array(model.sessions.prefix(sideMetrics.sessionCount))) { session in
                         Button {
-                            model.select(session.key)
-                            model.section = "Inbox"
-                            model.openModule("agents", on: surface)
+                            model.openInboxNotification(on: surface, key: session.key)
                         } label: {
                             WidgetActivityIndicator(
                                 status: session.visualStatus, animate: !model.effectiveReduceMotion
@@ -277,7 +290,8 @@ struct WidgetHostView: View {
 
     private func moduleButton(_ id: String, size: CGFloat) -> some View {
         Button {
-            model.openModule(id, on: surface)
+            if id == "agents", model.inboxCount > 0 { model.openInboxNotification(on: surface) }
+            else { model.openModule(id, on: surface) }
         } label: {
             Image(systemName: classicSide && id == "agents" ? "tray" : registry.module(id)?.symbol ?? "square.dashed")
                 .font(.system(size: 13, weight: .medium))
@@ -288,7 +302,14 @@ struct WidgetHostView: View {
                     in: RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.genHoverPlain())
-        .instantTooltip(registry.module(id)?.title ?? id)
+        .overlay(alignment: .topTrailing) {
+            if id == "agents", model.inboxCount > 0 {
+                WidgetInboxCount(count: model.inboxCount, needsAnswer: model.inbox.needsAnswer > 0,
+                        pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
+                        .allowsHitTesting(false).offset(x: 3, y: -3)
+            }
+        }
+        .instantTooltip(id == "agents" ? "Inbox: \(model.inbox.unread) unread, \(model.inbox.needsAnswer) need an answer" : registry.module(id)?.title ?? id)
         .accessibilityLabel("Open " + (registry.module(id)?.title ?? id))
     }
 

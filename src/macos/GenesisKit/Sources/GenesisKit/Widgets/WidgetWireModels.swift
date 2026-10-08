@@ -310,7 +310,35 @@ public struct WidgetActivityEvent: Codable, Equatable, Identifiable, Sendable {
     public var body: String
 }
 
+public struct WidgetInboxItem: Codable, Equatable, Sendable {
+    public var id: String
+    public var sourceId: String
+    public var kind: String
+    public var key: String
+    public var at: Double
+    public var needsAnswer: Bool
+}
+public struct WidgetInboxSession: Codable, Equatable, Sendable {
+    public var key: String
+    public var unread: Int
+    public var needsAnswer: Int
+    public var latest: WidgetInboxItem?
+    public var unreadItem: WidgetInboxItem?
+    public var pendingItem: WidgetInboxItem?
+}
+public struct WidgetInboxSummary: Codable, Equatable, Sendable {
+    public struct Profile: Codable, Equatable, Sendable { public var hostId: String }
+    public var unread: Int
+    public var needsAnswer: Int
+    public var complete: Bool
+    public var truncated: Bool
+    public var sessions: [WidgetInboxSession]
+    public var profile: Profile?
+    public static let empty = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: false, truncated: false, sessions: [])
+}
+
 public struct WidgetSnapshot: Codable, Equatable, Sendable {
+    public var notifications: WidgetInboxSummary? = nil
     public struct Changes: Codable, Equatable, Sendable {
         public struct File: Codable, Identifiable, Equatable, Sendable {
             public var path: String

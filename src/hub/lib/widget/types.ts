@@ -193,5 +193,6 @@ export const widgetStateSchema = z.object({
     assets: z.record(z.string(), widgetAssetSchema).default({}),
     drafts: z.record(z.string(), widgetDraftSchema).default({}),
     outgoing: z.array(widgetOutgoingSchema).default([]),
+    inboxRead: z.record(z.string(), z.number().finite().nonnegative()).default({}),
 });
 export type WidgetState = z.infer<typeof widgetStateSchema>;
