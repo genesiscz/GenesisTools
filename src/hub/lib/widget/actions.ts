@@ -12,7 +12,13 @@ import { confirmVideoAsset, importWidgetAsset, reviseVideoAsset } from "../compo
 import { changeOutgoing, enqueueWidgetMessage } from "../composer/outbox";
 import { createWidgetHandoff } from "./handoff";
 import { mutateWidgetState, readWidgetState, widgetRoot } from "./storage";
-import { widgetDraftSchema, widgetPayloadSchema, widgetPreferencesSchema, widgetTargetSchema } from "./types";
+import {
+    widgetDraftSchema,
+    widgetPayloadSchema,
+    widgetPreferencesPatchSchema,
+    widgetPreferencesSchema,
+    widgetTargetSchema,
+} from "./types";
 
 export const widgetActionSchema = z.discriminatedUnion("action", [
     z.object({ action: z.literal("selection"), key: z.string().nullable() }),
@@ -26,7 +32,7 @@ export const widgetActionSchema = z.discriminatedUnion("action", [
         draft: z.string().optional(),
         draftOption: z.string().optional(),
     }),
-    z.object({ action: z.literal("preferences"), patch: widgetPreferencesSchema.partial() }),
+    z.object({ action: z.literal("preferences"), patch: widgetPreferencesPatchSchema }),
     z.object({ action: z.literal("visibility"), key: z.string(), pinned: z.boolean() }),
     z.object({ action: z.literal("draft"), key: z.string(), draft: widgetDraftSchema }),
     z.object({ action: z.literal("draft-text"), key: z.string(), text: z.string().max(64_000) }),

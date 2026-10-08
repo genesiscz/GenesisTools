@@ -45,6 +45,8 @@ export const widgetPreferencesSchema = z.object({
         .length(3)
         .default([["agents"], ["capture", "shelf"], ["focus", "voice", "tasks"]]),
     sideLayout: z.enum(["joined", "separated"]).default("joined"),
+    sideStyle: z.enum(["modular", "classic"]).default("modular"),
+    joinedEdges: z.boolean().default(true),
     sidePosition: z.number().min(0).max(1).default(0.5),
     hoverPreviews: z.boolean().default(true),
     glassEffect: z.boolean().default(true),
@@ -55,6 +57,20 @@ export const widgetPreferencesSchema = z.object({
     voiceAccount: z.string().nullable().optional(),
     voiceModel: z.string().nullable().optional(),
     voiceLanguage: z.string().default(""),
+});
+
+// Zod defaults also run inside partial objects; a patch must retain only supplied keys.
+export const widgetPreferencesPatchSchema = z.record(z.string(), z.unknown()).transform((input, context) => {
+    const parsed = widgetPreferencesSchema.partial().safeParse(input);
+    if (!parsed.success) {
+        for (const issue of parsed.error.issues) {
+            context.addIssue({ ...issue });
+        }
+        return z.NEVER;
+    }
+    return Object.fromEntries(Object.entries(parsed.data).filter(([key]) => Object.hasOwn(input, key))) as Partial<
+        z.infer<typeof widgetPreferencesSchema>
+    >;
 });
 
 const attachmentBase = {

@@ -664,8 +664,60 @@ test("new external answers and saved drafts remain discoverable while another se
     expect(snapshot.errors).toEqual([]);
 });
 
+test("a single preference edit preserves unrelated saved choices and rejects malformed values", async () => {
+    const directory = await root();
+    const before = widgetPreferencesSchema.parse({
+        placement: "side",
+        side: "left",
+        display: "fixture-display",
+        projects: ["/fixture/project"],
+        sessions: ["fixture-session"],
+        providers: ["codex"],
+        topModules: ["capture", "shelf"],
+        sideGroups: [["tasks"], ["agents"], ["capture"]],
+        sideLayout: "separated",
+        sidePosition: 0.2,
+        hoverPreviews: false,
+        glassEffect: false,
+        voiceProvider: "local",
+        voiceAccount: "fixture-account",
+        voiceModel: "fixture-model",
+        voiceLanguage: "cs",
+    });
+    await mutateWidgetState(directory, (state) => {
+        state.preferences = before;
+    });
+    await performWidgetAction({ root: directory, input: { action: "preferences", patch: { showChanges: false } } });
+    const changed = { ...before, showChanges: false };
+    expect((await readWidgetState(directory)).preferences).toEqual(changed);
+    await performWidgetAction({ root: directory, input: { action: "preferences", patch: {} } });
+    expect((await readWidgetState(directory)).preferences).toEqual(changed);
+    await expect(
+        performWidgetAction({ root: directory, input: { action: "preferences", patch: { sidePosition: -1 } } })
+    ).rejects.toThrow();
+    expect((await readWidgetState(directory)).preferences).toEqual(changed);
+    await performWidgetAction({
+        root: directory,
+        input: {
+            action: "preferences",
+            patch: { voiceAccount: null, voiceLanguage: "", projects: [], glassEffect: true },
+        },
+    });
+    expect((await readWidgetState(directory)).preferences).toEqual({
+        ...changed,
+        voiceAccount: null,
+        voiceLanguage: "",
+        projects: [],
+        glassEffect: true,
+    });
+});
+
 test("legacy preferences gain independent module layouts without accepting off-screen positions", () => {
     const preferences = widgetPreferencesSchema.parse({ placement: "side" });
+    expect(preferences.sideStyle).toBe("modular");
+    expect(preferences.joinedEdges).toBe(true);
+    expect(widgetPreferencesSchema.parse({ sideStyle: "classic", joinedEdges: false }).joinedEdges).toBe(false);
+    expect(widgetPreferencesSchema.safeParse({ sideStyle: "unknown" }).success).toBe(false);
     expect(preferences.topModules).toEqual(["agents"]);
     expect(preferences.sideGroups).toHaveLength(3);
     expect(preferences.sidePosition).toBe(0.5);
