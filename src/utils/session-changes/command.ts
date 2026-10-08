@@ -1,6 +1,6 @@
 import { basename, isAbsolute, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
-import { RESERVED_PREFIX, scanShell, splitPipeline } from "@genesiscz/utils/shell/scan";
+import { RESERVED_PREFIX, type ShellScan, scanShell, splitPipeline } from "@genesiscz/utils/shell/scan";
 import { SCRIPT_RUNNERS, type StageKind, stageOf, WRAPPERS, WRAPPERS_WITH_NUMBER } from "./stages";
 import { elementText, expandHome, expandVariables, heredocBody, shellWords, type Word } from "./words";
 
@@ -87,6 +87,38 @@ function mergeAnalysis(into: CommandAnalysis, from: CommandAnalysis): void {
     }
 }
 
+/**
+ * Scans by command text, newest last. A session's changes analyze every earlier command again on each ask, and in a
+ * resident process (the hub server) the scan was about 40% of a warm ask (2026-10-08). A scan depends on the text
+ * alone and `analyzeCommand` only reads it. Bounded by the commands' total length.
+ */
+const scans = new Map<string, ShellScan>();
+const SCAN_CHARS_KEPT = 8 * 1024 * 1024;
+let scanChars = 0;
+
+function scanShellCached(command: string): ShellScan {
+    const kept = scans.get(command);
+    if (kept) {
+        scans.delete(command);
+        scans.set(command, kept);
+        return kept;
+    }
+
+    const scanned = scanShell(command);
+    scans.set(command, scanned);
+    scanChars += command.length;
+    for (const [text] of scans) {
+        if (scanChars <= SCAN_CHARS_KEPT) {
+            break;
+        }
+
+        scans.delete(text);
+        scanChars -= text.length;
+    }
+
+    return scanned;
+}
+
 export interface AnalyzeCommandInput {
     command: string;
     /** The directory the command starts in. */
@@ -120,10 +152,10 @@ export function analyzeCommand(input: AnalyzeCommandInput): CommandAnalysis {
         installs: false,
         updatesSnapshots: false,
     };
-    let scanned: ReturnType<typeof scanShell>;
+    let scanned: ShellScan;
 
     try {
-        scanned = scanShell(command);
+        scanned = scanShellCached(command);
     } catch (error) {
         log.debug({ error }, "could not scan a shell command; treating it as an unknown writer");
         analysis.kinds.push("write");
