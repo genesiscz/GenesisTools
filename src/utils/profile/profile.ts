@@ -307,9 +307,10 @@ function write(line: string, durMs?: number): void {
     }
 
     if (g.file) {
-        // The app call this line belongs to (utils/trace.ts), so the file joins with app-perf.log.
+        // The app call this line belongs to (utils/trace.ts), so the file joins with app-perf.log, and the
+        // process, so a slow timer in a resident process (the hub server, a watcher) can be named.
         const traceId = currentTraceId();
-        appendFile(traceId ? `${line} trace=${traceId}\n` : text);
+        appendFile(`${line}${traceId ? ` trace=${traceId}` : ""} pid=${process.pid}\n`);
     }
 }
 

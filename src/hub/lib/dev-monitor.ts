@@ -36,7 +36,7 @@ export interface ClassifyOptions {
 
 export const DEFAULT_CLASSIFY: ClassifyOptions = { minStallMs: 500, minSlowMainMs: 400, minProfileMs: 1000 };
 
-const profilePattern = /^\[profile:([^\]]+)\] (.*?) (\d+(?:\.\d+)?)(ms|s)(?: trace=(\S+))?$/;
+const profilePattern = /^\[profile:([^\]]+)\] (.*?) (\d+(?:\.\d+)?)(ms|s)(?: trace=(\S+))?(?: pid=(\d+))?$/;
 
 /**
  * A line of the day's profiling log as an event when it took at least `minProfileMs`: a timer inside a
@@ -55,15 +55,52 @@ export function classifyProfileLine(line: string, options: ClassifyOptions = DEF
         return null;
     }
 
-    const [, scope, label, , , trace] = match;
+    const [, scope, label, , , trace, pid] = match;
     const duration = ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`;
+    const who = pid ? ` [${processName(Number(pid))}]` : "";
     return {
         kind: "slow",
         time: "",
-        text: `${scope} ${label} ${duration}${trace ? ` trace=${trace}` : ""}`.slice(0, 300),
-        key: `${scope} ${label.replace(/\d+/g, "N")}`,
+        text: `${scope} ${label} ${duration}${trace ? ` trace=${trace}` : ""}${who}`.slice(0, 300),
+        key: `${scope} ${label.replace(/\d+/g, "N")}${who}`,
         ms,
     };
+}
+
+const processNames = new Map<number, string>();
+
+/** `pid 123 hub serve`: the process's tool and verbs, looked up once per pid (gone: the pid alone). */
+function processName(pid: number): string {
+    const known = processNames.get(pid);
+
+    if (known) {
+        return known;
+    }
+
+    const command = Bun.spawnSync(["ps", "-o", "command=", "-p", String(pid)])
+        .stdout.toString()
+        .trim();
+    const name = command ? `pid ${pid} ${shortCommand(command)}` : `pid ${pid}`;
+    processNames.set(pid, name);
+    return name;
+}
+
+/** `bun …/src/hub/index.ts serve --x` and `gt-hub --preload … serve` both read `hub serve`. */
+export function shortCommand(command: string): string {
+    const words = command.split(/\s+/).filter((word) => !word.startsWith("--preload"));
+    const entry = words.findIndex((word) => /\/src\/[^/]+\/index\.tsx?$/.test(word) || /\/tools$/.test(word));
+
+    if (entry === -1) {
+        return command.split("/").pop()?.slice(0, 60) ?? command.slice(0, 60);
+    }
+
+    const tool = words[entry].match(/\/src\/([^/]+)\/index\.tsx?$/)?.[1];
+    const rest = words.slice(entry + 1);
+    const firstOption = rest.findIndex((word) => word.startsWith("-"));
+    const verbs = (firstOption === -1 ? rest : rest.slice(0, firstOption))
+        .filter((word) => !word.includes("/"))
+        .slice(0, 3);
+    return [tool, ...verbs].filter(Boolean).join(" ");
 }
 
 const timePattern = /^\[(\d\d:\d\d:\d\d(?:\.\d+)?)\]\s*/;

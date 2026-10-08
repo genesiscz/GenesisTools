@@ -9,6 +9,7 @@ import {
     describeCrash,
     EventBatcher,
     formatEvent,
+    shortCommand,
 } from "./dev-monitor";
 
 describe("EventBatcher", () => {
@@ -89,6 +90,13 @@ describe("classifyProfileLine", () => {
             classifyProfileLine("[profile:cli] agents changes exit=0 cpu=1353ms rss=2470MB caller=app 1.117s")?.text
         ).toBe("cli agents changes exit=0 cpu=1353ms rss=2470MB caller=app 1.12s");
         expect(classifyProfileLine("[profile:widget] sessions 53.89ms")).toBeNull();
+        expect(classifyProfileLine("[profile:a] walk 1.5s trace=t1 pid=999999999")?.text).toBe(
+            "a walk 1.50s trace=t1 [pid 999999999]"
+        );
+        expect(shortCommand("/x/gt-hub --preload /a.ts --preload /b.ts /r/src/hub/index.ts serve --port 1")).toBe(
+            "hub serve"
+        );
+        expect(shortCommand("/x/bun /r/tools agents changes abc --tools t1 --json")).toBe("agents changes abc");
         expect(classifyProfileLine("[profile:agent-sessions] @sync.discover-full-skipped 4.5s")).toBeNull();
         expect(
             classifyProfileLine(
