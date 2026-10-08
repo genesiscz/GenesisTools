@@ -10,24 +10,24 @@ import { performWidgetAction } from "./lib/widget/actions";
 import { readWidgetText } from "./lib/widget/readback";
 import { widgetSnapshot } from "./lib/widget/snapshot";
 import { watchWidget } from "./lib/widget/watch";
+import { registerWidgetTasks } from "./widget-tasks-cli";
 
 const program = new Command().name("hub");
 const widget = program
     .command("widget")
     .description("Native widget data, media and ordered outgoing messages")
     .option("--state-root <directory>", "Widget state/assets directory, independent of shared session history");
+registerWidgetTasks(widget);
 widget
     .command("pin <session>")
     .requiredOption("--provider <provider>")
     .action(async (session: string, options, command) => {
-import { registerWidgetTasks } from "./widget-tasks-cli";
         const root = command.optsWithGlobals().stateRoot;
         const snapshot = await widgetSnapshot({ root });
         const candidates = snapshot.sessions.filter(
             (entry) => entry.target.sessionId === session && entry.target.provider === options.provider
         );
         if (candidates.length !== 1) {
-registerWidgetTasks(widget);
             throw new Error("Choose the exact session in Widget sessions; its identity is unavailable or ambiguous.");
         }
         out.result(
