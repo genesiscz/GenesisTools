@@ -564,6 +564,35 @@ describe("computeSessionChanges", () => {
         expect(compute({ transcript: sedOnly, log: [row("p0", `${REPO}/src/old.ts`, 0)] }).turns[0]?.files).toEqual([]);
     });
 
+    it("computes only the turns of onlyTools, each exactly as the whole session does", () => {
+        const scoped = compute({ transcript, log, onlyTools: ["codemod"] });
+        const scopedTurn = (id: string) => scoped.turns.find((item) => item.turnId === id);
+
+        expect(scopedTurn("p2")).toEqual(turn("p2"));
+        expect(scopedTurn("p1")?.files).toEqual([]);
+        expect(scopedTurn("p3")?.files).toEqual([]);
+    });
+
+    it("still reads a heredoc script an earlier turn wrote when onlyTools runs it", () => {
+        const scripted = parseClaudeTranscript("fixture-session", {
+            main: jsonl([
+                prompt("p1", "write a script", 0),
+                use("heredoc", "Bash", { command: "cat > gen.sh <<'EOF'\necho hi > src/out.ts\nEOF" }, 1),
+                result("p1", "heredoc", 2),
+                prompt("p2", "run it", 10),
+                use("run", "Bash", { command: "zsh gen.sh" }, 11),
+                result("p2", "run", 12),
+            ]),
+        });
+        const runLog = [row("p1", `${REPO}/gen.sh`, 2), row("p2", `${REPO}/src/out.ts`, 12)];
+        const whole = compute({ transcript: scripted, log: runLog });
+        const scoped = compute({ transcript: scripted, log: runLog, onlyTools: ["run"] });
+        const p2 = (changes: typeof whole) => changes.turns.find((item) => item.turnId === "p2");
+
+        expect(p2(scoped)).toEqual(p2(whole));
+        expect(p2(scoped)?.files.map((file) => file.path)).toEqual([`${REPO}/src/out.ts`]);
+    });
+
     it("judges the log alone by path rules when there is no transcript", () => {
         const logOnly = compute({
             transcript: null,

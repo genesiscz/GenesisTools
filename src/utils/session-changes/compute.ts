@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { analyzeCommand, type CommandAnalysis, isLockOrManifest, namedBy } from "./command";
 import { type PathRuleContext, pathExclusion, rootOf } from "./rules";
 import { fileToolVia, isShellTool } from "./transcript";
@@ -57,6 +57,13 @@ export interface SessionChangesInput {
     repoRoot?: (dir: string) => string | null;
     /** Whether a path is a directory now; a named target that is one is never listed as a file. */
     isDirectory?: (path: string) => boolean;
+    /**
+     * Compute only the turns that hold these tool calls; every other turn comes back with no files.
+     * `agents changes --tools` asks for a few new calls of a live session, and parsing every shell
+     * command of a 200 MB session cost 0.9 s of each 2.5 s run (2026-10-08). A command outside these
+     * turns is still read when it could feed a later one: a heredoc, or a script the session wrote.
+     */
+    onlyTools?: readonly string[];
 }
 
 function directoryNow(path: string): boolean {
@@ -482,6 +489,47 @@ export function lastChangedTurns(changes: SessionChanges, count: number): TurnCh
 }
 
 /**
+ * Whether analyzing a command can add to the session's known file texts, which a later command may
+ * run: only a heredoc writes one, directly or inside a script the session wrote before.
+ */
+function feedsLaterCommands(command: string, written: WrittenFiles): boolean {
+    if (writesHeredocFile(command)) {
+        return true;
+    }
+
+    for (const name of written.heredocScripts.values()) {
+        if (command.includes(name)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/** `cat > f <<EOF` is the only form `analyzeCommand` records a file text from; this test is wider. */
+function writesHeredocFile(text: string): boolean {
+    return text.includes("<<") && /\bcat\b/.test(text);
+}
+
+/**
+ * The file texts the session wrote, by absolute path (`AnalyzeCommandInput.files`), which also keeps
+ * the names of the ones that are scripts writing a file of their own, as each is set.
+ */
+class WrittenFiles extends Map<string, string> {
+    readonly heredocScripts = new Map<string, string>();
+
+    override set(path: string, text: string): this {
+        if (writesHeredocFile(text)) {
+            this.heredocScripts.set(path, basename(path));
+        } else {
+            this.heredocScripts.delete(path);
+        }
+
+        return super.set(path, text);
+    }
+}
+
+/**
  * Which files each turn of a session changed, and which detected changes were automatic.
  *
  * Evidence, strongest first: a file tool's own call (exact path, before and after text); a
@@ -531,6 +579,14 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
     }
 
     const rules: PathRuleContext = { roots: [...roots], home, tempDirs: input.tempDirs };
+    const wanted = input.onlyTools ? new Set(input.onlyTools) : null;
+    const scope = wanted
+        ? new Set([
+              ...calls.filter((call) => wanted.has(call.id)).map((call) => call.turnId),
+              ...rows.filter((row) => row.toolUseId && wanted.has(row.toolUseId)).map((row) => row.turn),
+          ])
+        : null;
+    const inScope = (turnId: string) => scope === null || scope.has(turnId);
     const turns = new Map<string, TurnChanges>();
 
     for (const turn of input.transcript?.turns ?? []) {
@@ -565,7 +621,7 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
     // heredoc, or a Write) is known when a later call runs it.
     const installsByTurn = new Map<string, boolean>();
     const analyses = new Map<string, CommandAnalysis>();
-    const written = new Map<string, string>();
+    const written = new WrittenFiles();
     const chronological = [...calls].sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
 
     for (const call of chronological) {
@@ -575,6 +631,10 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
         }
 
         if (!isShellTool(call.name) || call.command === null) {
+            continue;
+        }
+
+        if (!inScope(call.turnId) && !feedsLaterCommands(call.command, written)) {
             continue;
         }
 
@@ -603,6 +663,10 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
     };
 
     for (const call of calls) {
+        if (!inScope(call.turnId)) {
+            continue;
+        }
+
         const via = fileToolVia(call.name);
 
         if (via && call.filePath) {
@@ -636,6 +700,10 @@ export function computeSessionChanges(input: SessionChangesInput): ComputedSessi
     const fileRows = input.transcript ? [] : rows.filter((row) => row.source !== "bash");
 
     for (const row of [...orphans, ...fileRows]) {
+        if (!inScope(row.turn)) {
+            continue;
+        }
+
         const explicit = row.source !== "bash";
         const reason = explicit
             ? null

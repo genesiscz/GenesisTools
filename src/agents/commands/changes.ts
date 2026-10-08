@@ -382,7 +382,16 @@ export function registerChangesCommand(program: Command): void {
                 return;
             }
 
-            const changes = loadSessionChanges({ sessionId: session, log: read.rows });
+            const toolIds = options.tools
+                ? [...new Set(options.tools.split(",").map((id) => id.trim()))].filter(Boolean)
+                : null;
+            // With --tools only those calls' turns are computed: the hub asks for each new call of a
+            // live session, and the whole session cost 2.5 s per ask on a 200 MB transcript.
+            const changes = loadSessionChanges({
+                sessionId: session,
+                log: read.rows,
+                onlyTools: toolIds ?? undefined,
+            });
 
             if (!changes.transcriptPath && !existsSync(file) && !(await isKnownSession(session))) {
                 // An empty list would read as "this session changed nothing", for a mistyped id too.
@@ -391,10 +400,10 @@ export function registerChangesCommand(program: Command): void {
                 return;
             }
 
-            if (options.tools) {
+            if (toolIds) {
                 // The hub asks for every tool row on screen in one run: a large session costs about
                 // 0.7 s to read, and one process per row read it once per row (11 at a time).
-                const ids = [...new Set(options.tools.split(",").map((id) => id.trim()))].filter(Boolean);
+                const ids = toolIds;
                 const perTool = ids.map((tool) => ({ tool, ...toolCallFiles(changes, tool) }));
 
                 if (options.storeBlobs) {
