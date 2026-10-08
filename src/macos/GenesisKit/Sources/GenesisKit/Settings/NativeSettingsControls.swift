@@ -43,6 +43,8 @@ public struct NativeSettingsNumberPicker: View {
     private let range: Range<Int>
     private let identifier: String
     @Binding private var value: Int
+    @State private var entry = ""
+    @FocusState private var editing: Bool
 
     public init(_ title: String, range: Range<Int>, identifier: String, value: Binding<Int>) {
         self.title = title
@@ -52,6 +54,39 @@ public struct NativeSettingsNumberPicker: View {
     }
 
     public var body: some View {
+        if range.count > 60 {
+            HStack(spacing: 6) {
+                TextField(title, text: $entry)
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.trailing)
+                    .font(.system(size: 16, weight: .medium, design: .rounded)).monospacedDigit()
+                    .frame(width: 58)
+                    .focused($editing)
+                    .onSubmit { commitEntry() }
+                    .onChange(of: editing) { _, focused in
+                        if focused { entry = String(value) } else { commitEntry() }
+                    }
+                    .onChange(of: value) { _, updated in
+                        entry = String(updated)
+                    }
+                    .onAppear { entry = String(value) }
+                    .accessibilityLabel(title)
+                    .accessibilityIdentifier(identifier)
+                Stepper(title, value: $value, in: range.lowerBound...(range.upperBound - 1))
+                    .labelsHidden().fixedSize()
+                    .accessibilityIdentifier(identifier + ".stepper")
+            }.fixedSize()
+        } else {
+            menu
+        }
+    }
+
+    private func commitEntry() {
+        value = min(range.upperBound - 1, max(range.lowerBound, Int(entry) ?? value))
+        entry = String(value)
+    }
+
+    private var menu: some View {
         Menu {
             ForEach(Array(range), id: \.self) { option in
                 Button { value = option } label: {
