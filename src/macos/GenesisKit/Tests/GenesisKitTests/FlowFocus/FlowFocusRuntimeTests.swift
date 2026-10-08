@@ -190,6 +190,39 @@ final class FlowFocusRuntimeTests: XCTestCase {
         await owner.stop()
     }
 
+    func testPermissionActionRunsOnlyInTheStartedElectedHost() async throws {
+        let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.permission-owner", liveServices: false, presentsWindows: false)
+        let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.permission-client", liveServices: false, presentsWindows: false)
+        await owner.start()
+        await client.start()
+        var ownerRequests = 0
+        owner.flow.permissionRequestEffect = { ownerRequests += 1; return (false, false) }
+        client.flow.permissionRequestEffect = { XCTFail("passive client cannot request system access"); return (false, false) }
+        do {
+            client.flow.requestDictationPermissions()
+            try await waitUntil { owner.flow.lastError?.contains("owner is running") == true }
+            XCTAssertEqual(ownerRequests, 0, "isolated Preview cannot request live permissions")
+            owner.flow.hotkeyBindingEffect = {}
+            owner.flow.config.showPill = false
+            owner.flow.start()
+            let prompted = expectation(description: "owner received explicit permission request")
+            owner.flow.permissionRequestEffect = {
+                ownerRequests += 1
+                prompted.fulfill()
+                return (false, false)
+            }
+            client.flow.requestDictationPermissions()
+            await fulfillment(of: [prompted], timeout: 2)
+            XCTAssertEqual(ownerRequests, 1)
+        } catch {
+            await client.stop()
+            await owner.stop()
+            throw error
+        }
+        await client.stop()
+        await owner.stop()
+    }
+
     func testTwoHostsShareOneClockAndClientCommandsReachItsOwner() async throws {
         let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.owner", liveServices: false, presentsWindows: false)
         let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.client", liveServices: false, presentsWindows: false)

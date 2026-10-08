@@ -135,6 +135,7 @@ public final class CompanionSpeechRecognizer: ObservableObject {
     /// no recognition task starts. Tests use it where the runner has no Speech
     /// Recognition grant (starting a task there aborts the process).
     public var recognizes = true
+    var speechAuthorizationGranted: () -> Bool = { CompanionSpeechRecognizer.speechAuthorized() }
 
     /// Live partial transcript while the user is speaking (HUD "You" row).
     /// Always the WHOLE hold so far — committed utterances plus the live one.
@@ -238,6 +239,9 @@ public final class CompanionSpeechRecognizer: ObservableObject {
     /// silently yields nothing — a known SFSpeech flakiness on macOS).
     public func start(locale: Locale = .current, forceServer: Bool = false) throws {
         cancel() // never stack two sessions
+        guard !recognizes || speechAuthorizationGranted() else {
+            throw CompanionSpeechError.speechNotAuthorized
+        }
 
         let resolved = Self.normalizedLocale(locale)
         guard let recognizer = SFSpeechRecognizer(locale: resolved) ?? SFSpeechRecognizer() else {
@@ -380,6 +384,11 @@ public final class CompanionSpeechRecognizer: ObservableObject {
 
     private func startRecognitionTask() {
         guard recognizes, let recognizer else { return }
+        guard speechAuthorizationGranted() else {
+            FlowFocusLog.speech.error("Speech Recognition permission is unavailable; capture stopped")
+            cancel()
+            return
+        }
         generation += 1
         let gen = generation
         let request = SFSpeechAudioBufferRecognitionRequest()
@@ -460,6 +469,10 @@ public final class CompanionSpeechRecognizer: ObservableObject {
         onDevice: Bool,
         timeoutSeconds: Double
     ) async -> String {
+        guard speechAuthorized() else {
+            FlowFocusLog.speech.error("File transcription requires Speech Recognition permission")
+            return ""
+        }
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = false
         request.requiresOnDeviceRecognition = onDevice
@@ -522,11 +535,17 @@ public final class CompanionSpeechRecognizer: ObservableObject {
 
 public enum CompanionSpeechError: LocalizedError {
     case recognizerUnavailable
+    case speechNotAuthorized
+    case microphoneNotAuthorized
 
     public var errorDescription: String? {
         switch self {
         case .recognizerUnavailable:
             return "speech recognizer unavailable — check Settings → Privacy → Speech Recognition"
+        case .speechNotAuthorized:
+            return "Allow Speech Recognition in Dictation settings before dictating."
+        case .microphoneNotAuthorized:
+            return "Allow Microphone access in Dictation settings before recording."
         }
     }
 }

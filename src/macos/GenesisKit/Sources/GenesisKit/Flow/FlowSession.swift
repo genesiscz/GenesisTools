@@ -24,6 +24,7 @@ public final class FlowSession: ObservableObject {
         }
     }
     @Published public private(set) var lastError: String?
+    @Published public private(set) var isRequestingPermissions = false
     /// Set for a few seconds after a turn so the pill can confirm what landed.
     @Published public private(set) var lastInjected: String?
     /// Settings → Labs → Dictation (`app.labs.dictation`, default on). Off =
@@ -87,6 +88,9 @@ public final class FlowSession: ObservableObject {
     private var wordStats: [String: FlowDictionary.WordStats] = [:]
     private var finishTask: Task<Void, Never>?
     private var pillHideTask: Task<Void, Never>?
+    private var permissionTask: Task<Void, Never>?
+    private var permissionRequestID: UUID?
+    var permissionRequestEffect: (() async -> (microphone: Bool, speech: Bool))?
     private let preRoll = FlowPreRoll()
     var preRollEffect: ((Bool) -> Void)?
     var recognitionStartEffect: (() throws -> Void)?
@@ -170,6 +174,48 @@ public final class FlowSession: ObservableObject {
             cancelTurn()
             applyHotkeyBinding()
             applyPreRoll()
+        }
+    }
+
+    /// Only a deliberate settings action reaches the system prompts. Passive hosts forward
+    /// the request to the app that will actually own recognition and the microphone.
+    public func requestDictationPermissions() {
+        if forward("flow.permissions") { return }
+        guard started, store.writesEnabled else {
+            reportFailure("Permission requests are available when the dictation owner is running.")
+            return
+        }
+        guard permissionTask == nil else { return }
+        let requestID = UUID()
+        permissionRequestID = requestID
+        isRequestingPermissions = true
+        permissionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.permissionRequestID == requestID {
+                    self.permissionTask = nil
+                    self.permissionRequestID = nil
+                    self.isRequestingPermissions = false
+                }
+            }
+            let grants: (microphone: Bool, speech: Bool)
+            if let permissionRequestEffect = self.permissionRequestEffect {
+                grants = await permissionRequestEffect()
+            } else {
+                var microphone = CompanionSpeechRecognizer.micAuthorized()
+                if !microphone { microphone = await CompanionSpeechRecognizer.requestMicAuthorization() }
+                guard !Task.isCancelled, self.permissionRequestID == requestID else { return }
+                var speech = CompanionSpeechRecognizer.speechAuthorized()
+                if !speech { speech = await CompanionSpeechRecognizer.requestSpeechAuthorization() }
+                grants = (microphone, speech)
+            }
+            guard !Task.isCancelled, self.permissionRequestID == requestID else { return }
+            if grants.microphone && grants.speech {
+                self.lastError = nil
+                self.applyPreRoll()
+            } else {
+                self.reportFailure("Allow Microphone and Speech Recognition for the dictation app in System Settings.")
+            }
         }
     }
 
@@ -265,6 +311,10 @@ public final class FlowSession: ObservableObject {
 
     public func stop() {
         started = false
+        permissionTask?.cancel()
+        permissionTask = nil
+        permissionRequestID = nil
+        isRequestingPermissions = false
         remoteCommand = nil
         setPreRollRunning(false)
         pillHideTask?.cancel()

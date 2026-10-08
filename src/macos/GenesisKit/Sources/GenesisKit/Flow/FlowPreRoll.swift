@@ -44,6 +44,9 @@ public final class FlowPreRoll {
     private let ring = Ring()
 
     public private(set) var isRunning = false
+    var authorizationGranted: () -> Bool = {
+        CompanionSpeechRecognizer.micAuthorized() && CompanionSpeechRecognizer.speechAuthorized()
+    }
 
     /// Format of the buffers currently in the ring, for the caller to check
     /// against the recogniser's expectations.
@@ -53,6 +56,11 @@ public final class FlowPreRoll {
 
     /// Begin holding a rolling window. Safe to call repeatedly.
     public func start() {
+        guard authorizationGranted() else {
+            stop()
+            FlowFocusLog.flow.info("pre-roll waits for explicit microphone and Speech Recognition permission")
+            return
+        }
         guard !isRunning else { return }
         let engine = AVAudioEngine()
         let input = engine.inputNode

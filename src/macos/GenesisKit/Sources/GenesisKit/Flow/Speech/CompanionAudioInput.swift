@@ -44,12 +44,14 @@ public final class CompanionMicSource: CompanionAudioSource {
     /// When true and the system default input is a Bluetooth device, record
     /// from the built-in mic instead (see the file header for why).
     public var avoidBluetooth = false
+    var microphoneAuthorizationGranted: () -> Bool = { CompanionSpeechRecognizer.micAuthorized() }
 
     private var engine: AVAudioEngine?
     public private(set) var deviceLabel = "system default"
 
     public func start(onBuffer: @escaping (AVAudioPCMBuffer) -> Void) throws -> AVAudioFormat {
         stop()
+        guard microphoneAuthorizationGranted() else { throw CompanionSpeechError.microphoneNotAuthorized }
         let defaultDevice = CompanionInputDevices.defaultInput()
         var chosen = defaultDevice
         var engine = AVAudioEngine()

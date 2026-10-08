@@ -174,6 +174,25 @@ private struct FlowSettingsPane: View {
                     .font(GenTypography.headline(20))
                     .foregroundStyle(Color.genTextPrimary)
 
+                group("ACCESS") {
+                    Text("Microphone and Speech Recognition access is requested only when you press Review, by the app handling dictation.")
+                        .font(GenTypography.body(12))
+                        .foregroundStyle(Color.settingsTextSecondary)
+                    Button(session.isRequestingPermissions ? "Waiting for macOS…" : "Review dictation access") {
+                        session.requestDictationPermissions()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(session.isRequestingPermissions)
+                    .accessibilityIdentifier("flow-review-permissions")
+                    HStack(spacing: GenSpacing.md) {
+                        Button("Microphone settings") { openPrivacy("Privacy_Microphone") }
+                        Button("Speech Recognition settings") { openPrivacy("Privacy_SpeechRecognition") }
+                    }
+                    .buttonStyle(.genHoverPlain())
+                    .font(GenTypography.caption(11))
+                    .foregroundStyle(Color.jarvisTeal)
+                }
+
                 group("CAPTURE") {
                     toggle(
                         "Enabled",
@@ -239,6 +258,11 @@ private struct FlowSettingsPane: View {
             .padding(GenSpacing.xl)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private func openPrivacy(_ pane: String) {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     /// Writes go through `FlowSession.config`, whose `didSet` persists once per

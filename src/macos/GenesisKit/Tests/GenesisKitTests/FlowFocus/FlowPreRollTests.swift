@@ -1,5 +1,6 @@
 // Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Tests/GenesisTests/FlowPreRollTests.swift at 2026-10-08T05:04:08+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
 import AVFoundation
+import Speech
 import XCTest
 @testable import GenesisKit
 #if canImport(Genesis)
@@ -57,6 +58,79 @@ final class FlowPreRollTests: XCTestCase {
         session.cancelTurn()
         XCTAssertFalse(rolling)
         XCTAssertEqual(recognitionStarts, 4)
+    }
+
+    @MainActor
+    func testCapturePrimitivesDoNotOpenInputWithoutAnExistingGrant() throws {
+        let source = PermissionGuardAudioSource()
+        let recognizer = CompanionSpeechRecognizer(audioSource: source)
+        recognizer.speechAuthorizationGranted = { false }
+        XCTAssertThrowsError(try recognizer.start()) { error in
+            XCTAssertTrue(error.localizedDescription.contains("Allow Speech Recognition"))
+        }
+        XCTAssertEqual(source.starts, 0)
+        recognizer.recognizes = false
+        XCTAssertThrowsError(try recognizer.start(locale: Locale(identifier: "en-US"))) { error in
+            XCTAssertEqual((error as? CocoaError)?.code, .fileReadCorruptFile)
+        }
+        XCTAssertEqual(source.starts, 1, "capture-only file input remains usable without Speech permission")
+        let mic = CompanionMicSource()
+        mic.microphoneAuthorizationGranted = { false }
+        XCTAssertThrowsError(try mic.start { _ in XCTFail("no microphone buffers are permitted") }) { error in
+            XCTAssertTrue(error.localizedDescription.contains("Allow Microphone"))
+        }
+        let preRoll = FlowPreRoll()
+        preRoll.authorizationGranted = { false }
+        preRoll.start()
+        XCTAssertFalse(preRoll.isRunning)
+    }
+
+    @MainActor
+    func testPermissionRequestsAreExplicitCoalescedAndForwardedByPassiveHosts() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-explicit-permissions-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = FlowStore(directory: root)
+        var config = FlowConfig()
+        config.showPill = false
+        store.saveConfig(config)
+        let session = FlowSession(store: store)
+        session.hotkeyBindingEffect = {}
+        var requests = 0
+        let completed = expectation(description: "explicit permission request")
+        session.permissionRequestEffect = {
+            requests += 1
+            completed.fulfill()
+            return (false, false)
+        }
+        session.requestDictationPermissions()
+        XCTAssertEqual(requests, 0, "an unelected or preview session cannot prompt")
+        session.start()
+        XCTAssertEqual(requests, 0, "launch never requests authorization")
+        session.requestDictationPermissions()
+        session.requestDictationPermissions()
+        await fulfillment(of: [completed], timeout: 1)
+        XCTAssertEqual(requests, 1)
+        XCTAssertFalse(session.isRequestingPermissions)
+        XCTAssertTrue(session.lastError?.contains("System Settings") == true)
+        let passive = FlowSession(store: FlowStore(directory: root, writesEnabled: false))
+        var forwarded: [String] = []
+        passive.remoteCommand = { action, _ in forwarded.append(action) }
+        passive.permissionRequestEffect = { XCTFail("the passive process must not prompt"); return (false, false) }
+        passive.requestDictationPermissions()
+        XCTAssertEqual(forwarded, ["flow.permissions"])
+        session.stop()
+    }
+
+    func testWholeClipHelperReturnsWithoutStartingUnauthorizedRecognition() async throws {
+        guard !CompanionSpeechRecognizer.speechAuthorized() else {
+            throw XCTSkip("Negative control needs a runner without Speech authorization")
+        }
+        let recognizer = try XCTUnwrap(SFSpeechRecognizer(locale: Locale(identifier: "en-US")))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format(16_000), frameCapacity: 1))
+        buffer.frameLength = 1
+        let result = await CompanionSpeechRecognizer.transcribe(buffer: buffer, recognizer: recognizer,
+                                                                onDevice: true, timeoutSeconds: 1)
+        XCTAssertEqual(result, "")
     }
 
     private func format(_ rate: Double, channels: AVAudioChannelCount = 1) -> AVAudioFormat {
@@ -130,4 +204,15 @@ final class FlowPreRollTests: XCTestCase {
     func testPreRollIsOffByDefault() {
         XCTAssertFalse(FlowConfig().preRoll)
     }
+}
+
+@MainActor
+private final class PermissionGuardAudioSource: CompanionAudioSource {
+    let deviceLabel = "permission-test-fixture"
+    var starts = 0
+    func start(onBuffer: @escaping (AVAudioPCMBuffer) -> Void) throws -> AVAudioFormat {
+        starts += 1
+        throw CocoaError(.fileReadCorruptFile)
+    }
+    func stop() {}
 }
