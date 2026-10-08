@@ -46,6 +46,13 @@
 - **Window-local drag translation changes as the window moves.** Track pointer events in screen
   coordinates from mouse-down; hold presentation height stable during the drag. Give the native
   handle its own accessibility identity rather than identifying the image behind it.
+- **Padding and allocated height must include populated controls.** A side rail with 4 pt end
+  padding looked flush to its curved edge; adding a badge to a nominal 28 pt button also outgrew
+  its allocation. Reserve explicit end insets and include the badge row plus inter-row spacing in
+  the shared compact-height calculation used by both host and coordinator. Test counts 0 → 128 → 0,
+  not only empty inboxes. The reproduced fix used 12 pt end insets and a 42 pt badged button;
+  the live rail grew from 354 to 384 pt, while the top header grew from 39 to 47 pt. These dimensions
+  suit this design, not every panel. Inspect the first and last controls against the curved shape.
 - **A closed SwiftUI Picker can still build every native menu item.** Thousands of choices can stall
   the pane that contains it before the picker is opened. Sample the opening and inspect native menu
   construction; defer a searchable, bounded chooser until requested.
