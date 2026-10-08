@@ -58,6 +58,14 @@ export const CLAUDE_REGISTRARS: LazyRegistrar[] = [
             return (program: Command) => register(program, "claude");
         },
     },
+    {
+        names: ["message"],
+        load: async () => {
+            const register = (await import("@app/ai/commands/agent/message")).registerAgentMessageCommand;
+
+            return (program: Command) => register(program, "claude");
+        },
+    },
     { names: ["decide"], load: async () => (await import("./commands/decide")).registerDecideCommand },
     { names: ["who", "active"], load: async () => (await import("./commands/who")).registerWhoCommand },
     { names: ["worker"], load: async () => (await import("./commands/worker")).registerWorkerCommand },

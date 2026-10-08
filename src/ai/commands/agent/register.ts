@@ -5,6 +5,7 @@ import { isTurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
 import type { Command } from "commander";
 import { registerProviderUsageCommand } from "../usage/provider-usage";
 import { registerAgentCmuxCommand } from "./cmux";
+import { registerAgentMessageCommand } from "./message";
 import { registerAgentResumeCommand, registerAgentRunCommand } from "./run";
 import { type AgentToolSpec, type SharedVerb, toolName } from "./spec";
 import { registerAgentWaitCommand } from "./wait";
@@ -63,6 +64,12 @@ export function registerAgentTool(program: Command, spec: AgentToolSpec): void {
     shared("wait", () => {
         if (isTurnProvider(spec.alias)) {
             registerAgentWaitCommand(program, spec.alias);
+        }
+    });
+
+    shared("message", () => {
+        if (isTurnProvider(spec.alias)) {
+            registerAgentMessageCommand(program, spec.alias);
         }
     });
 

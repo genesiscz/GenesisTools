@@ -37,6 +37,8 @@ interface SessionNewFlags {
     name?: string;
     viaTmux?: boolean;
     focus?: string | boolean;
+    /** Commander's `--no-cross-messages`: true unless that flag is given. */
+    crossMessages?: boolean;
     json?: boolean;
 }
 
@@ -157,6 +159,7 @@ export async function runSessionNew(
             pidFile,
             prompt,
             promptFile: absolutePrompt,
+            crossMessages: options.crossMessages !== false,
             name: title,
             viaTmux: options.viaTmux === true,
             focus: focus.focus,
@@ -280,6 +283,10 @@ function addNewOptions(command: Command): Command {
         .option("--name <title>", "Session name and workspace title")
         .option("--via-tmux", "Run the agent inside a detached tmux session and attach the workspace to it")
         .option("--focus [value]", "Focus the new workspace: true or false (default: false)")
+        .option(
+            "--no-cross-messages",
+            "Claude: do not pass --cross-messages (messages from tools claude message then wait for approval in bypass mode)"
+        )
         .option("--json", "Print name, agent, account, workspace, surface, window, tmuxSession, cwd, command as JSON");
 }
 

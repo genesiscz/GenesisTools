@@ -124,10 +124,15 @@ tools claude cmux send <id> "run the tests"   # type into the session's own pane
 tools claude cmux send <id> "/compact" --no-enter --dry-run
 tools claude cmux read <id> --lines 40       # print that pane's text
 tools claude wait <id|title> [--timeout S] [--next] [--stream] [--json]   # block until the turn ends
+tools claude message <id|name|title> "status?"   # into the running session's socket, no typing
 ```
 
 `tree` (`--json` for machines) enumerates every cmux window and annotates each surface with
 the Claude Code session it hosts, from the refs journal plus the `· 8hex` tab-title marker.
+`open-session` resumes one session at a chosen level: `--window` makes a new workspace,
+`--workspace` a new pane, `--workspace --pane` a new tab, `--workspace --surface` types the
+resume command into that surface (`--no-enter` queues it). The command comes from the same
+builder restore uses, so the pinned account and auth mode survive.
 
 `wait` reads the session's transcript, never the pane, and exits when the current turn ends. The shared
 file watcher (`watchFileFeed`) wakes it on every write; a 5 s poll only notices silence and the deadline. A
@@ -136,7 +141,8 @@ the wait. Exit codes: 0 when the
 session is back at its prompt (the final assistant message goes to stdout, a status line to stderr),
 3 when a running turn has written nothing for `--stall-timeout` seconds (default 900, `0` never),
 124 on `--timeout`, 1 when no session matches. An idle session returns at once; `--next` waits for the
-next turn instead. `--json` prints `{outcome, state, sessionId, lastText, asksQuestion, durationMs, ...}`;
+next turn instead. `--last <n>` prints the last N assistant messages (separated by `---`), `--tools` adds
+the tool calls of the turn that ended (`tools: Bash ×2, Edit ×1`), `--quiet` prints only the status line. `--json` prints `{outcome, state, sessionId, lastText, asksQuestion, durationMs, ...}`;
 `asksQuestion` is true when the session waits on its question tool: Claude `AskUserQuestion`, Codex
 `request_user_input` (unanswered) or a turn that ended on `request_user_input_async`, Grok `ask_user_question` or
 `exit_plan` (no result yet). It is decided from the tool calls, never from the wording; the old `?`/`❓` wording
@@ -144,10 +150,21 @@ check is kept behind `DECISION_HEURISTICS` (off) in `turn-wait.ts`. The same ver
 `tools grok wait` and `tools codex wait`. `<session>` is an id (8+ characters), a transcript path or a
 `/rename` title (Grok: the session summary; Codex: the thread name).
 
-`open-session` resumes one session at a chosen level: `--window` makes a new workspace,
-`--workspace` a new pane, `--workspace --pane` a new tab, `--workspace --surface` types the
-resume command into that surface (`--no-enter` queues it). The command comes from the same
-builder restore uses, so the pinned account and auth mode survive.
+`tools claude message <session> "<text>"` (also `tools codex|grok message`) sends into a RUNNING session
+through the agent's own channel, never by typing into its pane. Claude: the session's cross-session socket
+(`~/.claude/sessions/<pid>.json` names `/tmp/cc-socks/<pid>.sock`); a busy session reads it between tool
+calls, an idle one starts a turn. A session in bypass mode holds such a message for approval unless it was
+started with `tools claude run --cross-messages` (passes `--settings {"crossSessionInbound":"accept"}`;
+`tools cmux agents new claude` adds it unless `--no-cross-messages`). `<session>` is a session id or
+8+ character prefix, the session name, or a `/rename` title; several matches fail with each candidate's
+exact command; part of the cmux tab or workspace title also works (`vybava` finds "vybava - grok"). Codex:
+`codex queue` on the shared app-server (a TUI started against it). Grok: no structured channel (the TUI
+listens on no socket). Where there is no channel, `--allow-keystrokes` pastes into the session's cmux tab
+with `cmux paste --submit`, which refuses over a draft or an open dialog. `--priority now|next|later`
+(Claude), `-` reads stdin. `--wait` then waits for the turn that answers and prints the reply, with the
+exit codes of `wait`; `--wait-timeout`, `--stall-timeout`, `--stream`, `--last`, `--tools` and `--quiet`
+work as there, and `--json` prints the wait report with a `delivery` field. A reply that already ended
+before the wait began still counts, because the send time is the baseline.
 
 `send` types text into the pane a session already occupies, resolving `<id>` in stages:
 the refs journal first, then an exact id, an id prefix, the tab title, the workspace, and

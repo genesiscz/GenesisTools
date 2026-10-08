@@ -80,6 +80,13 @@ afterEach(() => {
 test("the run line quotes the account and the prompt, and omits -- when there is no prompt", () => {
     expect(agentRunCommand({ agent: "claude", account: "work", prompt: "fix it" })).toBe(CLAUDE);
     expect(agentRunCommand({ agent: "claude", account: "work" })).toBe("'tools' 'claude' 'run' 'work'");
+    expect(agentRunCommand({ agent: "claude", account: "work", crossMessages: true })).toBe(
+        "'tools' 'claude' 'run' 'work' '--cross-messages'"
+    );
+    // Only Claude has the setting; another agent's line is unchanged.
+    expect(agentRunCommand({ agent: "codex", account: "work", crossMessages: true })).toBe(
+        "'tools' 'codex' 'run' 'work'"
+    );
     expect(agentRunCommand({ agent: "claude", account: "work", promptFile: "/tmp/my prompt.md" })).toBe(
         `'tools' 'claude' 'run' 'work' '--' "$(cat '/tmp/my prompt.md')"`
     );
@@ -402,7 +409,10 @@ test("agents new prints the result JSON, records the session, and rejects a bad 
         window: "window:1",
         tmuxSession: null,
         cwd: "/repo/app",
-        command: withPidNote(CLAUDE, "/state/sessions/claude-app-ab12cd.pid"),
+        command: withPidNote(
+            agentRunCommand({ agent: "claude", account: "work", prompt: "fix it", crossMessages: true }),
+            "/state/sessions/claude-app-ab12cd.pid"
+        ),
     });
     expect(store.lines).toEqual([
         expect.objectContaining({ type: "created", name: "claude-app-ab12cd", workspace: "workspace:9" }),

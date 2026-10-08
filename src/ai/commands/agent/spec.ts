@@ -26,7 +26,8 @@ export type SharedVerb =
     | "who"
     | "worker"
     | "cmux"
-    | "wait";
+    | "wait"
+    | "message";
 
 export interface AgentLaunchInput {
     account: AccountEntry;

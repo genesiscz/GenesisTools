@@ -42,6 +42,8 @@ export function agentRunCommand(input: {
     model?: string;
     prompt?: string;
     promptFile?: string;
+    /** Claude only: start it with `--cross-messages`, so `tools claude message` lands without approval. */
+    crossMessages?: boolean;
 }): string {
     const account = input.account.trim();
 
@@ -57,7 +59,14 @@ export function agentRunCommand(input: {
         throw new Error(`prompt is over ${PROMPT_CAP} bytes; pass it with --prompt-file instead`);
     }
 
-    const argv = ["tools", input.agent, "run", account, ...(input.model ? ["-m", input.model] : [])];
+    const argv = [
+        "tools",
+        input.agent,
+        "run",
+        account,
+        ...(input.model ? ["-m", input.model] : []),
+        ...(input.crossMessages && input.agent === "claude" ? ["--cross-messages"] : []),
+    ];
 
     if (input.promptFile) {
         return `${shellCommandLine([...argv, "--"])} "$(cat ${shellQuote(input.promptFile)})"`;

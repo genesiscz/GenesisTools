@@ -174,7 +174,10 @@ export async function runMessage(opts: MessageOpts): Promise<void> {
 export function registerMessageCommand(program: Command): void {
     program
         .command("message")
-        .description("Send a message (direct, broadcast, reply, or pure ack)")
+        .description(
+            "Send a bus message to agents logged into this bus session (direct, broadcast, reply, or pure ack). " +
+                "To reach a running Claude, Codex or Grok session that is not on the bus, use `tools <agent> message <session>`"
+        )
         .option("--from <token>", "Sender agent — name or id")
         .option("--to <csv>", "Recipient agents — comma-separated names or ids; empty = broadcast")
         .option("--body <text>", "Message body (omit + --reply for pure ack)")
