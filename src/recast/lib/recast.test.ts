@@ -503,6 +503,15 @@ describe("Recast captured proposals and package evidence", () => {
             await expect(verifyRecastAssets({ document: invented, packagePath: folder })).rejects.toThrow(
                 "literal text region"
             );
+            const files = await import("node:fs/promises");
+            const reread = spyOn(files, "readFile").mockResolvedValue(Buffer.from(text.slice(0, -5) + "12:00"));
+            try {
+                await expect(verifyRecastAssets({ document: invented, packagePath: folder })).rejects.toThrow(
+                    "literal text region"
+                );
+            } finally {
+                reread.mockRestore();
+            }
             await writeFile(assetPath, text.replace("08:40", "08:41"));
             await expect(verifyRecastAssets({ document, packagePath: folder })).rejects.toThrow();
             await rm(assetPath);

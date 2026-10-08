@@ -51,6 +51,8 @@ export async function verifyRecastAssets({
 
         logger.debug({ assetPath, bytes: source.bytes }, "recast: verifying source snapshot");
         const hash = createHash("sha256");
+        const textDecoder = source.kind === "text" ? new TextDecoder("utf-8", { fatal: true }) : undefined;
+        const textChunks: string[] = [];
         let bytes = 0;
         for await (const chunk of Bun.file(assetPath).stream()) {
             signal?.throwIfAborted();
@@ -59,9 +61,13 @@ export async function verifyRecastAssets({
                 throw new Error(`A source snapshot changed during verification: ${source.name}`);
             }
             hash.update(chunk);
+            if (textDecoder) {
+                textChunks.push(textDecoder.decode(chunk, { stream: true }));
+            }
         }
-        if (source.kind === "text") {
-            const text = new TextDecoder("utf-8", { fatal: true }).decode(await readFile(assetPath));
+        if (textDecoder) {
+            textChunks.push(textDecoder.decode());
+            const text = textChunks.join("");
             if (text.length !== source.textLength) {
                 throw new Error("The source text length does not match its snapshot metadata.");
             }
