@@ -93,10 +93,9 @@ final class BrowserURLForwarder: NSObject {
                   app.bundleIdentifier != Bundle.main.bundleIdentifier
             else { return }
             self?.lastOtherApp = app
-            // The stacking is only needed by a face a link can reach. With the relay running, links go to the
-            // relay, which has no windows to put back: no window-list query on every app switch of the machine
-            // (it showed in an idle hub's samples, 2026-10-08). Without a relay, this face is the fallback.
-            if LinkRelay.isRunning {
+            // A window face can still be older than a relay restarted after a crash. Only the relay itself
+            // has no windows to restore; fallback faces keep their stacking even while a relay runs.
+            if RelayJournal.role == "relay" {
                 self?.stackBeforeDelivery = []
             } else {
                 self?.stackBeforeDelivery = Self.onScreenStack()
