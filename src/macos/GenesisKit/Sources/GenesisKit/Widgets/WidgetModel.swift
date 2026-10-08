@@ -5,10 +5,35 @@ import UniformTypeIdentifiers
 
 @MainActor
 public final class WidgetModel: ObservableObject {
+    /// Matches the 64,000-character cap the hub's draft actions accept.
+    nonisolated static let draftTextLimit = 64_000
+    private static var draftTooLong: ToolsBridgeError {
+        .refused("The combined draft is too long. Shorten it before attaching.")
+    }
+
     @Published public private(set) var snapshot: WidgetSnapshot? {
-        didSet { sessionRoster.update(snapshot?.sessions ?? []) }
+        didSet {
+            sessionRoster.update(snapshot?.sessions ?? [])
+            updateInbox(snapshot?.notifications ?? .empty)
+        }
     }
     private var sessionRoster = WidgetSessionRoster()
+    public var railSessions: [WidgetSession] { sessionRoster.rail }
+    public var railActivitySessions: [WidgetSession] {
+        railSessions.filter { session in
+            let inbox = inboxFor(session.key)
+            return session.visualStatus == .working || (inbox?.unread ?? 0) + (inbox?.needsAnswer ?? 0) > 0
+        }
+    }
+    @Published public private(set) var inbox = WidgetInboxSummary.empty
+    @Published public private(set) var inboxPulse = 0
+    private var inboxSessions: [String: WidgetInboxSession] = [:]
+    private var inboxObserved = false
+    private var inboxStartedAt = 0.0
+    private var inboxSessionPulses: [String: Int] = [:]
+    private var inboxWatermarks: [String: (at: Double, id: String)] = [:]
+    private var openingInbox: WidgetInboxItem?
+    private var inboxReadRequests: Set<String> = []
     @Published public var selectedKey = ""
     @Published public var selectedCardID: String? { didSet { presentationChanged?() } }
     @Published public var section = "Inbox" {
@@ -27,6 +52,10 @@ public final class WidgetModel: ObservableObject {
     private var followedTranscript: String?
     private var receiptContextCache: [String: (at: Date, value: WidgetReceiptContext)] = [:]
     private var hoverTask: Task<Void, Never>?
+    /// The surface the pointer left while the side rail was dragged; its collapse waits for the drag end.
+    private var exitedDuringDrag: WidgetSurfaceID?
+    private var hoveredSession: (key: String, surface: WidgetSurfaceID)?
+    private var transcriptHoverTask: Task<Void, Never>?
     @Published public var error: String?
     @Published public var drafts: [String: WidgetDraft] = [:]
     /// The watch worker exited on its own. The snapshot is stale and nothing dispatches queued messages until
@@ -61,6 +90,7 @@ public final class WidgetModel: ObservableObject {
         }
     }
     @Published public var dialogOpen = false
+    private var mediaPicker: NSOpenPanel?
     public var presentationChanged: (() -> Void)?
     public var showSettings: (() -> Void)?
     public var showMedia: ((WidgetMediaSelection) -> Void)?
@@ -86,6 +116,7 @@ public final class WidgetModel: ObservableObject {
     private var voice: ToolsLineStream?
     private var tail: TranscriptLiveTail?
     private var transcriptTask: Task<Void, Never>?
+    private let transcriptCache: SessionTranscriptCache
     private var speechTask: Task<Void, Never>?
     private var mutationTask: Task<Void, Never>?
     private var preferenceTask: Task<Void, Never>?
@@ -105,11 +136,12 @@ public final class WidgetModel: ObservableObject {
 
     public init(
         binaryPath: String, stateRoot: String? = nil, defaults: UserDefaults = .standard,
-        appearance: NativeSettingsAppearance? = nil
+        appearance: NativeSettingsAppearance? = nil, transcriptCache: SessionTranscriptCache? = nil
     ) {
         self.defaults = defaults
         self.appearance = appearance ?? .shared
         bridge = ToolsBridge(binaryPath: binaryPath)
+        self.transcriptCache = transcriptCache ?? SessionTranscriptCache(bridge: bridge)
         self.stateRoot = stateRoot
         let base =
             stateRoot.map { URL(fileURLWithPath: $0) }
@@ -154,6 +186,9 @@ public final class WidgetModel: ObservableObject {
             ?? (lastSelected?.key == selectedKey ? lastSelected : nil)
     }
     public var cards: [WidgetCard] { snapshot?.cards.filter { $0.sessionKey == selectedKey } ?? [] }
+    public var inboxLoading: Bool {
+        !selectedKey.isEmpty && snapshot?.selectedKey != selectedKey && cards.isEmpty && error == nil
+    }
     public var card: WidgetCard? {
         cards.first { $0.id == selectedCardID } ?? cards.last(where: \.needsAnswer) ?? cards.last
     }
@@ -246,6 +281,10 @@ public final class WidgetModel: ObservableObject {
         settingsTask?.cancel()
         followedTranscript = nil
         stopping = true
+        cancelHoverPrewarm()
+        mediaPicker?.cancel(nil)
+        mediaPicker = nil
+        dialogOpen = false
         hoverTask?.cancel()
         watcher?.stop()
         watcher = nil
@@ -256,6 +295,7 @@ public final class WidgetModel: ObservableObject {
         tail?.stop()
         tail = nil
         transcriptTask?.cancel()
+        transcriptCache.cancelPending()
         speechTask?.cancel()
         quietTask?.cancel()
         for task in draftTasks.values { task.cancel() }
@@ -266,7 +306,7 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
-    private func receive(_ lines: [String]) {
+    func receive(_ lines: [String]) {
         for line in lines {
             do {
                 var next = try JSONDecoder().decode(WidgetSnapshot.self, from: Data(line.utf8))
@@ -295,7 +335,9 @@ public final class WidgetModel: ObservableObject {
                 if let session = next.sessions.first(where: { $0.key == selectedKey }) {
                     lastSelected = session
                 }
-                if selectedKey.isEmpty {
+                // A cold roster holds only the sessions synthesized from Decisions and forms; choosing
+                // and persisting one of those would orphan the selection once the roster arrives.
+                if selectedKey.isEmpty && next.rosterLoading != true {
                     selectedKey = WidgetSelection.initial(
                         persisted: next.state.selectedKey, visibleKeys: next.sessions.filter(\.visible).map(\.key))
                     selectedCardID = nil
@@ -312,6 +354,7 @@ public final class WidgetModel: ObservableObject {
                     setText(recovered)
                 }
                 resumeTranscript()
+                acknowledgeOpenedInbox()
                 scheduleQuietReduction()
                 presentationChanged?()
             } catch { report(error) }
@@ -353,8 +396,39 @@ public final class WidgetModel: ObservableObject {
         open(surface.edge)
     }
 
+    public func hoverSession(_ key: String, on surface: WidgetSurfaceID, inside: Bool) {
+        if !inside {
+            if hoveredSession?.key == key, hoveredSession?.surface == surface {
+                transcriptHoverTask?.cancel()
+                transcriptHoverTask = nil
+            }
+            // Expanding the top preview moves its buttons under a stationary pointer. Keep the target
+            // until the pointer leaves the whole surface, or reaches a different agent.
+            return
+        }
+        guard layout.hoverPreviews, !dialogOpen, !draggingSide, expanded == nil else { return }
+        cancelHoverPrewarm()
+        hoveredSession = (key, surface)
+        transcriptHoverTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(160)) } catch { return }
+            guard let self, self.expanded == nil, !self.dialogOpen,
+                  self.hoveredSession?.key == key, self.hoveredSession?.surface == surface else { return }
+            self.prewarmTranscript(on: surface)
+        }
+    }
+
+    private func cancelHoverPrewarm() {
+        transcriptHoverTask?.cancel()
+        transcriptHoverTask = nil
+        hoveredSession = nil
+    }
+
     public func hover(_ surface: WidgetSurfaceID, inside: Bool) {
-        guard layout.hoverPreviews, !dialogOpen, !draggingSide else { return }
+        guard layout.hoverPreviews, !dialogOpen else { return }
+        if draggingSide {
+            exitedDuringDrag = inside ? nil : surface
+            return
+        }
         hoverTask?.cancel()
         if inside {
             guard presentation(for: surface) != .expanded else { return }
@@ -362,13 +436,17 @@ public final class WidgetModel: ObservableObject {
                 do { try await Task.sleep(for: .milliseconds(160)) } catch { return }
                 guard let self, !self.dialogOpen else { return }
                 self.hoveredSurface = surface
+                self.prewarmTranscript(on: surface)
                 self.presentationChanged?()
             }
         } else {
             hoverTask = Task { [weak self] in
                 do { try await Task.sleep(for: .milliseconds(220)) } catch { return }
-                guard let self, self.hoveredSurface == surface else { return }
+                guard let self else { return }
+                if self.hoveredSession?.surface == surface { self.cancelHoverPrewarm() }
+                guard self.hoveredSurface == surface else { return }
                 self.hoveredSurface = nil
+                if self.expanded == nil { self.transcriptCache.cancelPending() }
                 self.presentationChanged?()
             }
         }
@@ -378,9 +456,14 @@ public final class WidgetModel: ObservableObject {
         let bounded = min(1, max(0, position))
         draggedSidePosition = bounded
         draggingSide = !finished
-        hoveredSurface = nil
+        cancelHoverPrewarm()
+        // Keep the current rail height while dragging; shrinking a hovered panel changes its travel.
         hoverTask?.cancel()
         presentationChanged?()
+        if finished, let exited = exitedDuringDrag {
+            exitedDuringDrag = nil
+            hover(exited, inside: false)
+        }
         if finished {
             action(
                 ["action": "preferences", "patch": ["sidePosition": .number(bounded)]],
@@ -393,17 +476,115 @@ public final class WidgetModel: ObservableObject {
     }
 
     public func open(_ edge: EdgePanelPlacement) {
+        cancelHoverPrewarm()
         openedAt = ProcessInfo.processInfo.systemUptime
         expanded = edge
+        prewarmTranscript()
         resumeTranscript()
         presentationChanged?()
         scheduleQuietReduction()
-        if let card, card.kind == "answer", !card.read {
+        if openingInbox == nil, let card, card.kind == "answer", !card.read {
             action(["action": "read", "id": .string(card.sourceId)])
         }
     }
 
+    func updateInbox(_ value: WidgetInboxSummary) {
+        var arrived = false
+        var arrivedKeys: Set<String> = []
+        if !inboxObserved, value.complete { inboxStartedAt = Date().timeIntervalSince1970 * 1000 }
+        for entry in value.sessions {
+            for item in [entry.unreadItem, entry.pendingItem].compactMap({ $0 }) {
+                // An incomplete snapshot cannot raise an arrival, so it must not move the watermark
+                // either: the complete snapshot that follows would then see nothing new.
+                guard item.at.isFinite, !inboxObserved || value.complete else { continue }
+                let token = entry.key + "|" + (item.needsAnswer ? "pending" : "unread")
+                let previous = inboxWatermarks[token]
+                if previous == nil || item.at > previous!.at || (item.at == previous!.at && item.id > previous!.id) {
+                    let isArrival = inboxObserved && value.complete && item.at > inboxStartedAt
+                    if isArrival { arrived = true; arrivedKeys.insert(entry.key) }
+                    inboxWatermarks[token] = (item.at, item.id)
+                    if isArrival, item.kind != "result", value.profile?.hostId == "local",
+                        snapshot?.sessions.first(where: { $0.key == item.key })?.target.hostId == "local" {
+                        let latency = Date().timeIntervalSince1970 * 1000 - item.at
+                        if latency >= 0 { PerfLog.mark("widget.inbox receipt-to-snapshot-applied pid=\(ProcessInfo.processInfo.processIdentifier) id=\(item.id) ms=\(latency)") }
+                    }
+                }
+            }
+        }
+        inboxObserved = inboxObserved || value.complete
+        if arrived { inboxPulse += 1 }
+        for key in arrivedKeys { inboxSessionPulses[key, default: 0] += 1 }
+        if inboxWatermarks.count > 4096 {
+            let removed = inboxWatermarks.sorted { $0.value.at < $1.value.at }.prefix(inboxWatermarks.count - 3072)
+            for (key, value) in removed {
+                inboxStartedAt = max(inboxStartedAt, value.at)
+                inboxWatermarks.removeValue(forKey: key)
+            }
+        }
+        var activeReadTokens: Set<String> = []
+        for entry in value.sessions {
+            for item in [entry.pendingItem, entry.unreadItem].compactMap({ $0 }) {
+                let token = item.key + "|" + item.id + "|" + String(item.at)
+                activeReadTokens.insert(token)
+            }
+        }
+        inboxReadRequests.formIntersection(activeReadTokens)
+        let activeKeys = Set(value.sessions.map(\.key))
+        inboxSessionPulses = inboxSessionPulses.filter { activeKeys.contains($0.key) }
+        inbox = value
+        inboxSessions = Dictionary(value.sessions.map { ($0.key, $0) }, uniquingKeysWith: { _, last in last })
+    }
+
+    public func inboxFor(_ key: String) -> WidgetInboxSession? { inboxSessions[key] }
+    public func inboxPulseFor(_ key: String) -> Int { inboxSessionPulses[key] ?? 0 }
+    public var inboxCount: Int { max(0, inbox.unread) + max(0, inbox.needsAnswer) }
+
+    public func openInboxNotification(on surface: WidgetSurfaceID, key: String? = nil, needsAnswer: Bool? = nil) {
+        guard !stopping else { return }
+        let candidates: [WidgetInboxSession]
+        if let key {
+            candidates = inboxSessions[key].map { [$0] } ?? []
+        } else {
+            candidates = inbox.sessions
+        }
+        let item = candidates.compactMap { entry in
+            needsAnswer == true ? entry.pendingItem : needsAnswer == false ? entry.unreadItem : entry.pendingItem ?? entry.unreadItem
+        }.max { a, b in
+            if needsAnswer == nil && a.needsAnswer != b.needsAnswer { return !a.needsAnswer }
+            return a.at < b.at
+        }
+        guard let item else {
+            if let key { select(key) }
+            section = "Inbox"
+            openModule("agents", on: surface)
+            return
+        }
+        openingInbox = item
+        select(item.key)
+        selectedCardID = item.id
+        section = "Inbox"
+        openModule("agents", on: surface)
+        acknowledgeOpenedInbox()
+    }
+
+    private func acknowledgeOpenedInbox() {
+        guard !stopping, let item = openingInbox, expanded != nil, activeModuleID == "agents", section == "Inbox",
+            selectedKey == item.key, let displayed = cards.first(where: { $0.id == item.id }), displayed.at == item.at
+        else { return }
+        selectedCardID = item.id
+        if !displayed.needsAnswer && displayed.read { openingInbox = nil; return }
+        let token = item.key + "|" + item.id + "|" + String(item.at)
+        guard inboxReadRequests.insert(token).inserted else { openingInbox = nil; return }
+        openingInbox = nil
+        action(["action": "inbox-read", "key": .string(item.key), "id": .string(item.id),
+                "kind": .string(item.kind), "at": .number(item.at)], failed: { [weak self] in
+            self?.inboxReadRequests.remove(token)
+        })
+    }
+
     public func collapse() {
+        cancelHoverPrewarm()
+        openingInbox = nil
         followedTranscript = nil
         hoveredSurface = nil
         hoverTask?.cancel()
@@ -414,16 +595,19 @@ public final class WidgetModel: ObservableObject {
         tail?.stop()
         tail = nil
         transcriptTask?.cancel()
+        transcriptCache.cancelPending()
         quietTask?.cancel()
         presentationChanged?()
     }
 
     public func select(_ key: String, edge: EdgePanelPlacement? = nil) {
+        if openingInbox?.key != key { openingInbox = nil }
         selectedKey = key
         lastSelected = snapshot?.sessions.first { $0.key == key }
         selectedCardID = nil
         action(["action": "selection", "key": .string(key)])
         if let edge { open(edge) }
+        if expanded != nil || hoveredSurface != nil { prewarmTranscript(on: expanded == nil ? hoveredSurface : nil) }
         resumeTranscript()
     }
 
@@ -443,7 +627,7 @@ public final class WidgetModel: ObservableObject {
         let key = selectedKey
         guard !key.isEmpty else { return }
         var value = drafts[key] ?? WidgetDraft()
-        value.text = String(text.prefix(64_000))
+        value.text = String(text.prefix(Self.draftTextLimit))
         drafts[key] = value
         dirtyDrafts.insert(key)
         draftRevisions[key, default: 0] += 1
@@ -508,6 +692,10 @@ public final class WidgetModel: ObservableObject {
             try Task.checkCancellation()
             guard let self, !self.stopping else { throw CancellationError() }
             let revisionBeforeAppend = self.draftRevisions[key, default: 0]
+            // Refuse before any backend write; the check after the append still covers concurrent typing.
+            let localText = self.drafts[key]?.text ?? ""
+            let expectedLength = localText.isEmpty ? note.text.count : localText.count + 1 + note.text.count
+            guard expectedLength <= Self.draftTextLimit else { throw Self.draftTooLong }
             if self.dirtyDrafts.contains(key), let local = self.drafts[key] {
                 _ = try await self.call(["action": "draft-text", "key": .string(key), "text": .string(local.text)])
             }
@@ -519,7 +707,7 @@ public final class WidgetModel: ObservableObject {
             if self.draftRevisions[key, default: 0] != revisionBeforeAppend, let local = self.drafts[key] {
                 merged.text = [local.text, note.text].filter { !$0.isEmpty }.joined(separator: " ")
             }
-            guard merged.text.count <= 64_000 else { throw ToolsBridgeError.refused("The combined draft is too long. Shorten it before attaching.") }
+            guard merged.text.count <= Self.draftTextLimit else { throw Self.draftTooLong }
             self.draftTasks[key]?.cancel()
             self.draftRevisions[key, default: 0] += 1
             let savedRevision = self.draftRevisions[key, default: 0]
@@ -741,11 +929,14 @@ public final class WidgetModel: ObservableObject {
     /// `ownsFile`: the file is a staging copy this model wrote (a pasted image); the import copies it into
     /// the asset store, so the copy is removed once the import ends, whatever its outcome.
     public func importFile(_ url: URL, ownsFile: Bool = false) {
-        guard !selectedKey.isEmpty else {
+        importFile(url, to: selectedKey, ownsFile: ownsFile)
+    }
+
+    private func importFile(_ url: URL, to key: String, ownsFile: Bool = false) {
+        guard !stopping, !key.isEmpty else {
             if ownsFile { removeStaging(url) }
             return
         }
-        let key = selectedKey
         let type = UTType(filenameExtension: url.pathExtension)
         let kind =
             type?.conforms(to: .movie) == true || type?.conforms(to: .video) == true ? "video" : "image"
@@ -768,15 +959,29 @@ public final class WidgetModel: ObservableObject {
     }
 
     public func chooseFiles() {
+        guard !stopping, !selectedKey.isEmpty else { return }
+        if let panel = mediaPicker {
+            panel.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let key = selectedKey
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.image, .movie, .video]
         panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        mediaPicker = panel
         dialogOpen = true
         panel.begin { [weak self] response in
-            guard let self else { return }
+            guard let self, self.mediaPicker === panel else { return }
+            self.mediaPicker = nil
             self.dialogOpen = false
-            if response == .OK { panel.urls.forEach { self.importFile($0) } }
+            if response == .OK, !self.stopping {
+                panel.urls.forEach { self.importFile($0, to: key) }
+            }
         }
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     public func pasteMedia() -> Bool {
@@ -807,6 +1012,8 @@ public final class WidgetModel: ObservableObject {
     /// the hub before the edit and can never overwrite the restored text afterwards.
     public func editOutgoing(_ message: WidgetOutgoing) {
         let key = snapshot?.sessions.first { $0.target.hasSameIdentity(as: message.target) }?.key ?? selectedKey
+        // A draft save still waiting to run would reach the hub after the edit and overwrite the restored text,
+        // so it goes first, on the same mutation chain.
         if draftTasks[key] != nil {
             draftTasks[key]?.cancel()
             draftTasks[key] = nil
@@ -815,20 +1022,30 @@ public final class WidgetModel: ObservableObject {
         let previous = mutationTask
         mutationTask = Task { [weak self] in
             await previous?.value
-            guard let self else { return }
+            guard let self, !self.stopping else { return }
             do {
-                _ = try await self.call(["action": "edit", "id": .string(message.id)])
-                var restored = WidgetDraft(assetIds: message.assetIds)
-                if case .object(let fields) = message.payload, case .string(let text) = fields["text"] {
-                    restored.text = text
+                let current = self.drafts[key] ?? WidgetDraft()
+                guard current.text.isEmpty, current.assetIds.isEmpty else {
+                    throw ToolsBridgeError.refused("Save or clear your current draft before editing an earlier message.")
                 }
-                self.drafts[key] = restored
-                self.dirtyDrafts.remove(key)
+                let revision = self.draftRevisions[key, default: 0]
+                let answersBefore = self.formAnswers
+                _ = try await self.call(["action": "edit", "id": .string(message.id)])
+                guard !self.stopping else { return }
+                let newerTyping = self.draftRevisions[key, default: 0] != revision
+                if !newerTyping {
+                    var restored = WidgetDraft(assetIds: message.assetIds)
+                    if case .object(let fields) = message.payload, case .string(let text) = fields["text"] {
+                        restored.text = text
+                    }
+                    self.drafts[key] = restored
+                    self.dirtyDrafts.remove(key)
+                }
                 self.submittedAssets.subtract(message.assetIds)
                 if case .object(let fields) = message.payload, case .string(let id) = fields["id"] {
                     self.selectedCardID = (fields["kind"] == .string("form") ? "form:" : "decision:") + id
                     self.submittedCards.remove(self.selectedCardID ?? "")
-                    if let answers = fields["answers"] {
+                    if let answers = fields["answers"], self.formAnswers["form:" + id] == answersBefore["form:" + id] {
                         let decoded = try JSONDecoder().decode(
                             [WidgetFormAnswer].self, from: JSONEncoder().encode(answers))
                         self.formAnswers["form:" + id] = Dictionary(
@@ -836,7 +1053,9 @@ public final class WidgetModel: ObservableObject {
                     }
                 }
                 self.selectedKey = key
-                self.notice = "Message restored as a draft."
+                self.notice = newerTyping
+                    ? "Earlier message restored; your newer typing was kept. Review the draft before sending."
+                    : "Message restored as a draft."
             } catch { self.report(error) }
         }
     }
@@ -1020,6 +1239,21 @@ public final class WidgetModel: ObservableObject {
         return value
     }
 
+    private func transcriptQuery(_ session: WidgetSession) -> SessionTranscriptCache.Query {
+        SessionTranscriptCache.Query(identity: session.key, query: session.transcriptPath ?? session.target.sessionId,
+                                     provider: session.target.provider)
+    }
+
+    private func prewarmTranscript(on surface: WidgetSurfaceID? = nil) {
+        let module = surface.map { moduleSelections[$0.key] ?? "agents" } ?? activeModuleID
+        let hovered = surface.flatMap { surface in
+            hoveredSession?.surface == surface
+                ? snapshot?.sessions.first { $0.key == hoveredSession?.key } : nil
+        }
+        guard module == "agents", let session = hovered ?? selected, session.target.provider != "unknown" else { return }
+        transcriptCache.prefetch(transcriptQuery(session))
+    }
+
     private func resumeTranscript() {
         let wanted = expanded != nil && activeModuleID == "agents" && section == "Conversation" ? selected : nil
         let identity = wanted.map { $0.key + "|" + ($0.transcriptPath ?? $0.target.sessionId) }
@@ -1045,17 +1279,11 @@ public final class WidgetModel: ObservableObject {
                 if self.followedTranscript == identity { self.transcriptLoading = false }
             }
             do {
-                let result = try await self.bridge.run(
-                    subcommand: "ai",
-                    args: SessionTranscriptClient.arguments(
-                        sessionId: session.transcriptPath ?? session.target.sessionId, limit: 30)
-                        + ["--provider", session.target.provider], timeoutSeconds: 30)
-                guard result.exitCode == 0 else { throw ToolsBridgeError.refused(result.stderr) }
-                let envelope = try SessionTranscriptClient.decode(Data(result.stdout.utf8))
+                let envelope = try await self.transcriptCache.value(for: self.transcriptQuery(session))
                 guard !Task.isCancelled, self.selectedKey == key, self.expanded != nil else { return }
                 self.transcript = envelope.turns
                 self.tail = TranscriptLiveTail(
-                    query: envelope.filePath, offset: envelope.nextOffset,
+                    query: envelope.filePath, offset: envelope.liveFollowOffset,
                     provider: envelope.provider, bridge: self.bridge,
                     onBatch: { [weak self] batch in
                         guard let self, self.selectedKey == key else { return }
@@ -1105,6 +1333,8 @@ public final class WidgetModel: ObservableObject {
 struct WidgetSessionRoster {
     private var source: [WidgetSession] = []
     private(set) var visible: [WidgetSession] = []
+    private(set) var rail: [WidgetSession] = []
+    private var railOrder = StickyOrder<String>()
     private(set) var preview: [WidgetSession] = []
     private(set) var waiting = 0
 
@@ -1113,6 +1343,12 @@ struct WidgetSessionRoster {
         guard sessions != source else { return false }
         source = sessions
         visible = sessions.filter(\.visible)
+        let byKey = Dictionary(visible.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        let ids = railOrder.update(visible.map {
+            .init(id: $0.key, active: $0.status == "working" || $0.status == "waiting",
+                  lastAt: Date(timeIntervalSince1970: $0.activityAt / 1000))
+        }, hold: true)
+        rail = ids.compactMap { byKey[$0] }
         let rank = ["waiting": 0, "working": 1, "finished": 2, "recent": 3]
         preview = Array(visible.sorted {
             let lhs = rank[$0.status] ?? 4

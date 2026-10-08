@@ -14,6 +14,7 @@ import {
     MAX_FREE_TEXT_CHARS,
     MAX_IMAGE_BASE64_CHARS,
     MAX_IMAGES_PER_ANSWER,
+    MAX_MEDIA_CONTEXT_CHARS,
     MAX_WAIT_BUDGET_MS,
 } from "./types";
 
@@ -303,7 +304,18 @@ export function attachImageFiles(answers: AskAnswer[], specs: string[]): AskAnsw
 }
 
 /** Drop anything the item did not offer, so a client cannot smuggle a choice or a path in. */
+export function answerMediaContextError(answer: Pick<AskAnswer, "mediaContext">): string | undefined {
+    if (typeof answer.mediaContext === "string" && answer.mediaContext.length > MAX_MEDIA_CONTEXT_CHARS) {
+        return `The media context exceeds ${MAX_MEDIA_CONTEXT_CHARS} characters. Reduce attachments or use more frames per image, then submit again.`;
+    }
+    return undefined;
+}
+
 export function sanitizeAnswer(answer: AskAnswer, form: AskForm): AskAnswer {
+    const mediaError = answerMediaContextError(answer);
+    if (mediaError) {
+        throw new Error(mediaError);
+    }
     const item = form.items.find((candidate) => candidate.id === answer.itemId);
     const choiceIds = new Set((item?.choices ?? []).map((choice) => choice.id));
     // An item that offered NO choices cannot have one selected. Accepting any id there also
@@ -317,7 +329,7 @@ export function sanitizeAnswer(answer: AskAnswer, form: AskForm): AskAnswer {
 
     return {
         itemId: answer.itemId,
-        mediaContext: typeof answer.mediaContext === "string" ? answer.mediaContext.slice(0, 128_000) : undefined,
+        mediaContext: typeof answer.mediaContext === "string" ? answer.mediaContext : undefined,
         // Mirror of the choice rule above: a choice-only item (`--no-free-text`) must not be
         // closed by arbitrary text, which `itemAnswered` would otherwise count as an answer.
         freeText: item?.allowFreeText ? answer.freeText?.slice(0, MAX_FREE_TEXT_CHARS) : undefined,

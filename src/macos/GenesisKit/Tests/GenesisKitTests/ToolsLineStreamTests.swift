@@ -1,5 +1,105 @@
+import Combine
 import XCTest
 @testable import GenesisKit
+
+@MainActor
+final class WidgetVideoInteractionTests: XCTestCase {
+    private let initial = WidgetVideoSettings(fps: 2, framesPerImage: 16, minimumDifferencePct: 0)
+    func testDoneImmediatelyAfterChangePersistsLatestExactlyOnce() {
+        var committed: [WidgetVideoSettings] = []
+        let editor = WidgetVideoSettingsCommitter(initial: initial) { committed.append($0) }
+        let latest = WidgetVideoSettings(fps: 4, framesPerImage: 8, minimumDifferencePct: 25)
+        editor.update(WidgetVideoSettings(fps: 1, framesPerImage: 4, minimumDifferencePct: 10))
+        editor.update(latest)
+        editor.finish()
+        editor.finish()
+        XCTAssertEqual(committed, [latest])
+    }
+    func testOrdinaryDebounceStillCommitsAndUnchangedCloseDoesNothing() async {
+        let saved = expectation(description: "debounced settings")
+        var count = 0
+        let editor = WidgetVideoSettingsCommitter(initial: initial) { _ in count += 1; saved.fulfill() }
+        editor.finish()
+        XCTAssertEqual(count, 0)
+        editor.update(WidgetVideoSettings(fps: 1, framesPerImage: 4, minimumDifferencePct: 0))
+        await fulfillment(of: [saved], timeout: 2)
+        editor.finish()
+        XCTAssertEqual(count, 1)
+    }
+    private func outgoing() -> WidgetOutgoing {
+        WidgetOutgoing(id: "fixture-video", target: .init(hostId: "local", provider: "codex", sessionId: "fixture", sourceHome: "", cwd: "/fixture"),
+            payload: ["kind": "followup", "text": "Earlier text"], assetIds: ["video"], createdAt: 1, sequence: 1, state: "preparing")
+    }
+    func testEditRefusesNewerLocalDraftBeforeBackendMutation() async {
+        let defaults = UserDefaults(suiteName: "video-edit-\(UUID())")!
+        let model = WidgetModel(binaryPath: "/fixture/no-process", defaults: defaults)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        model.setText("New unsaved text")
+        var edits = 0
+        model.actionRunner = { value in
+            if case .object(let fields) = value, fields["action"] == .string("edit") { edits += 1 }
+            return ["updated": true]
+        }
+        let finished = expectation(description: "queue drained")
+        model.editOutgoing(outgoing())
+        model.action(["action": "fixture-barrier"], completed: { finished.fulfill() })
+        await fulfillment(of: [finished], timeout: 2)
+        XCTAssertEqual(edits, 0)
+        XCTAssertEqual(model.drafts["chosen"]?.text, "New unsaved text")
+        XCTAssertTrue(model.error?.contains("current draft") == true)
+    }
+    func testEditIntoEmptyDraftStillCallsBackendAndShowsRestoreReceipt() async {
+        let defaults = UserDefaults(suiteName: "video-edit-\(UUID())")!
+        let model = WidgetModel(binaryPath: "/fixture/no-process", defaults: defaults)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        var edits = 0
+        model.actionRunner = { value in
+            if case .object(let fields) = value, fields["action"] == .string("edit") { edits += 1 }
+            return ["updated": true]
+        }
+        let finished = expectation(description: "queue drained")
+        model.editOutgoing(outgoing())
+        model.action(["action": "fixture-barrier"], completed: { finished.fulfill() })
+        await fulfillment(of: [finished], timeout: 2)
+        XCTAssertEqual(edits, 1)
+        XCTAssertEqual(model.notice, "Message restored as a draft.")
+        XCTAssertNil(model.error)
+    }
+    func testTypingDuringEditRemainsRecoverableAfterStop() async {
+        let defaults = UserDefaults(suiteName: "video-edit-\(UUID())")!
+        let model = WidgetModel(binaryPath: "/fixture/no-process", defaults: defaults)
+        model.selectedKey = "chosen"
+        let began = expectation(description: "edit begins")
+        let finished = expectation(description: "edit finishes")
+        var release: CheckedContinuation<Void, Never>?
+        model.actionRunner = { value in
+            if case .object(let fields) = value, fields["action"] == .string("edit") {
+                await withCheckedContinuation { continuation in release = continuation; began.fulfill() }
+            }
+            return ["updated": true]
+        }
+        let subscription = model.$notice.compactMap { $0 }.prefix(1).sink { _ in finished.fulfill() }
+        model.editOutgoing(outgoing())
+        await fulfillment(of: [began], timeout: 2)
+        model.setText("Typed during restore")
+        release?.resume()
+        await fulfillment(of: [finished], timeout: 2)
+        model.stop()
+        XCTAssertEqual(model.drafts["chosen"]?.text, "Typed during restore")
+        XCTAssertEqual(defaults.string(forKey: "widget.recovered-draft.chosen"), "Typed during restore")
+        withExtendedLifetime(subscription) {}
+    }
+    func testQueuedMediaCanCancelUntilDeliveryBoundary() {
+        for state in ["queued", "preparing", "review", "failed", "waiting-route"] {
+            XCTAssertTrue(WidgetOutgoingControls.canCancel(state), state)
+        }
+        for state in ["dispatching", "sent", "cancelled", "unknown"] {
+            XCTAssertFalse(WidgetOutgoingControls.canCancel(state), state)
+        }
+    }
+}
 
 @MainActor
 private final class FixtureVoiceLease: VoiceRecordingLease {
