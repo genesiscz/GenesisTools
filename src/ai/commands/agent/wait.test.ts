@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { codexNativeLinesToTurns } from "@genesiscz/utils/ai/transcripts/codex";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
+import type { TurnSnapshot } from "@genesiscz/utils/ai/transcripts/turn-state";
 import {
     DEFAULT_TURN_LIMIT,
     type SliceOptions,
@@ -11,12 +12,16 @@ import {
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Command } from "commander";
 import {
+    answeredBeforeWatch,
     DEFAULT_WAIT_STALL_SECONDS,
     exitCodeOf,
     parseSeconds,
+    printsFinalText,
     registerAgentWaitCommand,
+    streamsLive,
     type TranscriptPager,
     TurnStreamer,
+    turnExtrasOf,
     WAIT_EXIT_DONE,
     WAIT_EXIT_STALLED,
     WAIT_EXIT_TIMEOUT,
@@ -29,6 +34,53 @@ describe("wait exit codes", () => {
         expect(exitCodeOf("timeout")).toBe(WAIT_EXIT_TIMEOUT);
         expect(new Set([exitCodeOf("done"), exitCodeOf("stalled"), exitCodeOf("timeout")]).size).toBe(3);
         expect(WAIT_EXIT_TIMEOUT).toBe(124);
+    });
+});
+
+describe("answeredBeforeWatch", () => {
+    function snapshot(state: TurnSnapshot["state"], turnStartedAt: number | null): TurnSnapshot {
+        return {
+            state,
+            lastText: "",
+            asksQuestion: false,
+            question: null,
+            interrupted: false,
+            lastEventAt: turnStartedAt,
+            turnStartedAt,
+            lastActivityAt: 0,
+            silenceMs: 0,
+        };
+    }
+
+    it("takes an ended answering turn as the reply", () => {
+        expect(answeredBeforeWatch(snapshot("FINISHED", 2000), 1000)).toBe(true);
+        expect(answeredBeforeWatch(snapshot("AWAITING-INPUT", 2000), 1000)).toBe(true);
+    });
+
+    it("never takes a stalled or running answering turn as done, nor a turn from before the send", () => {
+        expect(answeredBeforeWatch(snapshot("STALLED", 2000), 1000)).toBe(false);
+        expect(answeredBeforeWatch(snapshot("RUNNING", 2000), 1000)).toBe(false);
+        expect(answeredBeforeWatch(snapshot("FINISHED", 500), 1000)).toBe(false);
+        expect(answeredBeforeWatch(snapshot("FINISHED", 2000), undefined)).toBe(false);
+        expect(answeredBeforeWatch(null, 1000)).toBe(false);
+    });
+});
+
+describe("wait output with --stream and --quiet", () => {
+    it("never streams with --quiet, even when --stream is given", () => {
+        expect(streamsLive({ stream: true, quiet: true })).toBe(false);
+        expect(streamsLive({ stream: true })).toBe(true);
+        expect(streamsLive({})).toBe(false);
+    });
+
+    it("prints a reply that ended before the watch began, because the streamer never showed it", () => {
+        expect(printsFinalText({ quiet: false, streaming: true, answeredBeforeWatch: true })).toBe(true);
+    });
+
+    it("does not print the text twice after a live stream, and prints nothing with --quiet", () => {
+        expect(printsFinalText({ quiet: false, streaming: true, answeredBeforeWatch: false })).toBe(false);
+        expect(printsFinalText({ quiet: false, streaming: false, answeredBeforeWatch: false })).toBe(true);
+        expect(printsFinalText({ quiet: true, streaming: false, answeredBeforeWatch: true })).toBe(false);
     });
 });
 
@@ -53,9 +105,41 @@ describe("registerAgentWaitCommand", () => {
         const flags = command.options.map((option) => option.long);
 
         expect(command.name()).toBe("wait");
-        expect(flags).toEqual(["--timeout", "--stall-timeout", "--next", "--stream", "--json", "--first"]);
+        expect(flags).toEqual([
+            "--timeout",
+            "--stall-timeout",
+            "--next",
+            "--stream",
+            "--json",
+            "--first",
+            "--last",
+            "--tools",
+            "--quiet",
+        ]);
         expect(command.description()).toContain("grok");
         expect(DEFAULT_WAIT_STALL_SECONDS).toBeGreaterThan(120);
+    });
+});
+
+describe("wait --last and --tools", () => {
+    const tool = (name: string) => ({ name, inputPreview: "" });
+    const turns = [
+        { role: "user" as const, text: "first ask", tools: [] },
+        { role: "assistant" as const, text: "old reply", tools: [tool("Read")] },
+        { role: "user" as const, text: "second ask", tools: [] },
+        { role: "assistant" as const, text: "", tools: [tool("Bash"), tool("Bash")] },
+        { role: "assistant" as const, text: "new reply", tools: [tool("Edit")] },
+    ];
+
+    it("keeps the last N assistant texts and counts only the ending turn's tools", () => {
+        expect(turnExtrasOf(turns, { last: 2, tools: true })).toEqual({
+            lastMessages: ["old reply", "new reply"],
+            tools: [
+                { name: "Bash", count: 2 },
+                { name: "Edit", count: 1 },
+            ],
+        });
+        expect(turnExtrasOf(turns, {})).toEqual({});
     });
 });
 

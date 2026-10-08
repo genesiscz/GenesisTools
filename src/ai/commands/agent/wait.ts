@@ -1,8 +1,8 @@
+import { resolveSessionTranscript } from "@app/ai/lib/sessions/resolve-transcript";
 import { transcriptByteSize, transcriptEnvelope, transcriptSnapshot } from "@genesiscz/utils/ai/transcripts/load";
-import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
-import { findSessionsByTitle } from "@genesiscz/utils/ai/transcripts/session-title";
+import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { readTurnState, type TurnProvider, type TurnSnapshot } from "@genesiscz/utils/ai/transcripts/turn-state";
-import { type TurnWaitOutcome, watchTurn } from "@genesiscz/utils/ai/transcripts/turn-wait";
+import { type TurnWaitOutcome, turnAnswers, watchTurn } from "@genesiscz/utils/ai/transcripts/turn-wait";
 import {
     DEFAULT_TURN_LIMIT,
     type SliceOptions,
@@ -29,6 +29,14 @@ export const WAIT_EXIT_TIMEOUT = 124;
 export const DEFAULT_WAIT_STALL_SECONDS = 900;
 /** Writes wake the wait at once (shared file watcher); this poll only notices silence and the deadline. */
 const POLL_MS = 5000;
+/**
+ * How far before `sentAt` an answering turn's start may be stamped. Grok stamps records in whole seconds, so its
+ * answer can carry the second the message was sent in; Claude and Codex stamp milliseconds and get no tolerance.
+ * The turn that was current before the send is excluded on its own (`baselineTurnStartedAt`).
+ */
+export function sentAtSlackMs(alias: TurnProvider): number {
+    return alias === "grok" ? 1000 : 0;
+}
 
 export interface WaitOptions {
     timeout?: string;
@@ -37,6 +45,139 @@ export interface WaitOptions {
     stream?: boolean;
     json?: boolean;
     first?: boolean;
+    /** Print the last N assistant messages instead of only the final one. */
+    last?: string;
+    /** Also list the tool calls of the turn that ended. */
+    tools?: boolean;
+    /** Status line and exit code only; no message text. */
+    quiet?: boolean;
+    /** Set by `message --wait`: a turn that ended after this instant (epoch ms) counts even if it ended before the wait began. */
+    sentAt?: number;
+    /**
+     * Set by `message --wait`: when the session's latest turn began, read just before the message was delivered.
+     * That turn (ended or still running) never answers the message, however close to the send it began.
+     */
+    baselineTurnStartedAt?: number;
+    /** Set by `message --wait`: the sent text. A Grok turn that opened in the baseline's second answers when this is its prompt. */
+    sentText?: string;
+    /** Set by `message --wait --json`: merged into the one JSON document. */
+    embed?: Record<string, unknown>;
+}
+
+/** What `--last` and `--tools` add, read from the transcript after the turn ended. */
+export interface TurnExtras {
+    lastMessages?: string[];
+    tools?: { name: string; count: number }[];
+}
+
+/** The last `last` assistant texts, and the tool calls since the last user turn, from parsed turns. */
+export function turnExtrasOf(
+    turns: readonly { role: TranscriptTurn["role"]; text: string; tools: readonly { name: string }[] }[],
+    want: { last?: number; tools?: boolean }
+): TurnExtras {
+    const extras: TurnExtras = {};
+
+    if (want.last !== undefined) {
+        extras.lastMessages = turns
+            .filter((turn) => turn.role === "assistant" && turn.text.trim() !== "")
+            .slice(-want.last)
+            .map((turn) => turn.text.trim());
+    }
+
+    if (want.tools) {
+        let start = 0;
+
+        for (let i = turns.length - 1; i >= 0; i--) {
+            if (turns[i].role === "user") {
+                start = i + 1;
+                break;
+            }
+        }
+
+        const counts = new Map<string, number>();
+
+        for (const turn of turns.slice(start)) {
+            for (const tool of turn.tools) {
+                counts.set(tool.name, (counts.get(tool.name) ?? 0) + 1);
+            }
+        }
+
+        extras.tools = [...counts].map(([name, count]) => ({ name, count }));
+    }
+
+    return extras;
+}
+
+/**
+ * `--last` and `--tools` from the transcript's tail, paging back from the end until the page set holds `last`
+ * assistant texts and the user prompt that began the ending turn, or the transcript's start. One page is
+ * DEFAULT_TURN_LIMIT turns, and user and tool-only turns use up part of it.
+ */
+export async function readTurnExtras(
+    page: TranscriptPager,
+    want: { last?: number; tools?: boolean }
+): Promise<TurnExtras> {
+    const tail = await page({});
+    const pages = [tail.turns];
+    let start = tail.nextOffset - tail.turns.length;
+    let texts = 0;
+    let sawUser = false;
+    const count = (turns: readonly TranscriptTurn[]) => {
+        for (const turn of turns) {
+            texts += turn.role === "assistant" && turn.text.trim() !== "" ? 1 : 0;
+            sawUser ||= turn.role === "user";
+        }
+    };
+    const covered = () => (want.last === undefined || texts >= want.last) && (!want.tools || sawUser);
+
+    count(tail.turns);
+
+    while (start > 0 && !covered()) {
+        const offset = Math.max(0, start - DEFAULT_TURN_LIMIT);
+        const earlier = await page({ offset, limit: start - offset });
+
+        if (earlier.turns.length === 0) {
+            break;
+        }
+
+        pages.unshift(earlier.turns);
+        count(earlier.turns);
+        start = offset;
+    }
+
+    return turnExtrasOf(pages.flat(), want);
+}
+
+/**
+ * Did the turn that answers a sent message already END before the watch starts? Only an ended turn counts
+ * (the same states TurnJudge treats as ended): a STALLED turn is unfinished, so it goes through the watch and
+ * keeps its stall handling and exit code.
+ */
+export function answeredBeforeWatch(
+    before: TurnSnapshot | null,
+    window: { turnStartedAfter?: number; turnNewerThan?: number; prompt?: string }
+): boolean {
+    return (
+        before !== null &&
+        window.turnStartedAfter !== undefined &&
+        (before.state === "AWAITING-INPUT" || before.state === "FINISHED") &&
+        before.turnStartedAt !== null &&
+        turnAnswers(before.turnStartedAt, window, before.turnPrompt)
+    );
+}
+
+/** Is the turn that answers a sent message already under way (started, not ended) when the watch begins? */
+export function answerAlreadyRunning(
+    before: TurnSnapshot | null,
+    window: { turnStartedAfter?: number; turnNewerThan?: number; prompt?: string }
+): boolean {
+    return (
+        before !== null &&
+        window.turnStartedAfter !== undefined &&
+        (before.state === "RUNNING" || before.state === "STALLED") &&
+        before.turnStartedAt !== null &&
+        turnAnswers(before.turnStartedAt, window, before.turnPrompt)
+    );
 }
 
 /** The exit status for an outcome. */
@@ -67,59 +208,54 @@ export function parseSeconds(
     return value;
 }
 
-class UsageError extends Error {}
+export class UsageError extends Error {}
 
-async function resolveByTitle(alias: TurnProvider, query: string, first: boolean): Promise<ResolvedTranscript | null> {
-    const hits = findSessionsByTitle(query, { provider: alias });
-
-    if (hits.length === 0) {
-        return null;
-    }
-
-    if (hits.length > 1 && !first) {
-        const lines = hits.slice(0, 6).map((hit) => `  ${hit.sessionId}  ${hit.title}`);
-        throw new Error(
-            `"${query}" names ${hits.length} ${alias} sessions. Pass the session id, or --first for the newest:\n${lines.join("\n")}`
-        );
-    }
-
-    return resolveTranscript(hits[0].locator, {}, alias);
+export interface WaitFlags {
+    timeoutSeconds: number | undefined;
+    last: number | undefined;
+    /** Infinity for `--stall-timeout 0`. */
+    stallTimeoutMs: number;
 }
 
 /**
- * The transcript a query names: a session id (or 8+ character prefix), a transcript path, or a `/rename`
- * title. Native sessions only; a `tools <agent> worker` session has its own verbs.
+ * `--timeout`, `--stall-timeout` and `--last`, validated, or a thrown UsageError naming the flag. `message --wait`
+ * calls it BEFORE it delivers, so a bad flag never leaves a sent message behind an unstarted wait.
  */
-export async function resolveWaitTranscript(
-    alias: TurnProvider,
-    query: string,
-    first: boolean
-): Promise<ResolvedTranscript> {
-    let resolved: ResolvedTranscript | null = null;
+export function parseWaitFlags(
+    options: Pick<WaitOptions, "timeout" | "stallTimeout" | "last">,
+    { timeoutFlag = "--timeout" }: { timeoutFlag?: string } = {}
+): WaitFlags {
+    const timeoutSeconds = parseSeconds(options.timeout, timeoutFlag, { allowZero: false });
+    const last = parseSeconds(options.last, "--last", { allowZero: false });
 
-    try {
-        resolved = await resolveTranscript(query, {}, alias);
-    } catch (err) {
-        log.debug({ err, query, alias }, "no session id or path matched; trying titles");
+    if (last !== undefined && !Number.isInteger(last)) {
+        throw new UsageError(`--last must be a whole number of messages (got ${options.last})`);
     }
 
-    // An 8+ character query also matches worker NAMES by substring, so a title can lose to a worker
-    // that merely contains it. A native session with that title wins.
-    if (!resolved || resolved.source === "worker") {
-        resolved = (await resolveByTitle(alias, query, first)) ?? resolved;
+    const stallSeconds =
+        parseSeconds(options.stallTimeout, "--stall-timeout", { allowZero: true }) ?? DEFAULT_WAIT_STALL_SECONDS;
+    return {
+        timeoutSeconds,
+        last,
+        stallTimeoutMs: stallSeconds === 0 ? Number.POSITIVE_INFINITY : stallSeconds * 1000,
+    };
+}
+
+/** Live streaming is text output, so --quiet turns it off (with --json too: the one JSON document stays). */
+export function streamsLive(options: Pick<WaitOptions, "stream" | "quiet">): boolean {
+    return options.stream === true && options.quiet !== true;
+}
+
+/**
+ * Does the final text still need printing? Not with --quiet, and not when the streamer already showed the turn
+ * live. A reply that ended before the watch began never went through the streamer (it was primed past it).
+ */
+export function printsFinalText(input: { quiet: boolean; streaming: boolean; answeredBeforeWatch: boolean }): boolean {
+    if (input.quiet) {
+        return false;
     }
 
-    if (!resolved) {
-        throw new Error(`No ${alias} session matches "${query}" (tried session id, path and /rename title)`);
-    }
-
-    if (resolved.source === "worker") {
-        throw new Error(
-            `"${query}" is a headless worker session. Use \`tools ${alias} worker\` (or \`tools ${alias} wait\` on a TUI session id).`
-        );
-    }
-
-    return resolved;
+    return !input.streaming || input.answeredBeforeWatch;
 }
 
 /** One read's pages of a transcript. */
@@ -365,34 +501,83 @@ function statusLine(report: WaitReport): string {
     return `${report.provider} ${id}: still ${report.state ?? "empty"} after ${waited} (timeout)`;
 }
 
+/**
+ * The session's latest turn before a message is sent, for `message --wait`: that turn never answers the message.
+ * Null when the session cannot be resolved here (delivery may still find it by a cmux title), which falls back to
+ * the send time alone.
+ */
+export async function readTurnBaseline(
+    alias: TurnProvider,
+    query: string,
+    first: boolean
+): Promise<{ sessionId: string; turnStartedAt: number | null } | null> {
+    try {
+        const resolved = await resolveSessionTranscript(alias, query, first);
+        const snapshot = readTurnState(alias, resolved.filePath, { stallTimeoutMs: Number.POSITIVE_INFINITY });
+        return { sessionId: resolved.sessionId, turnStartedAt: snapshot?.turnStartedAt ?? null };
+    } catch (error) {
+        log.debug({ error, alias, query }, "no turn baseline before the send; the send time alone decides");
+        return null;
+    }
+}
+
+/** The baseline's turn start, when the baseline is of the session the message went to. */
+export function baselineStartFor(
+    baseline: { sessionId: string; turnStartedAt: number | null } | null,
+    deliveredTo: string
+): number | undefined {
+    return baseline?.sessionId === deliveredTo && baseline.turnStartedAt !== null ? baseline.turnStartedAt : undefined;
+}
+
 export async function waitCommand(alias: TurnProvider, query: string, options: WaitOptions): Promise<void> {
     try {
-        const timeoutSeconds = parseSeconds(options.timeout, "--timeout", { allowZero: false });
-        const stallSeconds =
-            parseSeconds(options.stallTimeout, "--stall-timeout", { allowZero: true }) ?? DEFAULT_WAIT_STALL_SECONDS;
-        const stallTimeoutMs = stallSeconds === 0 ? Number.POSITIVE_INFINITY : stallSeconds * 1000;
-        const resolved = await resolveWaitTranscript(alias, query, options.first === true);
+        const { timeoutSeconds, last, stallTimeoutMs } = parseWaitFlags(options);
+        const resolved = await resolveSessionTranscript(alias, query, options.first === true);
         const read = (): TurnSnapshot | null => readTurnState(alias, resolved.filePath, { stallTimeoutMs });
         // With --json, stdout carries one JSON document, so the live text goes to stderr.
         const streamTo = options.json ? (line: string) => out.printlnErr(line) : (line: string) => out.println(line);
-        const streamer = options.stream ? new TurnStreamer({ resolved, write: streamTo }) : null;
+        let streamer = streamsLive(options) ? new TurnStreamer({ resolved, write: streamTo }) : null;
 
         await streamer?.prime();
         log.debug(
-            { alias, query, file: resolved.filePath, timeoutSeconds, stallSeconds, next: options.next },
+            { alias, query, file: resolved.filePath, timeoutSeconds, stallTimeoutMs, next: options.next },
             "waiting for a turn"
         );
 
-        const result = await watchTurn({
-            path: resolved.filePath,
-            read,
-            next: options.next === true,
-            timeoutMs: timeoutSeconds === undefined ? undefined : timeoutSeconds * 1000,
-            pollMs: POLL_MS,
-            onSnapshot: async () => {
-                await streamer?.print();
-            },
-        });
+        // `message --wait`: the reply may already be over (a fast agent). Only a turn that BEGAN after the send
+        // answers it: a busy Codex session queues the message behind its current turn, whose end is not the reply.
+        // The turn that was current before the send never answers; Grok's whole-second stamps get one second of
+        // tolerance below the send, the millisecond clocks none.
+        const window = {
+            turnStartedAfter: options.sentAt !== undefined ? options.sentAt - sentAtSlackMs(alias) : undefined,
+            turnNewerThan: options.baselineTurnStartedAt,
+            prompt: options.sentText,
+        };
+        const before = window.turnStartedAfter !== undefined ? read() : null;
+        const alreadyAnswered = answeredBeforeWatch(before, window);
+
+        // The answering turn may already be running with text written before the streamer was primed, which marked
+        // that text as history. Its live tail alone would cut the reply's beginning, so print it whole at the end.
+        if (streamer && answerAlreadyRunning(before, window)) {
+            log.debug({ file: resolved.filePath }, "the reply started before the stream; printing it whole at the end");
+            streamer = null;
+        }
+
+        const result = alreadyAnswered
+            ? { outcome: "done" as const, snapshot: before, waitedMs: 0, questions: [] }
+            : await watchTurn({
+                  path: resolved.filePath,
+                  read,
+                  next: options.next === true,
+                  turnStartedAfter: window.turnStartedAfter,
+                  turnNewerThan: window.turnNewerThan,
+                  prompt: window.prompt,
+                  timeoutMs: timeoutSeconds === undefined ? undefined : timeoutSeconds * 1000,
+                  pollMs: POLL_MS,
+                  onSnapshot: async () => {
+                      await streamer?.print();
+                  },
+              });
 
         if (streamer && !(await streamer.printRest())) {
             out.printlnErr(
@@ -401,14 +586,31 @@ export async function waitCommand(alias: TurnProvider, query: string, options: W
         }
 
         const report = reportOf({ ...result, resolved, provider: alias, waitedMs: result.waitedMs });
+        const extras =
+            last !== undefined || options.tools
+                ? await readTurnExtras(await transcriptPager(resolved), { last, tools: options.tools })
+                : {};
 
         process.exitCode = exitCodeOf(result.outcome);
 
         if (options.json) {
-            out.result(report);
+            out.result({ ...options.embed, ...report, ...extras });
         } else {
-            if (report.outcome === "done" && !streamer && report.lastText) {
-                out.println(report.lastText);
+            const printFinal = printsFinalText({
+                quiet: options.quiet === true,
+                streaming: streamer !== null,
+                answeredBeforeWatch: alreadyAnswered,
+            });
+
+            if (report.outcome === "done" && printFinal) {
+                const texts = extras.lastMessages ?? (report.lastText ? [report.lastText] : []);
+                out.println(texts.join("\n\n---\n\n"));
+            }
+
+            if (extras.tools && !options.quiet) {
+                out.println(
+                    pc.dim(`tools: ${extras.tools.map((tool) => `${tool.name} ×${tool.count}`).join(", ") || "none"}`)
+                );
             }
 
             for (const question of report.questions) {
@@ -446,6 +648,12 @@ export function registerAgentWaitCommand(program: Command, alias: TurnProvider):
             "Print {outcome,state,sessionId,lastText,asksQuestion,interrupted,questions,durationMs,...} instead of the text"
         )
         .option("--first", "When a title matches several sessions, take the newest instead of failing")
+        .option("--last <n>", "Print the last N assistant messages of the session, not only the final one")
+        .option("--tools", "Also list the tool calls of the turn that ended (name ×count)")
+        .option(
+            "--quiet",
+            "Print only the status line (stderr) and set the exit code; no message text, and no --stream output. --json still prints its document"
+        )
         .addHelpText(
             "after",
             `

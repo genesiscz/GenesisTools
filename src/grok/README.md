@@ -17,7 +17,8 @@ tools grok status --name fix-auth                    # one session; omit --name 
 tools grok stop --name fix-auth                      # kill the running turn (alias: interrupt)
 tools grok sessions [--json]
 tools grok who [--json]                              # live grok processes and the account each one bills
-tools grok wait <id|title> [--timeout S] [--next] [--json]   # TUI session: block until its turn ends (exit 0/3 stalled/124 timeout)
+tools grok wait <id|title> [--timeout S] [--next] [--last N] [--tools] [--json]   # TUI session: block until its turn ends (exit 0/3 stalled/124 timeout)
+tools grok message <id|title> "<text>" --allow-keystrokes --wait   # paste into its cmux tab, then print the reply
 tools grok cmux send <session> "<text>"              # type into the TUI pane and press Enter (--no-enter to leave it unsubmitted)
 tools grok cmux focus <session>
 

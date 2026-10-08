@@ -10,7 +10,7 @@ import {
 } from "@genesiscz/utils/claude/peer-message";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
-import { resolveWaitTranscript } from "./wait";
+import { resolveWaitTranscript, waitCommand } from "./wait";
 
 const { log } = logger.scoped("agent-message");
 
@@ -342,6 +342,13 @@ interface MessageFlags {
     first?: boolean;
     allowKeystrokes?: boolean;
     json?: boolean;
+    wait?: boolean;
+    waitTimeout?: string;
+    stallTimeout?: string;
+    stream?: boolean;
+    last?: string;
+    tools?: boolean;
+    quiet?: boolean;
 }
 
 async function readText(parts: string[]): Promise<string> {
@@ -371,6 +378,8 @@ export async function messageCommand(alias: TurnProvider, query: string, parts: 
 
     const priority = PRIORITIES.find((value) => value === flags.priority);
 
+    const sentAt = Date.now();
+
     try {
         const delivery = await messageDriverFor(alias)
             .deliver({ query, text, priority, first: flags.first })
@@ -392,12 +401,33 @@ export async function messageCommand(alias: TurnProvider, query: string, parts: 
                 return pasteIntoSurface({ alias, sessionId: error.sessionId, text });
             });
 
+        const sentLine = `sent to ${alias} ${delivery.sessionId}${delivery.name ? ` (${delivery.name})` : ""} via ${delivery.via}; ${delivery.note}`;
+
+        if (flags.wait) {
+            // The wait owns stdout from here: the reply is the result, the send line is status.
+            if (!flags.json) {
+                out.printlnErr(sentLine);
+            }
+
+            await waitCommand(alias, delivery.sessionId, {
+                timeout: flags.waitTimeout,
+                stallTimeout: flags.stallTimeout,
+                next: true,
+                stream: flags.stream,
+                json: flags.json,
+                last: flags.last,
+                tools: flags.tools,
+                quiet: flags.quiet,
+                sentAt,
+                embed: { delivery },
+            });
+            return;
+        }
+
         if (flags.json) {
             out.result(delivery);
         } else {
-            out.println(
-                `sent to ${alias} ${delivery.sessionId}${delivery.name ? ` (${delivery.name})` : ""} via ${delivery.via}; ${delivery.note}`
-            );
+            out.println(sentLine);
         }
     } catch (error) {
         if (error instanceof MessageError) {
@@ -428,7 +458,20 @@ export function registerAgentMessageCommand(program: Command, alias: TurnProvide
             "--allow-keystrokes",
             "When the agent has no structured channel (Grok, a Codex TUI without the shared app-server), paste into its cmux tab with cmux paste --submit"
         )
-        .option("--json", "Print {agent,sessionId,name,via,note}")
+        .option("--json", "Print {agent,sessionId,name,via,note}; with --wait, the wait report with a delivery field")
+        .option(
+            "--wait",
+            "After sending, wait for the turn that answers it and print the reply (exit codes as in wait)"
+        )
+        .option("--wait-timeout <seconds>", "With --wait: give up after this long (exit 124)")
+        .option(
+            "--stall-timeout <seconds>",
+            "With --wait: a silent transcript this long is a stall (exit 3; 0 = never)"
+        )
+        .option("--stream", "With --wait: print the reply as it is written")
+        .option("--last <n>", "With --wait: print the last N assistant messages, not only the final one")
+        .option("--tools", "With --wait: also list the tool calls of the answering turn")
+        .option("--quiet", "With --wait: status line and exit code only")
         .addHelpText(
             "after",
             `
