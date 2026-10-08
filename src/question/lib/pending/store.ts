@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { transcriptAnchorSchema } from "@genesiscz/utils/agent/source-anchor";
+import { createTranscriptAnchor, transcriptAnchorSchema } from "@genesiscz/utils/agent/source-anchor";
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
 import { withDatabaseReadSnapshot } from "@genesiscz/utils/database/read-snapshot";
 import { env } from "@genesiscz/utils/env";
@@ -115,13 +115,35 @@ interface PendingRow {
 }
 
 function rowToForm(row: PendingRow): AskForm {
+    const poster = row.poster_json
+        ? (SafeJSON.parse(row.poster_json, { strict: true }) as AskForm["poster"])
+        : undefined;
+    let transcriptAnchor: AskForm["transcriptAnchor"];
+    if (row.transcript_anchor_json) {
+        try {
+            const parsed = transcriptAnchorSchema.safeParse(
+                SafeJSON.parse(row.transcript_anchor_json, { strict: true })
+            );
+            if (parsed.success) {
+                transcriptAnchor = parsed.data;
+            } else {
+                log.warn({ id: row.id, error: parsed.error }, "ignored invalid stored form provenance");
+            }
+        } catch (error) {
+            log.warn({ id: row.id, error }, "could not decode stored form provenance");
+        }
+
+        transcriptAnchor ??= createTranscriptAnchor({
+            context: { agent: poster?.agent ?? "unknown", sessionId: row.session_hint ?? poster?.sessionId ?? null },
+            receivedAt: row.created_at,
+        });
+    }
+
     return {
         id: row.id,
         createdAt: row.created_at,
-        poster: row.poster_json ? (SafeJSON.parse(row.poster_json, { strict: true }) as AskForm["poster"]) : undefined,
-        transcriptAnchor: row.transcript_anchor_json
-            ? transcriptAnchorSchema.parse(SafeJSON.parse(row.transcript_anchor_json, { strict: true }))
-            : undefined,
+        poster,
+        transcriptAnchor,
         resolvedAt: row.resolved_at ?? undefined,
         status: row.status as AskFormStatus,
         source: row.source ?? undefined,

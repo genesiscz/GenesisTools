@@ -241,6 +241,20 @@ export interface QaRow extends QaEntry {
 }
 
 function rowToQaRow(r: Record<string, unknown>): QaRow {
+    let transcriptAnchor: QaEntry["transcriptAnchor"];
+    if (r.transcript_anchor_json) {
+        try {
+            const parsed = transcriptAnchorSchema.safeParse(SafeJSON.parse(String(r.transcript_anchor_json)));
+            if (parsed.success) {
+                transcriptAnchor = parsed.data;
+            } else {
+                log.warn({ id: r.id, error: parsed.error }, "ignored invalid stored answer provenance");
+            }
+        } catch (error) {
+            log.warn({ id: r.id, error }, "could not decode stored answer provenance");
+        }
+    }
+
     return {
         id: r.id as string,
         ts: r.ts as number,
@@ -264,9 +278,9 @@ function rowToQaRow(r: Record<string, unknown>): QaRow {
         attachments: r.attachments_json ? SafeJSON.parse(String(r.attachments_json)) : [],
         source: r.source as QaEntry["source"],
         turnUuid: r.turn_uuid as string | null,
-        transcriptAnchor: r.transcript_anchor_json
-            ? transcriptAnchorSchema.parse(SafeJSON.parse(String(r.transcript_anchor_json)))
-            : entryAnchor({ agent: r.agent as QaAgent, sessionId: r.session_id as string, ts: r.ts as number }),
+        transcriptAnchor:
+            transcriptAnchor ??
+            entryAnchor({ agent: r.agent as QaAgent, sessionId: r.session_id as string, ts: r.ts as number }),
         supersededBy: r.superseded_by as string | null,
         readAt: r.read_at as number | null,
     };
@@ -307,10 +321,14 @@ export function queryEntries(db: Database, opts: QueryOpts = {}): QaRow[] {
     return (db.query(sql).all(...params) as Record<string, unknown>[]).map(rowToQaRow);
 }
 
-export function getEntryById(db: Database, id: string, opts: Pick<QueryOpts, "logBase"> = {}): QaRow | null {
-    catchUp(db, opts.logBase);
+export function getStoredEntryById(db: Database, id: string): QaRow | null {
     const row = db.query("SELECT * FROM entries WHERE id = ? LIMIT 1").get(id) as Record<string, unknown> | null;
     return row ? rowToQaRow(row) : null;
+}
+
+export function getEntryById(db: Database, id: string, opts: Pick<QueryOpts, "logBase"> = {}): QaRow | null {
+    catchUp(db, opts.logBase);
+    return getStoredEntryById(db, id);
 }
 
 export function markEntriesUnread(db: Database, ids: string[], opts: Pick<QueryOpts, "logBase"> = {}): number {

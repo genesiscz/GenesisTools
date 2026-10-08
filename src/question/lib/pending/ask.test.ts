@@ -738,3 +738,38 @@ test("a multiplexed caller's explicit project path supplies missing source cwd",
     expect(form.poster?.sessionId).toBe("known-thread");
     expect(form.poster?.project).toBe("gt-ask-fixture");
 });
+
+test("invalid or newer form provenance cannot block healthy forms or rewrite the stored metadata", async () => {
+    const context = { ...deps, env: {}, ctx: { agent: "codex" as const, sessionId: "poster-session" } };
+    const broken = await postAskForm({ projectPath: PROJECT, items: [{ promptMarkdown: "First?" }] }, context);
+    const healthy = await postAskForm(
+        { projectPath: PROJECT, items: [{ promptMarkdown: "Second?" }], sourceMessage: { toolCallId: "known-call" } },
+        context
+    );
+    const additive = SafeJSON.stringify({ ...healthy.transcriptAnchor, schemaVersion: 99 });
+    db.query("UPDATE qa_pending SET transcript_anchor_json = ? WHERE id = ?").run(additive, healthy.id);
+    expect(getAskForm(healthy.id, deps)?.transcriptAnchor).toEqual(healthy.transcriptAnchor);
+    expect(db.query("SELECT transcript_anchor_json FROM qa_pending WHERE id = ?").get(healthy.id)).toEqual({
+        transcript_anchor_json: additive,
+    });
+    for (const raw of ["{", '{"kind":"future-anchor","messageId":"not-a-native-id"}', '{"kind":"native"}']) {
+        db.query("UPDATE qa_pending SET transcript_anchor_json = ? WHERE id = ?").run(raw, broken.id);
+        const read = getAskForm(broken.id, deps);
+        expect(read?.items[0].promptMarkdown).toBe("First?");
+        expect(read?.poster?.sessionId).toBe("poster-session");
+        expect(read?.transcriptAnchor).toEqual({
+            kind: "receipt-time",
+            provider: "codex",
+            sessionId: "poster-session",
+            receivedAt: broken.createdAt,
+        });
+        expect(listPendingForms(deps).map((form) => form.id)).toEqual([broken.id, healthy.id]);
+        expect(getAskForm(healthy.id, deps)?.transcriptAnchor).toMatchObject({
+            kind: "native",
+            toolCallId: "known-call",
+        });
+        expect(db.query("SELECT transcript_anchor_json FROM qa_pending WHERE id = ?").get(broken.id)).toEqual({
+            transcript_anchor_json: raw,
+        });
+    }
+});

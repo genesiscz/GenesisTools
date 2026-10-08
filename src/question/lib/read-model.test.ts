@@ -8,6 +8,7 @@ import { appendEntry } from "./log-store";
 import { insertForm, listFormsSnapshot, openPendingStore } from "./pending/store";
 import {
     getEntryById,
+    getStoredEntryById,
     markEntriesRead,
     markEntriesUnread,
     openReadModel,
@@ -373,5 +374,71 @@ it("recovers receipt-time context when an older reader consumed a now-retired so
         expect(getEntryById(db, "retired", { logBase })?.transcriptAnchor).toEqual(row?.transcriptAnchor);
     } finally {
         db.close();
+    }
+});
+
+it("keeps answers readable when optional stored provenance is malformed or from a newer writer", () => {
+    const logBase = mkdtempSync(join(tmpdir(), "qa-log-"));
+    const dbPath = join(mkdtempSync(join(tmpdir(), "qa-db-")), "qa.db");
+    const receipt = {
+        kind: "receipt-time" as const,
+        provider: "codex" as const,
+        sessionId: "poster-session",
+        receivedAt: 123,
+    };
+    appendEntry(
+        e("broken-anchor", { ts: 123, agent: "codex", sessionId: "poster-session", transcriptAnchor: receipt }),
+        logBase
+    );
+    appendEntry(
+        e("healthy-anchor", {
+            ts: 124,
+            transcriptAnchor: {
+                kind: "native",
+                provider: "grok",
+                sessionId: "other-session",
+                receivedAt: 124,
+                messageId: "known-message",
+            },
+        }),
+        logBase
+    );
+    const db = openReadModel(dbPath);
+    try {
+        queryEntries(db, { logBase });
+        for (const raw of ["{", '{"kind":"future-anchor","messageId":"not-a-native-id"}', '{"kind":"native"}']) {
+            db.query("UPDATE entries SET transcript_anchor_json = ? WHERE id = ?").run(raw, "broken-anchor");
+            const row = getStoredEntryById(db, "broken-anchor");
+            expect(row?.question).toBe("qbroken-anchor");
+            expect(row?.transcriptAnchor).toEqual(receipt);
+            expect(queryEntries(db, { logBase }).map((entry) => entry.id)).toEqual(["broken-anchor", "healthy-anchor"]);
+            expect(getStoredEntryById(db, "healthy-anchor")?.transcriptAnchor).toMatchObject({
+                kind: "native",
+                messageId: "known-message",
+            });
+            expect(db.query("SELECT transcript_anchor_json FROM entries WHERE id = ?").get("broken-anchor")).toEqual({
+                transcript_anchor_json: raw,
+            });
+        }
+    } finally {
+        db.close();
+    }
+});
+
+it("reads a stored answer through a readonly connection without ingesting new log records", () => {
+    const logBase = mkdtempSync(join(tmpdir(), "qa-log-"));
+    const dbPath = join(mkdtempSync(join(tmpdir(), "qa-db-")), "qa.db");
+    appendEntry(e("stored"), logBase);
+    const writer = openReadModel(dbPath);
+    queryEntries(writer, { logBase });
+    writer.close();
+    appendEntry(e("not-ingested"), logBase);
+    const reader = new Database(dbPath, { readonly: true, create: false });
+    try {
+        expect(getStoredEntryById(reader, "stored")?.id).toBe("stored");
+        expect(getStoredEntryById(reader, "not-ingested")).toBeNull();
+        expect(reader.query("SELECT COUNT(*) AS count FROM entries").get()).toEqual({ count: 1 });
+    } finally {
+        reader.close();
     }
 });
