@@ -73,9 +73,10 @@ public final class EdgePanelController<Content: View> {
             backing: .buffered, defer: false)
         panel.title = title
         panel.identifier = NSUserInterfaceItemIdentifier("widget-preview." + placement.rawValue)
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isFloatingPanel = true
+        // isFloatingPanel resets the level. Apply the top notch's menu-bar layer afterward.
+        panel.level = placement == .top ? .statusBar : .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.backgroundColor = .clear
