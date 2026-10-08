@@ -24,6 +24,15 @@ public enum EdgePanelGeometry {
         }
     }
 
+    public static func mediaFrame(anchor: CGRect, visible: CGRect) -> CGRect {
+        let bounds = visible.insetBy(dx: 12, dy: 12)
+        let size = CGSize(width: min(740, bounds.width), height: min(650, bounds.height))
+        return CGRect(
+            x: min(max(anchor.midX - size.width / 2, bounds.minX), bounds.maxX - size.width),
+            y: min(max(anchor.midY - size.height / 2, bounds.minY), bounds.maxY - size.height),
+            width: size.width, height: size.height)
+    }
+
     public static func interpolate(from: CGRect, to: CGRect, progress: CGFloat) -> CGRect {
         CGRect(
             x: from.minX + (to.minX - from.minX) * progress,

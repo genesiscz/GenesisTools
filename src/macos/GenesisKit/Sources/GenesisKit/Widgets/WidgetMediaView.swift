@@ -36,7 +36,7 @@ public enum WidgetMediaSelection: Identifiable {
 struct WidgetMediaView: View {
     @ObservedObject var model: WidgetModel
     let selection: WidgetMediaSelection
-    @Environment(\.dismiss) private var dismiss
+    let close: () -> Void
     @State private var settings = WidgetVideoSettings(
         fps: 2, framesPerImage: 16, minimumDifferencePct: 0)
     @State private var loadedSettings = false
@@ -56,7 +56,7 @@ struct WidgetMediaView: View {
             HStack {
                 Text(asset?.name ?? "Screenshots").font(.headline).lineLimit(1)
                 Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Done", action: close).keyboardShortcut(.cancelAction)
             }
             switch selection {
             case .video:

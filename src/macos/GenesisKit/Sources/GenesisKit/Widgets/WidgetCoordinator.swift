@@ -6,6 +6,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     public let model: WidgetModel
     private var panels: [EdgePanelPlacement: EdgePanelController<LiveWidgetView>] = [:]
     private var settings: NSWindow?
+    private var mediaWindow: NSWindow?
     private var localMouse: Any?
     private var globalMouse: Any?
     private var keyboard: Any?
@@ -38,6 +39,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             }
         model.presentationChanged = { [weak self] in self?.sync() }
         model.showSettings = { [weak self] in self?.showSettings() }
+        model.showMedia = { [weak self] selection in self?.showMedia(selection) }
     }
 
     public func start(showSettings: Bool = false) {
@@ -70,6 +72,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         panels.values.forEach { $0.hide() }
         settings?.close()
+        mediaWindow?.close()
     }
 
     private func rebuildPanels() {
@@ -110,6 +113,10 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func sync() {
+        if model.expanded != nil, settings?.isVisible == true {
+            settings?.orderOut(nil)
+            model.dialogOpen = mediaWindow?.isVisible == true
+        }
         if lastSide != model.side {
             rebuildPanels()
             return
@@ -162,7 +169,38 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private func showMedia(_ selection: WidgetMediaSelection) {
+        mediaWindow?.close()
+        let anchor = panels[model.expanded ?? model.side]?.panel
+        guard let screen = anchor?.screen ?? NSScreen.main else { return }
+        let frame = EdgePanelGeometry.mediaFrame(
+            anchor: anchor?.frame ?? screen.visibleFrame, visible: screen.visibleFrame)
+        let window = NSWindow(
+            contentRect: frame, styleMask: [.titled, .closable, .resizable],
+            backing: .buffered, defer: false)
+        window.title = "Media"
+        window.isReleasedWhenClosed = false
+        window.level = .floating
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.contentView = NSHostingView(
+            rootView: WidgetMediaView(model: model, selection: selection) { [weak self] in
+                self?.mediaWindow?.close()
+            }.widgetAccessibility(
+                reduceMotion: model.reduceMotion, reduceTransparency: model.reduceTransparency))
+        window.minSize = NSSize(width: min(600, frame.width), height: min(520, frame.height))
+        window.setFrame(frame, display: true)
+        window.delegate = self
+        mediaWindow = window
+        model.dialogOpen = true
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     public func windowWillClose(_ notification: Notification) {
+        if notification.object as? NSWindow === mediaWindow {
+            mediaWindow = nil
+            model.dialogOpen = settings?.isVisible == true
+        }
         if notification.object as? NSWindow === settings {
             model.dialogOpen = false
             settings = nil

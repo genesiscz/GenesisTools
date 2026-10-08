@@ -11,7 +11,7 @@ public struct LiveWidgetView: View {
         get { model.section }
         nonmutating set { model.section = newValue }
     }
-    @State private var media: WidgetMediaSelection?
+
     @State private var retry: WidgetOutgoing?
     @FocusState private var editing: Bool
 
@@ -48,9 +48,7 @@ public struct LiveWidgetView: View {
         .widgetAccessibility(
             reduceMotion: model.reduceMotion, reduceTransparency: model.reduceTransparency
         )
-        .sheet(item: $media, onDismiss: { model.dialogOpen = false }) { selection in
-            WidgetMediaView(model: model, selection: selection).frame(width: 740, height: 620)
-        }
+
         .alert(
             "Check the conversation before retrying",
             isPresented: Binding(
@@ -651,8 +649,7 @@ public struct LiveWidgetView: View {
         }
     }
     private func showMedia(_ selection: WidgetMediaSelection) {
-        model.dialogOpen = true
-        media = selection
+        model.showMedia?(selection)
     }
     private func openReference(_ value: String) {
         if let url = URL(string: value), ["https", "http"].contains(url.scheme ?? "") {

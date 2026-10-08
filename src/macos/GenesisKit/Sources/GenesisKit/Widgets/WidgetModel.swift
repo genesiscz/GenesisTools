@@ -35,6 +35,7 @@ public final class WidgetModel: ObservableObject {
     @Published public var dialogOpen = false
     public var presentationChanged: (() -> Void)?
     public var showSettings: (() -> Void)?
+    public var showMedia: ((WidgetMediaSelection) -> Void)?
     public var openHub: ((WidgetSession?) -> Void)?
     public var openDestination: ((WidgetSession, String, String?) -> Void)?
     @Published public var notice: String?

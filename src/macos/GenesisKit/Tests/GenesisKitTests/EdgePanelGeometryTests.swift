@@ -69,6 +69,19 @@ final class EdgePanelGeometryTests: XCTestCase {
         XCTAssertFalse(top.contains(CGPoint(x: 5, y: 15)))
     }
 
+    func testWideMediaStaysReachableBesideEitherScreenEdge() {
+        for edge in [EdgePanelPlacement.left, .right, .top] {
+            let anchor = EdgePanelGeometry.frame(
+                placement: edge, size: CGSize(width: 432, height: 440),
+                screen: screen, visible: visible, sideCenterY: 600)
+            let media = EdgePanelGeometry.mediaFrame(anchor: anchor, visible: visible)
+            XCTAssertTrue(visible.contains(media))
+            XCTAssertEqual(media.width, 740)
+        }
+        let small = CGRect(x: -800, y: -500, width: 640, height: 480)
+        XCTAssertTrue(small.contains(EdgePanelGeometry.mediaFrame(anchor: .zero, visible: small)))
+    }
+
     func testMotionFinishesAtExactTargetAndClosingDoesNotOvershoot() {
         XCTAssertEqual(EdgePanelGeometry.motionProgress(0, opening: true), 0)
         XCTAssertEqual(EdgePanelGeometry.motionProgress(1, opening: true), 1)
