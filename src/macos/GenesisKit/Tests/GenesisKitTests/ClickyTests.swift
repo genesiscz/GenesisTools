@@ -109,6 +109,18 @@ final class ClickyTests: XCTestCase {
         XCTAssertNotEqual(ClickyKeyLayout.label(55), ClickyKeyLayout.label(54))
     }
 
+    func testChartDragUsesAnAnchoredOriginAndClampsToHistory() {
+        let epoch = Date(timeIntervalSince1970: 0)
+        let domain = epoch...epoch.addingTimeInterval(3600)
+        let origin = epoch.addingTimeInterval(1200)
+        XCTAssertEqual(NativeChartSampling.pannedPosition(origin: origin, translation: 150, width: 300,
+            window: 600, domain: domain).timeIntervalSince1970, 900)
+        XCTAssertEqual(NativeChartSampling.pannedPosition(origin: origin, translation: -10000, width: 300,
+            window: 600, domain: domain).timeIntervalSince1970, 3000)
+        XCTAssertEqual(NativeChartSampling.pannedPosition(origin: origin, translation: 10000, width: 300,
+            window: 600, domain: domain).timeIntervalSince1970, 0)
+    }
+
     func testChartBinningBoundsWorkWithoutLosingCounts() {
         let points = (0..<10000).map { NativeTimePoint(date: Date(timeIntervalSince1970: Double($0) * 60), value: 1) }
         let bins = NativeChartSampling.bins(points: points, start: Date(timeIntervalSince1970: 0),
