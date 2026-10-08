@@ -17,7 +17,7 @@ export interface RecastIssue {
 }
 
 export function validateFieldValue(value: CellValue, field: RecastCollection["fields"][number]): string | undefined {
-    if (value === null || (typeof value === "string" && !value.trim())) {
+    if (value === null || (field.type === "text" && typeof value === "string" && !value.trim())) {
         return field.required ? `${field.label} is required.` : undefined;
     }
 

@@ -430,6 +430,22 @@ enum RecastPackage {
                 }
                 assets[source.assetName] = data
             }
+            if source.kind == "text" {
+                guard let text = String(data: data, encoding: .utf8), text.utf16.count == source.textLength else {
+                    throw recastError("The source text length does not match its snapshot metadata.")
+                }
+                let units = Array(text.utf16)
+                for anchor in file.anchors where anchor.sourceId == source.id && anchor.region.kind == "text" {
+                    let region = anchor.region
+                    guard anchor.sourceHash == source.contentHash, let start = region.start, let end = region.end,
+                          start >= 0, end > start, end <= units.count, let quote = region.quote,
+                          units[start..<end].elementsEqual(quote.utf16),
+                          units[..<start].suffix((region.prefix ?? "").utf16.count).elementsEqual((region.prefix ?? "").utf16),
+                          units[end...].prefix((region.suffix ?? "").utf16.count).elementsEqual((region.suffix ?? "").utf16) else {
+                        throw recastError("A literal text region does not match the preserved source.")
+                    }
+                }
+            }
         }
         return RecastState(file: file, assets: assets)
     }

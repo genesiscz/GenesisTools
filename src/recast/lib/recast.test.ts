@@ -21,7 +21,7 @@ import { readRecastInput, verifyRecastAssets } from "./package";
 import { generateRecastProposal } from "./proposal-generation";
 import { inspectRecastProposal, previewRecastProposalInput, recastProposalContext } from "./proposals";
 import { previewReconciliation } from "./reconcile";
-import { foldCalendarLine, renderRecastCollection } from "./render";
+import { foldCalendarLine, RecastExportError, renderRecastCollection } from "./render";
 import { previewRoundTrip } from "./roundtrip";
 import { captureRecastTranscript, recastAudioSelection, reviewRecastTranscript } from "./transcription";
 import { transcribeRecastSelection } from "./transcription-generation";
@@ -246,6 +246,39 @@ describe("Recast correction and acceptance", () => {
         document = apply(document, { kind: "accept-records", recordIds: ["record_fixture"] });
         expect(document.records[0].cells.name.origin).toBe("user");
         expect(document.records[0].state).toBe("accepted");
+    });
+
+    test("optional typed fields reject blank strings at mutation, acceptance and export", () => {
+        const values = {
+            number: 42,
+            boolean: false,
+            date: "2026-01-01",
+            datetime: "2026-01-01T12:00",
+            timezone: "UTC",
+        } as const;
+        for (const type of Object.keys(values) as (keyof typeof values)[]) {
+            const document = apply(set(example(), "name", "Reviewed"), {
+                kind: "accept-records",
+                recordIds: ["record_fixture"],
+            });
+            document.collections[0].fields.push({ id: "optional", label: "Optional", type, required: false });
+            expect(() =>
+                renderRecastCollection({ input: document, collectionId: document.collections[0].id, format: "csv" })
+            ).not.toThrow();
+            expect(() => set(document, "optional", null)).not.toThrow();
+            expect(() => set(document, "optional", values[type])).not.toThrow();
+            for (const value of ["", " "]) {
+                expect(() => set(document, "optional", value)).toThrow();
+                document.records[0].cells.optional = cell(value);
+                expect(() => apply(document, { kind: "accept-records", recordIds: ["record_fixture"] })).toThrow();
+                document.records[0].state = "accepted";
+                expect(() =>
+                    renderRecastCollection({ input: document, collectionId: document.collections[0].id, format: "csv" })
+                ).toThrow(RecastExportError);
+                document.records[0].state = "draft";
+            }
+        }
+        expect(() => set(example(), "value", " ")).not.toThrow();
     });
 
     test("batch acceptance is atomic and stale changes fail without input mutation", () => {

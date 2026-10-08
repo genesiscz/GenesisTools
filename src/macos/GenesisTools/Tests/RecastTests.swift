@@ -50,6 +50,69 @@ final class RecastTests: XCTestCase {
         XCTAssertThrowsError(try RecastPackage.decode(unsafe))
     }
 
+    func testPackageRejectsFabricatedTextEvidenceAndMetadataForEachSource() throws {
+        let bytes = Data("A 😀 source and 42".utf8)
+        let original = source(bytes)
+        var document = try file()
+        document.sources = [original]
+        document.anchors = [RecastAnchor(id: "anchor", sourceId: original.id, sourceHash: original.contentHash,
+            label: "Exact evidence", region: RecastRegion(kind: "text", start: 2, end: 4, quote: "😀", prefix: "A ", suffix: " source"))]
+        func decode(_ file: RecastFile) throws -> RecastState {
+            try RecastPackage.decode(RecastPackage.encode(RecastState(file: file, assets: [original.assetName: bytes])))
+        }
+        XCTAssertNoThrow(try decode(document))
+        var changed = document
+        changed.anchors[0].region.quote = "XX"
+        XCTAssertThrowsError(try decode(changed))
+        changed = document; changed.anchors[0].region.prefix = "B "
+        XCTAssertThrowsError(try decode(changed))
+        changed = document; changed.anchors[0].region.suffix = " other"
+        XCTAssertThrowsError(try decode(changed))
+        changed = document; changed.sources[0].textLength = bytes.count
+        XCTAssertThrowsError(try decode(changed))
+        changed = document; changed.anchors[0].region.start = -1
+        XCTAssertThrowsError(try decode(changed))
+        changed = document; changed.anchors[0].region.end = 1000
+        XCTAssertThrowsError(try decode(changed))
+        changed = document
+        var duplicate = original; duplicate.id = "duplicate"; duplicate.textLength = 1
+        changed.sources.append(duplicate)
+        XCTAssertThrowsError(try decode(changed), "Metadata must be checked even when bytes share an asset")
+    }
+
+    func testDroppedFileTimeoutCancelsProgressAndIgnoresLateCallback() async throws {
+        let progress = Progress(totalUnitCount: 1)
+        var reply: (@Sendable (URL?, Error?) -> Void)?
+        do {
+            _ = try await recastDroppedURL(timeoutSeconds: 0.01) { completion in reply = completion; return progress }
+            XCTFail("An unresponsive provider must time out")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("did not finish loading in time"))
+        }
+        XCTAssertTrue(progress.isCancelled)
+        reply?(URL(fileURLWithPath: "/fixture/late.txt"), nil)
+    }
+
+    @MainActor
+    func testDroppedFileCancellationResumesWaitAndCancelsProgress() async throws {
+        let started = expectation(description: "Item provider started")
+        let progress = Progress(totalUnitCount: 1)
+        let task = Task {
+            try await recastDroppedURL { _ in started.fulfill(); return progress }
+        }
+        await fulfillment(of: [started], timeout: 2)
+        task.cancel()
+        do { _ = try await task.value; XCTFail("A cancelled drop must finish") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertTrue(progress.isCancelled)
+        let expected = URL(fileURLWithPath: "/fixture/source.txt")
+        let loaded = try await recastDroppedURL { completion in
+            completion(expected, nil)
+            return Progress(totalUnitCount: 1)
+        }
+        XCTAssertEqual(loaded, expected)
+    }
+
     func testDocumentRoutingIgnoresOnlyExplicitLaunchInputs() {
         let executable = URL(fileURLWithPath: "/fixture/tools")
         let source = URL(fileURLWithPath: "/fixture/source.txt")
@@ -784,6 +847,29 @@ extension RecastTests {
 }
 
 extension RecastTests {
+    @MainActor
+    func testExportDiscardsResultsAfterSelectionChangesAwayAndBack() async throws {
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 { root.deleteLastPathComponent() }
+        let model = RecastModel(toolsPath: root.appendingPathComponent("tools").path)
+        defer { model.stop() }
+        var reviewed = try evidenceFixture()
+        reviewed.file.records[0].state = "accepted"
+        reviewed.file.records[0].cells["name"]?.state = "accepted"
+        var other = reviewed.file.collections[0]; other.id = "other"
+        reviewed.file.collections.append(other)
+        model.install(reviewed)
+        let done = expectation(description: "Obsolete render finishes")
+        let subscription = model.$busy.dropFirst().filter { !$0 }.prefix(1).sink { _ in done.fulfill() }
+        model.prepareExport(presentSheet: false)
+        model.selectedCollection = "other"
+        model.selectedCollection = "table"
+        await fulfillment(of: [done], timeout: 15)
+        subscription.cancel()
+        XCTAssertNil(model.rendering)
+        XCTAssertNil(model.error)
+    }
+
     @MainActor
     func testBlockedDestinationOpensWithRequiredFieldsAndCannotReuseOldRendering() async throws {
         var root = URL(fileURLWithPath: #filePath)

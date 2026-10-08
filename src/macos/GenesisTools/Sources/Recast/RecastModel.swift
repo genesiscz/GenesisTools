@@ -29,6 +29,7 @@ final class RecastModel: ObservableObject {
         didSet {
             if oldValue != selectedCollection {
                 rendering = nil
+                renderingRequestID = UUID()
                 exportFormat = collection?.kind == "calendar" ? "ics" : "csv"
                 bulkRecordIDs = []
                 invalidateProposal()
@@ -87,6 +88,7 @@ final class RecastModel: ObservableObject {
     private var previewTask: Task<Void, Never>?
     private var audioReadiness: AnyCancellable?
     private var epoch = UUID()
+    private var renderingRequestID = UUID()
     private var closed = false
     private var inferenceCheckpoint: RecastInferenceCheckpoint?
 
@@ -138,6 +140,7 @@ final class RecastModel: ObservableObject {
     func install(_ state: RecastState) {
         inferenceCheckpoint = nil
         rendering = nil
+        renderingRequestID = UUID()
         evidenceDraft = nil; showEvidenceSheet = false
         roundTrip = nil; showRoundTrip = false
         audioTranscript = nil
@@ -313,11 +316,8 @@ final class RecastModel: ObservableObject {
             var urls = [URL]()
             for provider in providers {
                 try Task.checkCancellation()
-                let url: URL? = try await withCheckedThrowingContinuation { continuation in
-                    _ = provider.loadObject(ofClass: URL.self) { url, error in
-                        if let error { continuation.resume(throwing: error) }
-                        else { continuation.resume(returning: url) }
-                    }
+                let url = try await recastDroppedURL { completion in
+                    provider.loadObject(ofClass: URL.self, completionHandler: completion)
                 }
                 if let url { urls.append(url) }
             }
@@ -480,11 +480,18 @@ final class RecastModel: ObservableObject {
         if presentSheet { showExport = true }
         let format = exportFormat
         let includeRecordIDs = exportIncludeRecordIDs
+        let requestID = UUID()
+        renderingRequestID = requestID
         perform("Preparing export") { model in
             var args = ["--collection", collection.id, "--format", format]
             if !includeRecordIDs { args.append("--no-record-ids") }
             let answer = try await model.command("render", file: file, arguments: args)
             let rendered = try JSONDecoder().decode(RecastRendering.self, from: Data(answer.utf8))
+            guard model.renderingRequestID == requestID, model.file?.id == file.id,
+                  model.file?.revision == file.revision, model.selectedCollection == collection.id,
+                  model.exportFormat == format, model.exportIncludeRecordIDs == includeRecordIDs else {
+                return
+            }
             model.rendering = rendered
         }
     }
@@ -561,4 +568,72 @@ func recastCommandError(_ command: String, result: ToolsRunResult) -> NSError {
         return recastError("\(stage) stopped unexpectedly. Your original sources and saved edits are preserved. \(next)")
     }
     return recastError(String(diagnostic.prefix(4000)))
+}
+
+private final class RecastDroppedURLCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<URL?, Error>?
+    private var result: Result<URL?, Error>?
+    private var progress: Progress?
+    private var timeout: DispatchWorkItem?
+    private var cancelProgress = false
+
+    func begin(_ continuation: CheckedContinuation<URL?, Error>, timeoutSeconds: TimeInterval) -> Bool {
+        let expired = DispatchWorkItem { [weak self] in
+            self?.finish(.failure(recastError("The dropped file did not finish loading in time.")))
+        }
+        lock.lock()
+        if let result {
+            lock.unlock()
+            continuation.resume(with: result)
+            return false
+        }
+        self.continuation = continuation
+        timeout = expired
+        lock.unlock()
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeoutSeconds, execute: expired)
+        return true
+    }
+
+    func attach(_ progress: Progress) {
+        lock.lock()
+        let completed = result != nil
+        let shouldCancel = cancelProgress
+        if !completed { self.progress = progress }
+        lock.unlock()
+        if shouldCancel { progress.cancel() }
+    }
+
+    func finish(_ result: Result<URL?, Error>) {
+        lock.lock()
+        guard self.result == nil else { lock.unlock(); return }
+        self.result = result
+        if case .failure = result { cancelProgress = true }
+        let shouldCancel = cancelProgress
+        let continuation = self.continuation
+        let progress = self.progress
+        let timeout = self.timeout
+        self.continuation = nil; self.progress = nil; self.timeout = nil
+        lock.unlock()
+        timeout?.cancel()
+        if shouldCancel { progress?.cancel() }
+        continuation?.resume(with: result)
+    }
+}
+
+func recastDroppedURL(timeoutSeconds: TimeInterval = 30,
+    load: (@escaping @Sendable (URL?, Error?) -> Void) -> Progress) async throws -> URL? {
+    let completion = RecastDroppedURLCompletion()
+    return try await withTaskCancellationHandler {
+        try Task.checkCancellation()
+        return try await withCheckedThrowingContinuation { continuation in
+            guard completion.begin(continuation, timeoutSeconds: timeoutSeconds) else { return }
+            let progress = load { url, error in
+                completion.finish(error.map { .failure($0) } ?? .success(url))
+            }
+            completion.attach(progress)
+        }
+    } onCancel: {
+        completion.finish(.failure(CancellationError()))
+    }
 }
