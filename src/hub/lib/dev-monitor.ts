@@ -1,6 +1,7 @@
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -422,6 +423,12 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
         }
 
         batcher.flush(Date.now());
-        await Bun.sleep(options.intervalMs);
+        try {
+            await delay(options.intervalMs, undefined, { signal: options.signal });
+        } catch (error) {
+            if (!options.signal.aborted) {
+                throw error;
+            }
+        }
     }
 }

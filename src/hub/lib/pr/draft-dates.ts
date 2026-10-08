@@ -1,7 +1,8 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, rename } from "node:fs/promises";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 /**
@@ -120,16 +121,21 @@ export async function draftDatesFor({
     now?: Date;
     file?: string;
 }): Promise<Map<string, string>> {
-    const stamped = stampDraftDates({ dates: await readDates(file), mr, draftIds, now });
+    try {
+        await mkdir(dirname(file), { recursive: true });
+        return await withFileLock(`${file}.lock`, async () => {
+            const stamped = stampDraftDates({ dates: await readDates(file), mr, draftIds, now });
 
-    if (stamped.changed) {
-        try {
-            await mkdir(dirname(file), { recursive: true });
-            await Bun.write(file, SafeJSON.stringify(stamped.dates, null, 2));
-        } catch (err) {
-            log.warn({ err, file }, "draft dates not saved; the next read dates new drafts again");
-        }
+            if (stamped.changed) {
+                const temporary = `${file}.${crypto.randomUUID()}.tmp`;
+                await Bun.write(temporary, SafeJSON.stringify(stamped.dates, null, 2));
+                await rename(temporary, file);
+            }
+
+            return stamped.byId;
+        });
+    } catch (err) {
+        log.warn({ err, file }, "draft dates not saved; the next read dates new drafts again");
+        return stampDraftDates({ dates: await readDates(file), mr, draftIds, now }).byId;
     }
-
-    return stamped.byId;
 }

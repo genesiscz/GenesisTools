@@ -1161,6 +1161,19 @@ describe("GitLab draft dates", () => {
         expect(empty.dates).toEqual({ other: { "9": "x" } });
     });
 
+    test("concurrent MR reads preserve both dates and their first observation", async () => {
+        const file = join(mkdtempSync(join(tmpdir(), "draft-dates-")), "dates.json");
+        const other = "https://gitlab.example.com/acme/web/-/merge_requests/8";
+        await Promise.all([
+            draftDatesFor({ mr, draftIds: ["50"], now: first, file }),
+            draftDatesFor({ mr: other, draftIds: ["60"], now: first, file }),
+        ]);
+        const stored = SafeJSON.parse(readFileSync(file, "utf8"));
+        expect(stored).toEqual({ [mr]: { "50": first.toISOString() }, [other]: { "60": first.toISOString() } });
+        const dates = await draftDatesFor({ mr, draftIds: ["50"], now: later, file });
+        expect(dates.get("50")).toBe(first.toISOString());
+    });
+
     test("the dates survive between reads through the file, and a broken file dates drafts now", async () => {
         const file = join(mkdtempSync(join(tmpdir(), "draft-dates-")), "dates.json");
         await draftDatesFor({ mr, draftIds: ["50"], now: first, file });

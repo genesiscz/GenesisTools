@@ -1,4 +1,5 @@
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { type Command, InvalidArgumentError } from "commander";
@@ -50,7 +51,7 @@ export function registerDevCommands(program: Command): void {
         )
         .option(
             "--min-profile-ms <ms>",
-            "report profiling lines (tools config profiling: CLI timers and whole command runs) at least this long",
+            `report profiling lines (${toolCommand("config profiling")}: CLI timers and whole command runs) at least this long`,
             positiveNumber,
             DEFAULT_CLASSIFY.minProfileMs
         )

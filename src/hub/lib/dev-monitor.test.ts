@@ -9,6 +9,7 @@ import {
     describeCrash,
     EventBatcher,
     formatEvent,
+    runDevMonitor,
     shortCommand,
 } from "./dev-monitor";
 
@@ -146,3 +147,17 @@ describe("describeCrash", () => {
         );
     });
 });
+
+test("aborting interrupts a long monitor interval", async () => {
+    const controller = new AbortController();
+    const run = runDevMonitor({
+        ...DEFAULT_CLASSIFY,
+        fromStart: false,
+        intervalMs: 60_000,
+        minDelayMs: 10_000,
+        signal: controller.signal,
+        emit: () => {},
+    });
+    controller.abort();
+    await run;
+}, 1000);
