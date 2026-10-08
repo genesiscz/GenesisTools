@@ -781,6 +781,24 @@ final class EdgePanelControllerTests: XCTestCase {
         return value
     }
 
+    func testTopNotchReceivesPointerAboveTheMenuBarWithoutRaisingSidePanels() throws {
+        _ = NSApplication.shared
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        for placement in [EdgePanelPlacement.top, .left, .right] {
+            let value = EdgePanelController(
+                placement: placement, screen: screen, compactSize: CGSize(width: 360, height: 36),
+                expandedSize: CGSize(width: 432, height: 600), title: "Hidden layering test") { Color.black }
+            defer { value.panel.close() }
+            if placement == .top {
+                XCTAssertGreaterThan(value.panel.level.rawValue, NSWindow.Level.mainMenu.rawValue,
+                    "The menu bar otherwise intercepts the notch's agent buttons on displays without a camera cutout")
+            } else {
+                XCTAssertLessThan(value.panel.level.rawValue, NSWindow.Level.mainMenu.rawValue,
+                    "Side widgets must not cover system menus")
+            }
+        }
+    }
+
     func testReduceMotionAndHiddenPanelReachTheExactTargetWithoutCallbacks() throws {
         let value = try controller()
         defer { value.hide(); value.panel.close() }
