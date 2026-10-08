@@ -89,6 +89,12 @@ describe("classifyProfileLine", () => {
         expect(
             classifyProfileLine("[profile:cli] agents changes exit=0 cpu=1353ms rss=2470MB caller=app 1.117s")?.text
         ).toBe("cli agents changes exit=0 cpu=1353ms rss=2470MB caller=app 1.12s");
+        expect(
+            classifyProfileLine("[profile:cli] hub serve exit=0 cpu=692ms rss=104MB caller=shell 60.06s")
+        ).toBeNull();
+        expect(classifyProfileLine("[profile:cli] hub prs exit=0 cpu=200ms rss=104MB caller=app 3.5s")?.kind).toBe(
+            "slow"
+        );
         expect(classifyProfileLine("[profile:widget] sessions 53.89ms")).toBeNull();
         expect(classifyProfileLine("[profile:a] walk 1.5s trace=t1 pid=999999999")?.text).toBe(
             "a walk 1.50s trace=t1 [pid 999999999]"

@@ -50,8 +50,13 @@ export function classifyProfileLine(line: string, options: ClassifyOptions = DEF
     }
 
     const ms = Number(match[3]) * (match[4] === "s" ? 1000 : 1);
+    // A whole command run counts by its CPU, unless the app waits on it: a server or a watcher started from
+    // a shell lives for minutes and costs little, and its wall time says nothing.
+    const cpu = Number(match[2].match(/\bcpu=(\d+)ms\b/)?.[1] ?? Number.NaN);
+    const appWaits = /\bcaller=app\b/.test(match[2]);
+    const cost = match[1] === "cli" && Number.isFinite(cpu) && !appWaits ? cpu : ms;
 
-    if (ms < options.minProfileMs) {
+    if (cost < options.minProfileMs) {
         return null;
     }
 
