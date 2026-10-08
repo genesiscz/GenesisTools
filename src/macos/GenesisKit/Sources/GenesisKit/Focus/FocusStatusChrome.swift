@@ -48,6 +48,8 @@ public struct FocusStatusChip: View {
 
 /// Top-of-workspace recovery strip after crash/force-quit mid-session.
 public struct FocusRecoveryBanner: View {
+    public init(focus: FocusOrchestrator) { self.focus = focus }
+
     @ObservedObject public var focus: FocusOrchestrator
 
     public var body: some View {

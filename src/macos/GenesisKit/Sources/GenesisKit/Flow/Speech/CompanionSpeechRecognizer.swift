@@ -61,6 +61,8 @@ private final class RequestBox: @unchecked Sendable {
 /// place; `text` is always the whole hold. A value type on purpose: the
 /// interesting rules are unit-testable without a microphone.
 public struct CompanionTranscriptAccumulator {
+    public init() {}
+
     public private(set) var committed = ""
     public private(set) var segment = ""
 
