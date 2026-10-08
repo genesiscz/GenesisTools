@@ -94,3 +94,25 @@ describe("gated-tool dispatch", () => {
         expect(output).toContain("Usage: control");
     });
 });
+
+describe("native widget dispatcher", () => {
+    it("executes main-guarded tools and propagates command failures", () => {
+        const bridge = join(ROOT, "widget-tools");
+        const help = spawnSync(process.execPath, [bridge, "video", "--help"], {
+            cwd: ROOT,
+            encoding: "utf8",
+            env: process.env,
+            timeout: 10_000,
+        });
+        expect(help.status).toBe(0);
+        expect(help.stdout).toContain("frames");
+        const invalid = spawnSync(process.execPath, [bridge, "video", "frames", "/fixture/missing.mp4", "--fps", "7"], {
+            cwd: ROOT,
+            encoding: "utf8",
+            env: process.env,
+            timeout: 10_000,
+        });
+        expect(invalid.status).toBe(1);
+        expect(invalid.stderr).toContain("--fps");
+    });
+});
