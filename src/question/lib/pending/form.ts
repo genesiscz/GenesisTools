@@ -315,6 +315,7 @@ export function sanitizeAnswer(answer: AskAnswer, form: AskForm): AskAnswer {
 
     return {
         itemId: answer.itemId,
+        mediaContext: typeof answer.mediaContext === "string" ? answer.mediaContext.slice(0, 128_000) : undefined,
         // Mirror of the choice rule above: a choice-only item (`--no-free-text`) must not be
         // closed by arbitrary text, which `itemAnswered` would otherwise count as an answer.
         freeText: item?.allowFreeText ? answer.freeText?.slice(0, MAX_FREE_TEXT_CHARS) : undefined,

@@ -410,6 +410,12 @@ export const QUESTION_RESPOND_INPUT_SCHEMA = {
                     freeText: { type: "string" },
                     selectedChoices: { type: "array", items: { type: "string" } },
                     fileTags: { type: "array", items: { type: "string" } },
+                    mediaContext: {
+                        type: "string",
+                        maxLength: 128000,
+                        description:
+                            "Additional user-provided local image/video paths and prepared evidence; does not replace typed answers.",
+                    },
                     images: {
                         type: "array",
                         description:

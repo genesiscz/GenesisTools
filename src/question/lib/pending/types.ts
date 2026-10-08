@@ -49,6 +49,8 @@ export interface AskImage {
 }
 
 export interface AskAnswer {
+    /** Durable, local media context supplied by the user; it supplements, never replaces, a typed choice. */
+    mediaContext?: string;
     itemId: string;
     freeText?: string;
     selectedChoices?: string[];

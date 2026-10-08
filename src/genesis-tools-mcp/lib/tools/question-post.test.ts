@@ -651,3 +651,27 @@ describe("question_post inline tokens and superseding", () => {
         expect(questionPostDescription(false)).toContain("pr-thread");
     });
 });
+
+test("media context supplements a typed answer and reaches the waiting consumer", async () => {
+    const posted = await handleQuestionPost(
+        {
+            projectPath: "/tmp/gt-mcp-fixture",
+            question: "Which layout?",
+            choices: [
+                { id: "c1", label: "left" },
+                { id: "c2", label: "right" },
+            ],
+            allowFreeText: false,
+        },
+        deps
+    );
+    const id = idIn(posted);
+    const context = '<fromVideo>{"original":"/fixture/video.mp4","manifest":"/fixture/manifest.json"}</fromVideo>';
+    await handleQuestionRespond(
+        { id, answers: [{ itemId: "q1", selectedChoices: ["c1"], mediaContext: context }] },
+        deps
+    );
+    expect(getAskForm(id, deps)?.answers?.q1.mediaContext).toBe(context);
+    expect(getAskForm(id, deps)?.answers?.q1.selectedChoices).toEqual(["c1"]);
+    expect(QUESTION_RESPOND_INPUT_SCHEMA.properties.answers.items.properties).toHaveProperty("mediaContext");
+});

@@ -48,6 +48,10 @@ function renderOneAnswer(item: AskItem, answer: AskAnswer | undefined): string {
         parts.push(`_(${answer.images.length} pasted image${answer.images.length === 1 ? "" : "s"})_`);
     }
 
+    if (answer.mediaContext?.trim()) {
+        parts.push(answer.mediaContext);
+    }
+
     return parts.length > 0 ? parts.join("\n\n") : "_(no answer)_";
 }
 
