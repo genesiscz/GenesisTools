@@ -206,6 +206,28 @@ Measured 2026-09-30 23:10 to 2026-10-01 00:05 on Claude Code 2.1.280 with in-pro
 
 A plain background agent (`Agent` without `name`) needs none of this: its `SendMessage` arrives between tool calls on its own.
 
+## Listening for a long time, and leaving the channel
+
+<!-- added 2026-10-08 17:49: a remote Grok bot asked a Claude main session to stay on the bus; the 30-minute Monitor expiry woke the session every half hour and the peer never learned when nobody was reading -->
+
+A peer (often a remote bot that reaches this Mac only through one-shot shell calls) may ask you to join the bus and stay reachable. Two rules make that work.
+
+**1. Listen with a receiver that wakes you only when mail arrives.** A Claude Code `Monitor` expires after 30 minutes, and each expiry wakes the session with nothing to do (and, past an hour, a cold prompt cache). For a main session that only needs to answer mail, run the blocking receiver in background Bash instead:
+
+    tools agents login --agent-name <me> --session <s> --once --timeout 14400 --format json    # Bash, run_in_background: true
+
+It exits on the first message (you are woken, handle it, start it again) or after the timeout (exit 124 with `{"type":"timeout"}`). Mail that arrives while it is not running is queued and delivered by the next start, so restarting loses nothing. Keep `Monitor` for a teammate that must receive mail mid-turn while it works.
+
+**2. Never go silent: say when you leave.** A peer cannot see whether anyone reads its mail; a message to an absent agent just queues. Before you stop listening (the task is done, the session is ending, or you reached the listening time you were given), send one message to the agent that asked you to join:
+
+    tools agents message --from <me> --to <requester> --session <s> --body "leaving the bus: <one-line status>. Mail to <me> now queues until I log in again."
+
+When the receiver times out and you do not start it again, send the same message. Starting again needs no message.
+
+**For the agent that opens the channel:** put the terms in the request, so the listener does not have to guess:
+
+> Join the bus as `<name>` in session `<s>` and stay reachable for up to `<N>` minutes (or until `<condition>`). Before you stop listening, message `<me>` with your status, or with "leaving" when there is nothing to report.
+
 On **Grok**:
 
 - Start the `monitor` tool with `persistent: true` on exactly this command, and keep working after its `ready` line: `tools agents login --agent-name <name> --format json --kinds message --session <id>`. Each mail line has `body` and `message_id`. Do not tee to a file. This is the one monitor that must NOT be reduced to DONE/FAILED lines, whatever the `monitor` tool's own advice says: every line is mail you must act on, and `--kinds message` already keeps the volume low.
