@@ -1030,7 +1030,8 @@ final class WidgetRosterTests: XCTestCase {
                             let document = try XCTUnwrap(scroll.documentView)
                             XCTAssertLessThanOrEqual(scroll.bounds.height, height + 0.5)
                             XCTAssertGreaterThan(document.bounds.height, scroll.contentView.bounds.height)
-                            XCTAssertTrue(host.bounds.insetBy(dx: -0.5, dy: -0.5).contains(host.convert(scroll.bounds, from: scroll)))
+                            XCTAssertTrue(host.bounds.insetBy(dx: -0.5, dy: -0.5).contains(host.convert(scroll.bounds, from: scroll)),
+                                "Viewport escaped host: style=\(style), edge=\(edge), expanded=\(expanded), height=\(height), host=\(host.bounds), scroll=\(host.convert(scroll.bounds, from: scroll))")
                             if height >= 120 {
                                 XCTAssertEqual(scroll.contentView.bounds.height, height - (style == "classic" ? 63 : 67), accuracy: 0.5,
                                     "The scrolling viewport must leave room for fixed settings and drag controls")
@@ -1137,6 +1138,30 @@ final class WidgetRosterTests: XCTestCase {
         XCTAssertTrue(roster.visible.isEmpty)
         XCTAssertTrue(roster.preview.isEmpty)
         XCTAssertEqual(roster.waiting, 0)
+    }
+
+    func testRailKeepsTargetsInPlaceAcrossActivityAndStatusRefreshes() {
+        var sessions = Array(fixtureSessions().filter(\.visible).prefix(8))
+        var roster = WidgetSessionRoster()
+        roster.update(sessions)
+        let original = roster.rail.map(\.key)
+        sessions.reverse()
+        sessions[0].status = "working"
+        sessions[0].activityAt += 1_000_000
+        sessions[1].status = "waiting"
+        sessions[1].title = "Updated in place"
+        roster.update(sessions)
+        XCTAssertEqual(roster.rail.map(\.key), original, "A pointer target must not move when an agent becomes active")
+        XCTAssertEqual(roster.rail.first(where: { $0.key == sessions[1].key })?.title, "Updated in place")
+        let removed = sessions.removeFirst().key
+        roster.update(sessions)
+        XCTAssertEqual(roster.rail.map(\.key), original.filter { $0 != removed })
+        var fresh = sessions[0]
+        fresh.key = "new-arrival"
+        fresh.activityAt += 2_000_000
+        sessions.insert(fresh, at: 0)
+        roster.update(sessions)
+        XCTAssertEqual(roster.rail.last?.key, "new-arrival", "An incoming session cannot steal a hovered dot")
     }
 
     func testRosterReadBenchmark() async throws {
