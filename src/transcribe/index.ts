@@ -247,7 +247,6 @@ async function interactiveMode(): Promise<void> {
             ...(env.ai.groq.getKey() ? [{ value: "groq", label: "Groq", hint: "whisper-large-v3" }] : []),
             ...(env.ai.openrouter.getKey() ? [{ value: "openrouter", label: "OpenRouter" }] : []),
             ...(env.x.getApiKey() ? [{ value: "xai", label: "xAI (Grok)", hint: "grok-voice STT" }] : []),
-            { value: "darwinkit", label: "DarwinKit", hint: "macOS native speech recognition" },
         ],
     });
 
@@ -357,7 +356,7 @@ const program = new Command()
     .name("transcribe")
     .description("Transcribe a local audio file, or a YouTube, X, or direct media URL")
     .argument("[file]", "Audio file, or a YouTube / X / direct media URL")
-    .option("--provider <provider>", "AI provider (local-hf, cloud, openai, groq, openrouter, darwinkit, xai)")
+    .option("--provider <provider>", "AI provider (local-hf, cloud, openai, groq, openrouter, xai)")
     .option("--force-transcribe", "YouTube only: skip captions and transcribe the audio")
     .option(
         "--price-only",
@@ -566,7 +565,7 @@ async function ensureProviderResolved(opts: TranscribeFlags): Promise<string | u
         if (available.length === 0) {
             out.error(pc.red("No transcription providers are available."));
             out.error(pc.dim("Set one of: OPENAI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, X_AI_API_KEY"));
-            out.error(pc.dim("…or install local-hf / darwinkit support."));
+            out.error(pc.dim("…or install local-hf support."));
             process.exit(1);
         }
 

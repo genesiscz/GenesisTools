@@ -87,7 +87,11 @@ export function taskModelRef(
 
     if (provider) {
         const fallback = taskModelDefault(provider, capability);
-        return fallback ? `${provider}/${fallback}` : provider;
+        if (!fallback) {
+            throw new Error(`No default ${capability} model is defined for provider "${provider}".`);
+        }
+
+        return `${provider}/${fallback}`;
     }
 
     return model;

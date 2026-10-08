@@ -70,6 +70,7 @@ export class Transcriber {
         persist?: boolean;
         app?: string;
     }): Promise<Transcriber> {
+        const model = taskModelRef(options, "transcribe");
         if (options?.persist && options.provider) {
             const config = await AIConfig.load();
             await config.setTask("transcribe", {
@@ -80,7 +81,7 @@ export class Transcriber {
 
         const resolved = await resolveForTask({
             task: "transcribe",
-            model: taskModelRef(options, "transcribe"),
+            model,
             app: options?.app,
             needs: "transcription",
         });
