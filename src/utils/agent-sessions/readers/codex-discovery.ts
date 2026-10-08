@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
-import { readdir, readFile, realpath } from "node:fs/promises";
+import { open, readdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { type HistoryDiscoveryOptions, walkSourceRoots } from "../source-discovery";
 import { asRecord, type JsonRecord, type JsonValue, scanJsonlRecords, text } from "../source-scan";
@@ -43,7 +44,68 @@ function columns(database: Database, table: string): string[] {
     );
 }
 
+/**
+ * Found headers by rollout path. A rollout is append-only and its header is one of its first lines, so a file with
+ * the same inode that has not shrunk and still begins with the same bytes (the session id is in them) still starts
+ * with it. Every listing read ~700 headers through a stream, about a sixth of a warm `ai usage sessions`
+ * (2026-10-08). A missing or broken header is never cached: it is read again, and its issue reported again, on every
+ * discovery.
+ */
+const HEADER_CACHE_LIMIT = 10_000;
+const HEADER_MARK_BYTES = 256;
+const headerCache = new Map<string, { ino: number; size: number; mark: string; header: CodexDiscoveryHeader }>();
+
+/** The file's inode, size and first bytes, or null when it cannot be read (the full read then reports why). */
+async function headerIdentity(path: string): Promise<{ ino: number; size: number; mark: string } | null> {
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+        handle = await open(path, "r");
+        const status = await handle.stat();
+        const buffer = Buffer.alloc(Math.min(HEADER_MARK_BYTES, status.size));
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        return { ino: status.ino, size: status.size, mark: buffer.subarray(0, bytesRead).toString("latin1") };
+    } catch (err) {
+        logger.debug({ err, path }, "[codex-discovery] header identity unreadable; reading the header in full");
+        return null;
+    } finally {
+        await handle?.close().catch(() => undefined);
+    }
+}
+
 async function readHeader(options: {
+    path: string;
+    root: string;
+    issues: NativeSourceIssue[];
+    incompleteRoots: Set<string>;
+}): Promise<CodexDiscoveryHeader | undefined> {
+    const identity = await headerIdentity(options.path);
+    const cached = headerCache.get(options.path);
+    if (
+        identity &&
+        cached &&
+        cached.ino === identity.ino &&
+        identity.size >= cached.size &&
+        identity.mark.startsWith(cached.mark)
+    ) {
+        return cached.header;
+    }
+
+    const header = await readHeaderUncached(options);
+    if (header && identity) {
+        headerCache.delete(options.path);
+        headerCache.set(options.path, { ...identity, header });
+        if (headerCache.size > HEADER_CACHE_LIMIT) {
+            const oldest = headerCache.keys().next().value;
+            if (oldest !== undefined) {
+                headerCache.delete(oldest);
+            }
+        }
+    }
+
+    return header;
+}
+
+async function readHeaderUncached(options: {
     path: string;
     root: string;
     issues: NativeSourceIssue[];

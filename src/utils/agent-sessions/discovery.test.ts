@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -417,6 +417,27 @@ test("discovery accepts a pre-session_meta Codex rollout and keeps its root comp
     expect(discovered.issues).toEqual([]);
     expect(discovered.completeRoots).toEqual([realpathSync(root)]);
     expect(discovered.sources.map((source) => source.metadata?.sessionId)).toEqual([ID_A]);
+});
+
+test("a repeated Codex discovery keeps the header of an appended rollout and re-reads one rewritten in place", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-header-cache-"));
+    const root = join(home, "sessions");
+    mkdirSync(root, { recursive: true });
+    const path = join(root, `rollout-2026-10-08T05-00-00-${ID_A}.jsonl`);
+    const header = (cwd: string) => line({ type: "session_meta", payload: { id: ID_A, cwd, history_mode: "legacy" } });
+    const reply = line({
+        type: "response_item",
+        payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "hi" }] },
+    });
+    const cwdOf = async () => (await discoverCodexHistorySources([root])).sources.map((source) => source.metadata?.cwd);
+
+    writeFileSync(path, header("/projects/one"));
+    expect(await cwdOf()).toEqual(["/projects/one"]);
+    appendFileSync(path, reply);
+    expect(await cwdOf()).toEqual(["/projects/one"]);
+    // Same inode, not shorter: only the first bytes tell the rewrite apart.
+    writeFileSync(path, header("/projects/two-is-longer") + reply + reply);
+    expect(await cwdOf()).toEqual(["/projects/two-is-longer"]);
 });
 
 test("a repeated walk in one process sees added, removed and renamed files and directories", async () => {
