@@ -374,6 +374,13 @@ export function checkJudgements(input: CheckInput): CheckResult {
                     line: item.line,
                     message: "not judged (no verdict); it will be left out",
                 });
+            } else if ([...item.fences.values()].some((text) => !isEmptyText(text))) {
+                // The skeleton's empty N01 template is no finding; one with text lost its verdict.
+                warnings.push({
+                    id: item.id,
+                    line: item.line,
+                    message: "it has text but no verdict; it will be left out",
+                });
             }
 
             continue;
@@ -494,6 +501,16 @@ export function checkJudgements(input: CheckInput): CheckResult {
     }
 
     return { errors, warnings };
+}
+
+/** The lines every door prints for a check: warnings first, then errors, each with its line when known. */
+export function checkLines(result: CheckResult): string[] {
+    const where = (problem: CheckProblem): string => `${problem.id}${problem.line ? ` (line ${problem.line})` : ""}`;
+
+    return [
+        ...result.warnings.map((warning) => `⚠  ${where(warning)}: ${warning.message}`),
+        ...result.errors.map((error) => `✗  ${where(error)}: ${error.message}`),
+    ];
 }
 
 const BARE_PATH = /(?<![\w/.@-])([\w@-][\w.@-]*\.[A-Za-z0-9]+):(\d+)\b/g;

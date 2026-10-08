@@ -120,7 +120,7 @@ Tests assert against `NEUTRAL_DEFAULTS` and `NEUTRAL_CONFIG`, never the seam.
 | `pr <iid> review --give` | Facts for reviewing someone else's MR (see below); `--md`, `--llm`, `--format summary`, `--expand <ids>`, `--proposal-skeleton`, `--mine-only` |
 | `pr <iid> review skeleton` | Write the judgements file: every judgeable item's heading (id, `discussion …` or `draft …`, anchor) and empty fields; `--force` starts over |
 | `pr <iid> review check` | Check a filled judgements file; exit 1 with the item and line of every error |
-| `pr <iid> review render` | The full layout to a file (`--out`, `--open`), or `--digest`, `--item <ids>`, `--proposal` (for `tools hub proposal push -`) |
+| `pr <iid> review render` | The full layout to a file (`--out`, `--open`), or `--digest`, `--item <ids>`, `--proposal` (for `tools hub proposal push -`). Runs the `check` first: warnings go to stderr, and any error exits 1 with nothing rendered |
 | `pr <iid> comments` | Threads with author, anchor and state; `--mine`, `--author`, `--unresolved`, `--json` |
 | `pr <iid> comments drafts` | My pending drafts with where each one landed |
 | `pr <iid> comments reply <thread>` | Draft reply in a thread (full id or unique prefix), or `--now` with `--resolve` |

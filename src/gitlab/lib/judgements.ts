@@ -380,6 +380,44 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const asString = (value: unknown): string =>
     typeof value === "string" ? value : value === undefined || value === null ? "" : String(value);
 
+const FILE_KEYS = ["mr", "mode", "head", "overall", "items", "sections"];
+const ITEM_KEYS = new Set(["id", "title", "pair", "fields", "rationale", "texts"]);
+
+/** `a string`, `an array`, `an object`, … for a message about a value of the wrong type. */
+function typeName(value: unknown): string {
+    if (Array.isArray(value)) {
+        return "an array";
+    }
+
+    if (value === null) {
+        return "null";
+    }
+
+    return typeof value === "object" ? "an object" : `a ${typeof value}`;
+}
+
+/** The entries of an optional object; anything else is an error, since its content would be lost. */
+function entriesOf({
+    value,
+    expected,
+    problem,
+}: {
+    value: unknown;
+    expected: string;
+    problem: (message: string) => void;
+}): Array<[string, unknown]> {
+    if (value === undefined || value === null) {
+        return [];
+    }
+
+    if (!isRecord(value)) {
+        problem(`${expected}, got ${typeName(value)}`);
+        return [];
+    }
+
+    return Object.entries(value);
+}
+
 export function parseJudgementsJson(value: unknown): Judgements {
     const warnings: JudgementWarning[] = [];
     const result: Judgements = { header: new Map(), items: [], sections: new Map(), warnings, format: "json" };
@@ -390,6 +428,17 @@ export function parseJudgementsJson(value: unknown): Judgements {
         return result;
     }
 
+    for (const key of Object.keys(value)) {
+        if (!FILE_KEYS.includes(key)) {
+            warnings.push({
+                severity: "warning",
+                id: "file",
+                line: 0,
+                message: `unknown key "${key}"; it is ignored (the keys are: ${FILE_KEYS.join(", ")})`,
+            });
+        }
+    }
+
     if (value.overall !== undefined) {
         result.header.set("Overall", asString(value.overall));
     }
@@ -398,7 +447,17 @@ export function parseJudgementsJson(value: unknown): Judgements {
         result.mr = Number(value.mr);
     }
 
-    for (const [name, body] of Object.entries(isRecord(value.sections) ? value.sections : {})) {
+    const fileError = (message: string): void => {
+        warnings.push({ severity: "error", id: "file", line: 0, message });
+    };
+
+    const sections = entriesOf({
+        value: value.sections,
+        expected: "`sections` must be an object of title → text",
+        problem: fileError,
+    });
+
+    for (const [name, body] of sections) {
         result.sections.set(name, asString(body));
     }
 
@@ -435,9 +494,46 @@ export function parseJudgementsJson(value: unknown): Judgements {
             fences: new Map(),
             line,
         };
+        const warn = (message: string, severity: "error" | "warning" = "warning"): void => {
+            warnings.push({ severity, id, line, message });
+        };
+        const error = (message: string): void => warn(message, "error");
+        const fieldEntries = entriesOf({
+            value: raw.fields,
+            expected: "`fields` must be an object of field name → text",
+            problem: error,
+        });
+        const textEntries = entriesOf({
+            value: raw.texts,
+            expected: "`texts` must be an object of text field name → text",
+            problem: error,
+        });
 
-        for (const [key, fieldValue] of Object.entries(isRecord(raw.fields) ? raw.fields : {})) {
+        // A field written at the item's top level instead of under fields or texts: read it, and say so.
+        for (const [key, fieldValue] of Object.entries(raw)) {
+            if (ITEM_KEYS.has(key)) {
+                continue;
+            }
+
             const name = canonicalField(key);
+
+            if (!name) {
+                warn(`unknown key "${key}"; it is ignored`);
+                continue;
+            }
+
+            const under = TEXT_FIELDS.has(name) ? "texts" : "fields";
+            warn(`"${key}" belongs under ${under}; read as "${name}"`);
+            (under === "texts" ? textEntries : fieldEntries).push([name, fieldValue]);
+        }
+
+        for (const [key, fieldValue] of fieldEntries) {
+            const name = canonicalField(key);
+
+            if (typeof fieldValue === "object" && fieldValue !== null) {
+                error(`field "${key}" must be text, got ${typeName(fieldValue)}`);
+                continue;
+            }
 
             if (!name || TEXT_FIELDS.has(name)) {
                 warnings.push({
@@ -462,8 +558,13 @@ export function parseJudgementsJson(value: unknown): Judgements {
             );
         }
 
-        for (const [key, text] of Object.entries(isRecord(raw.texts) ? raw.texts : {})) {
+        for (const [key, text] of textEntries) {
             const name = canonicalField(key);
+
+            if (typeof text === "object" && text !== null) {
+                error(`text "${key}" must be text, got ${typeName(text)}`);
+                continue;
+            }
 
             if (!name || !TEXT_FIELDS.has(name)) {
                 warnings.push({
@@ -476,6 +577,10 @@ export function parseJudgementsJson(value: unknown): Judgements {
             }
 
             item.fences.set(name, asString(text).trim());
+        }
+
+        if (raw.rationale !== undefined && raw.rationale !== null && !Array.isArray(raw.rationale)) {
+            error(`\`rationale\` must be an array of strings, got ${typeName(raw.rationale)}`);
         }
 
         const rationale = Array.isArray(raw.rationale) ? raw.rationale.map(asString).filter(Boolean) : [];

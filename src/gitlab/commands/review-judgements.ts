@@ -19,7 +19,7 @@ import { progress, type TargetOptions, withProject } from "@app/gitlab/commands/
 import { resolveProjectApi } from "@app/gitlab/lib/client";
 import { loadConfig } from "@app/gitlab/lib/config";
 import { parseJudgementsFile, reportPathFor } from "@app/gitlab/lib/judgements";
-import { checkJudgements, skeletonJson, skeletonText } from "@app/gitlab/lib/judgements-check";
+import { checkJudgements, checkLines, skeletonJson, skeletonText } from "@app/gitlab/lib/judgements-check";
 import {
     alreadyPosted,
     blockingErrors,
@@ -197,12 +197,8 @@ async function runCheck(iid: string, opts: JudgementOptions): Promise<void> {
         iid: Number(iid),
     });
 
-    for (const warning of result.warnings) {
-        out.println(`⚠  ${warning.id}${warning.line ? ` (line ${warning.line})` : ""}: ${warning.message}`);
-    }
-
-    for (const error of result.errors) {
-        out.println(`✗  ${error.id} (line ${error.line}): ${error.message}`);
+    for (const line of checkLines(result)) {
+        out.println(line);
     }
 
     if (result.errors.length > 0) {
@@ -326,7 +322,26 @@ async function runRender(iid: string, opts: RenderOptions): Promise<void> {
     }
 
     const judgements = parseJudgementsFile(readFileSync(file, "utf-8"), file);
-    const ctx = await renderContext(iid, mode, opts, api);
+    const [ctx, config] = await Promise.all([renderContext(iid, mode, opts, api), loadConfig()]);
+    // The same check as `review check`: a broken file never becomes a half-filled report or proposal.
+    const check = checkJudgements({
+        judgements,
+        known: ctx.known,
+        files: ctx.files,
+        rules: config.review.draftRules,
+        iid: Number(iid),
+    });
+
+    for (const line of checkLines(check)) {
+        progress(line);
+    }
+
+    if (check.errors.length > 0) {
+        progress(`\n${check.errors.length} error(s) in ${file}; nothing was rendered.`);
+        process.exitCode = 1;
+
+        return;
+    }
 
     if (opts.proposal) {
         out.result(proposalFromJudgements(judgements, ctx));
@@ -495,6 +510,12 @@ async function runPost(iid: string, opts: PostOptions): Promise<void> {
         itemIds: new Set(judgements.items.map((item) => item.id)),
     });
     const plan = planPost({ judgements, known: items.known, ids, answers, agent: opts.agent });
+
+    // Errors outside the selected items do not block this post, so only the warnings are shown here.
+    for (const line of checkLines({ warnings: check.warnings, errors: [] })) {
+        progress(line);
+    }
+
     const problems = [...blocking.map((e) => ({ id: e.id, message: e.message })), ...plan.errors];
 
     if (problems.length > 0) {

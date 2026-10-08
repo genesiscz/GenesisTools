@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { judgementsToJson, parseAnchor, parseJudgements, parseJudgementsFile, reportPathFor } from "./judgements";
-import { type CheckInput, checkJudgements, type KnownItem, skeletonText } from "./judgements-check";
+import { type CheckInput, checkJudgements, checkLines, type KnownItem, skeletonText } from "./judgements-check";
 import { parseUnifiedDiff } from "./pr-review";
 
 const KNOWN: KnownItem[] = [
@@ -501,5 +501,86 @@ describe("a judgements file edited by hand", () => {
             "the JSON was broken and was repaired; check the texts read as meant"
         );
         expect(errorsOf("not json at all {", "judgements.json")[0]).toContain("the JSON needs an `items` array");
+    });
+
+    test("a JSON item with its fields at the top is read under the real names, and says so", () => {
+        const flat = SafeJSON.stringify({
+            items: [
+                {
+                    id: "N01",
+                    verdict: "Bug [85%]",
+                    action: "comment",
+                    anchor: "src/lock.ts:4 (new) `    return;`",
+                    "proposed draft comment": "Tady se vrací dřív.",
+                    note: "scratch",
+                },
+            ],
+        });
+        const parsed = parseJudgementsFile(flat, "judgements.json");
+        const n01 = parsed.items[0];
+
+        expect(n01.fields.get("Verdict")).toBe("Bug [85%]");
+        expect(n01.fields.get("Action")).toBe("comment");
+        expect(n01.fences.get("Proposed draft comment")).toBe("Tady se vrací dřív.");
+        expect(parsed.warnings.map((w) => `${w.severity} ${w.id}: ${w.message}`)).toEqual([
+            'warning N01: "verdict" belongs under fields; read as "Verdict"',
+            'warning N01: "action" belongs under fields; read as "Action"',
+            'warning N01: "anchor" belongs under fields; read as "Anchor"',
+            'warning N01: "proposed draft comment" belongs under texts; read as "Proposed draft comment"',
+            'warning N01: unknown key "note"; it is ignored',
+        ]);
+        expect(errorsOf(flat, "judgements.json")).toEqual([]);
+    });
+
+    test("a JSON value of the wrong type is an error, because its content would be lost", () => {
+        const wrong = SafeJSON.stringify({
+            overal: "Approve",
+            sections: ["Checked and fine"],
+            items: [
+                {
+                    id: "N01",
+                    fields: "Verdict: Bug [85%]",
+                    texts: ["Tady se vrací dřív."],
+                    rationale: "because",
+                },
+                { id: "T01", pair: "discussion 0539a97f", fields: { Verdict: { text: "Valid" }, Action: "none" } },
+            ],
+        });
+
+        expect(errorsOf(wrong, "judgements.json")).toEqual([
+            "file: `sections` must be an object of title → text, got an array",
+            "N01: `fields` must be an object of field name → text, got a string",
+            "N01: `texts` must be an object of text field name → text, got an array",
+            "N01: `rationale` must be an array of strings, got a string",
+            'T01: field "Verdict" must be text, got an object',
+        ]);
+        expect(parseJudgementsFile(wrong, "judgements.json").warnings.map((w) => w.message)).toContain(
+            'unknown key "overal"; it is ignored (the keys are: mr, mode, head, overall, items, sections)'
+        );
+    });
+
+    test("a new finding with text but no verdict is reported, because it would be left out", () => {
+        const unjudged = GOOD.replace("- Verdict: Bug [85%]\n", "");
+
+        expect(warningsOf(unjudged)).toContain("N01: it has text but no verdict; it will be left out");
+        expect(warningsOf(skeletonText({ iid: 42, mode: "give", headSha: "0123456789", items: KNOWN }))).not.toContain(
+            "N01: it has text but no verdict; it will be left out"
+        );
+    });
+
+    test("every door prints the same problem lines: warnings first, then errors with their line", () => {
+        expect(
+            checkLines({
+                warnings: [
+                    { id: "T01", line: 0, message: "this thread has no block in the file" },
+                    { id: "N01", line: 7, message: "unknown field" },
+                ],
+                errors: [{ id: "file", line: 1, message: "the JSON needs an `items` array" }],
+            })
+        ).toEqual([
+            "⚠  T01: this thread has no block in the file",
+            "⚠  N01 (line 7): unknown field",
+            "✗  file (line 1): the JSON needs an `items` array",
+        ]);
     });
 });
