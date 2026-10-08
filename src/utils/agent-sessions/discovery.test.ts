@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -417,4 +417,20 @@ test("discovery accepts a pre-session_meta Codex rollout and keeps its root comp
     expect(discovered.issues).toEqual([]);
     expect(discovered.completeRoots).toEqual([realpathSync(root)]);
     expect(discovered.sources.map((source) => source.metadata?.sessionId)).toEqual([ID_A]);
+});
+
+test("a repeated walk in one process sees added, removed and renamed files and directories", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "gt-walk-cache-")));
+    mkdirSync(join(root, "project", "nested"), { recursive: true });
+    writeFileSync(join(root, "project", "a.jsonl"), "{}\n");
+    const files = async () => (await walkSourceRoots({ roots: [root] })).files.map((file) => file.relativePath);
+
+    expect(await files()).toEqual(["project/a.jsonl"]);
+    writeFileSync(join(root, "project", "nested", "b.jsonl"), "{}\n");
+    expect(await files()).toEqual(["project/a.jsonl", "project/nested/b.jsonl"]);
+    renameSync(join(root, "project", "a.jsonl"), join(root, "project", "c.jsonl"));
+    expect(await files()).toEqual(["project/c.jsonl", "project/nested/b.jsonl"]);
+    mkdirSync(join(root, "second"));
+    writeFileSync(join(root, "second", "d.jsonl"), "{}\n");
+    expect(await files()).toEqual(["project/c.jsonl", "project/nested/b.jsonl", "second/d.jsonl"]);
 });

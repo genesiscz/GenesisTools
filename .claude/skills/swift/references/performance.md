@@ -104,6 +104,14 @@ are in [genesistools.md](genesistools.md)). Add a new entry at the end of its se
   side files lazily (a generator per file). **Measured:** peak memory 2.6 GB → 1.2 GB, output
   byte-identical, same time. Memory pressure stalls the whole machine, not just your process.
 
+### Directory walks: stat first, read only what changed
+- A directory's mtime changes when an entry is added, removed or renamed. A resident process keeps each
+  directory's sorted entries with its mtime and inode, `stat`s every directory on the next walk and reads
+  only the changed ones. `stat` before `readdir`, so a change between them shows up as a newer mtime on
+  the next walk. Measured: 3,942 directories, `readdir` 74 ms vs `stat` 6 ms; a repeat walk of 30k
+  session files 259 → 74 ms CPU. Prove it with a test that adds, renames and removes between walks in
+  one process, and a planted break (cache ignores mtime) that fails it.
+
 ### Do not allocate for the worst case on every call
 - A zeroed 4 MB buffer per scan for files that needed a few hundred new bytes was the top self-time
   entry of a refresh. Size buffers to what is left to read; `allocUnsafe` when every used byte is read
