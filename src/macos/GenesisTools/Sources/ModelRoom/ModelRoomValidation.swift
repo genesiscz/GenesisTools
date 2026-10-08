@@ -4,6 +4,16 @@ enum ModelRoomLimits {
     static let maximumPosition = 8192.0
     static let maximumQuantities = 256
 
+    static func identifier(label: String, prefix: String, existing: Set<String>) -> String {
+        let slug = label.lowercased().replacingOccurrences(of: "[^a-z0-9_]+", with: "_", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+        let stem = prefix + String((slug.isEmpty ? "quantity" : slug).prefix(40))
+        var candidate = stem
+        var suffix = 2
+        while existing.contains(candidate) { candidate = "\(stem)_\(suffix)"; suffix += 1 }
+        return candidate
+    }
+
     static func position(for index: Int) -> ModelRoomPoint {
         ModelRoomPoint(x: 40 + Double(index % 12) * 240, y: 40 + Double(index / 12) * 160)
     }

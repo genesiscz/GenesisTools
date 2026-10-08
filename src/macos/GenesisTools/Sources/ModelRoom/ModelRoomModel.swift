@@ -8,7 +8,9 @@ final class ModelRoomModel: ObservableObject {
     @Published var file: ModelRoomFile?
     @Published var evaluation: ModelRoomEvaluation?
     @Published var selectedQuantity = "backlog"
-    @Published var selectedScenario = ""
+    @Published var selectedScenario = "" {
+        didSet { if selectedScenario != oldValue { normalizeSelection() } }
+    }
     @Published var mode = ModelRoomMode.build
     @Published var tick = 0
     @Published var busy = false
@@ -18,6 +20,7 @@ final class ModelRoomModel: ObservableObject {
     @Published var presentationStep = 0
     @Published var showAddQuantity = false
     @Published var showSweep = false
+    @Published var showEditor = false
     @Published var exporting = false
     @Published var notice: String?
     @Published var tableImport: ModelRoomTableSource?
@@ -43,10 +46,23 @@ final class ModelRoomModel: ObservableObject {
 
     var frame: ModelRoomFrame? {
         guard let frames = scenarioResult?.result?.frames, !frames.isEmpty else { return nil }
-        return frames[min(tick, frames.count - 1)]
+        return frames[max(0, min(tick, frames.count - 1))]
     }
 
-    var selected: ModelRoomQuantity? { file?.quantities.first { $0.id == selectedQuantity } }
+    var effectiveQuantities: [ModelRoomQuantity] { file?.effectiveQuantities(scenarioID: selectedScenario) ?? [] }
+    var selected: ModelRoomQuantity? { effectiveQuantities.first { $0.id == selectedQuantity } }
+    var relationships: [ModelRoomRelationship] { scenarioResult?.relationships ?? [] }
+
+    func normalizeSelection() {
+        guard let file else { return }
+        if !selectedScenario.isEmpty && !file.scenarios.contains(where: { $0.id == selectedScenario }) { selectedScenario = "" }
+        let ids = Set(effectiveQuantities.map(\.id))
+        if !ids.contains(selectedQuantity) {
+            selectedQuantity = file.presentation.outputs.first(where: { ids.contains($0) }) ?? effectiveQuantities.first?.id ?? ""
+        }
+        tick = min(max(0, tick), maximumTick)
+        presentationStep = min(max(0, presentationStep), max(0, file.presentation.steps.count - 1))
+    }
     var maximumTick: Int {
         let count = (file?.time.duration ?? 10) / (file?.time.step ?? 1)
         guard count.isFinite, count >= 1, count <= 10000 else { return 1 }
@@ -67,6 +83,8 @@ final class ModelRoomModel: ObservableObject {
                 let loaded = try JSONDecoder().decode(ModelRoomFile.self, from: Data(answer.stdout.utf8))
                 try loaded.validateForEditing()
                 file = loaded
+                selectedScenario = ""
+                normalizeSelection()
                 selectedQuantity = loaded.presentation.outputs.first ?? loaded.quantities.first?.id ?? ""
                 owner?.displayName = loaded.title
                 busy = false
@@ -145,13 +163,59 @@ final class ModelRoomModel: ObservableObject {
         apply(after, undo: before, title: title)
     }
 
+    func commitDraft(_ draft: ModelRoomFile, replacing original: ModelRoomFile) throws {
+        guard file == original else { throw modelError("The model changed while this editor was open. Reopen the editor to work from the latest revision.") }
+        try draft.validateForEditing()
+        guard draft != original else { return }
+        apply(draft, undo: original, title: "Edit model and presentation")
+    }
+
+    func validateDraft(_ draft: ModelRoomFile) async throws -> ModelRoomFile {
+        try draft.validateForEditing()
+        let answer = try await documentCommand(draft, command: "evaluate")
+        let result = try await Task.detached(priority: .userInitiated) {
+            try JSONDecoder().decode(ModelRoomEvaluation.self, from: Data(answer.utf8))
+        }.value
+        try Task.checkCancellation()
+        if let invalid = result.scenarios.first(where: { $0.error != nil }) {
+            throw modelError("\(invalid.label): \(invalid.error ?? "Invalid scenario")")
+        }
+        return result.document
+    }
+
+    func convertDraftTime(_ draft: ModelRoomFile, unit: String) async throws -> ModelRoomFile {
+        let answer = try await documentCommand(draft, command: "convert-time", arguments: ["--unit", unit])
+        let converted = try JSONDecoder().decode(ModelRoomFile.self, from: Data(answer.utf8))
+        try converted.validateForEditing()
+        return converted
+    }
+
+    private func documentCommand(_ draft: ModelRoomFile, command: String, arguments: [String] = []) async throws -> String {
+        let span = HubPerf.begin("model-room.author", command)
+        defer { span.end() }
+        let input = try await Task.detached(priority: .userInitiated) {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("model-room-draft-" + UUID().uuidString + ".json")
+            try JSONEncoder().encode(draft).write(to: url, options: .atomic)
+            return url
+        }.value
+        defer {
+            do { try FileManager.default.removeItem(at: input) }
+            catch { HubPerf.log("model-room: draft temporary cleanup: \(error)") }
+        }
+        try Task.checkCancellation()
+        let answer = try await bridge.run(subcommand: "model-room", args: [command, "--input", input.path] + arguments, timeoutSeconds: 30)
+        try Task.checkCancellation()
+        guard answer.exitCode == 0 else { throw modelRoomCommandFailure(answer) }
+        return answer.stdout
+    }
+
     private func apply(_ after: ModelRoomFile, undo before: ModelRoomFile, title: String) {
         owner?.undoManager?.registerUndo(withTarget: self) { target in
             target.apply(before, undo: after, title: title)
         }
         owner?.undoManager?.setActionName(title)
         file = after
-
+        normalizeSelection()
         owner?.displayName = after.title
         evaluate()
     }
@@ -164,8 +228,8 @@ final class ModelRoomModel: ObservableObject {
             let id = "branch_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
             let prior = file.scenarios.first { $0.id == selectedScenario }
             file.scenarios.append(ModelRoomScenario(id: id, label: "Scenario \(file.scenarios.count + 1)", overrides: prior?.overrides ?? [:], interventions: prior?.interventions ?? [], replacements: prior?.replacements ?? [], removed: prior?.removed ?? []))
-            selectedScenario = id
             self.file = file
+            selectedScenario = id
         }
     }
 
@@ -213,6 +277,7 @@ final class ModelRoomModel: ObservableObject {
     func forkScenario() {
         beginGesture(branch: true)
         finishGesture()
+        evaluate()
     }
 
     func inputValue(_ quantity: ModelRoomQuantity) -> Double {
@@ -220,28 +285,53 @@ final class ModelRoomModel: ObservableObject {
     }
 
     func updateQuantity(_ id: String, title: String, edit: (inout ModelRoomQuantity) -> Void) {
-        change(title) { file in
-            guard let index = file.quantities.firstIndex(where: { $0.id == id }) else { return }
-            edit(&file.quantities[index])
-        }
+        let scenarioID = selectedScenario
+        change(title) { $0.editQuantity(id: id, scenarioID: scenarioID, edit: edit) }
+    }
+
+    func moveQuantity(_ id: String, to position: ModelRoomPoint) {
+        guard var file else { return }
+        file.editQuantity(id: id, scenarioID: selectedScenario) { $0.position = position }
+        self.file = file
     }
 
     func removeSelected() {
         let id = selectedQuantity
+        let scenarioID = selectedScenario
         change("Delete quantity") { file in
-            file.quantities.removeAll { $0.id == id }
-            file.presentation.controls.removeAll { $0 == id }
-            file.presentation.outputs.removeAll { $0 == id }
+            if let index = file.scenarios.firstIndex(where: { $0.id == scenarioID }) {
+                file.scenarios[index].replacements.removeAll { $0.id == id }
+                if file.quantities.contains(where: { $0.id == id }) { file.scenarios[index].removed.append(id) }
+                file.scenarios[index].overrides.removeValue(forKey: id)
+                for intervention in file.scenarios[index].interventions.indices { file.scenarios[index].interventions[intervention].values.removeValue(forKey: id) }
+            } else {
+                file.quantities.removeAll { $0.id == id }
+                file.presentation.controls.removeAll { $0 == id }
+                file.presentation.outputs.removeAll { $0 == id }
+                for index in file.subsystems.indices { file.subsystems[index].quantities.removeAll { $0 == id } }
+                file.subsystems.removeAll { $0.quantities.isEmpty }
+                for index in file.scenarios.indices {
+                    file.scenarios[index].removed.removeAll { $0 == id }
+                    if !file.scenarios[index].replacements.contains(where: { $0.id == id }) {
+                        file.scenarios[index].overrides.removeValue(forKey: id)
+                        for intervention in file.scenarios[index].interventions.indices { file.scenarios[index].interventions[intervention].values.removeValue(forKey: id) }
+                    }
+                }
+            }
         }
-        selectedQuantity = file?.quantities.first?.id ?? ""
+        normalizeSelection()
     }
 
     func addQuantity(label: String, kind: String, unit: String) {
-        let id = "q_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let existing = Set((file?.quantities.map(\.id) ?? []) + (file?.scenarios.flatMap { $0.replacements.map(\.id) } ?? []))
+        let id = ModelRoomLimits.identifier(label: label, prefix: "q_", existing: existing)
+        let scenarioID = selectedScenario
         change("Add quantity") { file in
-            file.quantities.append(ModelRoomQuantity(id: id, label: label, unit: unit, position: ModelRoomLimits.position(for: file.quantities.count), kind: kind, value: kind == "input" ? 1 : nil, expression: kind == "formula" ? "1" : nil, initial: kind == "stock" ? 0 : nil, derivative: kind == "stock" ? "0[\(unit)/\(file.time.unit)]" : nil))
+            let quantity = ModelRoomQuantity(id: id, label: label, unit: unit, position: ModelRoomLimits.position(for: file.effectiveQuantities(scenarioID: scenarioID).count), kind: kind, value: kind == "input" ? 1 : nil, expression: kind == "formula" ? "1[\(unit)]" : nil, initial: kind == "stock" ? 0 : nil, derivative: kind == "stock" ? "0[\(unit)/\(file.time.unit)]" : nil)
+            if let index = file.scenarios.firstIndex(where: { $0.id == scenarioID }) { file.scenarios[index].replacements.append(quantity) }
+            else { file.quantities.append(quantity) }
         }
-        selectedQuantity = id
+        if effectiveQuantities.contains(where: { $0.id == id }) { selectedQuantity = id }
     }
 
     func togglePlayback() {

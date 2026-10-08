@@ -8,6 +8,7 @@ import { Command } from "commander";
 import { compileModel } from "./lib/compiler";
 import { importObservationQuantity, previewObservationTable, verifyObservationDigest } from "./lib/data-import";
 import { readModelDocument } from "./lib/document";
+import { convertModelTime } from "./lib/document-operations";
 import { evaluateDocument } from "./lib/evaluation";
 import { classroomModel, projectBudgetModel, supportCapacityModel } from "./lib/examples";
 import { assumptionsCSV, resultsCSV } from "./lib/exports";
@@ -255,6 +256,15 @@ program
         );
         const result = await evaluateDocument({ input: document });
         out.result(result);
+    });
+
+program
+    .command("convert-time")
+    .description("Print a new model with times converted to another unit, preserving elapsed durations.")
+    .requiredOption("--input <file>", "Model document")
+    .requiredOption("--unit <unit>", "Target time unit, for example hour or day")
+    .action(async (options: { input: string; unit: string }) => {
+        out.result(convertModelTime({ input: await readInput(options.input), unit: options.unit }));
     });
 
 program

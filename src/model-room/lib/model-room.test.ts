@@ -10,7 +10,8 @@ import { parseDelimited } from "@genesiscz/utils/tabular/delimited";
 import { compileModel } from "./compiler";
 import { importObservationQuantity, verifyObservationDigest } from "./data-import";
 import { readModelDocument } from "./document";
-import { evaluateDocument } from "./evaluation";
+import { convertModelTime } from "./document-operations";
+import { comparisonValue, evaluateDocument } from "./evaluation";
 import { classroomModel, projectBudgetModel, supportCapacityModel } from "./examples";
 import { assumptionsCSV, resultsCSV, scriptJSON, serializedModel } from "./exports";
 import { CalculationStopped, simulate, simulateAsync, sweepModel } from "./simulation";
@@ -372,6 +373,42 @@ describe("bounded cancellable calculations", () => {
     });
 });
 
+describe("document time conversion", () => {
+    test("converts schedules, presentation jumps and measurements without changing simulated quantities", async () => {
+        const original = supportCapacityModel();
+        original.quantities.push({
+            id: "observed",
+            label: "Observed",
+            unit: "tickets",
+            kind: "data",
+            points: [
+                { time: 0, value: 80 },
+                { time: 6, value: 20 },
+            ],
+            interpolation: "linear",
+            source: "fixture",
+            description: "",
+            provenance: "measured",
+            position: { x: 0, y: 0 },
+        });
+        const converted = convertModelTime({ input: original, unit: "hour" });
+        expect(original.time.unit).toBe("day");
+        expect(converted.time).toEqual({ unit: "hour", duration: 240, step: 24 });
+        expect(converted.scenarios[1].interventions[0].at).toBe(96);
+        expect(converted.presentation.steps[0].time).toBe(144);
+        const measured = converted.quantities.find((quantity) => quantity.id === "observed");
+        expect(measured?.kind === "data" ? measured.points[1].time : undefined).toBe(144);
+        const before = await evaluateDocument({ input: original });
+        const after = await evaluateDocument({ input: converted });
+        for (let index = 0; index < before.scenarios.length; index++) {
+            expect(after.scenarios[index].result?.frames.map((frame) => frame.values)).toEqual(
+                before.scenarios[index].result?.frames.map((frame) => frame.values)
+            );
+        }
+        expect(() => convertModelTime({ input: original, unit: "m" })).toThrow("Incompatible units");
+    });
+});
+
 describe("portable model exports", () => {
     test("document rendering metadata has bounded positions, sliders and presentation times", () => {
         const document = supportCapacityModel();
@@ -402,6 +439,39 @@ describe("portable model exports", () => {
 
         expect(exportedBacklog).toBe(calculatedBacklog);
         expect(csv).toContain('"Self-service on day 4","6","65","3","25","75","120"');
+    });
+
+    test("scenario metadata keeps changed-unit comparisons and graph relationships truthful", async () => {
+        const document = readModelDocument({
+            format: "genesis-model-room",
+            version: 1,
+            id: "unit_branches",
+            title: "Unit branches",
+            time: { unit: "day", duration: 1, step: 1 },
+            quantities: [{ id: "length", label: "Length", kind: "input", unit: "m", value: 2 }],
+            scenarios: [
+                {
+                    id: "centimetres",
+                    label: "Centimetres",
+                    replacements: [
+                        { id: "length", label: "Length", kind: "input", unit: "cm", value: 300 },
+                        { id: "doubled", label: "Doubled", kind: "formula", unit: "cm", expression: "length * 2" },
+                    ],
+                },
+                {
+                    id: "different_dimension",
+                    label: "Different dimension",
+                    replacements: [{ id: "length", label: "Duration", kind: "input", unit: "hour", value: 3 }],
+                },
+            ],
+        });
+        const { scenarios } = await evaluateDocument({ input: document });
+        const baseline = scenarios[0].quantities.length;
+        expect(comparisonValue({ value: 300, source: scenarios[1].quantities.length, target: baseline })).toBe(3);
+        expect(comparisonValue({ value: 3, source: scenarios[2].quantities.length, target: baseline })).toBeUndefined();
+        expect(scenarios[1].relationships).toEqual([{ source: "length", target: "doubled", delayed: false }]);
+        expect(scenarios[0].relationships).toEqual([]);
+        expect(scenarios[1].result?.frames[0].values.doubled).toBe(600);
     });
 
     test("CSV preserves scenario additions, removals and changed display units", async () => {

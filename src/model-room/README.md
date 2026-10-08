@@ -16,7 +16,11 @@ The launcher builds and signs GenesisTools.app if its native sources changed. It
 
 The window has Build, Explore, Compare and Present modes. Choose a quantity in the outline or board to inspect it. Formula changes apply with Evaluate or Command-Return. The time rail shows each quantity at the selected time, and the chart overlays scenario results.
 
-Use Branch to preserve the baseline. Option-dragging an input slider creates a branch; a slider gesture is one undo transaction. Input values and timed interventions belong to the selected scenario. Formulas are dimensional: a stock's derivative must have units of stock per time.
+Use Branch to preserve the baseline. Option-dragging an input slider creates a branch; a slider gesture is one undo transaction. Input values, formulas, added/removed quantities and board positions belong to the selected scenario. Formulas are dimensional: a stock's derivative must have units of stock per time. The inspector also authors slider ranges, provenance and quantity explanations.
+
+The titlebar's model editor has Model, Scenarios and Presentation sections. Edit the clock, branch names/colors, overrides, interventions, exposed controls, result charts and explanation steps. Changes remain in the sheet until **Check and apply** evaluates every branch and records one undoable edit. Cancel leaves the document untouched; a concurrent document change prevents an old draft from replacing it. Structural branch changes can be reset to their baseline definitions.
+
+**Convert all times** preserves physical time while changing its display unit. For example, ten days in daily steps becomes 240 hours in 24-hour steps; observation times, interventions and presentation jumps convert together. Editing a duration or step directly instead changes the simulation schedule.
 
 File commands open/save ordinary JSON documents and export HTML, results CSV or assumptions CSV. Imported observations require an explicit mapping from time and value columns; the preview shows the selected delimiter and the initial records.
 
@@ -29,6 +33,7 @@ tools model-room example budget > budget.modelroom.json
 
 tools model-room validate --input support.modelroom.json
 tools model-room evaluate --input support.modelroom.json
+tools model-room convert-time --input support.modelroom.json --unit hour > hourly.modelroom.json
 
 tools model-room export --input support.modelroom.json --output support.html
 tools model-room export --input support.modelroom.json --format results --output results.csv
@@ -87,7 +92,8 @@ Add `scenarioId` to the configuration to start from a branch. The sweep changes 
 - Instantaneous formula cycles are rejected. `lag(quantity, steps)` creates a temporal edge, where steps is an integer from 1 through 10000.
 - A delayed formula needs an explicit history seed. Inputs, stocks and data series use their declared initial value unless a separate seed is supplied.
 - Measured data uses either hold or linear interpolation. Outside the observed interval, the first or last observation is held; that behavior is visible in the model description.
-- Scenarios can override input values, schedule interventions and replace/remove quantities in the document format. The native structural-scenario editor is still pending.
+- Scenarios can override input values, schedule interventions and replace/remove quantities. Build mode edits the selected branch; Compare shows each branch's assumptions and units.
+- Comparison charts use the selected quantity's unit. Compatible replacements convert to that scale (300 cm becomes 3 m); absent or dimensionally incompatible quantities are excluded with an explanation. Value readouts retain each branch's declared units.
 - Results are IEEE-754 numbers. CSV retains their numeric precision; screen labels round for readability. Integration accuracy depends on the chosen step and model.
 
 The supplied support example starts at 80 tickets, receives 90 per day and has four agents completing 25 tickets each per day. Its baseline falls by ten tickets per day. Three agents instead produce a growing backlog. A day-four self-service intervention reduces arrivals to 65 and changes the direction of that branch.
@@ -100,7 +106,7 @@ A formula has at most 4096 characters, 512 tokens and 64 nested parsing levels. 
 
 Ordinary evaluation has a deadline, and a sweep contains at most ten thousand runs. Cancellation keeps complete sweep results and discards an incomplete run. The native window cancels superseded calculations and rejects a result from an older document revision. Invalid formulas preserve the last valid display with a stale-result indicator.
 
-Native chart samples are prepared away from the UI thread and retain endpoints and bucket extrema; exact frames remain available to the time rail and exports. The render budget is shared across the model's plotted series. Browser chart downsampling, subsystem authoring, presentation authoring, AI proposals and additional numerical techniques remain release work. These limits do not imply that every maximum-size model already meets an interactive performance target.
+Native chart samples are prepared away from the UI thread and retain endpoints and bucket extrema; exact frames remain available to the time rail and exports. The render budget is shared across the model's plotted series. Browser chart downsampling, subsystem authoring, AI proposals and additional numerical techniques remain release work. These limits do not imply that every maximum-size model already meets an interactive performance target.
 
 ## Verification
 

@@ -63,6 +63,8 @@ final class ModelRoomDocument: NSDocument {
         try file.validateForEditing()
         let publish: @MainActor () -> Void = {
             self.model.file = file
+            self.model.selectedScenario = ""
+            self.model.normalizeSelection()
             self.model.selectedQuantity = file.presentation.outputs.first ?? file.quantities.first?.id ?? ""
             self.displayName = file.title
         }

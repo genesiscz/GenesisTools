@@ -10,6 +10,11 @@ struct ModelRoomInspector: View {
     @State private var value = ""
     @State private var interventionValue = "65"
     @State private var interventionTime = "4"
+    @State private var rangeMin = "0"
+    @State private var rangeMax = "100"
+    @State private var rangeStep = "1"
+    @State private var quantityDescription = ""
+    @State private var provenance = "assumption"
 
     var body: some View {
         ScrollView {
@@ -39,6 +44,22 @@ struct ModelRoomInspector: View {
                         ModelRoomInputSlider(model: model, quantity: quantity).fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                if quantity.kind == "input" {
+                    DisclosureGroup("Slider range") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            field("Minimum", text: $rangeMin)
+                            field("Maximum", text: $rangeMax)
+                            field("Increment", text: $rangeStep)
+                            HStack {
+                                Button("Apply range") { applyRange() }.buttonStyle(.genHoverPlain())
+                                if quantity.range != nil {
+                                    Button("Remove range") { model.updateQuantity(quantity.id, title: "Remove slider range") { $0.range = nil } }
+                                        .buttonStyle(.genHoverPlain())
+                                }
+                            }
+                        }.padding(.top, 10)
+                    }
+                }
                 if quantity.kind == "formula" || quantity.kind == "stock" {
                     Text(quantity.kind == "stock" ? "Rate of change" : "Formula").font(.system(size: 12, weight: .medium))
                     TextEditor(text: $formula).font(.system(size: 12, design: .monospaced)).frame(minHeight: 90)
@@ -46,7 +67,7 @@ struct ModelRoomInspector: View {
                         .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 6))
                         .accessibilityLabel("Formula for \(quantity.label)")
                         .dropDestination(for: String.self) { items, _ in
-                            guard let reference = items.first, model.file?.quantities.contains(where: { $0.id == reference }) == true else { return false }
+                            guard let reference = items.first, model.effectiveQuantities.contains(where: { $0.id == reference }) else { return false }
                             formula += formula.isEmpty ? reference : " + " + reference
                             return true
                         }
@@ -57,7 +78,7 @@ struct ModelRoomInspector: View {
                     Text("Numbers can carry units: 0[tickets]. A lag uses whole steps: lag(backlog, 1).")
                         .font(.system(size: 10.5)).foregroundStyle(ReviewPalette.dim)
                     Text("Insert a reference").font(.system(size: 11, weight: .medium))
-                    ForEach((model.file?.quantities ?? []).filter { $0.id != quantity.id }) { other in
+                    ForEach(model.effectiveQuantities.filter { $0.id != quantity.id }) { other in
                         Button { formula += formula.isEmpty ? other.id : " + " + other.id } label: {
                             HStack { Text(other.label); Spacer(); Text(other.unit).foregroundStyle(ReviewPalette.dim) }
                                 .font(.system(size: 11)).padding(5)
@@ -74,13 +95,22 @@ struct ModelRoomInspector: View {
                 Divider()
                 Text("Why this value?").font(.system(size: 12, weight: .medium))
                 Text(explanation).font(.system(size: 11)).foregroundStyle(ReviewPalette.dim).textSelection(.enabled)
-                Text("Provenance: \(quantity.provenance)").font(.system(size: 10.5)).foregroundStyle(ReviewPalette.dim)
+                Picker("Provenance", selection: $provenance) {
+                    ForEach(["assumption", "identity", "measured", "estimate"], id: \.self) { Text($0.capitalized).tag($0) }
+                }
+                TextEditor(text: $quantityDescription).font(.system(size: 12)).frame(minHeight: 70)
+                    .accessibilityLabel("Quantity explanation")
+                Button("Apply explanation") {
+                    model.updateQuantity(quantity.id, title: "Explain quantity") { $0.description = quantityDescription; $0.provenance = provenance }
+                }.buttonStyle(.genHoverPlain())
                 Text(quantity.id).font(.system(size: 10, design: .monospaced)).textSelection(.enabled).foregroundStyle(ReviewPalette.dim)
                 Button("Delete quantity", role: .destructive) { model.removeSelected() }.buttonStyle(.genHoverPlain())
             }.padding(16)
         }
         .task(id: quantity.id + quantity.formula + quantity.unit + quantity.label + model.selectedScenario) {
             formula = quantity.formula; label = quantity.label; unit = quantity.unit
+            quantityDescription = quantity.description; provenance = quantity.provenance
+            rangeMin = String(quantity.range?.min ?? 0); rangeMax = String(quantity.range?.max ?? 100); rangeStep = String(quantity.range?.step ?? 1)
             value = String(quantity.kind == "input" ? model.inputValue(quantity) : quantity.baseValue)
         }
         .onChange(of: model.inputValue(quantity)) { _, next in
@@ -106,6 +136,16 @@ struct ModelRoomInspector: View {
         model.updateQuantity(quantity.id, title: "Edit formula") { item in
             if item.kind == "stock" { item.derivative = formula } else { item.expression = formula }
         }
+    }
+
+    private func applyRange() {
+        guard let minimum = Double(rangeMin), let maximum = Double(rangeMax), let increment = Double(rangeStep),
+              minimum.isFinite, maximum.isFinite, increment.isFinite, minimum < maximum, increment > 0,
+              (maximum - minimum).isFinite, ((maximum - minimum) / increment).isFinite else {
+            model.error = "A slider needs finite increasing endpoints and a positive increment."
+            return
+        }
+        model.updateQuantity(quantity.id, title: "Change slider range") { $0.range = ModelRoomRange(min: minimum, max: maximum, step: increment) }
     }
 
     private func addIntervention() {

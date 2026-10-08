@@ -12,13 +12,15 @@ struct ModelRoomView: View {
                 HStack(spacing: 12) {
                     Image(systemName: "point.3.connected.trianglepath.dotted").foregroundStyle(ReviewPalette.renamed)
                     Text("Model Room").font(.system(size: 13, weight: .semibold)).titlebarLabel()
-                    Text(model.file?.title ?? "Opening model…").foregroundStyle(ReviewPalette.dim).titlebarLabel()
+                    Text(model.file?.title ?? "Opening model…").foregroundStyle(ReviewPalette.dim).lineLimit(1).titlebarLabel()
                     Spacer()
                     if model.busy { ProgressView().controlSize(.small).accessibilityLabel("Calculating") }
                     IconButton(systemName: "arrow.uturn.backward", tooltip: "Undo (⌘Z)") { model.owner?.undoManager?.undo() }
                     IconButton(systemName: "arrow.uturn.forward", tooltip: "Redo (⇧⌘Z)") { model.owner?.undoManager?.redo() }
                     Button(model.exporting ? "Exporting…" : "Export HTML") { model.exportDocument(format: "html") }
                         .buttonStyle(.genHoverPlain()).disabled(model.exporting || model.file == nil)
+                    IconButton(systemName: "slider.horizontal.3", tooltip: "Edit model, scenarios and presentation") { model.showEditor = true }
+                        .disabled(model.file == nil)
                     Button("Save") { model.owner?.save(nil) }.buttonStyle(.genHoverPlain())
                 }
             } details: {
@@ -105,6 +107,9 @@ struct ModelRoomView: View {
         .preferredColorScheme(.dark)
         .sheet(isPresented: $model.showAddQuantity) { ModelRoomAddQuantity(model: model) }
         .sheet(isPresented: $model.showSweep) { ModelRoomSweepSheet(model: model) }
+        .sheet(isPresented: $model.showEditor) {
+            if let file = model.file { ModelRoomEditor(model: model, file: file) }
+        }
         .sheet(item: $model.tableImport) { source in ModelRoomImportSheet(model: model, source: source) }
     }
 
@@ -115,7 +120,7 @@ struct ModelRoomView: View {
                     Text("The model").font(.system(size: 12, weight: .semibold))
                     Text("Trace a value back to its assumptions.").font(.system(size: 11)).foregroundStyle(ReviewPalette.dim)
                 }
-                ForEach(file.quantities) { quantity in
+                ForEach(model.effectiveQuantities) { quantity in
                     Button { model.selectedQuantity = quantity.id } label: {
                         HStack {
                             Image(systemName: quantity.kind == "stock" ? "tray.full" : quantity.kind == "formula" ? "function" : quantity.kind == "data" ? "tablecells" : "slider.horizontal.3")
@@ -158,40 +163,51 @@ struct ModelRoomView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Change an assumption").font(.system(size: 20, weight: .semibold))
             Text("Option-drag a slider to branch. The baseline stays fixed.").foregroundStyle(ReviewPalette.dim)
-            ForEach(file.quantities.filter { $0.kind == "input" && $0.range != nil }) { quantity in
+            ForEach(model.effectiveQuantities.filter { $0.kind == "input" && $0.range != nil }) { quantity in
                 ModelRoomInputSlider(model: model, quantity: quantity)
             }
         }.frame(maxWidth: 700, alignment: .leading)
     }
 
     private func comparison(_ file: ModelRoomFile) -> some View {
-        ScrollView(.horizontal) {
-            Grid(alignment: .leading, horizontalSpacing: 28, verticalSpacing: 12) {
-                GridRow {
-                    Text("Assumption").foregroundStyle(ReviewPalette.dim)
-                    Text("Baseline").foregroundStyle(modelRoomColor("#a9c9ff"))
-                    ForEach(file.scenarios) { scenario in Text(scenario.label).foregroundStyle(modelRoomColor(scenario.color)) }
+        ScrollView([.horizontal, .vertical]) {
+            LazyVStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 18) {
+                    Text("Assumption").foregroundStyle(ReviewPalette.dim).frame(width: 185, alignment: .leading)
+                    Text("Baseline").foregroundStyle(modelRoomColor("#a9c9ff")).frame(width: 185, alignment: .leading)
+                    ForEach(file.scenarios) { scenario in
+                        Text(scenario.label).foregroundStyle(modelRoomColor(scenario.color)).frame(width: 185, alignment: .leading)
+                    }
                 }
-                ForEach(file.quantities.filter { $0.kind == "input" }) { quantity in
-                    GridRow {
-                        Text(quantity.label)
-                        Text("\(quantity.baseValue, specifier: "%g") \(quantity.unit)").monospacedDigit()
+                ForEach(file.comparisonInputs) { quantity in
+                    HStack(alignment: .top, spacing: 18) {
+                        Text(quantity.label).frame(width: 185, alignment: .leading)
+                        comparisonValue(file: file, scenarioID: "", quantityID: quantity.id).frame(width: 185, alignment: .leading)
                         ForEach(file.scenarios) { scenario in
-                            Text("\(scenario.overrides[quantity.id] ?? quantity.baseValue, specifier: "%g") \(quantity.unit)")
-                                .monospacedDigit().foregroundStyle(scenario.overrides[quantity.id] == nil ? ReviewPalette.dim : .primary)
+                            comparisonValue(file: file, scenarioID: scenario.id, quantityID: quantity.id).frame(width: 185, alignment: .leading)
                         }
                     }
                 }
-                GridRow {
-                    Text("Interventions").foregroundStyle(ReviewPalette.dim)
-                    Text("None")
+                HStack(alignment: .top, spacing: 18) {
+                    Text("Interventions").foregroundStyle(ReviewPalette.dim).frame(width: 185, alignment: .leading)
+                    Text("None").frame(width: 185, alignment: .leading)
                     ForEach(file.scenarios) { scenario in
                         Text(scenario.interventions.map { "\($0.label) · \($0.at.formatted()) \(file.time.unit)" }.joined(separator: "\n"))
-                            .frame(maxWidth: 220, alignment: .leading)
+                            .frame(width: 185, alignment: .leading)
                     }
                 }
             }.font(.system(size: 12)).padding(24)
-        }
+        }.frame(maxHeight: 260)
+    }
+
+    @ViewBuilder
+    private func comparisonValue(file: ModelRoomFile, scenarioID: String, quantityID: String) -> some View {
+        if let quantity = file.effectiveQuantities(scenarioID: scenarioID).first(where: { $0.id == quantityID }) {
+            if quantity.kind == "input" {
+                let value = file.scenarios.first { $0.id == scenarioID }?.overrides[quantityID] ?? quantity.baseValue
+                Text("\(value, specifier: "%g") \(quantity.unit)").monospacedDigit()
+            } else { Text(quantity.kind.capitalized).foregroundStyle(ReviewPalette.dim) }
+        } else { Text("Not in this branch").foregroundStyle(ReviewPalette.dim) }
     }
 
     private func presentation(_ file: ModelRoomFile) -> some View {
@@ -218,15 +234,29 @@ struct ModelRoomView: View {
                 }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
                     .background(ReviewPalette.renamed.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
             }
-            ForEach(file.quantities.filter { $0.kind == "input" && file.presentation.controls.contains($0.id) && $0.range != nil }) { quantity in
+            ForEach(model.effectiveQuantities.filter { $0.kind == "input" && file.presentation.controls.contains($0.id) && $0.range != nil }) { quantity in
                 ModelRoomInputSlider(model: model, quantity: quantity)
+            }
+            if !file.presentation.outputs.isEmpty {
+                Picker("Result", selection: $model.selectedQuantity) {
+                    ForEach(file.presentation.outputs, id: \.self) { id in
+                        Text(model.effectiveQuantities.first { $0.id == id }?.label ?? file.quantities.first { $0.id == id }?.label ?? id).tag(id)
+                    }
+                }.frame(maxWidth: 360)
             }
             ModelRoomChart(model: model)
             Text(file.description).font(.system(size: 11)).foregroundStyle(ReviewPalette.dim).textSelection(.enabled)
         }.padding(24)
+            .onAppear {
+                selectPresentationStep(0, file: file)
+                if !file.presentation.outputs.contains(model.selectedQuantity), let first = file.presentation.outputs.first {
+                    model.selectedQuantity = first
+                }
+            }
     }
 
     private func selectPresentationStep(_ direction: Int, file: ModelRoomFile) {
+        guard !file.presentation.steps.isEmpty else { return }
         model.presentationStep = max(0, min(file.presentation.steps.count - 1, model.presentationStep + direction))
         let step = file.presentation.steps[model.presentationStep]
         model.selectedScenario = step.scenario ?? ""
@@ -270,9 +300,8 @@ struct ModelRoomInputSlider: View {
 
 struct ModelRoomChart: View {
     @ObservedObject var model: ModelRoomModel
-    var output: ModelRoomQuantity? {
-        guard let file = model.file else { return nil }
-        return file.quantities.first { $0.id == model.selectedQuantity } ?? file.quantities.first { file.presentation.outputs.contains($0.id) }
+    var output: ModelRoomEvaluatedQuantity? {
+        model.scenarioResult?.quantities[model.selectedQuantity] ?? model.evaluation?.scenarios.first?.quantities[model.selectedQuantity]
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -291,7 +320,7 @@ struct ModelRoomChart: View {
                 Chart {
                     ForEach(model.evaluation?.scenarios ?? [], id: \.selectionID) { scenario in
                         ForEach(scenario.result?.chartFrames[output.id] ?? [], id: \.tick) { frame in
-                            if let value = frame.values[output.id] {
+                            if let value = scenario.quantities[output.id]?.convert(frame.values[output.id], to: output) {
                                 LineMark(x: .value("Time", frame.time), y: .value(output.label, value), series: .value("Scenario", scenario.label))
                                     .foregroundStyle(modelRoomColor(scenario.color))
                                     .lineStyle(StrokeStyle(lineWidth: scenario.selectionID == model.selectedScenario ? 2.8 : 1.5))
@@ -302,7 +331,12 @@ struct ModelRoomChart: View {
                         .foregroundStyle(ReviewPalette.dim).lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
                 }
                 .chartXAxisLabel(model.file?.time.unit ?? "Time")
-                .accessibilityLabel("\(output.label) over time for \((model.file?.scenarios.count ?? 0) + 1) scenarios")
+                .accessibilityLabel("\(output.label) over time in \(output.unit)")
+                let excluded = (model.evaluation?.scenarios ?? []).filter { $0.result != nil && $0.quantities[output.id]?.dimension != output.dimension }.map(\.label)
+                if !excluded.isEmpty {
+                    Text("Absent or incompatible quantities excluded: \(excluded.joined(separator: ", ")).")
+                        .font(.system(size: 10.5)).foregroundStyle(ReviewPalette.dim)
+                }
             }
         }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity)
     }

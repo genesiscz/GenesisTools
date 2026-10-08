@@ -6,7 +6,7 @@ struct ModelRoomBoard: View {
     @State private var dragOrigin: ModelRoomPoint?
 
     private var boardSize: CGSize {
-        let points = model.file?.quantities.map(\.position) ?? []
+        let points = model.effectiveQuantities.map(\.position)
         return CGSize(width: max(1000, (points.map(\.x).max() ?? 800) + 260), height: max(560, (points.map(\.y).max() ?? 400) + 180))
     }
 
@@ -22,8 +22,8 @@ struct ModelRoomBoard: View {
                         grid.move(to: CGPoint(x: 0, y: y)); grid.addLine(to: CGPoint(x: size.width, y: y))
                     }
                     context.stroke(grid, with: .color(.white.opacity(0.035)), lineWidth: 0.5)
-                    for edge in model.evaluation?.relationships ?? [] {
-                        guard let source = model.file?.quantities.first(where: { $0.id == edge.source }), let target = model.file?.quantities.first(where: { $0.id == edge.target }) else { continue }
+                    for edge in model.relationships {
+                        guard let source = model.effectiveQuantities.first(where: { $0.id == edge.source }), let target = model.effectiveQuantities.first(where: { $0.id == edge.target }) else { continue }
                         let from = CGPoint(x: source.position.x + 200, y: source.position.y + 56)
                         let to = CGPoint(x: target.position.x, y: target.position.y + 56)
                         var path = Path()
@@ -33,15 +33,14 @@ struct ModelRoomBoard: View {
                         context.fill(Path(ellipseIn: CGRect(x: to.x - 3, y: to.y - 3, width: 6, height: 6)), with: .color(ReviewPalette.renamed))
                     }
                 }
-                ForEach(model.file?.quantities ?? []) { quantity in
+                ForEach(model.effectiveQuantities) { quantity in
                     node(quantity)
                         .offset(x: quantity.position.x, y: quantity.position.y)
                         .gesture(DragGesture(minimumDistance: 4)
                             .onChanged { gesture in
                                 if dragOrigin == nil { dragOrigin = quantity.position; model.beginGesture() }
-                                guard let origin = dragOrigin, var file = model.file, let index = file.quantities.firstIndex(where: { $0.id == quantity.id }) else { return }
-                                file.quantities[index].position = ModelRoomPoint(x: min(ModelRoomLimits.maximumPosition, max(8, origin.x + gesture.translation.width)), y: min(ModelRoomLimits.maximumPosition, max(8, origin.y + gesture.translation.height)))
-                                model.file = file
+                                guard let origin = dragOrigin else { return }
+                                model.moveQuantity(quantity.id, to: ModelRoomPoint(x: min(ModelRoomLimits.maximumPosition, max(8, origin.x + gesture.translation.width)), y: min(ModelRoomLimits.maximumPosition, max(8, origin.y + gesture.translation.height))))
                             }
                             .onEnded { _ in dragOrigin = nil; model.finishGesture() })
                 }
@@ -76,7 +75,7 @@ struct ModelRoomBoard: View {
         .buttonStyle(.genHoverPlain())
         .accessibilityLabel("\(quantity.label), \(quantity.kind), \(model.frame?.values[quantity.id] ?? quantity.baseValue) \(quantity.unit)")
         .onMoveCommand { direction in
-            let neighbors = model.evaluation?.relationships.filter { $0.source == quantity.id || $0.target == quantity.id } ?? []
+            let neighbors = model.relationships.filter { $0.source == quantity.id || $0.target == quantity.id }
             if let edge = (direction == .left || direction == .up) ? neighbors.first : neighbors.last {
                 model.selectedQuantity = edge.source == quantity.id ? edge.target : edge.source
             }

@@ -83,6 +83,97 @@ final class ModelRoomTests: XCTestCase {
         XCTAssertFalse(undo.canUndo)
     }
 
+    @MainActor
+    func testStructuralBranchEditsPreserveBaselineAndUndoAsAGroup() throws {
+        let document = fixture()
+        defer { document.model.stop() }
+        document.model.file?.scenarios = [ModelRoomScenario(id: "alternative", label: "Alternative")]
+        document.model.selectedScenario = "alternative"
+        let before = document.model.file
+        let undo = try XCTUnwrap(document.undoManager)
+        undo.beginUndoGrouping()
+        document.model.updateQuantity("agents", title: "Rename branch quantity") { $0.label = "Alternative team" }
+        XCTAssertEqual(document.model.file?.quantities[0].label, "Agents")
+        XCTAssertEqual(document.model.effectiveQuantities.first?.label, "Alternative team")
+        document.model.addQuantity(label: "Staff hours", kind: "input", unit: "hour")
+        XCTAssertEqual(document.model.file?.quantities.count, 1)
+        XCTAssertEqual(document.model.selectedQuantity, "q_staff_hours")
+        document.model.removeSelected()
+        XCTAssertFalse(document.model.effectiveQuantities.contains { $0.id == "q_staff_hours" })
+        document.model.selectedQuantity = "agents"
+        document.model.removeSelected()
+        XCTAssertEqual(document.model.file?.quantities.count, 1)
+        XCTAssertTrue(document.model.effectiveQuantities.isEmpty)
+        undo.endUndoGrouping()
+        undo.undo()
+        XCTAssertEqual(document.model.file, before)
+    }
+
+    func testChartValuesConvertCompatibleUnitsAndRefuseOtherDimensions() {
+        let metres = ModelRoomEvaluatedQuantity(id: "length", label: "Length", kind: "input", unit: "m", scale: 1, dimension: "length")
+        let centimetres = ModelRoomEvaluatedQuantity(id: "length", label: "Length", kind: "input", unit: "cm", scale: 0.01, dimension: "length")
+        let hours = ModelRoomEvaluatedQuantity(id: "length", label: "Duration", kind: "input", unit: "hour", scale: 3600, dimension: "time")
+        XCTAssertEqual(centimetres.convert(300, to: metres), 3)
+        XCTAssertEqual(metres.convert(2, to: centimetres), 200)
+        XCTAssertNil(hours.convert(3, to: metres))
+        XCTAssertNil(metres.convert(Double.greatestFiniteMagnitude, to: centimetres))
+    }
+
+    @MainActor
+    func testModelEditorIsOneUndoableEditAndRefusesStaleDrafts() throws {
+        let document = fixture()
+        defer { document.model.stop() }
+        let original = try XCTUnwrap(document.model.file)
+        var draft = original
+        draft.title = "Updated capacity"
+        draft.time.duration = 20
+        draft.scenarios = [ModelRoomScenario(id: "plan", label: "Plan", interventions: [ModelRoomIntervention(at: 4, values: ["agents": 3], label: "New team")])]
+        draft.presentation.steps = [ModelRoomPresentationStep(title: "Change team", text: "A deliberate assumption", scenario: "plan", time: 5)]
+        let undo = try XCTUnwrap(document.undoManager)
+        undo.beginUndoGrouping()
+        try document.model.commitDraft(draft, replacing: original)
+        undo.endUndoGrouping()
+        XCTAssertEqual(document.model.file, draft)
+        XCTAssertThrowsError(try document.model.commitDraft(original, replacing: original))
+        XCTAssertEqual(document.model.file, draft)
+        undo.undo()
+        XCTAssertEqual(document.model.file, original)
+        XCTAssertFalse(undo.canUndo)
+        undo.redo()
+        XCTAssertEqual(document.model.file, draft)
+        var invalid = draft
+        invalid.time.step = 0
+        XCTAssertThrowsError(try document.model.commitDraft(invalid, replacing: draft))
+        XCTAssertEqual(document.model.file, draft)
+    }
+
+    @MainActor
+    func testMinimalDocumentDefaultsAndTransientEditorIdentityRoundTrip() throws {
+        let source = """
+        {"format":"genesis-model-room","version":1,"id":"minimal","title":"Minimal","time":{"unit":"day","duration":10,"step":1},"quantities":[{"id":"value","label":"Value","unit":"1","kind":"input","value":2}],"scenarios":[{"id":"other","label":"Other"}]}
+        """
+        var file = try JSONDecoder().decode(ModelRoomFile.self, from: Data(source.utf8))
+        try file.validateForEditing()
+        XCTAssertEqual(file.description, "")
+        XCTAssertEqual(file.quantities[0].position, ModelRoomPoint(x: 0, y: 0))
+        XCTAssertEqual(file.quantities[0].provenance, "assumption")
+        XCTAssertEqual(file.scenarios[0].color, "#a9c9ff")
+        file.scenarios[0].interventions = [ModelRoomIntervention(at: 4, values: ["value": 3], label: "Before")]
+        let interventionID = file.scenarios[0].interventions[0].id
+        file.scenarios[0].interventions[0].label = "After"
+        file.scenarios[0].interventions[0].at = 5
+        XCTAssertEqual(file.scenarios[0].interventions[0].id, interventionID)
+        file.presentation.steps = [ModelRoomPresentationStep(title: "Before", text: "Explanation")]
+        let stepID = file.presentation.steps[0].id
+        file.presentation.steps[0].title = "After"
+        XCTAssertEqual(file.presentation.steps[0].id, stepID)
+        let bytes = try JSONEncoder().encode(file)
+        let reopened = try JSONDecoder().decode(ModelRoomFile.self, from: bytes)
+        XCTAssertEqual(reopened, file)
+        XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains(interventionID.uuidString))
+        XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains(stepID.uuidString))
+    }
+
     func testNativeBuildOriginNeverSilentlySwitchesCheckouts() throws {
         let built = "/fixture/feature/tools"
         XCTAssertEqual(try AppToolsOrigin.resolve(configured: built, isExecutable: { $0 == built }, fallback: { "/fixture/main/tools" }), built)

@@ -1,6 +1,6 @@
 import { SafeJSON } from "@genesiscz/utils/json";
-import { readModelDocument } from "../lib/document";
-import { evaluateDocument } from "../lib/evaluation";
+import { readModelDocument, scenarioDocument } from "../lib/document";
+import { comparisonValue, evaluateDocument } from "../lib/evaluation";
 import { assumptionsCSV, resultsCSV, serializedModel } from "../lib/exports";
 
 const input: unknown = SafeJSON.parse(document.getElementById("model-document")?.textContent ?? "null", {
@@ -82,7 +82,17 @@ const results = element("section");
 const title = element("h2", "Follow what changes");
 const selection = element("select");
 selection.setAttribute("aria-label", "Chart quantity");
-for (const quantity of model.quantities.filter((entry) => model.presentation.outputs.includes(entry.id))) {
+const selectableOutputs = new Map(model.quantities.map((quantity) => [quantity.id, quantity]));
+for (const scenario of model.scenarios) {
+    for (const quantity of scenario.replacements) {
+        if (!selectableOutputs.has(quantity.id)) {
+            selectableOutputs.set(quantity.id, quantity);
+        }
+    }
+}
+for (const quantity of [...selectableOutputs.values()].filter(
+    (entry) => model.presentation.outputs.includes(entry.id) || entry.id === outputId
+)) {
     const option = element("option", `${quantity.label} · ${quantity.unit}`);
     option.value = quantity.id;
     selection.append(option);
@@ -158,7 +168,14 @@ function renderControls(): void {
         renderResults();
     });
     controls.append(scenarioSelect);
-    for (const quantity of model.quantities) {
+    let quantities = model.quantities;
+    try {
+        quantities = scenarioDocument(model, selectedScenario || undefined).document.quantities;
+    } catch (error) {
+        controls.append(element("p", error instanceof Error ? error.message : String(error)));
+        return;
+    }
+    for (const quantity of quantities) {
         if (quantity.kind !== "input" || !model.presentation.controls.includes(quantity.id)) {
             continue;
         }
@@ -171,7 +188,6 @@ function renderControls(): void {
         const value =
             model.scenarios.find((scenario) => scenario.id === selectedScenario)?.overrides[quantity.id] ??
             quantity.value;
-        slider.value = String(value);
         const readout = element("output", String(value));
         readout.htmlFor = slider.id;
         readout.className = "value";
@@ -182,6 +198,7 @@ function renderControls(): void {
             slider.step = String(quantity.range.step);
         }
 
+        slider.value = String(value);
         slider.addEventListener("input", () => {
             const number = Number(slider.value);
 
@@ -218,12 +235,27 @@ function renderResults(): void {
         return;
     }
 
-    const quantity = model.quantities.find((entry) => entry.id === outputId);
     const series = evaluation.scenarios.filter((entry) => entry.result);
-    const all = series.flatMap(
-        (entry) =>
-            entry.result?.frames.map((frame) => frame.values[outputId]).filter((value) => value !== undefined) ?? []
-    );
+    const current = series.find((entry) => entry.id === (selectedScenario || null));
+    const quantity = current?.quantities[outputId] ?? series[0]?.quantities[outputId];
+    const plotted = series.map((scenario) => ({
+        scenario,
+        points: (scenario.result?.frames ?? []).flatMap((frame) => {
+            const value = comparisonValue({
+                value: frame.values[outputId],
+                source: scenario.quantities[outputId],
+                target: quantity,
+            });
+            return value === undefined ? [] : [{ time: frame.time, value }];
+        }),
+    }));
+    const all = plotted.flatMap((entry) => entry.points.map((point) => point.value));
+    for (const option of selection.options) {
+        const descriptor = current?.quantities[option.value] ?? series[0]?.quantities[option.value];
+        if (descriptor) {
+            option.textContent = `${descriptor.label} · ${descriptor.unit}`;
+        }
+    }
     let minimum = all.reduce((current, value) => Math.min(current, value), 0);
     let maximum = all.reduce((current, value) => Math.max(current, value), 0);
 
@@ -235,7 +267,10 @@ function renderResults(): void {
     const x = (time: number) => 54 + (time / model.time.duration) * 642;
     const y = (value: number) => 285 - ((value - minimum) / (maximum - minimum)) * 260;
     chart.replaceChildren();
-    chart.setAttribute("aria-label", `${quantity?.label ?? outputId} over ${model.time.duration} ${model.time.unit}`);
+    chart.setAttribute(
+        "aria-label",
+        `${quantity?.label ?? outputId} (${quantity?.unit ?? ""}) over ${model.time.duration} ${model.time.unit}`
+    );
     for (let i = 0; i <= 4; i++) {
         const value = minimum + ((maximum - minimum) * i) / 4;
         chart.append(
@@ -263,18 +298,21 @@ function renderResults(): void {
     }
 
     legend.replaceChildren();
-    for (const scenario of series) {
-        const frames = scenario.result?.frames ?? [];
-        const points = frames.map((frame) => `${x(frame.time)},${y(frame.values[outputId])}`).join(" ");
-        chart.append(
-            svgNode("polyline", {
-                points,
-                fill: "none",
-                stroke: scenario.color,
-                "stroke-width": scenario.id === (selectedScenario || null) ? "3" : "1.6",
-            })
+    for (const { scenario, points } of plotted) {
+        if (points.length) {
+            chart.append(
+                svgNode("polyline", {
+                    points: points.map((point) => `${x(point.time)},${y(point.value)}`).join(" "),
+                    fill: "none",
+                    stroke: scenario.color,
+                    "stroke-width": scenario.id === (selectedScenario || null) ? "3" : "1.6",
+                })
+            );
+        }
+        const item = element(
+            "span",
+            points.length ? scenario.label : `${scenario.label} (absent or incompatible quantity)`
         );
-        const item = element("span", scenario.label);
         item.style.color = scenario.color;
         legend.append(item);
     }
@@ -306,9 +344,8 @@ function renderResults(): void {
     );
     timeLabel.textContent = `Time: ${time} ${model.time.unit}`;
     values.replaceChildren();
-    const current = series.find((entry) => entry.id === (selectedScenario || null));
     const frame = current?.result?.frames[selectedTick];
-    for (const entry of model.quantities) {
+    for (const entry of Object.values(current?.quantities ?? {})) {
         const row = element("div");
         row.className = "stat";
         row.append(
@@ -338,13 +375,11 @@ function renderResultTable(): void {
     tablePage = Math.max(0, Math.min(tablePage, Math.ceil(total / pageSize) - 1));
     const start = tablePage * pageSize;
     const end = Math.min(total, start + pageSize);
+    const current = series.find((scenario) => scenario.id === (selectedScenario || null));
+    const quantity = current?.quantities[outputId] ?? series[0]?.quantities[outputId];
     const table = element("table");
     const header = element("tr");
-    for (const text of [
-        "Scenario",
-        "Time",
-        model.quantities.find((quantity) => quantity.id === outputId)?.label ?? outputId,
-    ]) {
+    for (const text of ["Scenario", "Time", quantity ? `${quantity.label} (${quantity.unit})` : outputId]) {
         header.append(element("th", text));
     }
 
@@ -355,7 +390,16 @@ function renderResultTable(): void {
         for (let index = Math.max(0, start - offset); index < Math.min(frames.length, end - offset); index++) {
             const point = frames[index];
             const row = element("tr");
-            for (const text of [scenario.label, String(point.time), String(point.values[outputId] ?? "")]) {
+            const compared = comparisonValue({
+                value: point.values[outputId],
+                source: scenario.quantities[outputId],
+                target: quantity,
+            });
+            for (const text of [
+                scenario.label,
+                String(point.time),
+                compared === undefined ? "Absent or incompatible quantity" : String(compared),
+            ]) {
                 row.append(element("td", text));
             }
 

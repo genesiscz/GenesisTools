@@ -44,7 +44,10 @@ struct ModelRoomIntervention: Codable, Equatable, Identifiable {
     var at: Double
     var values: [String: Double]
     var label: String
-    var id: String { "\(at):\(label)" }
+    var id = UUID()
+
+    private enum CodingKeys: String, CodingKey { case at, values, label }
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.at == rhs.at && lhs.values == rhs.values && lhs.label == rhs.label }
 }
 
 struct ModelRoomScenario: Codable, Equatable, Identifiable {
@@ -65,11 +68,17 @@ struct ModelRoomSubsystem: Codable, Equatable, Identifiable {
     var quantities: [String]
 }
 
-struct ModelRoomPresentationStep: Codable, Equatable {
+struct ModelRoomPresentationStep: Codable, Equatable, Identifiable {
     var title: String
     var text: String
     var scenario: String?
     var time: Double?
+    var id = UUID()
+
+    private enum CodingKeys: String, CodingKey { case title, text, scenario, time }
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.title == rhs.title && lhs.text == rhs.text && lhs.scenario == rhs.scenario && lhs.time == rhs.time
+    }
 }
 
 struct ModelRoomPresentation: Codable, Equatable {
@@ -97,6 +106,42 @@ struct ModelRoomFile: Codable, Equatable {
     var presentation: ModelRoomPresentation
 }
 
+extension ModelRoomFile {
+    mutating func editQuantity(id: String, scenarioID: String, edit: (inout ModelRoomQuantity) -> Void) {
+        if let scenarioIndex = scenarios.firstIndex(where: { $0.id == scenarioID }) {
+            guard var quantity = effectiveQuantities(scenarioID: scenarioID).first(where: { $0.id == id }) else { return }
+            edit(&quantity)
+            if let index = scenarios[scenarioIndex].replacements.firstIndex(where: { $0.id == id }) { scenarios[scenarioIndex].replacements[index] = quantity }
+            else { scenarios[scenarioIndex].replacements.append(quantity) }
+        } else {
+            guard let index = quantities.firstIndex(where: { $0.id == id }) else { return }
+            edit(&quantities[index])
+        }
+    }
+
+    var comparisonInputs: [ModelRoomQuantity] {
+        var result: [ModelRoomQuantity] = []
+        var seen: Set<String> = []
+        for scenarioID in [""] + scenarios.map(\.id) {
+            for quantity in effectiveQuantities(scenarioID: scenarioID) where quantity.kind == "input" && !seen.contains(quantity.id) {
+                result.append(quantity); seen.insert(quantity.id)
+            }
+        }
+        return result
+    }
+
+    func effectiveQuantities(scenarioID: String) -> [ModelRoomQuantity] {
+        guard let scenario = scenarios.first(where: { $0.id == scenarioID }) else { return quantities }
+        var result = quantities
+        for replacement in scenario.replacements {
+            if let index = result.firstIndex(where: { $0.id == replacement.id }) { result[index] = replacement }
+            else { result.append(replacement) }
+        }
+        let removed = Set(scenario.removed)
+        return result.filter { !removed.contains($0.id) }
+    }
+}
+
 struct ModelRoomFrame: Codable {
     var tick: Int
     var time: Double
@@ -114,10 +159,27 @@ struct ModelRoomResult: Codable {
     private enum CodingKeys: String, CodingKey { case scenarioId, frames, method, timeUnit, step }
 }
 
+struct ModelRoomEvaluatedQuantity: Codable {
+    var id: String
+    var label: String
+    var kind: String
+    var unit: String
+    var scale: Double
+    var dimension: String
+
+    func convert(_ value: Double?, to target: ModelRoomEvaluatedQuantity) -> Double? {
+        guard let value, dimension == target.dimension else { return nil }
+        let converted = value * scale / target.scale
+        return converted.isFinite ? converted : nil
+    }
+}
+
 struct ModelRoomEvaluatedScenario: Codable, Identifiable {
     var id: String?
     var label: String
     var color: String
+    var quantities: [String: ModelRoomEvaluatedQuantity]
+    var relationships: [ModelRoomRelationship]
     var result: ModelRoomResult?
     var error: String?
     var selectionID: String { id ?? "" }
