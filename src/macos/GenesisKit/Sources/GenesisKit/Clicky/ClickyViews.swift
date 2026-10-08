@@ -75,10 +75,8 @@ public enum ClickySettingsPages {
                     }
                 ], order: 0),
             NativeSettingsSection(
-                id: "settings", title: "Settings", pages: [ClickyPage.sound, .sleep, .notifications].map(page),
-                order: 10),
-            NativeSettingsSection(
-                id: "clicky", title: "Clicky", pages: [ClickyPage.stats, .visualizer].map(page), order: 20),
+                id: "clicky", title: "Clicky",
+                pages: [ClickyPage.sound, .sleep, .notifications, .stats, .visualizer].map(page), order: 10),
             NativeSettingsSection(
                 id: "about", title: "",
                 pages: [
@@ -161,7 +159,7 @@ private struct ClickySettingsPageContent: View {
                         })
                 ).labelsHidden().toggleStyle(.switch).accessibilityIdentifier("clicky.enabled")
             }
-            DisclosureGroup("Input permission and privacy") {
+            NativeSettingsDisclosure("Input permission and privacy", identifier: "clicky.inputPrivacy") {
                 VStack(alignment: .leading, spacing: 12) {
                     Label(model.hasInputPermission ? "Input Monitoring is allowed" : "Input Monitoring is required",
                           systemImage: model.hasInputPermission ? "checkmark.shield" : "hand.raised")
@@ -282,9 +280,9 @@ private struct ClickySettingsPageContent: View {
                 setting(
                     "Scheduled quiet hours", detail: "Automatically pause each day during this time.",
                     value: $model.preferences.quietHours)
-                HStack {
-                    DatePicker("From", selection: timeBinding(\.quietStart), displayedComponents: .hourAndMinute)
-                    DatePicker("Until", selection: timeBinding(\.quietEnd), displayedComponents: .hourAndMinute)
+                HStack(spacing: 12) {
+                    NativeSettingsTimePicker("From", identifier: "clicky.quietStart", minutes: $model.preferences.quietStart)
+                    NativeSettingsTimePicker("Until", identifier: "clicky.quietEnd", minutes: $model.preferences.quietEnd)
                 }.disabled(!model.preferences.quietHours)
                 Text("Equal start and end times disable the schedule. Sleep and screen sleep always pause sounds.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -293,29 +291,13 @@ private struct ClickySettingsPageContent: View {
                 Text("Clicky stays quiet while any of these applications is in front.").font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 ForEach(model.preferences.excludedApplications, id: \.self) { bundleID in
-                    HStack {
-                        Text(bundleID).font(.system(size: 11)).textSelection(.enabled)
-                        Spacer()
-                        IconButton(systemName: "minus.circle", tooltip: "Remove \(bundleID)") {
-                            model.preferences.excludedApplications.removeAll { $0 == bundleID }
-                        }
+                    NativeSettingsApplicationRow(bundleID: bundleID) {
+                        model.preferences.excludedApplications.removeAll { $0 == bundleID }
                     }
                 }
                 Button("Add application…", action: model.excludeApplication).buttonStyle(.bordered)
             }
         }
-    }
-
-    private func timeBinding(_ path: WritableKeyPath<ClickyPreferences, Int>) -> Binding<Date> {
-        Binding(
-            get: {
-                let minute = model.preferences[keyPath: path]
-                return ClickyPreferences.clockTime(minute: minute)
-            },
-            set: { date in
-                let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
-                model.preferences[keyPath: path] = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
-            })
     }
 
     private var visualizer: some View {
@@ -345,22 +327,19 @@ private struct ClickySettingsPageContent: View {
                     "Activation notifications", detail: "Show a macOS notification when Clicky is enabled.",
                     value: Binding(
                         get: { model.preferences.notifications },
-                        set: { enabled in
-                            if enabled && model.notificationStatus != "Allowed" {
-                                model.requestNotifications()
-                            } else {
-                                model.preferences.notifications = enabled
-                            }
-                        }))
+                        set: model.setActivationNotifications))
                 Divider()
                 HStack {
                     Text(model.notificationStatus).font(.system(size: 12)).foregroundStyle(.secondary)
                     Spacer()
-                    Button("Allow notifications", action: model.requestNotifications).buttonStyle(.bordered)
+                    if model.notificationBusy { ProgressView().controlSize(.small) }
+                    Button(model.notificationActionTitle, action: model.requestNotifications)
+                        .buttonStyle(.bordered).disabled(model.notificationBusy)
+                        .accessibilityIdentifier("clicky.notificationPermission")
                 }
             }
             Text(
-                "Clicky asks macOS only when you press Allow notifications. Notification style and sound are controlled in System Settings."
+                model.notificationHelp
             )
             .font(.system(size: 12)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
         }
