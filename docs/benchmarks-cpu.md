@@ -262,3 +262,30 @@ Sibling PRs own youtube/dashboard/swift scripts; those commands are not in this 
 
 Run one script at a time: two benchmarks in flight skew each other, and a load average above
 about 30 on this machine turns every timing metric into noise (note `uptime` before each run).
+## 2026-10-08: consumed-prefix verification budget
+
+Transcript folds avoid reparsing their consumed records. They still verify every consumed byte when the file's
+size, mtimeNs or ctimeNs changes: partial boundary markers cannot detect a rewrite in the middle. One operation
+hashes the old prefix once, then extends that SHA with the exact newly committed bytes. An unchanged verified
+file generation reuses the digest, including recently written files. Metadata-equal mutations are outside this
+fast-cache contract.
+
+Measured on Bun 1.3.13 in the resident `agentsToolChangesDoor.match/run` handler, with a valid 234,720,477-byte
+transcript and six interleaved processes (three per arm; nine samples per phase; cold warmup excluded):
+
+| Phase | Before full-prefix verification | With verification | Median process CPU |
+| --- | ---: | ---: | --- |
+| Unchanged | 24.588 ms | 25.238 ms | Nine samples per arm |
+| Append | 23.173 ms | 113.522 ms | Nine samples per arm |
+| Immediately unchanged after append | 20.504 ms | 17.294 ms | Nine samples per arm |
+| After simulated 3.5-minute pause | 17.165 ms | 15.932 ms | Three samples per arm |
+
+All ten output payloads per process were byte-identical and no blob store was created. Socket transport and the
+live app were excluded. The pause advances the clock and invokes the fold sweep; it does not sleep for 3.5 minutes.
+
+The refresh budget must include approximately 90 ms additional CPU per verification of a changed 223 MiB prefix
+on this machine. At one such append per second that is about 9% of one core for verification alone. It is O(consumed
+bytes), not a constant-cost live append. Repeated unchanged reads retain the warm path; multiple different consumed
+prefixes and concurrently written files can each pay this cost. The earlier two-hash implementation cost roughly
+130 ms for a 163 MB prefix; the current single-pass prefix alone costs about 63–64 ms for that size. No append CPU
+parity or safe append-generation guarantee is claimed.
