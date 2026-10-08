@@ -2,7 +2,8 @@ import { existsSync, statSync } from "node:fs";
 import { sessionChangesPath } from "@app/agents/lib/changes/log";
 import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
 import { decisionFiles } from "@app/question/lib/decisions/read";
-import { type DecisionRecord, readDecisions } from "@app/question/lib/decisions/store";
+import { type DecisionRecord, kindOf, readDecisions } from "@app/question/lib/decisions/store";
+import { renderFormAnswer } from "@app/question/lib/pending/render";
 import { listForms, openPendingStore } from "@app/question/lib/pending/store";
 import type { AskForm, AskItem } from "@app/question/lib/pending/types";
 import { openReadModel, type QaRow, queryEntries } from "@app/question/lib/read-model";
@@ -36,7 +37,7 @@ export interface WidgetSession {
 }
 export interface WidgetCard {
     id: string;
-    kind: "decision" | "form" | "answer" | "result";
+    kind: "decision" | "todo" | "form" | "answer" | "result";
     sessionKey: string;
     sourceId: string;
     at: number;
@@ -59,6 +60,61 @@ export interface WidgetSources {
     forms(session?: string): AskForm[];
     answers(session?: string): QaRow[];
     agents(session?: string): Promise<AgentsTree>;
+    events?(ids: string[]): WidgetActivityEvent[];
+}
+export interface WidgetActivityEvent {
+    id: string;
+    sourceId: string;
+    at: number;
+    title: string;
+    body: string;
+}
+export function readWidgetDecisionEvents({
+    ids,
+    file = decisionFiles().events,
+}: {
+    ids: string[];
+    file?: string;
+}): WidgetActivityEvent[] {
+    if (!ids.length || !existsSync(file)) {
+        return [];
+    }
+    if (statSync(file).size > 16 * 1024 * 1024) {
+        throw new Error("The Decision event ledger is too large for the widget; open the full ledger in Hub.");
+    }
+    const selected = new Set(ids);
+    return readJsonlRows<unknown>(file)
+        .rows.flatMap((row, index) => {
+            if (
+                typeof row !== "object" ||
+                !row ||
+                !("id" in row) ||
+                typeof row.id !== "string" ||
+                !selected.has(row.id) ||
+                !("ts" in row) ||
+                typeof row.ts !== "string" ||
+                !("ev" in row) ||
+                typeof row.ev !== "string"
+            ) {
+                return [];
+            }
+            const at = Date.parse(row.ts);
+            if (!Number.isFinite(at)) {
+                return [];
+            }
+            return [
+                {
+                    id: `${row.id}:${row.ts}:${index}`,
+                    sourceId: row.id,
+                    at,
+                    title: `Decision ${row.ev}`,
+                    body: ["state" in row ? String(row.state) : "", "route" in row ? String(row.route) : ""]
+                        .filter(Boolean)
+                        .join(" · "),
+                },
+            ];
+        })
+        .slice(-100);
 }
 let cachedAgents: { at: number; promise: Promise<AgentsTree> } | undefined;
 export function widgetAgents(): Promise<AgentsTree> {
@@ -122,6 +178,7 @@ export const realWidgetSources: WidgetSources = {
         }
     },
     agents: () => widgetAgents(),
+    events: (ids) => readWidgetDecisionEvents({ ids }),
 };
 
 function provider(value: string | null | undefined): WidgetTarget["provider"] {
@@ -367,7 +424,7 @@ export async function widgetSnapshot({
         }
         cards.push({
             id: `decision:${row.id}`,
-            kind: "decision",
+            kind: kindOf(row),
             sessionKey: session.key,
             sourceId: row.id,
             at: Date.parse(row.updatedTs),
@@ -402,7 +459,12 @@ export async function widgetSnapshot({
             sourceId: form.id,
             at: form.resolvedAt ?? form.createdAt,
             title: form.items[0]?.promptMarkdown ?? "Question",
-            body: form.items.length > 1 ? `${String(form.items.length)} questions` : "",
+            body:
+                form.status === "answered"
+                    ? cleanVisibleContext(renderFormAnswer(form, form.answers ?? {}))
+                    : form.items.length > 1
+                      ? `${String(form.items.length)} questions`
+                      : "",
             status: form.status,
             choices: [],
             formItems: form.items,
@@ -455,9 +517,18 @@ export async function widgetSnapshot({
                   files: [],
               })
             : null;
+    const activity =
+        selectedId && sources.events
+            ? await read(
+                  "Decision activity",
+                  () => sources.events!(decisions.filter((row) => row.sessionId === selectedId).map((row) => row.id)),
+                  []
+              )
+            : [];
     return {
         version: 1,
         state,
+        activity,
         sessions: [...sessions.values()].sort(
             (a, b) => Number(b.status === "waiting") - Number(a.status === "waiting") || b.activityAt - a.activityAt
         ),

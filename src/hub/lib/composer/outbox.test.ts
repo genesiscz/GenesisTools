@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { postDecisions, readDecisions } from "@app/question/lib/decisions/store";
 import { postAskForm } from "@app/question/lib/pending/ask";
 import { openPendingStore } from "@app/question/lib/pending/store";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { readWidgetChanges, type WidgetSources, widgetSnapshot } from "../widget/snapshot";
+import { createWidgetHandoff } from "../widget/handoff";
+import { readWidgetChanges, readWidgetDecisionEvents, type WidgetSources, widgetSnapshot } from "../widget/snapshot";
 import { mutateWidgetState, readWidgetState } from "../widget/storage";
 import { type WidgetTarget, widgetOutgoingSchema, widgetSessionKey } from "../widget/types";
 import { widgetDispatcher } from "./dispatch";
@@ -428,4 +429,51 @@ describe("widget source and delivery contracts", () => {
         expect(snapshot.changes).toBeNull();
         expect(snapshot.errors).toEqual([]);
     });
+});
+
+test("Decision events retain source timestamps and filter IDs before the display bound", async () => {
+    const directory = await root();
+    const file = join(directory, "events.jsonl");
+    const wanted = { id: "d_1_fixture", ev: "updated", state: "acknowledged", ts: "2026-01-01T12:00:00Z" };
+    const foreign = Array.from({ length: 110 }, (_, index) => ({ id: `other-${index}`, ev: "updated", ts: wanted.ts }));
+    await writeFile(
+        file,
+        [SafeJSON.stringify(wanted), "corrupt", ...foreign.map((row) => SafeJSON.stringify(row))].join("\n")
+    );
+    const events = readWidgetDecisionEvents({ ids: [wanted.id], file });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ sourceId: wanted.id, at: Date.parse(wanted.ts), body: "acknowledged" });
+});
+
+test("a separate handoff saves the unsent draft without dispatching or clearing it", async () => {
+    const directory = await root();
+    const key = widgetSessionKey(target);
+    await mutateWidgetState(directory, (state) => {
+        state.drafts[key] = { text: "Keep this independent from the original conversation", assetIds: [] };
+        state.preferences.showChanges = false;
+    });
+    const sources: WidgetSources = {
+        sessions: async () => [
+            {
+                ...target,
+                provider: "codex",
+                title: "Fixture task",
+                project: "Fixture",
+                cwdShort: "Fixture",
+                mtime: Date.now(),
+                model: null,
+                account: null,
+                filePath: "/fixture/no-transcript.jsonl",
+            },
+        ],
+        decisions: () => [],
+        forms: () => [],
+        answers: () => [],
+        agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+    };
+    const result = await createWidgetHandoff({ root: directory, key, sources });
+    expect(result.sent).toBe(false);
+    expect(await readFile(result.path, "utf8")).toContain("Keep this independent");
+    expect((await readWidgetState(directory)).drafts[key].text).toContain("Keep this independent");
+    expect((await readWidgetState(directory)).outgoing).toHaveLength(0);
 });

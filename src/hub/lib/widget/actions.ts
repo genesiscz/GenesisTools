@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { decisionFiles } from "@app/question/lib/decisions/read";
-import { readDecisions } from "@app/question/lib/decisions/store";
+import { readDecisions, updateDecision } from "@app/question/lib/decisions/store";
 import { markEntriesRead, openReadModel } from "@app/question/lib/read-model";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -10,11 +10,22 @@ import { videoSettingsSchema } from "@genesiscz/utils/video/types";
 import { z } from "zod";
 import { confirmVideoAsset, importWidgetAsset, reviseVideoAsset } from "../composer/assets";
 import { changeOutgoing, enqueueWidgetMessage } from "../composer/outbox";
+import { createWidgetHandoff } from "./handoff";
 import { mutateWidgetState, readWidgetState, widgetRoot } from "./storage";
 import { widgetDraftSchema, widgetPayloadSchema, widgetPreferencesSchema, widgetTargetSchema } from "./types";
 
 export const widgetActionSchema = z.discriminatedUnion("action", [
     z.object({ action: z.literal("selection"), key: z.string().nullable() }),
+    z.object({ action: z.literal("handoff"), key: z.string() }),
+    z.object({
+        action: z.literal("ledger"),
+        id: z.string(),
+        sessionId: z.string(),
+        expectedRevision: z.number().int().positive(),
+        state: z.enum(["drafted", "dismissed", "acknowledged", "implemented"]),
+        draft: z.string().optional(),
+        draftOption: z.string().optional(),
+    }),
     z.object({ action: z.literal("preferences"), patch: widgetPreferencesSchema.partial() }),
     z.object({ action: z.literal("visibility"), key: z.string(), pinned: z.boolean() }),
     z.object({ action: z.literal("draft"), key: z.string(), draft: widgetDraftSchema }),
@@ -49,6 +60,21 @@ export async function performWidgetAction({
 }): Promise<unknown> {
     const request = widgetActionSchema.parse(input);
     switch (request.action) {
+        case "handoff":
+            return createWidgetHandoff({ root, key: request.key });
+        case "ledger": {
+            const files = decisionFiles();
+            const row = readDecisions(files.file).find((entry) => entry.id === request.id);
+            if (!row || row.sessionId !== request.sessionId) {
+                throw new Error("This item belongs to another session.");
+            }
+            return updateDecision(files.file, files.events, request.id, {
+                state: request.state,
+                expectedRevision: request.expectedRevision,
+                ...(request.draft !== undefined ? { draft: request.draft } : {}),
+                ...(request.draftOption !== undefined ? { draftOption: request.draftOption } : {}),
+            });
+        }
         case "selection":
             return mutateWidgetState(root, (state) => {
                 state.selectedKey = request.key;
