@@ -7,6 +7,7 @@ import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/sour
 import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { profiler } from "@genesiscz/utils/profile";
 import { boundHistoryText, HISTORY_METADATA_LIMITS } from "../metadata";
 import type {
     BoundedMetadataField,
@@ -403,7 +404,17 @@ function isSubagent(source: NativeSessionSource<"claude">): boolean {
     return isClaudeSubagentPath(source.filePath);
 }
 
+/** One Claude transcript's metadata, timed as `metadata.claude` (the hub's listings read it for every changed file). */
 export async function readClaudeMetadata(
+    source: NativeSessionSource<"claude">,
+    options: HistoryReadOptions = {}
+): Promise<HistoryMetadataRead> {
+    return profiler
+        .scope("agent-sessions")
+        .measureAsync("metadata.claude", () => readClaudeMetadataUncounted(source, options));
+}
+
+async function readClaudeMetadataUncounted(
     source: NativeSessionSource<"claude">,
     options: HistoryReadOptions = {}
 ): Promise<HistoryMetadataRead> {

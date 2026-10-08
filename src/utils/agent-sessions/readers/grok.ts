@@ -6,6 +6,7 @@ import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/sour
 import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { profiler } from "@genesiscz/utils/profile";
 import type {
     BoundedMetadataField,
     HistoryMetadataRead,
@@ -524,7 +525,17 @@ function pushBounded(fields: BoundedMetadataField[], field: BoundedMetadataField
     }
 }
 
+/** One grok session's metadata, timed as `metadata.grok`. */
 export async function readGrokMetadata(
+    source: NativeSessionSource<"grok">,
+    options: HistoryReadOptions = {}
+): Promise<HistoryMetadataRead> {
+    return profiler
+        .scope("agent-sessions")
+        .measureAsync("metadata.grok", () => readGrokMetadataUncounted(source, options));
+}
+
+async function readGrokMetadataUncounted(
     source: NativeSessionSource<"grok">,
     options: HistoryReadOptions = {}
 ): Promise<HistoryMetadataRead> {
