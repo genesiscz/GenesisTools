@@ -355,6 +355,8 @@ private struct ClickySettingsPageContent: View {
                     value: $model.preferences.collectStats)
                 Text("Minute history: 30 days · Hourly: 1 year · Daily: 2 years. Earlier lifetime totals are preserved without inventing historical detail.")
                     .font(.caption).foregroundStyle(.secondary)
+                Text("Counts are recorded while Clicky is listening. Paused or muted applications and Secure Input are not counted.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Divider()
                 Button("Reset statistics…", role: .destructive) { confirmReset = true }.buttonStyle(.genHoverPlain())
             }
