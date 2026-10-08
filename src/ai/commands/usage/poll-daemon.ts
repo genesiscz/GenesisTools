@@ -74,6 +74,14 @@ const prof = profiler.scope("ai-usage");
 
 async function main(): Promise<void> {
     const startedAt = Date.now();
+    // CPU the process spent before `main` (bun start and imports), logged on the setup line: a tick's CPU is
+    // start + setup + the phases below, so the lines account for all of it.
+    const beforeMain = process.cpuUsage();
+    const setupCpu = cpuMeta();
+    const endSetup = prof.start("tick.setup", () => ({
+        ...setupCpu(),
+        beforeMain: `${Math.round((beforeMain.user + beforeMain.system) / 1000)}ms`,
+    }));
     logger.info("[ai-usage] daemon poll starting");
 
     const dashConfig = await loadDashboardConfig();
@@ -83,6 +91,7 @@ async function main(): Promise<void> {
 
     await storage.ensureDirs();
     await notifManager.loadState(storage);
+    endSetup();
 
     try {
         // `force: true` — the daemon is the every-minute driver, so every other consumer
