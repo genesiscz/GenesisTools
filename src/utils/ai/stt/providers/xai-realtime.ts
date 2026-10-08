@@ -49,13 +49,14 @@ export function parseXaiSttEvent(raw: string, nowMs: number): LiveTranscriptEven
             return null;
         }
 
-        const isFinal = event.is_final === true || event.speech_final === true;
+        // A chunk final is included again in the stitched utterance final.
+        const isFinal = event.speech_final === true || (event.is_final === true && event.speech_final === undefined);
         return { kind: isFinal ? "final" : "partial", text, isFinal, startedAtMs: nowMs };
     }
 
     if (event.type === "transcript.done") {
         const text = event.text?.trim() ?? "";
-        return text ? { kind: "final", text, isFinal: true, startedAtMs: nowMs } : null;
+        return text ? { kind: "session_final", text, isFinal: true, startedAtMs: nowMs } : null;
     }
 
     return null;

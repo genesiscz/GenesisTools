@@ -90,6 +90,30 @@ test("auto surface prefixes observed ids", () => {
     expect(listenCandidates(observation, "ax").some((item) => item.id === "ax:c0")).toBe(true);
 });
 
+test("a completed session transcript cannot replay earlier spoken commands", async () => {
+    let observed = 0;
+    let acted = 0;
+    const pipeline = createListenPipeline({
+        evaluate: async () => {
+            throw new Error("A session summary must never be interpreted as a fresh command");
+        },
+        surface: surfaceWith({
+            see: async () => {
+                observed++;
+                return observation;
+            },
+            onAct: () => {
+                acted++;
+            },
+        }),
+    });
+    const decision = await pipeline.decide({ ...final("click export"), kind: "session_final" });
+    expect(decision.status).toBe("hold");
+    expect(decision.reason).toBe("session_final");
+    expect(observed).toBe(0);
+    expect(acted).toBe(0);
+});
+
 test("partial below the gate does not act", async () => {
     const acts: PrefetchPayload[] = [];
     const evaluate: Evaluator = async () =>

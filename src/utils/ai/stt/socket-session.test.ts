@@ -154,8 +154,20 @@ test("xai parser maps transcript.partial finals and transcript.done", () => {
     expect(
         parseXaiSttEvent(SafeJSON.stringify({ type: "transcript.done", text: "press seven", duration: 2 }), 1)
     ).toMatchObject({
-        kind: "final",
+        kind: "session_final",
     });
+    expect(
+        parseXaiSttEvent(
+            SafeJSON.stringify({ type: "transcript.partial", text: "press", is_final: true, speech_final: false }),
+            1
+        )
+    ).toMatchObject({ kind: "partial", isFinal: false });
+    expect(
+        parseXaiSttEvent(
+            SafeJSON.stringify({ type: "transcript.partial", text: "press seven", is_final: true, speech_final: true }),
+            1
+        )
+    ).toMatchObject({ kind: "final", isFinal: true });
     expect(parseXaiSttEvent(SafeJSON.stringify({ type: "transcript.created" }), 1)).toBeNull();
 });
 
