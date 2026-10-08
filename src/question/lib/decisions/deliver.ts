@@ -58,6 +58,14 @@ export interface DeliverDeps {
     snapshot?: () => Promise<CmuxLiveSnapshot>;
 }
 
+/** The transport was attempted but its receipt was lost; never put it back on an automatic send queue. */
+export class DeliveryUnknownError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "DeliveryUnknownError";
+    }
+}
+
 /** A delivery that did not reach the agent. The send puts the batch back to `answered`. */
 export class NotDeliveredError extends Error {
     constructor(readonly result: DeliveryResult) {

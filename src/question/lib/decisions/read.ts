@@ -4,6 +4,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { json2md } from "@genesiscz/utils/json2md";
 import { isTestProcess } from "@genesiscz/utils/test-process";
+import { DeliveryUnknownError } from "./deliver";
 import {
     boundContext,
     cleanBlock,
@@ -229,18 +230,23 @@ export async function sendSessionDecisions({
     file,
     events,
     session,
+    ids: selectedIds,
     emit,
 }: {
     file: string;
     events: string;
     session: string;
+    ids?: readonly string[];
     /**
      * Returns (or resolves) when delivered; throws (or rejects) when not. Its value is ignored.
      * `numbers` are the decisions in `text`, for a caller that frames the message.
      */
     emit: (text: string, numbers: number[]) => unknown;
 }): Promise<SentDecisions> {
-    const rows = readDecisions(file).filter((row) => row.sessionId === session && kindOf(row) === "decision");
+    const selected = selectedIds ? new Set(selectedIds) : undefined;
+    const rows = readDecisions(file).filter(
+        (row) => row.sessionId === session && kindOf(row) === "decision" && (!selected || selected.has(row.id))
+    );
     const due = deliverDecisions(rows, () => undefined);
     const ids = rows.filter((row) => due.numbers.includes(row.number)).map((row) => row.id);
     // The text comes from the rows as they stood UNDER the lock, not from the read above: an
@@ -251,8 +257,9 @@ export async function sendSessionDecisions({
     try {
         await emit(sent.text, sent.numbers);
     } catch (error) {
-        // Nobody received these answers: put them back, so the next send delivers them.
-        await restoreUndelivered(file, events, ids);
+        if (!(error instanceof DeliveryUnknownError)) {
+            await restoreUndelivered(file, events, ids);
+        }
         throw error;
     }
 

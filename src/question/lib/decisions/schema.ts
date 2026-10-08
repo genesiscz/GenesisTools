@@ -81,6 +81,12 @@ export const postDecisionsInputSchema = z.object({
 });
 
 export const decisionPatchSchema = z.object({
+    expectedRevision: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Refuse the update if the posted question has changed; absent rows have revision 1."),
     state: z.enum(DECISION_STATES).optional().describe("The next state; only forward moves are accepted."),
     answer: z.string().optional().describe("The answer text, or a copy of an answer the user gave in chat."),
     option: z

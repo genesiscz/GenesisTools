@@ -17,6 +17,7 @@ const { log } = logger.scoped("question-inbox");
 
 /** One decision's answer: a letter, a text, or a letter with a note. */
 export interface DecisionAnswer {
+    expectedRevision?: number;
     number: number;
     /** One letter, a-z. Required unless `text` is given. */
     option?: string;
@@ -63,6 +64,7 @@ function findRow(rows: DecisionRecord[], session: string, number: number): Decis
 }
 
 interface CheckedAnswer {
+    expectedRevision?: number;
     number: number;
     option?: string;
     text?: string;
@@ -89,6 +91,15 @@ async function checkAnswer(
     }
 
     const row = findRow(rows, session, answer.number);
+    if (
+        answer.expectedRevision !== undefined &&
+        (!Number.isInteger(answer.expectedRevision) ||
+            answer.expectedRevision < 1 ||
+            answer.expectedRevision !== (row?.revision ?? 1))
+    ) {
+        throw new Error(`stale decision revision: ${row?.id ?? answer.number}`);
+    }
+
     const block = row ? null : await deps.block(session, answer.number);
 
     if (!row && !block) {
@@ -105,7 +116,14 @@ async function checkAnswer(
         throw new Error(`DECISION ${answer.number} is already ${row.state}`);
     }
 
-    return { number: answer.number, option, text, ...(row ? { row } : {}), ...(block ? { block } : {}) };
+    return {
+        number: answer.number,
+        option,
+        text,
+        expectedRevision: answer.expectedRevision ?? row?.revision ?? 1,
+        ...(row ? { row } : {}),
+        ...(block ? { block } : {}),
+    };
 }
 
 /**
@@ -170,6 +188,7 @@ export async function answerInboxDecisions(
 
         return {
             id: row.id,
+            expectedRevision: item.expectedRevision,
             state: "answered" as const,
             ...(item.option ? { option: item.option } : {}),
             ...(item.text ? { answer: item.text } : {}),
@@ -178,6 +197,7 @@ export async function answerInboxDecisions(
     await updateDecisions(deps.file, deps.events, { updates });
 
     const sent = await sendAnsweredDecisions({
+        ids: updates.map((update) => update.id),
         session: input.session,
         ...(input.provider ? { provider: input.provider } : {}),
         files: deps,
@@ -199,8 +219,8 @@ export async function answerInboxDecisions(
 
 /** One decision: the inbox's click on an option letter. */
 export function answerInboxDecision(input: AnswerDecisionInput, deps: AnswerDecisionDeps): Promise<InboxAnswerResult> {
-    const { number, option, text, ...rest } = input;
-    return answerInboxDecisions({ ...rest, answers: [{ number, option, text }] }, deps);
+    const { number, option, text, expectedRevision, ...rest } = input;
+    return answerInboxDecisions({ ...rest, answers: [{ number, option, text, expectedRevision }] }, deps);
 }
 
 /**

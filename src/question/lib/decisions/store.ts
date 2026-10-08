@@ -50,6 +50,7 @@ export interface DecisionRef {
  * session's next prompt by the UserPromptSubmit hook, or queued for that prompt.
  */
 export interface DecisionDelivery {
+    uncertain?: boolean;
     /** `resume`: the answers went as the first prompt of the session resumed in a new pane. */
     route: "cmux" | "codex" | "prompt" | "queued" | "resume";
     /** A short human place: `cmux · agents-window · pane 1`, `codex worker w1`. Never an error text. */
@@ -456,11 +457,15 @@ function sessionNumbers(rows: DecisionRecord[], sessionId: string): Record<Decis
 
 /** The patched row, or a thrown reason. Pure, so a batch can check every patch before it writes. */
 function patched(row: DecisionRecord, patch: DecisionPatch, ts: string): DecisionRecord {
+    if (patch.expectedRevision !== undefined && patch.expectedRevision !== (row.revision ?? 1)) {
+        throw new Error(`stale decision revision: ${row.id}`);
+    }
+
     if (patch.state && !canMove(row, patch.state)) {
         throw new Error(`cannot move ${row.id} from ${row.state} to ${patch.state}`);
     }
 
-    const { comment, ...fields } = patch;
+    const { comment, expectedRevision: _expectedRevision, ...fields } = patch;
     const next: DecisionRecord = {
         ...row,
         ...fields,

@@ -23,6 +23,7 @@ import { collect } from "./ask";
 const { log } = logger.scoped("question-inbox");
 
 interface AnswerFlags {
+    expectedRevision?: string;
     session?: string;
     provider?: string;
     cwd?: string;
@@ -59,7 +60,12 @@ function singleAnswer(flags: AnswerFlags): DecisionAnswer {
         throw new Error("--decision takes a number");
     }
 
-    return { number, ...(flags.option ? { option: flags.option } : {}), ...(flags.text ? { text: flags.text } : {}) };
+    return {
+        number,
+        ...(flags.option ? { option: flags.option } : {}),
+        ...(flags.text ? { text: flags.text } : {}),
+        ...(flags.expectedRevision !== undefined ? { expectedRevision: Number(flags.expectedRevision) } : {}),
+    };
 }
 
 function batchAnswers(raw: string): DecisionAnswer[] {
@@ -76,7 +82,17 @@ function batchAnswers(raw: string): DecisionAnswer[] {
 
         const option = "option" in entry && typeof entry.option === "string" ? entry.option : undefined;
         const text = "text" in entry && typeof entry.text === "string" ? entry.text : undefined;
-        return { number: entry.number, ...(option ? { option } : {}), ...(text ? { text } : {}) };
+        const revision = "expectedRevision" in entry ? entry.expectedRevision : undefined;
+        if (revision !== undefined && (typeof revision !== "number" || !Number.isInteger(revision) || revision < 1)) {
+            throw new Error("expectedRevision must be a positive integer");
+        }
+
+        return {
+            number: entry.number,
+            ...(option ? { option } : {}),
+            ...(text ? { text } : {}),
+            ...(typeof revision === "number" ? { expectedRevision: revision } : {}),
+        };
     });
 }
 
@@ -189,6 +205,7 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
         .option("--provider <name>", "claude, codex or grok (the store's value when omitted)")
         .option("--cwd <path>", "The session's folder, kept on a decision stored from its transcript")
         .option("--decision <n>", "The decision number")
+        .option("--expected-revision <number>", "Refuse an answer if the question has been revised")
         .option("--option <letter>", "The chosen option, a-z")
         .option("--text <answer>", "A free-text answer, or a note after the option")
         .option("--form <id>", "Answer this pending form instead")

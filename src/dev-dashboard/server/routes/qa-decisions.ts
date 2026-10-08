@@ -30,6 +30,7 @@ const CALLER_MISTAKES = [
     /^DECISION \d+ is not waiting/,
     /^DECISION \d+ has options/,
     /^DECISION \d+ is already/,
+    /^stale decision revision:/,
 ];
 
 function refusal(err: unknown) {
@@ -60,7 +61,17 @@ function parseAnswers(value: unknown): DecisionAnswer[] | null {
 
         const option = optionalString(entry.option);
         const text = optionalString(entry.text);
-        answers.push({ number: entry.number, ...(option ? { option } : {}), ...(text ? { text } : {}) });
+        const revision = entry.expectedRevision;
+        if (revision !== undefined && (typeof revision !== "number" || !Number.isInteger(revision) || revision < 1)) {
+            return null;
+        }
+
+        answers.push({
+            number: entry.number,
+            ...(option ? { option } : {}),
+            ...(text ? { text } : {}),
+            ...(typeof revision === "number" ? { expectedRevision: revision } : {}),
+        });
     }
 
     return answers;

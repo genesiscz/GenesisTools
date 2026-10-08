@@ -1,6 +1,12 @@
 import { canonicalAgent } from "@app/handoff/targeting";
 import { logger } from "@genesiscz/utils/logger";
-import { type DeliverDeps, type DeliveryResult, deliverToSession, NotDeliveredError } from "./deliver";
+import {
+    type DeliverDeps,
+    type DeliveryResult,
+    DeliveryUnknownError,
+    deliverToSession,
+    NotDeliveredError,
+} from "./deliver";
 import { decisionFiles, decisionLine, sendSessionDecisions } from "./read";
 import { kindOf, readDecisions, recordDelivery } from "./store";
 
@@ -34,18 +40,21 @@ export function providerOf(given: string | undefined, rows: ReadonlyArray<{ prov
 export async function sendAnsweredDecisions({
     session,
     provider: given,
+    ids,
     dryRun = false,
     files = decisionFiles(),
     deps = {},
 }: {
     session: string;
     provider?: string;
+    ids?: readonly string[];
     dryRun?: boolean;
     files?: { file: string; events: string };
     deps?: DeliverDeps;
 }): Promise<SendResult> {
     const { file, events } = files;
-    const rows = readDecisions(file).filter((row) => row.sessionId === session);
+    const selected = ids ? new Set(ids) : undefined;
+    const rows = readDecisions(file).filter((row) => row.sessionId === session && (!selected || selected.has(row.id)));
     const provider = providerOf(given, rows);
 
     if (dryRun) {
@@ -64,6 +73,7 @@ export async function sendAnsweredDecisions({
 
     try {
         const sent = await sendSessionDecisions({
+            ids,
             file,
             events,
             session,
@@ -90,6 +100,11 @@ export async function sendAnsweredDecisions({
         );
         return { session, provider, ...sent, ...delivery.route, dryRun: false };
     } catch (error) {
+        if (error instanceof DeliveryUnknownError) {
+            await recordDelivery(file, events, due, { route: "queued", uncertain: true, error: error.message });
+            throw error;
+        }
+
         if (!(error instanceof NotDeliveredError)) {
             throw error;
         }

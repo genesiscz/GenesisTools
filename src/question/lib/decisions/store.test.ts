@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { z } from "zod";
-import { deliverToSession } from "./deliver";
+import { DeliveryUnknownError, deliverToSession } from "./deliver";
 import { livePaneTargets, noPaneTargets } from "./deliver.fixtures";
 import {
     decisionLine,
@@ -762,4 +762,82 @@ describe("superseding", () => {
             [2, "r2"],
         ]);
     });
+});
+
+test("revision preconditions are checked against rows re-read under the write lock", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-revision-"));
+    const file = join(dir, "decisions.jsonl");
+    const events = join(dir, "events.jsonl");
+    const [row] = await postDecisions(file, events, {
+        sessionId: "test-session",
+        decisions: [{ prompt: "Original?", options: ["yes", "no"] }],
+    });
+    let pending: Promise<DecisionRecord> | undefined;
+    await withFileLock(file + ".lock", async () => {
+        pending = updateDecision(file, events, row.id, { state: "answered", option: "a", expectedRevision: 1 });
+        pending.catch(() => undefined);
+        await Bun.sleep(0);
+        writeFileSync(file, SafeJSON.stringify({ ...row, prompt: "Changed?", revision: 2 }) + "\n");
+    });
+    await expect(pending).rejects.toThrow("stale decision revision");
+    expect(readDecisions(file)[0]).toMatchObject({ prompt: "Changed?", revision: 2, state: "open" });
+    const accepted = await updateDecision(file, events, row.id, {
+        state: "answered",
+        option: "b",
+        expectedRevision: 2,
+    });
+    expect(accepted.option).toBe("b");
+    expect(accepted).not.toHaveProperty("expectedRevision");
+});
+
+test("selected decision send leaves another answered item untouched", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-selected-"));
+    const file = join(dir, "decisions.jsonl");
+    const events = join(dir, "events.jsonl");
+    const rows = await postDecisions(file, events, {
+        sessionId: "test-session",
+        decisions: [
+            { prompt: "First?", options: ["yes"] },
+            { prompt: "Second?", options: ["yes"] },
+        ],
+    });
+    await updateDecisions(file, events, {
+        updates: rows.map((row) => ({ id: row.id, state: "answered", option: "a" })),
+    });
+    const sent = await sendSessionDecisions({
+        file,
+        events,
+        session: "test-session",
+        ids: [rows[1].id],
+        emit: () => undefined,
+    });
+    expect(sent.numbers).toEqual([2]);
+    expect(readDecisions(file).map((row) => row.state)).toEqual(["answered", "sent"]);
+    const remaining = await sendSessionDecisions({ file, events, session: "test-session", emit: () => undefined });
+    expect(remaining.numbers).toEqual([1]);
+});
+
+test("an unknown transport outcome is not restored to the automatic decision queue", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-unknown-"));
+    const file = join(dir, "decisions.jsonl");
+    const events = join(dir, "events.jsonl");
+    const [row] = await postDecisions(file, events, {
+        sessionId: "test-session",
+        decisions: [{ prompt: "Proceed?", options: ["yes"] }],
+    });
+    await updateDecision(file, events, row.id, { state: "answered", option: "a" });
+    await expect(
+        sendSessionDecisions({
+            file,
+            events,
+            session: "test-session",
+            emit: () => {
+                throw new DeliveryUnknownError("receipt lost");
+            },
+        })
+    ).rejects.toThrow("receipt lost");
+    expect(readDecisions(file)[0].state).toBe("sent");
+    await expect(
+        sendSessionDecisions({ file, events, session: "test-session", emit: () => undefined })
+    ).rejects.toThrow("nothing to send");
 });

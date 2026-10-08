@@ -10,7 +10,7 @@ import { type InboxCommandDeps, registerInboxCommand } from "../../commands/inbo
 import { paneMiss } from "../decisions/deliver";
 import { livePaneTargets } from "../decisions/deliver.fixtures";
 import { parseDecisionBlocks } from "../decisions/read";
-import { type DecisionRecord, postDecisions, readDecisions } from "../decisions/store";
+import { type DecisionRecord, postDecisions, readDecisions, updateDecision } from "../decisions/store";
 import { type AskDeps, getAskForm, postAskForm } from "../pending/ask";
 import type { AskForm } from "../pending/types";
 import { answerInboxDecision, answerInboxDecisions, answerInboxForm } from "./answer";
@@ -825,4 +825,62 @@ describe("inbox answer: the hub's argv", () => {
             })
         ).toBeNull();
     });
+});
+
+test("answering one inbox card does not deliver an older queued answer", async () => {
+    const files = scratch();
+    const rows = await postDecisions(files.file, files.events, {
+        sessionId: "s-alpha",
+        decisions: [
+            { prompt: "Older?", options: ["yes"] },
+            { prompt: "Current?", options: ["yes"] },
+        ],
+    });
+    await updateDecision(files.file, files.events, rows[0].id, { state: "answered", option: "a" });
+    const sent: string[][] = [];
+    await answerInboxDecision(
+        { session: "s-alpha", provider: "claude", number: 2, option: "a", expectedRevision: 1 },
+        {
+            ...files,
+            block: async () => null,
+            deliver: {
+                findTargets: livePaneTargets,
+                runTool: async (args) => {
+                    sent.push(args);
+                    return { success: true, stdout: '{"sent":true}', stderr: "" };
+                },
+            },
+        }
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0].join(" ")).toContain("DECISION 2:");
+    expect(sent[0].join(" ")).not.toContain("DECISION 1:");
+    expect(readDecisions(files.file).map((row) => row.state)).toEqual(["answered", "sent"]);
+});
+
+test("a stale inbox card cannot answer a newer posted question", async () => {
+    const files = scratch();
+    const [row] = await postDecisions(files.file, files.events, {
+        sessionId: "s-alpha",
+        decisions: [{ prompt: "Original?", options: ["yes"] }],
+    });
+    await postDecisions(files.file, files.events, {
+        sessionId: "s-alpha",
+        decisions: [{ prompt: "New question?", options: ["no"], supersedes: row.id }],
+    });
+    await expect(
+        answerInboxDecision(
+            { session: "s-alpha", number: 1, option: "a", expectedRevision: 1 },
+            {
+                ...files,
+                block: async () => null,
+                deliver: {
+                    runTool: async () => {
+                        throw new Error("must not deliver");
+                    },
+                },
+            }
+        )
+    ).rejects.toThrow("stale decision revision");
+    expect(readDecisions(files.file)[0].state).toBe("open");
 });
