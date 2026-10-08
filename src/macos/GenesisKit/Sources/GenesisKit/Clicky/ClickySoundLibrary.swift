@@ -42,6 +42,8 @@ final class ClickySoundLibrary: ObservableObject {
     @Published private(set) var rows: [ClickyLibraryRow] = []
     @Published private(set) var loading: ClickyPackReference?
     @Published private(set) var refreshing = false
+    @Published private(set) var choosingFolder = false
+    private var folderPanel: NSOpenPanel?
     @Published private(set) var error: String?
     @Published private(set) var active: ClickyActivePack?
     var install: ((ClickyPackReference, PreparedClickyPack) throws -> Void)?
@@ -79,16 +81,26 @@ final class ClickySoundLibrary: ObservableObject {
     }
 
     func addFolder() {
+        guard !stopped else { return }
+        if let folderPanel {
+            folderPanel.makeKeyAndOrderFront(nil)
+            return
+        }
         let panel = NSOpenPanel()
         panel.title = "Add a Clicky sound library"
         panel.message = "Choose the audio folder containing registry.json. Sounds remain in that folder."
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
+        folderPanel = panel
+        choosingFolder = true
         panel.begin { [weak self] response in
             Task { @MainActor in
+                guard let self else { return }
+                self.folderPanel = nil
+                self.choosingFolder = false
                 guard response == .OK, let url = panel.url else { return }
-                await self?.register(url)
+                await self.register(url)
             }
         }
     }
@@ -205,6 +217,9 @@ final class ClickySoundLibrary: ObservableObject {
 
     func stop() {
         stopped = true
+        folderPanel?.cancel(nil)
+        folderPanel = nil
+        choosingFolder = false
         lifetime &+= 1
         cancelSelection()
         refreshTask?.cancel()

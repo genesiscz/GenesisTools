@@ -24,6 +24,7 @@ struct ClickySoundLibraryView: View {
                 Spacer()
                 Button("Add folder…", action: library.addFolder)
                     .accessibilityIdentifier("clicky.library.add")
+                    .disabled(library.choosingFolder)
             }
             if let error = library.error {
                 Label(error, systemImage: "exclamationmark.triangle")
