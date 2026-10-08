@@ -283,6 +283,28 @@ process.on('SIGTERM', () => server.close(() => process.exit(0)));
     if (portableGreen.exit !== 0) {
         throw new Error("Portable test did not turn green after fixture fix.");
     }
+    const remapRecording: BugRecording = {
+        version: 1,
+        id: "path-remap-fixture",
+        title: "Fixed deployment preserves double-slash paths",
+        initialUrl: "http://original.invalid//fixture-cart?item=1#row",
+        actions: [],
+        evidence: [],
+        expectation: {
+            description: "The fixed deployment preserves the exact URL path",
+            kind: "url",
+            expected: "http://original.invalid//fixture-cart?item=1#row",
+        },
+    };
+    const remapDirectory = await generateWorkspace({ recording: remapRecording });
+    const networkPathRemap = await verifyWorkspace({
+        directory: remapDirectory,
+        baseUrl: server.url.toString(),
+        browserBinary,
+    });
+    if (networkPathRemap.status !== "passed") {
+        throw new Error("Fixed deployment remapping treated a double-slash path as another hostname.");
+    }
     const hiddenRecording: BugRecording = {
         version: 1,
         id: "hidden-delete-fixture",
@@ -379,6 +401,7 @@ process.on('SIGTERM', () => server.close(() => process.exit(0)));
         portableRedExit: portableRed.exit,
         green,
         portableGreenExit: portableGreen.exit,
+        networkPathRemap,
         unchangedHash: before === after,
         cancelled,
         hiddenDeletion: {

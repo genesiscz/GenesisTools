@@ -87,6 +87,51 @@ describe("bug repro contract", () => {
         expect(source).toContain(EXPECTATION_MARKER);
         expect(source).toContain('toHaveText("\\"; throw new Error(\'injected\')")');
     });
+    test("remapped generated tests preserve slash-prefixed paths and external navigation", async () => {
+        type FixturePage = { goto(url: string): Promise<void> };
+        for (const pathname of ["/cart", "//cart", "///cart"]) {
+            const urls: string[] = [];
+            const page: FixturePage = {
+                goto: async (url) => {
+                    urls.push(url);
+                },
+            };
+            let pending: Promise<void> | undefined;
+            const testFixture = Object.assign(
+                (_title: string, work: (args: { page: FixturePage }) => Promise<void>) => {
+                    pending = work({ page });
+                },
+                { step: async (_title: string, work: () => Promise<void>) => work() }
+            );
+            const assertion = () => ({
+                toHaveURL: async (expected: string) => {
+                    expect(urls.at(-1)).toBe(expected);
+                },
+            });
+            const source = generateRepro({
+                ...recording,
+                initialUrl: `http://original.test${pathname}?item=1#row`,
+                actions: [
+                    { id: "external", kind: "navigate", url: "http://other.test//checkout", excluded: false, at: 1 },
+                ],
+                expectation: {
+                    description: "Keep the external checkout",
+                    kind: "url",
+                    expected: "http://other.test//checkout",
+                },
+            });
+            const compiled = new Bun.Transpiler({ loader: "ts" }).transformSync(source);
+            const body = compiled
+                .split("\n")
+                .filter((line) => !line.startsWith("import "))
+                .join("\n");
+            new Function("test", "expect", "process", body)(testFixture, assertion, {
+                env: { BUG_TO_TEST_BASE_URL: "http://fixed.test/base" },
+            });
+            await pending;
+            expect(urls).toEqual([`http://fixed.test${pathname}?item=1#row`, "http://other.test//checkout"]);
+        }
+    });
     test("hidden assertions allow removed elements while rejecting multiple targets", () => {
         const hidden = generateRepro({
             ...recording,
