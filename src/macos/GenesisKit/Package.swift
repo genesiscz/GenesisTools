@@ -12,7 +12,7 @@ let package = Package(
         .library(name: "GenesisKit", targets: ["GenesisKit"]),
     ],
     targets: [
-        .target(name: "GenesisKit", path: "Sources/GenesisKit"),
-        .testTarget(name: "GenesisKitTests", dependencies: ["GenesisKit"], path: "Tests/GenesisKitTests"),
+        .target(name: "GenesisKit", path: "Sources/GenesisKit", exclude: ["Flow", "Focus"]),
+        .testTarget(name: "GenesisKitTests", dependencies: ["GenesisKit"], path: "Tests/GenesisKitTests", exclude: ["FlowFocus"]),
     ]
 )
