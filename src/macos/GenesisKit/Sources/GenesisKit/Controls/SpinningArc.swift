@@ -8,6 +8,7 @@ import SwiftUI
 /// kept GenesisTools Preview at 23% CPU (2026-10-08). Here the turn is a layer animation, which the
 /// render server runs, so the app does no work between frames.
 public struct SpinningArc: NSViewRepresentable {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     public var color: Color
     public var lineWidth: CGFloat
     /// The visible part of the circle, as `Circle().trim(from:to:)` takes it.
@@ -30,7 +31,7 @@ public struct SpinningArc: NSViewRepresentable {
     }
 
     public func updateNSView(_ view: ArcView, context: Context) {
-        view.configure(color: NSColor(color).cgColor, lineWidth: lineWidth, trim: trim, period: period, spinning: spinning)
+        view.configure(color: NSColor(color).cgColor, lineWidth: lineWidth, trim: trim, period: period, spinning: spinning && !reduceMotion)
     }
 
     public final class ArcView: NSView {
@@ -72,10 +73,10 @@ public struct SpinningArc: NSViewRepresentable {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             arc.frame = bounds
-            let inset = arc.lineWidth / 2
-            // From three o'clock, clockwise on screen, as `Circle().trim` draws (the layer's y axis points up).
+            // Circle.stroke centers the stroke on its boundary; an inset would shrink a 9 pt ring to 7 pt.
+            // From three o'clock, clockwise on screen, as Circle.trim draws in this unflipped layer.
             let path = CGMutablePath()
-            let radius = max(0, min(bounds.width, bounds.height) / 2 - inset)
+            let radius = max(0, min(bounds.width, bounds.height) / 2)
             path.addArc(center: CGPoint(x: bounds.midX, y: bounds.midY), radius: radius, startAngle: 0, endAngle: -2 * .pi, clockwise: true)
             arc.path = path
             CATransaction.commit()

@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import XCTest
 @testable import GenesisKit
 
@@ -113,5 +114,47 @@ final class PathOpenerTests: XCTestCase {
         XCTAssertEqual(PathLabel.display("/tmp/x"), "/tmp/x")
         XCTAssertEqual(PathLabel.display(home), "~")
         XCTAssertEqual(PathLabel.display(home + "x/y"), home + "x/y", "a sibling of the home folder keeps its path")
+    }
+}
+
+@MainActor
+final class SpinningArcTests: XCTestCase {
+    func testPathMatchesCircleStrokeWithoutAnInsetAndResizes() throws {
+        let view = SpinningArc.ArcView(frame: CGRect(x: 0, y: 0, width: 9, height: 9))
+        view.configure(color: NSColor.blue.cgColor, lineWidth: 2, trim: 0.12...0.78, period: 1.65, spinning: false)
+        view.layout()
+        let arc = try XCTUnwrap(view.layer?.sublayers?.first as? CAShapeLayer)
+        XCTAssertEqual(try XCTUnwrap(arc.path).boundingBoxOfPath, Circle().path(in: view.bounds).boundingRect)
+        XCTAssertEqual(arc.strokeStart, 0.12)
+        XCTAssertEqual(arc.strokeEnd, 0.78)
+        XCTAssertEqual(arc.lineCap, .round)
+        view.setFrameSize(CGSize(width: 20, height: 30))
+        view.layout()
+        XCTAssertEqual(try XCTUnwrap(arc.path).boundingBoxOfPath, CGRect(x: 0, y: 5, width: 20, height: 20))
+    }
+
+    func testSpinAttachesStopsAndReattachesWithoutChangingTrim() throws {
+        _ = NSApplication.shared
+        let window = NSPanel(contentRect: CGRect(x: 0, y: 0, width: 40, height: 40),
+                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let view = SpinningArc.ArcView(frame: CGRect(x: 0, y: 0, width: 20, height: 20))
+        view.configure(color: NSColor.blue.cgColor, lineWidth: 2, trim: 0.12...0.78, period: 1.65, spinning: true)
+        let arc = try XCTUnwrap(view.layer?.sublayers?.first as? CAShapeLayer)
+        XCTAssertNil(arc.animation(forKey: "genesis.spin"))
+        window.contentView = view
+        let spin = try XCTUnwrap(arc.animation(forKey: "genesis.spin") as? CABasicAnimation)
+        XCTAssertEqual(spin.duration, 1.65)
+        XCTAssertEqual(try XCTUnwrap(spin.toValue as? Double), -2 * .pi)
+        XCTAssertEqual(spin.repeatCount, .infinity)
+        view.removeFromSuperview()
+        XCTAssertNil(arc.animation(forKey: "genesis.spin"))
+        window.contentView = view
+        XCTAssertNotNil(arc.animation(forKey: "genesis.spin"))
+        view.configure(color: NSColor.blue.cgColor, lineWidth: 2, trim: 0.12...0.78, period: 1.65, spinning: false)
+        XCTAssertNil(arc.animation(forKey: "genesis.spin"))
+        XCTAssertEqual(arc.strokeStart, 0.12)
+        XCTAssertEqual(arc.strokeEnd, 0.78)
     }
 }
