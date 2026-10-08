@@ -190,7 +190,7 @@ public struct FocusStudioView: View {
             Text(model.emptiness == .noMatches ? "Clear the search or choose another tag or project to see recorded activity."
                  : model.emptiness == .captureWasOff
                  ? "This range was not measured, which is not the same as an empty day. Turn capture back on in Settings → Focus."
-                 : "Capture is on. Start a flow from the timer.")
+                 : "Start a flow from the timer. Recorded activity appears here.")
                 .font(GenTypography.caption(11))
                 .foregroundStyle(Color.genTextTertiary)
                 .multilineTextAlignment(.center)

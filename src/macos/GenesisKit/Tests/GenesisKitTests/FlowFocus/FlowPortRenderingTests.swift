@@ -13,6 +13,11 @@ final class FlowPortRenderingTests: XCTestCase {
         let store = try ActivityStore(path: root.appendingPathComponent("activity.db").path)
         let now = ISO8601DateFormatter().date(from: "2026-10-07T09:00:00Z")!
         let start = Int64(now.addingTimeInterval(-7200).timeIntervalSince1970 * 1000)
+        let emptyModel = FocusStudioModel(store: store)
+        emptyModel.range = FocusRange.make(.day, containing: now)
+        emptyModel.reload(now: now)
+        try render(FocusStudioView(model: emptyModel), width: 1080, height: 760,
+                   to: URL(fileURLWithPath: directory).appendingPathComponent("\(prefix)-FocusStudio-empty.png"))
         let session = try store.startSession(.init(kind: "flow", plannedSec: 1500, startedMs: start,
                                                    state: "done", cycleIndex: 1, tag: "Shared library",
                                                    note: "Preserve the working feature", interruptions: 1))
@@ -78,7 +83,8 @@ final class FlowPortRenderingTests: XCTestCase {
         do {
             let command = try JSONEncoder().encode(FocusStartCommand(phase: .flow, seconds: 1500, tag: "Shared library"))
             _ = try await runtime.send(action: "focus.start", payload: command)
-            try render(FlowWidget(runtime: runtime).background(Color.settingsBackground), width: 432, height: 620,
+            let expandedSize = FlowWidget.module(runtime: runtime).expandedSize
+            try render(FlowWidget(runtime: runtime).background(Color.settingsBackground), width: expandedSize.width, height: expandedSize.height,
                        to: URL(fileURLWithPath: directory).appendingPathComponent("\(prefix)-FlowWidget-expanded.png"))
             try render(FlowWidget(runtime: runtime, presentation: .preview).background(Color.settingsBackground), width: 360, height: 240,
                        to: URL(fileURLWithPath: directory).appendingPathComponent("\(prefix)-FlowWidget-preview.png"))
@@ -94,14 +100,28 @@ final class FlowPortRenderingTests: XCTestCase {
         try FileManager.default.removeItem(at: root)
     }
 
+
     private func render<V: View>(_ view: V, width: CGFloat, height: CGFloat, to url: URL) throws {
         let host = NSHostingView(rootView: view.environment(\.colorScheme, .dark))
         host.frame = NSRect(x: 0, y: 0, width: width, height: height)
         host.layoutSubtreeIfNeeded()
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
+        XCTAssertEqual(host.bounds.size, CGSize(width: width, height: height), "render the descriptor's actual bounds")
+        XCTAssertEqual(CGFloat(bitmap.pixelsWide) / width, CGFloat(bitmap.pixelsHigh) / height,
+                       accuracy: 0.01, "the bitmap must preserve the view's aspect ratio")
         let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
         try png.write(to: url)
         XCTAssertGreaterThan(png.count, 10_000, "a blank view is not a rendered surface")
+        var brightSamples = 0
+        for y in stride(from: 0, to: bitmap.pixelsHigh, by: 4) {
+            for x in stride(from: 0, to: bitmap.pixelsWide, by: 4) {
+                if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                   color.redComponent + color.greenComponent + color.blueComponent > 1.5 {
+                    brightSamples += 1
+                }
+            }
+        }
+        XCTAssertGreaterThan(brightSamples, 10, "PNG byte count alone cannot distinguish a black render")
     }
 }

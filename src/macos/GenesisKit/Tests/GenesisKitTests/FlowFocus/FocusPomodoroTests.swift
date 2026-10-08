@@ -70,6 +70,18 @@ final class PomodoroEngineTests: XCTestCase {
         try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
     }
 
+    func testHUDSummaryUsesVisibleReadyDurationAndPreservesActiveState() {
+        let view = FocusHUDView(engine: engine, recorder: ActivityRecorder(store: store))
+        XCTAssertEqual(engine.remainingSec, 0)
+        XCTAssertEqual(view.voiceOverSummary, "Flow, 5 minutes 0 seconds remaining")
+        engine.start(.flow, seconds: 125, tag: "Draft")
+        XCTAssertEqual(view.voiceOverSummary, "Flow, 2 minutes 5 seconds remaining, tagged Draft")
+        engine.pause()
+        XCTAssertEqual(view.voiceOverSummary, "Flow, 2 minutes 5 seconds remaining, paused, tagged Draft")
+        engine.stop()
+        XCTAssertEqual(view.voiceOverSummary, "Flow, 5 minutes 0 seconds remaining, tagged Draft")
+    }
+
     // MARK: - Pause accounting (the 2026-09-21 21:56 defect)
 
     /// Observed live: a 25-minute flow, overrunning, reported "62:15" REMAINING after a pause.

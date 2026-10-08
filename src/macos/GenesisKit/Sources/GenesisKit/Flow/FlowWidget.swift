@@ -19,7 +19,7 @@ public struct FlowWidget: View {
 
     public static func module(runtime: FlowFocusRuntime) -> WidgetModuleDescriptor {
         WidgetModuleDescriptor(id: "focus", title: "Flow", symbol: "waveform", tint: .jarvisTeal,
-                               expandedSize: CGSize(width: 432, height: 620),
+                               expandedSize: CGSize(width: 432, height: 480),
                                summary: { runtime.flow.phase == .listening ? "Listening" : "Dictation & Focus" }) { presentation in
             FlowWidget(runtime: runtime, presentation: presentation)
         }
@@ -61,6 +61,7 @@ public struct FlowWidget: View {
                                          onToggleStyle: { hudStyle = hudStyle == .full ? .compact : .full },
                                          style: hudStyle,
                                          onPlanChange: focus.updatePlan)
+                                .frame(maxWidth: .infinity)
                         }
                         windowLinks
                         if !flow.history.isEmpty { recentDictation }

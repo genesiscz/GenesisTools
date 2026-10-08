@@ -576,13 +576,13 @@ public struct FocusHUDView: View {
         }
     }
 
-    private var voiceOverSummary: String {
-        let minutes = abs(engine.remainingSec) / 60
-        let seconds = abs(engine.remainingSec) % 60
+    var voiceOverSummary: String {
+        let minutes = abs(displayedSeconds) / 60
+        let seconds = abs(displayedSeconds) % 60
         // Read as a sentence, not as a template: "over by" at the end came out as
         // "28 minutes 11 seconds over by".
         let clock = "\(minutes) minutes \(seconds) seconds"
-        let core = engine.remainingSec < 0 ? "over by \(clock)" : "\(clock) remaining"
+        let core = displayedSeconds < 0 ? "over by \(clock)" : "\(clock) remaining"
         let paused = isPaused ? ", paused" : ""
         let tag = engine.tag.map { ", tagged \($0)" } ?? ""
         return "\(engine.phase.label), \(core)\(paused)\(tag)"
