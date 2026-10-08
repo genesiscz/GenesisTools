@@ -190,7 +190,7 @@ try {
         }
     }
 } finally {
-    chrome.close();
+    await chrome.close();
     server.stop(true);
 }
 

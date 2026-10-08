@@ -169,6 +169,6 @@ export async function verifyExtension(distDir: string = DIST_DIR): Promise<Verif
     } finally {
         log.info({ checks }, "extension verify");
         conn?.close();
-        headless.close();
+        await headless.close();
     }
 }

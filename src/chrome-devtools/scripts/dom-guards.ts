@@ -450,7 +450,7 @@ try {
     failures += 1;
     console.log(`FAIL  the guard run itself: ${error instanceof Error ? error.message : String(error)}`);
 } finally {
-    chrome.close();
+    await chrome.close();
     server.stop(true);
 }
 
