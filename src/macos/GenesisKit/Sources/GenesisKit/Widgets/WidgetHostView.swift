@@ -39,7 +39,7 @@ struct WidgetHostView: View {
         Group {
             if surface.edge == .top {
                 VStack(spacing: 0) {
-                    topStrip
+                    topStrip.frame(width: WidgetClusterGeometry.topWidth(cutout: cutout, moduleCount: moduleIDs.count))
                     if presentation != .compact { content }
                 }
             } else {
@@ -98,7 +98,7 @@ struct WidgetHostView: View {
             if cutout > 0 { Spacer(minLength: cutout) } else { Spacer(minLength: 8) }
             if selected?.id == "agents" {
                 HStack(spacing: 5) {
-                    ForEach(Array(model.previewSessions.prefix(3))) { session in
+                    ForEach(Array(model.railSessions.prefix(3))) { session in
                         Button {
                             model.openInboxNotification(on: surface, key: session.key)
                         } label: {
