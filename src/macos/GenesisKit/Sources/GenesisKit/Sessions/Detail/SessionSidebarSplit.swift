@@ -34,7 +34,9 @@ public struct SessionSidebarSplit: Layout {
             return
         }
 
-        let sidebarWidth = min(sidebar.sizeThatFits(ProposedViewSize(width: nil, height: bounds.height)).width, bounds.width)
+        // The sidebar's width is known (the hairline and `sidebarWidth`). Asking it with an open width made
+        // SwiftUI size the whole sidebar subtree once more on every layout pass of the session screen.
+        let sidebarWidth = min(Self.sidebarWidth + 1, bounds.width)
         let covers = Self.overlays(width: bounds.width, sidebar: sidebarWidth, mainMinWidth: mainMinWidth)
         let mainWidth = covers ? bounds.width : bounds.width - sidebarWidth
         main.place(at: bounds.origin, proposal: ProposedViewSize(width: mainWidth, height: bounds.height))
