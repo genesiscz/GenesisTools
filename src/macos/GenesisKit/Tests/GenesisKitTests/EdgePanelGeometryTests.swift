@@ -1186,6 +1186,104 @@ final class WidgetRosterTests: XCTestCase {
         }
     }
 
+    func testRailStaysAtBezelDuringInterruptedAnimation() async throws {
+        _ = NSApplication.shared
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        for edge in [EdgePanelPlacement.left, .right] {
+            try await withFixture(sessionCount: 4, sideStyle: "classic") { model, _, _ in
+                let registry = WidgetModuleRegistry()
+                try registry.register(WidgetModuleDescriptor(
+                    id: "shelf", title: "Shelf", symbol: "tray", tint: .blue, summary: { "Fixture" }
+                ) { _ in Color.blue })
+                let surface = WidgetSurfaceID(edge: edge)
+                let controller = EdgePanelController(
+                    placement: edge, screen: screen, compactSize: CGSize(width: 44, height: 180),
+                    expandedSize: CGSize(width: 476, height: 480), title: "Hidden rail animation fixture"
+                ) {
+                    WidgetHostView(model: model, registry: registry, surface: surface, moduleIDs: ["shelf"],
+                        cutout: 0, headerHeight: 36, visibleHeight: screen.visibleFrame.height)
+                }
+                let panel = controller.panel
+                panel.alphaValue = 0
+                panel.level = NSWindow.Level(rawValue: -1000)
+                defer { controller.hide(); panel.close() }
+                controller.show()
+                func handles(_ view: NSView) -> [ScreenVerticalDragView] {
+                    if let handle = view as? ScreenVerticalDragView { return [handle] }
+                    return view.subviews.flatMap(handles)
+                }
+                var sampledFrames: [CGRect] = []
+                func sample() throws {
+                    let host = try XCTUnwrap(panel.contentView)
+                    host.layoutSubtreeIfNeeded()
+                    let handle = try XCTUnwrap(handles(host).first)
+                    let frame = panel.convertToScreen(handle.convert(handle.bounds, to: nil))
+                    sampledFrames.append(frame)
+                    let expectedX = edge == .right ? screen.frame.maxX - 42 : screen.frame.minX + 2
+                    XCTAssertEqual(frame.minX, expectedX, accuracy: 0.5, "A growing content view moved the rail")
+                    XCTAssertTrue(panel.frame.insetBy(dx: -0.5, dy: -0.5).contains(frame), "Handle escaped panel")
+                }
+                try sample()
+                for opening in [true, false, true] {
+                    if opening { model.openModule("shelf", on: surface) } else { model.collapse() }
+                    controller.setPresentation(opening ? .expanded : .compact, reduceMotion: false)
+                    // A bounded animation-frame sampler, not a production polling loop.
+                    for _ in 0..<12 {
+                        try await Task.sleep(for: .milliseconds(16))
+                        try sample()
+                    }
+                }
+                try await Task.sleep(for: .milliseconds(300))
+                try sample()
+                XCTAssertGreaterThan(sampledFrames.count, 30)
+                let xs = sampledFrames.map { $0.minX }
+                print("RAIL_FRAME_PROOF edge=\(edge) samples=\(xs.count) x-range=\(xs.max()! - xs.min()!)")
+            }
+        }
+    }
+
+    func testTopBarMeasuresChangingWingsAndReservesCutout() {
+        for cutout: CGFloat in [0, 200] {
+            for widths: (CGFloat, CGFloat) in [(70, 60), (120, 260)] {
+                let host = NSHostingView(rootView: WidgetTopBarLayout(cutout: cutout) {
+                    Color.red.frame(width: widths.0, height: 23)
+                    Color.blue.frame(width: widths.1, height: 25)
+                }.fixedSize())
+                let expected = cutout > 0 ? max(widths.0, widths.1) * 2 + cutout + 16 : widths.0 + widths.1 + 16
+                XCTAssertEqual(host.fittingSize.width, expected, accuracy: 0.5)
+                XCTAssertEqual(host.fittingSize.height, 25, accuracy: 0.5)
+            }
+        }
+    }
+
+    func testScreenDragIgnoresMovingWindowAndEndsOnce() throws {
+        _ = NSApplication.shared
+        let view = ScreenVerticalDragView(frame: CGRect(x: 0, y: 0, width: 40, height: 21))
+        let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 44, height: 180),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView?.addSubview(view)
+        defer { window.close() }
+        var pointer = CGPoint(x: 500, y: 600)
+        view.pointer = { pointer }
+        var received: [(CGFloat, Bool)] = []
+        view.moved = { received.append(($0, $1)) }
+        let event = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: .zero,
+            modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+            eventNumber: 1, clickCount: 1, pressure: 1))
+        view.mouseDown(with: event)
+        pointer.y -= 120
+        window.setFrameOrigin(CGPoint(x: -10000, y: -10120))
+        view.mouseDragged(with: event)
+        pointer.y += 40
+        window.setFrameOrigin(CGPoint(x: -10000, y: -10080))
+        view.mouseDragged(with: event)
+        view.mouseUp(with: event)
+        view.mouseUp(with: event)
+        XCTAssertEqual(received.map { $0.0 }, [0, 120, 80, 80])
+        XCTAssertEqual(received.map { $0.1 }, [false, false, false, true])
+    }
+
     func testOverflowUsesARealScrollableViewportAndReachesDocumentEnd() async throws {
         _ = NSApplication.shared
         for style in ["classic", "modular"] {

@@ -1,4 +1,28 @@
 import Foundation
+import SwiftUI
+
+/// Measures both wings before placing them, keeping a hardware cutout at the screen's center.
+struct WidgetTopBarLayout: Layout {
+    var cutout: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        guard sizes.count == 2 else { return .zero }
+        let width = cutout > 0
+            ? max(sizes[0].width, sizes[1].width) * 2 + cutout + 16
+            : sizes[0].width + sizes[1].width + 16
+        return CGSize(width: width, height: max(sizes[0].height, sizes[1].height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 2 else { return }
+        let left = subviews[0].sizeThatFits(.unspecified)
+        let right = subviews[1].sizeThatFits(.unspecified)
+        subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(left))
+        let rightX = cutout > 0 ? bounds.midX + cutout / 2 + 8 : bounds.maxX - right.width
+        subviews[1].place(at: CGPoint(x: rightX, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(right))
+    }
+}
 
 public struct WidgetLayoutConfiguration: Codable, Equatable, Sendable {
     public var topModules: [String]
