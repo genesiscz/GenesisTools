@@ -117,6 +117,33 @@ mistake changed rows for a full candidate inventory. `bulk:true` means the fast 
 structural gaps fall back to the normal walk. `AX_TOOL_NO_BULK=1` is a diagnostic comparison.
 Neither path may silently erase a modal. Snapshot action guards reject covered targets.
 
+## Scrolling (`control scroll`)
+
+`scroll --direction` posts wheel events to the window under the point (`--coords`, a target's
+center, or the main window's center) as window-addressed events for that process. It does NOT
+bring the app forward, so the user's focus and typing stay where they are; the user takeover gate
+still stops it when the user moves the pointer. `--foreground` restores the old activate-first path
+for an app that ignores events addressed to a background window.
+
+| Flag | Meaning |
+| --- | --- |
+| `--pixels N` / `--amount N` | Distance in pixels, or wheel lines at 40 px each (default 3) |
+| `--time S` | Spread the distance over S seconds, 60 events per second, with trackpad phases (began, changed, ended) |
+| `--ease flick\|linear` | `flick` (default) starts fast and slows down like a real flick; `linear` keeps one speed |
+| `--repeat N`, `--pause S` | N scrolls, S seconds apart (default 0.3) |
+| `--alternate` | Every second repeat goes the other way: down, up, down |
+
+```bash
+# A fast reader going down and back up three times, as a person would, in one call:
+tools control scroll --app <pid> --direction down --pixels 3000 --time 0.6 --repeat 3 --alternate --coords X,Y
+```
+
+Use `--time` whenever the question is how a page BEHAVES while it scrolls (jumps, flicker, lazy
+rows): a single wheel event, or a shell loop of them, gives the page nothing to render between
+steps and hides exactly those bugs. Without `--time` it is one event, as before. Record the
+screen (`capture.md`) or read the page's own scroll log to see the result; one screenshot after
+the scroll proves only where it ended.
+
 ## Coordinates, OCR and cursor feedback
 
 Native `act --coords X,Y` uses global logical screen points inside the pinned window. API

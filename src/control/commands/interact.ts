@@ -339,27 +339,59 @@ export function registerInteractCommands(program: Command): void {
         program
             .command("scroll")
             .description(
-                "Scroll: --direction sends wheel events (at element center / --coords / screen center); WITHOUT --direction scrolls the target element into view (AXScrollToVisible)."
+                "Scroll: --direction sends wheel events to the window under the point (element center / --coords / the main window's center) without taking focus; WITHOUT --direction scrolls the target element into view (AXScrollToVisible). --time spreads the distance over real time like a trackpad flick; --repeat with --alternate scrolls down and up again."
             )
             .requiredOption("--app <name>", "app process name")
     )
         .option("--direction <dir>", "up | down | left | right (wheel mode)")
-        .option("--amount <n>", "wheel lines to scroll (default 3)")
+        .option("--amount <n>", "wheel lines to scroll, 40 px each (default 3)")
+        .option("--pixels <n>", "distance in pixels instead of --amount (1–100000)")
+        .option(
+            "--time <seconds>",
+            "spread the distance over this time, 60 events per second (0.05–30); default one event"
+        )
+        .option("--ease <curve>", "flick (fast, then slowing; default) | linear (same speed)")
+        .option("--repeat <n>", "scroll this many times (1–200)")
+        .option("--pause <seconds>", "pause between repeats (default 0.3)")
+        .option("--alternate", "every second repeat goes the other way (down, up, down, …)")
+        .option(
+            "--foreground",
+            "bring the app frontmost first (the old path, for an app that ignores background window events)"
+        )
         .option("--coords <x,y>", "scroll at this screen point instead of an element")
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const axArgs = ["scroll", "--app", opts.app, ...targetArgs(opts)];
-            if (opts.direction) {
-                axArgs.push("--direction", opts.direction);
+            const passThrough: [string, string | undefined][] = [
+                ["--direction", opts.direction],
+                ["--amount", opts.amount],
+                ["--pixels", opts.pixels],
+                ["--time", opts.time],
+                ["--ease", opts.ease],
+                ["--repeat", opts.repeat],
+                ["--pause", opts.pause],
+                ["--coords", opts.coords],
+            ];
+            for (const [flag, value] of passThrough) {
+                if (value) {
+                    axArgs.push(flag, value);
+                }
             }
-            if (opts.amount) {
-                axArgs.push("--amount", opts.amount);
+
+            if (opts.alternate) {
+                axArgs.push("--alternate");
             }
-            if (opts.coords) {
-                axArgs.push("--coords", opts.coords);
+
+            if (opts.foreground) {
+                axArgs.push("--foreground");
             }
-            const result = runAx(axArgs);
+
+            // A timed, repeated scroll runs for as long as it was asked to, plus the usual margin.
+            const seconds =
+                Number(opts.time ?? 0) * Number(opts.repeat ?? 1) +
+                Number(opts.pause ?? 0.3) * Number(opts.repeat ?? 1);
+            const result = runAx(axArgs, Math.max(10_000, Math.ceil(seconds * 1000) + 10_000));
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 process.exit(result.ok === false ? 1 : 0);
@@ -371,7 +403,9 @@ export function registerInteractCommands(program: Command): void {
             if (result.method === "AXScrollToVisible") {
                 out.println(`${pc.green("scrolled into view")} ${pc.cyan(targetLabel(opts, result))}`);
             } else {
-                out.println(`${pc.green("scrolled")} ${opts.direction} x${result.amount}`);
+                out.println(
+                    `${pc.green("scrolled")} ${opts.direction} ${result.pixels}px in ${result.events} events${result.time ? ` over ${result.time}s` : ""}${Number(result.repeat) > 1 ? ` ×${result.repeat}${result.alternate ? " alternating" : ""}` : ""} (${result.method})`
+                );
             }
         });
 
