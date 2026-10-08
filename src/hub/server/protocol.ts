@@ -104,6 +104,8 @@ export function parseRequest(line: string): HubServerRequest | null {
 /** Splits a byte stream into lines; keeps the partial tail for the next chunk. */
 export class LineBuffer {
     private partial = "";
+    /** Characters of `partial` already searched for a newline: a long line arriving in many chunks is scanned once. */
+    private searched = 0;
 
     constructor(private readonly maxLine: number = MAX_REQUEST_LINE) {}
 
@@ -111,7 +113,7 @@ export class LineBuffer {
     push(chunk: string): string[] | null {
         this.partial += chunk;
         const lines: string[] = [];
-        let newline = this.partial.indexOf("\n");
+        let newline = this.partial.indexOf("\n", this.searched);
         while (newline >= 0) {
             // A complete line is checked too: an oversized one that arrived with its newline closes the connection.
             if (newline > this.maxLine) {
@@ -127,6 +129,7 @@ export class LineBuffer {
             newline = this.partial.indexOf("\n");
         }
 
+        this.searched = this.partial.length;
         return this.partial.length > this.maxLine ? null : lines;
     }
 }

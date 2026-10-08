@@ -48,7 +48,13 @@ public final class BatchedToolChangeSource: ToolChangeSource, @unchecked Sendabl
 
         guard let binary, let owner = unstored.owner(of: change) else { return nil }
         let argv = ["agents", "changes", owner.sessionId, "--tool", owner.toolUseId, "--json", "--store-blobs"]
-        let stored = await unstored.store(owner) { await CLIToolChangeSource.run(binary, argv, timeout: 30) != nil }
+        let cli = cli
+        let stored = await unstored.store(owner) {
+            guard await CLIToolChangeSource.run(binary, argv, timeout: 30) != nil else { return false }
+            // `--store-blobs` logs a failed object-store write and still answers: only a diff that now reads proves
+            // the blobs landed, so a failed store keeps the owner and the next click tries again.
+            return await cli.expandedDiff(for: change, context: context) != nil
+        }
         guard stored else { return nil }
         return await cli.expandedDiff(for: change, context: context)
     }

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { currentTraceId } from "@genesiscz/utils/trace";
 import { parseArgv } from "./argv";
+import { callHubServer } from "./client";
 import { agentsToolChangesDoor } from "./doors/changes";
 import { repoDoor, usageSessionsDoor } from "./doors/frequent";
 import { transcriptFetchDoor, transcriptLiveDoor } from "./doors/transcript";
@@ -345,5 +346,28 @@ describe("LineBuffer", () => {
     it("an oversized line is refused even when its newline arrives in the same chunk", () => {
         expect(new LineBuffer(10).push("12345678901\n")).toBeNull();
         expect(new LineBuffer(10).push("short\nalso\n")).toEqual(["short", "also"]);
+    });
+
+    it("a line split over many chunks comes out whole, and the limit still counts every chunk", () => {
+        const lines = new LineBuffer(20);
+        expect(lines.push("abc")).toEqual([]);
+        expect(lines.push("def")).toEqual([]);
+        expect(lines.push("g\nh")).toEqual(["abcdefg"]);
+        expect(lines.push("ij\n")).toEqual(["hij"]);
+        const long = new LineBuffer(5);
+        expect(long.push("abc")).toEqual([]);
+        expect(long.push("def")).toBeNull();
+    });
+});
+
+describe("callHubServer", () => {
+    it("reads a reply that arrives in many chunks, and drops one longer than its limit", async () => {
+        const { socketPath } = await start();
+        const word = "x".repeat(300_000);
+        const answer = await callHubServer({ argv: ["echo", word], timeoutMs: 5000, socketPath });
+        expect(answer).toEqual({ stdout: `${word}\n`, stderr: "", exit: 0 });
+        expect(
+            await callHubServer({ argv: ["echo", word], timeoutMs: 5000, socketPath, maxReplyChars: 1000 })
+        ).toBeNull();
     });
 });

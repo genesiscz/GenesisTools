@@ -24,7 +24,8 @@ function readRecords(path: string): unknown[] {
     if (!existsSync(path)) {
         return [];
     }
-    // A live Codex or Grok file is read again on every write: only its new lines are parsed (record-cache.ts).
+    // A live Codex or Grok file is read again on every write: between 8 and 48 MB only its new lines are parsed;
+    // a larger file is parsed whole each time, to bound the cache's memory (record-cache.ts).
     return readRecordsAppendOnly(path);
 }
 

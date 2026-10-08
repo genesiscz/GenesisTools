@@ -3,7 +3,10 @@ import { createConnection } from "node:net";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { hubServerSocketPath } from "./paths";
-import type { CallResult } from "./protocol";
+import { type CallResult, LineBuffer } from "./protocol";
+
+/** A reply past this is dropped and the caller does the work itself, instead of buffering until the timeout. */
+const MAX_REPLY_CHARS = 64 * 1024 * 1024;
 
 /**
  * One call to the resident hub server, if one runs: the same argv the CLI takes, answered by the server's door
@@ -15,10 +18,12 @@ export async function callHubServer({
     argv,
     timeoutMs,
     socketPath = hubServerSocketPath(),
+    maxReplyChars = MAX_REPLY_CHARS,
 }: {
     argv: string[];
     timeoutMs: number;
     socketPath?: string;
+    maxReplyChars?: number;
 }): Promise<CallResult | null> {
     if (!existsSync(socketPath)) {
         return null;
@@ -26,7 +31,7 @@ export async function callHubServer({
 
     return new Promise((resolve) => {
         let settled = false;
-        let pending = "";
+        const replyLines = new LineBuffer(maxReplyChars);
         const socket = createConnection(socketPath);
         const finish = (result: CallResult | null, why?: string) => {
             if (settled) {
@@ -52,14 +57,19 @@ export async function callHubServer({
         // Decode across chunks: a multi-byte character split between two chunks must not become U+FFFD.
         socket.setEncoding("utf8");
         socket.on("data", (chunk) => {
-            pending += String(chunk);
-            const newline = pending.indexOf("\n");
-            if (newline === -1) {
+            const lines = replyLines.push(String(chunk));
+            if (lines === null) {
+                finish(null, `reply longer than ${maxReplyChars} characters`);
+                return;
+            }
+
+            const line = lines[0];
+            if (line === undefined) {
                 return;
             }
 
             try {
-                const reply = SafeJSON.parse(pending.slice(0, newline), { strict: true }) as {
+                const reply = SafeJSON.parse(line, { strict: true }) as {
                     ok?: boolean;
                     code?: string;
                     stdout?: string;

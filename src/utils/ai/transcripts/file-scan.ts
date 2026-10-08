@@ -130,6 +130,12 @@ export interface PrefixMark {
  * Verify one consumed prefix, then extend the SHA with the exact new bytes the caller commits. A changed
  * generation reads the old prefix once; an unchanged nanosecond stat generation reuses its verified SHA state.
  * Metadata-equal mutations are outside that fast-cache contract. Every retained state is checked after the read.
+ *
+ * Cost on the live path: every append changes the generation, so each resumed read hashes the whole consumed
+ * prefix again, O(file size) of I/O and SHA-256. Measured 2026-10-09 on a page-cached 412 MB Codex rollout: 152 ms
+ * per verification (about 0.37 ms per MB), and 0 ms when the generation is unchanged. That is the price of
+ * detecting a rewrite anywhere before the kept end; a shorter marker missed edits in the middle. What a resumed
+ * read saves is the JSON parse of that prefix, which costs several times more.
  */
 export function readPrefixMark(fd: number, offset: number): PrefixMark {
     const identity = prefixIdentity(fd);

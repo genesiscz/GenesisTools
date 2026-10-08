@@ -85,6 +85,10 @@ function parseLines(text: string, into: Record<string, unknown>[]): void {
  * call is parsed only from the old end. A live Codex rollout of 163 MB cost 150 ms of reading and parsing on
  * every write it got (a working session writes several a second; 2026-10-08), for a turn assembly of 25 ms.
  *
+ * Only files from 8 MB (`CACHE_MIN_BYTES`) to 48 MB (`CACHE_MAX_FILE_BYTES`) are kept: a larger live transcript is
+ * still parsed whole on every read, for the memory reason above. Codex turns have their own bounded fold
+ * (turn-fold-cache.ts); Grok has none.
+ *
  * Complete lines are kept; an unfinished last line is parsed fresh each time and never kept. A file replaced
  * (another inode), shorter, or with other bytes at its start or before the kept end is read whole again.
  * The records are shared between calls: callers read them and build their own objects (the turn builders
