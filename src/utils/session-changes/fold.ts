@@ -42,7 +42,11 @@ interface SessionFolds {
 const CHUNK_BYTES = 8 * 1024 * 1024;
 /** Sessions kept: the hub shows one, sometimes two. A fold holds every tool input of its files. */
 const SESSIONS_KEPT = 2;
-const IDLE_MS = 120_000;
+/**
+ * The hub asks only when an editing command of the shown session finishes, often minutes apart: with 2 minutes, an ask
+ * after a 3.5 minute pause rebuilt the folds (1.0 s CPU instead of ~0.2 s, 2026-10-08). A kept session costs ~130 MB.
+ */
+const IDLE_MS = 10 * 60_000;
 const sessions = new Map<string, SessionFolds>();
 let sweep: ReturnType<typeof setTimeout> | null = null;
 
