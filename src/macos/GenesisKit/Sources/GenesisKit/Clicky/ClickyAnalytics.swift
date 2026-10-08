@@ -78,6 +78,14 @@ extension ClickyStatistics {
             let presses = Int((20 + 90 * abs(sin(Double(index) / 37))) * factor)
             let bucket = ClickyActivityBucket(presses: presses, releases: presses)
             result.minutes[Int(date.timeIntervalSince1970 / 60)] = bucket
+            var performance = ClickyPerformanceBucket()
+            performance.presses = presses
+            performance.characters = Int(Double(presses) * 0.8)
+            performance.corrections = Int(Double(presses) * 0.05)
+            performance.activeSeconds = min(55, Double(performance.characters) / (3.3 + 1.2 * abs(sin(Double(index) / 50))))
+            performance.bursts = presses > 0 ? 1 : 0
+            result.performanceMinutes[Int(date.timeIntervalSince1970 / 60)] = performance
+            result.performanceStartedAt = start
             let hour = Int(date.timeIntervalSince1970 / 3600)
             let day = Int(calendar.startOfDay(for: date).timeIntervalSince1970)
             result.hours[hour, default: ClickyActivityBucket()].presses += presses

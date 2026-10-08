@@ -8,6 +8,7 @@ public enum ClickyPage: String, CaseIterable, Identifiable {
     case visualizer = "Visualizer"
     case notifications = "Notifications"
     case stats = "Stats"
+    case performance = "Performance"
     case about = "About"
     public var id: String { rawValue }
     var symbol: String {
@@ -18,6 +19,7 @@ public enum ClickyPage: String, CaseIterable, Identifiable {
         case .visualizer: return "keyboard.fill"
         case .notifications: return "bell.badge.fill"
         case .stats: return "chart.bar.fill"
+        case .performance: return "speedometer"
         case .about: return "info.circle.fill"
         }
     }
@@ -29,6 +31,7 @@ public enum ClickyPage: String, CaseIterable, Identifiable {
         case .visualizer: return .purple
         case .notifications: return .orange
         case .stats: return .mint
+        case .performance: return .cyan
         }
     }
     var subtitle: String {
@@ -39,6 +42,7 @@ public enum ClickyPage: String, CaseIterable, Identifiable {
         case .visualizer: return "See the rhythm of your keyboard."
         case .notifications: return "Choose when Clicky gets your attention."
         case .stats: return "Your typing, counted locally."
+        case .performance: return "Your pace, your patterns and a little perspective."
         case .about: return "Small sounds. Made for your Mac."
         }
     }
@@ -76,7 +80,7 @@ public enum ClickySettingsPages {
                 ], order: 0),
             NativeSettingsSection(
                 id: "clicky", title: "Clicky",
-                pages: [ClickyPage.sound, .sleep, .notifications, .stats, .visualizer].map(page), order: 10),
+                pages: [ClickyPage.sound, .sleep, .notifications, .stats, .performance, .visualizer].map(page), order: 10),
             NativeSettingsSection(
                 id: "about", title: "",
                 pages: [
@@ -128,6 +132,7 @@ private struct ClickySettingsPageContent: View {
             case .visualizer: visualizer
             case .notifications: notifications
             case .stats: stats
+            case .performance: ClickyPerformanceView(store: model.analytics, defaults: model.settingsDefaults)
             case .about: NativeSettingsAboutPage()
             }
         }
