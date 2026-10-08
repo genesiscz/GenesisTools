@@ -225,8 +225,14 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
             const children = await spawnOk(["pgrep", "-P", String(pid)]);
             return children.code === 0 && children.stdout.trim() !== "";
         },
-        async closeWorkspace(workspace, window) {
-            await runCmuxOk(["workspace", "close", workspace, ...(window ? ["--window", window] : [])]);
+        async closeWorkspace(workspace, window, force) {
+            await runCmuxOk([
+                "workspace",
+                "close",
+                workspace,
+                ...(window ? ["--window", window] : []),
+                ...(force ? ["--force"] : []),
+            ]);
         },
         async killTmux(session) {
             const result = await spawnOk([resolveTmuxBin(), "kill-session", "-t", session]);

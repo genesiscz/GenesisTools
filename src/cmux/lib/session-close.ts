@@ -74,7 +74,8 @@ export interface SessionCloseIO {
     sendExit(record: CloseSubject, text: string): Promise<void>;
     /** True while the agent still runs: a child of the recorded shell, or the agent's process on an adopted surface's tty. */
     agentRunning(record: CloseSubject): Promise<boolean>;
-    closeWorkspace(workspace: string, window: string | null): Promise<void>;
+    /** `force`: the user passed --force, so cmux may kill a process that is still running there. */
+    closeWorkspace(workspace: string, window: string | null, force: boolean): Promise<void>;
     killTmux(session: string): Promise<void>;
     sleep(ms: number): Promise<void>;
     now(): number;
@@ -268,7 +269,7 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
     if (adopted && record) {
         await io.closeSurface(record.surface, report.window);
     } else if (listed) {
-        await io.closeWorkspace(report.workspace, report.window);
+        await io.closeWorkspace(report.workspace, report.window, options.force === true);
     }
 
     const listedNow = async () =>

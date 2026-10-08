@@ -70,8 +70,8 @@ function fake(input: {
             running -= 1;
             return running >= 0;
         },
-        closeWorkspace: async (workspace) => {
-            calls.push(`close ${workspace}`);
+        closeWorkspace: async (workspace, _window, force) => {
+            calls.push(force ? `close ${workspace} --force` : `close ${workspace}`);
             workspaces = workspaces.filter((entry) => entry.ref !== workspace);
         },
         killTmux: async (session) => {
@@ -130,6 +130,8 @@ test("an agent that does not quit leaves the workspace open and the record open,
 
     const forced = fake({ runningChecks: 1_000 });
     expect((await closeSession("codex-app-ab12cd", { graceMs: 2_000, force: true }, forced.io)).outcome).toBe("closed");
+    // cmux refuses to close a workspace with a live process unless it gets --force too.
+    expect(forced.calls).toContain("close workspace:9 --force");
 });
 
 test("a dry run plans and touches nothing, and tmux stays unless --kill-tmux", async () => {
