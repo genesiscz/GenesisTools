@@ -1,7 +1,9 @@
+import { out } from "@genesiscz/utils/logger";
 import { type Command, Option } from "commander";
 import { focusCommand } from "./focus";
 import { openSessionCommand } from "./open-session";
 import { pinsCommand } from "./pins";
+import { type ReadOptions, readSessionText } from "./read";
 import { restoreCommand } from "./restore";
 import { type SendOptions, sendCommand } from "./send";
 import { forgetCommand, listCommand, snapshotCommand } from "./snapshot";
@@ -43,6 +45,26 @@ export function registerCmuxCommand(program: Command): void {
         .option("--dry-run", "Print what would be focused and stop")
         .option("--json", "Emit the match as JSON instead of a status line")
         .action(focusCommand);
+
+    cmux.command("read <session>")
+        .description("Print the cmux pane text for a session, using the same resolution as send")
+        .option("--lines <n>", "How many lines to capture")
+        .option("--scrollback", "Ask cmux for scrollback as well as the visible pane")
+        .option("--first", "Take the best match instead of failing when several panes match")
+        .option("--include-self", "Also consider the pane this command runs in (excluded by default)")
+        .action(async (query: string, opts: ReadOptions) => {
+            try {
+                const text = await readSessionText(query, opts);
+
+                if (text !== null) {
+                    out.print(text);
+                    await out.flush();
+                }
+            } catch (error) {
+                out.error(error instanceof Error ? error.message : String(error));
+                process.exitCode = 1;
+            }
+        });
 
     cmux.command("send <session> <text>")
         .description("Type text into the cmux pane a session is running in, then press Enter")

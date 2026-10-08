@@ -1,0 +1,411 @@
+import { randomBytes } from "node:crypto";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
+import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { buildRenameWorkspaceArgs } from "@genesiscz/utils/cmux/lib/controls";
+import { windowList } from "@genesiscz/utils/cmux/lib/socket";
+import { focusedPlace } from "@genesiscz/utils/cmux/open-command";
+import { buildWorkspaceCreateArgs } from "@genesiscz/utils/cmux/workspace";
+import { env } from "@genesiscz/utils/env";
+import { levenshteinDistance } from "@genesiscz/utils/fuzzy-match";
+import { logger } from "@genesiscz/utils/logger";
+import { shellCommandLine, shellQuote } from "@genesiscz/utils/shell/quote";
+import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
+import { createTmuxSession } from "@genesiscz/utils/tmux/sessions";
+import { buildCmuxCommand } from "./launchers/claudeLauncher";
+
+const { log } = logger.scoped("cmux-session");
+
+/** Gap between literal text and Enter, so the shell sees the whole line. */
+const TMUX_ENTER_DELAY_MS = 100;
+
+export interface SessionNewResult {
+    workspace: string;
+    surface: string;
+    window: string;
+    tmuxSession: string | null;
+    cwd: string;
+    command: string;
+}
+
+export interface SessionNewRequest {
+    repo: string;
+    account: string;
+    prompt?: string;
+    promptFile?: string;
+    name?: string;
+    viaTmux?: boolean;
+    focus?: boolean;
+    home: string;
+    cwd: string;
+}
+
+export interface RepoFs {
+    isDirectory(path: string): boolean;
+    /** Directory names, or null when the path is not a directory. */
+    list(path: string): string[] | null;
+}
+
+export interface SessionNewIO {
+    focusedWindow(): Promise<string | undefined>;
+    listWindows(): Promise<{ ref: string; id: string; visible: boolean }[]>;
+    runJSON<T>(args: string[]): Promise<T>;
+    runOk(args: string[]): Promise<void>;
+    shell(): string;
+    createTmuxShell(session: string, cwd: string, shell: string): Promise<void>;
+    sendTmuxKeys(session: string, command: string): Promise<void>;
+    repoFs: RepoFs;
+    nonce(): string;
+}
+
+interface WorkspaceCreated {
+    workspace_ref?: string;
+    surface_ref?: string;
+    window_ref?: string;
+}
+
+/**
+ * `--focus` is `true` or `false`. Omitted means false. A bare flag or any other value is rejected.
+ */
+export function parseFocusFlag(
+    raw: string | boolean | undefined
+): { ok: true; focus: boolean } | { ok: false; given?: string } {
+    if (raw === undefined || raw === "") {
+        return { ok: true, focus: false };
+    }
+
+    if (typeof raw === "boolean") {
+        return { ok: false };
+    }
+
+    const given = raw.trim().toLowerCase();
+
+    if (given === "true") {
+        return { ok: true, focus: true };
+    }
+
+    if (given === "false") {
+        return { ok: true, focus: false };
+    }
+
+    return { ok: false, given: raw.trim() };
+}
+
+export function suggestProjectNames(query: string, names: readonly string[]): string[] {
+    const needle = query.toLowerCase();
+    const ranked = names
+        .map((name) => {
+            const folded = name.toLowerCase();
+
+            if (folded === needle) {
+                return { name, score: 0 };
+            }
+
+            if (folded.startsWith(needle) || (needle.startsWith(folded) && folded.length >= 3)) {
+                return { name, score: 1 };
+            }
+
+            if (needle.length >= 3 && folded.includes(needle)) {
+                return { name, score: 2 };
+            }
+
+            const distance = levenshteinDistance(needle, folded);
+
+            if (distance <= 3 && Math.abs(folded.length - needle.length) <= 3) {
+                return { name, score: 10 + distance };
+            }
+
+            return { name, score: 1000 };
+        })
+        .filter((entry) => entry.score < 1000)
+        .sort((a, b) => a.score - b.score || a.name.localeCompare(b.name));
+
+    return ranked.slice(0, 5).map((entry) => entry.name);
+}
+
+function isProjectName(value: string): boolean {
+    return !value.startsWith("~") && !value.includes("/") && !value.includes("\\") && !isAbsolute(value);
+}
+
+function expandHome(value: string, home: string): string {
+    if (value === "~") {
+        return home;
+    }
+
+    if (value.startsWith("~/")) {
+        return join(home, value.slice(2));
+    }
+
+    return value;
+}
+
+/** Absolute directory, or `<home>/Tresors/Projects/<name>`. */
+export function resolveSessionRepo(repo: string, home: string, cwd: string, fs: RepoFs): string {
+    const trimmed = repo.trim();
+
+    if (!trimmed) {
+        throw new Error("--repo is required");
+    }
+
+    const projects = join(home, "Tresors", "Projects");
+
+    if (isProjectName(trimmed)) {
+        if (!fs.isDirectory(projects)) {
+            throw new Error(`Projects directory does not exist: ${projects}`);
+        }
+
+        const direct = join(projects, trimmed);
+
+        if (fs.isDirectory(direct)) {
+            return direct;
+        }
+
+        const names = fs.list(projects) ?? [];
+        const folded = names.find((name) => name.toLowerCase() === trimmed.toLowerCase());
+
+        if (folded && fs.isDirectory(join(projects, folded))) {
+            return join(projects, folded);
+        }
+
+        const suggestions = suggestProjectNames(trimmed, names);
+        const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
+        throw new Error(`No project named "${trimmed}" under ${projects}.${hint}`);
+    }
+
+    const expanded = expandHome(trimmed, home);
+    const absolute = isAbsolute(expanded) ? expanded : resolve(cwd, expanded);
+
+    if (!fs.isDirectory(absolute)) {
+        throw new Error(`No such directory: ${absolute}`);
+    }
+
+    return absolute;
+}
+
+/** The shell line `cmux` types into the new workspace: `tools claude run`, not the `cr` alias. */
+export function claudeRunCommand(input: { account: string; prompt?: string; promptFile?: string }): string {
+    const account = input.account.trim();
+
+    if (!account) {
+        throw new Error("account is required");
+    }
+
+    if (input.prompt && input.promptFile) {
+        throw new Error("pass only one of --prompt and --prompt-file");
+    }
+
+    if (input.promptFile) {
+        return buildCmuxCommand({
+            account,
+            prompt: "",
+            enforceCap: false,
+            promptFile: input.promptFile,
+        });
+    }
+
+    if (input.prompt) {
+        return buildCmuxCommand({ account, prompt: input.prompt });
+    }
+
+    return shellCommandLine(["tools", "claude", "run", account]);
+}
+
+export function tmuxAttachCommand(session: string): string {
+    return `tmux attach -t ${shellQuote(session)}`;
+}
+
+/**
+ * The third argument of `createTmuxSession` is the pane executable. A command line is exec'd as
+ * one word and the session dies immediately (`tools tmux create --command`).
+ */
+export function assertShellExecutable(shell: string): string {
+    const trimmed = shell.trim();
+
+    if (!trimmed || /[\s=]/.test(trimmed) || trimmed.includes("\n")) {
+        throw new Error("tmux session shell must be an executable path, not a command line");
+    }
+
+    return trimmed;
+}
+
+export function devTmuxSessionName(cwd: string, name: string | undefined, nonce: string): string {
+    const raw = (name?.trim() || cwd.split("/").filter(Boolean).at(-1) || "repo").toLowerCase();
+    const slug = raw
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 32);
+    const id = nonce
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "")
+        .slice(0, 8);
+
+    return `cmux-${slug || "repo"}-${id || "x"}`;
+}
+
+export function tmuxLiteralSendArgv(tmuxBin: string, session: string, command: string): string[] {
+    return [tmuxBin, "send-keys", "-t", session, "-l", "--", command];
+}
+
+export function tmuxEnterArgv(tmuxBin: string, session: string): string[] {
+    return [tmuxBin, "send-keys", "-t", session, "Enter"];
+}
+
+/**
+ * The window the new workspace belongs to.
+ *
+ * Prefer the focused window. When cmux has no window at all, create one and use it. When windows
+ * exist but none is focused, use a visible window instead of creating another.
+ */
+export async function resolveSessionWindow(
+    io: Pick<SessionNewIO, "focusedWindow" | "listWindows" | "runOk">
+): Promise<string> {
+    const focused = (await io.focusedWindow())?.trim();
+
+    if (focused) {
+        return focused;
+    }
+
+    let windows = await io.listWindows();
+
+    if (windows.length === 0) {
+        await io.runOk(["new-window"]);
+        windows = await io.listWindows();
+    }
+
+    const chosen = windows.find((window) => window.visible && window.ref) ?? windows.find((window) => window.ref);
+
+    if (!chosen) {
+        throw new Error("cmux has no window to open a workspace in");
+    }
+
+    return chosen.ref;
+}
+
+export async function startDevSession(input: SessionNewRequest, io: SessionNewIO): Promise<SessionNewResult> {
+    const cwd = resolveSessionRepo(input.repo, input.home, input.cwd, io.repoFs);
+    const claude = claudeRunCommand({
+        account: input.account,
+        prompt: input.prompt,
+        promptFile: input.promptFile,
+    });
+    const windowRef = await resolveSessionWindow(io);
+    let tmuxSession: string | null = null;
+    let command = claude;
+
+    if (input.viaTmux) {
+        tmuxSession = devTmuxSessionName(cwd, input.name, io.nonce());
+        const shell = assertShellExecutable(io.shell());
+        await io.createTmuxShell(tmuxSession, cwd, shell);
+        await io.sendTmuxKeys(tmuxSession, claude);
+        command = tmuxAttachCommand(tmuxSession);
+    }
+
+    const name = input.name?.trim() || undefined;
+    const created = await io.runJSON<WorkspaceCreated>(
+        buildWorkspaceCreateArgs({
+            window: windowRef,
+            cwd,
+            command,
+            focus: input.focus === true,
+            name,
+        })
+    );
+    const workspace = created.workspace_ref?.trim();
+    const surface = created.surface_ref?.trim();
+    const window = created.window_ref?.trim() || windowRef;
+
+    if (!workspace || !surface) {
+        throw new Error("cmux created a workspace but returned no workspace or surface ref");
+    }
+
+    if (name) {
+        try {
+            await io.runOk(buildRenameWorkspaceArgs(workspace, name));
+        } catch (error) {
+            log.warn({ error, workspace, name }, "rename-workspace failed after create");
+        }
+    }
+
+    return { workspace, surface, window, tmuxSession, cwd, command };
+}
+
+async function spawnTmux(argv: string[]): Promise<void> {
+    const proc = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "pipe" });
+    const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+
+    if (code !== 0) {
+        throw new Error(`tmux ${argv[1] ?? "command"} failed: ${stderr.trim() || `exit ${code}`}`);
+    }
+}
+
+export function liveRepoFs(): RepoFs {
+    return {
+        isDirectory(path) {
+            try {
+                return statSync(path).isDirectory();
+            } catch (error) {
+                log.debug({ error, path }, "repo path is not a directory");
+                return false;
+            }
+        },
+        list(path) {
+            if (!existsSync(path)) {
+                return null;
+            }
+
+            try {
+                return readdirSync(path, { withFileTypes: true })
+                    .filter((entry) => {
+                        if (entry.name.startsWith(".")) {
+                            return false;
+                        }
+
+                        if (entry.isDirectory()) {
+                            return true;
+                        }
+
+                        if (!entry.isSymbolicLink()) {
+                            return false;
+                        }
+
+                        try {
+                            return statSync(join(path, entry.name)).isDirectory();
+                        } catch (error) {
+                            log.debug({ error, path, name: entry.name }, "project symlink is not a directory");
+                            return false;
+                        }
+                    })
+                    .map((entry) => entry.name);
+            } catch (error) {
+                log.debug({ error, path }, "could not list project directory");
+                return null;
+            }
+        },
+    };
+}
+
+export function liveSessionIO(): SessionNewIO {
+    return {
+        focusedWindow: async () => (await focusedPlace()).window_ref,
+        listWindows: async () => {
+            const windows = await windowList();
+            return windows.map((window) => ({ ref: window.ref, id: window.id, visible: window.visible }));
+        },
+        runJSON: (args) => runCmuxJSON(args),
+        runOk: async (args) => {
+            await runCmuxOk(args);
+        },
+        shell: () => env.paths.getShell(),
+        createTmuxShell: async (session, cwd, shell) => {
+            await createTmuxSession(session, cwd, assertShellExecutable(shell));
+        },
+        sendTmuxKeys: async (session, command) => {
+            const tmux = resolveTmuxBin();
+            await spawnTmux(tmuxLiteralSendArgv(tmux, session, command));
+            await Bun.sleep(TMUX_ENTER_DELAY_MS);
+            await spawnTmux(tmuxEnterArgv(tmux, session));
+        },
+        repoFs: liveRepoFs(),
+        nonce: () => randomBytes(3).toString("hex"),
+    };
+}

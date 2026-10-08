@@ -18,6 +18,42 @@ export interface OpenSplitResult {
     workspaceId: string;
 }
 
+export interface BackgroundWorkspaceArgs {
+    window: string;
+    cwd: string;
+    command: string;
+    /** When false, cmux leaves the current workspace selected. */
+    focus: boolean;
+    name?: string;
+}
+
+/**
+ * Argv for `cmux workspace create` in a window the caller names.
+ *
+ * `new-workspace` without `--window` opens a new macOS window when the shell is not inside
+ * cmux (`identify.caller` is null). `--focus false` keeps the user's current workspace selected.
+ */
+export function buildWorkspaceCreateArgs(opts: BackgroundWorkspaceArgs): string[] {
+    const args = [
+        "workspace",
+        "create",
+        "--window",
+        opts.window,
+        "--cwd",
+        opts.cwd,
+        "--focus",
+        opts.focus ? "true" : "false",
+        "--command",
+        opts.command,
+    ];
+
+    if (opts.name) {
+        args.push("--name", opts.name);
+    }
+
+    return args;
+}
+
 export async function createWorkspaceWithName(opts: {
     name?: string;
     cwd?: string;

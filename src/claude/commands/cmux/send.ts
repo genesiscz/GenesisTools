@@ -64,7 +64,7 @@ async function deliver({ target, surfaceId, text, enter, enterDelayMs }: Deliver
  * id", so with several candidates `--first` would type into whichever sorted
  * highest. Typing into the wrong agent session is worse than not typing at all.
  */
-function refuseAmbiguous(
+export function refuseAmbiguous(
     result: Awaited<ReturnType<typeof findSessionTargets>>,
     queryTrim: string,
     opts: SendOptions

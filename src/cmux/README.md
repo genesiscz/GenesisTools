@@ -15,6 +15,7 @@ Crash recovery and repeatable layouts for cmux. A profile captures the workspace
 | `doctor` | Read-only health probe: is cmux running, does its socket answer, is the UI thread starved |
 | `rescue [name]` | Guided recovery from a livelocked cmux — offline capture, confirmed kill, clean relaunch, command replay |
 | `send-self <text>` | Type text into the terminal surface this process is running in, then press Enter |
+| `session new --repo <name\|path>` | Open a background workspace in the focused cmux window and start `tools claude run` there |
 
 ### `profiles` subcommands
 

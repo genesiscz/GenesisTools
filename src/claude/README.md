@@ -122,6 +122,7 @@ tools claude cmux tree                  # live window → workspace → pane →
 tools claude cmux open-session <id> --workspace workspace:1   # resume as a new pane there
 tools claude cmux send <id> "run the tests"   # type into the session's own pane
 tools claude cmux send <id> "/compact" --no-enter --dry-run
+tools claude cmux read <id> --lines 40       # print that pane's text
 ```
 
 `tree` (`--json` for machines) enumerates every cmux window and annotates each surface with
