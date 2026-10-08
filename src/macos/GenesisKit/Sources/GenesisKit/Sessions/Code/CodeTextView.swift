@@ -122,6 +122,28 @@ struct WrappedCodeTextView: NSViewRepresentable {
         var key = ""
     }
 
+    /// One block's text converted for AppKit. Shared by key: a transcript row that scrolls away and back
+    /// gets a new view, and converting its text again was a quarter of the code-block main-thread time
+    /// while scrolling (`CodeTextConversion.appKit`, hub sample 2026-10-08 05:42). `NSTextStorage` copies
+    /// what it is given, so two views never share mutable text.
+    final class Converted {
+        let gutter: NSAttributedString?
+        let body: NSAttributedString
+
+        init(gutter: NSAttributedString?, body: NSAttributedString) {
+            self.gutter = gutter
+            self.body = body
+        }
+    }
+
+    /// Bounded by count and by UTF-16 length (cost); NSCache also drops entries under memory pressure.
+    static let converted: NSCache<NSString, Converted> = {
+        let cache = NSCache<NSString, Converted>()
+        cache.countLimit = 400
+        cache.totalCostLimit = 8_000_000
+        return cache
+    }()
+
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> WrappedCodeContainer {
@@ -132,7 +154,14 @@ struct WrappedCodeTextView: NSViewRepresentable {
         guard context.coordinator.key != key else { return }
         context.coordinator.key = key
         RenderProbe.hit("codeText.wrapStore")
-        view.set(gutter: gutter(), body: body(), gutterWidth: gutterWidth)
+        let text: Converted
+        if let known = Self.converted.object(forKey: key as NSString) {
+            text = known
+        } else {
+            text = Converted(gutter: gutter(), body: body())
+            Self.converted.setObject(text, forKey: key as NSString, cost: text.body.length + (text.gutter?.length ?? 0))
+        }
+        view.set(gutter: text.gutter, body: text.body, gutterWidth: gutterWidth)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: WrappedCodeContainer, context: Context) -> CGSize? {
