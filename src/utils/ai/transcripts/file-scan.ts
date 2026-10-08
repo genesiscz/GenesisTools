@@ -19,6 +19,9 @@ const CHUNK_BYTES = 4 * 1024 * 1024;
 export interface ScanRange {
     from?: number;
     until?: number;
+    /** One append-only scan keeps its descriptor open across prefix verification and both scan ranges. */
+    fd?: number;
+    prefix?: PrefixMark;
 }
 
 /**
@@ -40,7 +43,7 @@ export function scanFileMatches(
     let fd: number | null = null;
 
     try {
-        fd = openSync(path, "r");
+        fd = range.fd ?? openSync(path, "r");
         // Sized to what is left to read, not a fixed 4 MB: a resumed scan reads a few hundred bytes, and a
         // zeroed 4 MB buffer per file per call was the largest cost of a hub agents refresh (2026-10-08).
         // Unzeroed: only bytes a read filled (plus carried ones) are ever looked at.
@@ -54,6 +57,11 @@ export function scanFileMatches(
 
         for (;;) {
             const read = readSync(fd, buffer, carried, Math.max(0, Math.min(chunk, buffer.length - carried)), position);
+            if (range.prefix) {
+                const committed = Math.max(0, Math.min(read, until - position));
+                range.prefix.update(buffer.subarray(carried, carried + committed));
+            }
+
             position += read;
             const end = carried + read;
             const done = read === 0;
@@ -84,7 +92,7 @@ export function scanFileMatches(
         logger.debug({ error, path }, "[transcripts] file scan failed");
         return false;
     } finally {
-        if (fd !== null) {
+        if (fd !== null && range.fd === undefined) {
             closeSync(fd);
         }
     }
@@ -95,24 +103,93 @@ interface ScanEntry<S> {
     /** Every match that starts before this offset is in `state`, whole. */
     committed: number;
     /**
-     * The file's first bytes and the bytes just before `committed`: a file rewritten in place (same inode)
-     * almost never keeps both. The cache is for append-only files (transcripts, event logs); a file edited
-     * in the middle with both ends kept would read stale.
+     * Digest of every byte before `committed`, to detect rewrites anywhere in the already scanned region.
      */
     mark: string;
     state: S;
 }
 
-const MARK_BYTES = 64;
+const MARK_CACHE_LIMIT = 4000;
+const marks = new Map<string, { generation: string; hash: Bun.CryptoHasher }>();
 
-/** The file's first bytes and the bytes just before `offset`, to tell an appended file from a rewritten one. */
+function prefixIdentity(fd: number): { key: string; generation: string } {
+    const status = fstatSync(fd, { bigint: true });
+    return {
+        key: `${status.dev}:${status.ino}`,
+        generation: `${status.size}:${status.mtimeNs}:${status.ctimeNs}`,
+    };
+}
+
+export interface PrefixMark {
+    digest(): string;
+    update(bytes: Uint8Array): void;
+    finish(): { digest: string; stable: boolean };
+}
+
+/**
+ * Verify one consumed prefix, then extend the SHA with the exact new bytes the caller commits. A changed
+ * generation reads the old prefix once; an unchanged nanosecond stat generation reuses its verified SHA state.
+ * Metadata-equal mutations are outside that fast-cache contract. Every retained state is checked after the read.
+ */
+export function readPrefixMark(fd: number, offset: number): PrefixMark {
+    const identity = prefixIdentity(fd);
+    const oldKey = `${identity.key}:${offset}`;
+    const cached = marks.get(oldKey);
+    const hash = cached?.generation === identity.generation ? cached.hash.copy() : new Bun.CryptoHasher("sha256");
+    if (cached?.generation !== identity.generation) {
+        const buffer = Buffer.allocUnsafe(Math.min(CHUNK_BYTES, offset));
+        let position = 0;
+        while (position < offset) {
+            const read = readSync(fd, buffer, 0, Math.min(buffer.length, offset - position), position);
+            if (read === 0) {
+                throw new Error("Transcript shortened while checking its consumed prefix");
+            }
+
+            hash.update(buffer.subarray(0, read));
+            position += read;
+        }
+    }
+
+    let consumed = offset;
+    const retain = (key: string): void => {
+        marks.delete(key);
+        marks.set(key, { generation: identity.generation, hash: hash.copy() });
+        if (marks.size > MARK_CACHE_LIMIT) {
+            const oldest = marks.keys().next().value;
+            if (oldest !== undefined) {
+                marks.delete(oldest);
+            }
+        }
+    };
+    if (prefixIdentity(fd).generation === identity.generation) {
+        retain(oldKey);
+    }
+
+    return {
+        digest: () => hash.copy().digest("hex"),
+        update(bytes) {
+            hash.update(bytes);
+            consumed += bytes.byteLength;
+        },
+        finish() {
+            const final = prefixIdentity(fd);
+            const stable = final.key === identity.key && final.generation === identity.generation;
+            const key = `${identity.key}:${consumed}`;
+            if (stable) {
+                retain(key);
+            } else {
+                marks.delete(oldKey);
+                marks.delete(key);
+            }
+
+            return { digest: hash.copy().digest("hex"), stable };
+        },
+    };
+}
+
+/** A compatibility read for callers that only need the current prefix digest. */
 export function markBefore(fd: number, offset: number): string {
-    const head = Buffer.alloc(Math.min(MARK_BYTES, offset));
-    readSync(fd, head, 0, head.length, 0);
-    const start = Math.max(0, offset - MARK_BYTES);
-    const tail = Buffer.alloc(offset - start);
-    readSync(fd, tail, 0, tail.length, start);
-    return `${head.toString("latin1")}\u0000${tail.toString("latin1")}`;
+    return readPrefixMark(fd, offset).finish().digest;
 }
 
 /** Most entries kept: one per sub-agent file and parent transcript a hub list reads. */
@@ -138,22 +215,64 @@ export function scanAppendOnly<S>(options: {
     const { path, needle, window } = options;
     const key = `${needle}\u0000${path}`;
     const cached = scanCache.get(key) as ScanEntry<S> | undefined;
-    let size: number;
-    let ino: number;
-    let unchanged = false;
     let fd: number | null = null;
-
     try {
         fd = openSync(path, "r");
-        const stat = fstatSync(fd);
-        size = stat.size;
-        ino = stat.ino;
-        unchanged =
-            cached !== undefined &&
-            cached.ino === ino &&
-            cached.committed <= size &&
-            markBefore(fd, cached.committed) === cached.mark;
+        const { size, ino } = fstatSync(fd);
+        let prefix = readPrefixMark(fd, cached?.ino === ino && cached.committed <= size ? cached.committed : 0);
+        const usable =
+            cached !== undefined && cached.ino === ino && cached.committed <= size && prefix.digest() === cached.mark;
+        const entry: ScanEntry<S> =
+            usable && cached ? cached : { ino, committed: 0, mark: "", state: options.initial() };
+        if (!usable) {
+            prefix = readPrefixMark(fd, 0);
+        }
+
+        const span = Math.max(window, needle.length);
+        const safeEnd = Math.max(entry.committed, size - span);
+        if (safeEnd > entry.committed) {
+            const next = options.copy(entry.state);
+            const ok = scanFileMatches(path, needle, window, (slice) => options.apply(next, slice), {
+                from: entry.committed,
+                until: safeEnd,
+                fd,
+                prefix,
+            });
+            if (!ok) {
+                scanCache.delete(key);
+                return null;
+            }
+
+            entry.state = next;
+            entry.committed = safeEnd;
+        }
+
+        const result = options.copy(entry.state);
+        const ok = scanFileMatches(path, needle, window, (slice) => options.apply(result, slice), {
+            from: safeEnd,
+            fd,
+        });
+        if (!ok) {
+            scanCache.delete(key);
+            return null;
+        }
+
+        const checkpoint = prefix.finish();
+        entry.mark = checkpoint.digest;
+        scanCache.delete(key);
+        if (checkpoint.stable) {
+            scanCache.set(key, entry as ScanEntry<unknown>);
+            if (scanCache.size > SCAN_CACHE_LIMIT) {
+                const oldest = scanCache.keys().next().value;
+                if (oldest !== undefined) {
+                    scanCache.delete(oldest);
+                }
+            }
+        }
+
+        return result;
     } catch (error) {
+        scanCache.delete(key);
         logger.debug({ error, path }, "[transcripts] file scan failed");
         return null;
     } finally {
@@ -161,60 +280,6 @@ export function scanAppendOnly<S>(options: {
             closeSync(fd);
         }
     }
-
-    const entry: ScanEntry<S> =
-        unchanged && cached ? cached : { ino, committed: 0, mark: "", state: options.initial() };
-    const span = Math.max(window, needle.length);
-    const safeEnd = Math.max(entry.committed, size - span);
-
-    if (safeEnd > entry.committed) {
-        const next = options.copy(entry.state);
-        const ok = scanFileMatches(path, needle, window, (slice) => options.apply(next, slice), {
-            from: entry.committed,
-            until: safeEnd,
-        });
-
-        if (!ok) {
-            return null;
-        }
-
-        let markFd: number | null = null;
-
-        try {
-            markFd = openSync(path, "r");
-            entry.mark = markBefore(markFd, safeEnd);
-        } catch (error) {
-            logger.debug({ error, path }, "[transcripts] file scan failed");
-            return null;
-        } finally {
-            if (markFd !== null) {
-                closeSync(markFd);
-            }
-        }
-
-        entry.state = next;
-        entry.committed = safeEnd;
-    }
-
-    const result = options.copy(entry.state);
-    const ok = scanFileMatches(path, needle, window, (slice) => options.apply(result, slice), { from: safeEnd });
-
-    if (!ok) {
-        return null;
-    }
-
-    scanCache.delete(key);
-    scanCache.set(key, entry as ScanEntry<unknown>);
-
-    if (scanCache.size > SCAN_CACHE_LIMIT) {
-        const oldest = scanCache.keys().next().value;
-
-        if (oldest !== undefined) {
-            scanCache.delete(oldest);
-        }
-    }
-
-    return result;
 }
 
 export interface ToolCallScan {

@@ -10,6 +10,7 @@ const MIN = 60 * 1000;
 const listing: { sessions: SessionMetadataRecord[] } = { sessions: [] };
 const tails = new Map<string, string[]>();
 const tailReads: string[] = [];
+const unreadableTails = new Set<string>();
 
 mock.module("@app/claude/lib/history/search", () => ({
     getSessionListing: async () => ({
@@ -27,6 +28,10 @@ mock.module("@app/claude/lib/history/search", () => ({
 mock.module("@genesiscz/utils/claude/session.utils", () => ({
     readTailBytes: async (filePath: string) => {
         tailReads.push(filePath);
+        if (unreadableTails.has(filePath)) {
+            throw new Error("temporary read failure");
+        }
+
         return tails.get(filePath) ?? [];
     },
 }));
@@ -126,6 +131,7 @@ describe("listSessionRows", () => {
     beforeEach(() => {
         listing.sessions = [];
         tails.clear();
+        unreadableTails.clear();
         pins.clear();
         cmuxRefs.clear();
         tailReads.length = 0;
@@ -149,6 +155,20 @@ describe("listSessionRows", () => {
         const [third] = await listSessionRows({ hours: 6, now: NOW });
         expect(tailReads.length).toBeGreaterThan(readsAfterFirst);
         expect(third?.model).toBe("sonnet");
+    });
+
+    test("a failed tail read is retried after access returns without a file change", async () => {
+        const path = join(mkdtempSync(join(tmpdir(), "gt-tail-retry-")), "session.jsonl");
+        writeFileSync(path, `${OPUS_LINE}\n`);
+        listing.sessions = [record({ filePath: path, sessionId: "retry-id", mtime: NOW - 5 * MIN })];
+        tails.set(path, [OPUS_LINE]);
+        unreadableTails.add(path);
+        expect((await listSessionRows({ hours: 6, now: NOW }))[0]?.model).toBeNull();
+        unreadableTails.delete(path);
+        expect((await listSessionRows({ hours: 6, now: NOW }))[0]?.model).toBe("opus");
+        const reads = tailReads.length;
+        expect((await listSessionRows({ hours: 6, now: NOW }))[0]?.model).toBe("opus");
+        expect(tailReads.length).toBe(reads);
     });
 
     test("withUsage false reads no transcript tail and keeps who and where", async () => {

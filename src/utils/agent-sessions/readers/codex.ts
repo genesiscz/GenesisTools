@@ -897,6 +897,53 @@ interface RolloutMetadataFold {
     userTextBounded: boolean;
 }
 
+function validRolloutMetadataFold(value: unknown): value is RolloutMetadataFold {
+    const nullableText = (text: unknown): boolean => text === null || typeof text === "string";
+    if (value === null || typeof value !== "object") {
+        return false;
+    }
+
+    if (!("header" in value)) {
+        return false;
+    }
+
+    const header = value.header;
+    const validHeader =
+        header === null ||
+        (typeof header === "object" &&
+            "nativeId" in header &&
+            typeof header.nativeId === "string" &&
+            (!("parentNativeId" in header) || typeof header.parentNativeId === "string") &&
+            "cwd" in header &&
+            nullableText(header.cwd) &&
+            "gitBranch" in header &&
+            nullableText(header.gitBranch) &&
+            "historyMode" in header &&
+            typeof header.historyMode === "string" &&
+            "isSubagent" in header &&
+            typeof header.isSubagent === "boolean" &&
+            "timestamp" in header &&
+            nullableText(header.timestamp));
+    return (
+        validHeader &&
+        "firstPrompt" in value &&
+        nullableText(value.firstPrompt) &&
+        "firstTimestamp" in value &&
+        nullableText(value.firstTimestamp) &&
+        "lastTimestamp" in value &&
+        nullableText(value.lastTimestamp) &&
+        "userTextParts" in value &&
+        Array.isArray(value.userTextParts) &&
+        value.userTextParts.every((part: unknown) => typeof part === "string") &&
+        "userTextCharacters" in value &&
+        typeof value.userTextCharacters === "number" &&
+        Number.isSafeInteger(value.userTextCharacters) &&
+        value.userTextCharacters >= 0 &&
+        "userTextBounded" in value &&
+        typeof value.userTextBounded === "boolean"
+    );
+}
+
 function foldRolloutRow(fold: RolloutMetadataFold, row: JsonRecord): void {
     const candidate = firstHeader(row);
     if (!fold.header && candidate) {
@@ -1086,6 +1133,7 @@ async function readCodexMetadataUncounted(
             userTextCharacters: 0,
             userTextBounded: false,
         }),
+        validState: validRolloutMetadataFold,
         copy: (fold) => ({ ...fold, userTextParts: [...fold.userTextParts] }),
         apply: foldRolloutRow,
         onIssue: (message) => reportIssue(source, options, issues, message),

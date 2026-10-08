@@ -1,6 +1,6 @@
 import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
-import { markBefore } from "./file-scan";
+import { readPrefixMark } from "./file-scan";
 import { parseTranscriptLine } from "./parse-line";
 import type { TranscriptTurn } from "./types";
 
@@ -92,17 +92,18 @@ export function foldTurnsAppendOnly(
         fd = openSync(path, "r");
         const { size, ino } = fstatSync(fd);
         const cached = folds.get(path);
+        let prefix = readPrefixMark(fd, cached?.ino === ino && cached.consumed <= size ? cached.consumed : 0);
         const usable =
-            cached !== undefined &&
-            cached.ino === ino &&
-            cached.consumed <= size &&
-            markBefore(fd, cached.consumed) === cached.mark;
+            cached !== undefined && cached.ino === ino && cached.consumed <= size && prefix.digest() === cached.mark;
         const entry: FoldEntry =
             usable && cached
                 ? cached
                 : { ino, consumed: 0, mark: "", fold: create(), events: false, lastUsed: Date.now() };
+        if (!usable) {
+            prefix = readPrefixMark(fd, 0);
+        }
+
         entry.lastUsed = Date.now();
-        keep(path, entry);
         if (entry.events) {
             return null;
         }
@@ -134,10 +135,19 @@ export function foldTurnsAppendOnly(
 
             entry.fold.push(records);
             entry.consumed += lastNewline + 1;
-            entry.mark = markBefore(fd, entry.consumed);
-            if (entry.events) {
-                return null;
-            }
+            prefix.update(bytes.subarray(0, lastNewline + 1));
+        }
+
+        const checkpoint = prefix.finish();
+        entry.mark = checkpoint.digest;
+        if (checkpoint.stable) {
+            keep(path, entry);
+        } else {
+            folds.delete(path);
+        }
+
+        if (entry.events) {
+            return null;
         }
 
         const unfinished = bytes.subarray(lastNewline + 1).toString("utf8");

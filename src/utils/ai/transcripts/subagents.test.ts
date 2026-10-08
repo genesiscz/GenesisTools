@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, renameSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -127,6 +127,19 @@ describe("listSubagents: a row read again only when its files change", () => {
     const agentFile = join(cacheDir, "agent-acache.jsonl");
     const metaFile = join(cacheDir, "agent-acache.meta.json");
 
+    test("an old meta file rewritten with the same mtime but a different size is read again", () => {
+        writeFileSync(agentFile, lines(prompt("2026-09-24T10:00:00.000Z"), reply));
+        writeFileSync(metaFile, SafeJSON.stringify({ name: "one" }));
+        const old = new Date(Date.now() - 10_000);
+        utimesSync(agentFile, old, old);
+        utimesSync(metaFile, old, old);
+        const read = () => listSubagents(resolved, { scan: true }).subagents[0];
+        expect(read()?.name).toBe("one");
+        writeFileSync(metaFile, SafeJSON.stringify({ name: "a longer name" }));
+        utimesSync(metaFile, old, old);
+        expect(read()?.name).toBe("a longer name");
+    });
+
     test("an append, a meta edit and the clock all show up; nothing else is re-read", () => {
         writeFileSync(agentFile, lines(prompt("2026-09-24T10:00:00.000Z"), toolCall));
         writeFileSync(metaFile, SafeJSON.stringify({ name: "first" }));
@@ -179,6 +192,17 @@ describe("file scans", () => {
             writeFileSync(fresh, content);
             expect(scanClaudeToolCalls(path)).toEqual(scanClaudeToolCalls(fresh));
         }
+    });
+
+    test("a growing rewrite in the middle invalidates counts even when both boundary slices match", () => {
+        const path = join(scanRoot, "middle-rewrite.jsonl");
+        const prefix = "x".repeat(128);
+        const suffix = "x".repeat(2048);
+        const tool = '{"type":"tool_use","id":"toolu_mid","name":"Read"}';
+        writeFileSync(path, `${prefix}${tool}${suffix}`);
+        expect(scanClaudeToolCalls(path)?.toolCalls).toBe(1);
+        writeFileSync(path, `${prefix}${tool.replace("tool_use", "tool_old")}${suffix}more`);
+        expect(scanClaudeToolCalls(path)?.toolCalls).toBe(0);
     });
 
     test("a file rewritten in place, or replaced, is scanned from the start again", () => {

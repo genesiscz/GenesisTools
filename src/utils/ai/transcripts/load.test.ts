@@ -1,10 +1,11 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
-import { appendFileSync, mkdirSync, mkdtempSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, renameSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { codexNativeLinesToTurns, createCodexTurnParser } from "./codex";
+import { readPrefixMark } from "./file-scan";
 import { transcriptEnvelope, transcriptSnapshot } from "./load";
 import { readRecordsAppendOnly } from "./record-cache";
 import type { ResolvedTranscript } from "./resolve";
@@ -254,5 +255,55 @@ describe("foldTurnsAppendOnly", () => {
         const file = join(fixtureRoot(), "small.jsonl");
         writeFileSync(file, row("user", "hi"));
         expect(foldTurnsAppendOnly(file, createCodexTurnParser)).toBeNull();
+    });
+});
+
+describe("verified prefix continuation", () => {
+    test("a recent unchanged record file performs no prefix reads after its first verification", () => {
+        const file = join(fixtureRoot(), "recent.jsonl");
+        writeFileSync(file, `${SafeJSON.stringify({ text: "x".repeat(4096) })}\n`);
+        const first = readRecordsAppendOnly(file, { minCacheBytes: 0 });
+        const reader = spyOn(fs, "readSync");
+        try {
+            expect(readRecordsAppendOnly(file, { minCacheBytes: 0 })).toEqual(first);
+            expect(readRecordsAppendOnly(file, { minCacheBytes: 0 })).toEqual(first);
+            expect(reader).not.toHaveBeenCalled();
+        } finally {
+            reader.mockRestore();
+        }
+    });
+
+    test("same-size middle rewrites invalidate a recent cached prefix even with its mtime restored", () => {
+        const file = join(fixtureRoot(), "same-size.jsonl");
+        const row = (text: string) => `${SafeJSON.stringify({ pad: "x".repeat(256), text, tail: "x".repeat(256) })}\n`;
+        writeFileSync(file, row("before"));
+        const status = statSync(file);
+        expect(readRecordsAppendOnly(file, { minCacheBytes: 0 })[0]?.text).toBe("before");
+        writeFileSync(file, row("after!"));
+        utimesSync(file, status.atime, status.mtime);
+        expect(readRecordsAppendOnly(file, { minCacheBytes: 0 })[0]?.text).toBe("after!");
+    });
+
+    test("the continuation hashes only committed new bytes and drops a generation changed during parsing", () => {
+        const file = join(fixtureRoot(), "during-read.jsonl");
+        writeFileSync(file, "old\n");
+        const fd = fs.openSync(file, "r");
+        try {
+            const prefix = readPrefixMark(fd, 4);
+            appendFileSync(file, "new\npartial");
+            prefix.update(Buffer.from("new\n"));
+            const checkpoint = prefix.finish();
+            expect(checkpoint.stable).toBe(false);
+            expect(checkpoint.digest).toBe(new Bun.CryptoHasher("sha256").update("old\nnew\n").digest("hex"));
+            const reader = spyOn(fs, "readSync");
+            try {
+                expect(readPrefixMark(fd, 8).finish().stable).toBe(true);
+                expect(reader).toHaveBeenCalled();
+            } finally {
+                reader.mockRestore();
+            }
+        } finally {
+            fs.closeSync(fd);
+        }
     });
 });

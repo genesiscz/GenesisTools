@@ -49,7 +49,8 @@ const directoryCache = new Map<string, { mtimeMs: number; ino: number; entries: 
 async function directoryEntries(directory: string): Promise<DirectoryEntry[]> {
     const status = await stat(directory);
     const cached = directoryCache.get(directory);
-    if (cached && cached.mtimeMs === status.mtimeMs && cached.ino === status.ino) {
+    const settled = Date.now() - status.mtimeMs >= 2000;
+    if (settled && cached && cached.mtimeMs === status.mtimeMs && cached.ino === status.ino) {
         return cached.entries;
     }
 
@@ -57,6 +58,10 @@ async function directoryEntries(directory: string): Promise<DirectoryEntry[]> {
     read.sort((left, right) => left.name.localeCompare(right.name));
     const entries = read.map((entry) => ({ name: entry.name, directory: entry.isDirectory(), file: entry.isFile() }));
     directoryCache.delete(directory);
+    if (!settled) {
+        return entries;
+    }
+
     directoryCache.set(directory, { mtimeMs: status.mtimeMs, ino: status.ino, entries });
     if (directoryCache.size > DIRECTORY_CACHE_LIMIT) {
         const oldest = directoryCache.keys().next().value;

@@ -1,6 +1,16 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+    appendFileSync,
+    mkdirSync,
+    mkdtempSync,
+    realpathSync,
+    renameSync,
+    statSync,
+    symlinkSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -431,13 +441,14 @@ test("a repeated Codex discovery keeps the header of an appended rollout and re-
     });
     const cwdOf = async () => (await discoverCodexHistorySources([root])).sources.map((source) => source.metadata?.cwd);
 
-    writeFileSync(path, header("/projects/one"));
-    expect(await cwdOf()).toEqual(["/projects/one"]);
+    const prefix = `/projects/${"long-folder/".repeat(30)}`;
+    writeFileSync(path, header(`${prefix}one`));
+    expect(await cwdOf()).toEqual([`${prefix}one`]);
     appendFileSync(path, reply);
-    expect(await cwdOf()).toEqual(["/projects/one"]);
-    // Same inode, not shorter: only the first bytes tell the rewrite apart.
-    writeFileSync(path, header("/projects/two-is-longer") + reply + reply);
-    expect(await cwdOf()).toEqual(["/projects/two-is-longer"]);
+    expect(await cwdOf()).toEqual([`${prefix}one`]);
+    // The same inode grows and the first 256 bytes still match, but the header has changed.
+    writeFileSync(path, header(`${prefix}two-is-longer`) + reply + reply);
+    expect(await cwdOf()).toEqual([`${prefix}two-is-longer`]);
 });
 
 test("a repeated walk in one process sees added, removed and renamed files and directories", async () => {
@@ -454,4 +465,15 @@ test("a repeated walk in one process sees added, removed and renamed files and d
     mkdirSync(join(root, "second"));
     writeFileSync(join(root, "second", "d.jsonl"), "{}\n");
     expect(await files()).toEqual(["project/c.jsonl", "project/nested/b.jsonl", "second/d.jsonl"]);
+});
+
+test("a recent directory with an unchanged coarse timestamp is read again", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "gt-walk-recent-")));
+    writeFileSync(join(root, "a.jsonl"), "{}\n");
+    const timestamp = statSync(root).mtime;
+    const files = async () => (await walkSourceRoots({ roots: [root] })).files.map((file) => file.relativePath);
+    expect(await files()).toEqual(["a.jsonl"]);
+    writeFileSync(join(root, "b.jsonl"), "{}\n");
+    utimesSync(root, timestamp, timestamp);
+    expect(await files()).toEqual(["a.jsonl", "b.jsonl"]);
 });

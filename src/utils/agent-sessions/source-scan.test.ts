@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { appendFileSync, existsSync, mkdtempSync, readdirSync, readlinkSync, writeFileSync } from "node:fs";
+import {
+    appendFileSync,
+    existsSync,
+    mkdtempSync,
+    readdirSync,
+    readlinkSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -141,6 +149,7 @@ function resumedFold(path: string, storePath: string): { rows: unknown[]; issues
             path,
             storePath,
             initial: () => [],
+            validState: (state): state is unknown[] => Array.isArray(state),
             copy: (list) => [...list],
             apply: (list, row) => list.push(row),
             onIssue: (message) => issues.push(message),
@@ -186,6 +195,7 @@ test("a small file resumes in this process without writing the store, and starts
                 path,
                 storePath,
                 initial: () => [],
+                validState: (state): state is unknown[] => Array.isArray(state),
                 copy: (list) => [...list],
                 apply: (list, row) => {
                     applied++;
@@ -208,4 +218,80 @@ test("a small file resumes in this process without writing the store, and starts
     applied = 0;
     expect(fold()).toEqual(await fullScan(path));
     expect(applied).toBe(4);
+});
+
+test("a file that grows during a fold leaves no persisted partial snapshot", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gt-jsonl-changing-"));
+    const path = join(root, "rollout.jsonl");
+    const storePath = join(root, "store.json");
+    writeFileSync(path, '{"n":1}\n');
+    let appended = false;
+    foldJsonlResumable<unknown[]>({
+        path,
+        storePath,
+        initial: () => [],
+        copy: (list) => [...list],
+        resumeMinBytes: 0,
+        validState: (state): state is unknown[] => Array.isArray(state),
+        apply: (list, row) => {
+            list.push(row);
+            if (!appended) {
+                appended = true;
+                appendFileSync(path, '{"n":2}\n');
+            }
+        },
+        onIssue: () => {},
+    });
+    expect(existsSync(storePath)).toBe(false);
+    const issues: string[] = [];
+    let applied = 0;
+    const rows = foldJsonlResumable<unknown[]>({
+        path,
+        storePath,
+        initial: () => [],
+        validState: (state): state is unknown[] => Array.isArray(state),
+        copy: (list) => [...list],
+        resumeMinBytes: 0,
+        apply: (list, row) => {
+            applied++;
+            list.push(row);
+        },
+        onIssue: (message) => issues.push(message),
+    });
+    expect({ rows, issues }).toEqual(await fullScan(path));
+    expect(applied).toBe(2);
+    expect(existsSync(storePath)).toBe(true);
+});
+
+test("malformed fold stores and entries are cache misses, never source failures", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gt-jsonl-corrupt-store-"));
+    const path = join(root, "rollout.jsonl");
+    const storePath = join(root, "store.json");
+    writeFileSync(path, '{"n":1}\n{"n":2}\n');
+    const expected = await fullScan(path);
+    resumedFold(path, storePath);
+    const stored = SafeJSON.parse(await Bun.file(storePath).text(), { strict: true }) as {
+        files: Record<string, object>;
+    };
+    const original = stored.files[path];
+    let aliasCount = 0;
+    const uncachedPath = (): string => {
+        const alias = join(root, `uncached-${aliasCount++}.jsonl`);
+        symlinkSync(path, alias);
+        return alias;
+    };
+    for (const damaged of [
+        null,
+        { ...original, issues: {} },
+        { ...original, consumed: -1 },
+        { ...original, state: null },
+    ]) {
+        const alias = uncachedPath();
+        writeFileSync(storePath, SafeJSON.stringify({ version: 1, files: { [alias]: damaged } }, { strict: true }));
+        expect(resumedFold(alias, storePath)).toEqual(expected);
+    }
+    for (const files of [[], "bad", null]) {
+        writeFileSync(storePath, SafeJSON.stringify({ version: 1, files }, { strict: true }));
+        expect(resumedFold(uncachedPath(), storePath)).toEqual(expected);
+    }
 });

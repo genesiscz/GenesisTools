@@ -1,6 +1,6 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
-import { markBefore } from "./file-scan";
+import { readPrefixMark } from "./file-scan";
 import { parseTranscriptLine } from "./parse-line";
 
 interface RecordsEntry {
@@ -99,13 +99,15 @@ export function readRecordsAppendOnly(
         fd = openSync(path, "r");
         const { size, ino } = fstatSync(fd);
         const cached = cache.get(path);
+        let prefix = readPrefixMark(fd, cached?.ino === ino && cached.consumed <= size ? cached.consumed : 0);
         const usable =
-            cached !== undefined &&
-            cached.ino === ino &&
-            cached.consumed <= size &&
-            markBefore(fd, cached.consumed) === cached.mark;
+            cached !== undefined && cached.ino === ino && cached.consumed <= size && prefix.digest() === cached.mark;
         const entry: RecordsEntry =
             usable && cached ? cached : { ino, consumed: 0, mark: "", records: [], bytes: size, lastUsed: Date.now() };
+        if (!usable) {
+            prefix = readPrefixMark(fd, 0);
+        }
+
         entry.bytes = size;
         entry.lastUsed = Date.now();
         const fresh = Buffer.allocUnsafe(size - entry.consumed);
@@ -127,12 +129,14 @@ export function readRecordsAppendOnly(
             parseLines(complete.toString("utf8"), records);
             entry.records = records;
             entry.consumed += complete.length;
-            entry.mark = markBefore(fd, entry.consumed);
+            prefix.update(complete);
         }
 
         const tail: Record<string, unknown>[] = [];
         parseLines(unfinished.toString("utf8"), tail);
-        if (size >= minCacheBytes && size <= CACHE_MAX_FILE_BYTES) {
+        const checkpoint = prefix.finish();
+        entry.mark = checkpoint.digest;
+        if (checkpoint.stable && size >= minCacheBytes && size <= CACHE_MAX_FILE_BYTES) {
             keep(path, entry);
         } else {
             cache.delete(path);

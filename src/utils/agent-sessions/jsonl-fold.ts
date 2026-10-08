@@ -1,6 +1,6 @@
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs";
 import { dirname } from "node:path";
-import { markBefore } from "@genesiscz/utils/ai/transcripts/file-scan";
+import { readPrefixMark } from "@genesiscz/utils/ai/transcripts/file-scan";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
@@ -26,7 +26,7 @@ interface FoldStore {
 
 /** Files kept per store: the live and recently changed sessions are what get re-read. */
 const STORE_FILES = 20;
-/** Smaller files are folded from the start without the store: re-reading them is cheap, the store is not free. */
+/** Smaller files resume in memory, without paying for a persisted store. */
 const RESUME_MIN_BYTES = 8 * 1024 * 1024;
 const CHUNK_BYTES = 8 * 1024 * 1024;
 /**
@@ -43,12 +43,51 @@ function readStore(path: string): FoldStore {
     }
 
     try {
-        const parsed = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as FoldStore;
-        return parsed?.version === 1 && parsed.files ? parsed : { version: 1, files: {} };
+        const parsed: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+        if (
+            parsed !== null &&
+            typeof parsed === "object" &&
+            "version" in parsed &&
+            parsed.version === 1 &&
+            "files" in parsed &&
+            parsed.files !== null &&
+            typeof parsed.files === "object" &&
+            !Array.isArray(parsed.files)
+        ) {
+            return { version: 1, files: parsed.files as FoldStore["files"] };
+        }
+
+        return { version: 1, files: {} };
     } catch (error) {
         logger.debug({ error, path }, "[agent-sessions] fold store unreadable; starting over");
         return { version: 1, files: {} };
     }
+}
+
+function validFold<S>(value: unknown, validState: (state: unknown) => state is S): value is StoredFold<S> {
+    return (
+        value !== null &&
+        typeof value === "object" &&
+        "ino" in value &&
+        typeof value.ino === "number" &&
+        Number.isSafeInteger(value.ino) &&
+        value.ino >= 0 &&
+        "consumed" in value &&
+        typeof value.consumed === "number" &&
+        Number.isSafeInteger(value.consumed) &&
+        value.consumed >= 0 &&
+        "line" in value &&
+        typeof value.line === "number" &&
+        Number.isSafeInteger(value.line) &&
+        value.line >= 0 &&
+        "mark" in value &&
+        typeof value.mark === "string" &&
+        "issues" in value &&
+        Array.isArray(value.issues) &&
+        value.issues.every((issue: unknown) => typeof issue === "string") &&
+        "state" in value &&
+        validState(value.state)
+    );
 }
 
 function writeStore(path: string, store: FoldStore): void {
@@ -70,13 +109,15 @@ export interface FoldJsonlOptions<S> {
     /** The JSON file that keeps every file's fold for this kind of read (one per reader). */
     storePath: string;
     initial: () => S;
+    /** The persisted state is untrusted JSON; reject a malformed state before copying or applying to it. */
+    validState: (state: unknown) => state is S;
     /** A deep enough copy that `apply` on it leaves the stored state alone. */
     copy: (state: S) => S;
     /** One record, in file order. */
     apply: (state: S, row: JsonRecord) => void;
     onIssue: (message: string) => void;
     signal?: AbortSignal;
-    /** Files smaller than this are folded whole and not kept (default 8 MB; tests pass 0). */
+    /** Files smaller than this resume only in memory (default 8 MB; tests pass 0). */
     resumeMinBytes?: number;
 }
 
@@ -103,21 +144,26 @@ export function foldJsonlResumable<S>(options: FoldJsonlOptions<S>): S | null {
     }
 
     try {
-        const { size, ino } = fstatSync(fd);
+        const initialStatus = fstatSync(fd);
+        const { size, ino } = initialStatus;
         const resumable = size >= (options.resumeMinBytes ?? RESUME_MIN_BYTES);
         const store: FoldStore = resumable ? readStore(options.storePath) : { version: 1, files: {} };
-        const openFd = fd;
-        const usable = (candidate: StoredFold<S> | undefined): candidate is StoredFold<S> =>
-            candidate !== undefined &&
-            candidate.ino === ino &&
-            candidate.consumed <= size &&
-            markBefore(openFd, candidate.consumed) === candidate.mark;
-        const inMemory = memoryFolds.get(options.path) as StoredFold<S> | undefined;
-        const stored = store.files[options.path] as StoredFold<S> | undefined;
-        const kept = usable(inMemory) ? inMemory : usable(stored) ? stored : undefined;
-        const fold: StoredFold<S> = kept
-            ? { ...kept, issues: [...kept.issues], state: options.copy(kept.state) }
-            : { ino, consumed: 0, line: 0, mark: "", issues: [], state: options.initial() };
+        const inMemory: unknown = memoryFolds.get(options.path);
+        const stored: unknown = store.files[options.path];
+        const candidates = [inMemory, stored];
+        const kept = candidates.find(
+            (candidate): candidate is StoredFold<S> =>
+                validFold(candidate, options.validState) && candidate.ino === ino && candidate.consumed <= size
+        );
+        let prefix = readPrefixMark(fd, kept?.consumed ?? 0);
+        const usable = kept !== undefined && prefix.digest() === kept.mark;
+        const fold: StoredFold<S> =
+            usable && kept
+                ? { ...kept, issues: [...kept.issues], state: options.copy(kept.state) }
+                : { ino, consumed: 0, line: 0, mark: "", issues: [], state: options.initial() };
+        if (!usable) {
+            prefix = readPrefixMark(fd, 0);
+        }
 
         for (const message of fold.issues) {
             options.onIssue(message);
@@ -166,23 +212,27 @@ export function foldJsonlResumable<S>(options: FoldJsonlOptions<S>): S | null {
                 newline = bytes.indexOf(10, start);
             }
 
+            prefix.update(bytes.subarray(0, start));
             carried = Buffer.from(bytes.subarray(start));
         }
 
-        fold.mark = markBefore(fd, fold.consumed);
+        const checkpoint = prefix.finish();
         memoryFolds.delete(options.path);
-        memoryFolds.set(options.path, { ...fold, issues: [...fold.issues], state: options.copy(fold.state) });
-        if (memoryFolds.size > MEMORY_FILES) {
-            const oldest = memoryFolds.keys().next().value;
-            if (oldest !== undefined) {
-                memoryFolds.delete(oldest);
+        if (checkpoint.stable) {
+            fold.mark = checkpoint.digest;
+            memoryFolds.set(options.path, { ...fold, issues: [...fold.issues], state: options.copy(fold.state) });
+            if (memoryFolds.size > MEMORY_FILES) {
+                const oldest = memoryFolds.keys().next().value;
+                if (oldest !== undefined) {
+                    memoryFolds.delete(oldest);
+                }
             }
-        }
 
-        if (resumable) {
-            delete store.files[options.path];
-            store.files[options.path] = { ...fold, state: options.copy(fold.state) } as StoredFold<unknown>;
-            writeStore(options.storePath, store);
+            if (resumable) {
+                delete store.files[options.path];
+                store.files[options.path] = { ...fold, state: options.copy(fold.state) } as StoredFold<unknown>;
+                writeStore(options.storePath, store);
+            }
         }
 
         // The unfinished last line counts as a full scan counts it, in a copy that is never kept.

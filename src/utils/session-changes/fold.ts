@@ -1,6 +1,6 @@
 import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { basename } from "node:path";
-import { markBefore } from "@genesiscz/utils/ai/transcripts/file-scan";
+import { readPrefixMark } from "@genesiscz/utils/ai/transcripts/file-scan";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -87,8 +87,8 @@ function advance(path: string, agentId: string | null, fold: FileFold | null): F
     const fd = openSync(path, "r");
     try {
         const { size, ino } = fstatSync(fd);
-        const usable =
-            fold !== null && fold.ino === ino && fold.consumed <= size && markBefore(fd, fold.consumed) === fold.mark;
+        let prefix = readPrefixMark(fd, fold?.ino === ino && fold.consumed <= size ? fold.consumed : 0);
+        const usable = fold !== null && fold.ino === ino && fold.consumed <= size && prefix.digest() === fold.mark;
         const current: FileFold =
             usable && fold
                 ? fold
@@ -101,6 +101,10 @@ function advance(path: string, agentId: string | null, fold: FileFold | null): F
                       prompts: [],
                       unmatched: [],
                   };
+        if (!usable) {
+            prefix = readPrefixMark(fd, 0);
+        }
+
         const hooks = {
             prompt: (promptId: string, prompt: string) => current.prompts.push([promptId, prompt]),
             unmatched: (result: UnmatchedResult) => current.unmatched.push(result),
@@ -130,10 +134,16 @@ function advance(path: string, agentId: string | null, fold: FileFold | null): F
                 hooks
             );
             current.consumed += lastNewline + 1;
+            prefix.update(bytes.subarray(0, lastNewline + 1));
             carry = Buffer.from(bytes.subarray(lastNewline + 1));
         }
 
-        current.mark = markBefore(fd, current.consumed);
+        const checkpoint = prefix.finish();
+        if (!checkpoint.stable) {
+            return null;
+        }
+
+        current.mark = checkpoint.digest;
         const tail = carry.toString("utf8");
         if (tail.length > 0 && parsedAtAll(tail)) {
             try {

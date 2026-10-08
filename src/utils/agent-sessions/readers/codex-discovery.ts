@@ -45,25 +45,36 @@ function columns(database: Database, table: string): string[] {
 }
 
 /**
- * Found headers by rollout path. A rollout is append-only and its header is one of its first lines, so a file with
- * the same inode that has not shrunk and still begins with the same bytes (the session id is in them) still starts
- * with it. Every listing read ~700 headers through a stream, about a sixth of a warm `ai usage sessions`
+ * Found headers by rollout path, reused only while the file identity, size and timestamps are unchanged.
+ * Appends re-read the header too: a rewrite beyond the first 256 bytes can look like an append, so that prefix
+ * alone cannot prove that the header stayed the same. Every listing read ~700 headers through a stream, about a sixth of a warm `ai usage sessions`
  * (2026-10-08). A missing or broken header is never cached: it is read again, and its issue reported again, on every
  * discovery.
  */
 const HEADER_CACHE_LIMIT = 10_000;
 const HEADER_MARK_BYTES = 256;
-const headerCache = new Map<string, { ino: number; size: number; mark: string; header: CodexDiscoveryHeader }>();
+const headerCache = new Map<
+    string,
+    { ino: number; size: number; mtimeMs: number; ctimeMs: number; mark: string; header: CodexDiscoveryHeader }
+>();
 
 /** The file's inode, size and first bytes, or null when it cannot be read (the full read then reports why). */
-async function headerIdentity(path: string): Promise<{ ino: number; size: number; mark: string } | null> {
+async function headerIdentity(
+    path: string
+): Promise<{ ino: number; size: number; mtimeMs: number; ctimeMs: number; mark: string } | null> {
     let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
         handle = await open(path, "r");
         const status = await handle.stat();
         const buffer = Buffer.alloc(Math.min(HEADER_MARK_BYTES, status.size));
         const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-        return { ino: status.ino, size: status.size, mark: buffer.subarray(0, bytesRead).toString("latin1") };
+        return {
+            ino: status.ino,
+            size: status.size,
+            mtimeMs: status.mtimeMs,
+            ctimeMs: status.ctimeMs,
+            mark: buffer.subarray(0, bytesRead).toString("latin1"),
+        };
     } catch (err) {
         logger.debug({ err, path }, "[codex-discovery] header identity unreadable; reading the header in full");
         return null;
@@ -84,8 +95,10 @@ async function readHeader(options: {
         identity &&
         cached &&
         cached.ino === identity.ino &&
-        identity.size >= cached.size &&
-        identity.mark.startsWith(cached.mark)
+        identity.size === cached.size &&
+        identity.mtimeMs === cached.mtimeMs &&
+        identity.ctimeMs === cached.ctimeMs &&
+        identity.mark === cached.mark
     ) {
         return cached.header;
     }

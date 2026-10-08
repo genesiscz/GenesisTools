@@ -239,6 +239,7 @@ interface ReadAgentEntry {
     size: number;
     mtimeMs: number;
     metaMtimeMs: number;
+    metaSize: number;
     working: boolean;
     agent: Omit<SessionSubagent, "state">;
 }
@@ -247,12 +248,13 @@ interface ReadAgentEntry {
 const READ_AGENT_CACHE_LIMIT = 4000;
 const readAgentCache = new Map<string, ReadAgentEntry>();
 
-function metaMtime(path: string): number {
+function metaIdentity(path: string): { mtimeMs: number; size: number } {
     try {
-        return statSync(path).mtimeMs;
-    } catch {
-        // No meta file (older agents): its absence is part of the key.
-        return -1;
+        const status = statSync(path);
+        return { mtimeMs: status.mtimeMs, size: status.size };
+    } catch (error) {
+        logger.debug({ error, path }, "[transcripts] sub-agent meta identity unavailable");
+        return { mtimeMs: -1, size: -1 };
     }
 }
 
@@ -280,14 +282,17 @@ function readAgent(
         return null;
     }
 
-    const metaMtimeMs = metaMtime(join(dir, `agent-${id}.meta.json`));
+    const meta = metaIdentity(join(dir, `agent-${id}.meta.json`));
+    const settled = Date.now() - Math.max(stat.mtimeMs, meta.mtimeMs) >= 2000;
     const cached = readAgentCache.get(key);
     if (
+        settled &&
         cached &&
         cached.ino === stat.ino &&
         cached.size === stat.size &&
         cached.mtimeMs === stat.mtimeMs &&
-        cached.metaMtimeMs === metaMtimeMs
+        cached.metaMtimeMs === meta.mtimeMs &&
+        cached.metaSize === meta.size
     ) {
         return { ...cached.agent, state: stateOf(cached.working, cached.mtimeMs) };
     }
@@ -299,11 +304,16 @@ function readAgent(
     }
 
     readAgentCache.delete(key);
+    if (!settled) {
+        return { ...read.agent, state: stateOf(read.working, read.stat.mtimeMs) };
+    }
+
     readAgentCache.set(key, {
         ino: read.stat.ino,
         size: read.stat.size,
         mtimeMs: read.stat.mtimeMs,
-        metaMtimeMs,
+        metaMtimeMs: meta.mtimeMs,
+        metaSize: meta.size,
         working: read.working,
         agent: read.agent,
     });

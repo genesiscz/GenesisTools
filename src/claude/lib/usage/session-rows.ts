@@ -310,8 +310,8 @@ async function extractTailUsage(filePath: string): Promise<TailUsage> {
         return { ...cached.usage };
     }
 
-    const usage = await extractTailUsageUncached(filePath);
-    if (status) {
+    const { usage, read } = await extractTailUsageUncached(filePath);
+    if (status && read) {
         // The stat came first: a write after it leaves a newer mtime, and the next call reads the tail again.
         tailCache.delete(filePath);
         tailCache.set(filePath, { size: status.size, mtimeMs: status.mtimeMs, ino: status.ino, usage: { ...usage } });
@@ -326,7 +326,7 @@ async function extractTailUsage(filePath: string): Promise<TailUsage> {
     return usage;
 }
 
-async function extractTailUsageUncached(filePath: string): Promise<TailUsage> {
+async function extractTailUsageUncached(filePath: string): Promise<{ usage: TailUsage; read: boolean }> {
     const fallback = emptyTailUsage();
 
     try {
@@ -343,20 +343,20 @@ async function extractTailUsageUncached(filePath: string): Promise<TailUsage> {
             const haveUser = parsed.lastUserAt != null;
 
             if ((haveClock && haveUsage && haveUser) || size <= 0 || bytes >= size || bytes >= TAIL_MAX_BYTES) {
-                return parsed;
+                return { usage: parsed, read: true };
             }
 
             const next = Math.min(TAIL_MAX_BYTES, bytes * 2, size);
 
             if (next <= bytes) {
-                return parsed;
+                return { usage: parsed, read: true };
             }
 
             bytes = next;
         }
     } catch (err) {
         logger.debug({ err, filePath }, "session tail read failed");
-        return fallback;
+        return { usage: fallback, read: false };
     }
 }
 
