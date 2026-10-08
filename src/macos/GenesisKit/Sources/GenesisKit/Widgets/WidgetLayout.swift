@@ -64,6 +64,10 @@ struct WidgetSideStripMetrics {
     var spacing: CGFloat { classic ? 5 : 7 }
     var moduleSize: CGFloat { classic ? 28 : 32 }
 
+    var fixedOverflowChromeHeight: CGFloat {
+        Self.verticalPadding * 2 + Self.dragHeight + Self.settingsHeight + spacing * 2
+    }
+
     var minimumHeight: CGFloat {
         let modules = moduleCount == 0 ? Self.addHeight : CGFloat(moduleCount) * moduleSize
         let sessions = CGFloat(sessionCount) * Self.sessionHeight
@@ -82,6 +86,33 @@ public enum WidgetClusterGeometry {
         let fixedWidth: CGFloat = 32 + titleWidth + 64 + 20 + 24
         let overflowWidth: CGFloat = moduleCount > 5 ? 28 : 0
         return max(360, max(0, cutout) + fixedWidth + CGFloat(otherButtons) * 33 + overflowWidth)
+    }
+
+    static func allocate(
+        heights: [(minimum: CGFloat, preferred: CGFloat)], visibleHeight: CGFloat, gap: CGFloat = 12
+    ) -> (heights: [CGFloat], gap: CGFloat) {
+        guard !heights.isEmpty else { return ([], 0) }
+        let available = max(0, visibleHeight)
+        let actualGap = min(max(0, gap), available / CGFloat(heights.count * 2))
+        let budget = max(0, available - actualGap * CGFloat(heights.count - 1))
+        let minimums = heights.map { max(0, $0.minimum) }
+        let preferred = zip(heights, minimums).map { max($0.0.preferred, $0.1) }
+        let minimumTotal = minimums.reduce(0, +)
+        if minimumTotal > budget {
+            // Cap tall rails first so a small rail does not lose usable controls unnecessarily.
+            var remaining = budget
+            var cap: CGFloat = 0
+            for (index, height) in minimums.sorted().enumerated() {
+                cap = remaining / CGFloat(minimums.count - index)
+                if height >= cap { break }
+                remaining -= height
+            }
+            return (minimums.map { min($0, cap) }, actualGap)
+        }
+        let preferredTotal = preferred.reduce(0, +)
+        guard preferredTotal > budget else { return (preferred, actualGap) }
+        let extraScale = (budget - minimumTotal) / max(1, preferredTotal - minimumTotal)
+        return (zip(minimums, preferred).map { $0 + ($1 - $0) * extraScale }, actualGap)
     }
 
     public static func centers(
