@@ -1265,7 +1265,8 @@ final class WidgetRosterTests: XCTestCase {
         window.contentView?.addSubview(view)
         defer { window.close() }
         var pointer = CGPoint(x: 500, y: 600)
-        view.pointer = { pointer }
+        view.pointer = { _ in pointer }
+        XCTAssertEqual(view.accessibilityIdentifier(), "widget.drag")
         var received: [(CGFloat, Bool)] = []
         view.moved = { received.append(($0, $1)) }
         let event = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: .zero,
