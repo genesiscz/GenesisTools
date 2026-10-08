@@ -14,6 +14,43 @@ final class EdgePanelGeometryTests: XCTestCase {
         XCTAssertEqual(WidgetClusterGeometry.topWidth(cutout: 200, moduleCount: 12), 524)
     }
 
+    func testShortDisplayReservesCompactRailsBeforeExpandingOneGroup() {
+        let allocation = WidgetClusterGeometry.allocate(
+            heights: [(189, 600), (100, 100), (108, 108)], visibleHeight: 500)
+        XCTAssertEqual(allocation.heights, [268, 100, 108])
+        XCTAssertEqual(allocation.gap, 12)
+        let roomy = WidgetClusterGeometry.allocate(
+            heights: [(189, 600), (100, 100), (108, 108)], visibleHeight: 1000)
+        XCTAssertEqual(roomy.heights, [600, 100, 108])
+        let overflowing = WidgetClusterGeometry.allocate(
+            heights: [(318, 600), (106, 106), (108, 108)], visibleHeight: 350)
+        XCTAssertEqual(overflowing.heights, [112, 106, 108], "Only the tall rail needs scrolling here")
+    }
+
+    func testOverflowClustersFitShortDisplaysWithoutOverlappingAtEitherDragLimit() {
+        for available in [1.0, 20, 120, 240, 300, 500] {
+            for requests: [(minimum: CGFloat, preferred: CGFloat)] in [
+                [(318, 660)], [(288, 600), (100, 100), (108, 108)], [(318, 318), (318, 318), (318, 318)]
+            ] {
+                let allocation = WidgetClusterGeometry.allocate(heights: requests, visibleHeight: available)
+                let visible = CGRect(x: -800, y: -400, width: 800, height: available)
+                for position in [0.0, 0.5, 1.0] {
+                    let centers = WidgetClusterGeometry.centers(
+                        heights: allocation.heights, position: position, visible: visible, gap: allocation.gap)
+                    var previousBottom = visible.maxY
+                    for (index, height) in allocation.heights.enumerated() {
+                        let top = centers[index] + height / 2
+                        let bottom = centers[index] - height / 2
+                        XCTAssertGreaterThanOrEqual(height, 0)
+                        XCTAssertLessThanOrEqual(top, previousBottom + 0.001)
+                        XCTAssertGreaterThanOrEqual(bottom, visible.minY - 0.001)
+                        previousBottom = bottom - allocation.gap
+                    }
+                }
+            }
+        }
+    }
+
     func testRoundedSurfacesKeepTheirFrameAndCutAllFourCorners() {
         let rect = CGRect(x: -400, y: 120, width: 44, height: 165)
         for edge in [EdgePanelPlacement.left, .right, .top] {
@@ -936,7 +973,7 @@ final class WidgetRosterTests: XCTestCase {
                             let root = WidgetHostView(
                                 model: model, registry: registry, surface: WidgetSurfaceID(edge: edge),
                                 moduleIDs: ids, cutout: 0, headerHeight: 36, visibleHeight: 900)
-                            let host = NSHostingView(rootView: root)
+                            let host = NSHostingView(rootView: root.sideStripContents)
                             let measured = host.fittingSize
                             XCTAssertEqual(measured.width, 44, accuracy: 0.5)
                             XCTAssertEqual(measured.height, metrics.minimumHeight, accuracy: 0.5,
@@ -948,6 +985,68 @@ final class WidgetRosterTests: XCTestCase {
                                 XCTAssertEqual(measured.height, style == "classic" ? 100 : 106, accuracy: 0.5)
                             }
                             print("SIDE_LAYOUT style=\(style) edge=\(edge) sessions=\(count) modules=\(ids.count) measured=\(measured.height) allocated=\(metrics.minimumHeight)")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func testOverflowUsesARealScrollableViewportAndReachesDocumentEnd() async throws {
+        _ = NSApplication.shared
+        for style in ["classic", "modular"] {
+            try await withFixture(sessionCount: 4, sideStyle: style) { model, _, _ in
+                let ids = ["agents", "capture", "shelf", "tasks"]
+                let registry = WidgetModuleRegistry()
+                for id in ids {
+                    try registry.register(WidgetModuleDescriptor(
+                        id: id, title: id, symbol: "circle", tint: .blue, summary: { "Fixture" }
+                    ) { _ in Color.clear })
+                }
+                for edge in [EdgePanelPlacement.left, .right] {
+                    for height: CGFloat in [60, 120, 240] {
+                        let surface = WidgetSurfaceID(edge: edge)
+                        for expanded in [false, true] {
+                            if expanded { model.openModule("shelf", on: surface) } else { model.collapse() }
+                            let width: CGFloat = expanded ? 476 : 44
+                            let root = WidgetHostView(
+                                model: model, registry: registry, surface: surface, moduleIDs: ids,
+                                cutout: 0, headerHeight: 36, visibleHeight: height)
+                            let host = NSHostingView(rootView: root)
+                            host.sizingOptions = []
+                            let window = NSWindow(
+                                contentRect: CGRect(x: -10000, y: -10000, width: width, height: height),
+                                styleMask: [.borderless], backing: .buffered, defer: false)
+                            window.isReleasedWhenClosed = false
+                            defer { window.close() }
+                            window.contentView = host
+                            host.layoutSubtreeIfNeeded()
+                            @MainActor func scrollViews(_ view: NSView) -> [NSScrollView] {
+                                if let scroll = view as? NSScrollView { return [scroll] }
+                                return view.subviews.flatMap(scrollViews)
+                            }
+                            let scroll = try XCTUnwrap(scrollViews(host).first,
+                                "An undersized rail must have a native scrolling viewport")
+                            let document = try XCTUnwrap(scroll.documentView)
+                            XCTAssertLessThanOrEqual(scroll.bounds.height, height + 0.5)
+                            XCTAssertGreaterThan(document.bounds.height, scroll.contentView.bounds.height)
+                            XCTAssertTrue(host.bounds.insetBy(dx: -0.5, dy: -0.5).contains(host.convert(scroll.bounds, from: scroll)))
+                            if height >= 120 {
+                                XCTAssertEqual(scroll.contentView.bounds.height, height - (style == "classic" ? 63 : 67), accuracy: 0.5,
+                                    "The scrolling viewport must leave room for fixed settings and drag controls")
+                            } else {
+                                XCTAssertEqual(scroll.contentView.bounds.height, height, accuracy: 0.5)
+                            }
+                            document.scroll(CGPoint(x: 0, y: document.bounds.maxY))
+                            host.layoutSubtreeIfNeeded()
+                            XCTAssertEqual(scroll.contentView.bounds.maxY, document.bounds.maxY, accuracy: 0.5,
+                                "Scrolling must reach the final control rather than clipping the document")
+                            document.scroll(.zero)
+                            host.layoutSubtreeIfNeeded()
+                            XCTAssertEqual(scroll.contentView.bounds.minY, 0, accuracy: 0.5,
+                                "The initial module must remain reachable after returning to the top")
+                            XCTAssertFalse(window.isVisible, "The regression must never show a desktop window")
+                            print("SIDE_OVERFLOW style=\(style) edge=\(edge) expanded=\(expanded) height=\(height) viewport=\(scroll.contentView.bounds.height) document=\(document.bounds.height)")
                         }
                     }
                 }

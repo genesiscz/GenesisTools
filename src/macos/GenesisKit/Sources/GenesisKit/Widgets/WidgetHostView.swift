@@ -153,48 +153,85 @@ struct WidgetHostView: View {
     }
 
     private var sideStrip: some View {
+        GeometryReader { geometry in
+            if geometry.size.height + 0.5 >= sideMetrics.minimumHeight {
+                sideStripContents
+            } else if geometry.size.height >= sideMetrics.fixedOverflowChromeHeight + sideMetrics.moduleSize {
+                VStack(spacing: sideMetrics.spacing) {
+                    if !classicSide { dragHandle }
+                    ScrollView(.vertical) {
+                        VStack(spacing: sideMetrics.spacing) { sideModuleControls }
+                            .frame(width: WidgetSideStripMetrics.width)
+                    }
+                    .scrollIndicators(.visible)
+                    .accessibilityLabel("Scrollable widgets and sessions")
+                    sideSettingsButton
+                    if classicSide { dragHandle }
+                }
+                .padding(.vertical, WidgetSideStripMetrics.verticalPadding)
+            } else {
+                ScrollView(.vertical) {
+                    sideStripContents.fixedSize(horizontal: false, vertical: true)
+                }
+                .scrollIndicators(.visible)
+                .accessibilityLabel("Scrollable widget controls")
+            }
+        }
+        .frame(idealHeight: sideMetrics.minimumHeight)
+        .frame(width: WidgetSideStripMetrics.width)
+    }
+
+    var sideStripContents: some View {
         VStack(spacing: sideMetrics.spacing) {
             if !classicSide { dragHandle }
-            if moduleIDs.isEmpty {
-                Button {
-                    model.showSettings?()
-                } label: {
-                    Image(systemName: "plus")
-                        .frame(width: WidgetSideStripMetrics.addWidth, height: WidgetSideStripMetrics.addHeight)
-                }.buttonStyle(.genHoverPlain()).accessibilityLabel("Add a widget to this group")
-            }
-            ForEach(moduleIDs, id: \.self) { id in
-                moduleButton(id, size: sideMetrics.moduleSize)
-                if id == "agents", sideMetrics.sessionCount > 0 {
-                    VStack(spacing: WidgetSideStripMetrics.sessionSpacing) {
-                        ForEach(Array(model.sessions.prefix(sideMetrics.sessionCount))) { session in
-                            Button {
-                                model.select(session.key)
-                                model.section = "Inbox"
-                                model.openModule("agents", on: surface)
-                            } label: {
-                                WidgetActivityIndicator(
-                                    status: session.visualStatus, animate: !model.effectiveReduceMotion
-                                )
-                                .frame(width: WidgetSideStripMetrics.sessionWidth, height: WidgetSideStripMetrics.sessionHeight)
-                            }
-                            .buttonStyle(.genHoverPlain())
-                            .instantTooltip(session.title + " · " + session.visualStatus.label)
-                            .accessibilityLabel(session.title + ", " + session.visualStatus.label)
-                        }
-                    }
-                }
-            }
+            sideModuleControls
             Spacer(minLength: WidgetSideStripMetrics.minimumSpacer)
+            sideSettingsButton
+            if classicSide { dragHandle }
+        }.padding(.vertical, WidgetSideStripMetrics.verticalPadding).frame(width: WidgetSideStripMetrics.width)
+    }
+
+    @ViewBuilder private var sideModuleControls: some View {
+        if moduleIDs.isEmpty {
             Button {
                 model.showSettings?()
             } label: {
-                Image(systemName: "slider.horizontal.3").font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .frame(width: WidgetSideStripMetrics.settingsWidth, height: WidgetSideStripMetrics.settingsHeight)
-            }.buttonStyle(.genHoverPlain()).accessibilityLabel("Widget settings")
-            if classicSide { dragHandle }
-        }.padding(.vertical, WidgetSideStripMetrics.verticalPadding).frame(width: WidgetSideStripMetrics.width)
+                Image(systemName: "plus")
+                    .frame(width: WidgetSideStripMetrics.addWidth, height: WidgetSideStripMetrics.addHeight)
+            }.buttonStyle(.genHoverPlain()).accessibilityLabel("Add a widget to this group")
+        }
+        ForEach(moduleIDs, id: \.self) { id in
+            moduleButton(id, size: sideMetrics.moduleSize)
+            if id == "agents", sideMetrics.sessionCount > 0 {
+                VStack(spacing: WidgetSideStripMetrics.sessionSpacing) {
+                    ForEach(Array(model.sessions.prefix(sideMetrics.sessionCount))) { session in
+                        Button {
+                            model.select(session.key)
+                            model.section = "Inbox"
+                            model.openModule("agents", on: surface)
+                        } label: {
+                            WidgetActivityIndicator(
+                                status: session.visualStatus, animate: !model.effectiveReduceMotion
+                            )
+                            .frame(width: WidgetSideStripMetrics.sessionWidth, height: WidgetSideStripMetrics.sessionHeight)
+                        }
+                        .buttonStyle(.genHoverPlain())
+                        .instantTooltip(session.title + " · " + session.visualStatus.label)
+                        .accessibilityLabel(session.title + ", " + session.visualStatus.label)
+                    }
+                }
+            }
+        }
+    }
+
+    private var sideSettingsButton: some View {
+        Button {
+            model.showSettings?()
+        } label: {
+            Image(systemName: "slider.horizontal.3").font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .frame(width: WidgetSideStripMetrics.settingsWidth, height: WidgetSideStripMetrics.settingsHeight)
+        }.buttonStyle(.genHoverPlain()).accessibilityLabel("Widget settings")
     }
 
     @ViewBuilder private var content: some View {
