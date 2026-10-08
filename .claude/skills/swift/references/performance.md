@@ -74,6 +74,37 @@ the end of their section with a date and a commit.
 - A cache keyed on "what can change" beats re-deriving; prove parity on real data, not only fixtures,
   and plant a regression to prove the parity test catches.
 
+### A resident process should remember what did not change
+- The hub's agents tree re-read every sub-agent transcript of every parent on each refresh (158
+  refreshes a day, 1.29 s each through the server). Three generic caches, all keyed by file identity:
+  1. **Append-only scan, resumed** (`scanAppendOnly`, src/utils/ai/transcripts/file-scan.ts): keep the
+     result up to `size - window` (every match before it is whole), scan only new bytes, scan the short
+     unfinished tail into a copy each time. Reset on another inode, a shorter file, or changed bytes at the
+     file's start or before the kept offset (a cheap guard against in-place rewrites).
+  2. **Parsed row per file** (`readAgent`): reuse when inode, size, mtime (exact float, not a value
+     rebuilt from an ISO string: it loses sub-millisecond precision and never matches) and the meta
+     file's mtime are equal; recompute only clock-dependent fields (`state`) per call.
+  3. **Bounded LRU** (delete + set on hit, drop the oldest past a limit).
+- Result: repeat refresh 430 → 42 ms wall, 630 → 57 ms CPU; first call 707 → 418 ms. Parity: 6934
+  lines of output identical, tool counts of 368 finished agents identical (2ebffa076).
+
+### Do not allocate for the worst case on every call
+- `Buffer.alloc(4 MB)` per scan, zeroed, for files that needed a few hundred new bytes, was the top
+  self-time entry. Size the buffer to what is left to read and use `allocUnsafe` when every used byte is
+  read first.
+
+### Serial servers turn one slow door into many slow calls
+- The hub server answers calls one after another: `hub procs --json` took 350 ms from a shell but
+  1.28 s on average through the server, waiting behind `hub agents`. Fix the slowest door first, then
+  re-rank; the queue time of every other call falls with it.
+- Every call the app runs as a process pays Bun startup and module loading (~240 ms CPU); a frequent
+  command deserves a server door (src/hub/server/doors) and a server-first call site.
+
+### Wall-time timers lie under concurrency and load
+- `measureAsync` around one task inside a `Promise.all` measures its wall time, including the other
+  tasks' turns on the event loop. `discover.walk` read 3.4 s in the usage poll daemon while a warm walk
+  costs 107 ms (CPU-profile it alone). Rank by `process.cpuUsage()` deltas or a `--cpu-prof` run.
+
 ### Polling watchers
 - A safety refresh every 5 s that runs a full snapshot (~1 s CPU) costs ~15% CPU on its own (widget
   watcher, 2026-10-08). Refresh on the event; keep the safety interval long and cheap.
