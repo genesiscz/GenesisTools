@@ -60,6 +60,59 @@ final class FlowShortcutTests: XCTestCase {
         XCTAssertEqual(FlowConfig().migratingLegacyChord(), FlowConfig())
     }
 
+    func testOlderConfigurationKeepsChoicesWhenNewKeysAreMissing() throws {
+        let data = Data(#"{"enabled":false,"keyCode":49,"modifiers":256,"localeIdentifier":"en-GB"}"#.utf8)
+        let config = try JSONDecoder().decode(FlowConfig.self, from: data)
+        XCTAssertFalse(config.enabled)
+        XCTAssertEqual(config.keyCode, 49)
+        XCTAssertEqual(config.modifiers, 256)
+        XCTAssertEqual(config.localeIdentifier, "en-GB")
+        XCTAssertEqual(config.preRoll, FlowConfig().preRoll)
+        XCTAssertEqual(config.historyLimit, FlowConfig().historyLimit)
+        XCTAssertEqual(try JSONDecoder().decode(FlowConfig.self, from: JSONEncoder().encode(config)), config)
+        XCTAssertThrowsError(try JSONDecoder().decode(FlowConfig.self, from: Data(#"{"enabled":"invalid"}"#.utf8)))
+    }
+
+    func testOlderTransformsAndCountersReceiveOnlyMissingDefaults() throws {
+        let transform = try JSONDecoder().decode(FlowTransform.self, from: Data(#"{"name":"Fixture rewrite","prompt":"Keep the meaning","enabled":false}"#.utf8))
+        XCTAssertEqual(transform.name, "Fixture rewrite")
+        XCTAssertFalse(transform.enabled)
+        XCTAssertFalse(transform.isDefault)
+        XCTAssertTrue(transform.appBundleIds.isEmpty)
+        let stats = try JSONDecoder().decode(FlowStats.self, from: Data(#"{"totalWords":42}"#.utf8))
+        XCTAssertEqual(stats.totalWords, 42)
+        XCTAssertEqual(stats.sessionCount, 0)
+        let rule = try JSONDecoder().decode(FlowDictionaryRule.self, from: Data(#"{"from":"spoken","to":"Written"}"#.utf8))
+        XCTAssertTrue(rule.enabled)
+        XCTAssertFalse(rule.learned)
+        let snippet = try JSONDecoder().decode(FlowSnippet.self, from: Data(#"{"trigger":"insert fixture","body":"Fixture text"}"#.utf8))
+        XCTAssertTrue(snippet.enabled)
+    }
+
+    func testOlderEntriesAndSuggestionsKeepRequiredContent() throws {
+        let entry = try JSONDecoder().decode(FlowEntry.self, from: Data(#"{"text":"Fixture words","rawText":"fixture words","durationSeconds":1.5,"injected":false,"wordCount":2}"#.utf8))
+        XCTAssertEqual(entry.text, "Fixture words")
+        XCTAssertEqual(entry.rawText, "fixture words")
+        XCTAssertEqual(entry.wordCount, 2)
+        let suggestion = try JSONDecoder().decode(FlowSuggestion.self, from: Data(#"{"heard":"fixture","suggested":"Fixture","reason":"technicalTerm","occurrences":3}"#.utf8))
+        XCTAssertEqual(suggestion.suggested, "Fixture")
+        XCTAssertEqual(suggestion.occurrences, 3)
+    }
+
+    func testLoadingAnOlderConfigDoesNotQuarantineOrRewriteIt() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-config-version-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("config.json")
+        let data = Data(#"{"enabled":false,"localeIdentifier":"en-GB"}"#.utf8)
+        try data.write(to: file)
+        let config = FlowStore(directory: root).loadConfig()
+        XCTAssertFalse(config.enabled)
+        XCTAssertEqual(config.localeIdentifier, "en-GB")
+        XCTAssertEqual(try Data(contentsOf: file), data)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), ["config.json"])
+    }
+
     func testMenuTitlesCarryTheChordOrSayItIsUnavailable() {
         XCTAssertEqual(GlobalHotkeyStatus.registered(chord: "⌃⌥⌘D").menuTitle("Start dictation"), "Start dictation  ⌃⌥⌘D")
         XCTAssertEqual(
