@@ -128,7 +128,7 @@ enum LinkRelay {
     static func run() -> Never {
         RelayJournal.role = "relay"
         guard claim() else {
-            note("another relay holds the lock, exiting")
+            note("relay lock could not be claimed, exiting")
             exit(0)
         }
         if let previous = RelayJournal.previousEnd(
@@ -200,12 +200,26 @@ enum LinkRelay {
         return false
     }
 
-    private static func claim() -> Bool {
-        try? FileManager.default.createDirectory(at: lockFile.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let descriptor = open(lockFile.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
-        guard descriptor >= 0 else { return true }
+    /// A descriptor is returned only after the file opened and this process owns its exclusive lock.
+    static func claimDescriptor(_ file: URL) -> Int32? {
+        let descriptor = open(file.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
+        guard descriptor >= 0 else { return nil }
         guard acquireLock(descriptor) else {
             close(descriptor)
+            return nil
+        }
+        return descriptor
+    }
+
+    private static func claim() -> Bool {
+        do {
+            try FileManager.default.createDirectory(at: lockFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        } catch {
+            note("lock directory could not be created: \(error)")
+            return false
+        }
+        guard let descriptor = claimDescriptor(lockFile) else {
+            note("lock file could not be claimed (errno \(errno))")
             return false
         }
         lockDescriptor = descriptor

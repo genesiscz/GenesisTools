@@ -63,6 +63,18 @@ final class LinkRelayTests: XCTestCase {
         XCTAssertFalse(LinkRelay.acquireLock(second))
     }
 
+    func testAClaimCannotSucceedWithoutAnOpenedAndExclusiveDescriptor() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("relay-claim-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        XCTAssertNil(LinkRelay.claimDescriptor(directory), "a directory cannot open as a writable lock file")
+        let file = directory.appendingPathComponent("relay.lock")
+        let descriptor = try XCTUnwrap(LinkRelay.claimDescriptor(file))
+        defer { close(descriptor) }
+        XCTAssertNil(LinkRelay.claimDescriptor(file), "the normal first claim excludes a second relay")
+        XCTAssertNil(LinkRelay.claimDescriptor(directory.appendingPathComponent("missing/relay.lock")))
+    }
+
     func testTheStateFileRoundTrips() throws {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("relay-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: file) }
