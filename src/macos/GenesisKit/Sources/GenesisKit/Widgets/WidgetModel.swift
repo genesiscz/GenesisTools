@@ -70,6 +70,8 @@ public final class WidgetModel: ObservableObject {
     private var transcriptTask: Task<Void, Never>?
     private var speechTask: Task<Void, Never>?
     private var mutationTask: Task<Void, Never>?
+    private var preferenceTask: Task<Void, Never>?
+    private var pendingPreferences: [String: WidgetJSON] = [:]
     private var draftTasks: [String: Task<Void, Never>] = [:]
     private var dirtyDrafts: Set<String> = []
     private var submittedAssets: Set<String> = []
@@ -212,6 +214,8 @@ public final class WidgetModel: ObservableObject {
     }
 
     public func stop() {
+        preferenceTask?.cancel()
+        flushPreferences()
         settingsTask?.cancel()
         followedTranscript = nil
         stopping = true
@@ -238,7 +242,8 @@ public final class WidgetModel: ObservableObject {
     private func receive(_ lines: [String]) {
         for line in lines {
             do {
-                let next = try JSONDecoder().decode(WidgetSnapshot.self, from: Data(line.utf8))
+                var next = try JSONDecoder().decode(WidgetSnapshot.self, from: Data(line.utf8))
+                next.state.preferences = try mergingPreferences(pendingPreferences, into: next.state.preferences)
                 snapshot = next
                 if !draggingSide, let position = draggedSidePosition,
                     abs((next.state.preferences.sidePosition ?? 0.5) - position) < 0.0001
@@ -279,6 +284,7 @@ public final class WidgetModel: ObservableObject {
                     defaults.removeObject(forKey: "widget.recovered-draft." + selectedKey)
                     setText(recovered)
                 }
+                resumeTranscript()
                 scheduleQuietReduction()
                 presentationChanged?()
             } catch { report(error) }
@@ -427,9 +433,56 @@ public final class WidgetModel: ObservableObject {
         scheduleQuietReduction()
     }
 
+    private func mergingPreferences(
+        _ patch: [String: WidgetJSON], into preferences: WidgetPreferences
+    ) throws -> WidgetPreferences {
+        guard case .object(var fields) = try WidgetJSON.value(preferences) else { return preferences }
+        fields.merge(patch) { _, new in new }
+        return try JSONDecoder().decode(WidgetPreferences.self, from: JSONEncoder().encode(WidgetJSON.object(fields)))
+    }
+
+    public func updatePreferences(_ patch: [String: WidgetJSON]) {
+        pendingPreferences.merge(patch) { _, new in new }
+        if var current = snapshot {
+            do {
+                current.state.preferences = try mergingPreferences(patch, into: current.state.preferences)
+                snapshot = current
+                presentationChanged?()
+            } catch { report(error) }
+        }
+        preferenceTask?.cancel()
+        preferenceTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(180)) } catch { return }
+            self?.flushPreferences()
+        }
+    }
+
+    private func flushPreferences() {
+        let patch = pendingPreferences
+        guard !patch.isEmpty else { return }
+        func acknowledge() {
+            for (key, value) in patch where pendingPreferences[key] == value {
+                pendingPreferences.removeValue(forKey: key)
+            }
+        }
+        action(
+            ["action": "preferences", "patch": .object(patch)],
+            failed: { [weak self] in
+                acknowledge()
+                self?.refreshSettings()
+            },
+            completed: { acknowledge() })
+    }
+
     public func action(
         _ value: WidgetJSON, failed: (() -> Void)? = nil, completed: (() -> Void)? = nil
     ) {
+        if completed == nil, failed == nil, case .object(let request) = value,
+            request["action"] == .string("preferences"), case .object(let patch) = request["patch"]
+        {
+            updatePreferences(patch)
+            return
+        }
         let previous = mutationTask
         mutationTask = Task { [weak self] in
             await previous?.value
@@ -667,6 +720,7 @@ public final class WidgetModel: ObservableObject {
             "--input", "mic", "--json", "--stop-on-stdin",
         ]
         if let account = prefs.voiceAccount, !account.isEmpty { args += ["--account", account] }
+        if let model = prefs.voiceModel, !model.isEmpty { args += ["--model", model] }
         do {
             voice = try ToolsLineStream(
                 bridge: bridge, subcommand: "voice", args: args,

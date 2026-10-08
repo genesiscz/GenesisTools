@@ -107,7 +107,7 @@ if firstArgument == "--widget" {
 }
 
 if firstArgument == "--clicky" {
-    runClicky()
+    runClicky(Array(arguments.dropFirst()))
 }
 
 // GenesisTools --review [--repo <path>] [--style split|unified] [--snapshot <png>]: the diff review

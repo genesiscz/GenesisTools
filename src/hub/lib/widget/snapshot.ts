@@ -282,7 +282,8 @@ export async function widgetSnapshot({
         }
         const hiddenByFilter =
             (state.preferences.projects.length > 0 && !state.preferences.projects.includes(target.cwd)) ||
-            (state.preferences.sessions.length > 0 && !state.preferences.sessions.includes(key));
+            (state.preferences.sessions.length > 0 && !state.preferences.sessions.includes(key)) ||
+            (state.preferences.providers.length > 0 && !state.preferences.providers.includes(target.provider));
         const pinned = !state.preferences.excludedKeys.includes(key);
         const entry: WidgetSession = {
             key,

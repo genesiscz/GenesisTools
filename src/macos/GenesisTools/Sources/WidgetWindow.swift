@@ -38,6 +38,7 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
                 }
                 WidgetLaunch.start(args)
             })
+        coordinator?.settingsPresenter = { ClickyLaunch.openSettings(pageID: $0) }
         coordinator?.model.openDestination = { session, mode, file in
             var args = [
                 "--hub", "--mode", "sessions", "--session", session.target.sessionId,
@@ -49,7 +50,15 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
         }
         observer = DistributedNotificationCenter.default().addObserver(
             forName: widgetSettingsNotification, object: nil, queue: .main
-        ) { [weak self] _ in MainActor.assumeIsolated { self?.coordinator?.showSettings() } }
+        ) { [weak self] notification in
+            MainActor.assumeIsolated {
+                if let key = notification.userInfo?["sessionKey"] as? String {
+                    self?.openSession(key)
+                } else {
+                    self?.coordinator?.showSettings()
+                }
+            }
+        }
         let menu = NSMenu()
         let root = NSMenuItem()
         let application = NSMenu()
@@ -62,7 +71,14 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(root)
         NSApp.mainMenu = menu
         coordinator?.start(showSettings: args.contains("--settings"))
+        if let key = value("--session-key") { openSession(key) }
     }
+    private func openSession(_ key: String) {
+        guard let model = coordinator?.model else { return }
+        model.select(key)
+        model.openModule("agents", on: WidgetSurfaceID(edge: model.placement == "top" ? .top : model.side))
+    }
+
     @objc private func showWidgetSettings() { coordinator?.showSettings() }
     @objc private func showHub() { WidgetLaunch.start(["--hub", "--mode", "agents"]) }
 
@@ -92,7 +108,12 @@ func runAgentWidget(_ args: [String]) -> Never {
         }
         guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
             close(descriptor)
-            DistributedNotificationCenter.default().post(name: widgetSettingsNotification, object: nil)
+            let key = args.firstIndex(of: "--session-key").flatMap { index in
+                args.indices.contains(index + 1) ? args[index + 1] : nil
+            }
+            DistributedNotificationCenter.default().postNotificationName(
+                widgetSettingsNotification, object: nil, userInfo: key.map { ["sessionKey": $0] },
+                deliverImmediately: true)
             exit(0)
         }
         let app = NSApplication.shared

@@ -15,11 +15,14 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     private var keyboard: Any?
     private var screenObserver: NSObjectProtocol?
     private var lastSide: EdgePanelPlacement?
+    private var lastDisplayID: String?
+    public var settingsPresenter: ((String) -> Void)?
     private var topHeaderHeight: CGFloat = 36
     private var topCompactWidth: CGFloat = 360
     private var availableCardHeight: CGFloat = 660
     private var screenID: String {
-        UserDefaults.standard.string(forKey: "widget.display") ?? ""
+        model.snapshot?.state.preferences.display
+            ?? UserDefaults.standard.string(forKey: "widget.display") ?? ""
     }
 
     public init(
@@ -117,6 +120,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         let requested = NSScreen.screens.first { Self.id($0) == screenID }
         guard let screen = requested ?? NSScreen.main ?? NSScreen.screens.first else { return }
         display = screen
+        lastDisplayID = screenID
         let cutout: CGFloat
         if screen.safeAreaInsets.top > 0, let left = screen.auxiliaryTopLeftArea,
             let right = screen.auxiliaryTopRightArea
@@ -165,7 +169,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         }
         var layout = model.layout
         layout.sidePosition = 0.5
-        if lastSide != model.side || lastLayout != layout {
+        if lastSide != model.side || lastLayout != layout || lastDisplayID != screenID {
             rebuildPanels()
             return
         }
@@ -223,6 +227,10 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
 
     public func showSettings() {
         model.collapse()
+        if let settingsPresenter {
+            settingsPresenter("widgets.general")
+            return
+        }
         if settings == nil {
             let view = WidgetSettingsView(
                 model: model, display: screenID,

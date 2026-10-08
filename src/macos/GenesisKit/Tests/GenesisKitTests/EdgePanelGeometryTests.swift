@@ -210,6 +210,67 @@ final class WidgetInteractionTests: XCTestCase {
     }
 
     @MainActor
+    func testSliderBurstWritesOneMergedPreferenceAction() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "widget-preferences-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            do { try FileManager.default.removeItem(at: directory) } catch { XCTFail("Fixture cleanup: \(error)") }
+        }
+        let snapshot = """
+            {"version":1,"state":{"version":1,"revision":0,"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":""},"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}
+            """
+        try snapshot.write(to: directory.appendingPathComponent("snapshot.json"), atomically: true, encoding: .utf8)
+        let script = directory.appendingPathComponent("tools")
+        let actions = directory.appendingPathComponent("actions.jsonl")
+        try """
+        #!/bin/sh
+        case "$*" in
+          *snapshot*) cat '\(directory.path)/snapshot.json'; exit 0 ;;
+        esac
+        while [ "$#" -gt 0 ]; do
+          if [ "$1" = "--input" ]; then
+            shift
+            cat "$1" >> '\(actions.path)'
+            printf '\\n' >> '\(actions.path)'
+          fi
+          shift
+        done
+        printf '{}'
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = WidgetModel(
+            binaryPath: script.path, stateRoot: directory.path, defaults: defaults,
+            appearance: NativeSettingsAppearance(
+                defaults: defaults, notificationNamespace: domain, observeExternalChanges: false))
+        defer { value.stop() }
+        value.startSettings()
+        let deadline = ContinuousClock.now + .seconds(5)
+        while value.snapshot == nil && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertNotNil(value.snapshot)
+        for step in 0...100 { value.updatePreferences(["sidePosition": .number(Double(step) / 100)]) }
+        value.updatePreferences(["side": .string("left")])
+        XCTAssertEqual(value.snapshot?.state.preferences.sidePosition, 1)
+        XCTAssertEqual(value.snapshot?.state.preferences.side, "left")
+        while !FileManager.default.fileExists(atPath: actions.path) && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let rows = try String(contentsOf: actions, encoding: .utf8).split(separator: "\n")
+        XCTAssertEqual(rows.count, 1)
+        let request = try JSONDecoder().decode(WidgetJSON.self, from: Data(rows[0].utf8))
+        guard case .object(let fields) = request, case .object(let patch) = fields["patch"] else {
+            return XCTFail("Expected one preference patch")
+        }
+        XCTAssertEqual(patch["sidePosition"], .number(1))
+        XCTAssertEqual(patch["side"], .string("left"))
+    }
+
+    @MainActor
     func testHoverStaysPassiveAndAnExplicitClickCancelsPendingHover() async throws {
         let domain = "widget-tests." + UUID().uuidString
         let defaults = UserDefaults(suiteName: domain)!

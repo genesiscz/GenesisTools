@@ -47,6 +47,10 @@ struct WidgetHostView: View {
         .overlay(shape.stroke(.white.opacity(0.12), lineWidth: 0.7))
         .foregroundStyle(.white)
         .preferredColorScheme(.dark)
+        .environment(
+            \.nativeSettingsTheme,
+            model.snapshot?.state.preferences.glassEffect == false ? .solid : model.appearance.theme
+        )
         .nativeSettingsAppearance(model.appearance)
         .widgetAccessibility(reduceMotion: model.reduceMotion, reduceTransparency: model.reduceTransparency)
         .onHover { model.hover(surface, inside: $0) }

@@ -230,6 +230,8 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var sidePosition: Double?
     public var hoverPreviews: Bool?
     public var glassEffect: Bool?
+    public var display: String?
+    public var providers: [String]?
 
     public var layout: WidgetLayoutConfiguration {
         WidgetLayoutConfiguration(
@@ -241,6 +243,7 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var quietSeconds: Int
     public var voiceProvider: String
     public var voiceAccount: String?
+    public var voiceModel: String?
     public var voiceLanguage: String
 }
 public struct WidgetOutgoing: Codable, Identifiable, Equatable, Sendable {

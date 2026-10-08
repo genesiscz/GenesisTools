@@ -428,6 +428,16 @@ describe("widget source and delivery contracts", () => {
         expect(queried).toEqual([target.sessionId, target.sessionId]);
         expect(snapshot.changes).toBeNull();
         expect(snapshot.errors).toEqual([]);
+        await mutateWidgetState(directory, (state) => {
+            state.preferences.projects = [];
+            state.preferences.providers = ["claude"];
+        });
+        const providerHidden = await widgetSnapshot({ root: directory, sources });
+        expect(providerHidden.sessions[0]).toMatchObject({ pinned: true, hiddenByFilter: true, visible: false });
+        await mutateWidgetState(directory, (state) => {
+            state.preferences.providers = ["codex"];
+        });
+        expect((await widgetSnapshot({ root: directory, sources })).sessions[0]?.visible).toBe(true);
     });
 });
 

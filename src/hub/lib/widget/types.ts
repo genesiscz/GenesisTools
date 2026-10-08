@@ -48,9 +48,12 @@ export const widgetPreferencesSchema = z.object({
     sidePosition: z.number().min(0).max(1).default(0.5),
     hoverPreviews: z.boolean().default(true),
     glassEffect: z.boolean().default(true),
+    display: z.string().default(""),
+    providers: z.array(z.enum(["claude", "codex", "grok", "unknown"])).default([]),
     quietSeconds: z.number().int().min(3).max(300).default(15),
     voiceProvider: z.string().default("xai"),
     voiceAccount: z.string().nullable().optional(),
+    voiceModel: z.string().nullable().optional(),
     voiceLanguage: z.string().default(""),
 });
 
