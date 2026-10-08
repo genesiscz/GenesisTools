@@ -49,8 +49,10 @@ export async function callHubServer({
         socket.once("connect", () => {
             socket.write(`${SafeJSON.stringify({ id: 1, op: "call", argv, timeoutMs }, { strict: true })}\n`);
         });
+        // Decode across chunks: a multi-byte character split between two chunks must not become U+FFFD.
+        socket.setEncoding("utf8");
         socket.on("data", (chunk) => {
-            pending += chunk.toString("utf8");
+            pending += String(chunk);
             const newline = pending.indexOf("\n");
             if (newline === -1) {
                 return;

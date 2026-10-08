@@ -11,7 +11,7 @@ import { levenshteinDistance } from "@genesiscz/utils/fuzzy-match";
 import { logger } from "@genesiscz/utils/logger";
 import { shellCommandLine, shellQuote } from "@genesiscz/utils/shell/quote";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
-import { createTmuxSession } from "@genesiscz/utils/tmux/sessions";
+import { createTmuxSession, killTmuxSession } from "@genesiscz/utils/tmux/sessions";
 import { buildCmuxCommand } from "./launchers/claudeLauncher";
 
 const { log } = logger.scoped("cmux-session");
@@ -54,6 +54,7 @@ export interface SessionNewIO {
     shell(): string;
     createTmuxShell(session: string, cwd: string, shell: string): Promise<void>;
     sendTmuxKeys(session: string, command: string): Promise<void>;
+    killTmuxSession(session: string): Promise<void>;
     repoFs: RepoFs;
     nonce(): string;
 }
@@ -301,21 +302,36 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
     }
 
     const name = input.name?.trim() || undefined;
-    const created = await io.runJSON<WorkspaceCreated>(
-        buildWorkspaceCreateArgs({
-            window: windowRef,
-            cwd,
-            command,
-            focus: input.focus === true,
-            name,
-        })
-    );
-    const workspace = created.workspace_ref?.trim();
-    const surface = created.surface_ref?.trim();
-    const window = created.window_ref?.trim() || windowRef;
+    let workspace: string;
+    let surface: string;
+    let window: string;
 
-    if (!workspace || !surface) {
-        throw new Error("cmux created a workspace but returned no workspace or surface ref");
+    try {
+        const created = await io.runJSON<WorkspaceCreated>(
+            buildWorkspaceCreateArgs({
+                window: windowRef,
+                cwd,
+                command,
+                focus: input.focus === true,
+                name,
+            })
+        );
+        workspace = created.workspace_ref?.trim() ?? "";
+        surface = created.surface_ref?.trim() ?? "";
+        window = created.window_ref?.trim() || windowRef;
+
+        if (!workspace || !surface) {
+            throw new Error("cmux created a workspace but returned no workspace or surface ref");
+        }
+    } catch (error) {
+        // The detached tmux session already runs Claude on the prompt; nobody would ever attach to it.
+        if (tmuxSession) {
+            await io.killTmuxSession(tmuxSession).catch((killError: unknown) => {
+                log.warn({ error: killError, tmuxSession }, "could not kill the tmux session after cmux failed");
+            });
+        }
+
+        throw error;
     }
 
     if (name) {
@@ -405,6 +421,7 @@ export function liveSessionIO(): SessionNewIO {
             await Bun.sleep(TMUX_ENTER_DELAY_MS);
             await spawnTmux(tmuxEnterArgv(tmux, session));
         },
+        killTmuxSession: (session) => killTmuxSession(session),
         repoFs: liveRepoFs(),
         nonce: () => randomBytes(3).toString("hex"),
     };

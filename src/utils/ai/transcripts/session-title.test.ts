@@ -73,4 +73,20 @@ describe("findSessionsByTitle", () => {
             "019c0000-0000-7000-8000-000000000009"
         );
     });
+
+    it("reads a renamed Codex thread by its last name only, once", () => {
+        const index = join(mkdtempSync(join(tmpdir(), "titles-codex-")), "session_index.jsonl");
+        const id = "019c0000-0000-7000-8000-000000000010";
+        writeFileSync(
+            index,
+            [
+                `{"id":"${id}","thread_name":"old name","updated_at":"2026-03-07T22:43:36Z"}`,
+                `{"id":"${id}","thread_name":"new name","updated_at":"2026-03-08T22:43:36Z"}`,
+                `{"id":"${id}","thread_name":"new name","updated_at":"2026-03-09T22:43:36Z"}`,
+            ].join("\n")
+        );
+
+        expect(findSessionsByTitle("old name", { provider: "codex", codexIndexPath: index })).toEqual([]);
+        expect(findSessionsByTitle("new name", { provider: "codex", codexIndexPath: index })).toHaveLength(1);
+    });
 });

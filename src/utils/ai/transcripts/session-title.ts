@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
+import { scanFileMatches } from "./file-scan";
 import type { TurnProvider } from "./turn-state";
 
 export interface TitledSession {
@@ -57,7 +58,8 @@ function listDir(path: string): string[] {
 function mtimeOf(path: string): number {
     try {
         return statSync(path).mtimeMs;
-    } catch {
+    } catch (err) {
+        logger.debug({ err, path }, "[session-title] could not stat a transcript");
         return 0;
     }
 }
@@ -78,9 +80,23 @@ export function lastClaudeTitle(text: string): string | null {
         const decoded = SafeJSON.parse(`"${last}"`, { strict: true });
 
         return typeof decoded === "string" ? decoded : last;
-    } catch {
+    } catch (err) {
+        logger.debug({ err }, "[session-title] title escape unreadable; using it raw");
         return last;
     }
+}
+
+/** Bytes kept after each `custom-title` match: a title longer than this is not read. */
+const TITLE_WINDOW = 4096;
+
+/** The last `/rename` title of a transcript, streamed: a 200 MB transcript is never one string. */
+function lastClaudeTitleIn(path: string): string | null {
+    const found: { last: Buffer | null } = { last: null };
+    scanFileMatches(path, '"type":"custom-title","customTitle":"', TITLE_WINDOW, (slice) => {
+        found.last = Buffer.from(slice);
+    });
+
+    return found.last === null ? null : lastClaudeTitle(found.last.toString("utf8"));
 }
 
 function claudeSessions({
@@ -123,7 +139,7 @@ function claudeSessions({
         }
 
         try {
-            const title = lastClaudeTitle(readFileSync(file.path, "utf8"));
+            const title = lastClaudeTitleIn(file.path);
 
             if (title) {
                 found.push({
@@ -184,14 +200,16 @@ function codexSessions(indexPath: string): TitledSession[] {
         return [];
     }
 
-    const found: TitledSession[] = [];
+    // Codex appends a line per rename, in write order: the last line of an id is its current title.
+    const found = new Map<string, TitledSession>();
 
     for (const line of readFileSync(indexPath, "utf8").split("\n")) {
         try {
             const record: unknown = line.trim() ? SafeJSON.parse(line, { strict: true }) : null;
 
             if (isRecord(record) && typeof record.id === "string" && typeof record.thread_name === "string") {
-                found.push({
+                found.delete(record.id);
+                found.set(record.id, {
                     sessionId: record.id,
                     title: record.thread_name,
                     mtime: Date.parse(String(record.updated_at)) || 0,
@@ -203,7 +221,7 @@ function codexSessions(indexPath: string): TitledSession[] {
         }
     }
 
-    return found;
+    return [...found.values()];
 }
 
 /**

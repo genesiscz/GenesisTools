@@ -149,8 +149,9 @@ function advance(path: string, agentId: string | null, fold: FileFold | null): F
             try {
                 SafeJSON.parse(tail, { strict: true });
                 return null;
-            } catch {
+            } catch (error) {
                 // A partial line, as a full parse sees it too: skipped.
+                log.debug({ error }, "partial tail line skipped");
             }
         }
 

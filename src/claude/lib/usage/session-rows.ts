@@ -298,7 +298,10 @@ const TAIL_CACHE_LIMIT = 2000;
 const tailCache = new Map<string, { size: number; mtimeMs: number; ino: number; usage: TailUsage }>();
 
 async function extractTailUsage(filePath: string): Promise<TailUsage> {
-    const status = await stat(filePath).catch(() => null);
+    const status = await stat(filePath).catch((err: unknown) => {
+        logger.debug({ err, filePath }, "session tail stat failed; reading without the cache");
+        return null;
+    });
     const cached = tailCache.get(filePath);
     if (
         status &&

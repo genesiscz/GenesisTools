@@ -899,6 +899,9 @@ final class ReviewModel: ObservableObject {
     func revealDraft(_ id: String) {
         guard let draft = proposal?.drafts.first(where: { $0.id == id }) else { return }
         reveal(path: draft.path)
+        // A draft whose file has no change in this scope never gets a card; a pending mark for it would
+        // wait for ever and block the first-draft jump.
+        guard draftCards.contains(where: { $0.id == "draft:\(id)" }) else { return }
         pendingThreadCard = "draft:\(id)"
         focusPendingThread()
     }
@@ -910,8 +913,12 @@ final class ReviewModel: ObservableObject {
             notice = "No undecided agent draft sits on this diff."
             return
         }
-        let index = focusedCard.flatMap { id in open.firstIndex { $0.id == id } }
-        let next = index.map { open[($0 + 1) % open.count] } ?? open[0]
+        // Position in every draft, not only the open ones: a just-decided focused card is no longer open.
+        let cards = draftCards
+        let start = focusedCard.flatMap { id in cards.firstIndex { $0.id == id } }
+        let next = start.flatMap { start in
+            (1...cards.count).lazy.map { cards[(start + $0) % cards.count] }.first { $0.state == "proposed" }
+        } ?? open[0]
         revealDraft(String(next.id.dropFirst("draft:".count)))
     }
 

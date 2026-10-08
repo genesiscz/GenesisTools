@@ -190,14 +190,16 @@ async function main(): Promise<void> {
                     }
                 }
 
-                const answer = await callHubServer({ argv, timeoutMs: Math.max(1000, Math.min(20_000, budgetMs / 2)) });
+                // Short: a stalled server must not eat the budget the local walk needs (a cold walk is ~2 s CPU).
+                const answer = await callHubServer({ argv, timeoutMs: Math.max(1000, Math.min(5_000, budgetMs / 4)) });
                 if (answer?.exit !== 0) {
                     return null;
                 }
 
                 try {
-                    const parsed = SafeJSON.parse(answer.stdout, { strict: true }) as { rows?: AgentSessionRow[] };
-                    return Array.isArray(parsed.rows) ? parsed.rows : null;
+                    const parsed: unknown = SafeJSON.parse(answer.stdout, { strict: true });
+                    const rows = typeof parsed === "object" && parsed !== null && "rows" in parsed ? parsed.rows : null;
+                    return Array.isArray(rows) ? rows : null;
                 } catch (err) {
                     logger.debug({ err }, "[ai-usage] hub server rows unreadable; computing locally");
                     return null;

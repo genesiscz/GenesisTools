@@ -3297,6 +3297,10 @@ window.genesisDiff = {
 
         if (id !== null && (!card || !viewer.getItem(card.fileId))) {
             pendingFocus = { id, reply };
+            // The card that had the mark loses it now; the deferred focus starts from `previous === id`
+            // and would never redraw it, so two cards would show the bar.
+            const unmarked = comments.filter((comment) => comment.id === previous && comment.id !== id);
+            refreshAnnotations(unmarked.map((comment) => comment.fileId));
             post({ type: "log", message: `focusThread ${id} waits for its file` });
             return;
         }

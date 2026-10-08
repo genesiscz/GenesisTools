@@ -48,9 +48,14 @@ function endedTurn(snapshot: TurnSnapshot): boolean {
     return snapshot.state === "AWAITING-INPUT" || snapshot.state === "FINISHED";
 }
 
+/** A transcript that was read and then stays unreadable this long (Codex moved it to `archived_sessions`,
+ *  the file was deleted) ends the wait as `stalled`: no write can ever wake it again. */
+export const TRANSCRIPT_GONE_MS = 30_000;
+
 export class TurnJudge {
     readonly questions: string[] = [];
     private snapshot: TurnSnapshot | null = null;
+    private missingSince: number | null = null;
 
     constructor(
         private readonly options: { next: boolean; baselineEnd: number | null; startedAt: number; now: () => number }
@@ -58,11 +63,19 @@ export class TurnJudge {
 
     /** The outcome this snapshot settles, or null to keep waiting. */
     step(snapshot: TurnSnapshot | null): TurnWaitResult | null {
-        this.snapshot = snapshot;
-
         if (!snapshot) {
-            return null;
+            if (this.snapshot === null) {
+                return null;
+            }
+
+            // Keep the last snapshot read, so the report still names the state the session was in.
+            this.missingSince ??= this.options.now();
+
+            return this.options.now() - this.missingSince >= TRANSCRIPT_GONE_MS ? this.result("stalled") : null;
         }
+
+        this.snapshot = snapshot;
+        this.missingSince = null;
 
         const ended = endedTurn(snapshot);
         const isNew = !this.options.next || (snapshot.lastEventAt ?? 0) > (this.options.baselineEnd ?? 0);

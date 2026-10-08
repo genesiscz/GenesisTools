@@ -79,7 +79,9 @@ async function headerIdentity(
         logger.debug({ err, path }, "[codex-discovery] header identity unreadable; reading the header in full");
         return null;
     } finally {
-        await handle?.close().catch(() => undefined);
+        await handle?.close().catch((err: unknown) => {
+            logger.debug({ err, path }, "[codex-discovery] header handle close failed");
+        });
     }
 }
 

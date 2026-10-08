@@ -506,7 +506,8 @@ function runOptimizeInner({
                     sha256Before = sha256(replace);
                     // Read just before the swap, so a family rewritten copy by copy
                     // credits its shared blocks to the copy that held them last.
-                    privateBefore = getPrivateSize(replace);
+                    // Another hard link keeps the inode, so the swap frees nothing; the last link is credited.
+                    privateBefore = st.nlink > 1 ? 0 : getPrivateSize(replace);
                 } catch (err) {
                     log.warn({ err, replace }, "pre-state capture failed");
                     recordOp({

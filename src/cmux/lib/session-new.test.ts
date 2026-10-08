@@ -55,6 +55,9 @@ function harness(overrides: Partial<SessionNewIO> = {}): { io: SessionNewIO; cal
         sendTmuxKeys: async (session, command) => {
             calls.push(["tmux-keys", session, command]);
         },
+        killTmuxSession: async (session) => {
+            calls.push(["tmux-kill", session]);
+        },
         repoFs: repoFs(),
         nonce: () => "ab12cd",
         ...overrides,
@@ -226,6 +229,34 @@ test("--via-tmux starts a login shell, send-keys the claude line, and attaches",
     expect(calls[2]).toContain("tmux attach -t 'cmux-demo-ab12cd'");
     expect(calls[2]).not.toContain(CLAUDE);
     expect(calls.some((call) => call.includes("tools tmux create"))).toBe(false);
+});
+
+test("--via-tmux kills its tmux session when the cmux workspace is not created", async () => {
+    const { io, calls } = harness({
+        runJSON: async <T>(args: string[]): Promise<T> => {
+            calls.push(args);
+            throw new Error("cmux is busy");
+        },
+    });
+
+    await expect(
+        startDevSession(
+            { repo: "demo", account: "work", prompt: "fix it", viaTmux: true, home: HOME, cwd: "/elsewhere" },
+            io
+        )
+    ).rejects.toThrow("cmux is busy");
+    expect(calls.at(-1)).toEqual(["tmux-kill", "cmux-demo-ab12cd"]);
+});
+
+test("a workspace created without --via-tmux kills nothing when cmux fails", async () => {
+    const { io, calls } = harness({
+        runJSON: async <T>(): Promise<T> => ({ window_ref: "window:1" }) as T,
+    });
+
+    await expect(
+        startDevSession({ repo: "demo", account: "work", prompt: "fix it", home: HOME, cwd: "/elsewhere" }, io)
+    ).rejects.toThrow("no workspace or surface ref");
+    expect(calls.some((call) => call[0] === "tmux-kill")).toBe(false);
 });
 
 test("--focus true is forwarded, and a workspace with no surface is an error", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { randomBytes } from "node:crypto";
-import { lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { linkSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { runOptimize } from "@app/macos/lib/clones/audit";
@@ -133,6 +133,41 @@ describe.skipIf(skip.unlessMac)("measureSetFreeable on real APFS clones", () => 
             const report = runOptimize({ roots: [dir], sets: [set], planCacheHit: false });
             expect(report.totals.cloned).toBe(2);
             expect(report.totals.bytesReclaimed).toBe(0);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe.skipIf(skip.unlessMac)("hard links", () => {
+    it("a hard link of the keep frees nothing, and two links of one copy count once", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-cl-free-"));
+        try {
+            const data = randomBytes(SIZE);
+            const keep = join(dir, "a", "lib.a");
+            const keepLink = join(dir, "b", "lib.a");
+            const copy = join(dir, "c", "lib.a");
+            const copyLink = join(dir, "d", "lib.a");
+            put(keep, data);
+            put(copy, data);
+            mkdirSync(dirname(keepLink), { recursive: true });
+            mkdirSync(dirname(copyLink), { recursive: true });
+            linkSync(keep, keepLink);
+            linkSync(copy, copyLink);
+
+            const linkedToKeep = measureSetFreeable({
+                set: fileSet(keep, [keep, keepLink]),
+                fixedRoots: [],
+                storeRoots: [],
+            });
+            expect(linkedToKeep.proven).toBe(0);
+
+            const twoLinks = measureSetFreeable({
+                set: fileSet(keep, [keep, copy, copyLink]),
+                fixedRoots: [],
+                storeRoots: [],
+            });
+            expect(twoLinks.proven).toBe(alloc(copy));
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }

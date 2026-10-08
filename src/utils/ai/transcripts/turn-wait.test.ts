@@ -6,7 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import type { ActivityState } from "./activity";
 import type { TurnSnapshot } from "./turn-state";
 import { readTurnState } from "./turn-state";
-import { looksLikeQuestion, waitForTurn, watchTurn } from "./turn-wait";
+import { looksLikeQuestion, TRANSCRIPT_GONE_MS, waitForTurn, watchTurn } from "./turn-wait";
 
 function snap(state: ActivityState, lastEventAt: number | null): TurnSnapshot {
     return {
@@ -83,6 +83,22 @@ describe("waitForTurn", () => {
 
         expect(result.outcome).toBe("timeout");
         expect(result.snapshot).toBeNull();
+    });
+
+    it("ends as stalled when a transcript it read goes away, and keeps the last snapshot", async () => {
+        const reader = script(snap("RUNNING", 10), null);
+        const result = await waitForTurn({ read: reader.read, pollMs: 5000, ...clock() });
+
+        expect(result.outcome).toBe("stalled");
+        expect(result.waitedMs).toBe(5000 + TRANSCRIPT_GONE_MS);
+        expect(result.snapshot?.state).toBe("RUNNING");
+    });
+
+    it("a transcript that is unreadable once and back again keeps waiting", async () => {
+        const reader = script(snap("RUNNING", 10), null, snap("RUNNING", 20), snap("AWAITING-INPUT", 30));
+        const result = await waitForTurn({ read: reader.read, pollMs: 1000, ...clock() });
+
+        expect(result.outcome).toBe("done");
     });
 
     it("with next, ignores the turn that was already finished and waits for a later one", async () => {

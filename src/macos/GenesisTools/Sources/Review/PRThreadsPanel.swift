@@ -117,7 +117,8 @@ struct PRReviewBar: View {
                         .offset(y: 38)
                         .task(id: notice) {
                             guard !isError else { return }
-                            try? await Task.sleep(for: .seconds(6))
+                            // A cancelled sleep (the overlay went away) must not clear the notice early.
+                            do { try await Task.sleep(for: .seconds(6)) } catch { return }
                             if store.notice == notice { store.notice = nil }
                         }
                 }
