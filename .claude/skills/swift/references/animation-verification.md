@@ -122,3 +122,11 @@ nextOffset when starting the live tail, so intervening turns are caught up. Deco
 coalesce hover/open loads, cancel unused work, and reject late results even if a loader ignores cancellation.
 Measure the added CLI work and resident memory as well as time removed from a click; a cache hit is not
 a rendered-frame or FPS measurement.
+
+## Top-edge panels must pass the system hit-test (2026-10-08 19:56)
+
+A window-only screenshot can show a perfect top notch while macOS routes the same screen point to `AXMenuBar`. Verify the center of an observed button with `tools control hittest --at <x,y>` before treating a hover/click refusal as stale automation. Negative display origins are valid coordinates; retain the observed window, point, and hit-test receipt.
+
+For a panel occupying the menu-bar band, choose its final level after setting `isFloatingPanel`. In the measured AppKit path, setting `isFloatingPanel = true` reset a previously assigned status-bar level back to floating (raw 3), below the main menu (raw 24). The regression passed only when `.statusBar` was assigned afterward. Side panels keep `.floating`; do not raise every window to solve one top-edge hit-test bug. Also verify normal system menus remain usable outside the notch.
+
+A compact-to-preview expansion can move child controls away from a stationary pointer and emit child `onHover(false)` followed by another container hover. Keep the last agent hover identity through that reflow; clear it on leaving the whole surface, opening a destination, collapsing, dragging, or stopping. Cover the sequence with different hovered/selected sessions so an accidental selected-session preload cannot pass. Log the cache identity, not only “30 turns”, when correlating the UI with the read.
