@@ -113,6 +113,21 @@ enum AppMainMenu {
 final class AppMenuTarget: NSObject {
     static let shared = AppMenuTarget()
 
+    func openModelRoom(directory: String?) {
+        guard let executable = Bundle.main.executablePath else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        do {
+            var arguments = ["--model-room", "--tools", try AppToolsOrigin.binaryPath()]
+            if let directory { arguments += ["--directory", directory] }
+            process.arguments = arguments
+            try process.run()
+        } catch {
+            HubPerf.log("menu: Model Room did not start: \(error)")
+            NSApp.presentError(error)
+        }
+    }
+
     /// The settings window is its own face (`GenesisTools --window`, App/GenesisToolsApp.swift).
     @objc func openSettings(_ sender: Any?) {
         guard let executable = Bundle.main.executablePath else { return }
@@ -159,6 +174,9 @@ enum HubMenuCommands {
         HubMenuCommand(title: "New Handoff…", key: "h", modifiers: [.command, .shift], run: { overlay($0, "--handoff") },
                        enabled: { $0.selectedID != nil }),
         HubMenuCommand(title: "Prompt Library…", key: "p", modifiers: [.command, .shift], run: { overlay($0, "--prompts") }),
+        HubMenuCommand(title: "Model Room…", run: { hub in
+            AppMenuTarget.shared.openModelRoom(directory: hub.paletteContext.currentPath)
+        }),
         HubMenuCommand(title: "Open Project in Cursor", run: { hub in
             if let path = hub.paletteContext.currentPath { hub.runPalette(.openCursor(path), toggleGlass: toggleGlass) }
         }, enabled: { $0.paletteContext.currentPath != nil }, separated: true),
