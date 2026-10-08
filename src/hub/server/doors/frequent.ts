@@ -194,14 +194,21 @@ export const repoDoor: CallDoor<RepoArgs> = {
  * `ai usage sessions --json [--hours N] [--min N] [--limit N] [--fresh]`: the session list the hub and
  * Genesis.app poll. A `--provider` list stays a process (its enum errors print from the CLI).
  */
-export const usageSessionsDoor: CallDoor<{ listing: Record<string, number>; fresh: boolean }> = {
+export const usageSessionsDoor: CallDoor<{ listing: Record<string, number>; fresh: boolean; cacheWrite: boolean }> = {
     kind: "call",
     name: "ai usage sessions --json",
     match(argv) {
         const parsed = parseArgv(argv, {
             command: ["ai", "usage", "sessions"],
             positionals: 0,
-            flags: { "--json": "bool", "--fresh": "bool", "--hours": "value", "--min": "value", "--limit": "value" },
+            flags: {
+                "--json": "bool",
+                "--fresh": "bool",
+                "--no-cache-write": "bool",
+                "--hours": "value",
+                "--min": "value",
+                "--limit": "value",
+            },
         });
         if (parsed?.flags.get("--json") !== true) {
             return null;
@@ -225,14 +232,18 @@ export const usageSessionsDoor: CallDoor<{ listing: Record<string, number>; fres
             listing[key] = value;
         }
 
-        return { listing, fresh: parsed.flags.get("--fresh") === true };
+        return {
+            listing,
+            fresh: parsed.flags.get("--fresh") === true,
+            cacheWrite: parsed.flags.get("--no-cache-write") !== true,
+        };
     },
-    async run({ listing, fresh }, { signal }) {
+    async run({ listing, fresh, cacheWrite }, { signal }) {
         try {
             signal.throwIfAborted();
             const { sessionRowsJson } = await import("@app/ai/lib/sessions/rows-cache");
             const { listAgentSessionRows } = await import("@app/ai/lib/sessions/agent-session-rows");
-            return ok(asResult(await sessionRowsJson(listing, { fresh, listRows: listAgentSessionRows })));
+            return ok(asResult(await sessionRowsJson(listing, { fresh, cacheWrite, listRows: listAgentSessionRows })));
         } catch (error) {
             return failed(error);
         }

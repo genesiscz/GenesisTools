@@ -11,6 +11,7 @@ import {
     SESSION_ROWS_MAX_AGE_MS,
     type SessionRowsCache,
     sessionRowsCacheKey,
+    sessionRowsJson,
     writeSessionRowsCache,
 } from "./rows-cache";
 
@@ -99,6 +100,27 @@ describe("read and write", () => {
         await Bun.write(path, '{"query":null,"fetchedAt":1,"lastRequestedAt":1,"rows":[]}');
 
         expect(await readSessionRowsCache(path)).toBeNull();
+    });
+});
+
+describe("sessionRowsJson", () => {
+    test("daemon fetches do not update the cache or request stamp; normal fresh requests still do", async () => {
+        const path = await scratch();
+        const original = entry();
+        await writeSessionRowsCache(original, path);
+        const answer = await sessionRowsJson(original.query, {
+            fresh: true,
+            cacheWrite: false,
+            path,
+            listRows: async () => [row(9)],
+        });
+        expect(answer.rows).toEqual([row(9)]);
+        expect(answer.cached).toBe(false);
+        expect(await readSessionRowsCache(path)).toEqual(original);
+        await sessionRowsJson(original.query, { fresh: true, path, listRows: async () => [row(10)] });
+        const updated = await readSessionRowsCache(path);
+        expect(updated?.rows).toEqual([row(10)]);
+        expect(updated?.lastRequestedAt).toBeGreaterThan(original.lastRequestedAt);
     });
 });
 

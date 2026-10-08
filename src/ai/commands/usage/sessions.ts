@@ -18,6 +18,7 @@ interface SessionsOptions {
     limit?: string;
     json?: boolean;
     fresh?: boolean;
+    cacheWrite?: boolean;
 }
 
 function positiveInt(value: string | undefined): number | undefined {
@@ -97,6 +98,7 @@ export function registerAiUsageSessionsCommand(usage: Command): void {
         .option("--limit <n>", "Cap the rows returned, newest first across every provider")
         .option("--json", "Emit the rows as JSON")
         .option("--fresh", "Recompute instead of reading the daemon's cached answer (--json only)")
+        .option("--no-cache-write", "Read the rows without updating the daemon cache or request stamp (--json only)")
         // `tools ai usage` declares --provider and --json itself, so commander attaches them to
         // the PARENT when they are typed after `sessions`. Without the merge every flag was
         // silently dropped and the command always printed every provider as a table.
@@ -130,7 +132,11 @@ export function registerAiUsageSessionsCommand(usage: Command): void {
             // reading the table gets a freshly computed list every time.
             if (opts.json) {
                 out.result(
-                    await sessionRowsJson(listing, { fresh: opts.fresh === true, listRows: listAgentSessionRows })
+                    await sessionRowsJson(listing, {
+                        fresh: opts.fresh === true,
+                        cacheWrite: opts.cacheWrite !== false,
+                        listRows: listAgentSessionRows,
+                    })
                 );
                 return;
             }

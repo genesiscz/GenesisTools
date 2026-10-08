@@ -179,7 +179,7 @@ async function main(): Promise<void> {
                     return null;
                 }
 
-                const argv = ["ai", "usage", "sessions", "--json", "--fresh"];
+                const argv = ["ai", "usage", "sessions", "--json", "--fresh", "--no-cache-write"];
                 for (const [flag, value] of [
                     ["--hours", query.hours],
                     ["--min", query.minRows],

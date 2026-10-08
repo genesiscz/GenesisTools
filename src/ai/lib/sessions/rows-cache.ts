@@ -149,22 +149,29 @@ export async function sessionRowsJson(
     listing: AgentSessionRowsOptions,
     {
         fresh = false,
+        cacheWrite = true,
+        path = sessionRowsCachePath(),
         listRows,
-    }: { fresh?: boolean; listRows: (options: AgentSessionRowsOptions) => Promise<AgentSessionRow[]> }
+    }: {
+        fresh?: boolean;
+        cacheWrite?: boolean;
+        path?: string;
+        listRows: (options: AgentSessionRowsOptions) => Promise<AgentSessionRow[]>;
+    }
 ): Promise<{ fetchedAt: number; cached: boolean; rows: AgentSessionRow[] }> {
     if (!fresh) {
         const key = sessionRowsCacheKey(listing);
-        const cached = await readSessionRowsCache();
+        const cached = await readSessionRowsCache(path);
         const now = Date.now();
 
         if (cacheIsUsable(cached, key, now)) {
             // The stamp tells the daemon this query is still wanted, and it is read against an hour, so
             // rewriting the whole file on every 35 s poll would be churn for nothing.
-            if (now - cached.lastRequestedAt > 30_000) {
-                const latest = await readSessionRowsCache();
+            if (cacheWrite && now - cached.lastRequestedAt > 30_000) {
+                const latest = await readSessionRowsCache(path);
 
                 if (latest && latest.fetchedAt === cached.fetchedAt) {
-                    await writeSessionRowsCache({ ...latest, lastRequestedAt: now });
+                    await writeSessionRowsCache({ ...latest, lastRequestedAt: now }, path);
                 }
             }
 
@@ -174,6 +181,9 @@ export async function sessionRowsJson(
 
     const rows = await listRows(listing);
     const now = Date.now();
-    await writeSessionRowsCache({ query: listing, fetchedAt: now, lastRequestedAt: now, rows });
+    if (cacheWrite) {
+        await writeSessionRowsCache({ query: listing, fetchedAt: now, lastRequestedAt: now, rows }, path);
+    }
+
     return { fetchedAt: now, cached: false, rows };
 }
