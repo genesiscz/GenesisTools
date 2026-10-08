@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { readDecisions, updateDecision } from "@app/question/lib/decisions/store";
 import { markEntriesRead, openReadModel } from "@app/question/lib/read-model";
+import { logger } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { videoSettingsSchema } from "@genesiscz/utils/video/types";
@@ -133,19 +134,27 @@ export async function performWidgetAction({
         case "capture": {
             await mkdir(widgetRoot(root), { recursive: true });
             const input = join(widgetRoot(root), `capture-${randomUUID()}.png`);
-            const result = await boundedCommand({
-                command: ["/usr/sbin/screencapture", "-i", "-x", input],
-                signal,
-                timeoutMs: 120_000,
-            });
-            if (result.error || result.status !== 0 || !(await Bun.file(input).exists())) {
-                throw new Error("Screenshot selection cancelled or capture permission unavailable");
+            try {
+                const result = await boundedCommand({
+                    command: ["/usr/sbin/screencapture", "-i", "-x", input],
+                    signal,
+                    timeoutMs: 120_000,
+                });
+                if (result.error || result.status !== 0 || !(await Bun.file(input).exists())) {
+                    throw new Error("Screenshot selection cancelled or capture permission unavailable");
+                }
+                return await performWidgetAction({
+                    root,
+                    input: { action: "import", key: request.key, type: "image", input },
+                    signal,
+                });
+            } finally {
+                try {
+                    await unlink(input);
+                } catch (error) {
+                    logger.debug({ error, path: input }, "Screenshot staging cleanup ended");
+                }
             }
-            return performWidgetAction({
-                root,
-                input: { action: "import", key: request.key, type: "image", input },
-                signal,
-            });
         }
         case "remove-asset":
             return mutateWidgetState(root, (state) => {

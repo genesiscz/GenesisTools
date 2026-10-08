@@ -1,16 +1,22 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import * as files from "node:fs/promises";
+import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { postDecisions, readDecisions } from "@app/question/lib/decisions/store";
 import { postAskForm } from "@app/question/lib/pending/ask";
 import { openPendingStore } from "@app/question/lib/pending/store";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as commands from "@genesiscz/utils/process/bounded-command";
+import * as videos from "@genesiscz/utils/video/probe";
+import { createCanvas } from "@napi-rs/canvas";
+import { performWidgetAction } from "../widget/actions";
 import { createWidgetHandoff } from "../widget/handoff";
 import { readWidgetChanges, readWidgetDecisionEvents, type WidgetSources, widgetSnapshot } from "../widget/snapshot";
 import { mutateWidgetState, readWidgetState } from "../widget/storage";
 import { type WidgetTarget, widgetOutgoingSchema, widgetPreferencesSchema, widgetSessionKey } from "../widget/types";
+import { importWidgetAsset, reviseVideoAsset } from "./assets";
 import { widgetDispatcher } from "./dispatch";
 import { processWidgetOutbox } from "./engine";
 import { changeOutgoing, enqueueWidgetMessage, messageReadiness, recoverWidgetOutbox } from "./outbox";
@@ -759,4 +765,121 @@ test("an open TODO does not mark its session as waiting for an answer", async ()
     );
     const needsAnswer = await widgetSnapshot({ root: directory, sources });
     expect(needsAnswer.sessions[0]?.status).toBe("waiting");
+});
+
+test("failed post-copy video checks remove the unreferenced copy while successful imports stay durable", async () => {
+    const directory = await root();
+    const source = join(directory, "video.mp4");
+    await writeFile(source, "fixture-video");
+    const probe = spyOn(videos, "probeVideo").mockImplementation(async ({ input }) => ({
+        path: resolve(input),
+        durationUs: 1_000_000,
+        width: 128,
+        height: 80,
+        displayWidth: 128,
+        displayHeight: 80,
+        rotation: 0,
+        bytes: (await files.stat(input)).size,
+        codec: "fixture",
+    }));
+    const copy = files.copyFile;
+    let tamper = true;
+    const copying = spyOn(files, "copyFile").mockImplementation(async (input, output, mode) => {
+        await copy(input, output, mode);
+        if (tamper) {
+            await files.appendFile(input, "changed");
+        }
+    });
+    try {
+        await expect(importWidgetAsset({ root: directory, input: source, type: "video" })).rejects.toThrow("changed");
+        expect(await readdir(join(directory, "assets"))).toEqual([]);
+        expect(Object.keys((await readWidgetState(directory)).assets)).toEqual([]);
+        tamper = false;
+        const asset = await importWidgetAsset({ root: directory, input: source, type: "video" });
+        expect(await Bun.file(asset.path).exists()).toBe(true);
+        expect((await readWidgetState(directory)).assets[asset.id]).toEqual(asset);
+    } finally {
+        copying.mockRestore();
+        probe.mockRestore();
+    }
+});
+
+test("screenshot staging is removed after import success and partial capture failure", async () => {
+    const directory = await root();
+    let failed = false;
+    const run = spyOn(commands, "boundedCommand").mockImplementation(async ({ command }) => {
+        const file = command.at(-1);
+        if (!file) {
+            throw new Error("Fixture capture needs an output path");
+        }
+        await writeFile(file, failed ? Buffer.from("partial") : createCanvas(2, 2).toBuffer("image/png"));
+        return { status: failed ? 1 : 0, signal: null, stdout: "", stderr: "" };
+    });
+    try {
+        await performWidgetAction({ root: directory, input: { action: "capture", key: widgetSessionKey(target) } });
+        expect((await readdir(directory)).filter((name) => name.startsWith("capture-"))).toEqual([]);
+        const state = await readWidgetState(directory);
+        expect(Object.keys(state.assets)).toHaveLength(1);
+        expect(await Bun.file(Object.values(state.assets)[0].path).exists()).toBe(true);
+        failed = true;
+        await expect(
+            performWidgetAction({ root: directory, input: { action: "capture", key: widgetSessionKey(target) } })
+        ).rejects.toThrow("cancelled");
+        expect((await readdir(directory)).filter((name) => name.startsWith("capture-"))).toEqual([]);
+        expect(Object.keys((await readWidgetState(directory)).assets)).toHaveLength(1);
+    } finally {
+        run.mockRestore();
+    }
+});
+
+test("unchanged video settings preserve the prepared revision and a real change invalidates it", async () => {
+    const directory = await root();
+    const id = randomUUID();
+    const settings = { fps: 2 as const, framesPerImage: 16 as const, minimumDifferencePct: 1 };
+    await mutateWidgetState(directory, (state) => {
+        state.assets[id] = {
+            id,
+            type: "video",
+            name: "video.mp4",
+            path: "/fixture/video.mp4",
+            sha256: "fixture",
+            durationUs: 1_000_000,
+            width: 128,
+            height: 80,
+            settings,
+            revision: 3,
+            confirmedRevision: 3,
+            status: "ready",
+            manifestPath: "/fixture/manifest.json",
+        };
+    });
+    const unchanged = await reviseVideoAsset({ root: directory, id, settings });
+    expect(unchanged).toMatchObject({
+        revision: 3,
+        confirmedRevision: 3,
+        status: "ready",
+        manifestPath: "/fixture/manifest.json",
+    });
+    const revised = await reviseVideoAsset({ root: directory, id, settings: { ...settings, fps: 4 } });
+    expect(revised).toMatchObject({ revision: 4, status: "pending" });
+    expect(revised).not.toHaveProperty("confirmedRevision");
+    expect(revised).not.toHaveProperty("manifestPath");
+});
+
+test("widget snapshots request a read-only roster and watch discovery may refresh intentionally", async () => {
+    const directory = await root();
+    const refreshes: (boolean | undefined)[] = [];
+    const sources: WidgetSources = {
+        sessions: async () => [],
+        decisions: () => [],
+        forms: () => [],
+        answers: () => [],
+        agents: async (refresh) => {
+            refreshes.push(refresh);
+            return { generatedAt: "", parents: [], orphans: [] };
+        },
+    };
+    await widgetSnapshot({ root: directory, sources });
+    await widgetSnapshot({ root: directory, sources, refresh: true });
+    expect(refreshes).toEqual([false, true]);
 });

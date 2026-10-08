@@ -54,6 +54,7 @@ export interface CodexAgentHead {
 }
 
 export interface CodexAgentsContext {
+    readOnly?: boolean;
     now: number;
     /** The model shown when a rollout does not say; the parent's. */
     model: string | null;
@@ -62,9 +63,16 @@ export interface CodexAgentsContext {
 }
 
 /** Sub-agent rollouts the session index saw written at or after `since`. */
-export async function recentCodexAgentRecords(since: number): Promise<CodexAgentRecord[]> {
+export async function recentCodexAgentRecords({
+    since,
+    refresh,
+}: {
+    since: number;
+    refresh?: boolean;
+}): Promise<CodexAgentRecord[]> {
     const catalog = await catalogHistory({
         provider: "codex",
+        refresh,
         filters: { agentsOnly: true, mtimeFrom: since },
         maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
     });
@@ -420,7 +428,7 @@ export function attachCodexAgents(records: CodexAgentRecord[], context: CodexAge
         sortNodes(nodes);
     }
 
-    if (changed) {
+    if (changed && !context.readOnly) {
         saveCache(cachePath, cache, context.now);
     }
 

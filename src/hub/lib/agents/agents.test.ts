@@ -1,20 +1,24 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as sessionRows from "@app/ai/lib/sessions/agent-session-rows";
+import * as history from "@app/claude/lib/history/search";
 import type { CodexSessionMeta } from "@app/codex/lib/store";
 import type { GrokSessionMeta } from "@app/grok/lib/store";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Command } from "commander";
 import { registerAgentsCommand } from "../../commands/agents";
 import { hubArgs, hubUrl } from "../open";
+import * as codexAgents from "./codex-agents";
 import { agentCounts } from "./counts";
-import { freshMtime, parentsOfRecentAgents } from "./index";
+import { freshMtime, hubAgents, parentsOfRecentAgents } from "./index";
 import { readAgentMail } from "./mail";
 import { readParent } from "./parent";
 import { unreadInbox } from "./team";
 import { type ParentRow, promptPreview, withoutFullPrompts } from "./tree";
 import type { AgentNode } from "./types";
+import * as workerListing from "./workers";
 import { codexWorkerNode, grokWorkerNode } from "./workers";
 
 const NOW = Date.parse("2026-03-10T12:00:00.000Z");
@@ -592,4 +596,39 @@ describe("freshMtime", () => {
         expect(freshMtime({ filePath: file, mtime: onDisk + 5_000 })).toBe(onDisk + 5_000);
         expect(freshMtime({ filePath: join(dir, "missing.jsonl"), mtime: 42 })).toBe(42);
     });
+});
+
+test("hub roster forwards diagnostic and intentional-refresh modes to every catalog", async () => {
+    const rows = spyOn(sessionRows, "listAgentSessionRows").mockResolvedValue([]);
+    const claude = spyOn(history, "getSessionListing").mockResolvedValue({
+        sessions: [],
+        total: 0,
+        subagents: 0,
+        indexed: 0,
+        staleRemoved: 0,
+        reindexed: false,
+        projectCount: 0,
+        scope: "fixture",
+    });
+    const codex = spyOn(codexAgents, "recentCodexAgentRecords").mockResolvedValue([]);
+    const workers = spyOn(workerListing, "listWorkers").mockResolvedValue([]);
+    try {
+        for (const refresh of [false, true]) {
+            rows.mockClear();
+            claude.mockClear();
+            codex.mockClear();
+            await hubAgents({ hours: 168, refresh, teamsRoot: mkdtempSync(join(tmpdir(), "roster-refresh-")) });
+            expect(rows).toHaveBeenCalledTimes(1);
+            expect(claude).toHaveBeenCalledTimes(1);
+            expect(codex).toHaveBeenCalledTimes(1);
+            expect(rows.mock.calls[0][0]?.refresh).toBe(refresh);
+            expect(claude.mock.calls[0][0]?.refresh).toBe(refresh);
+            expect(codex.mock.calls[0][0].refresh).toBe(refresh);
+        }
+    } finally {
+        rows.mockRestore();
+        claude.mockRestore();
+        codex.mockRestore();
+        workers.mockRestore();
+    }
 });

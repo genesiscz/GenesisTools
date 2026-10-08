@@ -59,7 +59,7 @@ export interface WidgetSources {
     decisions(): DecisionRecord[];
     forms(session?: string): AskForm[];
     answers(session?: string): QaRow[];
-    agents(session?: string): Promise<AgentsTree>;
+    agents(refresh?: boolean): Promise<AgentsTree>;
     events?(ids: string[]): WidgetActivityEvent[];
 }
 export interface WidgetActivityEvent {
@@ -116,11 +116,11 @@ export function readWidgetDecisionEvents({
         })
         .slice(-100);
 }
-let cachedAgents: { at: number; promise: Promise<AgentsTree> } | undefined;
-export function widgetAgents(): Promise<AgentsTree> {
-    if (!cachedAgents || Date.now() - cachedAgents.at > 15_000) {
-        const promise = hubAgents({ hours: 168, limit: 150 });
-        cachedAgents = { at: Date.now(), promise };
+let cachedAgents: { at: number; refreshed: boolean; promise: Promise<AgentsTree> } | undefined;
+export function widgetAgents({ refresh = false }: { refresh?: boolean } = {}): Promise<AgentsTree> {
+    if (!cachedAgents || Date.now() - cachedAgents.at > 15_000 || (refresh && !cachedAgents.refreshed)) {
+        const promise = hubAgents({ hours: 168, limit: 150, refresh });
+        cachedAgents = { at: Date.now(), refreshed: refresh, promise };
         promise.catch((error) => {
             if (cachedAgents?.promise === promise) {
                 cachedAgents = undefined;
@@ -168,7 +168,7 @@ export const realWidgetSources: WidgetSources = {
             dbPath: toolDataDir("question", "qa.db"),
             opts: { sessionId, limit: sessionId ? 80 : 100 },
         }),
-    agents: () => widgetAgents(),
+    agents: (refresh) => widgetAgents({ refresh }),
     events: (ids) => readWidgetDecisionEvents({ ids }),
 };
 
@@ -261,7 +261,7 @@ export async function widgetSnapshot({
         read("sessions", () => sources.sessions(refresh), []),
         read("decisions", sources.decisions, []),
         read("questions", () => sources.forms(), []),
-        read("agents", () => sources.agents(), { generatedAt: "", parents: [], orphans: [] }),
+        read("agents", () => sources.agents(refresh), { generatedAt: "", parents: [], orphans: [] }),
         read("answer sessions", () => sources.answers(), []),
     ]);
     const sessions = new Map<string, WidgetSession>();

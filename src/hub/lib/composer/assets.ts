@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { copyFile, mkdir, stat } from "node:fs/promises";
+import { copyFile, mkdir, stat, unlink } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
 import { importImageAttachments } from "@genesiscz/utils/image/attachments";
+import { logger } from "@genesiscz/utils/logger";
 import { prepareVideoEvidence, videoDigest } from "@genesiscz/utils/video/evidence";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { type VideoSettings, videoSettingsSchema } from "@genesiscz/utils/video/types";
@@ -19,56 +20,77 @@ export async function importWidgetAsset({
     root?: string;
 }): Promise<WidgetAsset> {
     const directory = join(widgetRoot(root), "assets");
-    let asset: WidgetAsset;
-    if (type === "image") {
-        const [image] = await importImageAttachments({
-            attachments: [{ type, path: resolve(input) }],
-            root: directory,
-        });
-        asset = {
-            type,
-            id: image.id,
-            name: image.name,
-            path: image.path,
-            sha256: image.sha256,
-            mimeType: image.mimeType,
-            width: image.width,
-            height: image.height,
-            bytes: image.bytes,
-        };
-    } else {
-        await probeVideo({ input });
-        const id = randomUUID();
-        const path = join(directory, id + extname(input).toLowerCase());
-        await mkdir(directory, { recursive: true });
-        const before = await stat(input);
-        const digest = await videoDigest(input);
-        await copyFile(input, path, constants.COPYFILE_EXCL);
-        const after = await stat(input);
-        if (after.size !== before.size || after.mtimeMs !== before.mtimeMs || (await videoDigest(path)) !== digest) {
-            throw new Error("Video changed while importing; choose it again");
+    let ownedPath: string | undefined;
+    try {
+        let asset: WidgetAsset;
+        if (type === "image") {
+            const [image] = await importImageAttachments({
+                attachments: [{ type, path: resolve(input) }],
+                root: directory,
+            });
+            ownedPath = image.path;
+            asset = {
+                type,
+                id: image.id,
+                name: image.name,
+                path: image.path,
+                sha256: image.sha256,
+                mimeType: image.mimeType,
+                width: image.width,
+                height: image.height,
+                bytes: image.bytes,
+            };
+        } else {
+            await probeVideo({ input });
+            const id = randomUUID();
+            const path = join(directory, id + extname(input).toLowerCase());
+            await mkdir(directory, { recursive: true });
+            const before = await stat(input);
+            const digest = await videoDigest(input);
+            await copyFile(input, path, constants.COPYFILE_EXCL);
+            ownedPath = path;
+            const after = await stat(input);
+            if (
+                after.size !== before.size ||
+                after.mtimeMs !== before.mtimeMs ||
+                (await videoDigest(path)) !== digest
+            ) {
+                throw new Error("Video changed while importing; choose it again");
+            }
+
+            const info = await probeVideo({ input: path });
+            asset = {
+                type,
+                id,
+                name: basename(input),
+                path,
+                sha256: digest,
+                durationUs: info.durationUs,
+                width: info.displayWidth,
+                height: info.displayHeight,
+                settings: { fps: 2, framesPerImage: 16, minimumDifferencePct: 0 },
+                revision: 1,
+                status: "pending",
+            };
         }
 
-        const info = await probeVideo({ input: path });
-        asset = {
-            type,
-            id,
-            name: basename(input),
-            path,
-            sha256: digest,
-            durationUs: info.durationUs,
-            width: info.displayWidth,
-            height: info.displayHeight,
-            settings: { fps: 2, framesPerImage: 16, minimumDifferencePct: 0 },
-            revision: 1,
-            status: "pending",
-        };
+        await mutateWidgetState(root, (state) => {
+            state.assets[asset.id] = asset;
+        });
+        return asset;
+    } catch (error) {
+        if (ownedPath) {
+            try {
+                await unlink(ownedPath);
+            } catch (cleanupError) {
+                logger.warn(
+                    { error: cleanupError, path: ownedPath },
+                    "Could not clean up an unreferenced widget import"
+                );
+            }
+        }
+        throw error;
     }
-
-    await mutateWidgetState(root, (state) => {
-        state.assets[asset.id] = asset;
-    });
-    return asset;
 }
 
 function assertEditable(state: WidgetState, id: string): void {
@@ -96,6 +118,14 @@ export async function reviseVideoAsset({
         const asset = state.assets[id];
         if (asset?.type !== "video") {
             throw new Error("No such video attachment");
+        }
+
+        if (
+            asset.settings.fps === parsed.fps &&
+            asset.settings.framesPerImage === parsed.framesPerImage &&
+            asset.settings.minimumDifferencePct === parsed.minimumDifferencePct
+        ) {
+            return asset;
         }
 
         asset.settings = parsed;

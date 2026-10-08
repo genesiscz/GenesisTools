@@ -25,6 +25,8 @@ export type { AgentMail, AgentNode, AgentParent, AgentsTree } from "./types";
 const prof = profiler.scope("hub-agents");
 
 export interface HubAgentsOptions {
+    /** False for diagnostics; intentional background refreshes may update the shared index and memo. */
+    refresh?: boolean;
     /** The window in hours. Default 24. */
     hours?: number;
     /** At most this many parents. Default 50. */
@@ -71,14 +73,24 @@ function parentRow(row: AgentSessionRow): ParentRow {
 }
 
 /** A parent the listing did not return (older than the window): only what its file says. */
-async function parentById(id: string, rows: AgentSessionRow[], now: number): Promise<ParentRow | null> {
+async function parentById({
+    id,
+    rows,
+    now,
+    refresh,
+}: {
+    id: string;
+    rows: AgentSessionRow[];
+    now: number;
+    refresh?: boolean;
+}): Promise<ParentRow | null> {
     const listed = rows.find((row) => row.sessionId === id || row.sessionId.startsWith(id));
     if (listed) {
         return parentRow(listed);
     }
 
     for (const provider of ["claude", "codex"] as const) {
-        const found = await resolveParentRow(id, provider, now);
+        const found = await resolveParentRow({ id, provider, now, refresh });
         if (found) {
             return found;
         }
@@ -87,7 +99,17 @@ async function parentById(id: string, rows: AgentSessionRow[], now: number): Pro
     return null;
 }
 
-async function resolveParentRow(id: string, provider: "claude" | "codex", now: number): Promise<ParentRow | null> {
+async function resolveParentRow({
+    id,
+    provider,
+    now,
+    refresh,
+}: {
+    id: string;
+    provider: "claude" | "codex";
+    now: number;
+    refresh?: boolean;
+}): Promise<ParentRow | null> {
     try {
         const resolved = await resolveTranscript(id, {}, provider);
         const mtime = Bun.file(resolved.filePath).lastModified;
@@ -98,6 +120,7 @@ async function resolveParentRow(id: string, provider: "claude" | "codex", now: n
         const hours = (now - mtime) / 3_600_000 + 1;
         const rows = await listAgentSessionRows({
             providers: [provider],
+            refresh,
             hours,
             maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
         });
@@ -122,9 +145,16 @@ async function resolveParentRow(id: string, provider: "claude" | "codex", now: n
 }
 
 /** Sub-agent transcripts the session index saw written at or after `since` (the window is in the SQL). */
-async function recentAgentRecords(since: number): Promise<SessionMetadataRecord[]> {
+async function recentAgentRecords({
+    since,
+    refresh,
+}: {
+    since: number;
+    refresh?: boolean;
+}): Promise<SessionMetadataRecord[]> {
     const listing = await getSessionListing({
         subagentsOnly: true,
+        refresh,
         mtimeFrom: since,
         maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
     });
@@ -140,7 +170,7 @@ async function recentAgentRecords(since: number): Promise<SessionMetadataRecord[
 export async function parentsOfRecentAgents(
     since: number,
     listed: Set<string>,
-    listAgents: (since: number) => Promise<SessionMetadataRecord[]> = recentAgentRecords
+    listAgents: (since: number) => Promise<SessionMetadataRecord[]> = (since) => recentAgentRecords({ since })
 ): Promise<ParentRow[]> {
     let children: SessionMetadataRecord[];
     try {
@@ -188,9 +218,15 @@ export async function parentsOfRecentAgents(
 const SESSION_AGENTS_LOOKBACK_MS = 14 * 24 * 3_600_000;
 
 /** Codex sub-agents from the session index; an index that cannot answer leaves the Codex rows without any. */
-async function codexAgentRecords(since: number): Promise<CodexAgentRecord[]> {
+async function codexAgentRecords({
+    since,
+    refresh,
+}: {
+    since: number;
+    refresh?: boolean;
+}): Promise<CodexAgentRecord[]> {
     try {
-        return await recentCodexAgentRecords(since);
+        return await recentCodexAgentRecords({ since, refresh });
     } catch (error) {
         logger.warn({ error }, "[hub agents] codex sub-agent listing unavailable; codex sessions list without agents");
         return [];
@@ -211,6 +247,7 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
                 ? Promise.resolve([])
                 : listAgentSessionRows({
                       providers: ["claude", "codex"],
+                      refresh: options.refresh,
                       hours,
                       limit,
                       maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
@@ -218,20 +255,27 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
         ),
         prof.measureAsync("workers", () => listWorkers({ now, since, promptChars: options.promptChars })),
         prof.measureAsync("codex-agents", () =>
-            codexAgentRecords(options.session ? now - SESSION_AGENTS_LOOKBACK_MS : since)
+            codexAgentRecords({
+                since: options.session ? now - SESSION_AGENTS_LOOKBACK_MS : since,
+                refresh: options.refresh,
+            })
         ),
     ]);
-    const codexTops = prof.measure("codex-tree", () => attachCodexAgents(codexRecords, { now, model: null }));
+    const codexTops = prof.measure("codex-tree", () =>
+        attachCodexAgents(codexRecords, { now, model: null, readOnly: options.refresh === false })
+    );
 
     let parentRows: ParentRow[];
     if (options.session) {
-        const one = await parentById(options.session, rows, now);
+        const one = await parentById({ id: options.session, rows, now, refresh: options.refresh });
         parentRows = one ? [one] : [];
     } else {
         parentRows = rows.map(parentRow);
         const listed = new Set(parentRows.map((row) => row.sessionId));
         // A parent is in the window when any of its agents is, like a worker's rendezvous session.
-        const byChild = await prof.measureAsync("agent-parents", () => parentsOfRecentAgents(since, listed));
+        const byChild = await prof.measureAsync("agent-parents", () =>
+            parentsOfRecentAgents(since, listed, (since) => recentAgentRecords({ since, refresh: options.refresh }))
+        );
         for (const row of byChild) {
             parentRows.push(row);
             listed.add(row.sessionId);
@@ -243,7 +287,7 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
                 continue;
             }
 
-            const lead = await parentById(id, rows, now);
+            const lead = await parentById({ id, rows, now, refresh: options.refresh });
             if (lead) {
                 parentRows.push(lead);
                 listed.add(lead.sessionId);
@@ -257,7 +301,7 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
                 .filter((id) => !listed.has(id))
         );
         for (const id of waiting) {
-            const extra = await parentById(id, rows, now);
+            const extra = await parentById({ id, rows, now, refresh: options.refresh });
             if (extra) {
                 parentRows.push(extra);
             }

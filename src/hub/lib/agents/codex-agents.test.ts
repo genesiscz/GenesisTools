@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as storage from "@genesiscz/utils/storage/storage";
 import {
     attachCodexAgents,
     buildCodexParent,
@@ -288,6 +289,36 @@ describe("attachCodexAgents", () => {
 
         expect(a?.toolCalls).toBe(3);
         expect(again.get(ROOT)?.[0]?.id).toBe(CHILD_B);
+    });
+
+    test("read-only codex roster reads no memo writes while intentional refreshes still publish them", () => {
+        const { records, cache } = family();
+        const publish = storage.atomicWriteFileSync;
+        let allowWrite = false;
+        const write = spyOn(storage, "atomicWriteFileSync").mockImplementation((...args) => {
+            if (!allowWrite) {
+                throw new Error("Diagnostic reached the durable memo writer");
+            }
+            return publish(...args);
+        });
+        try {
+            const before = attachCodexAgents(records, { now: NOW, cachePath: cache, model: null, readOnly: true });
+            expect(before.get(ROOT)).toHaveLength(2);
+            expect(write).not.toHaveBeenCalled();
+            expect(existsSync(cache)).toBe(false);
+            allowWrite = true;
+            attachCodexAgents(records, { now: NOW, cachePath: cache, model: null, readOnly: false });
+            allowWrite = false;
+            expect(write).toHaveBeenCalledTimes(1);
+            const bytes = readFileSync(cache);
+            writeFileSync(records[0].filePath, call("custom_tool_call"), { flag: "a" });
+            const after = attachCodexAgents(records, { now: NOW, cachePath: cache, model: null, readOnly: true });
+            expect(after.get(ROOT)?.find((node) => node.id === CHILD_A)?.toolCalls).toBe(3);
+            expect(readFileSync(cache)).toEqual(bytes);
+            expect(write).toHaveBeenCalledTimes(1);
+        } finally {
+            write.mockRestore();
+        }
     });
 
     test("a head that cannot be read leaves the agent out instead of failing the list", () => {
