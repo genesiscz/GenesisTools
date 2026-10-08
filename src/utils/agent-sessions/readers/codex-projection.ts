@@ -174,11 +174,27 @@ function scanThreads(database: Database, databaseIndex: number): Record<string, 
     }
 
     if (columns.includes("updated_at_ordinal")) {
-        const rows = database
-            .query(
-                "SELECT thread_id, count(*) AS count, coalesce(max(rollout_ordinal), 0) AS ordinal, coalesce(max(updated_at_ordinal), 0) AS revision FROM thread_items GROUP BY thread_id"
-            )
-            .all()
+        // Two scans, each answered by an index alone (codex has `(thread_id, rollout_ordinal)` and
+        // `(thread_id, updated_at_ordinal)`). One query needing both maxima read every table row, large
+        // `item_json` included: a 559 MB database took 56 ms warm and up to 6.6 s cold, synchronously, in the
+        // hub server (2026-10-08). The rows are identical; 12 ms warm.
+        const revisions = new Map(
+            (
+                database
+                    .query(
+                        "SELECT thread_id, coalesce(max(updated_at_ordinal), 0) AS revision FROM thread_items GROUP BY thread_id"
+                    )
+                    .all() as Array<{ thread_id: unknown; revision: unknown }>
+            ).map((row) => [row.thread_id, row.revision])
+        );
+        const rows = (
+            database
+                .query(
+                    "SELECT thread_id, count(*) AS count, coalesce(max(rollout_ordinal), 0) AS ordinal FROM thread_items GROUP BY thread_id"
+                )
+                .all() as Array<Record<string, unknown>>
+        )
+            .map((row) => ({ ...row, revision: revisions.get(row.thread_id) ?? 0 }))
             .filter(isThreadItemsGroupRow);
         for (const row of rows) {
             if (row.count > 0) {
