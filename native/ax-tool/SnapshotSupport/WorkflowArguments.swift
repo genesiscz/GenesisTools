@@ -154,7 +154,7 @@ public struct WorkflowArguments {
         try reject(["--prepare"], unless: ["press","click","key","type","paste","select","set"])
         // A target key is the row's identity, so it is useful to every action that names a row,
         // not only to the prepared ones. It is what lets a live-updating window stay actionable.
-        try reject(["--target-key"], unless: ["press","click","key","type","paste","select","set","perform","focus","hover","move","scroll","get"])
+        try reject(["--target-key"], unless: ["press","click","key","type","paste","select","set","perform","focus","hover","move","drag","scroll","get"])
         let revalidateScope = values["--revalidate-scope"] ?? "window"
         // `app` used to be accepted and behaved exactly like `window`: nothing ever implemented
         // an app-wide revalidation, so the flag promised a scope it did not check.
