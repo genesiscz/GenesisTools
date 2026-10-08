@@ -226,10 +226,18 @@ struct WidgetHostView: View {
                                 status: session.visualStatus, animate: !model.effectiveReduceMotion
                             )
                             .frame(width: WidgetSideStripMetrics.sessionWidth, height: WidgetSideStripMetrics.sessionHeight)
+                            .overlay(alignment: .topTrailing) {
+                                if let inbox = model.inboxFor(session.key), inbox.unread + inbox.needsAnswer > 0 {
+                                    WidgetInboxCount(count: inbox.unread + inbox.needsAnswer,
+                                        needsAnswer: inbox.needsAnswer > 0, pulse: model.inboxPulseFor(session.key),
+                                        reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete, compact: true)
+                                        .offset(x: 4, y: -3).allowsHitTesting(false)
+                                }
+                            }
                         }
                         .buttonStyle(.genHoverPlain())
-                        .instantTooltip(session.title + " · " + session.visualStatus.label)
-                        .accessibilityLabel(session.title + ", " + session.visualStatus.label)
+                        .instantTooltip(sessionSummary(session))
+                        .accessibilityLabel(sessionSummary(session))
                         .accessibilityIdentifier("widget.agent." + session.key)
                     }
                 }
@@ -311,6 +319,15 @@ struct WidgetHostView: View {
         }
         .instantTooltip(id == "agents" ? "Inbox: \(model.inbox.unread) unread, \(model.inbox.needsAnswer) need an answer" : registry.module(id)?.title ?? id)
         .accessibilityLabel("Open " + (registry.module(id)?.title ?? id))
+    }
+
+    private func sessionSummary(_ session: WidgetSession) -> String {
+        var parts = [session.title, session.visualStatus.label]
+        if let inbox = model.inboxFor(session.key) {
+            if inbox.unread > 0 { parts.append("\(inbox.unread) unread") }
+            if inbox.needsAnswer > 0 { parts.append("\(inbox.needsAnswer) waiting for your answer") }
+        }
+        return parts.joined(separator: ", ")
     }
 
     private func expand() {

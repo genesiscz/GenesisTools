@@ -13,20 +13,21 @@ struct WidgetInboxCount: View {
     let pulse: Int
     let reduceMotion: Bool
     var complete = true
+    var compact = false
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     var body: some View {
         HStack(spacing: 2) {
-            if reduceMotion || systemReduceMotion {
+            if !compact, reduceMotion || systemReduceMotion {
                 Image(systemName: needsAnswer ? "questionmark.bubble.fill" : "tray.fill")
                     .font(.system(size: 7, weight: .bold))
-            } else {
+            } else if !compact {
                 Image(systemName: needsAnswer ? "questionmark.bubble.fill" : "tray.fill")
                     .font(.system(size: 7, weight: .bold))
                     .symbolEffect(.bounce, options: .nonRepeating, value: pulse)
             }
             Text(verbatim: count > 99 ? "99+" : String(max(0, count)) + (complete ? "" : "+"))
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-        }.foregroundStyle(.white).frame(width: 29, height: 15)
+                .font(.system(size: compact ? 8 : 9, weight: .bold, design: .monospaced))
+        }.foregroundStyle(.white).frame(width: compact ? 18 : 29, height: compact ? 13 : 15)
             .background(needsAnswer ? Color.orange : WidgetInk.blue, in: Capsule())
             .accessibilityLabel((complete ? "" : "At least ") + "\(count) inbox notifications")
     }
