@@ -1,4 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
     classifyPerfLine,
     classifyProfileLine,
@@ -12,6 +15,7 @@ import {
     formatEvent,
     runDevMonitor,
     shortCommand,
+    TextTail,
 } from "./dev-monitor";
 
 describe("EventBatcher", () => {
@@ -207,4 +211,31 @@ test("process snapshots have a deadline and an empty answer retains the slow eve
         },
     });
     expect(events.map((event) => event.text)).toEqual(["a walk 1.50s [pid 1000]"]);
+});
+
+test("log tails read bounded chunks without losing lines or UTF-8 at chunk boundaries", () => {
+    const dir = mkdtempSync(join(tmpdir(), "monitor-tail-"));
+    const file = join(dir, "app.log");
+    const first = `${"a".repeat(65_535)}é\n`;
+    const lines = Array.from({ length: 3000 }, (_, index) => `line ${index} ${"x".repeat(90)}`);
+    writeFileSync(file, `${first}${lines.join("\n")}\n`);
+    try {
+        const tail = new TextTail(file, true);
+        const read = tail.read();
+        expect(read.length).toBeLessThan(lines.length);
+        const all = [...read];
+        for (let index = 0; index < 10; index++) {
+            all.push(...tail.read());
+        }
+        expect(all).toEqual([first.trimEnd(), ...lines]);
+        expect(tail.read()).toEqual([]);
+        writeFileSync(file, "rotated\n");
+        expect(tail.read()).toEqual(["rotated"]);
+        const afterStart = new TextTail(file, false);
+        expect(afterStart.read()).toEqual([]);
+        writeFileSync(file, "rotated\nnext\n");
+        expect(afterStart.read()).toEqual(["next"]);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
 });

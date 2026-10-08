@@ -1,6 +1,7 @@
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { setTimeout as delay } from "node:timers/promises";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { logger } from "@genesiscz/utils/logger";
@@ -200,9 +201,10 @@ export function formatEvent(event: DevEvent): string {
  * Reads what was appended to one text file since the last call, line by line; a rotated file starts over.
  * A path function follows a day-stamped log to the next day's file, from its start.
  */
-class TextTail {
+export class TextTail {
     private offset: number;
     private partial = "";
+    private decoder = new StringDecoder("utf8");
     private path: string;
 
     constructor(
@@ -224,6 +226,7 @@ class TextTail {
             this.path = now;
             this.offset = 0;
             this.partial = "";
+            this.decoder = new StringDecoder("utf8");
         }
 
         if (!existsSync(this.path)) {
@@ -236,16 +239,17 @@ class TextTail {
             if (size < this.offset) {
                 this.offset = 0;
                 this.partial = "";
+                this.decoder = new StringDecoder("utf8");
             }
 
             if (size === this.offset) {
                 return [];
             }
 
-            const buffer = Buffer.alloc(size - this.offset);
-            readSync(fd, buffer, 0, buffer.length, this.offset);
-            this.offset = size;
-            const text = this.partial + buffer.toString("utf8");
+            const buffer = Buffer.alloc(Math.min(65_536, size - this.offset));
+            const bytes = readSync(fd, buffer, 0, buffer.length, this.offset);
+            this.offset += bytes;
+            const text = this.partial + this.decoder.write(buffer.subarray(0, bytes));
             const lines = text.split("\n");
             this.partial = lines.pop() ?? "";
             return lines.filter((line) => line.length > 0);
