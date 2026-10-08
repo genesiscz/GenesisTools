@@ -323,6 +323,19 @@ function write(line: string, durMs?: number): void {
 export type ProfileMeta = Record<string, string | number | boolean | null | undefined>;
 export type ProfileMetaInput = ProfileMeta | (() => ProfileMeta);
 
+/**
+ * `cpu=<ms>`: the process's CPU from this call until the timer's line is written. Pass it as the meta of a timer whose
+ * work runs alone (sequential phases of a short process); for overlapping calls it counts everyone's CPU.
+ * `prof.measureAsync("tick.poll", fn, cpuMeta())`.
+ */
+export function cpuMeta(): () => ProfileMeta {
+    const start = process.cpuUsage();
+    return () => {
+        const used = process.cpuUsage(start);
+        return { cpu: `${Math.round((used.user + used.system) / 1000)}ms` };
+    };
+}
+
 const META_VALUE_CHARS = 80;
 
 function formatMeta(input: ProfileMetaInput | undefined): string {
