@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
 import { findCodexRollout, isCodexRollout, parseCodexRollout } from "./codex";
 import { type ComputedSessionChanges, computeSessionChanges, type SessionChangesInput } from "./compute";
-import { findClaudeTranscript, readClaudeTranscript } from "./transcript";
+import { readClaudeTranscriptFolded } from "./fold";
+import { findClaudeTranscript } from "./transcript";
 import type { SessionTranscript } from "./types";
 
 export { findCodexRollout, isCodexRollout, parseCodexRollout } from "./codex";
@@ -54,7 +55,10 @@ export type {
 const { log } = logger.scoped("session-changes");
 
 function readTranscript(sessionId: string, path: string): SessionTranscript {
-    return isCodexRollout(path) ? parseCodexRollout(sessionId, readFileSync(path, "utf8")) : readClaudeTranscript(path);
+    // Folded: a resident process (the hub server) then reads only what the session's files gained since its last ask.
+    return isCodexRollout(path)
+        ? parseCodexRollout(sessionId, readFileSync(path, "utf8"))
+        : readClaudeTranscriptFolded(path);
 }
 
 /**

@@ -178,7 +178,7 @@ interface HistoryBackup {
     backupTime: number | null;
 }
 
-interface ParseState {
+export interface ParseState {
     calls: Map<string, SessionToolCall>;
     inputs: Map<string, Json>;
     turns: Map<string, SessionTurn>;
@@ -225,9 +225,60 @@ function historyBackups(entry: Json): HistoryBackup[] {
         .filter((backup): backup is HistoryBackup => backup !== null);
 }
 
-function parseLines(content: string | Iterable<string>, agentId: string | null, state: ParseState): void {
-    let currentTurn: string | null = null;
+/** A tool result whose call was not in the state when its line was read (a sub-agent answering a call of another file). */
+export interface UnmatchedResult {
+    toolUseId: string;
+    promptId: string | null;
+    at: string | null;
+    block: Json;
+    entry: Json;
+}
 
+/**
+ * What one file's lines leave for the merge to repeat (session-changes/fold.ts): a full parse reads the main file and
+ * every sub-agent file into one state, and a file folded on its own cannot see the others.
+ */
+export interface ParseHooks {
+    /** A sub-agent line's prompt: the full parse fills a main turn with it while that turn's prompt is empty. */
+    prompt?: (promptId: string, prompt: string) => void;
+    unmatched?: (result: UnmatchedResult) => void;
+}
+
+/** Where `parseLines` stopped in a file: the turn its next lines belong to until another prompt starts. */
+export interface ParseCursor {
+    currentTurn: string | null;
+}
+
+/** A tool result applied to its call, as the full parse applies it. */
+export function applyToolResult(
+    state: ParseState,
+    call: SessionToolCall,
+    result: Omit<UnmatchedResult, "toolUseId">
+): void {
+    const { promptId, at, block, entry } = result;
+    // The result carries the prompt it answered, which is authoritative over "the last prompt seen".
+    call.turnId = promptId ?? call.turnId;
+    call.finishedAt = epoch(at);
+    call.isError = block.is_error === true;
+    const toolResult = record(entry.toolUseResult);
+    const via = fileToolVia(call.name);
+
+    if (via && !call.isError) {
+        Object.assign(call, fileToolBytes(via, state.inputs.get(call.id) ?? {}, toolResult));
+    }
+
+    if (call.command !== null) {
+        call.harnessDetected = harnessDetected(toolResult);
+    }
+}
+
+export function parseLines(
+    content: string | Iterable<string>,
+    agentId: string | null,
+    state: ParseState,
+    cursor: ParseCursor = { currentTurn: null },
+    hooks: ParseHooks = {}
+): void {
     for (const line of typeof content === "string" ? content.split("\n") : content) {
         // Most bytes of a transcript are lines no rule reads (attachments, snapshots, titles).
         if (
@@ -270,7 +321,7 @@ function parseLines(content: string | Iterable<string>, agentId: string | null, 
         const message = record(entry.message);
 
         if (entry.type === "user" && promptId) {
-            currentTurn = promptId;
+            cursor.currentTurn = promptId;
             const uuid = text(entry.uuid);
 
             if (uuid && agentId === null) {
@@ -286,6 +337,10 @@ function parseLines(content: string | Iterable<string>, agentId: string | null, 
 
             if (turn && turn.prompt === "" && prompt) {
                 turn.prompt = prompt;
+            }
+
+            if (agentId !== null && prompt) {
+                hooks.prompt?.(promptId, prompt);
             }
         }
 
@@ -306,7 +361,7 @@ function parseLines(content: string | Iterable<string>, agentId: string | null, 
                 state.inputs.set(id, input);
                 state.calls.set(id, {
                     id,
-                    turnId: currentTurn ?? "",
+                    turnId: cursor.currentTurn ?? "",
                     name,
                     startedAt: epoch(at),
                     finishedAt: null,
@@ -323,32 +378,23 @@ function parseLines(content: string | Iterable<string>, agentId: string | null, 
                 continue;
             }
 
-            const call = state.calls.get(text(block.tool_use_id) ?? "");
+            const toolUseId = text(block.tool_use_id) ?? "";
+            const call = state.calls.get(toolUseId);
 
             if (!call) {
+                hooks.unmatched?.({ toolUseId, promptId, at, block, entry });
                 continue;
             }
 
-            // The result carries the prompt it answered, which is authoritative over "the last prompt seen".
-            call.turnId = promptId ?? call.turnId;
-            call.finishedAt = epoch(at);
-            call.isError = block.is_error === true;
-            const result = record(entry.toolUseResult);
-            const via = fileToolVia(call.name);
-
-            if (via && !call.isError) {
-                Object.assign(call, fileToolBytes(via, state.inputs.get(call.id) ?? {}, result));
-            }
-
-            if (call.command !== null) {
-                call.harnessDetected = harnessDetected(result);
-            }
+            applyToolResult(state, call, { promptId, at, block, entry });
         }
     }
 }
 
 /** The subagent transcripts of a Claude session (`<session>/subagents/agent-<id>.jsonl`) and the call that launched each. */
-function subagentFiles(transcriptPath: string): { path: string; agentId: string; parentToolUseId: string | null }[] {
+export function subagentFiles(
+    transcriptPath: string
+): { path: string; agentId: string; parentToolUseId: string | null }[] {
     const dir = join(transcriptPath.replace(/\.jsonl$/, ""), "subagents");
 
     if (!existsSync(dir)) {
@@ -481,9 +527,8 @@ function fillFromBackups(state: ParseState, readBackup: (name: string) => string
     }
 }
 
-/** Parse a Claude session transcript (main thread plus subagents) into turns and tool calls. */
-export function parseClaudeTranscript(sessionId: string, source: TranscriptSource): SessionTranscript {
-    const state: ParseState = {
+export function emptyParseState(): ParseState {
+    return {
         calls: new Map(),
         inputs: new Map(),
         turns: new Map(),
@@ -491,6 +536,29 @@ export function parseClaudeTranscript(sessionId: string, source: TranscriptSourc
         promptOfMessage: new Map(),
         backups: [],
     };
+}
+
+/** The transcript a parsed state stands for: checkpoint backups fill the before and after text file tools left out. */
+export function finishTranscript(
+    sessionId: string,
+    state: ParseState,
+    readBackup?: (name: string) => string | null
+): SessionTranscript {
+    if (readBackup) {
+        fillFromBackups(state, readBackup);
+    }
+
+    return {
+        sessionId,
+        turns: [...state.turns.values()],
+        calls: [...state.calls.values()],
+        cwds: [...state.cwds],
+    };
+}
+
+/** Parse a Claude session transcript (main thread plus subagents) into turns and tool calls. */
+export function parseClaudeTranscript(sessionId: string, source: TranscriptSource): SessionTranscript {
+    const state = emptyParseState();
     parseLines(source.main, null, state);
 
     for (const agent of source.subagents ?? []) {
@@ -506,16 +574,7 @@ export function parseClaudeTranscript(sessionId: string, source: TranscriptSourc
         }
     }
 
-    if (source.readBackup) {
-        fillFromBackups(state, source.readBackup);
-    }
-
-    return {
-        sessionId,
-        turns: [...state.turns.values()],
-        calls: [...state.calls.values()],
-        cwds: [...state.cwds],
-    };
+    return finishTranscript(sessionId, state, source.readBackup);
 }
 
 /** The main transcript of a Claude session, searched across every project directory. */
@@ -545,8 +604,19 @@ export function readClaudeTranscript(transcriptPath: string): SessionTranscript 
         content: readLinesSync(file.path),
     }));
     log.debug({ transcriptPath, subagents: subagents.length }, "reading session transcript");
+
+    // In chunks: the whole text of a 218 MB transcript was a 640 MB string before parsing began.
+    return parseClaudeTranscript(sessionId, {
+        main: readLinesSync(transcriptPath),
+        subagents,
+        readBackup: backupReader(sessionId),
+    });
+}
+
+/** Reads one of Claude's checkpoint backups of a session by file name, or returns null. */
+export function backupReader(sessionId: string): (name: string) => string | null {
     const backups = join(CLAUDE_DIR, "file-history", sessionId);
-    const readBackup = (name: string): string | null => {
+    return (name) => {
         const path = join(backups, basename(name));
 
         try {
@@ -556,7 +626,4 @@ export function readClaudeTranscript(transcriptPath: string): SessionTranscript 
             return null;
         }
     };
-
-    // In chunks: the whole text of a 218 MB transcript was a 640 MB string before parsing began.
-    return parseClaudeTranscript(sessionId, { main: readLinesSync(transcriptPath), subagents, readBackup });
 }

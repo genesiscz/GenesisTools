@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { readClaudeTranscriptFolded } from "./fold";
 import {
     analyzeCommand,
     applyReplacement,
@@ -18,6 +22,7 @@ import {
     type StageKind,
     storeBlobs,
 } from "./index";
+import { readClaudeTranscript } from "./transcript";
 
 const REPO = "/tmp/fixture-repo";
 const OTHER = "/tmp/fixture-other";
@@ -803,5 +808,47 @@ describe("parseCodexRollout", () => {
             [to, ["exec-mv", "exec-up"]],
             [from, ["exec-mv"]],
         ]);
+    });
+});
+
+describe("readClaudeTranscriptFolded", () => {
+    it("equals a full read as the main and sub-agent files grow, with the cross-file steps applied", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-session-fold-"));
+        const main = join(dir, "fold-session.jsonl");
+        const agents = join(dir, "fold-session", "subagents");
+        mkdirSync(agents, { recursive: true });
+        writeFileSync(
+            join(agents, "agent-a1.meta.json"),
+            SafeJSON.stringify({ toolUseId: "t-agent" }, { strict: true })
+        );
+        const agent = join(agents, "agent-a1.jsonl");
+        const lines = (items: Line[]) => `${jsonl(items)}\n`;
+        const same = () => {
+            const folded = readClaudeTranscriptFolded(main, { minBytes: 0 });
+            expect(folded).toEqual(readClaudeTranscript(main));
+            return folded;
+        };
+
+        // A turn without prompt text: the sub-agent's prompt line fills it, as the full read does.
+        writeFileSync(
+            main,
+            lines([
+                prompt("p1", "", 0),
+                use("t-agent", "Agent", { prompt: "help" }, 1),
+                use("t-main", "Bash", { command: "ls" }, 2),
+            ])
+        );
+        writeFileSync(agent, lines([prompt("p1", "from the agent", 3)]));
+        same();
+
+        // The sub-agent answers a call of the main file, then makes its own.
+        appendFileSync(agent, lines([result("p1", "t-main", 4), use("t-sub", "Bash", { command: "pwd" }, 5)]));
+        same();
+
+        appendFileSync(main, lines([result("p1", "t-agent", 6), prompt("p2", "next", 7)]));
+        const final = same();
+        expect(final.calls.find((call) => call.id === "t-main")?.finishedAt).not.toBeNull();
+        expect(final.turns.find((turn) => turn.turnId === "p1")?.prompt).toBe("from the agent");
+        expect(final.calls.find((call) => call.id === "t-sub")?.agentId).toBe("a1");
     });
 });
