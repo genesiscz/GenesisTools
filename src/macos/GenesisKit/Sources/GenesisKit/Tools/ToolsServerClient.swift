@@ -406,18 +406,32 @@ public final class ToolsServerClient: @unchecked Sendable {
 }
 
 /// One connection's partial line. Touched only from that connection's read source, on the I/O queue.
-private final class LineSplitter: @unchecked Sendable {
+///
+/// A reply of several MB arrives in 64 KB reads. Each read used to search the whole partial line again from its start
+/// (`Collection.firstIndex`, a byte at a time) and copy it, so one reply cost time quadratic in its size; an idle hub
+/// spent most of its I/O queue there (2026-10-08). Only the new bytes are searched now (memchr), and the partial
+/// line is copied only when a newline ends a line before it.
+final class LineSplitter: @unchecked Sendable {
     private var buffer = Data()
+    /// Bytes at the buffer's start already searched: none of them is a newline.
+    private var searched = 0
 
     func push(_ bytes: ArraySlice<UInt8>) -> [Data] {
         buffer.append(contentsOf: bytes)
         var lines: [Data] = []
-        while let newline = buffer.firstIndex(of: 0x0A) {
-            let line = buffer[buffer.startIndex..<newline]
-            buffer.removeSubrange(buffer.startIndex...newline)
-            if !line.isEmpty { lines.append(Data(line)) }
+        var lineStart = 0
+        buffer.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            var from = searched
+            while from < raw.count, let hit = memchr(base + from, 0x0A, raw.count - from) {
+                let newline = base.distance(to: UnsafeRawPointer(hit))
+                if newline > lineStart { lines.append(Data(bytes: base + lineStart, count: newline - lineStart)) }
+                lineStart = newline + 1
+                from = lineStart
+            }
         }
-        buffer = Data(buffer)
+        if lineStart > 0 { buffer = buffer.subdata(in: lineStart..<buffer.count) }
+        searched = buffer.count
         return lines
     }
 }

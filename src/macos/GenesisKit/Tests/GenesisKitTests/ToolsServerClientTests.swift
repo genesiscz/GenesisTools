@@ -232,3 +232,33 @@ private final class Counter: @unchecked Sendable {
         lock.withLock { count += 1 }
     }
 }
+
+final class LineSplitterTests: XCTestCase {
+    /// Lines split across reads, empty lines dropped, a partial line kept for the next read.
+    func testSplitsAcrossReads() {
+        let splitter = LineSplitter()
+        let text = Array("a\n\nbc\nde".utf8)
+        XCTAssertEqual(splitter.push(text[0..<3]).map { String(decoding: $0, as: UTF8.self) }, ["a"])
+        XCTAssertEqual(splitter.push(text[3..<5]).map { String(decoding: $0, as: UTF8.self) }, [])
+        XCTAssertEqual(splitter.push(text[5..<8]).map { String(decoding: $0, as: UTF8.self) }, ["bc"])
+        XCTAssertEqual(splitter.push(Array("f\ng\n".utf8)[...]).map { String(decoding: $0, as: UTF8.self) }, ["def", "g"])
+    }
+
+    /// An 8 MB line in 64 KB reads arrives whole and in linear time: the quadratic search took seconds here.
+    func testABigLineInSmallReads() {
+        let splitter = LineSplitter()
+        let line = [UInt8](repeating: 0x61, count: 8 << 20)
+        let start = CFAbsoluteTimeGetCurrent()
+        var got: [Data] = []
+        var at = 0
+        while at < line.count {
+            got += splitter.push(line[at..<min(at + 65536, line.count)])
+            at += 65536
+        }
+        got += splitter.push(Array("\nnext".utf8)[...])
+        let seconds = CFAbsoluteTimeGetCurrent() - start
+        XCTAssertEqual(got.count, 1)
+        XCTAssertEqual(got.first?.count, line.count)
+        XCTAssertLessThan(seconds, 0.5)
+    }
+}
