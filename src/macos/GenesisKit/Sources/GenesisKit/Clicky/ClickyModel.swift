@@ -10,6 +10,12 @@ import os
 public final class ClickyModel: ObservableObject {
     @Published public var preferences: ClickyPreferences { didSet { savePreferences(previous: oldValue) } }
     public let appearance: NativeSettingsAppearance
+    let soundLibrary: ClickySoundLibrary
+    private var librarySubscription: AnyCancellable?
+    public var selectedSoundName: String { soundLibrary.active?.entry.name ?? preferences.selectedSwitch.name }
+    public var selectedSoundDetail: String {
+        soundLibrary.active.map { "\($0.entry.author) · \($0.entry.licence)" } ?? preferences.selectedSwitch.detail
+    }
     @Published public private(set) var enabled = false
     @Published public private(set) var status = "Clicky is off"
     @Published public private(set) var statistics: ClickyStatistics
@@ -41,6 +47,7 @@ public final class ClickyModel: ObservableObject {
         inputMonitor: (any ClickyInputMonitoring)? = nil, observeSystemEvents: Bool = true
     ) {
         self.defaults = defaults
+        soundLibrary = ClickySoundLibrary(defaults: defaults)
         self.previewOnly = previewOnly
         self.inputMonitor = inputMonitor ?? SystemClickyInputMonitor()
         self.appearance =
@@ -69,6 +76,18 @@ public final class ClickyModel: ObservableObject {
         appearanceSubscription = self.appearance.objectWillChange.sink { [weak self] _ in
             Task { @MainActor in self?.syncAppearance() }
         }
+        soundLibrary.install = { [weak self] reference, pack in
+            guard let self else { throw ClickyPackError.invalid("Clicky is no longer available.") }
+            if self.audio == nil { self.audio = ClickyAudio() }
+            try self.audio?.install(reference: reference, pack: pack)
+            self.previewGeneration &+= 1
+            self.inputState.clear()
+            self.preferences.selectedPack = reference
+        }
+        librarySubscription = soundLibrary.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        soundLibrary.restore(preferences.selectedPack)
         guard !previewOnly && observeSystemEvents else { return }
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [
@@ -145,7 +164,7 @@ public final class ClickyModel: ObservableObject {
             pendingStats = true
         }
         refreshContext()
-        notify("Clicky enabled", body: "Your selected switch is \(preferences.selectedSwitch.name).")
+        notify("Clicky enabled", body: "Your selected switch is \(selectedSoundName).")
         log.notice("Input feedback activated; no input content is retained")
     }
 
@@ -168,6 +187,7 @@ public final class ClickyModel: ObservableObject {
     }
 
     public func shutdown() {
+        soundLibrary.stop()
         deactivate()
         boundaryTimer?.invalidate()
         persistenceWork?.cancel()
@@ -178,19 +198,37 @@ public final class ClickyModel: ObservableObject {
         observers.removeAll()
     }
 
+    public func selectBuiltIn(_ profile: ClickySwitch) {
+        soundLibrary.useBuiltIn()
+        audio?.useBuiltIn()
+        previewGeneration &+= 1
+        inputState.clear()
+        preferences.selectedPack = nil
+        preferences.selectedSwitch = profile
+    }
+
+    func removeSoundLibrary(_ id: String) {
+        if preferences.selectedPack?.libraryID == id { selectBuiltIn(preferences.selectedSwitch) }
+        soundLibrary.remove(id)
+    }
+
     public func preview(_ profile: ClickySwitch? = nil, release: Bool = false, position: Float = 0) {
-        play(profile: profile ?? preferences.selectedSwitch, release: release, pan: position)
+        if let profile {
+            play(profile: profile, release: release, pan: position)
+        } else {
+            playSelected(keyCode: 0, release: release, preview: true, pan: position)
+        }
     }
 
     public func previewStroke(_ profile: ClickySwitch? = nil, position: Float = 0) {
-        let chosen = profile ?? preferences.selectedSwitch
-        preview(chosen, position: position)
-        guard preferences.releaseSounds else { return }
+        preview(profile, position: position)
         let generation = previewGeneration
         Task { @MainActor [weak self] in
             do { try await Task.sleep(for: .milliseconds(85)) } catch { return }
-            guard let self, self.previewGeneration == generation, self.preferences.releaseSounds else { return }
-            self.preview(chosen, release: true, position: position)
+            guard let self, self.previewGeneration == generation else { return }
+            if profile == nil || self.preferences.releaseSounds {
+                self.preview(profile, release: true, position: position)
+            }
         }
     }
 
@@ -340,6 +378,7 @@ public final class ClickyModel: ObservableObject {
         }
         guard !IsSecureEventInputEnabled() else {
             inputState.clear()
+            audio?.clearHeldKeys()
             return
         }
         let repeated = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
@@ -350,6 +389,7 @@ public final class ClickyModel: ObservableObject {
                 repeatSounds: preferences.repeatSounds)
         else {
             inputState.clear()
+            audio?.clearHeldKeys()
             return
         }
         let code = UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode))
@@ -386,8 +426,25 @@ public final class ClickyModel: ObservableObject {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: work)
             }
         }
-        guard !release || preferences.releaseSounds else { return }
-        play(profile: preferences.selectedSwitch, release: release, pan: ClickyEventPolicy.pan(keyCode: code))
+        playSelected(keyCode: code, release: release, preview: false, pan: ClickyEventPolicy.pan(keyCode: code))
+    }
+
+    private func playSelected(keyCode: UInt16, release: Bool, preview: Bool, pan: Float) {
+        if audio == nil { audio = ClickyAudio() }
+        do {
+            let imported = try audio?.playSelected(keyCode: keyCode, release: release, preview: preview,
+                                                   preferences: preferences, pan: pan) ?? false
+            if !imported && (!release || preferences.releaseSounds) {
+                try audio?.play(profile: preferences.selectedSwitch, release: release, preferences: preferences, pan: pan)
+            }
+            if preferences.visualizer && (!release || preferences.releaseSounds) {
+                lastPan = pan
+                pulse &+= 1
+            }
+        } catch {
+            self.error = "Audio could not start: \(error.localizedDescription)"
+            log.error("Audio output failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func play(profile: ClickySwitch, release: Bool, pan: Float) {

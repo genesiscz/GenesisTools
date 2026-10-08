@@ -979,3 +979,698 @@ final class ClickyPackTests: XCTestCase {
         _ = try await loader.prepare(at: fixture.root, entry: fixture.entry)
     }
 }
+
+extension ClickyPackTests {
+    private enum IntegrationFailure: LocalizedError, Sendable {
+        case corrupt, missingRequest
+        var errorDescription: String? {
+            switch self {
+            case .corrupt: return "Synthetic pack checksum failed"
+            case .missingRequest: return "The synthetic request was not pending"
+            }
+        }
+    }
+
+    private actor GatedIntegrationLoader: ClickyPackLoading {
+        let entries: [ClickyPackEntry]
+        let packs: [String: PreparedClickyPack]
+        let catalogueStarted: @Sendable (Int) -> Void
+        let prepareStarted: @Sendable (Int) -> Void
+        private var catalogueHeld = false
+        private var catalogues = 0
+        private var prepares = 0
+        private var catalogueWaiters: [Int: CheckedContinuation<[ClickyPackEntry], Error>] = [:]
+        private var prepareWaiters: [Int: CheckedContinuation<PreparedClickyPack, Error>] = [:]
+        private var prepareIDs: [Int: String] = [:]
+
+        init(
+            packs: [PreparedClickyPack],
+            catalogueStarted: @escaping @Sendable (Int) -> Void = { _ in },
+            prepareStarted: @escaping @Sendable (Int) -> Void = { _ in }
+        ) {
+            entries = packs.map(\.entry)
+            self.packs = Dictionary(uniqueKeysWithValues: packs.map { ($0.entry.id, $0) })
+            self.catalogueStarted = catalogueStarted
+            self.prepareStarted = prepareStarted
+        }
+
+        func holdCatalogues() { catalogueHeld = true }
+        func counts() -> (catalogue: Int, prepare: Int) { (catalogues, prepares) }
+
+        func catalogue(at root: URL) async throws -> [ClickyPackEntry] {
+            catalogues += 1
+            let request = catalogues
+            if !catalogueHeld {
+                catalogueStarted(request)
+                return entries
+            }
+            // Gates intentionally ignore task cancellation so the production generation guard is exercised.
+            return try await withCheckedThrowingContinuation { continuation in
+                catalogueWaiters[request] = continuation
+                catalogueStarted(request)
+            }
+        }
+
+        func prepare(at root: URL, entry: ClickyPackEntry) async throws -> PreparedClickyPack {
+            prepares += 1
+            let request = prepares
+            prepareIDs[request] = entry.id
+            return try await withCheckedThrowingContinuation { continuation in
+                prepareWaiters[request] = continuation
+                prepareStarted(request)
+            }
+        }
+
+        func finishCatalogue(_ request: Int, entries: [ClickyPackEntry]? = nil) throws {
+            guard let continuation = catalogueWaiters.removeValue(forKey: request) else {
+                throw IntegrationFailure.missingRequest
+            }
+            continuation.resume(returning: entries ?? self.entries)
+        }
+
+        func finishPrepare(_ request: Int, failure: Bool = false) throws {
+            guard let continuation = prepareWaiters.removeValue(forKey: request),
+                let id = prepareIDs.removeValue(forKey: request), let pack = packs[id]
+            else { throw IntegrationFailure.missingRequest }
+            if failure {
+                continuation.resume(throwing: IntegrationFailure.corrupt)
+            } else {
+                continuation.resume(returning: pack)
+            }
+        }
+
+        func cancelPending() {
+            for continuation in catalogueWaiters.values { continuation.resume(throwing: CancellationError()) }
+            for continuation in prepareWaiters.values { continuation.resume(throwing: CancellationError()) }
+            catalogueWaiters.removeAll()
+            prepareWaiters.removeAll()
+            prepareIDs.removeAll()
+        }
+    }
+
+    private func integrationPack(_ base: PreparedClickyPack, id: String, manifestHash: String? = nil) -> PreparedClickyPack {
+        PreparedClickyPack(
+            entry: ClickyPackEntry(id: id, name: "Synthetic \(id)", kind: base.entry.kind, author: "Fixture Author",
+                                  licence: base.entry.licence, manifest: "\(id)/manifest.json", licenceFile: "\(id)/LICENCE.txt"),
+            manifestHash: manifestHash ?? ClickyPackLoader.sha256(Data(id.utf8)), licenceText: base.licenceText,
+            source: base.source, permissions: base.permissions, attribution: base.attribution,
+            attributionRequired: base.attributionRequired, playback: base.playback, samples: base.samples,
+            decodedFrameCount: base.decodedFrameCount)
+    }
+
+    @MainActor
+    private func integrationDefaults() -> (UserDefaults, String) {
+        let suite = "dev.genesis.clicky.integration.\(UUID().uuidString)"
+        return (UserDefaults(suiteName: suite)!, suite)
+    }
+
+    @MainActor
+    private func seedLibrary(_ defaults: UserDefaults, root: URL, count: Int = 1) throws -> [ClickyLibraryRecord] {
+        let bookmark = try root.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        let records = (0..<count).map {
+            ClickyLibraryRecord(id: "fixture-library-\($0)", displayName: "Fixture library \($0)", bookmark: bookmark)
+        }
+        defaults.set(try JSONEncoder().encode(records), forKey: "clicky.libraries.v1")
+        return records
+    }
+
+    @MainActor
+    func testIntegrationNewestSelectionWinsWhenCancelledPreparationReturnsLate() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let base = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let a = integrationPack(base, id: "alpha")
+        let b = integrationPack(base, id: "beta")
+        let starts = [expectation(description: "alpha preparation"), expectation(description: "beta preparation")]
+        let committed = expectation(description: "beta installed")
+        let staleInstall = expectation(description: "alpha must not install")
+        staleInstall.isInverted = true
+        let loader = GatedIntegrationLoader(packs: [a, b], prepareStarted: { starts[$0 - 1].fulfill() })
+        addTeardownBlock { await loader.cancelPending() }
+        let (defaults, suite) = integrationDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let record = try XCTUnwrap(seedLibrary(defaults, root: fixture.root).first)
+        let library = ClickySoundLibrary(defaults: defaults, loader: loader)
+        defer { library.stop() }
+        var installed: [ClickyPackReference] = []
+        library.install = { reference, _ in
+            installed.append(reference)
+            if reference.packID == "alpha" { staleInstall.fulfill() } else { committed.fulfill() }
+        }
+        await library.refresh()
+        let refA = ClickyPackReference(libraryID: record.id, packID: a.entry.id)
+        let refB = ClickyPackReference(libraryID: record.id, packID: b.entry.id)
+        library.select(refA)
+        await fulfillment(of: [starts[0]], timeout: 2)
+        library.select(refB)
+        await fulfillment(of: [starts[1]], timeout: 2)
+        try await loader.finishPrepare(2)
+        await fulfillment(of: [committed], timeout: 2)
+        try await loader.finishPrepare(1)
+        await fulfillment(of: [staleInstall], timeout: 0.05)
+        XCTAssertEqual(installed, [refB])
+        XCTAssertEqual(library.active?.reference, refB)
+        XCTAssertNil(library.loading)
+        XCTAssertNil(library.error)
+    }
+
+    @MainActor
+    func testIntegrationBuiltInAndStopCancelPendingSelectionsWithoutLateInstallation() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let base = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        for stop in [false, true] {
+            let started = expectation(description: "preparation started \(stop)")
+            let forbidden = expectation(description: "cancelled preparation must not install \(stop)")
+            forbidden.isInverted = true
+            let loader = GatedIntegrationLoader(packs: [base], prepareStarted: { _ in started.fulfill() })
+            addTeardownBlock { await loader.cancelPending() }
+            let (defaults, suite) = integrationDefaults()
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let record = try XCTUnwrap(seedLibrary(defaults, root: fixture.root).first)
+            let library = ClickySoundLibrary(defaults: defaults, loader: loader)
+            defer { library.stop() }
+            library.install = { _, _ in forbidden.fulfill() }
+            await library.refresh()
+            library.select(ClickyPackReference(libraryID: record.id, packID: base.entry.id))
+            await fulfillment(of: [started], timeout: 2)
+            if stop { library.stop() } else { library.useBuiltIn() }
+            try await loader.finishPrepare(1)
+            await fulfillment(of: [forbidden], timeout: 0.05)
+            XCTAssertNil(library.active)
+            XCTAssertNil(library.loading)
+        }
+    }
+
+    @MainActor
+    func testIntegrationFailedAndUnavailableSelectionsPreservePreviousPackAndPreference() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let base = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let a = integrationPack(base, id: "valid")
+        let b = integrationPack(base, id: "corrupt")
+        let starts = [expectation(description: "valid preparation"), expectation(description: "corrupt preparation")]
+        let installed = expectation(description: "valid installed")
+        let failed = expectation(description: "failed load reported")
+        let loader = GatedIntegrationLoader(packs: [a, b], prepareStarted: { starts[$0 - 1].fulfill() })
+        addTeardownBlock { await loader.cancelPending() }
+        let (defaults, suite) = integrationDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let record = try XCTUnwrap(seedLibrary(defaults, root: fixture.root).first)
+        let library = ClickySoundLibrary(defaults: defaults, loader: loader)
+        defer { library.stop() }
+        var preferences = ClickyPreferences()
+        var installationCount = 0
+        library.install = { reference, _ in
+            installationCount += 1
+            preferences.selectedPack = reference
+            installed.fulfill()
+        }
+        let subscription = library.$error.compactMap { $0 }.filter { $0.contains("checksum") }.sink { _ in failed.fulfill() }
+        defer { subscription.cancel() }
+        await library.refresh()
+        let valid = ClickyPackReference(libraryID: record.id, packID: a.entry.id)
+        library.select(valid)
+        await fulfillment(of: [starts[0]], timeout: 2)
+        try await loader.finishPrepare(1)
+        await fulfillment(of: [installed], timeout: 2)
+        library.select(ClickyPackReference(libraryID: record.id, packID: b.entry.id))
+        await fulfillment(of: [starts[1]], timeout: 2)
+        try await loader.finishPrepare(2, failure: true)
+        await fulfillment(of: [failed], timeout: 2)
+        XCTAssertEqual(library.active?.reference, valid)
+        XCTAssertEqual(preferences.selectedPack, valid)
+        XCTAssertEqual(installationCount, 1)
+        library.select(ClickyPackReference(libraryID: "missing-library", packID: "missing"))
+        let unavailable = expectation(description: "unavailable reported")
+        let missingSubscription = library.$error.compactMap { $0 }.sink { _ in unavailable.fulfill() }
+        defer { missingSubscription.cancel() }
+        await fulfillment(of: [unavailable], timeout: 2)
+        XCTAssertEqual(library.active?.reference, valid)
+        XCTAssertEqual(preferences.selectedPack, valid)
+        XCTAssertEqual(installationCount, 1)
+        let calls = await loader.counts()
+        XCTAssertEqual(calls.prepare, 2)
+    }
+
+    @MainActor
+    func testIntegrationInstallationFailureKeepsTheLastSuccessfulMetadata() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let base = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let a = integrationPack(base, id: "valid")
+        let b = integrationPack(base, id: "allocation-failure")
+        let starts = [expectation(description: "first prepare"), expectation(description: "second prepare")]
+        let installed = expectation(description: "first installed")
+        let failed = expectation(description: "installation error")
+        let loader = GatedIntegrationLoader(packs: [a, b], prepareStarted: { starts[$0 - 1].fulfill() })
+        addTeardownBlock { await loader.cancelPending() }
+        let (defaults, suite) = integrationDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let record = try XCTUnwrap(seedLibrary(defaults, root: fixture.root).first)
+        let library = ClickySoundLibrary(defaults: defaults, loader: loader)
+        defer { library.stop() }
+        library.install = { reference, _ in
+            if reference.packID == b.entry.id { throw IntegrationFailure.corrupt }
+            installed.fulfill()
+        }
+        let subscription = library.$error.compactMap { $0 }.sink { _ in failed.fulfill() }
+        defer { subscription.cancel() }
+        await library.refresh()
+        let reference = ClickyPackReference(libraryID: record.id, packID: a.entry.id)
+        library.select(reference)
+        await fulfillment(of: [starts[0]], timeout: 2)
+        try await loader.finishPrepare(1)
+        await fulfillment(of: [installed], timeout: 2)
+        library.select(ClickyPackReference(libraryID: record.id, packID: b.entry.id))
+        await fulfillment(of: [starts[1]], timeout: 2)
+        try await loader.finishPrepare(2)
+        await fulfillment(of: [failed], timeout: 2)
+        XCTAssertEqual(library.active?.reference, reference)
+        XCTAssertEqual(library.active?.licenceText, base.licenceText)
+    }
+
+    @MainActor
+    func testIntegrationRemovingLibraryInvalidatesAnOlderRefresh() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let pack = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let started = expectation(description: "refresh catalogue started")
+        let loader = GatedIntegrationLoader(packs: [pack], catalogueStarted: { _ in started.fulfill() })
+        addTeardownBlock { await loader.cancelPending() }
+        let (defaults, suite) = integrationDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let record = try XCTUnwrap(seedLibrary(defaults, root: fixture.root).first)
+        let library = ClickySoundLibrary(defaults: defaults, loader: loader)
+        defer { library.stop() }
+        await loader.holdCatalogues()
+        let refresh = Task { @MainActor in await library.refresh() }
+        await fulfillment(of: [started], timeout: 2)
+        library.remove(record.id)
+        try await loader.finishCatalogue(1)
+        await refresh.value
+        XCTAssertTrue(library.records.isEmpty)
+        XCTAssertTrue(library.rows.isEmpty)
+        XCTAssertFalse(library.refreshing)
+        let persisted = try JSONDecoder().decode([ClickyLibraryRecord].self, from: XCTUnwrap(defaults.data(forKey: "clicky.libraries.v1")))
+        XCTAssertTrue(persisted.isEmpty)
+    }
+
+    @MainActor
+    func testIntegrationNewerRefreshWinsWhenOlderCatalogueReturnsLast() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let base = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let older = integrationPack(base, id: "older")
+        let newer = integrationPack(base, id: "newer")
+        let starts = [expectation(description: "old refresh"), expectation(description: "new refresh")]
+        let loader = GatedIntegrationLoader(packs: [older, newer], catalogueStarted: { starts[$0 - 1].fulfill() })
+        addTeardownBlock { await loader.cancelPending() }
+        let (defaults, suite) = integrationDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        _ = try seedLibrary(defaults, root: fixture.root)
+        let library = ClickySoundLibrary(defaults: defaults, loader: loader)
+        defer { library.stop() }
+        await loader.holdCatalogues()
+        let first = Task { @MainActor in await library.refresh() }
+        await fulfillment(of: [starts[0]], timeout: 2)
+        let second = Task { @MainActor in await library.refresh() }
+        await fulfillment(of: [starts[1]], timeout: 2)
+        try await loader.finishCatalogue(2, entries: [newer.entry])
+        await second.value
+        XCTAssertEqual(library.rows.map { $0.entry.id }, [newer.entry.id])
+        try await loader.finishCatalogue(1, entries: [older.entry])
+        await first.value
+        XCTAssertEqual(library.rows.map { $0.entry.id }, [newer.entry.id])
+        XCTAssertFalse(library.refreshing)
+    }
+
+    @MainActor
+    func testIntegrationImportDuringOlderRefreshRetainsBothLibraries() async throws {
+        let firstFixture = try Fixture()
+        let secondFixture = try Fixture()
+        defer { firstFixture.dispose(); secondFixture.dispose() }
+        let pack = try await ClickyPackLoader().prepare(at: firstFixture.root, entry: firstFixture.entry)
+        let starts = [expectation(description: "older refresh"), expectation(description: "new import")]
+        let loader = GatedIntegrationLoader(packs: [pack], catalogueStarted: { starts[$0 - 1].fulfill() })
+        addTeardownBlock { await loader.cancelPending() }
+        let (defaults, suite) = integrationDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        _ = try seedLibrary(defaults, root: firstFixture.root)
+        let library = ClickySoundLibrary(defaults: defaults, loader: loader)
+        defer { library.stop() }
+        await loader.holdCatalogues()
+        let refreshing = Task { @MainActor in await library.refresh() }
+        await fulfillment(of: [starts[0]], timeout: 2)
+        let importing = Task { @MainActor in await library.register(secondFixture.root) }
+        await fulfillment(of: [starts[1]], timeout: 2)
+        try await loader.finishCatalogue(2)
+        await importing.value
+        XCTAssertEqual(library.records.count, 2)
+        try await loader.finishCatalogue(1)
+        await refreshing.value
+        XCTAssertEqual(Set(library.rows.map { $0.reference.libraryID }), Set(library.records.map(\.id)))
+        XCTAssertEqual(library.rows.count, 2)
+    }
+
+    @MainActor
+    func testIntegrationStopPreventsPendingImportFromMutatingOrPersistingTheCatalogue() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let pack = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let started = expectation(description: "import catalogue started")
+        let loader = GatedIntegrationLoader(packs: [pack], catalogueStarted: { _ in started.fulfill() })
+        addTeardownBlock { await loader.cancelPending() }
+        let (defaults, suite) = integrationDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let library = ClickySoundLibrary(defaults: defaults, loader: loader)
+        await loader.holdCatalogues()
+        let importing = Task { @MainActor in await library.register(fixture.root) }
+        await fulfillment(of: [started], timeout: 2)
+        library.stop()
+        try await loader.finishCatalogue(1)
+        await importing.value
+        XCTAssertTrue(library.records.isEmpty)
+        XCTAssertTrue(library.rows.isEmpty)
+        XCTAssertNil(defaults.data(forKey: "clicky.libraries.v1"))
+    }
+
+    @MainActor
+    func testIntegrationCancelledCallerImportDoesNotCommitAndNormalImportWorks() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let pack = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let starts = [expectation(description: "cancelled import"), expectation(description: "normal import")]
+        let loader = GatedIntegrationLoader(packs: [pack], catalogueStarted: { starts[$0 - 1].fulfill() })
+        addTeardownBlock { await loader.cancelPending() }
+        let (defaults, suite) = integrationDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let library = ClickySoundLibrary(defaults: defaults, loader: loader)
+        defer { library.stop() }
+        await loader.holdCatalogues()
+        let cancelled = Task { @MainActor in await library.register(fixture.root) }
+        await fulfillment(of: [starts[0]], timeout: 2)
+        cancelled.cancel()
+        try await loader.finishCatalogue(1)
+        await cancelled.value
+        XCTAssertTrue(library.records.isEmpty)
+        let normal = Task { @MainActor in await library.register(fixture.root) }
+        await fulfillment(of: [starts[1]], timeout: 2)
+        try await loader.finishCatalogue(2)
+        await normal.value
+        XCTAssertEqual(library.records.count, 1)
+        XCTAssertEqual(library.rows.count, 1)
+        XCTAssertNil(library.error)
+    }
+
+    @MainActor
+    func testIntegrationConcurrentImportsCannotExceedTheLibraryLimit() async throws {
+        let firstFixture = try Fixture()
+        let secondFixture = try Fixture()
+        defer { firstFixture.dispose(); secondFixture.dispose() }
+        let pack = try await ClickyPackLoader().prepare(at: firstFixture.root, entry: firstFixture.entry)
+        let starts = [expectation(description: "first import at limit"), expectation(description: "second import at limit")]
+        let loader = GatedIntegrationLoader(packs: [pack], catalogueStarted: { starts[$0 - 1].fulfill() })
+        addTeardownBlock { await loader.cancelPending() }
+        let (defaults, suite) = integrationDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        _ = try seedLibrary(defaults, root: firstFixture.root, count: 31)
+        let library = ClickySoundLibrary(defaults: defaults, loader: loader)
+        defer { library.stop() }
+        await loader.holdCatalogues()
+        let first = Task { @MainActor in await library.register(firstFixture.root) }
+        await fulfillment(of: [starts[0]], timeout: 2)
+        let second = Task { @MainActor in await library.register(secondFixture.root) }
+        await fulfillment(of: [starts[1]], timeout: 2)
+        try await loader.finishCatalogue(1)
+        await first.value
+        try await loader.finishCatalogue(2)
+        await second.value
+        XCTAssertEqual(library.records.count, 32)
+        let persisted = try JSONDecoder().decode([ClickyLibraryRecord].self, from: XCTUnwrap(defaults.data(forKey: "clicky.libraries.v1")))
+        XCTAssertEqual(persisted.count, 32)
+        XCTAssertNotNil(library.error)
+    }
+
+    @MainActor
+    func testIntegrationBankCacheStaysAtThreeDeduplicatesAndReplacesSameReference() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let base = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let engine = AVAudioEngine()
+        try engine.enableManualRenderingMode(.offline, format: XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)), maximumFrameCount: 8192)
+        let audio = ClickyAudio(engine: engine)
+        defer { audio.stop() }
+        for id in ["alpha", "beta", "gamma", "delta"] {
+            let pack = integrationPack(base, id: id)
+            let reference = ClickyPackReference(libraryID: "fixture-library", packID: id)
+            try audio.install(reference: reference, pack: pack)
+            XCTAssertLessThanOrEqual(audio.cachedPackCount, 3)
+            XCTAssertLessThanOrEqual(audio.cachedPackFrames, 3 * ClickyPackLoader.maximumFrames)
+        }
+        XCTAssertEqual(audio.cachedPackCount, 3)
+        XCTAssertEqual(audio.cachedPackFrames, 15)
+        let reference = ClickyPackReference(libraryID: "fixture-library", packID: "delta")
+        let replacement = integrationPack(base, id: "delta", manifestHash: String(repeating: "d", count: 64))
+        try audio.install(reference: reference, pack: replacement)
+        try audio.install(reference: reference, pack: replacement)
+        XCTAssertEqual(audio.cachedPackCount, 3)
+        XCTAssertEqual(audio.cachedPackFrames, 15)
+        XCTAssertEqual(audio.selectedPackReference, reference)
+        audio.useBuiltIn()
+        XCTAssertNil(audio.selectedPackReference)
+        XCTAssertEqual(audio.cachedPackCount, 3)
+    }
+
+    @MainActor
+    func testIntegrationPreparedPlaybackRendersAfterSourcesDisappearAndNeverCallsLoaderAgain() async throws {
+        var fixture = try Fixture()
+        let frameCount = 960
+        let waves: [(String, Double, Double)] = [("press-a.wav", 400, 0.25), ("press-b.wav", 800, 0.08),
+                                              ("release-a.wav", 1200, 0.10), ("release-b.wav", 1600, 0.06)]
+        var declarations: [[String: Any]] = []
+        for (name, frequency, amplitude) in waves {
+            let samples = (0..<frameCount).map { index in
+                Int16((sin(2 * Double.pi * frequency * Double(index) / 48_000) * amplitude * 32767).rounded())
+            }
+            let bytes = Self.wav(samples)
+            try bytes.write(to: fixture.root.appendingPathComponent("fixture/\(name)"))
+            declarations.append(["filename": name, "sha256": ClickyPackLoader.sha256(bytes), "frames": frameCount])
+        }
+        fixture.manifest["files"] = declarations
+        try fixture.writeManifest()
+        let pack = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let started = expectation(description: "one preparation")
+        let installed = expectation(description: "one installation")
+        let loader = GatedIntegrationLoader(packs: [pack], prepareStarted: { _ in started.fulfill() })
+        addTeardownBlock { await loader.cancelPending() }
+        let (defaults, suite) = integrationDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let record = try XCTUnwrap(seedLibrary(defaults, root: fixture.root).first)
+        let library = ClickySoundLibrary(defaults: defaults, loader: loader)
+        defer { library.stop() }
+        let engine = AVAudioEngine()
+        let stereo = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+        try engine.enableManualRenderingMode(.offline, format: stereo, maximumFrameCount: 8192)
+        let audio = ClickyAudio(engine: engine)
+        defer { audio.stop() }
+        library.install = { reference, prepared in
+            try audio.install(reference: reference, pack: prepared)
+            installed.fulfill()
+        }
+        await library.refresh()
+        library.select(ClickyPackReference(libraryID: record.id, packID: pack.entry.id))
+        await fulfillment(of: [started], timeout: 2)
+        try await loader.finishPrepare(1)
+        await fulfillment(of: [installed], timeout: 2)
+        fixture.dispose()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.path))
+        var preferences = ClickyPreferences()
+        preferences.volume = 1
+        preferences.randomizedPitch = true
+        preferences.spatialAudio = false
+        func render(_ key: UInt16, release: Bool) throws -> Double {
+            XCTAssertTrue(try audio.playSelected(keyCode: key, release: release, preview: false, preferences: preferences, pan: 0))
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: stereo, frameCapacity: 8192))
+            XCTAssertEqual(try engine.renderOffline(8192, to: buffer), .success)
+            let channel = try XCTUnwrap(buffer.floatChannelData?[0])
+            return (0..<Int(buffer.frameLength)).reduce(0) { $0 + Double(channel[$1] * channel[$1]) }
+        }
+        let pressA = try render(0, release: false)
+        let pressB = try render(1, release: false)
+        let releaseB = try render(1, release: true)
+        let releaseA = try render(0, release: true)
+        XCTAssertGreaterThan(pressA, 0)
+        XCTAssertGreaterThan(releaseA, 0)
+        XCTAssertGreaterThan(pressA, pressB * 5)
+        XCTAssertGreaterThan(releaseA, releaseB * 1.8)
+        XCTAssertLessThan(releaseA, pressA)
+        preferences.releaseSounds = false
+        _ = try render(0, release: false)
+        XCTAssertEqual(try render(0, release: true), 0, accuracy: 0.000001)
+        preferences.releaseSounds = true
+        audio.clearHeldKeys()
+        XCTAssertEqual(try render(0, release: true), 0, accuracy: 0.000001)
+        let calls = await loader.counts()
+        XCTAssertEqual(calls.prepare, 1)
+        XCTAssertEqual(calls.catalogue, 1)
+        XCTAssertEqual(audio.cachedPackCount, 1)
+        XCTAssertEqual(audio.cachedPackFrames, 4 * frameCount)
+    }
+}
+
+extension ClickyTests {
+    @MainActor
+    func testIntegrationLegacyPreferencesRestoreEveryExistingFieldWithoutExternalSelection() throws {
+        var original = ClickyPreferences()
+        original.selectedSwitch = .paper
+        original.volume = 0.73
+        original.releaseSounds = false
+        original.repeatSounds = true
+        original.collectStats = false
+        original.excludedApplications = ["com.example.fixture"]
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+        legacy.removeValue(forKey: "selectedPack")
+        let data = try JSONSerialization.data(withJSONObject: legacy)
+        let decoded = try JSONDecoder().decode(ClickyPreferences.self, from: data)
+        XCTAssertEqual(decoded, original)
+        XCTAssertNil(decoded.selectedPack)
+        let monitor = InputMonitorStub()
+        let (model, defaults, suite) = monitorFixture(monitor, snapshot: true)
+        model.shutdown()
+        defaults.set(data, forKey: "clicky.preferences.v1")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let restored = ClickyModel(defaults: defaults, previewOnly: true, inputMonitor: monitor, observeSystemEvents: false)
+        defer { restored.shutdown() }
+        XCTAssertEqual(restored.preferences, original)
+        XCTAssertEqual(restored.selectedSoundName, "Paper")
+        XCTAssertFalse(restored.enabled)
+        XCTAssertEqual(monitor.requests, 0)
+        XCTAssertEqual(monitor.starts, 0)
+    }
+
+    func testIntegrationExternalPreferencesNamespaceLibraryIDsAndRoundTrip() throws {
+        let first = ClickyPackReference(libraryID: "fixture-library-one", packID: "same-pack")
+        let second = ClickyPackReference(libraryID: "fixture-library-two", packID: "same-pack")
+        XCTAssertNotEqual(first, second)
+        var preferences = ClickyPreferences()
+        preferences.selectedSwitch = .honey
+        preferences.selectedPack = first
+        let decoded = try JSONDecoder().decode(ClickyPreferences.self, from: JSONEncoder().encode(preferences))
+        XCTAssertEqual(decoded, preferences)
+        XCTAssertEqual(decoded.selectedPack, first)
+        XCTAssertEqual(decoded.selectedSwitch, .honey)
+    }
+
+    @MainActor
+    func testIntegrationMissingRestoredLibraryKeepsExternalPreferenceAndBuiltInFallbackWithoutInput() async throws {
+        let monitor = InputMonitorStub()
+        let suite = "dev.genesis.clicky.missing-library.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var saved = ClickyPreferences()
+        saved.selectedSwitch = .honey
+        saved.selectedPack = ClickyPackReference(libraryID: "missing-library", packID: "fixture")
+        defaults.set(try JSONEncoder().encode(saved), forKey: "clicky.preferences.v1")
+        let model = ClickyModel(defaults: defaults, previewOnly: true, inputMonitor: monitor, observeSystemEvents: false)
+        defer { model.shutdown() }
+        let unavailable = expectation(description: "restore unavailable")
+        let subscription = model.soundLibrary.$error.compactMap { $0 }.sink { _ in unavailable.fulfill() }
+        defer { subscription.cancel() }
+        await fulfillment(of: [unavailable], timeout: 2)
+        XCTAssertEqual(model.preferences.selectedPack, saved.selectedPack)
+        XCTAssertEqual(model.selectedSoundName, "Honey")
+        XCTAssertNil(model.soundLibrary.active)
+        XCTAssertFalse(model.enabled)
+        XCTAssertEqual(monitor.requests, 0)
+        XCTAssertEqual(monitor.starts, 0)
+        model.selectBuiltIn(.violet)
+        XCTAssertNil(model.preferences.selectedPack)
+        XCTAssertEqual(model.selectedSoundName, "Violet")
+        XCTAssertNil(model.soundLibrary.error)
+    }
+}
+
+extension ClickyPackTests {
+    @MainActor
+    func testIntegrationRemovingLibraryCancelsItsPendingSelection() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let pack = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let started = expectation(description: "selection before removal")
+        let forbidden = expectation(description: "removed library must not install")
+        forbidden.isInverted = true
+        let loader = GatedIntegrationLoader(packs: [pack], prepareStarted: { _ in started.fulfill() })
+        addTeardownBlock { await loader.cancelPending() }
+        let (defaults, suite) = integrationDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let record = try XCTUnwrap(seedLibrary(defaults, root: fixture.root).first)
+        let library = ClickySoundLibrary(defaults: defaults, loader: loader)
+        defer { library.stop() }
+        library.install = { _, _ in forbidden.fulfill() }
+        await library.refresh()
+        library.select(ClickyPackReference(libraryID: record.id, packID: pack.entry.id))
+        await fulfillment(of: [started], timeout: 2)
+        library.remove(record.id)
+        try await loader.finishPrepare(1)
+        await fulfillment(of: [forbidden], timeout: 0.05)
+        XCTAssertNil(library.active)
+        XCTAssertNil(library.loading)
+        XCTAssertTrue(library.records.isEmpty)
+        XCTAssertTrue(library.rows.isEmpty)
+    }
+
+    @MainActor
+    func testIntegrationRestoreCannotReapplySavedPackAfterBuiltInChoiceDuringRefresh() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let pack = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let started = expectation(description: "restore refresh")
+        let forbidden = expectation(description: "stale restore must not prepare")
+        forbidden.isInverted = true
+        let loader = GatedIntegrationLoader(packs: [pack], catalogueStarted: { _ in started.fulfill() },
+                                            prepareStarted: { _ in forbidden.fulfill() })
+        addTeardownBlock { await loader.cancelPending() }
+        let (defaults, suite) = integrationDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let record = try XCTUnwrap(seedLibrary(defaults, root: fixture.root).first)
+        let library = ClickySoundLibrary(defaults: defaults, loader: loader)
+        defer { library.stop() }
+        await loader.holdCatalogues()
+        library.restore(ClickyPackReference(libraryID: record.id, packID: pack.entry.id))
+        await fulfillment(of: [started], timeout: 2)
+        library.useBuiltIn()
+        try await loader.finishCatalogue(1)
+        await fulfillment(of: [forbidden], timeout: 0.05)
+        XCTAssertNil(library.active)
+        XCTAssertNil(library.loading)
+        let calls = await loader.counts()
+        XCTAssertEqual(calls.prepare, 0)
+    }
+
+    @MainActor
+    func testIntegrationRestoringCatalogueWithoutSelectionDoesNotPrepareAudio() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let pack = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let catalogue = expectation(description: "restored catalogue")
+        let forbidden = expectation(description: "metadata browsing must not prepare")
+        forbidden.isInverted = true
+        let loader = GatedIntegrationLoader(packs: [pack], catalogueStarted: { _ in catalogue.fulfill() },
+                                            prepareStarted: { _ in forbidden.fulfill() })
+        addTeardownBlock { await loader.cancelPending() }
+        let (defaults, suite) = integrationDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        _ = try seedLibrary(defaults, root: fixture.root)
+        let library = ClickySoundLibrary(defaults: defaults, loader: loader)
+        defer { library.stop() }
+        library.restore(nil)
+        await fulfillment(of: [catalogue], timeout: 2)
+        await fulfillment(of: [forbidden], timeout: 0.05)
+        XCTAssertEqual(library.rows.count, 1)
+        XCTAssertNil(library.active)
+        let calls = await loader.counts()
+        XCTAssertEqual(calls.catalogue, 1)
+        XCTAssertEqual(calls.prepare, 0)
+    }
+}

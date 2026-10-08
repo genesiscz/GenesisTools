@@ -36,6 +36,77 @@ final class ClickyAudio {
     private var buffers: [String: AVAudioPCMBuffer] = [:]
     private var cursor = 0
     private var idleStop: DispatchWorkItem?
+    private struct PackBank {
+        let reference: ClickyPackReference
+        let manifestHash: String
+        let playback: ClickyPackPlayback
+        let buffers: [String: AVAudioPCMBuffer]
+        let decodedFrames: Int
+    }
+    private var banks: [PackBank] = []
+    private var activeReference: ClickyPackReference?
+    private var liveSelection = ClickyPackSelectionState()
+    private var previewSelection = ClickyPackSelectionState()
+    var cachedPackCount: Int { banks.count }
+    var cachedPackFrames: Int { banks.reduce(0) { $0 + $1.decodedFrames } }
+    var selectedPackReference: ClickyPackReference? { activeReference }
+
+    func install(reference: ClickyPackReference, pack: PreparedClickyPack) throws {
+        if let index = banks.firstIndex(where: { $0.reference == reference && $0.manifestHash == pack.manifestHash }) {
+            let bank = banks.remove(at: index)
+            banks.append(bank)
+        } else {
+            var decoded: [String: AVAudioPCMBuffer] = [:]
+            var unique: [String: AVAudioPCMBuffer] = [:]
+            for (name, sample) in pack.samples {
+                if let existing = unique[sample.sha256] {
+                    decoded[name] = existing
+                    continue
+                }
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(sample.frames.count)),
+                    let channel = buffer.floatChannelData?[0]
+                else { throw ClickyPackError.invalid("This sound pack could not allocate an audio buffer.") }
+                buffer.frameLength = buffer.frameCapacity
+                sample.frames.withUnsafeBufferPointer { pointer in
+                    if let base = pointer.baseAddress { channel.update(from: base, count: pointer.count) }
+                }
+                decoded[name] = buffer
+                unique[sample.sha256] = buffer
+            }
+            let bank = PackBank(reference: reference, manifestHash: pack.manifestHash, playback: pack.playback,
+                                buffers: decoded, decodedFrames: unique.values.reduce(0) { $0 + Int($1.frameLength) })
+            banks.removeAll { $0.reference == reference }
+            banks.append(bank)
+            if banks.count > 3 { banks.removeFirst(banks.count - 3) }
+        }
+        stop()
+        activeReference = reference
+    }
+
+    func useBuiltIn() {
+        stop()
+        activeReference = nil
+    }
+
+    func clearHeldKeys() {
+        liveSelection.clear()
+        previewSelection.clear()
+    }
+
+    @discardableResult
+    func playSelected(keyCode: UInt16, release: Bool, preview: Bool, preferences: ClickyPreferences, pan: Float) throws -> Bool {
+        guard let reference = activeReference, let bank = banks.last(where: { $0.reference == reference }) else { return false }
+        let choice: ClickySampleChoice?
+        if preview {
+            choice = previewSelection.next(playback: bank.playback, keyCode: keyCode, release: release)
+        } else {
+            choice = liveSelection.next(playback: bank.playback, keyCode: keyCode, release: release)
+        }
+        guard let choice, !release || preferences.releaseSounds, let buffer = bank.buffers[choice.filename] else { return true }
+        let gain = bank.playback.gain * (release ? bank.playback.keyupGain : 1)
+        try schedule(buffer, preferences: preferences, pan: pan, gain: gain, pitchVariation: bank.playback.pitchVariation)
+        return true
+    }
 
     init(engine: AVAudioEngine = AVAudioEngine()) {
         self.engine = engine
@@ -65,6 +136,12 @@ final class ClickyAudio {
     }
 
     func play(profile: ClickySwitch, release: Bool, preferences: ClickyPreferences, pan: Float) throws {
+        let variant = preferences.randomizedPitch ? Int.random(in: 0..<3) : 1
+        guard let buffer = buffers[key(profile, release, variant)] else { return }
+        try schedule(buffer, preferences: preferences, pan: pan, gain: 1, pitchVariation: 0.05)
+    }
+
+    private func schedule(_ buffer: AVAudioPCMBuffer, preferences: ClickyPreferences, pan: Float, gain: Float, pitchVariation: Float) throws {
         guard preferences.volume > 0 else { return }
         idleStop?.cancel()
         if !engine.isRunning {
@@ -72,24 +149,24 @@ final class ClickyAudio {
         }
         let voice = voices[cursor]
         cursor = (cursor + 1) % voices.count
-        voice.0.volume = Float(preferences.volume)
+        voice.0.volume = min(1, max(0, Float(preferences.volume) * gain))
         voice.0.pan = preferences.spatialAudio ? pan : 0
-        voice.1.rate = preferences.randomizedPitch ? Float.random(in: 0.95...1.05) : 1
-        let variant = preferences.randomizedPitch ? Int.random(in: 0..<3) : 1
-        if let buffer = buffers[key(profile, release, variant)] {
-            voice.0.scheduleBuffer(buffer, at: nil, options: .interrupts)
-            if !voice.0.isPlaying {
-                voice.0.play()
-            }
-        }
+        voice.1.rate = preferences.randomizedPitch ? Float.random(in: (1 - pitchVariation)...(1 + pitchVariation)) : 1
+        voice.0.scheduleBuffer(buffer, at: nil, options: .interrupts)
+        if !voice.0.isPlaying { voice.0.play() }
         let stop = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated { self?.stop() }
+            MainActor.assumeIsolated { self?.stopVoices() }
         }
         idleStop = stop
         DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: stop)
     }
 
     func stop() {
+        clearHeldKeys()
+        stopVoices()
+    }
+
+    private func stopVoices() {
         idleStop?.cancel()
         idleStop = nil
         for voice in voices { voice.0.stop() }

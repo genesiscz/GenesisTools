@@ -41,6 +41,7 @@ public enum ClickySwitch: String, CaseIterable, Codable, Identifiable {
 
 public struct ClickyPreferences: Codable, Equatable {
     public var selectedSwitch: ClickySwitch = .basalt
+    public var selectedPack: ClickyPackReference?
     public var volume: Double = 0.45
     public var releaseSounds = true
     public var randomizedPitch = true

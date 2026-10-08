@@ -184,9 +184,9 @@ private struct ClickySettingsPageContent: View {
             card {
                 HStack {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(model.preferences.selectedSwitch.name).font(
+                        Text(model.selectedSoundName).font(
                             .system(size: 25, weight: .semibold, design: .rounded))
-                        Text(model.preferences.selectedSwitch.detail).font(.system(size: 12)).foregroundStyle(
+                        Text(model.selectedSoundDetail).font(.system(size: 12)).foregroundStyle(
                             .secondary)
                     }
                     Spacer()
@@ -204,7 +204,7 @@ private struct ClickySettingsPageContent: View {
                     ForEach(Array(ClickySwitch.allCases.enumerated()), id: \.element.id) { index, profile in
                         HStack(spacing: 12) {
                             Button {
-                                model.preferences.selectedSwitch = profile
+                                model.selectBuiltIn(profile)
                                 model.previewStroke(profile)
                             } label: {
                                 HStack(spacing: 12) {
@@ -218,7 +218,7 @@ private struct ClickySettingsPageContent: View {
                                         Text(profile.detail).font(.system(size: 10)).foregroundStyle(.secondary)
                                     }
                                     Spacer()
-                                    if model.preferences.selectedSwitch == profile {
+                                    if model.preferences.selectedPack == nil && model.preferences.selectedSwitch == profile {
                                         Image(systemName: "checkmark").foregroundStyle(.pink).font(
                                             .system(size: 12, weight: .semibold))
                                     }
@@ -232,6 +232,7 @@ private struct ClickySettingsPageContent: View {
                     }
                 }
             }
+            ClickySoundLibraryView(model: model, library: model.soundLibrary)
             card("Sound behavior") {
                 setting(
                     "Key release sounds", detail: "A separate sound when each key comes back up.",
@@ -500,13 +501,13 @@ public struct ClickyPopoverView: View {
             Text("Switches").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
             ForEach(ClickySwitch.allCases) { profile in
                 Button {
-                    model.preferences.selectedSwitch = profile
+                    model.selectBuiltIn(profile)
                     model.previewStroke(profile)
                 } label: {
                     HStack {
                         Text(profile.name)
                         Spacer()
-                        if model.preferences.selectedSwitch == profile { Image(systemName: "checkmark") }
+                        if model.preferences.selectedPack == nil && model.preferences.selectedSwitch == profile { Image(systemName: "checkmark") }
                     }.padding(.horizontal, 8).padding(.vertical, 5).contentShape(Rectangle())
                 }.buttonStyle(.genHoverRow())
             }
