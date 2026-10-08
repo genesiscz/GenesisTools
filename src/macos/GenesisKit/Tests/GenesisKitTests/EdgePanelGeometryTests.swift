@@ -954,6 +954,49 @@ final class WidgetRosterTests: XCTestCase {
         try await body(model, snapshotFile, snapshot)
     }
 
+    func testNewOutgoingMessageScrollsItsReceiptIntoTheViewport() async throws {
+        _ = NSApplication.shared
+        try await withFixture(sessionCount: 1) { model, _, original in
+            var snapshot = original
+            let session = try XCTUnwrap(snapshot.sessions.first)
+            model.selectedKey = session.key
+            model.section = "Inbox"
+            func message(_ index: Int) -> WidgetOutgoing {
+                WidgetOutgoing(id: "receipt-\(index)", target: session.target,
+                    payload: ["kind": "followup", "text": .string(String(repeating: "Fixture message \(index). ", count: 30))],
+                    assetIds: [], createdAt: Double(index), sequence: index, state: "sent")
+            }
+            snapshot.state.outgoing = (0..<8).map(message)
+            model.receive([String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)])
+            let host = NSHostingView(rootView: LiveWidgetView(model: model, edge: .right, embedded: true))
+            host.sizingOptions = []
+            let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 432, height: 600),
+                styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            defer { window.close() }
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
+            func scrollViews(_ view: NSView) -> [NSScrollView] {
+                if let scroll = view as? NSScrollView { return [scroll] }
+                return view.subviews.flatMap(scrollViews)
+            }
+            let scroll = try XCTUnwrap(scrollViews(host).first)
+            let document = try XCTUnwrap(scroll.documentView)
+            XCTAssertGreaterThan(document.bounds.height, scroll.contentView.bounds.height * 2)
+            XCTAssertEqual(scroll.contentView.bounds.minY, 0, accuracy: 1)
+            snapshot.state.outgoing.append(message(8))
+            model.receive([String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)])
+            let deadline = ContinuousClock.now + .seconds(2)
+            while scroll.contentView.bounds.minY < 1 && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(100))
+                host.layoutSubtreeIfNeeded()
+            }
+            XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0, "Sending must reveal the new receipt below the history")
+            XCTAssertEqual(scroll.contentView.bounds.maxY, document.bounds.maxY, accuracy: 2,
+                "The new receipt must be inside the real native scrolling viewport")
+        }
+    }
+
     func testCompactSideHeightMatchesRealHostingLayoutForEachStyleAndSessionCount() async throws {
         _ = NSApplication.shared
         let groups = [[], ["shelf"], ["agents"], ["agents", "capture", "shelf", "tasks"]]
