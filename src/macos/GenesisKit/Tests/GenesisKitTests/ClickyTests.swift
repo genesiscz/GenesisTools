@@ -598,3 +598,384 @@ final class ClickyTests: XCTestCase {
         second.shutdown()
     }
 }
+
+final class ClickyPackTests: XCTestCase {
+    private struct Fixture {
+        let root: URL
+        let entry: ClickyPackEntry
+        let wav: Data
+        var manifest: [String: Any]
+
+        init() throws {
+            root = FileManager.default.temporaryDirectory.appendingPathComponent("clicky-pack-tests-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: root.appendingPathComponent("fixture"), withIntermediateDirectories: true)
+            entry = ClickyPackEntry(
+                id: "fixture", name: "Fixture", kind: "original-procedural", author: "Example Author",
+                licence: "Fixture-Licence", manifest: "fixture/manifest.json", licenceFile: "fixture/LICENCE.txt")
+            wav = ClickyPackTests.wav([0, 16_384, -16_384, 32_767, -32_768], oddChunk: true)
+            let files = ["press-a.wav", "press-b.wav", "release-a.wav", "release-b.wav"]
+            let variants = ["press": ["press-a.wav", "press-b.wav"], "release": ["release-a.wav", "release-b.wav"]]
+            let hash = ClickyPackLoader.sha256(wav)
+            manifest = [
+                "formatVersion": 1, "id": "fixture", "name": "Authoritative fixture",
+                "kind": "original-procedural", "author": "Example Author", "licence": "Fixture-Licence",
+                "attribution": "Fixture audio by Example Author", "attributionRequired": true,
+                "permissions": ["personal": true, "modification": true, "redistribution": true, "commercialRedistribution": false],
+                "source": ["generator": "generator.swift", "generatorVersion": "1", "generatorSha256": String(repeating: "a", count: 64),
+                           "baseSeed": 42, "externalSamples": false, "qualityNote": "Synthetic fixture", "repository": "https://example.com/audio"],
+                "audio": ["sampleRate": 48_000, "channels": 1, "bitsPerSample": 16],
+                "playback": ["defaultCategory": "letter", "categories": Dictionary(uniqueKeysWithValues: ClickyPackPlayback.categoryNames.map { ($0, variants) }),
+                             "keyCodes": ["KeyA": "letter", "Digit1": "digit", "Numpad1": "digit", "Space": "space", "Enter": "enter",
+                                          "NumpadEnter": "enter", "Backspace": "backspace", "Delete": "backspace", "ShiftLeft": "modifier"],
+                             "gain": 0.65, "keyupGain": 0.75, "pitchVariation": 0],
+                "files": files.map { ["filename": $0, "sha256": hash, "frames": 5] as [String: Any] },
+            ]
+            for name in files {
+                try wav.write(to: root.appendingPathComponent("fixture/\(name)"))
+            }
+            try Data("Fixture licence. Permission granted to use these synthetic test samples.\n".utf8)
+                .write(to: root.appendingPathComponent("fixture/LICENCE.txt"))
+            try writeManifest()
+            try writeRegistry([entry])
+        }
+
+        func writeManifest() throws {
+            try JSONSerialization.data(withJSONObject: manifest).write(to: root.appendingPathComponent("fixture/manifest.json"))
+        }
+
+        func writeRegistry(_ entries: [ClickyPackEntry], version: Int = 1) throws {
+            struct Registry: Encodable {
+                let formatVersion: Int
+                let sets: [ClickyPackEntry]
+            }
+            try JSONEncoder().encode(Registry(formatVersion: version, sets: entries)).write(to: root.appendingPathComponent("registry.json"))
+        }
+
+        func dispose() { try? FileManager.default.removeItem(at: root) }
+    }
+
+    private static func wav(_ samples: [Int16], oddChunk: Bool = false) -> Data {
+        func le16(_ value: UInt16) -> [UInt8] { [UInt8(truncatingIfNeeded: value), UInt8(truncatingIfNeeded: value >> 8)] }
+        func le32(_ value: Int) -> [UInt8] { le16(UInt16(truncatingIfNeeded: value)) + le16(UInt16(truncatingIfNeeded: value >> 16)) }
+        var chunks = [UInt8]()
+        if oddChunk {
+            chunks += Array("JUNK".utf8) + le32(3) + [1, 2, 3, 0]
+        }
+        chunks += Array("fmt ".utf8) + le32(16) + le16(1) + le16(1) + le32(48_000) + le32(96_000) + le16(2) + le16(16)
+        let pcm = samples.flatMap { le16(UInt16(bitPattern: $0)) }
+        chunks += Array("data".utf8) + le32(pcm.count) + pcm
+        return Data(Array("RIFF".utf8) + le32(chunks.count + 4) + Array("WAVE".utf8) + chunks)
+    }
+
+    private func assertPrepareFails(_ fixture: Fixture, file: StaticString = #filePath, line: UInt = #line) async {
+        do {
+            _ = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+            XCTFail("Malformed pack prepared successfully", file: file, line: line)
+        } catch {
+            XCTAssertFalse(error.localizedDescription.isEmpty, file: file, line: line)
+        }
+    }
+
+    func testValidCatalogueAndPreparedPCMKeepMetadataAndDeduplicateVerifiedSamples() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let loader = ClickyPackLoader()
+        let entries = try await loader.catalogue(at: fixture.root)
+        XCTAssertEqual(entries.map(\.id), ["fixture"])
+        XCTAssertNil(entries[0].availabilityError)
+        let prepared = try await loader.prepare(at: fixture.root, entry: entries[0])
+        XCTAssertEqual(prepared.entry.name, "Authoritative fixture")
+        XCTAssertEqual(prepared.samples.count, 4)
+        XCTAssertEqual(prepared.decodedFrameCount, 5)
+        XCTAssertEqual(prepared.samples["press-a.wav"]?.frames, [0, 0.5, -0.5, Float(32_767) / 32768, -1])
+        XCTAssertEqual(prepared.manifestHash.count, 64)
+        XCTAssertEqual(prepared.source.baseSeed, 42)
+        XCTAssertEqual(prepared.source.sourceURL?.absoluteString, "https://example.com/audio")
+        XCTAssertEqual(prepared.source.qualityNote, "Synthetic fixture")
+        XCTAssertTrue(prepared.attributionRequired)
+        XCTAssertFalse(prepared.permissions.commercialRedistribution)
+        XCTAssertTrue(prepared.licenceText.contains("Permission granted"))
+        XCTAssertEqual(prepared.playback.gain, 0.65)
+        XCTAssertEqual(prepared.playback.keyupGain, 0.75)
+    }
+
+    func testPhysicalMappingsOverridesAndPairedReleaseVariants() async throws {
+        var fixture = try Fixture()
+        defer { fixture.dispose() }
+        var playback = try XCTUnwrap(fixture.manifest["playback"] as? [String: Any])
+        var codes = try XCTUnwrap(playback["keyCodes"] as? [String: String])
+        codes["KeyA"] = "space"
+        playback["keyCodes"] = codes
+        fixture.manifest["playback"] = playback
+        try fixture.writeManifest()
+        let prepared = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let mapping: [(UInt16, String)] = [(0, "space"), (18, "digit"), (83, "digit"), (49, "space"), (36, "enter"),
+                                          (76, "enter"), (51, "backspace"), (117, "backspace"), (56, "modifier"), (65535, "letter")]
+        for (code, category) in mapping {
+            XCTAssertEqual(prepared.playback.category(for: code), category)
+        }
+        var state = ClickyPackSelectionState()
+        XCTAssertNil(state.next(playback: prepared.playback, keyCode: 49, release: true))
+        XCTAssertEqual(state.next(playback: prepared.playback, keyCode: 49, release: false)?.filename, "press-a.wav")
+        XCTAssertEqual(state.next(playback: prepared.playback, keyCode: 0, release: false)?.filename, "press-b.wav")
+        XCTAssertEqual(state.next(playback: prepared.playback, keyCode: 49, release: true)?.filename, "release-a.wav")
+        XCTAssertEqual(state.next(playback: prepared.playback, keyCode: 0, release: true)?.filename, "release-b.wav")
+        _ = state.next(playback: prepared.playback, keyCode: 0, release: false)
+        XCTAssertEqual(state.next(playback: prepared.playback, keyCode: 0, release: false)?.filename, "press-b.wav")
+        XCTAssertEqual(state.next(playback: prepared.playback, keyCode: 0, release: true)?.filename, "release-b.wav")
+        _ = state.next(playback: prepared.playback, keyCode: 0, release: false)
+        state.clear()
+        XCTAssertNil(state.next(playback: prepared.playback, keyCode: 0, release: true))
+        XCTAssertEqual(state.next(playback: prepared.playback, keyCode: 0, release: false)?.variant, 0)
+    }
+
+    func testReleaseUsesPressIndexModuloReleaseCount() async throws {
+        var fixture = try Fixture()
+        defer { fixture.dispose() }
+        var playback = try XCTUnwrap(fixture.manifest["playback"] as? [String: Any])
+        var categories = try XCTUnwrap(playback["categories"] as? [String: [String: [String]]])
+        categories["letter"] = ["press": ["press-a.wav", "press-b.wav"], "release": ["release-a.wav"]]
+        playback["categories"] = categories
+        fixture.manifest["playback"] = playback
+        try fixture.writeManifest()
+        let prepared = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        var state = ClickyPackSelectionState()
+        _ = state.next(playback: prepared.playback, keyCode: 0, release: false)
+        _ = state.next(playback: prepared.playback, keyCode: 0, release: false)
+        let release = state.next(playback: prepared.playback, keyCode: 0, release: true)
+        XCTAssertEqual(release?.variant, 1)
+        XCTAssertEqual(release?.filename, "release-a.wav")
+    }
+
+    func testCatalogueRejectsAmbiguousIdentityAndVersionsButRetainsUnavailableRows() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let loader = ClickyPackLoader()
+        for entries in [[fixture.entry, fixture.entry], [ClickyPackEntry(id: "../escape", name: "Fixture", kind: "fixture", author: "Example", licence: "Fixture", manifest: "../manifest.json", licenceFile: "../LICENCE.txt")]] {
+            try fixture.writeRegistry(entries)
+            do {
+                _ = try await loader.catalogue(at: fixture.root)
+                XCTFail("Ambiguous catalogue was accepted")
+            } catch {
+            XCTAssertFalse(error.localizedDescription.isEmpty)
+        }
+        }
+        try fixture.writeRegistry([fixture.entry], version: 2)
+        do {
+            _ = try await loader.catalogue(at: fixture.root)
+            XCTFail("Unsupported catalogue was accepted")
+        } catch {
+            XCTAssertFalse(error.localizedDescription.isEmpty)
+        }
+        let bad = ClickyPackEntry(id: "other", name: "Other", kind: "fixture", author: "Example", licence: "Fixture", manifest: "../manifest.json", licenceFile: "other/LICENCE.txt")
+        try fixture.writeRegistry([fixture.entry, bad])
+        let entries = try await loader.catalogue(at: fixture.root)
+        XCTAssertNil(entries[0].availabilityError)
+        XCTAssertNotNil(entries[1].availabilityError)
+        _ = try await loader.prepare(at: fixture.root, entry: entries[0])
+        let validRow = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(fixture.entry)) as? [String: Any])
+        var malformedRow = validRow
+        malformedRow["id"] = "broken"
+        malformedRow["author"] = false
+        try JSONSerialization.data(withJSONObject: ["formatVersion": 1, "sets": [validRow, malformedRow]])
+            .write(to: fixture.root.appendingPathComponent("registry.json"))
+        let partial = try await loader.catalogue(at: fixture.root)
+        XCTAssertEqual(partial.count, 2)
+        XCTAssertNil(partial[0].availabilityError)
+        XCTAssertNotNil(partial[1].availabilityError)
+    }
+
+    func testManifestRejectsMalformedDeclarationsAndPlaybackAlongsideNormalControl() async throws {
+        let mutations: [(inout [String: Any]) -> Void] = [
+            { $0["formatVersion"] = 2 }, { $0["id"] = "other" },
+            { $0["audio"] = ["sampleRate": 44_100, "channels": 1, "bitsPerSample": 16] },
+            { $0["files"] = [] },
+            { manifest in
+                if var files = manifest["files"] as? [[String: Any]] { files.append(files[0]); manifest["files"] = files }
+            },
+            { manifest in
+                if var files = manifest["files"] as? [[String: Any]] { files[0]["frames"] = 12_001; manifest["files"] = files }
+            },
+            { manifest in
+                if var playback = manifest["playback"] as? [String: Any] { playback["gain"] = 1.1; manifest["playback"] = playback }
+            },
+            { manifest in
+                if var playback = manifest["playback"] as? [String: Any] { playback["pitchVariation"] = 0.1; manifest["playback"] = playback }
+            },
+            { manifest in
+                if var playback = manifest["playback"] as? [String: Any] { playback["keyCodes"] = ["UnsupportedKey": "letter"]; manifest["playback"] = playback }
+            },
+            { manifest in
+                if var playback = manifest["playback"] as? [String: Any] { playback["categories"] = ["letter": ["press": ["missing.wav"], "release": []]]; manifest["playback"] = playback }
+            },
+        ]
+        for mutation in mutations {
+            var fixture = try Fixture()
+            defer { fixture.dispose() }
+            mutation(&fixture.manifest)
+            try fixture.writeManifest()
+            await assertPrepareFails(fixture)
+        }
+        let normal = try Fixture()
+        defer { normal.dispose() }
+        _ = try await ClickyPackLoader().prepare(at: normal.root, entry: normal.entry)
+    }
+
+    func testTraversalHashMismatchAndDuplicateHashDoNotBypassValidation() async throws {
+        for filename in ["../escape.wav", "/escape.wav", "sub/file.wav", "sub\\file.wav", "%2e%2e.wav", "bad\0.wav", "https:sample.wav"] {
+            var fixture = try Fixture()
+            defer { fixture.dispose() }
+            var files = try XCTUnwrap(fixture.manifest["files"] as? [[String: Any]])
+            files[0]["filename"] = filename
+            fixture.manifest["files"] = files
+            try fixture.writeManifest()
+            await assertPrepareFails(fixture)
+        }
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        _ = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        try Data("changed".utf8).write(to: fixture.root.appendingPathComponent("fixture/press-b.wav"))
+        await assertPrepareFails(fixture)
+    }
+
+    func testSymlinksNonregularFilesMissingLicenceAndPayloadLimits() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        _ = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let licence = fixture.root.appendingPathComponent("fixture/LICENCE.txt")
+        let originalLicence = try Data(contentsOf: licence)
+        try FileManager.default.removeItem(at: licence)
+        await assertPrepareFails(fixture)
+        try FileManager.default.createSymbolicLink(at: licence, withDestinationURL: fixture.root.appendingPathComponent("registry.json"))
+        await assertPrepareFails(fixture)
+        try FileManager.default.removeItem(at: licence)
+        try FileManager.default.createDirectory(at: licence, withIntermediateDirectories: false)
+        await assertPrepareFails(fixture)
+        try FileManager.default.removeItem(at: licence)
+        XCTAssertEqual(mkfifo(licence.path, 0o600), 0)
+        await assertPrepareFails(fixture)
+        try FileManager.default.removeItem(at: licence)
+        try Data(repeating: 65, count: 256 * 1024 + 1).write(to: licence)
+        await assertPrepareFails(fixture)
+        try originalLicence.write(to: licence)
+        let wavURL = fixture.root.appendingPathComponent("fixture/press-a.wav")
+        try FileManager.default.removeItem(at: wavURL)
+        try FileManager.default.createSymbolicLink(at: wavURL, withDestinationURL: fixture.root.appendingPathComponent("fixture/press-b.wav"))
+        await assertPrepareFails(fixture)
+        try FileManager.default.removeItem(at: wavURL)
+        try Data(repeating: 0, count: 64 * 1024 + 1).write(to: wavURL)
+        await assertPrepareFails(fixture)
+        try fixture.wav.write(to: wavURL)
+        _ = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        let pack = fixture.root.appendingPathComponent("fixture")
+        let moved = fixture.root.appendingPathComponent("moved")
+        try FileManager.default.moveItem(at: pack, to: moved)
+        try FileManager.default.createSymbolicLink(at: pack, withDestinationURL: moved)
+        await assertPrepareFails(fixture)
+    }
+
+    func testPCMDecoderRejectsMalformedHeadersChunksFormatAndSilentData() throws {
+        let good = Self.wav([16_384, -16_384])
+        XCTAssertEqual(try ClickyPackLoader.decodePCM16(good, expectedFrames: 2), [0.5, -0.5])
+        var corruptions = [Data(), Data(good.dropLast()), Self.wav([0, 0]), Self.wav([1])]
+        for (index, byte): (Int, UInt8) in [(0, 0), (4, 0), (20, 3), (22, 2), (24, 0), (28, 1), (32, 4), (34, 8), (40, 3)] {
+            var modified = good
+            modified[index] = byte
+            corruptions.append(modified)
+        }
+        for malformed in corruptions {
+            XCTAssertThrowsError(try ClickyPackLoader.decodePCM16(malformed, expectedFrames: 2))
+        }
+        XCTAssertEqual(try ClickyPackLoader.decodePCM16(Self.wav([16_384, -16_384], oddChunk: true), expectedFrames: 2), [0.5, -0.5])
+    }
+
+    func testPinnedDirectorySurvivesPathReplacementAndRejectsRootSymlinks() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let root = try ClickyPackDirectory(root: fixture.root)
+        let pinned = try root.child("fixture")
+        let expected = try pinned.read("LICENCE.txt", limit: 256 * 1024)
+        let pack = fixture.root.appendingPathComponent("fixture")
+        let moved = fixture.root.appendingPathComponent("moved")
+        try FileManager.default.moveItem(at: pack, to: moved)
+        try FileManager.default.createSymbolicLink(at: pack, withDestinationURL: moved)
+        XCTAssertEqual(try pinned.read("LICENCE.txt", limit: 256 * 1024), expected)
+        XCTAssertThrowsError(try root.child("fixture"))
+        XCTAssertThrowsError(try ClickyPackDirectory(root: pack))
+        XCTAssertThrowsError(try pinned.read("../registry.json", limit: 256 * 1024))
+        XCTAssertEqual(try root.child("moved").read("LICENCE.txt", limit: 256 * 1024), expected)
+    }
+
+    func testCatalogueAndManifestSizeLimitsAndCatalogueSymlink() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let loader = ClickyPackLoader()
+        let registry = fixture.root.appendingPathComponent("registry.json")
+        try Data(repeating: 32, count: 2 * 1024 * 1024 + 1).write(to: registry)
+        do {
+            _ = try await loader.catalogue(at: fixture.root)
+            XCTFail("Oversized catalogue accepted")
+        } catch {
+            XCTAssertFalse(error.localizedDescription.isEmpty)
+        }
+        try FileManager.default.removeItem(at: registry)
+        try FileManager.default.createSymbolicLink(at: registry, withDestinationURL: fixture.root.appendingPathComponent("fixture/manifest.json"))
+        do {
+            _ = try await loader.catalogue(at: fixture.root)
+            XCTFail("Catalogue symlink accepted")
+        } catch {
+            XCTAssertFalse(error.localizedDescription.isEmpty)
+        }
+        try FileManager.default.removeItem(at: registry)
+        try fixture.writeRegistry([fixture.entry])
+        let entries = try await loader.catalogue(at: fixture.root)
+        XCTAssertEqual(entries.count, 1)
+        try Data(repeating: 32, count: 256 * 1024 + 1).write(to: fixture.root.appendingPathComponent("fixture/manifest.json"))
+        await assertPrepareFails(fixture)
+        try fixture.writeManifest()
+        _ = try await loader.prepare(at: fixture.root, entry: fixture.entry)
+    }
+
+    func testOptionalAttributionAndPreparedSelectionNeedNoFiles() async throws {
+        var fixture = try Fixture()
+        fixture.manifest["attribution"] = nil
+        try fixture.writeManifest()
+        let pack = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)
+        XCTAssertEqual(pack.attribution, "")
+        XCTAssertTrue(pack.attributionRequired)
+        XCTAssertTrue(pack.licenceText.contains("Permission granted"))
+        fixture.dispose()
+        var state = ClickyPackSelectionState()
+        for _ in 0..<100 {
+            let press = try XCTUnwrap(state.next(playback: pack.playback, keyCode: 0, release: false))
+            let release = try XCTUnwrap(state.next(playback: pack.playback, keyCode: 0, release: true))
+            XCTAssertNotNil(pack.samples[press.filename])
+            XCTAssertNotNil(pack.samples[release.filename])
+            XCTAssertEqual(press.variant, release.variant)
+        }
+    }
+
+    func testCancelledLoadAndUnsafeSourceLinks() async throws {
+        var fixture = try Fixture()
+        defer { fixture.dispose() }
+        fixture.manifest["source"] = ["repository": "https://user:secret@example.com/audio", "licenceEvidence": "file:///etc/passwd"]
+        try fixture.writeManifest()
+        let loader = ClickyPackLoader()
+        let prepared = try await loader.prepare(at: fixture.root, entry: fixture.entry)
+        XCTAssertNil(prepared.source.sourceURL)
+        let root = fixture.root
+        let entry = fixture.entry
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await loader.prepare(at: root, entry: entry)
+        }
+        do {
+            _ = try await task.value
+            XCTFail("Cancelled preparation succeeded")
+        } catch is CancellationError {
+        } catch {
+            XCTFail("Expected CancellationError, got \(error)")
+        }
+        _ = try await loader.prepare(at: fixture.root, entry: fixture.entry)
+    }
+}
