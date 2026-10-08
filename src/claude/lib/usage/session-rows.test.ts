@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { registerUsageCommand } from "@app/claude/commands/usage";
 import type { SessionMetadataRecord } from "@genesiscz/utils/claude/history-cache";
 import { Command } from "commander";
@@ -126,6 +129,26 @@ describe("listSessionRows", () => {
         pins.clear();
         cmuxRefs.clear();
         tailReads.length = 0;
+    });
+
+    test("an unchanged session file is not read again; a changed one is", async () => {
+        const path = join(mkdtempSync(join(tmpdir(), "gt-tail-cache-")), "session.jsonl");
+        writeFileSync(path, `${OPUS_LINE}\n`);
+        listing.sessions = [record({ filePath: path, sessionId: "tail-id", mtime: NOW - 5 * MIN })];
+        tails.set(path, [OPUS_LINE]);
+
+        const [first] = await listSessionRows({ hours: 6, now: NOW });
+        const readsAfterFirst = tailReads.length;
+        expect(first?.model).toBe("opus");
+        const [second] = await listSessionRows({ hours: 6, now: NOW });
+        expect(tailReads.length).toBe(readsAfterFirst);
+        expect(second?.model).toBe("opus");
+
+        appendFileSync(path, `${SONNET_LINE}\n`);
+        tails.set(path, [OPUS_LINE, SONNET_LINE]);
+        const [third] = await listSessionRows({ hours: 6, now: NOW });
+        expect(tailReads.length).toBeGreaterThan(readsAfterFirst);
+        expect(third?.model).toBe("sonnet");
     });
 
     test("withUsage false reads no transcript tail and keeps who and where", async () => {

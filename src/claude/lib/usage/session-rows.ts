@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { cleanPromptText } from "@app/claude/lib/cmux/sessions";
 import { getSessionListing, type SessionMetadataRecord } from "@app/claude/lib/history/search";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
@@ -287,7 +288,45 @@ function parseTailLines(lines: string[], filePath: string): TailUsage {
     return usage;
 }
 
+/**
+ * Tail usage by session file, valid while the file's size, mtime and inode are unchanged: the result depends only
+ * on the file's last bytes. A listing reads the tail of every session it lists, and most of them are idle; a
+ * resident process (the hub server answers the agents tree and the usage daemon's rows) re-read them all on every
+ * call (`claude-sessions tail` 340 ms of a 2.6 s agents call, 2026-10-08).
+ */
+const TAIL_CACHE_LIMIT = 2000;
+const tailCache = new Map<string, { size: number; mtimeMs: number; ino: number; usage: TailUsage }>();
+
 async function extractTailUsage(filePath: string): Promise<TailUsage> {
+    const status = await stat(filePath).catch(() => null);
+    const cached = tailCache.get(filePath);
+    if (
+        status &&
+        cached &&
+        cached.size === status.size &&
+        cached.mtimeMs === status.mtimeMs &&
+        cached.ino === status.ino
+    ) {
+        return { ...cached.usage };
+    }
+
+    const usage = await extractTailUsageUncached(filePath);
+    if (status) {
+        // The stat came first: a write after it leaves a newer mtime, and the next call reads the tail again.
+        tailCache.delete(filePath);
+        tailCache.set(filePath, { size: status.size, mtimeMs: status.mtimeMs, ino: status.ino, usage: { ...usage } });
+        if (tailCache.size > TAIL_CACHE_LIMIT) {
+            const oldest = tailCache.keys().next().value;
+            if (oldest !== undefined) {
+                tailCache.delete(oldest);
+            }
+        }
+    }
+
+    return usage;
+}
+
+async function extractTailUsageUncached(filePath: string): Promise<TailUsage> {
     const fallback = emptyTailUsage();
 
     try {
