@@ -1,8 +1,37 @@
 import { type ActionRecordingSnapshot, startActionRecording } from "@app/chrome-devtools/lib/action-recording";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { logger } from "@genesiscz/utils/logger";
-import { type BugRecording, parseRecording } from "./types";
+import { type BugRecording, httpUrl, parseRecording } from "./types";
 import { saveRecording } from "./workspace";
+
+export function recordingSnapshot(options: {
+    snapshot: ActionRecordingSnapshot;
+    id: string;
+    title: string;
+}): BugRecording {
+    const validUrl = (value: string | undefined) => {
+        try {
+            httpUrl(value);
+            return true;
+        } catch (error) {
+            logger.debug({ error }, "non-HTTP recorded URL retained as evidence only");
+            return false;
+        }
+    };
+    return {
+        version: 1,
+        id: options.id,
+        title: options.title,
+        ...options.snapshot,
+        actions: options.snapshot.actions
+            .filter((action) => action.kind !== "navigate" || validUrl(action.url))
+            .map((action) =>
+                action.sourceUrl === undefined || validUrl(action.sourceUrl)
+                    ? action
+                    : { ...action, sourceUrl: undefined }
+            ),
+    };
+}
 
 export async function recordBug(options: {
     port: number;
@@ -17,12 +46,7 @@ export async function recordBug(options: {
         throw new Error("Recording deadline must be between 1 and 600 seconds.");
     }
     const id = crypto.randomUUID();
-    const build = (snapshot: ActionRecordingSnapshot): BugRecording => ({
-        version: 1,
-        id,
-        title: options.title,
-        ...snapshot,
-    });
+    const build = (snapshot: ActionRecordingSnapshot) => recordingSnapshot({ snapshot, id, title: options.title });
     let checkpoint: BugRecording | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let pendingSave = Promise.resolve();

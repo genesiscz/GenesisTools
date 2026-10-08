@@ -1,11 +1,12 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { redactBrowserText } from "@app/chrome-devtools/lib/action-recording";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { recordingSnapshot } from "./capture";
 import { EXPECTATION_MARKER, generateRepro } from "./generate";
 import { type BugRecording, parseExpectation, parseRecording } from "./types";
 import { classifyReport, exportWorkspace, generateWorkspace, testHash, verifyWorkspace } from "./workspace";
@@ -157,6 +158,81 @@ describe("bug repro contract", () => {
         const changedModules = await generateWorkspace({ recording, directory: join(root, "modules") });
         await mkdir(join(changedModules, "node_modules"));
         await expect(verifyWorkspace({ directory: changedModules })).rejects.toThrow("Imported dependencies");
+    });
+    test("capture keeps non-HTTP navigation as evidence without losing valid actions", async () => {
+        const invalidUrls = [
+            "about:blank",
+            "data:text/plain,fixture",
+            "chrome-error://chromewebdata/",
+            "https://[redacted]@site.test/",
+        ];
+        const evidence = invalidUrls.map((text, index) => ({
+            id: `e${index}`,
+            kind: "navigation" as const,
+            text,
+            excluded: false,
+            at: index,
+        }));
+        const snapshot = recordingSnapshot({
+            id: recording.id,
+            title: recording.title,
+            snapshot: {
+                initialUrl: recording.initialUrl,
+                actions: [
+                    ...invalidUrls.map((url, index) => ({
+                        id: `n${index}`,
+                        kind: "navigate" as const,
+                        url,
+                        excluded: false,
+                        at: index,
+                    })),
+                    { ...recording.actions[0], sourceUrl: "about:blank" },
+                    {
+                        id: "valid",
+                        kind: "navigate",
+                        url: "https://site.test/cart",
+                        sourceUrl: "https://site.test/",
+                        excluded: false,
+                        at: 5,
+                    },
+                ],
+                evidence,
+            },
+        });
+        expect(parseRecording(snapshot).actions).toHaveLength(2);
+        expect(snapshot.actions[0].sourceUrl).toBeUndefined();
+        expect(snapshot.actions[1].sourceUrl).toBe("https://site.test/");
+        expect(snapshot.evidence).toEqual(evidence);
+        const root = await mkdtemp(join(tmpdir(), "bug-to-test-capture-"));
+        const directory = await generateWorkspace({
+            recording: { ...snapshot, expectation: recording.expectation },
+            directory: join(root, "workspace"),
+        });
+        expect(await readFile(join(directory, "repro.spec.ts"), "utf8")).toContain(
+            'page.goto(remap("https://site.test/cart"))'
+        );
+    });
+    test("imported output symlinks are refused before spawning and preserve external data", async () => {
+        const root = await mkdtemp(join(tmpdir(), "bug-to-test-output-"));
+        const outside = join(root, "outside");
+        await mkdir(outside);
+        const sentinel = join(outside, "sentinel.txt");
+        await Bun.write(sentinel, "preserve fixture");
+        for (const name of ["runs", "runner.log", "verification.json"]) {
+            const directory = await generateWorkspace({ recording, directory: join(root, name) });
+            await symlink(name === "runs" ? outside : sentinel, join(directory, name));
+            let spawned = false;
+            await expect(
+                verifyWorkspace({
+                    directory,
+                    onSpawn: () => {
+                        spawned = true;
+                    },
+                })
+            ).rejects.toThrow("never symlinks");
+            expect(spawned).toBe(false);
+            expect(await readFile(sentinel, "utf8")).toBe("preserve fixture");
+        }
     });
     test("imported TypeScript aliases cannot redirect trusted Playwright imports", async () => {
         const root = await mkdtemp(join(tmpdir(), "bug-to-test-alias-"));

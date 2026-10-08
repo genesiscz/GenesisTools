@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, lstat, mkdir, readdir, readFile, realpath, symlink } from "node:fs/promises";
+import { constants } from "node:fs";
+import { cp, lstat, mkdir, open, readdir, readFile, realpath, symlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { env } from "@genesiscz/utils/env";
@@ -163,6 +164,35 @@ async function checkedWorkspace(input: string): Promise<{ directory: string; has
     }
     return { directory, hash };
 }
+async function checkedOutput(options: { directory: string; name: string; isDirectory?: boolean }): Promise<string> {
+    const file = join(options.directory, options.name);
+    try {
+        const stat = await lstat(file);
+        if (stat.isSymbolicLink() || (options.isDirectory ? !stat.isDirectory() : !stat.isFile())) {
+            throw new Error("Workspace output paths must be ordinary files or directories, never symlinks.");
+        }
+    } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+            throw error;
+        }
+    }
+    return file;
+}
+
+async function writeOutput(options: { directory: string; name: string; content: string }): Promise<void> {
+    const file = await checkedOutput(options);
+    const handle = await open(
+        file,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+        0o600
+    );
+    try {
+        await handle.writeFile(options.content);
+    } finally {
+        await handle.close();
+    }
+}
+
 export async function verifyWorkspace(options: {
     directory: string;
     signal?: AbortSignal;
@@ -173,8 +203,12 @@ export async function verifyWorkspace(options: {
 }): Promise<VerificationResult> {
     const { directory, hash } = await checkedWorkspace(options.directory);
     const started = Date.now();
-    const runDirectory = join(directory, "runs", `${Date.now()}-${crypto.randomUUID()}`);
-    await mkdir(runDirectory, { recursive: true });
+    const runs = await checkedOutput({ directory, name: "runs", isDirectory: true });
+    await checkedOutput({ directory, name: "runner.log" });
+    await checkedOutput({ directory, name: "verification.json" });
+    await mkdir(runs, { recursive: true });
+    const runDirectory = join(runs, `${Date.now()}-${crypto.randomUUID()}`);
+    await mkdir(runDirectory);
     const reportPath = join(runDirectory, "report.json");
     await Bun.write(reportPath, "{}");
     const modules = join(directory, "node_modules");
@@ -307,7 +341,7 @@ export async function verifyWorkspace(options: {
             }
         }
     });
-    await Bun.write(join(directory, "runner.log"), output);
+    await writeOutput({ directory, name: "runner.log", content: output });
     await Bun.write(join(runDirectory, "runner.log"), output);
     const report: unknown = SafeJSON.parse(await Bun.file(reportPath).text(), { strict: true });
     const classification = classifyReport({ report, exitCode });
@@ -324,7 +358,11 @@ export async function verifyWorkspace(options: {
         durationMs: Date.now() - started,
         exitCode,
     };
-    await Bun.write(join(directory, "verification.json"), SafeJSON.stringify(result, { strict: true }, 2));
+    await writeOutput({
+        directory,
+        name: "verification.json",
+        content: SafeJSON.stringify(result, { strict: true }, 2),
+    });
     await Bun.write(join(runDirectory, "verification.json"), SafeJSON.stringify(result, { strict: true }, 2));
     log.info({ status: result.status, durationMs: result.durationMs }, "repro execution finished");
     return result;
