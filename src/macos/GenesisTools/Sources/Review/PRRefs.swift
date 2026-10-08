@@ -205,22 +205,20 @@ final class PRHeadFiles: ObservableObject {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", repo] + args
-        let out = Pipe()
-        process.standardOutput = out
-        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        let result: ProcessCapture
         do {
-            try process.run()
+            // A deadline: a stuck git must not hold `started` for this key for the life of the process.
+            result = try process.runCapturing(timeout: 30)
         } catch {
-            HubPerf.log("review.headFiles git failed to start: \(error.localizedDescription)")
+            HubPerf.log("review.headFiles git failed: \(error)")
             return nil
         }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            HubPerf.log("review.headFiles git \(args.prefix(2).joined(separator: " ")) exited \(process.terminationStatus)")
+        guard result.status == 0 else {
+            HubPerf.log("review.headFiles git \(args.prefix(2).joined(separator: " ")) exited \(result.status)")
             return nil
         }
-        return String(decoding: data, as: UTF8.self)
+        return String(decoding: result.stdout, as: UTF8.self)
     }
 }
 
@@ -343,15 +341,8 @@ enum PRRefMenu {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", repo, "cat-file", "-e", "\(sha)^{commit}"]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-        } catch {
-            return false
-        }
-        process.waitUntilExit()
-        return process.terminationStatus == 0
+        process.standardInput = FileHandle.nullDevice
+        return (try? process.runCapturing(timeout: 15))?.status == 0
     }
 
     @MainActor
@@ -473,7 +464,7 @@ enum CommitMenu {
     /// Blocking git: only from the detached task.
     nonisolated private static func lookup(_ sha: String, repo: String) -> Lookup {
         if git(repo, ["cat-file", "-e", "\(sha)^{commit}"]) == nil {
-            _ = git(repo, ["fetch", "--no-tags", "--quiet", "origin", sha])
+            _ = git(repo, ["fetch", "--no-tags", "--quiet", "--end-of-options", "origin", sha])
             guard git(repo, ["cat-file", "-e", "\(sha)^{commit}"]) != nil else {
                 return Lookup(full: nil, missing: "\(sha.prefix(10)) is not in \(URL(fileURLWithPath: repo).lastPathComponent), and origin did not give it.")
             }
@@ -487,17 +478,16 @@ enum CommitMenu {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", repo] + args
-        let out = Pipe()
-        process.standardOutput = out
-        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        // A fetch must fail rather than wait on a credential prompt nobody can see.
+        process.environment = ProcessInfo.processInfo.environment.merging(["GIT_TERMINAL_PROMPT": "0"]) { _, new in new }
+        let result: ProcessCapture
         do {
-            try process.run()
+            result = try process.runCapturing(timeout: 30)
         } catch {
-            HubPerf.log("review.commitRef git failed to start: \(error.localizedDescription)")
+            HubPerf.log("review.commitRef git failed: \(error)")
             return nil
         }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
+        return result.status == 0 ? String(decoding: result.stdout, as: UTF8.self) : nil
     }
 }

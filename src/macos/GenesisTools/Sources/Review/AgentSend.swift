@@ -344,6 +344,9 @@ struct AgentSendForm: View {
         let target: AgentTarget
         if let session = sessions.first(where: { $0.sessionId == choice }) {
             target = AgentTarget(sessionId: session.sessionId, provider: session.provider, name: Self.title(session))
+        } else if let remembered = AgentTarget.remembered(for: model.agentTargetKey), remembered.sessionId == choice {
+            // Not listed this time: keep the saved provider, or a Codex or Grok session goes through Claude's path.
+            target = remembered
         } else {
             target = AgentTarget(sessionId: choice, provider: nil, name: "session \(choice.prefix(8))")
         }

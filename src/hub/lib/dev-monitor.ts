@@ -447,4 +447,7 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
             }
         }
     }
+
+    // Events still waiting out the batch delay go out before the monitor stops.
+    batcher.flush(Number.POSITIVE_INFINITY);
 }

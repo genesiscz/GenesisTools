@@ -937,7 +937,12 @@ async function reapStaleAppFaces(step: (message: string) => void, relaunch: bool
     let reopen: RelaunchStep[] = [];
 
     if (relaunch) {
-        reopen = captureRelaunch({ psStdout: listing.stdout, launcherPath: launcher, stalePids: stale });
+        // A failed capture only costs the reopen; the reap below must still run.
+        try {
+            reopen = captureRelaunch({ psStdout: listing.stdout, launcherPath: launcher, stalePids: stale });
+        } catch (err) {
+            logger.warn({ err }, "relaunch: window faces could not be recorded; they stay closed after the reap");
+        }
     } else {
         logger.info("relaunch: off (--no-relaunch); reaped windows stay closed");
     }

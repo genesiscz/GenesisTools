@@ -192,6 +192,8 @@ func runHub(_ args: [String]) -> Never {
     }
     if request.isScripted {
         HubDefaults.isolate()
+        // An embedded review re-anchors and saves comments; a scripted run must not touch the user's file.
+        ReviewCommentStore.readOnly = true
         if let glass = request.glass { HubDefaults.store.set(glass, forKey: HubGlass.key) }
         for (key, value) in request.settings { HubDefaults.store.set(value, forKey: key) }
         for (key, value) in request.textSettings { HubDefaults.store.set(value, forKey: key) }

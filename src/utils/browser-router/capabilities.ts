@@ -83,6 +83,8 @@ function appInstalled(bundleId: string): boolean {
     const run = Bun.spawnSync(["mdfind", `kMDItemCFBundleIdentifier == '${bundleId}'`], {
         stdout: "pipe",
         stderr: "pipe",
+        // A busy or broken Spotlight index must not hang `presets` or a route sync.
+        timeout: 5000,
     });
 
     if (run.exitCode !== 0) {

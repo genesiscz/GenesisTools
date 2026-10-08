@@ -138,6 +138,49 @@ export function parseFrontmostPid(output: string): number | null {
     return match ? Number(match[1]) : null;
 }
 
+/** Hub flags that run something once (Sources/Hub/HubWindow.swift): a value after each, none, or an optional one. */
+const HUB_ONE_SHOT_VALUE = new Set([
+    "--inbox-resume",
+    "--inbox-info",
+    "--decision",
+    "--question",
+    "--timeline-open",
+    "--timeline-action",
+]);
+const HUB_ONE_SHOT_BARE = new Set(["--digest", "--rules", "--prompts", "--handoff"]);
+const HUB_ONE_SHOT_OPTIONAL = new Set(["--palette", "--find", "--session-search"]);
+
+/** A hub's argv without its one-shot actions, so a rebuild reopens the window and does not run them again. */
+export function withoutHubActions(argv: string[]): string[] {
+    const kept: string[] = [];
+
+    for (let index = 0; index < argv.length; index++) {
+        const arg = argv[index];
+        const next = argv[index + 1];
+
+        if (HUB_ONE_SHOT_VALUE.has(arg)) {
+            index++;
+            continue;
+        }
+
+        if (HUB_ONE_SHOT_OPTIONAL.has(arg)) {
+            if (next !== undefined && !next.startsWith("--")) {
+                index++;
+            }
+
+            continue;
+        }
+
+        if (HUB_ONE_SHOT_BARE.has(arg)) {
+            continue;
+        }
+
+        kept.push(arg);
+    }
+
+    return kept;
+}
+
 /**
  * What each face starts with again. Only the face that was frontmost activates, and it goes last so it
  * ends in front; every other one opens behind (`open -g` plus the face's own `--no-activate`). A hub
@@ -153,7 +196,7 @@ export function relaunchPlan(faces: WindowFace[], frontPid: number | null): Rela
         if (face.kind === "settings") {
             argv = ["--window"];
         } else if (face.kind === "hub") {
-            argv = [...kept, "--resume"];
+            argv = [...withoutHubActions(kept), "--resume"];
         }
 
         if (!activate) {

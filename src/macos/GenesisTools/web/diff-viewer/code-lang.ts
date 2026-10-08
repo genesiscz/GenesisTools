@@ -57,7 +57,8 @@ export function fenceLanguage(info: string): string | null {
             .trim()
             .split(/[\s{,]/)[0]
             ?.toLowerCase() ?? "";
-    return aliases[word] ?? null;
+    // Own keys only: "constructor" or "__proto__" in a PR's fence must not reach shiki as an object.
+    return Object.hasOwn(aliases, word) ? aliases[word] : null;
 }
 
 /** "```tsx title=x" → the info after the backticks or tildes; null when the line opens no fence. */

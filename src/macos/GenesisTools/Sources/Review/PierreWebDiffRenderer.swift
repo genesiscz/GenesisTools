@@ -59,6 +59,13 @@ final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandle
     private var lastWidth: CGFloat?
     private var frameObserver: NSObjectProtocol?
 
+    /// The hub builds a renderer per worktree, session and PR; each one's observer goes with it.
+    deinit {
+        if let frameObserver {
+            NotificationCenter.default.removeObserver(frameObserver)
+        }
+    }
+
     /// The rows above the diff (header, PR bar, notices) change height when the diff column changes width:
     /// a side panel's release re-wraps the header, and the diff's top edge moved by that much, so the code
     /// under the reader slid with it (recording 2026-10-07). When the top edge moves inside an unchanged

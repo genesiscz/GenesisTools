@@ -309,7 +309,8 @@ function lintText(item: JudgementItem, field: string, text: string, rules: Draft
         }
     }
 
-    if (/file:\/\/|\]\(\/(?!\/)/.test(text)) {
+    // A root-relative GitLab link (`/uploads/…` attachments, `/group/project/-/…`) is not a local file.
+    if (/file:\/\/|\]\(\/(?!\/|uploads\/)(?![^)\s]*\/-\/)/.test(text)) {
         problems.push({
             id: item.id,
             line: item.line,

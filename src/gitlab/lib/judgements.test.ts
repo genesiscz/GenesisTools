@@ -197,6 +197,12 @@ describe("judgements", () => {
 
             expect(check(text).errors.map((e) => e.message)).toContain(problem);
         }
+
+        for (const link of ["![shot](/uploads/abc123/shot.png)", "[MR 4](/group/app/-/merge_requests/4)"]) {
+            const text = GOOD.replace("Dobrej catch, opravím to.", `Dobrej catch, ${link} opravím.`);
+
+            expect(check(text).errors.map((e) => e.message)).not.toContain(problem);
+        }
     });
 
     test("an answer in my own thread has no hand-written Opus prefix and no second person", () => {

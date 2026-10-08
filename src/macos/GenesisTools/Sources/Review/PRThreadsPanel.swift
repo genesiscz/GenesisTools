@@ -789,11 +789,13 @@ final class PRCardClicks {
         let start = NSEvent.mouseLocation
         let clickCount = event.clickCount
         release?.invalidate()
-        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self, weak window] timer in
+        // 100 ms: the floor for a timer (CLAUDE.md), and a release is still answered within one frame batch.
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self, weak window] timer in
             guard NSEvent.pressedMouseButtons & 1 == 0 else { return }
             timer.invalidate()
             MainActor.assumeIsolated {
-                guard let self, let window, let text = window.firstResponder as? NSTextView,
+                // An editable text view is a Reply/Edit editor or the find field's editor, never the card's text.
+                guard let self, let window, let text = window.firstResponder as? NSTextView, !text.isEditable,
                       text.bounds.contains(text.convert(point, from: nil)), !Self.isLink(in: text, at: point),
                       PRThreadCardClick.isClick(down: start, up: NSEvent.mouseLocation) else { return }
                 self.clicked(id, clickCount: clickCount, text: text)

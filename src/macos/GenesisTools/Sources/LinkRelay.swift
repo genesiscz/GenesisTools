@@ -19,7 +19,7 @@ enum LinkRelay {
     private static let startDeadline: TimeInterval = 3
 
     private static var lockFile: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/app/link-relay.lock")
+        URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/app/link-relay.lock")
     }
 
     /// The window faces that need a relay in front of them: every face `FaceRecord` reopens after a rebuild.

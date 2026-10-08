@@ -11,6 +11,7 @@ import {
     type WindowFace,
     windowFaceKind,
     windowFacesFromPs,
+    withoutHubActions,
 } from "./relaunch";
 
 const LAUNCHER = "/Users/alice/Applications/GenesisTools.app/Contents/MacOS/GenesisTools";
@@ -105,6 +106,30 @@ describe("relaunchPlan", () => {
             { pid: 2, kind: "hub", argv: ["--hub", "--session", "s1", "--resume", "--no-activate"], activate: false },
             { pid: 3, kind: "settings", argv: ["--window", "--no-activate"], activate: false },
             { pid: 1, kind: "review", argv: ["--review", "--repo", "/x"], activate: true },
+        ]);
+    });
+
+    it("never runs a hub's one-shot action again", () => {
+        const argv = [
+            "--hub",
+            "--timeline-open",
+            "t1",
+            "--timeline-action",
+            "a",
+            "--palette",
+            "--find",
+            "x",
+            "--digest",
+            "--width",
+            "900",
+        ];
+
+        expect(withoutHubActions(argv)).toEqual(["--hub", "--width", "900"]);
+        expect(relaunchPlan([{ pid: 4, kind: "hub", argv, lossless: true }], 4)[0].argv).toEqual([
+            "--hub",
+            "--width",
+            "900",
+            "--resume",
         ]);
     });
 

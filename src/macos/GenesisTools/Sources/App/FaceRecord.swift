@@ -8,7 +8,8 @@ import Foundation
 /// It goes at a normal exit; one left by a SIGTERM is pruned by the next rebuild.
 enum FaceRecord {
     static var directory: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/app/faces", isDirectory: true)
+        // `genesisHome()`, as the TS side and the relay journal: a sandboxed GENESIS_TOOLS_HOME holds all three.
+        URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/app/faces", isDirectory: true)
     }
 
     /// The windows a rebuild reopens: the settings window, the hub and a review, never a scripted run.

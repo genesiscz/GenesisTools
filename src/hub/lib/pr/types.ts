@@ -135,7 +135,6 @@ export interface PublishResult {
     url?: string;
 }
 
-/** Everything the hub's review window does to a PR/MR. Only `publish` submits the pending drafts. */
 /** One commit of a version, as the host lists it. */
 export interface PrVersionCommit {
     sha: string;
@@ -169,6 +168,7 @@ export interface VersionsResult {
     history: boolean;
 }
 
+/** Everything the hub's review window does to a PR/MR. Only `publish` submits the pending drafts. */
 export interface PrBackend {
     threads(): Promise<Omit<ThreadsResult, "pr" | "cached" | "fetchedAt">>;
     reply(input: { threadId: string; body: string; draft: boolean }): Promise<ReplyResult>;

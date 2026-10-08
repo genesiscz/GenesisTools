@@ -3178,8 +3178,14 @@ const reviewState = installReviewState({
 window.genesisDiff = {
     addFiles(batch) {
         try {
+            const waitingBefore = deferredLoad;
             addFiles(batch);
-            reviewState.afterFiles(batch.last);
+
+            // A batch held until the scroll ends calls afterFiles itself, against the new files; calling it
+            // now, against the old set, would drop a restored place whose file only the new set has.
+            if (deferredLoad === null || deferredLoad === waitingBefore) {
+                reviewState.afterFiles(batch.last);
+            }
         } catch (error) {
             post({ type: "error", message: error instanceof Error ? error.message : String(error) });
         }

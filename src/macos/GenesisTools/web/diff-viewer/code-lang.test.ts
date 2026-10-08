@@ -18,6 +18,9 @@ describe("fenceLanguage", () => {
         expect(fenceLanguage('tsx title="Button.tsx"')).toBe("tsx");
         expect(fenceLanguage("ts{1,3}")).toBe("typescript");
         expect(fenceLanguage("")).toBeNull();
+        expect(fenceLanguage("constructor")).toBeNull();
+        expect(fenceLanguage("__proto__")).toBeNull();
+        expect(fenceLanguage("toString")).toBeNull();
         expect(fenceLanguage("text")).toBeNull();
         expect(fenceLanguage("brainfuck")).toBeNull();
     });
