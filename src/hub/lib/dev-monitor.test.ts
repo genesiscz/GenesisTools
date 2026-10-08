@@ -197,3 +197,14 @@ test("a burst of profile PIDs uses one process snapshot and retains names and mi
         },
     });
 });
+
+test("process snapshots have a deadline and an empty answer retains the slow event by PID", async () => {
+    const events = await classifyProfileLines({
+        lines: ["[profile:a] walk 1.5s pid=1000"],
+        readProcesses: async (options) => {
+            expect(options?.timeoutMs).toBe(1000);
+            return [];
+        },
+    });
+    expect(events.map((event) => event.text)).toEqual(["a walk 1.50s [pid 1000]"]);
+});

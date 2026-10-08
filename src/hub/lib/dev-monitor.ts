@@ -96,7 +96,10 @@ export async function classifyProfileLines({
     }
 
     const processNames = new Map(
-        (await readProcesses()).map((row) => [row.pid, `pid ${row.pid} ${shortCommand(row.command)}`])
+        (await readProcesses({ timeoutMs: 1000 })).map((row) => [
+            row.pid,
+            `pid ${row.pid} ${shortCommand(row.command)}`,
+        ])
     );
     return eligible
         .map((line) => classifyProfileLine(line, { ...options, processNames }))
