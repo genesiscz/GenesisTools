@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { filterForAgent, isVisibleToAgent } from "../lib/filter";
+import { loginEndIsLeave, remainingAgentNames } from "../lib/leave";
 import type { AgentRecord, FeedEvent } from "../lib/types";
 
 const agentAlpha: AgentRecord = {
@@ -252,5 +253,52 @@ describe("filter.filterForAgent", () => {
         const result = filterForAgent(events, main);
         expect(result.length).toBe(1);
         expect(result[0]?.type === "message" && result[0].to_agent_ids).toEqual(["agt_other"]);
+    });
+});
+
+describe("agent_left", () => {
+    const loggedIn = (seq: number, id: string, name: string): FeedEvent => ({
+        seq,
+        ts: "2026-01-01T00:00:01Z",
+        type: "logged_in",
+        agent_id: id,
+        agent_name: name,
+        mode: "once",
+    });
+    const left = (seq: number, id: string, name: string): FeedEvent => ({
+        seq,
+        ts: "2026-01-01T00:00:02Z",
+        type: "agent_left",
+        agent_id: id,
+        agent_name: name,
+        reason: "leave",
+        remaining: [],
+    });
+
+    test("reaches every agent but the leaver, a --once receiver included", () => {
+        expect(isVisibleToAgent(left(5, "agt_beta", "beta"), agentAlpha)).toBe(true);
+        expect(isVisibleToAgent(left(5, "agt_alpha", "alpha"), agentAlpha)).toBe(false);
+    });
+
+    test("remaining agents are those that logged in and did not leave since; a --once logout is not leaving", () => {
+        const events: FeedEvent[] = [
+            loggedIn(1, "agt_alpha", "alpha"),
+            loggedIn(2, "agt_beta", "beta"),
+            {
+                seq: 3,
+                ts: "2026-01-01T00:00:03Z",
+                type: "logged_out",
+                agent_id: "agt_beta",
+                reason: "clean_exit",
+                mode: "once",
+            },
+            loggedIn(4, "agt_gamma", "gamma"),
+            left(5, "agt_gamma", "gamma"),
+        ];
+
+        expect(remainingAgentNames(events, "agt_alpha")).toEqual(["beta"]);
+        expect(loginEndIsLeave("once", "clean_exit")).toBe(false);
+        expect(loginEndIsLeave("once", "signal")).toBe(true);
+        expect(loginEndIsLeave("stream", "cap")).toBe(true);
     });
 });

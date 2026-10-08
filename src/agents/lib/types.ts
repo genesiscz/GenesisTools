@@ -1,6 +1,6 @@
 export type AgentMode = "stream" | "once";
 
-export type LifecycleEventType = "registered" | "logged_in" | "logged_out" | "stale_lock_reaped";
+export type LifecycleEventType = "registered" | "logged_in" | "logged_out" | "stale_lock_reaped" | "agent_left";
 
 export type CommEventType = "message";
 
@@ -36,6 +36,21 @@ export interface LoggedOutEvent extends FeedEventBase {
     mode?: AgentMode;
 }
 
+/**
+ * An agent stopped listening for good, as opposed to one `--once` cycle ending. Every other agent sees it,
+ * so a `--once` receiver wakes on it, and `remaining` names who is still on the bus.
+ */
+export interface AgentLeftEvent extends FeedEventBase {
+    type: "agent_left";
+    agent_id: string;
+    agent_name: string;
+    /** `leave`: `tools agents leave`. `signal`/`cap`: its login ended that way. `dead_pid`: its login was reaped. */
+    reason: "leave" | "signal" | "cap" | "dead_pid";
+    /** Names of the agents still on the bus, the leaver excluded. */
+    remaining: string[];
+    note?: string;
+}
+
 export interface StaleLockReapedEvent extends FeedEventBase {
     type: "stale_lock_reaped";
     lock: string;
@@ -55,7 +70,13 @@ export interface MessageEvent extends FeedEventBase {
     in_reply_to?: string;
 }
 
-export type FeedEvent = RegisteredEvent | LoggedInEvent | LoggedOutEvent | StaleLockReapedEvent | MessageEvent;
+export type FeedEvent =
+    | RegisteredEvent
+    | LoggedInEvent
+    | LoggedOutEvent
+    | StaleLockReapedEvent
+    | AgentLeftEvent
+    | MessageEvent;
 
 /**
  * Derived from feed events via deriveRegistry(). Not persisted.

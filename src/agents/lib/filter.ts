@@ -14,6 +14,10 @@ export function isVisibleToAgent(event: FeedEvent, agent: AgentRecord, meta?: Se
         return Boolean(meta?.debug);
     }
 
+    if (event.type === "agent_left") {
+        return event.agent_id !== agent.agent_id;
+    }
+
     return false;
 }
 

@@ -7,6 +7,7 @@ import { registerBlameCommand } from "./commands/blame";
 import { registerChangesCommand } from "./commands/changes";
 import { registerDiscoverCommand } from "./commands/discover";
 import { registerHooksCommands } from "./commands/hooks";
+import { registerLeaveCommand } from "./commands/leave";
 import { registerListenCommand } from "./commands/listen";
 import { registerLoginCommand } from "./commands/login";
 import { registerMessageCommand } from "./commands/message";
@@ -23,6 +24,7 @@ program
 
 registerLoginCommand(program);
 registerMessageCommand(program);
+registerLeaveCommand(program);
 registerRequestCommand(program);
 registerDiscoverCommand(program);
 registerListenCommand(program);

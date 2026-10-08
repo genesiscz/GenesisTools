@@ -17,6 +17,7 @@ tools agents login --agent-name researcher                     # auto-registers 
 tools agents login --agent-id agt_xxx --agent-name X            # attach with a chosen id
 tools agents login --agent-name X --once                       # drain queued batch, or block for mail
 tools agents login --agent-name X --once --timeout 300         # same, but give up after 300 s: {"type":"timeout"}, exit 124
+tools agents leave --agent-name X --note "done"                # announce leaving: every other agent gets agent_left
 tools agents login --agent-name lead --kinds message,error     # receiver-side verbosity filter
 tools agents login --agent-name lead --filter '.op=="approval_request"'
 tools agents message --from X --to Y --body '...'
@@ -29,6 +30,11 @@ tools agents listen                                            # human-facing co
 ```
 
 There is no separate `register` command — `login` auto-registers on first use for a given `--agent-name`/`--agent-id`. There is no separate `respond` command — replies go through `message --reply <msg-id>`. `request` is a thin send-and-wait primitive over those same replies; it does not introduce a second channel.
+
+**Leaving.** `{"type":"agent_left","agent_name":…,"reason":…,"remaining":[…]}` reaches every other agent (it wakes a
+`--once` receiver) when an agent runs `leave`, when a stream login ends, when any login is killed by a signal, and when a
+dead login is reaped. One `--once` cycle (a message or a timeout) is not leaving. `remaining` names the agents that
+logged in and have not left since.
 
 ## Session resolution
 

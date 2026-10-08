@@ -24,6 +24,12 @@ export function formatEventPretty(event: FeedEvent): string {
         return `${time} ${seq} ${tag} ${chalk.cyan(event.agent_id)} reason=${event.reason}`;
     }
 
+    if (event.type === "agent_left") {
+        const remaining = event.remaining.length > 0 ? event.remaining.join(", ") : "nobody";
+        const note = event.note ? `: ${event.note}` : "";
+        return `${time} ${seq} ${tag} ${chalk.bold(event.agent_name)} reason=${event.reason}${note} · remaining: ${remaining}`;
+    }
+
     if (event.type === "stale_lock_reaped") {
         return `${time} ${seq} ${tag} ${chalk.yellow(event.lock)} pid=${event.pid}`;
     }
@@ -58,6 +64,8 @@ function colorType(type: string): string {
             return chalk.green(type);
         case "logged_out":
             return chalk.dim(type);
+        case "agent_left":
+            return chalk.yellow(type);
         case "stale_lock_reaped":
             return chalk.yellow(type);
         default:

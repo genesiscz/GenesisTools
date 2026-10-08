@@ -3,7 +3,9 @@ import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { sweepStaleLocks } from "@genesiscz/utils/storage/stale-lock-sweep";
-import { appendFeed } from "./feed";
+import { deriveRegistry } from "./derived-registry";
+import { appendFeed, readFeed } from "./feed";
+import { announceLeave } from "./leave";
 import { assertSafePathSegment } from "./paths";
 import type { SessionPaths, SlotLockPayload } from "./types";
 
@@ -82,6 +84,12 @@ export async function runStaleSweep(paths: SessionPaths): Promise<void> {
                 agent_id: owner,
                 reason: "dead_pid",
                 mode: reapedMode,
+            });
+            const record = deriveRegistry(await readFeed(paths)).find((entry) => entry.agent_id === owner);
+            await announceLeave(paths, {
+                agent_id: owner,
+                agent_name: record?.agent_name ?? owner,
+                reason: "dead_pid",
             });
         }
     }

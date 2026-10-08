@@ -14,6 +14,7 @@ import { FeedLogCursor, withFeedLock } from "../lib/feed";
 import { isVisibleToAgent } from "../lib/filter";
 import { formatEventPretty } from "../lib/format-pretty";
 import { deriveMainAgentId, isMainId } from "../lib/id-gen";
+import { announceLeave, loginEndIsLeave } from "../lib/leave";
 import { onShutdown } from "../lib/lifecycle";
 import { createListenerFilter } from "../lib/listener-filter";
 import { formatReadyEvent, loginStderrAllowed, writeLoginJsonLine } from "../lib/login-io";
@@ -414,7 +415,15 @@ async function emitLoggedOut({
         reason,
         mode,
     });
+
+    // Both the shutdown handler and the finally block end a login; one leave per process.
+    if (!leaveAnnounced && loginEndIsLeave(mode, reason)) {
+        leaveAnnounced = true;
+        await announceLeave(paths, { agent_id: record.agent_id, agent_name: record.agent_name, reason });
+    }
 }
+
+let leaveAnnounced = false;
 
 function emitResumeHint(record: AgentRecord, mode: "stream" | "once"): void {
     const parts = ["tools", "agents", "login", "--agent-id", record.agent_id];
