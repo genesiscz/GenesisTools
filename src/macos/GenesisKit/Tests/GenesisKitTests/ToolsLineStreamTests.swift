@@ -7,10 +7,29 @@ import XCTest
 @MainActor
 final class WidgetVideoInteractionTests: XCTestCase {
     private let initial = WidgetVideoSettings(fps: 2, framesPerImage: 16, minimumDifferencePct: 0)
+    func testVideoRangeClampsCrossingHandlesAndRestoresWholeVideo() throws {
+        let legacy = try JSONDecoder().decode(WidgetVideoSettings.self,
+            from: Data(#"{"fps":2,"framesPerImage":16,"minimumDifferencePct":0}"#.utf8))
+        XCTAssertEqual(legacy.sampleRange(durationUs: 12_000_000), 0...12_000_000)
+        var settings = legacy
+        settings.setSampleStart(seconds: 2.1, durationUs: 12_000_000)
+        settings.setSampleEnd(seconds: 3.2, durationUs: 12_000_000)
+        XCTAssertEqual(settings.sampleRange(durationUs: 12_000_000), 2_100_000...3_200_000)
+        settings.setSampleStart(seconds: 9, durationUs: 12_000_000)
+        XCTAssertEqual(settings.startUs, 3_190_000)
+        settings.setSampleEnd(seconds: 1, durationUs: 12_000_000)
+        XCTAssertEqual(settings.endUs, 3_200_000)
+        settings.setSampleStart(seconds: -.infinity, durationUs: 12_000_000)
+        XCTAssertEqual(settings.startUs, 3_190_000)
+        settings.setSampleStart(seconds: 0, durationUs: 12_000_000)
+        settings.setSampleEnd(seconds: 12, durationUs: 12_000_000)
+        XCTAssertEqual(settings, legacy)
+    }
+
     func testDoneImmediatelyAfterChangePersistsLatestExactlyOnce() {
         var committed: [WidgetVideoSettings] = []
         let editor = WidgetVideoSettingsCommitter(initial: initial) { committed.append($0) }
-        let latest = WidgetVideoSettings(fps: 4, framesPerImage: 8, minimumDifferencePct: 25)
+        let latest = WidgetVideoSettings(fps: 4, framesPerImage: 8, minimumDifferencePct: 25, startUs: 2_100_000, endUs: 3_200_000)
         editor.update(WidgetVideoSettings(fps: 1, framesPerImage: 4, minimumDifferencePct: 10))
         editor.update(latest)
         editor.finish()
