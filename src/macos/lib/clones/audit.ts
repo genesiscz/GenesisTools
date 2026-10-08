@@ -20,13 +20,14 @@ import {
 } from "@genesiscz/utils/fs/disk-usage";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { CloneUnsupportedError, getCloneId, isApfsCloneSupported } from "@genesiscz/utils/macos/apfs";
+import { CloneUnsupportedError, getCloneId, getPrivateSize, isApfsCloneSupported } from "@genesiscz/utils/macos/apfs";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { isUnderAny } from "./collapse";
 import { clonesProfile } from "./profile";
 import type {
     DuplicateSet,
+    FreeBytesDelta,
     ProcessListEntry,
     ProcessListReport,
     ProcessOp,
@@ -45,6 +46,7 @@ export interface ProcessMeta {
     endedAt: string;
     planCacheHit: boolean;
     planCacheAgeMs?: number;
+    freeBytes?: FreeBytesDelta;
 }
 
 interface MetaLine {
@@ -120,12 +122,32 @@ export function appendOp(id: string, op: ProcessOp): void {
     appendRunLogRow(PROCESS_LOG_DIR, id, op);
 }
 
+/** What one clone freed: its private bytes before the swap. A log written before
+ *  that was measured only has the full size. */
+function freedBytes(op: ProcessOp): number {
+    return op.privateBytes ?? op.bytes;
+}
+
+/** statfs available bytes on the volume holding `path`, or undefined when unreadable. */
+function volumeAvailable(path: string | undefined): number | undefined {
+    if (path === undefined) {
+        return undefined;
+    }
+
+    try {
+        return freeDiskSpace(path).available;
+    } catch (err) {
+        log.debug({ err, path }, "statfs failed");
+        return undefined;
+    }
+}
+
 function totalsOf(ops: ProcessOp[]): ProcessTotals {
     const t: ProcessTotals = { cloned: 0, skipped: 0, errors: 0, bytesReclaimed: 0 };
     for (const op of ops) {
         if (op.op === "clone") {
             t.cloned += 1;
-            t.bytesReclaimed += op.bytes;
+            t.bytesReclaimed += freedBytes(op);
         } else if (op.op === "skip") {
             t.skipped += 1;
         } else if (op.op === "error") {
@@ -183,6 +205,7 @@ function metaToReport(meta: ProcessMeta, ops: ProcessOp[], totals: ProcessTotals
         },
         ops,
         totals,
+        ...(meta.freeBytes !== undefined ? { freeBytes: meta.freeBytes } : {}),
     };
 }
 
@@ -224,7 +247,7 @@ function readProcessSummary(id: string): Omit<ProcessReport, "ops"> | null {
 
         if (rec.op.op === "clone") {
             t.cloned += 1;
-            t.bytesReclaimed += rec.op.bytes;
+            t.bytesReclaimed += freedBytes(rec.op);
         } else if (rec.op.op === "skip") {
             t.skipped += 1;
         } else if (rec.op.op === "error") {
@@ -415,10 +438,19 @@ function runOptimizeInner({
         sets.map((s) => expandSetToPairs(s, keepOnlyRoots))
     );
     const totalPairs = pairsBySet.reduce((s, p) => s + p.length, 0);
+    const freeBefore = volumeAvailable(roots[0]);
     log.info(
-        { id, roots, sets: sets.length, totalPairs, planCacheHit, planCacheAgeMs, keepOnlyRoots },
+        { id, roots, sets: sets.length, totalPairs, planCacheHit, planCacheAgeMs, keepOnlyRoots, freeBefore },
         "runOptimize starting"
     );
+    const freeBytesNow = (): { freeBytes?: FreeBytesDelta } => {
+        if (freeBefore === undefined) {
+            return {};
+        }
+
+        const after = volumeAvailable(roots[0]);
+        return { freeBytes: { before: freeBefore, ...(after !== undefined ? { after } : {}) } };
+    };
     writeMeta({
         id,
         state: "applied",
@@ -427,6 +459,7 @@ function runOptimizeInner({
         endedAt: startedAt,
         planCacheHit,
         ...(planCacheAgeMs !== undefined ? { planCacheAgeMs } : {}),
+        ...(freeBefore !== undefined ? { freeBytes: { before: freeBefore } } : {}),
     });
 
     // Build the ProcessReport in-memory so we don't have to re-read the
@@ -439,7 +472,7 @@ function runOptimizeInner({
         ops.push(op);
         if (op.op === "clone") {
             totals.cloned += 1;
-            totals.bytesReclaimed += op.bytes;
+            totals.bytesReclaimed += freedBytes(op);
         } else if (op.op === "skip") {
             totals.skipped += 1;
         } else if (op.op === "error") {
@@ -457,6 +490,7 @@ function runOptimizeInner({
                 let modeBefore = 0;
                 let mtimeBeforeMs = 0;
                 let sha256Before = "";
+                let privateBefore: number | null = null;
                 try {
                     // There's a small TOCTOU window between lstatSync and sha256(replace)
                     // here — `replace` could in theory be modified between the two reads.
@@ -470,6 +504,9 @@ function runOptimizeInner({
                     modeBefore = st.mode & 0o7777;
                     mtimeBeforeMs = st.mtimeMs;
                     sha256Before = sha256(replace);
+                    // Read just before the swap, so a family rewritten copy by copy
+                    // credits its shared blocks to the copy that held them last.
+                    privateBefore = getPrivateSize(replace);
                 } catch (err) {
                     log.warn({ err, replace }, "pre-state capture failed");
                     recordOp({
@@ -524,6 +561,7 @@ function runOptimizeInner({
                             mtimeBeforeMs,
                             sha256Before,
                             sha256After,
+                            ...(privateBefore !== null ? { privateBytes: privateBefore } : {}),
                         });
                         if (cache !== undefined) {
                             refreshCloneIds(cache, [keep, replace]);
@@ -577,6 +615,7 @@ function runOptimizeInner({
                 endedAt: new Date().toISOString(),
                 planCacheHit,
                 ...(planCacheAgeMs !== undefined ? { planCacheAgeMs } : {}),
+                ...freeBytesNow(),
             });
         }
 
@@ -589,6 +628,7 @@ function runOptimizeInner({
     // on-disk JSONL keeps endedAt=startedAt forever and consumers can never
     // recover the real duration.
     const endedAt = new Date().toISOString();
+    const free = freeBytesNow();
     writeMeta({
         id,
         state: "applied",
@@ -597,6 +637,7 @@ function runOptimizeInner({
         endedAt,
         planCacheHit,
         ...(planCacheAgeMs !== undefined ? { planCacheAgeMs } : {}),
+        ...free,
     });
 
     const rep: ProcessReport = {
@@ -611,6 +652,7 @@ function runOptimizeInner({
         },
         ops,
         totals,
+        ...free,
     };
 
     log.info(
@@ -622,6 +664,7 @@ function runOptimizeInner({
             skipped: rep.totals.skipped,
             errors: rep.totals.errors,
             bytesReclaimed: rep.totals.bytesReclaimed,
+            freeBytes: rep.freeBytes,
             elapsedMs: Math.round(sw.elapsedMs),
         },
         "runOptimize complete"

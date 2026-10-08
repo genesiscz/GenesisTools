@@ -29,6 +29,8 @@ function plan(): Parameters<typeof applyReclaimPlan>[0] {
         keepRoots: [],
         sets: [],
         totalReclaimable: 0,
+        totalFreeable: 0,
+        dropped: { sets: 0, naiveBytes: 0 },
         fromSnapshot: false,
         deniedDirs: 0,
     };

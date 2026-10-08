@@ -19,6 +19,8 @@ export interface Preset {
     exclude: string[];
     minReal: number;
     keepPartners: KeepPartnerId[];
+    rewriteStores?: KeepPartnerId[];
+    keepUnfreeable?: boolean;
     createdAt: string;
     lastRunAt?: string;
     lastReclaimable?: number;

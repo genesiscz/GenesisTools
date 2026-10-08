@@ -11,6 +11,10 @@ export const KEEP_PARTNER_IDS = ["bun", "npm", "pnpm", "yarn", "composer"] as co
 
 export type KeepPartnerId = (typeof KEEP_PARTNER_IDS)[number];
 
+/** Stores `--rewrite-stores` accepts. Only bun maps a worktree file to its
+ *  store copy, so only bun's byte-identical store files ever meet in one set. */
+export const REWRITABLE_STORE_IDS = ["bun"] as const satisfies readonly KeepPartnerId[];
+
 export interface PackageIdentity {
     dir: string;
     name: string;

@@ -4,6 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { type RootStamp, stampRoots } from "./cache";
 import { collapseDuplicates } from "./collapse";
 import { discoverRoots } from "./discover";
+import { annotateFreeable } from "./freeable";
 import {
     type KeepPartnerId,
     makePartnerFor,
@@ -29,6 +30,11 @@ export interface ReclaimSelector {
     exclude: string[];
     minReal: number;
     keepPartners: KeepPartnerId[];
+    /** Stores whose files may be rewritten onto a byte-identical file of the same
+     *  store. Each one is also a keep partner. */
+    rewriteStores?: KeepPartnerId[];
+    /** List (and apply) sets that free nothing; they are dropped by default. */
+    keepUnfreeable?: boolean;
 }
 
 export interface ReclaimPlan {
@@ -41,7 +47,12 @@ export interface ReclaimPlan {
     skipped: SkippedRoot[];
     keepRoots: ResolvedKeepPartner[];
     sets: DuplicateSet[];
+    /** Naive bytes of `sets`: `(copies - 1) * eachBytes` each. */
     totalReclaimable: number;
+    /** Measured bytes the volume gains when `sets` are applied. */
+    totalFreeable: number;
+    /** Sets measured at zero freeable and left out. */
+    dropped: { sets: number; naiveBytes: number };
     /** True when the sets came from a fresh plan snapshot instead of a scan. */
     fromSnapshot: boolean;
     /** Directories the walk could not open. A permission-denied subtree
@@ -82,6 +93,17 @@ function sumReclaimable(sets: DuplicateSet[]): number {
     return sets.reduce((s, x) => s + x.reclaimable, 0);
 }
 
+/** Every partner the plan resolves: the asked keep partners plus each store to rewrite. */
+export function effectiveKeepPartners(selector: ReclaimSelector): KeepPartnerId[] {
+    return [...new Set([...selector.keepPartners, ...(selector.rewriteStores ?? [])])];
+}
+
+/** Store roots apply must never write to: every resolved store not named in `--rewrite-stores`. */
+export function fixedStoreRoots(plan: Pick<ReclaimPlan, "keepRoots" | "selector">): string[] {
+    const rewrite = plan.selector.rewriteStores ?? [];
+    return plan.keepRoots.filter((k) => !rewrite.includes(k.id)).map((k) => k.root);
+}
+
 /** Discover → resolve keep partners → collapse. Mutates nothing on disk except
  *  the run log. `keepPartners` is empty by default, so a package-manager store
  *  joins a duplicate set only when the user asked for it. Every phase is timed
@@ -95,6 +117,7 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
         worktreesOf: selector.worktreesOf ?? null,
         targets: selector.targets,
         keepPartners: selector.keepPartners,
+        rewriteStores: selector.rewriteStores ?? [],
         minReal: selector.minReal,
     });
 
@@ -115,12 +138,30 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
     );
     const rootStamps = stampRoots(discovered.roots);
 
-    const keepRoots = resolveKeepPartners(selector.keepPartners, spawnCacheCommand);
+    const keepRoots = resolveKeepPartners(effectiveKeepPartners(selector), spawnCacheCommand);
     const keepOnlyRoots = keepRoots.map((k) => k.root);
+    const fixedRoots = fixedStoreRoots({ keepRoots, selector });
+    const rewritableRoots = keepOnlyRoots.filter((r) => !fixedRoots.includes(r));
 
-    const finish = (sets: DuplicateSet[], fromSnapshot: boolean, deniedDirs = 0): ReclaimPlan => {
+    const finish = (measuredSets: DuplicateSet[], fromSnapshot: boolean, deniedDirs = 0): ReclaimPlan => {
+        // Measured on every path, the snapshot one included: a reused set names
+        // the same files, but their private bytes are whatever they are now.
+        const { sets, dropped } = annotateFreeable({
+            sets: measuredSets,
+            fixedRoots,
+            storeRoots: keepOnlyRoots,
+            keepUnfreeable: selector.keepUnfreeable === true,
+        });
         const totalReclaimable = sumReclaimable(sets);
-        appendReclaimEvent(runId, { phase: "plan", sets: sets.length, totalReclaimable, fromSnapshot });
+        const totalFreeable = sets.reduce((s, x) => s + (x.freeable ?? 0), 0);
+        appendReclaimEvent(runId, {
+            phase: "plan",
+            sets: sets.length,
+            totalReclaimable,
+            totalFreeable,
+            dropped,
+            fromSnapshot,
+        });
         const elapsedMs = Math.round(endPlan());
         log.info(
             {
@@ -130,6 +171,8 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
                 keepRoots: keepRoots.map((k) => k.id),
                 sets: sets.length,
                 totalReclaimable,
+                totalFreeable,
+                dropped,
                 fromSnapshot,
                 deniedDirs,
                 elapsedMs,
@@ -145,6 +188,8 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
             keepRoots,
             sets,
             totalReclaimable,
+            totalFreeable,
+            dropped,
             fromSnapshot,
             deniedDirs,
         };
@@ -187,6 +232,7 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
             minSize: selector.minReal,
             exclude: selector.exclude,
             keepOnlyRoots,
+            rewritableRoots,
             // Every sibling command prunes .git; without it a git-sourced
             // package's pack files join a set the others deliberately exclude.
             pruneNames: [".git"],
@@ -208,7 +254,7 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
     appendReclaimEvent(runId, { phase: "collapse", sets: report.sets.length, stats: report.stats ?? null });
     opts.onPhase?.(
         "collapse",
-        `${report.sets.length} set(s) · ${formatBytes(sumReclaimable(report.sets))} reclaimable · ${formatDuration(performance.now() - collapseStart)}`
+        `${report.sets.length} set(s) · ${formatBytes(sumReclaimable(report.sets))} naive · ${formatDuration(performance.now() - collapseStart)}`
     );
     return finish(report.sets, false, report.stats?.deniedDirs ?? 0);
 }

@@ -110,8 +110,10 @@ describe("planReclaim", () => {
                 },
             ];
             const seenRoots: string[][] = [];
+            // The canned paths do not exist, so the set frees nothing; keep it
+            // in the plan, because this test is about reuse, not measurement.
             const plan = await planReclaim(
-                { ...defaultSelector([outer]), minReal: 1024 },
+                { ...defaultSelector([outer]), minReal: 1024, keepUnfreeable: true },
                 {
                     snapshot: (roots) => {
                         seenRoots.push(roots);
@@ -123,7 +125,7 @@ describe("planReclaim", () => {
             expect(seenRoots.length).toBe(1);
             expect(seenRoots[0].length).toBe(2);
             expect(plan.fromSnapshot).toBe(true);
-            expect(plan.sets).toEqual(canned);
+            expect(plan.sets).toEqual(canned.map((s) => ({ ...s, freeable: 0 })));
             expect(plan.totalReclaimable).toBe(7);
             expect(readReclaimEvents(plan.runId).map((e) => e.phase)).toEqual(["start", "discover", "plan"]);
         } finally {

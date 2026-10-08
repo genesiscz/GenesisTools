@@ -73,9 +73,16 @@ export interface DuplicateSet {
     what: string;
     copies: number;
     eachBytes: number;
+    /** Naive: `(copies - 1) * eachBytes`, as if every replaced copy were fully private. */
     reclaimable: number;
     members: string[];
     keep: string;
+    /** Store copies that stay keep-only. They are never rewritten, but they still
+     *  hold blocks, so the freeable measure must see them. */
+    storeMembers?: string[];
+    /** Bytes the volume really gains when apply rewrites this set (private bytes of
+     *  the rewritten copies, see `freeable.ts`). Absent when not measured. */
+    freeable?: number;
 }
 
 export interface DuplicatesReport {
@@ -104,6 +111,9 @@ export interface ProcessOp {
     sha256Before: string;
     sha256After?: string;
     message?: string;
+    /** APFS private bytes of `replace` just before the swap: what this clone freed.
+     *  `bytes` stays the full size, because that is what a rollback must allocate. */
+    privateBytes?: number;
 }
 
 export interface ProcessTotals {
@@ -122,6 +132,13 @@ export interface ProcessReport {
     planCache: { hit: boolean; ageMs?: number };
     ops: ProcessOp[];
     totals: ProcessTotals;
+    /** statfs available bytes on the first root's volume around the run. */
+    freeBytes?: FreeBytesDelta;
+}
+
+export interface FreeBytesDelta {
+    before: number;
+    after?: number;
 }
 
 export interface ProcessListEntry {
@@ -146,6 +163,10 @@ export interface PlanReport {
     keepRoots: { id: string; root: string }[];
     sets: DuplicateSet[];
     totalReclaimable: number;
+    /** Sum of `freeable` over `sets`. Absent on reports that did not measure it. */
+    totalFreeable?: number;
+    /** Sets left out because they free nothing. */
+    dropped?: { sets: number; naiveBytes: number };
     fromSnapshot: boolean;
     deniedDirs: number;
 }

@@ -1,6 +1,7 @@
 import { resolveKinds } from "@app/macos/commands/clones/kinds";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
-import { KEEP_PARTNER_IDS } from "@app/macos/lib/clones/keep-partners";
+import { createStoresCommand } from "@app/macos/commands/clones/reclaim-stores";
+import { KEEP_PARTNER_IDS, type KeepPartnerId, REWRITABLE_STORE_IDS } from "@app/macos/lib/clones/keep-partners";
 import {
     applyReclaimPlan,
     type PlanRunHooks,
@@ -22,6 +23,7 @@ import {
     type ReclaimSelector,
 } from "@app/macos/lib/clones/reclaim";
 import { JsonRenderer, resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
+import { freeBytesLine } from "@app/macos/lib/clones/render/table";
 import { resolveSelector, type SelectorError } from "@app/macos/lib/clones/selector";
 import { TARGET_KIND_VALUES } from "@app/macos/lib/clones/targets";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
@@ -48,6 +50,8 @@ interface ReclaimOpts {
     worktreesOf?: string;
     targets?: string | boolean;
     keepPartners?: string | boolean;
+    rewriteStores?: string | boolean;
+    keepUnfreeable?: boolean;
     exclude: string[];
     minReal: string;
     format?: string;
@@ -82,6 +86,11 @@ function applySelectorFlags(cmd: Command): Command {
             "--keep-partners [ids]",
             `Package-manager stores never rewritten (${KEEP_PARTNER_IDS.join(", ")}); only bun also offers its cached copies as keep candidates`
         )
+        .option(
+            "--rewrite-stores [ids]",
+            `Also rewrite a store file onto a byte-identical file of the same store (${REWRITABLE_STORE_IDS.join(", ")}); implies --keep-partners for it`
+        )
+        .option("--keep-unfreeable", "Keep sets that free nothing (dropped by default, so apply skips them)", false)
         .option("--exclude <glob>", "Exclude glob (repeatable)", collect, [])
         .option("--min-real <bytes>", "Minimum per-file size to consider", String(DEFAULT_MIN_REAL));
 }
@@ -155,6 +164,30 @@ async function selectorFrom(dirsArg: string[], opts: ReclaimOpts, verb: string[]
         return null;
     }
 
+    const rewriteStores = await resolveKinds({
+        raw: opts.rewriteStores,
+        fallback: [],
+        flag: "--rewrite-stores",
+        values: REWRITABLE_STORE_IDS,
+        subcommand,
+    });
+    if (rewriteStores === null) {
+        return null;
+    }
+
+    const isRewritable = (s: string): s is KeepPartnerId => (REWRITABLE_STORE_IDS as readonly string[]).includes(s);
+    const unknownStore = rewriteStores.find((s) => !isRewritable(s));
+    if (unknownStore !== undefined) {
+        console.error(
+            suggestEnumFlag("tools macos clones", "--rewrite-stores", REWRITABLE_STORE_IDS, {
+                subcommand,
+                given: unknownStore,
+            })
+        );
+        process.exitCode = 1;
+        return null;
+    }
+
     const resolved = resolveSelector({
         dirs,
         ...(opts.worktreesOf !== undefined ? { worktreesOf: opts.worktreesOf } : {}),
@@ -168,7 +201,11 @@ async function selectorFrom(dirsArg: string[], opts: ReclaimOpts, verb: string[]
         return null;
     }
 
-    return resolved.selector;
+    return {
+        ...resolved.selector,
+        ...(rewriteStores.length > 0 ? { rewriteStores: rewriteStores.filter(isRewritable) } : {}),
+        ...(opts.keepUnfreeable === true ? { keepUnfreeable: true } : {}),
+    };
 }
 
 function selectorFromPreset(preset: Preset): ReclaimSelector {
@@ -179,6 +216,8 @@ function selectorFromPreset(preset: Preset): ReclaimSelector {
         exclude: preset.exclude,
         minReal: preset.minReal,
         keepPartners: preset.keepPartners,
+        ...(preset.rewriteStores !== undefined ? { rewriteStores: preset.rewriteStores } : {}),
+        ...(preset.keepUnfreeable === true ? { keepUnfreeable: true } : {}),
     };
 }
 
@@ -192,6 +231,8 @@ function presetFromSelector(id: string, selector: ReclaimSelector, run?: { recla
         exclude: selector.exclude,
         minReal: selector.minReal,
         keepPartners: selector.keepPartners,
+        ...(selector.rewriteStores !== undefined ? { rewriteStores: selector.rewriteStores } : {}),
+        ...(selector.keepUnfreeable === true ? { keepUnfreeable: true } : {}),
         createdAt: now,
         ...(run !== undefined ? { lastRunAt: now, lastReclaimable: run.reclaimable } : {}),
     };
@@ -310,7 +351,7 @@ async function runPlan({
 
         const plan = result.plan;
         spinner?.stop(
-            `${plan.roots.length} root(s) · ${plan.sets.length} set(s) · ${formatBytes(plan.totalReclaimable)}`
+            `${plan.roots.length} root(s) · ${plan.sets.length} set(s) · ${formatBytes(plan.totalFreeable)} freeable`
         );
         return plan;
     } finally {
@@ -349,7 +390,7 @@ function createPlanCommand(): Command {
             );
 
             if (opts.save !== undefined) {
-                savePreset(presetFromSelector(opts.save, selector, { reclaimable: plan.totalReclaimable }));
+                savePreset(presetFromSelector(opts.save, selector, { reclaimable: plan.totalFreeable }));
                 recorded(opts, `preset "${opts.save}"`);
             }
 
@@ -370,7 +411,8 @@ async function applyPlan(plan: ReclaimPlan, opts: ReclaimOpts, verb: string[]): 
     if (isInteractive()) {
         p.intro("clones reclaim apply");
         p.log.info(
-            `${plan.sets.length} set(s) → clones · reclaim ${formatBytes(plan.totalReclaimable)} · ` +
+            `${plan.sets.length} set(s) → clones · frees ${formatBytes(plan.totalFreeable)} ` +
+                `(naive ${formatBytes(plan.totalReclaimable)}) · ` +
                 "rewrites in place, content-verified"
         );
         const ok = await p.typedConfirm({ message: 'Type "apply" to proceed', phrase: "apply" });
@@ -400,7 +442,17 @@ async function applyPlan(plan: ReclaimPlan, opts: ReclaimOpts, verb: string[]): 
         return 1;
     }
 
-    await printLn(resolveRenderer(resolveFormat(opts.format)).processReport(applied.report));
+    const fmt = resolveFormat(opts.format);
+    await printLn(resolveRenderer(fmt).processReport(applied.report));
+    if (fmt === "table") {
+        // The three numbers side by side: what the plan promised, what the
+        // kernel said each copy held privately, and what statfs saw.
+        await printLn(
+            `projected free ${formatBytes(plan.totalFreeable)} · measured ${formatBytes(applied.report.totals.bytesReclaimed)}` +
+                (freeBytesLine(applied.report) !== null ? ` · ${freeBytesLine(applied.report)}` : "")
+        );
+    }
+
     return applied.report.totals.errors > 0 ? 1 : 0;
 }
 
@@ -535,7 +587,7 @@ function createPresetsCommand(): Command {
             }
 
             if (opts.apply !== true) {
-                touchPreset(id, { lastRunAt: new Date().toISOString(), lastReclaimable: plan.totalReclaimable });
+                touchPreset(id, { lastRunAt: new Date().toISOString(), lastReclaimable: plan.totalFreeable });
                 await savePlanSnapshot(selector, plan);
                 recorded(
                     opts,
@@ -550,7 +602,7 @@ function createPresetsCommand(): Command {
             // Only a run that actually applied is a run: a cancelled prompt, a
             // missing --yes or a refused clone used to be recorded as one.
             if (code === 0) {
-                touchPreset(id, { lastRunAt: new Date().toISOString(), lastReclaimable: plan.totalReclaimable });
+                touchPreset(id, { lastRunAt: new Date().toISOString(), lastReclaimable: plan.totalFreeable });
             } else {
                 log.info({ id, code }, "preset run not recorded — apply did not complete");
             }
@@ -568,5 +620,6 @@ export function createReclaimCommand(): Command {
     group.addCommand(createPlanCommand());
     group.addCommand(createApplyCommand());
     group.addCommand(createPresetsCommand());
+    group.addCommand(createStoresCommand());
     return group;
 }

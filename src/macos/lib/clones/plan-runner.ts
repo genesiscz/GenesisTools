@@ -16,7 +16,7 @@ import { ensureClonesDaemonTasks } from "./daemon-tasks";
 import { RepoNotFoundError } from "./discover";
 import { FileMetaCache } from "./file-meta-cache";
 import { clonesProfile } from "./profile";
-import { planReclaim, type ReclaimPhase, type ReclaimPlan, type ReclaimSelector } from "./reclaim";
+import { fixedStoreRoots, planReclaim, type ReclaimPhase, type ReclaimPlan, type ReclaimSelector } from "./reclaim";
 import { appendReclaimEvent } from "./reclaim-run";
 import type { DuplicateSet, ProcessReport } from "./render/types";
 import { loadClonesConfig } from "./store";
@@ -34,6 +34,8 @@ export function planCacheParamsFor(selector: ReclaimSelector, roots: string[]): 
         targets: selector.targets,
         ...(selector.worktreesOf !== undefined ? { worktreesOf: selector.worktreesOf } : {}),
         keepPartners: selector.keepPartners,
+        rewriteStores: selector.rewriteStores ?? [],
+        keepUnfreeable: selector.keepUnfreeable === true,
     });
 }
 
@@ -225,7 +227,7 @@ export function applyReclaimPlan(plan: ReclaimPlan): ApplyPlanResult {
             roots: plan.roots,
             sets: plan.sets,
             planCacheHit: plan.fromSnapshot,
-            keepOnlyRoots: plan.keepRoots.map((k) => k.root),
+            keepOnlyRoots: fixedStoreRoots(plan),
             cache: FileMetaCache.getInstance(),
         });
         appendReclaimEvent(plan.runId, {

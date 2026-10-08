@@ -16,6 +16,21 @@ import {
     type ProcessReport,
 } from "./types";
 
+/** `volume free 10.5 GB → 13.6 GB (+3.1 GB)`: what statfs saw around the run.
+ *  Other writers on the volume move it too, so it is evidence, not an exact sum. */
+export function freeBytesLine(r: Pick<ProcessReport, "freeBytes">): string | null {
+    if (r.freeBytes?.after === undefined) {
+        return null;
+    }
+
+    const delta = r.freeBytes.after - r.freeBytes.before;
+    const sign = delta >= 0 ? "+" : "-";
+    return (
+        `volume free ${formatBytes(r.freeBytes.before)} → ${formatBytes(r.freeBytes.after)} ` +
+        `(${sign}${formatBytes(Math.abs(delta))}, statfs; other writers move it too)`
+    );
+}
+
 function realCell(real: number | null): string {
     return real === null ? "unavailable" : formatBytes(real);
 }
@@ -117,6 +132,9 @@ export class TableRenderer implements CloneRenderer {
     duplicates(r: DuplicatesReport): string {
         const lines: string[] = [];
         lines.push(pc.bold(`clones duplicates — ${r.roots.join(", ")}`));
+        // A measured set (reclaim plan) shows the naive bytes beside the bytes
+        // the volume really gains; an unmeasured one keeps the old column.
+        const measured = r.sets.some((s) => s.freeable !== undefined);
         if (r.sets.length === 0) {
             lines.push(pc.dim("No non-clone duplicates found."));
         } else {
@@ -126,12 +144,24 @@ export class TableRenderer implements CloneRenderer {
                 String(s.copies),
                 formatBytes(s.eachBytes),
                 formatBytes(s.reclaimable),
+                ...(measured ? [formatBytes(s.freeable ?? 0)] : []),
             ]);
             lines.push(
-                formatTable(rows, ["kind", "what", "copies", "each", "reclaimable"], {
-                    alignRight: [2, 3, 4],
-                    maxColWidth: 60,
-                })
+                formatTable(
+                    rows,
+                    [
+                        "kind",
+                        "what",
+                        "copies",
+                        "each",
+                        measured ? "naive" : "reclaimable",
+                        ...(measured ? ["freeable"] : []),
+                    ],
+                    {
+                        alignRight: measured ? [2, 3, 4, 5] : [2, 3, 4],
+                        maxColWidth: 60,
+                    }
+                )
             );
 
             if (r.grouped) {
@@ -147,7 +177,16 @@ export class TableRenderer implements CloneRenderer {
         }
 
         lines.push("");
-        lines.push(pc.bold(`projected reclaim: ${formatBytes(r.totalReclaimable)}`));
+        if (measured) {
+            const freeable = r.sets.reduce((s, x) => s + (x.freeable ?? 0), 0);
+            lines.push(
+                pc.bold(`projected free: ${formatBytes(freeable)}`) +
+                    pc.dim(`  (naive ${formatBytes(r.totalReclaimable)}: every copy counted as fully private)`)
+            );
+        } else {
+            lines.push(pc.bold(`projected reclaim: ${formatBytes(r.totalReclaimable)}`));
+        }
+
         lines.push("");
         lines.push(pc.dim(CLONES_GLOSSARY));
         return lines.join("\n");
@@ -166,6 +205,12 @@ export class TableRenderer implements CloneRenderer {
         );
         lines.push("");
         lines.push(`roots scanned: ${r.roots.length}`);
+        if (r.dropped !== undefined && r.dropped.sets > 0) {
+            lines.push(
+                `left out ${r.dropped.sets} set(s) that free nothing (naive ${formatBytes(r.dropped.naiveBytes)}): ` +
+                    "their copies already share blocks with a file apply does not rewrite (--keep-unfreeable lists them)"
+            );
+        }
         if (r.fromSnapshot) {
             // The stamps prove nothing the snapshot names has changed. They
             // cannot prove it is complete, so say that instead of implying a
@@ -206,12 +251,13 @@ export class TableRenderer implements CloneRenderer {
             op.op,
             op.status,
             op.bytes > 0 ? formatBytes(op.bytes) : "",
+            op.privateBytes !== undefined ? formatBytes(op.privateBytes) : "",
             op.replace,
         ]);
         if (opRows.length > 0) {
             lines.push(
-                formatTable(opRows, ["#", "op", "status", "bytes", "replace"], {
-                    alignRight: [3],
+                formatTable(opRows, ["#", "op", "status", "bytes", "freed", "replace"], {
+                    alignRight: [3, 4],
                     maxColWidth: 60,
                 })
             );
@@ -257,6 +303,10 @@ export class TableRenderer implements CloneRenderer {
                         `errors ${r.totals.errors}  reclaimed ${formatBytes(r.totals.bytesReclaimed)}`
                 )
             );
+            const volume = freeBytesLine(r);
+            if (volume !== null) {
+                lines.push(volume);
+            }
             const probe = getGetattrlistbulkProbeFailure();
             if (probe) {
                 lines.push(

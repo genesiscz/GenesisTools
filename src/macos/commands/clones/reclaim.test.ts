@@ -87,11 +87,11 @@ interface PlanJson {
 }
 
 describe("createReclaimCommand", () => {
-    it("exposes plan, apply and presets", () => {
+    it("exposes plan, apply, presets and stores", () => {
         const subs = createReclaimCommand()
             .commands.map((c) => c.name())
             .sort();
-        expect(subs).toEqual(["apply", "plan", "presets"]);
+        expect(subs).toEqual(["apply", "plan", "presets", "stores"]);
     });
 
     it("plan --format json reports the discovered roots and the duplicate set, and writes the snapshot", async () => {

@@ -55,6 +55,9 @@ export interface CollapseArgs {
     /** Package-manager stores. A member under one of these always wins `keep`,
      *  is never a replace target, and stops the directory rollup. */
     keepOnlyRoots?: string[];
+    /** Keep-only roots whose files may still be the REPLACE side when a byte-identical
+     *  file elsewhere in the same store is the keep (`--rewrite-stores`). */
+    rewritableRoots?: string[];
     /** Forwarded to `findDuplicateFiles` — injects keep-partner candidates. */
     partnerFor?: (path: string, size: number) => string[];
 }
@@ -292,6 +295,7 @@ export async function collapseDuplicates({
     cache,
     prefixHash,
     keepOnlyRoots = [],
+    rewritableRoots = [],
     partnerFor,
 }: CollapseArgs): Promise<DuplicatesReport> {
     const sw = new Stopwatch();
@@ -477,9 +481,12 @@ export async function collapseDuplicates({
     }
 
     // A keep-only member that is not the keep can never be replaced, so it must
-    // not inflate `copies` or `reclaimable`.
+    // not inflate `copies` or `reclaimable`. It still holds blocks, so it is
+    // kept aside as a store member for the freeable measure.
+    const fixedRoots = keepOnlyRoots.filter((r) => !rewritableRoots.includes(r));
     const normalizedSets = sets.flatMap((set) => {
-        const members = set.members.filter((m) => m === set.keep || !isUnderAny(m, keepOnlyRoots));
+        const isFixed = (m: string): boolean => m !== set.keep && isUnderAny(m, fixedRoots);
+        const members = set.members.filter((m) => !isFixed(m));
         if (members.length === set.members.length) {
             return [set];
         }
@@ -492,6 +499,7 @@ export async function collapseDuplicates({
             {
                 ...set,
                 members,
+                storeMembers: set.members.filter(isFixed),
                 copies: members.length,
                 reclaimable: (members.length - 1) * set.eachBytes,
             },

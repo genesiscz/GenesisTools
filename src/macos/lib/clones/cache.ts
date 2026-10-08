@@ -32,6 +32,10 @@ export interface PlanCacheParams {
     targets: string[];
     worktreesOf: string;
     keepPartners: string[];
+    /** Stores rewritten onto themselves: they change both `keep` and the members. */
+    rewriteStores?: string[];
+    /** Whether zero-freeable sets stayed in the plan. */
+    keepUnfreeable?: boolean;
 }
 
 export interface RootStamp {
@@ -75,6 +79,8 @@ export function planCacheParams(p: {
     targets?: string[];
     worktreesOf?: string;
     keepPartners?: string[];
+    rewriteStores?: string[];
+    keepUnfreeable?: boolean;
 }): PlanCacheParams {
     return {
         roots: p.roots,
@@ -85,6 +91,8 @@ export function planCacheParams(p: {
         targets: p.targets ?? [],
         worktreesOf: p.worktreesOf ?? "",
         keepPartners: p.keepPartners ?? [],
+        rewriteStores: p.rewriteStores ?? [],
+        keepUnfreeable: p.keepUnfreeable ?? false,
     };
 }
 
@@ -99,6 +107,8 @@ export function planCacheKey(p: PlanCacheParams): string {
         targets: (p.targets.length === 0 ? DEFAULT_TARGETS : p.targets).slice().sort(),
         worktreesOf: p.worktreesOf,
         keepPartners: [...p.keepPartners].sort(),
+        rewriteStores: [...(p.rewriteStores ?? [])].sort(),
+        keepUnfreeable: p.keepUnfreeable === true,
     };
     const sha1 = createHash("sha1").update(SafeJSON.stringify(normalized)).digest("hex");
     return `plan-${sha1}.json`;
