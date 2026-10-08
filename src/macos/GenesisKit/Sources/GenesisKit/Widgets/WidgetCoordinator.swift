@@ -261,7 +261,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             let module = selectedModule(for: surface)
             switch model.presentation(for: surface) {
             case .compact: return compact
-            case .preview: return max(compact, 245)
+            case .preview: return max(compact, module?.id == "agents" ? model.previewHeight : 245)
             case .expanded:
                 let height = module?.id == "agents" ? model.preferredHeight : (module?.expandedSize.height ?? 440)
                 return max(compact, min(availableCardHeight, height + 40))
@@ -293,11 +293,14 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                     CGSize(
                         width: max(topCompactWidth, width),
                         height: min(availableCardHeight, contentHeight + 40) + topHeaderHeight))
-                controller.setPreviewSize(CGSize(width: max(topCompactWidth, width), height: 245 + topHeaderHeight))
+                controller.setPreviewSize(
+                    CGSize(
+                        width: max(topCompactWidth, width),
+                        height: (module?.id == "agents" ? model.previewHeight : 245) + topHeaderHeight))
             } else if let index = sideSurfaces.firstIndex(of: surface) {
                 controller.setSideCenterY(centers[index])
                 controller.setCompactSize(CGSize(width: 44, height: sideHeights[index]))
-                controller.setPreviewSize(CGSize(width: 324, height: sideHeights[index]))
+                controller.setPreviewSize(CGSize(width: 368, height: sideHeights[index]))
                 controller.setExpandedSize(CGSize(width: width + 44, height: sideHeights[index]))
             }
             orderFront(controller)

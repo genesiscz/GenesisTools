@@ -44,7 +44,7 @@ struct WidgetHostView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .nativeGlassSurface(in: shape, tint: .black.opacity(0.30), opaqueColor: Color(white: 0.09))
         .clipShape(shape)
-        .overlay(shape.stroke(.white.opacity(0.12), lineWidth: 0.7))
+        .overlay(shape.stroke(.white.opacity(0.035), lineWidth: 0.5))
         .foregroundStyle(.white)
         .preferredColorScheme(.dark)
         .environment(
@@ -63,17 +63,38 @@ struct WidgetHostView: View {
                 expand()
             } label: {
                 HStack(spacing: 7) {
-                    Image(systemName: selected?.symbol ?? "square.grid.2x2.fill")
-                        .foregroundStyle(selected?.tint ?? .blue)
+                    if selected?.id == "agents" {
+                        GenesisWidgetMark()
+                    } else {
+                        Image(systemName: selected?.symbol ?? "square.grid.2x2.fill")
+                            .foregroundStyle(selected?.tint ?? .blue)
+                    }
                     if cutout == 0 {
-                        Text(selected?.title ?? "Widgets").font(.system(size: 12, weight: .semibold))
+                        Text(selected?.id == "agents" ? "Agents" : selected?.title ?? "Widgets")
+                            .font(.system(size: 12, weight: .semibold))
                     }
                 }
             }
             .buttonStyle(.genHoverPlain())
             .accessibilityLabel("Open " + (selected?.title ?? "widgets"))
             if cutout > 0 { Spacer(minLength: cutout) } else { Spacer(minLength: 8) }
-            ForEach(Array(moduleIDs.prefix(4)), id: \.self) { id in moduleButton(id, size: 25) }
+            if selected?.id == "agents" {
+                HStack(spacing: 5) {
+                    ForEach(Array(model.previewSessions.prefix(3))) { session in
+                        Button {
+                            model.select(session.key)
+                            model.openModule("agents", on: surface)
+                        } label: {
+                            WidgetActivityIndicator(status: session.visualStatus, animate: !model.effectiveReduceMotion)
+                                .frame(width: 18, height: 22)
+                        }.buttonStyle(.genHoverPlain()).accessibilityLabel(
+                            session.title + ", " + session.visualStatus.label)
+                    }
+                }
+            }
+            ForEach(Array(moduleIDs.filter { $0 != selected?.id }.prefix(4)), id: \.self) { id in
+                moduleButton(id, size: 25)
+            }
             if moduleIDs.count > 4 {
                 Button {
                     model.showSettings?()
@@ -135,8 +156,10 @@ struct WidgetHostView: View {
                                 model.select(session.key)
                                 model.openModule("agents", on: surface)
                             } label: {
-                                Circle().fill(session.visualStatus.color).frame(width: 6, height: 6)
-                                    .frame(width: 26, height: 13)
+                                WidgetActivityIndicator(
+                                    status: session.visualStatus, animate: !model.effectiveReduceMotion
+                                )
+                                .frame(width: 26, height: 17)
                             }
                             .buttonStyle(.genHoverPlain())
                             .instantTooltip(session.title + " · " + session.visualStatus.label)
@@ -159,16 +182,20 @@ struct WidgetHostView: View {
         if let selected {
             VStack(spacing: 0) {
                 if presentation == .preview {
-                    HStack {
-                        Label(selected.title, systemImage: selected.symbol)
-                            .font(.system(size: 12, weight: .semibold))
-                        Spacer()
-                        Image(systemName: "arrow.up.left.and.arrow.down.right").font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }.padding(.horizontal, 16).padding(.top, 15)
-                    selected.content(.preview).padding(16)
-                    Button("Open " + selected.title) { expand() }
-                        .buttonStyle(.genHover()).padding(.bottom, 14)
+                    if selected.id == "agents" {
+                        AgentWidgetPreview(model: model, surface: surface)
+                    } else {
+                        HStack {
+                            Label(selected.title, systemImage: selected.symbol)
+                                .font(.system(size: 12, weight: .semibold))
+                            Spacer()
+                            Image(systemName: "arrow.up.left.and.arrow.down.right").font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }.padding(.horizontal, 16).padding(.top, 15)
+                        selected.content(.preview).padding(16)
+                        Button("Open " + selected.title) { expand() }
+                            .buttonStyle(.genHover()).padding(.bottom, 14)
+                    }
                 } else {
                     if moduleIDs.count > 1 {
                         HStack(spacing: 6) {
@@ -180,7 +207,7 @@ struct WidgetHostView: View {
                     selected.content(.expanded)
                 }
             }
-            .frame(width: presentation == .preview ? 280 : selected.expandedSize.width)
+            .frame(width: presentation == .preview ? 324 : selected.expandedSize.width)
             .frame(maxHeight: .infinity)
             .transition(.opacity)
         } else {

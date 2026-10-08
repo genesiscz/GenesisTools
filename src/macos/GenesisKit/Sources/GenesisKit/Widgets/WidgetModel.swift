@@ -128,6 +128,17 @@ public final class WidgetModel: ObservableObject {
     }
 
     public var sessions: [WidgetSession] { snapshot?.sessions.filter(\.visible) ?? [] }
+    public var previewSessions: [WidgetSession] {
+        let rank = ["waiting": 0, "working": 1, "finished": 2, "recent": 3]
+        return Array(
+            sessions.sorted {
+                let lhs = rank[$0.status] ?? 4
+                let rhs = rank[$1.status] ?? 4
+                return lhs == rhs ? $0.activityAt > $1.activityAt : lhs < rhs
+            }.prefix(4))
+    }
+    public var previewHeight: CGFloat { previewSessions.isEmpty ? 180 : 100 + CGFloat(previewSessions.count) * 54 }
+
     public var selected: WidgetSession? {
         snapshot?.sessions.first { $0.key == selectedKey }
             ?? (lastSelected?.key == selectedKey ? lastSelected : nil)
