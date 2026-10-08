@@ -1247,9 +1247,8 @@ final class ReviewModel: ObservableObject {
     /// One markdown file in the outbox with every comment and its code, one section per repository.
     private func writeOutbox(_ ids: [String]) -> (file: URL, message: String, owners: [(store: ReviewCommentStore, ids: [String])])? {
         let (message, owners) = composeAgentMessage(ids)
-        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let outbox = comments.directory.appendingPathComponent("outbox", isDirectory: true)
-        let file = outbox.appendingPathComponent("\(stamp).md")
+        let file = ReviewOutbox.file(in: outbox)
         do {
             try FileManager.default.createDirectory(at: outbox, withIntermediateDirectories: true)
             try message.write(to: file, atomically: true, encoding: .utf8)

@@ -37,6 +37,20 @@ final class ReviewQueueTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: target.path))
     }
 
+    func testRapidOutboxSendsKeepDistinctFilesAndContents() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("outbox-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let now = Date(timeIntervalSince1970: 100)
+        let first = ReviewOutbox.file(in: directory, now: now)
+        let second = ReviewOutbox.file(in: directory, now: now)
+        XCTAssertNotEqual(first, second)
+        try "first".write(to: first, atomically: true, encoding: .utf8)
+        try "second".write(to: second, atomically: true, encoding: .utf8)
+        XCTAssertEqual(try String(contentsOf: first), "first")
+        XCTAssertEqual(try String(contentsOf: second), "second")
+    }
+
     // MARK: queued vs sent
 
     func testWithoutAPaneThatGotItAQueuedCommentNeverReadsSent() {

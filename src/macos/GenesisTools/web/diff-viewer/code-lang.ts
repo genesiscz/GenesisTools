@@ -65,3 +65,27 @@ export function fenceInfo(line: string): string | null {
     const match = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
     return match ? match[2].trim() : null;
 }
+
+export type FencedPart = { kind: "prose"; text: string } | { kind: "code"; text: string; language: string };
+
+export function fencedParts(text: string): FencedPart[] {
+    const parts = text.split(/```([a-zA-Z0-9_+-]*)[^\n]*\n?/);
+    const result: FencedPart[] = [];
+
+    // Both fences match: prose, opening language, code, closing language, prose.
+    for (let index = 0; index < parts.length; index += 4) {
+        const prose = parts[index];
+
+        if (prose?.trim()) {
+            result.push({ kind: "prose", text: prose.trim() });
+        }
+
+        const code = parts[index + 2];
+
+        if (code?.trim()) {
+            result.push({ kind: "code", text: code.replace(/\n$/, ""), language: parts[index + 1] ?? "" });
+        }
+    }
+
+    return result;
+}

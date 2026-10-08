@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { fenceInfo, fenceLanguage } from "./code-lang";
+import { fencedParts, fenceInfo, fenceLanguage } from "./code-lang";
 
 describe("fenceLanguage", () => {
     test("the names GitLab and GitHub notes use map to shiki's", () => {
@@ -30,5 +30,22 @@ describe("fenceInfo", () => {
         expect(fenceInfo("```")).toBe("");
         expect(fenceInfo("const a = 1")).toBeNull();
         expect(fenceInfo("``not a fence")).toBeNull();
+    });
+});
+
+describe("fencedParts", () => {
+    test("keeps prose after each fence and the languages of successive blocks", () => {
+        expect(fencedParts("before\n```ts\nlet a = 1\n```\nafter\n```swift\nlet b = 2\n```\nend")).toEqual([
+            { kind: "prose", text: "before" },
+            { kind: "code", text: "let a = 1", language: "ts" },
+            { kind: "prose", text: "after" },
+            { kind: "code", text: "let b = 2", language: "swift" },
+            { kind: "prose", text: "end" },
+        ]);
+    });
+
+    test("plain prose and an unclosed code fence retain their contents", () => {
+        expect(fencedParts("plain")).toEqual([{ kind: "prose", text: "plain" }]);
+        expect(fencedParts("```ts\ncode")).toEqual([{ kind: "code", text: "code", language: "ts" }]);
     });
 });

@@ -1,5 +1,12 @@
 import Foundation
 
+enum ReviewOutbox {
+    static func file(in directory: URL, now: Date = Date()) -> URL {
+        let stamp = ISO8601DateFormatter().string(from: now).replacingOccurrences(of: ":", with: "-")
+        return directory.appendingPathComponent("\(stamp)-\(UUID().uuidString).md")
+    }
+}
+
 /// A review comment written in the review window. It starts local (for the agent working in the
 /// repository) and may later become a GitHub / GitLab review draft or a posted comment
 /// (handoff h_3te8zv19). It is anchored to the TEXT of the commented lines, not only their numbers,

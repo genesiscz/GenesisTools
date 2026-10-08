@@ -16,7 +16,7 @@ import {
     type SupportedLanguages,
 } from "@pierre/diffs";
 import { WorkerPoolManager } from "@pierre/diffs/worker";
-import { fenceInfo, fenceLanguage } from "./code-lang";
+import { fencedParts, fenceInfo, fenceLanguage } from "./code-lang";
 import { parseFileDiff } from "./file-diff";
 import { installReviewState } from "./review-state";
 
@@ -720,20 +720,8 @@ function renderMeta(meta: NonNullable<BridgeComment["meta"]>): HTMLElement {
 /** Markdown with ``` fences: fenced parts become code blocks, the rest stays rich text. */
 function fencedText(text: string): HTMLElement {
     const box = element("div", "");
-    const parts = text.split(/```([a-zA-Z0-9_+-]*)[^\n]*\n?/);
-    // split with one capture group: text, language, code, text, language, code, …
-    for (let index = 0; index < parts.length; index += 3) {
-        const prose = parts[index];
-
-        if (prose?.trim()) {
-            box.appendChild(richText(prose.trim()));
-        }
-
-        const code = parts[index + 2];
-
-        if (code?.trim()) {
-            box.appendChild(codeBlock(code.replace(/\n$/, ""), parts[index + 1] ?? ""));
-        }
+    for (const part of fencedParts(text)) {
+        box.appendChild(part.kind === "prose" ? richText(part.text) : codeBlock(part.text, part.language));
     }
     return box;
 }
