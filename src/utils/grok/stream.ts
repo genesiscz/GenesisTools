@@ -13,6 +13,7 @@ export interface GrokTurnSummary {
     report: string;
     toolCalls: GrokToolCall[];
     ended: boolean;
+    sessionId?: string;
     malformedLines: number;
 }
 
@@ -72,6 +73,9 @@ export function parseTurnLog(text: string): GrokTurnSummary {
             summary.toolCalls.push({ tool: event.toolName ?? "?", target: toolTarget(event.rawInput) });
         } else if (event.type === "end") {
             summary.ended = true;
+            if (typeof event.sessionId === "string" && event.sessionId.trim()) {
+                summary.sessionId = event.sessionId;
+            }
         }
     }
 
