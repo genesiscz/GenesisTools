@@ -36,6 +36,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bytesEqualStreaming, copyFileStreaming, sha256File, sha256PrefixFile } from "@genesiscz/utils/fs/disk-usage";
 import { sha256File as sha256FileHash } from "@genesiscz/utils/fs/hash";
+import { readLinesSync } from "./read-lines";
 import { TemporaryArtifacts } from "./temporary-artifacts";
 
 const PREFIX_HASH_BYTES = 4 * 1024;
@@ -501,4 +502,30 @@ it("temporary artifact ownership bounds files without deleting outside paths", a
         owner.dispose();
         rmSync(dir, { recursive: true, force: true });
     }
+});
+
+const readLinesRoot = mkdtempSync(join(tmpdir(), "gt-read-lines-"));
+
+describe("readLinesSync", () => {
+    it("gives what split('\\n') gives, across chunk edges and multi-byte characters", () => {
+        const texts = [
+            "a\nb\nc",
+            "a\nb\n",
+            "",
+            "\n",
+            "žluťoučký kůň\n🙂🙂\nend",
+            `${"x".repeat(37)}\n${"ř".repeat(50)}\n\n${"y".repeat(5)}`,
+        ];
+        for (const [index, text] of texts.entries()) {
+            const path = join(readLinesRoot, `t${index}.txt`);
+            writeFileSync(path, text);
+            for (const chunkBytes of [1, 2, 3, 7, 64, 1024]) {
+                expect([...readLinesSync(path, { chunkBytes })]).toEqual(text.split("\n"));
+            }
+        }
+    });
+
+    it("a missing file throws, as readFileSync does", () => {
+        expect(() => [...readLinesSync(join(readLinesRoot, "missing.txt"))]).toThrow();
+    });
 });

@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 import { CLAUDE_DIR, PROJECTS_DIR } from "@genesiscz/utils/claude/projects";
+import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { SessionToolCall, SessionTranscript, SessionTurn } from "./types";
@@ -224,10 +225,10 @@ function historyBackups(entry: Json): HistoryBackup[] {
         .filter((backup): backup is HistoryBackup => backup !== null);
 }
 
-function parseLines(content: string, agentId: string | null, state: ParseState): void {
+function parseLines(content: string | Iterable<string>, agentId: string | null, state: ParseState): void {
     let currentTurn: string | null = null;
 
-    for (const line of content.split("\n")) {
+    for (const line of typeof content === "string" ? content.split("\n") : content) {
         // Most bytes of a transcript are lines no rule reads (attachments, snapshots, titles).
         if (
             line.length === 0 ||
@@ -381,10 +382,10 @@ function subagentFiles(transcriptPath: string): { path: string; agentId: string;
 }
 
 export interface TranscriptSource {
-    /** The main transcript's text. */
-    main: string;
+    /** The main transcript's text, or its lines (a large file read in chunks, `readLinesSync`). */
+    main: string | Iterable<string>;
     /** Subagent transcripts, each with the tool call that launched it. */
-    subagents?: { agentId: string; content: string; parentToolUseId: string | null }[];
+    subagents?: { agentId: string; content: string | Iterable<string>; parentToolUseId: string | null }[];
     /** Reads one of Claude's checkpoint backups by file name, or returns null. */
     readBackup?: (name: string) => string | null;
 }
@@ -540,7 +541,8 @@ export function readClaudeTranscript(transcriptPath: string): SessionTranscript 
     const subagents = subagentFiles(transcriptPath).map((file) => ({
         agentId: file.agentId,
         parentToolUseId: file.parentToolUseId,
-        content: readFileSync(file.path, "utf8"),
+        // A generator: each file is read only while it is parsed, never all at once (365 MB for one session).
+        content: readLinesSync(file.path),
     }));
     log.debug({ transcriptPath, subagents: subagents.length }, "reading session transcript");
     const backups = join(CLAUDE_DIR, "file-history", sessionId);
@@ -555,5 +557,6 @@ export function readClaudeTranscript(transcriptPath: string): SessionTranscript 
         }
     };
 
-    return parseClaudeTranscript(sessionId, { main: readFileSync(transcriptPath, "utf8"), subagents, readBackup });
+    // In chunks: the whole text of a 218 MB transcript was a 640 MB string before parsing began.
+    return parseClaudeTranscript(sessionId, { main: readLinesSync(transcriptPath), subagents, readBackup });
 }
