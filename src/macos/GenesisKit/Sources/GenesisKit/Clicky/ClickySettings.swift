@@ -100,12 +100,16 @@ public struct ClickyStatistics: Codable, Equatable {
     public var hours: [Int: ClickyActivityBucket] = [:]
     public var days: [Int: ClickyActivityBucket] = [:]
     public var keys: [Int: Int] = [:]
+    public var performanceMinutes: [Int: ClickyPerformanceBucket] = [:]
+    public var performanceStartedAt: Date?
+    var lastTypingAt: Date?
     private var latestMinute = 0
     private var prunedHour: Int?
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
         case presses, releases, sessions, startedAt, historyStartedAt, minutes, hours, days, keys
+        case performanceMinutes, performanceStartedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -119,6 +123,8 @@ public struct ClickyStatistics: Codable, Equatable {
         hours = try values.decodeIfPresent([Int: ClickyActivityBucket].self, forKey: .hours) ?? [:]
         days = try values.decodeIfPresent([Int: ClickyActivityBucket].self, forKey: .days) ?? [:]
         keys = try values.decodeIfPresent([Int: Int].self, forKey: .keys) ?? [:]
+        performanceMinutes = try values.decodeIfPresent([Int: ClickyPerformanceBucket].self, forKey: .performanceMinutes) ?? [:]
+        performanceStartedAt = try values.decodeIfPresent(Date.self, forKey: .performanceStartedAt)
         latestMinute = minutes.keys.max() ?? 0
     }
 
@@ -126,14 +132,17 @@ public struct ClickyStatistics: Codable, Equatable {
         lhs.presses == rhs.presses && lhs.releases == rhs.releases && lhs.sessions == rhs.sessions
             && lhs.startedAt == rhs.startedAt && lhs.historyStartedAt == rhs.historyStartedAt
             && lhs.minutes == rhs.minutes && lhs.hours == rhs.hours && lhs.days == rhs.days && lhs.keys == rhs.keys
+            && lhs.performanceMinutes == rhs.performanceMinutes && lhs.performanceStartedAt == rhs.performanceStartedAt
     }
 
-    public mutating func record(keyCode: UInt16, release: Bool, at date: Date = Date(), calendar: Calendar = .current) {
+    public mutating func record(keyCode: UInt16, release: Bool, at date: Date = Date(), calendar: Calendar = .current,
+        shortcut: Bool = false) {
         let minute = Int(floor(date.timeIntervalSince1970 / 60))
         let hour = Int(floor(date.timeIntervalSince1970 / 3600))
         let day = Int(calendar.startOfDay(for: date).timeIntervalSince1970)
         if historyStartedAt == nil { historyStartedAt = date }
         if release { releases += 1 } else { presses += 1; keys[Int(keyCode), default: 0] += 1 }
+        if !release { recordPerformance(keyCode: keyCode, shortcut: shortcut, at: date) }
         minutes[minute, default: ClickyActivityBucket()].record(release: release)
         hours[hour, default: ClickyActivityBucket()].record(release: release)
         days[day, default: ClickyActivityBucket()].record(release: release)
@@ -141,6 +150,7 @@ public struct ClickyStatistics: Codable, Equatable {
         let retentionHour = latestMinute / 60
         if prunedHour != retentionHour {
             minutes = minutes.filter { $0.key >= latestMinute - 30 * 24 * 60 }
+            performanceMinutes = performanceMinutes.filter { $0.key >= latestMinute - 30 * 24 * 60 }
             hours = hours.filter { $0.key >= retentionHour - 366 * 24 }
             let oldestDay = calendar.date(byAdding: .day, value: -730, to: date) ?? date
             days = days.filter { $0.key >= Int(oldestDay.timeIntervalSince1970) }

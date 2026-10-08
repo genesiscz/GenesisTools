@@ -199,6 +199,7 @@ public final class ClickyModel: ObservableObject {
         previewGeneration &+= 1
         inputMonitor.stop()
         inputState.clear()
+        statistics.breakTypingBurst()
         enabled = false
         audio?.stop()
         flushStatistics()
@@ -223,6 +224,7 @@ public final class ClickyModel: ObservableObject {
         audio?.useBuiltIn()
         previewGeneration &+= 1
         inputState.clear()
+        statistics.breakTypingBurst()
         preferences.selectedPack = nil
         preferences.selectedSwitch = profile
     }
@@ -256,6 +258,7 @@ public final class ClickyModel: ObservableObject {
         sleepingUntil = Date().addingTimeInterval(Double(minutes) * 60)
         audio?.stop()
         inputState.clear()
+        statistics.breakTypingBurst()
         refreshContext()
     }
 
@@ -342,6 +345,7 @@ public final class ClickyModel: ObservableObject {
     }
 
     private func savePreferences(previous: ClickyPreferences) {
+        if previous.collectStats != preferences.collectStats { statistics.breakTypingBurst() }
         if !syncingAppearance {
             if previous.reduceMotion != preferences.reduceMotion { appearance.reduceMotion = preferences.reduceMotion }
             if previous.reduceTransparency != preferences.reduceTransparency {
@@ -363,6 +367,7 @@ public final class ClickyModel: ObservableObject {
         if note.name == NSWorkspace.willSleepNotification || note.name == NSWorkspace.screensDidSleepNotification {
             systemSleeping = true
             inputState.clear()
+            statistics.breakTypingBurst()
             audio?.stop()
             flushStatistics()
         } else if note.name == NSWorkspace.didWakeNotification || note.name == NSWorkspace.screensDidWakeNotification {
@@ -390,6 +395,7 @@ public final class ClickyModel: ObservableObject {
         }
         if isPaused {
             inputState.clear()
+            statistics.breakTypingBurst()
             audio?.stop()
         }
         boundaryTimer?.invalidate()
@@ -419,6 +425,7 @@ public final class ClickyModel: ObservableObject {
         }
         guard !IsSecureEventInputEnabled() else {
             inputState.clear()
+            statistics.breakTypingBurst()
             audio?.clearHeldKeys()
             return
         }
@@ -430,6 +437,7 @@ public final class ClickyModel: ObservableObject {
                 repeatSounds: preferences.repeatSounds)
         else {
             inputState.clear()
+            statistics.breakTypingBurst()
             audio?.clearHeldKeys()
             return
         }
@@ -454,7 +462,9 @@ public final class ClickyModel: ObservableObject {
             PerfLog.mark("clicky.transition.\(diagnosticSource).\(type.rawValue).accepted")
         }
         if preferences.collectStats && (transition.countsPress || transition.release) {
-            statistics.record(keyCode: code, release: transition.release)
+            statistics.record(keyCode: code, release: transition.release,
+                at: ClickyInputTime.date(timestampNanoseconds: event.timestamp),
+                shortcut: event.flags.contains(.maskCommand) || event.flags.contains(.maskControl))
             analytics.stage { [weak self] in self?.statistics }
             pendingStats = true
             if persistenceWork == nil {

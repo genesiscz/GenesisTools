@@ -648,7 +648,7 @@ final class ClickyTests: XCTestCase {
         XCTAssertEqual(sections.map(\.id), ["general", "clicky", "about"])
         XCTAssertEqual(sections[1].title, "Clicky")
         XCTAssertEqual(sections[1].pages.map(\.id),
-            ["clicky.sound", "clicky.sleep", "clicky.notifications", "clicky.stats", "clicky.visualizer"])
+            ["clicky.sound", "clicky.sleep", "clicky.notifications", "clicky.stats", "clicky.performance", "clicky.visualizer"])
         XCTAssertFalse(model.enabled)
         let controller = ClickyWindowController(model: model)
         XCTAssertTrue(controller.model === model)
@@ -1841,5 +1841,125 @@ extension ClickyPackTests {
         let calls = await loader.counts()
         XCTAssertEqual(calls.catalogue, 1)
         XCTAssertEqual(calls.prepare, 0)
+    }
+}
+
+extension ClickyTests {
+    func testPerformanceUsesEventTimeInsteadOfDelayedCallbackArrival() {
+        let now = date(12)
+        let first = ClickyInputTime.date(timestampNanoseconds: 990_000_000_000, now: now, uptime: 1000)
+        let second = ClickyInputTime.date(timestampNanoseconds: 990_250_000_000, now: now, uptime: 1000)
+        XCTAssertEqual(second.timeIntervalSince(first), 0.25)
+        XCTAssertEqual(now.timeIntervalSince(first), 10)
+        XCTAssertEqual(ClickyInputTime.date(timestampNanoseconds: 0, now: now, uptime: 1000), now)
+        XCTAssertEqual(ClickyInputTime.date(timestampNanoseconds: 1001_000_000_000, now: now, uptime: 1000), now)
+    }
+
+    func testPerformanceFiveSecondStopBoundaryExcludesLongPausesAndReleases() {
+        var stats = ClickyStatistics()
+        let start = date(12)
+        for offset in [0.0, 1.0, 6.0, 11.001, 12.001] {
+            stats.record(keyCode: 0, release: false, at: start.addingTimeInterval(offset))
+        }
+        stats.record(keyCode: 0, release: true, at: start.addingTimeInterval(14))
+        let bucket = stats.performanceMinutes.values.first!
+        XCTAssertEqual(bucket.presses, 5)
+        XCTAssertEqual(bucket.characters, 5)
+        XCTAssertEqual(bucket.bursts, 2)
+        XCTAssertEqual(bucket.activeSeconds, 7, accuracy: 0.0001)
+        XCTAssertEqual(bucket.estimatedWords, 1)
+    }
+
+    func testPerformanceShortcutsAndNavigationStopBurstsWhileModifiersDoNotAddWords() {
+        var stats = ClickyStatistics()
+        let start = date(12)
+        stats.record(keyCode: 0, release: false, at: start)
+        stats.record(keyCode: 56, release: false, at: start.addingTimeInterval(0.5))
+        stats.record(keyCode: 1, release: false, at: start.addingTimeInterval(1))
+        stats.record(keyCode: 8, release: false, at: start.addingTimeInterval(2), shortcut: true)
+        stats.record(keyCode: 0, release: false, at: start.addingTimeInterval(3))
+        stats.record(keyCode: 123, release: false, at: start.addingTimeInterval(4))
+        stats.record(keyCode: 51, release: false, at: start.addingTimeInterval(5))
+        let bucket = stats.performanceMinutes.values.first!
+        XCTAssertEqual(bucket.presses, 7)
+        XCTAssertEqual(bucket.characters, 3)
+        XCTAssertEqual(bucket.corrections, 1)
+        XCTAssertEqual(bucket.activeSeconds, 1)
+        XCTAssertEqual(bucket.bursts, 3)
+    }
+
+    func testPerformancePauseAndReloadNeverBridgeTypingTime() throws {
+        var stats = ClickyStatistics()
+        stats.record(keyCode: 0, release: false, at: date(12))
+        stats.breakTypingBurst()
+        stats.record(keyCode: 0, release: false, at: date(12).addingTimeInterval(1))
+        let encoded = try JSONEncoder().encode(stats)
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("lastTypingAt"))
+        var restored = try JSONDecoder().decode(ClickyStatistics.self, from: encoded)
+        restored.record(keyCode: 0, release: false, at: date(12).addingTimeInterval(2))
+        XCTAssertEqual(restored.performanceMinutes.values.first?.activeSeconds, 0)
+        XCTAssertEqual(restored.performanceMinutes.values.first?.bursts, 3)
+        XCTAssertEqual(stats.performanceMinutes, try JSONDecoder().decode(ClickyStatistics.self, from: encoded).performanceMinutes)
+    }
+
+    func testPerformanceSplitsMidnightAndCountsCarriedBurstInsideFilteredDay() {
+        var stats = ClickyStatistics()
+        let start = date(23, 59).addingTimeInterval(58)
+        stats.record(keyCode: 0, release: false, at: start)
+        stats.record(keyCode: 0, release: false, at: start.addingTimeInterval(4))
+        let midnight = calendar.startOfDay(for: start.addingTimeInterval(4))
+        let filter = ClickyPerformanceFilter(start: midnight, end: midnight.addingTimeInterval(3600))
+        let report = ClickyPerformanceReport(statistics: stats, filter: filter, grouping: .day, calendar: calendar)
+        XCTAssertEqual(stats.performanceMinutes.values.reduce(0) { $0 + $1.activeSeconds }, 4)
+        XCTAssertEqual(report.total.activeSeconds, 2)
+        XCTAssertEqual(report.total.bursts, 1)
+        XCTAssertEqual(report.total.characters, 1)
+        XCTAssertEqual(report.hours[0].activeSeconds, 2)
+        XCTAssertEqual(report.weekdays[4].activeSeconds, 2)
+    }
+
+    func testPerformanceFiltersWeightedRatesAndGroupingKeepTotals() {
+        var stats = ClickyStatistics()
+        var fast = ClickyPerformanceBucket()
+        fast.characters = 10; fast.activeSeconds = 1; fast.presses = 10
+        var slow = ClickyPerformanceBucket()
+        slow.characters = 100; slow.activeSeconds = 100; slow.presses = 100
+        stats.performanceMinutes[Int(date(12).timeIntervalSince1970 / 60)] = fast
+        stats.performanceMinutes[Int(date(12, 5).timeIntervalSince1970 / 60)] = slow
+        let all = ClickyPerformanceFilter(start: date(0), end: date(23, 59))
+        let report = ClickyPerformanceReport(statistics: stats, filter: all, grouping: .fifteenMinutes, calendar: calendar)
+        XCTAssertEqual(report.timeline.count, 1)
+        XCTAssertEqual(report.total.wordsPerMinute!, 22 * 60 / 101, accuracy: 0.0001)
+        XCTAssertEqual(report.hours[12].wordsPerMinute, report.total.wordsPerMinute)
+        var excluded = all
+        excluded.weekdays = [0]
+        XCTAssertEqual(ClickyPerformanceReport(statistics: stats, filter: excluded, grouping: .minute, calendar: calendar).total.presses, 0)
+        excluded.weekdays = Set(0..<7)
+        excluded.fromHour = 22; excluded.untilHour = 8
+        XCTAssertEqual(ClickyPerformanceReport(statistics: stats, filter: excluded, grouping: .minute, calendar: calendar).total.presses, 0)
+    }
+
+    func testDictationEstimateUsesRetainedWordConventionAndCanFavorTyping() {
+        var totals = ClickyPerformanceBucket()
+        totals.characters = 750; totals.corrections = 50; totals.activeSeconds = 180; totals.bursts = 2
+        let estimate = ClickyDictationEstimate(totals: totals, wordsPerMinute: 140, setupPerBurst: 3)
+        XCTAssertEqual(totals.estimatedWords, 150)
+        XCTAssertEqual(totals.estimatedRetainedWords, 140)
+        XCTAssertEqual(estimate.speakingSeconds, 60)
+        XCTAssertEqual(estimate.setupSeconds, 6)
+        XCTAssertEqual(estimate.differenceSeconds, 114)
+        totals.activeSeconds = 20
+        XCTAssertEqual(ClickyDictationEstimate(totals: totals, wordsPerMinute: 140, setupPerBurst: 3).differenceSeconds, -46)
+    }
+
+    func testPerformanceRetentionDoesNotInventLegacyTiming() throws {
+        var stats = try JSONDecoder().decode(ClickyStatistics.self, from: Data("{\"presses\":12000}".utf8))
+        XCTAssertTrue(stats.performanceMinutes.isEmpty)
+        XCTAssertNil(stats.performanceStartedAt)
+        let first = date(12)
+        stats.record(keyCode: 0, release: false, at: first)
+        stats.record(keyCode: 0, release: false, at: first.addingTimeInterval(31 * 86400))
+        XCTAssertEqual(stats.performanceMinutes.count, 1)
+        XCTAssertEqual(stats.presses, 12002)
     }
 }
