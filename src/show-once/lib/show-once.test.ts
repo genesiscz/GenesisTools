@@ -471,8 +471,11 @@ function cdpFixture(
 }
 
 test("password changes between probe or focus and mutation refuse literals and preserve runtime-secret fill", async () => {
+    let changeBetweenCalls = true;
     let changeOnFocus = false;
     let changePageOnFocus = false;
+    let redirectFocus = false;
+    let focused: unknown;
     let keyEvents = 0;
     const location = { href: "https://example.com/" };
     const input = {
@@ -485,6 +488,7 @@ test("password changes between probe or focus and mutation refuse literals and p
         closest: () => null,
         contains: () => false,
         focus: () => {
+            focused = redirectFocus ? { tagName: "BUTTON", type: "button" } : input;
             if (changeOnFocus) {
                 input.type = "password";
             }
@@ -513,12 +517,18 @@ test("password changes between probe or focus and mutation refuse literals and p
             const value: unknown = runInNewContext(expression, {
                 location,
                 window: {},
-                document: { querySelectorAll: () => [input], elementFromPoint: () => input },
+                document: {
+                    querySelectorAll: () => [input],
+                    elementFromPoint: () => input,
+                    get activeElement() {
+                        return focused;
+                    },
+                },
                 getComputedStyle: () => ({ visibility: "visible", display: "block" }),
                 HTMLInputElement: { prototype },
                 Event: class {},
             });
-            if (!changeOnFocus && expression.includes("return result;")) {
+            if (changeBetweenCalls && expression.includes("return result;")) {
                 input.type = "password";
             }
             return value;
@@ -542,6 +552,7 @@ test("password changes between probe or focus and mutation refuse literals and p
         );
         expect(writes).toBe(1);
         expect(input.value).toBe("literal");
+        changeBetweenCalls = false;
         changeOnFocus = true;
         input.type = "text";
         await expect(browser.action({ ...base, kind: "fill" })).rejects.toThrow("Target changed");
@@ -561,6 +572,16 @@ test("password changes between probe or focus and mutation refuse literals and p
         input.type = "text";
         await expect(browser.action({ ...base, kind: "press", value: "Enter" })).rejects.toThrow("Target changed");
         expect(keyEvents).toBe(0);
+        changePageOnFocus = false;
+        changeOnFocus = false;
+        location.href = "https://example.com/";
+        input.type = "text";
+        redirectFocus = true;
+        await expect(browser.action({ ...base, kind: "press", value: "Enter" })).rejects.toThrow("Target changed");
+        expect(keyEvents).toBe(0);
+        redirectFocus = false;
+        await expect(browser.action({ ...base, kind: "press", value: "Enter" })).resolves.toContain("Key dispatched");
+        expect(keyEvents).toBe(2);
     } finally {
         await browser.close();
         server.stop(true);

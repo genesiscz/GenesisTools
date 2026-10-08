@@ -298,7 +298,7 @@ export class BrowserSession {
             await this.page.evaluate(
                 this.expression(
                     locator,
-                    `if(nodes.length !== 1 || !identity || !visible || disabled || covered || (result.password && !${secret}) || location.href !== ${expected}) throw Error('Target changed'); el.focus(); if ((el.type === 'password' && !${secret}) || location.href !== ${expected}) throw Error('Target changed'); return true;`
+                    `if(nodes.length !== 1 || !identity || !visible || disabled || covered || (result.password && !${secret}) || location.href !== ${expected}) throw Error('Target changed'); el.focus(); if (document.activeElement !== el || (el.type === 'password' && !${secret}) || location.href !== ${expected}) throw Error('Target changed'); return true;`
                 ),
                 { signal }
             );
