@@ -110,6 +110,12 @@ public final class ToolsLineStream: @unchecked Sendable {
         }
     }
 
+    /// Requests an EOF-driven finish while retaining final stdout events.
+    public func finishInput() {
+        do { try input.fileHandleForWriting.close() }
+        catch { PerfLog.mark("tools.follow input close \(error.localizedDescription)") }
+    }
+
     /// Ends the child: stdin closes and it gets SIGTERM. `onExit` still runs, with `stopped` true.
     public func stop() {
         lock.lock()

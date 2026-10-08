@@ -1,12 +1,13 @@
 import SwiftUI
 
 public enum AgentWidgetStatus: String {
-    case working, waiting, finished
+    case working, waiting, finished, recent
     public var label: String {
         switch self {
         case .working: return "Working"
         case .waiting: return "Needs your answer"
         case .finished: return "Finished"
+        case .recent: return "Recent activity"
         }
     }
     public var color: Color {
@@ -14,6 +15,7 @@ public enum AgentWidgetStatus: String {
         case .working: return Color(red: 0.23, green: 0.62, blue: 1)
         case .waiting: return Color(red: 1, green: 0.76, blue: 0.32)
         case .finished: return Color(red: 0.24, green: 0.84, blue: 0.48)
+        case .recent: return .gray
         }
     }
 }
@@ -66,8 +68,10 @@ public struct AgentWidgetActions {
     public var settings: () -> Void
     public var next: () -> Void
     public init(
-        expand: @escaping () -> Void, collapse: @escaping () -> Void, select: @escaping (String) -> Void,
-        choose: @escaping (String) -> Void, submit: @escaping () -> Void, settings: @escaping () -> Void,
+        expand: @escaping () -> Void, collapse: @escaping () -> Void,
+        select: @escaping (String) -> Void,
+        choose: @escaping (String) -> Void, submit: @escaping () -> Void,
+        settings: @escaping () -> Void,
         next: @escaping () -> Void
     ) {
         self.expand = expand
@@ -83,7 +87,9 @@ public struct AgentWidgetActions {
 public enum AgentWidgetKeyboard {
     public static func choiceNumber(keyCode: UInt16, characters: String) -> Int? {
         // The physical number row also works on layouts where its unshifted glyph is not a digit.
-        let physical: [UInt16: Int] = [0x12: 1, 0x13: 2, 0x14: 3, 0x15: 4, 0x17: 5, 0x16: 6, 0x1a: 7, 0x1c: 8, 0x19: 9]
+        let physical: [UInt16: Int] = [
+            0x12: 1, 0x13: 2, 0x14: 3, 0x15: 4, 0x17: 5, 0x16: 6, 0x1a: 7, 0x1c: 8, 0x19: 9,
+        ]
         if let number = physical[keyCode] {
             return number
         }

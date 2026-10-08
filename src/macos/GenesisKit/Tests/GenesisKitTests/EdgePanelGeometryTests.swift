@@ -78,3 +78,12 @@ final class EdgePanelGeometryTests: XCTestCase {
         }
     }
 }
+
+final class WidgetSelectionTests: XCTestCase {
+    func testRelaunchRestoresItsDestinationEvenWhenFilteredOrTemporarilyMissing() {
+        XCTAssertEqual(WidgetSelection.initial(persisted: "local:codex:chosen:home", visibleKeys: ["another"]),
+                       "local:codex:chosen:home")
+        XCTAssertEqual(WidgetSelection.initial(persisted: nil, visibleKeys: ["first", "second"]), "first")
+        XCTAssertEqual(WidgetSelection.initial(persisted: nil, visibleKeys: []), "")
+    }
+}
