@@ -115,7 +115,7 @@ public struct ClickyAnalyticsView: View {
                                     .help("\(key.label): \(count.formatted()) presses")
                                     .accessibilityLabel("\(key.label), \(count) presses")
                             }
-                        }.padding(.horizontal, row == 2 ? 8 : row == 3 ? 15 : 0)
+                        }.padding(.horizontal, row == 3 ? 8 : row == 4 ? 15 : 0)
                     }
                 }
                 if let key = selectedKey {
