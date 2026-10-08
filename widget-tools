@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { env } from "@genesiscz/utils/env";
+import { execve } from "@genesiscz/utils/process/execve";
 
 const [tool, ...args] = process.argv.slice(2);
 if (!tool || !/^[a-z][a-z0-9-]*$/.test(tool)) {
@@ -13,6 +14,16 @@ const entry = [
     resolve(import.meta.dir, "src", tool + ".ts"),
     resolve(import.meta.dir, "src", tool + ".tsx"),
 ].find(existsSync);
-if (!entry) { throw new Error("Native bridge tool is unavailable: " + tool); }
-process.argv = [process.execPath, entry, ...args];
-await import(pathToFileURL(entry).href);
+if (!entry) {
+    throw new Error("Native bridge tool is unavailable: " + tool);
+}
+
+// Preserve the app's child PID and stdin while letting import.meta.main identify the real command.
+const failure = execve(process.execPath, [
+    process.execPath,
+    "--preload", resolve(import.meta.dir, "src/utils/bun/preload-orphan-watchdog.ts"),
+    "--preload", resolve(import.meta.dir, "src/utils/bun/preload-solid-scoped.ts"),
+    "--preload", resolve(import.meta.dir, "src/utils/search/stores/sqlite-vec-preload.ts"),
+    entry, ...args,
+], env.getProcessEnv());
+throw new Error("Native bridge could not execute the command: " + failure);
