@@ -70,7 +70,7 @@ public struct NativeTimeSeriesChart: View {
         self.initialWindow = initialWindow
         self.valueLabel = valueLabel
         self.end = end
-        _position = State(initialValue: max(points.first?.date ?? end, end.addingTimeInterval(-initialWindow)))
+        _position = State(initialValue: end.addingTimeInterval(-initialWindow))
     }
     private var window: TimeInterval { max(interval * 5, initialWindow / zoom) }
     private var domain: ClosedRange<Date> {
@@ -126,6 +126,10 @@ public struct NativeTimeSeriesChart: View {
                     BarMark(x: .value("Time", point.date), y: .value(valueLabel, point.value)).foregroundStyle(.mint)
                 }
             }
+            if visible.count == 1, let point = visible.first {
+                PointMark(x: .value("Time", point.date), y: .value(valueLabel, point.value))
+                    .foregroundStyle(.mint).symbolSize(36)
+            }
             if let point = selectedPoint {
                 RuleMark(x: .value("Selected time", point.date)).foregroundStyle(.secondary).lineStyle(StrokeStyle(dash: [3]))
             }
@@ -137,6 +141,13 @@ public struct NativeTimeSeriesChart: View {
         .chartScrollPosition(x: $position)
         .chartXSelection(value: $selected)
         .chartYAxis { AxisMarks(position: .leading) }
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: 4)) {
+                AxisGridLine()
+                AxisTick()
+                AxisValueLabel(format: interval >= 86400 ? .dateTime.day().month(.abbreviated) : .dateTime.hour().minute())
+            }
+        }
         .accessibilityLabel("\(valueLabel) timeline. Scroll horizontally to pan; use the zoom controls to change the visible range.")
     }
 }
