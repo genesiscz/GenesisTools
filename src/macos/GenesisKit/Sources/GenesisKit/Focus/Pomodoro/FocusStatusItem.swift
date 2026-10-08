@@ -52,20 +52,24 @@ public final class FocusStatusItem {
         cancellables.removeAll()
         if let item { NSStatusBar.system.removeStatusItem(item) }
         item = nil
+        lastTitle = nil
+        lastPhase = nil
     }
 
     // MARK: - Rendering
 
     private var lastTitle: String?
+    private var lastPhase: PomodoroPlan.Phase?
 
-    private func render(style: String) {
-        guard let button = item?.button else { return }
+    func render(style: String, into suppliedButton: NSButton? = nil) {
+        guard let button = suppliedButton ?? item?.button else { return }
         let dot = engine.state == .idle ? "○" : "●"
         let title = style == "dot" || engine.state == .idle
             ? dot
             : "\(dot) \(FocusHUDView.clock(engine.remainingSec))"
-        guard title != lastTitle else { return }
+        guard title != lastTitle || engine.phase != lastPhase else { return }
         lastTitle = title
+        lastPhase = engine.phase
 
         let colour: NSColor = switch engine.phase {
         case .flow: NSColor(Color.genAccent)

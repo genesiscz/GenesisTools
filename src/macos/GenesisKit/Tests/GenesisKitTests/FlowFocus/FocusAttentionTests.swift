@@ -1,4 +1,5 @@
 // Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Tests/GenesisTests/FocusAttentionTests.swift at 2026-10-08T05:04:08+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
+import AppKit
 import UserNotifications
 import XCTest
 @testable import GenesisKit
@@ -34,6 +35,25 @@ final class FocusAttentionTests: XCTestCase {
         engine = nil
         store = nil
         try? FileManager.default.removeItem(at: dir)
+    }
+
+    func testDotStyleUpdatesPhaseColourAndReinstallDoesNotLeaveItBlank() throws {
+        let recorder = ActivityRecorder(store: store, liveServices: false)
+        let status = FocusStatusItem(engine: engine, recorder: recorder, store: store,
+                                     onOpenStudio: {}, onToggleHUD: {})
+        let button = NSButton()
+        engine.start(.flow)
+        status.render(style: "dot", into: button)
+        let firstTitle = button.attributedTitle.string
+        let firstColour = button.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+        engine.start(.shortBreak)
+        status.render(style: "dot", into: button)
+        XCTAssertEqual(button.attributedTitle.string, firstTitle)
+        XCTAssertNotEqual(button.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor, firstColour)
+        status.remove()
+        let replacement = NSButton()
+        status.render(style: "dot", into: replacement)
+        XCTAssertEqual(replacement.attributedTitle.string, firstTitle)
     }
 
     // MARK: - Flow end

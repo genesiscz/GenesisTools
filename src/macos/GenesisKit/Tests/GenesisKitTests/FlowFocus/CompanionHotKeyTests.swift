@@ -30,6 +30,19 @@ final class CompanionHotKeyTests: XCTestCase {
         hotKey.stop()
     }
 
+    func testRepeatedRegistrationFailureReusesOneCarbonHandler() throws {
+        let hotKey = CompanionHotKey()
+        hotKey.registerKeyOverride = { false }
+        XCTAssertFalse(hotKey.start())
+        guard let first = hotKey.eventHandler else { throw XCTSkip("Carbon refused handler installation in this runner") }
+        for _ in 0 ..< 3 {
+            XCTAssertFalse(hotKey.start())
+            XCTAssertEqual(hotKey.eventHandler, first, "failed retries must not orphan an installed Carbon callback")
+        }
+        hotKey.stop()
+        XCTAssertNil(hotKey.eventHandler)
+    }
+
     func testDoubleStartIsIdempotent() throws {
         let hotKey = CompanionHotKey()
         try XCTSkipUnless(hotKey.start(), "Carbon refused registration (headless test runner)")

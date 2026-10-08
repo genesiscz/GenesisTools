@@ -40,7 +40,8 @@ public final class CompanionHotKey {
     public private(set) var modifiers: UInt32
 
     private var hotKeyRef: EventHotKeyRef?
-    private var eventHandler: EventHandlerRef?
+    private(set) var eventHandler: EventHandlerRef?
+    var registerKeyOverride: (() -> Bool)?
     /// Carbon identity for THIS binding. Two instances must not share a
     /// (signature, id) pair or the second registration silently shadows the
     /// first — which is exactly what happens when Flow's dictation key and the
@@ -77,6 +78,7 @@ public final class CompanionHotKey {
     @discardableResult
     public func start() -> Bool {
         guard hotKeyRef == nil else { return true }
+        if eventHandler != nil { return registerKey() }
 
         var eventTypes = [
             EventTypeSpec(
@@ -137,6 +139,7 @@ public final class CompanionHotKey {
     // MARK: - Internals
 
     private func registerKey() -> Bool {
+        if let registerKeyOverride { return registerKeyOverride() }
         let id = EventHotKeyID(signature: signature, id: hotKeyId)
         var ref: EventHotKeyRef?
         let status = RegisterEventHotKey(

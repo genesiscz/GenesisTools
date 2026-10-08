@@ -361,7 +361,7 @@ public struct FocusHUDView: View {
                            : (isPaused ? "Resume this phase"
                               : "Start a \(FocusFormat.duration(Int64(engine.plan.duration(of: engine.phase)) * 1000)) \(engine.phase.label.lowercased())")))
         .accessibilityIdentifier("focus-hud-primary")
-        .accessibilityLabel(isRunning ? "Pause" : "Start")
+        .accessibilityLabel(isRunning ? "Pause" : (isPaused ? "Resume" : "Start"))
     }
 
     private var secondaryRow: some View {

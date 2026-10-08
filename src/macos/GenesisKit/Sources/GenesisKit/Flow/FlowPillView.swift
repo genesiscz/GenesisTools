@@ -14,6 +14,8 @@ public struct FlowPillView: View {
     /// Drives the idle breathing. A single looping scale, not a shadow and not
     /// a `TimelineView` — both are documented idle-CPU sinks in this repo.
     @State private var breathing = false
+    @State private var breathingGeneration: UInt64 = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var accent: Color {
         switch session.phase {
@@ -81,7 +83,10 @@ public struct FlowPillView: View {
             .overlay(Circle().stroke(accent.opacity(0.35), lineWidth: 1))
             .scaleEffect(breathing && session.phase == .listening ? 1.06 : 1.0)
             .onAppear { restartBreathing() }
-            .onChange(of: session.phase) { _ in restartBreathing() }
+            .onChange(of: session.phase) { _, _ in restartBreathing() }
+            .onChange(of: session.config.showPill) { _, _ in restartBreathing() }
+            .onChange(of: reduceMotion) { _, _ in restartBreathing() }
+            .onDisappear(perform: stopBreathing)
     }
 
     /// Seven bars, as in the reference.
@@ -100,7 +105,7 @@ public struct FlowPillView: View {
             }
         }
         .frame(width: 44, height: 22, alignment: .center)
-        .animation(.easeOut(duration: 0.08), value: recognizer.micLevel)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.08), value: recognizer.micLevel)
     }
 
     private static let barWeights: [Double] = [0.45, 0.7, 0.95, 1.0, 0.9, 0.65, 0.4]
@@ -113,16 +118,20 @@ public struct FlowPillView: View {
         return base + CGFloat(weighted) * 16
     }
 
-    /// Cancelling a `repeatForever` needs its own animation-free transaction —
-    /// a plain write inside the running animation's transaction just retargets
-    /// it and the loop keeps going.
+    private func stopBreathing() {
+        breathingGeneration &+= 1
+        stopLoopingAnimation { breathing = false }
+    }
+
     private func restartBreathing() {
-        var reset = Transaction()
-        reset.disablesAnimations = true
-        withTransaction(reset) { breathing = false }
-        guard session.phase == .listening else { return }
-        withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) {
+        stopBreathing()
+        guard session.phase == .listening, session.config.showPill, !reduceMotion else { return }
+        let generation = breathingGeneration
+        restartLoopingAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true),
+                                reset: { breathing = false }, start: {
+            guard breathingGeneration == generation, session.phase == .listening,
+                  session.config.showPill, !reduceMotion else { return }
             breathing = true
-        }
+        })
     }
 }
