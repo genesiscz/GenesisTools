@@ -7,11 +7,12 @@ public struct ClickyAnalyticsView: View {
     @State private var resolution: ClickyTimeResolution = .minute
     @State private var releases = false
     @State private var example: ClickyStatistics?
+    @State private var exampleTime: Date?
     @State private var selectedKey: Int?
 
     public init(store: ClickyAnalyticsStore) { self.store = store }
     private var data: ClickyStatistics { example ?? store.snapshot }
-    private var now: Date { Date() }
+    private var now: Date { exampleTime ?? Date() }
     private var today: [ClickyActivityBucket] {
         let start = Int(Calendar.current.startOfDay(for: now).timeIntervalSince1970 / 60)
         return data.minutes.filter { $0.key >= start }.map(\.value)
@@ -32,11 +33,18 @@ public struct ClickyAnalyticsView: View {
                 }
                 Spacer()
                 Button(example == nil ? "Explore sample data" : "Back to my data") {
-                    example = example == nil ? ClickyStatistics.example() : nil
+                    if example == nil {
+                        let reference = Date()
+                        exampleTime = reference
+                        example = ClickyStatistics.example(now: reference)
+                    } else {
+                        example = nil
+                        exampleTime = nil
+                    }
                 }.buttonStyle(.bordered).accessibilityIdentifier("clicky.stats.example")
             }
             HStack(spacing: 12) {
-                summary("Today", value: todayPresses.formatted(), symbol: "keyboard")
+                summary(example == nil ? "Today" : "Sample day", value: todayPresses.formatted(), symbol: "keyboard")
                 summary("Active minutes", value: activeMinutes.formatted(), symbol: "clock")
                 summary("Peak / minute", value: (today.map(\.presses).max() ?? 0).formatted(), symbol: "bolt")
             }
