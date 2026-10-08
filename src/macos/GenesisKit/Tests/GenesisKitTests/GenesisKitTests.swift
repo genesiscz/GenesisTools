@@ -536,7 +536,7 @@ final class WidgetVoiceDraftOrderingTests: XCTestCase {
         backend.drafts["chosen"] = WidgetDraft(text: "Initial", assetIds: ["image"])
         let appendStarted = expectation(description: "append")
         let gate = ShelfDraftGate()
-        backend.beforeAppend = { appendStarted.fulfill(); await gate.wait() }
+        backend.beforeAppend = { appendStarted.fulfill(); await gate.wait(timeout: .seconds(5)) }
         let model = model(backend)
         defer { model.stop() }
         model.selectedKey = "chosen"
@@ -554,7 +554,7 @@ final class WidgetVoiceDraftOrderingTests: XCTestCase {
         let flushStarted = expectation(description: "initial flush")
         let gate = ShelfDraftGate()
         var writes = 0
-        backend.beforeTextSave = { writes += 1; if writes == 1 { flushStarted.fulfill(); await gate.wait() } }
+        backend.beforeTextSave = { writes += 1; if writes == 1 { flushStarted.fulfill(); await gate.wait(timeout: .seconds(5)) } }
         let model = model(backend)
         defer { model.stop() }
         model.selectedKey = "chosen"
@@ -572,7 +572,7 @@ final class WidgetVoiceDraftOrderingTests: XCTestCase {
         let saving = expectation(description: "final save")
         let gate = ShelfDraftGate()
         var writes = 0
-        backend.beforeTextSave = { writes += 1; if writes == 1 { saving.fulfill(); await gate.wait() } }
+        backend.beforeTextSave = { writes += 1; if writes == 1 { saving.fulfill(); await gate.wait(timeout: .seconds(5)) } }
         let model = model(backend)
         defer { model.stop() }
         model.selectedKey = "chosen"
