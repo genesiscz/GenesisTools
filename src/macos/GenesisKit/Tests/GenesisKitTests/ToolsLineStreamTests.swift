@@ -580,3 +580,53 @@ final class ToolsLineStreamTests: XCTestCase {
         XCTAssertEqual(report?.stopped, true)
     }
 }
+
+final class ToolsLineBufferTests: XCTestCase {
+    func testArbitraryChunkBoundariesPreserveUnicodeEmptyLinesAndCarriageReturns() {
+        let bytes = Data("\nfirst\nŽluťoučký 🫧\r\n\nlast\nincomplete".utf8)
+        for size in 1...bytes.count {
+            var buffer = ToolsLineBuffer()
+            var lines: [String] = []
+            for offset in stride(from: 0, to: bytes.count, by: size) {
+                lines += buffer.append(bytes.subdata(in: offset..<min(offset + size, bytes.count)))
+            }
+            XCTAssertEqual(lines, ["first", "Žluťoučký 🫧\r", "last"])
+            XCTAssertEqual(buffer.append(Data(" tail\n".utf8)), ["incomplete tail"])
+            XCTAssertTrue(buffer.append(Data()).isEmpty)
+            XCTAssertEqual(buffer.append(Data("next\n".utf8)), ["next"])
+        }
+    }
+
+    func testFragmentedLargeSnapshotDoesNotRescanPrefixes() {
+        let payload = Data(repeating: 0x61, count: 512 * 1024)
+        var buffer = ToolsLineBuffer()
+        for offset in stride(from: 0, to: payload.count, by: 4096) {
+            XCTAssertTrue(buffer.append(payload.subdata(in: offset..<min(offset + 4096, payload.count))).isEmpty)
+        }
+        XCTAssertEqual(buffer.append(Data([0x0A])).first?.utf8.count, payload.count)
+        XCTAssertEqual(buffer.scannedBytes, payload.count + 1)
+    }
+
+    func testFragmentedSnapshotCPUCost() throws {
+        guard ProcessInfo.processInfo.environment["LINE_BUFFER_BENCH"] == "1" else {
+            throw XCTSkip("Set LINE_BUFFER_BENCH=1 for the fragmented 512KiB stream benchmark")
+        }
+        let chunks = Array(repeating: Data(repeating: 0x61, count: 4096), count: 128) + [Data([0x0A])]
+        func cpu() -> Double {
+            var usage = rusage()
+            getrusage(RUSAGE_SELF, &usage)
+            return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) * 1000
+                + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1000
+        }
+        for repetition in 0..<3 {
+            var buffer = ToolsLineBuffer()
+            var output: [String] = []
+            let start = cpu()
+            for chunk in chunks { output += buffer.append(chunk) }
+            let elapsed = cpu() - start
+            XCTAssertEqual(output.count, 1)
+            XCTAssertEqual(output[0].utf8.count, 512 * 1024)
+            print("LINE_BUFFER_BENCH repetition=\(repetition) bytes=524289 scanned=\(buffer.scannedBytes) cpu-ms=\(elapsed)")
+        }
+    }
+}

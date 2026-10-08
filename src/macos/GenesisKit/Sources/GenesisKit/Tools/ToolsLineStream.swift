@@ -26,7 +26,7 @@ public final class ToolsLineStream: @unchecked Sendable {
     private let output = Pipe()
     private let errors = Pipe()
     private let lock = NSLock()
-    private var partial = Data()
+    private var lineBuffer = ToolsLineBuffer()
     private var stderrTail = Data()
     private var stopRequested = false
     private var outputClosed = false
@@ -163,17 +163,7 @@ public final class ToolsLineStream: @unchecked Sendable {
 
         lock.lock()
         outBytes += data.count
-        partial.append(data)
-        var lines: [String] = []
-        while let newline = partial.firstIndex(of: 0x0A) {
-            let line = partial[partial.startIndex..<newline]
-            partial.removeSubrange(partial.startIndex...newline)
-            if !line.isEmpty {
-                lines.append(String(decoding: line, as: UTF8.self))
-            }
-        }
-        // Rebase so indices stay small after many removals.
-        partial = Data(partial)
+        let lines = lineBuffer.append(data)
         let stopped = stopRequested
         lock.unlock()
         guard !lines.isEmpty, !stopped else { return }
@@ -205,5 +195,42 @@ public final class ToolsLineStream: @unchecked Sendable {
         DispatchQueue.main.async {
             MainActor.assumeIsolated { onExit(report) }
         }
+    }
+}
+
+struct ToolsLineBuffer: Sendable {
+    private var partial = Data()
+    private var searchedTo = 0
+    private(set) var scannedBytes = 0
+
+    mutating func append(_ data: Data) -> [String] {
+        partial.append(data)
+        var lines: [String] = []
+        var consumed = 0
+        var scanned = 0
+        partial.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            guard let base = bytes.baseAddress else { return }
+            var cursor = searchedTo
+            while cursor < bytes.count {
+                guard let match = memchr(base.advanced(by: cursor), 0x0A, bytes.count - cursor) else {
+                    scanned += bytes.count - cursor
+                    break
+                }
+                let newline = base.distance(to: UnsafeRawPointer(match))
+                scanned += newline - cursor + 1
+                if newline > consumed {
+                    let line = UnsafeRawBufferPointer(start: base.advanced(by: consumed), count: newline - consumed)
+                    lines.append(String(decoding: line, as: UTF8.self))
+                }
+                consumed = newline + 1
+                cursor = consumed
+            }
+        }
+        scannedBytes += scanned
+        if consumed > 0 {
+            partial.removeSubrange(partial.startIndex..<partial.index(partial.startIndex, offsetBy: consumed))
+        }
+        searchedTo = partial.count
+        return lines
     }
 }
