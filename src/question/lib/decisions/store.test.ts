@@ -7,7 +7,7 @@ import { runAsCaller } from "@genesiscz/utils/agent/runtime";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { z } from "zod";
-import { DeliveryUnknownError, deliverToSession } from "./deliver";
+import { DeliveryUnknownError, deliverToSession, resolveDeliveryTarget } from "./deliver";
 import { livePaneTargets, noPaneTargets } from "./deliver.fixtures";
 import {
     decisionLine,
@@ -627,12 +627,184 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
 describe("delivery routes", () => {
     function spy(result: { success: boolean; stdout: string; stderr?: string }) {
         const calls: string[][] = [];
+        const prompts: string[] = [];
         const runTool = async (args: string[]) => {
             calls.push(args);
+            if (args.includes("--prompt-file")) {
+                prompts.push(readFileSync(args[args.indexOf("--prompt-file") + 1], "utf8"));
+            }
             return { stderr: "", ...result };
         };
-        return { calls, runTool };
+        return { calls, prompts, runTool };
     }
+
+    test("owned Claude and Grok workers resume without cmux and require exact completed-turn receipts", async () => {
+        for (const provider of ["claude", "grok"] as const) {
+            const calls: string[][] = [];
+            let promptFile = "";
+            const result = await deliverToSession(
+                {
+                    session: "fixture-session",
+                    provider,
+                    sourceHome: "/fixture/source",
+                    text: "Synthetic answer\\nwith media references",
+                },
+                {
+                    nativeWorkers: () => [
+                        {
+                            provider,
+                            name: "fixture",
+                            sessionId: "fixture-session",
+                            sourceHome: "/fixture/source",
+                            turns: 1,
+                            ready: true,
+                        },
+                    ],
+                    findTargets: async () => {
+                        throw new Error("native route must not require cmux");
+                    },
+                    runTool: async (args) => {
+                        calls.push(args);
+                        promptFile = args[args.indexOf("--prompt-file") + 1];
+                        expect(readFileSync(promptFile, "utf8")).toBe("Synthetic answer\\nwith media references");
+                        return {
+                            success: true,
+                            stderr: "",
+                            stdout: SafeJSON.stringify({
+                                kind: "turn",
+                                backend: provider,
+                                name: "fixture",
+                                sessionId: "fixture-session",
+                                sourceHome: "/fixture/source",
+                                turn: 2,
+                                completed: true,
+                                exitCode: 0,
+                            }),
+                        };
+                    },
+                }
+            );
+            expect(result).toEqual({
+                channel: "resume",
+                delivered: true,
+                target: `${provider} worker fixture · resumed turn 2`,
+            });
+            expect(calls[0].slice(0, provider === "claude" ? 3 : 2)).toEqual(
+                provider === "claude" ? ["claude", "worker", "steer"] : ["grok", "steer"]
+            );
+            expect(calls[0]).toContain("--expect-session");
+            expect(calls[0]).not.toContain("Synthetic answer\\nwith media references");
+            expect(existsSync(promptFile)).toBe(false);
+        }
+    });
+
+    test("native route rejects wrong provider, source home, worker-name aliases, busy and unstarted sessions", async () => {
+        const worker = {
+            provider: "grok" as const,
+            name: "fixture",
+            sessionId: "fixture-session",
+            sourceHome: "/fixture/source",
+            turns: 1,
+            ready: true,
+        };
+        const lookup = { nativeWorkers: () => [worker], findTargets: noPaneTargets };
+        for (const target of [
+            { provider: "claude", session: "fixture-session", sourceHome: "/fixture/source" },
+            { provider: "grok", session: "fixture-session", sourceHome: "/different/home" },
+            { provider: "grok", session: "fixture", sourceHome: "/fixture/source" },
+        ]) {
+            expect((await resolveDeliveryTarget(target, lookup)).kind).toBe("none");
+        }
+        for (const reason of ["worker is busy", "session has not started"]) {
+            const target = await resolveDeliveryTarget(
+                { provider: "grok", session: "fixture-session", sourceHome: "/fixture/source" },
+                {
+                    nativeWorkers: () => [{ ...worker, ready: false, reason }],
+                    findTargets: async () => {
+                        throw new Error("must not reroute an owned unavailable worker");
+                    },
+                }
+            );
+            expect(target).toEqual({ kind: "none", reason });
+        }
+    });
+
+    test("native delivery never accepts a lost, incomplete, wrong-session or wrong-turn receipt", async () => {
+        const worker = {
+            provider: "grok" as const,
+            name: "fixture",
+            sessionId: "fixture-session",
+            sourceHome: "/fixture/source",
+            turns: 1,
+            ready: true,
+        };
+        const receipt = {
+            kind: "turn",
+            backend: "grok",
+            name: "fixture",
+            sessionId: "fixture-session",
+            sourceHome: "/fixture/source",
+            turn: 2,
+            completed: true,
+            exitCode: 0,
+        };
+        for (const body of [
+            "not json",
+            "{}",
+            ...[
+                { backend: "claude" },
+                { sessionId: "new-copy" },
+                { sourceHome: "/wrong/home" },
+                { turn: 3 },
+                { completed: false },
+                { exitCode: 1 },
+            ].map((change) => SafeJSON.stringify({ ...receipt, ...change })),
+        ]) {
+            let calls = 0;
+            await expect(
+                deliverToSession(
+                    {
+                        provider: "grok",
+                        session: worker.sessionId,
+                        sourceHome: worker.sourceHome,
+                        text: "Synthetic reply",
+                    },
+                    {
+                        nativeWorkers: () => [worker],
+                        runTool: async () => {
+                            calls += 1;
+                            return { success: true, stdout: body, stderr: "" };
+                        },
+                        findTargets: async () => {
+                            throw new Error("An attempted native send must not fall back and duplicate");
+                        },
+                    }
+                )
+            ).rejects.toBeInstanceOf(DeliveryUnknownError);
+            expect(calls).toBe(1);
+        }
+        const rejected = await deliverToSession(
+            { provider: "grok", session: worker.sessionId, sourceHome: worker.sourceHome, text: "Synthetic reply" },
+            {
+                nativeWorkers: () => [worker],
+                runTool: async () => ({
+                    success: false,
+                    stderr: "",
+                    stdout: SafeJSON.stringify({
+                        kind: "rejected",
+                        backend: "grok",
+                        name: "fixture",
+                        error: "Worker became busy before receiving input",
+                    }),
+                }),
+            }
+        );
+        expect(rejected).toEqual({
+            channel: "queued",
+            delivered: false,
+            error: "Worker became busy before receiving input",
+        });
+    });
 
     test("a Claude or Grok session gets one line typed into its cmux pane", async () => {
         const { calls, runTool } = spy({ success: true, stdout: '{"sent":true}' });
@@ -668,17 +840,39 @@ describe("delivery routes", () => {
         expect(result.delivered).toBe(false);
     });
 
+    test("Codex daemon queue acceptance and empty exit-zero output are not provider input receipts", async () => {
+        for (const stdout of ["{}", '{"queued":true}', '{"queued":false}', ""]) {
+            await expect(
+                deliverToSession(
+                    { session: "fixture-thread", provider: "codex", text: "Synthetic" },
+                    {
+                        codexWorkerFor: () => "fixture",
+                        runTool: async () => ({ success: true, stdout, stderr: "" }),
+                    }
+                )
+            ).rejects.toBeInstanceOf(DeliveryUnknownError);
+        }
+    });
+
     test("a Codex thread run by a tools codex worker is steered, and one without a worker is queued untouched", async () => {
-        const steered = spy({ success: true, stdout: "{}" });
-        const text = "DECISION 1: a) yes\nDECISION 2: b) no";
+        const steered = spy({ success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}' });
+        const text = ["DECISION 1: a) yes\nDECISION 2: b) no", "Synthetic media reference ".repeat(10_000)].join("\n");
 
         expect(
             await deliverToSession(
                 { session: "thread-1", provider: "codex", text },
                 { runTool: steered.runTool, codexWorkerFor: () => "reviewer" }
             )
-        ).toEqual({ channel: "codex", delivered: true, target: "codex worker reviewer" });
-        expect(steered.calls).toEqual([["codex", "steer", "--name", "reviewer", "--prompt", text]]);
+        ).toEqual({
+            channel: "codex",
+            delivered: true,
+            target: "codex worker reviewer · input acknowledged (turn fixture-turn)",
+        });
+        expect(steered.calls).toEqual([
+            ["codex", "steer", "--name", "reviewer", "--json", "--prompt-file", expect.any(String)],
+        ]);
+        expect(steered.prompts).toEqual([text]);
+        expect(existsSync(steered.calls[0][6])).toBe(false);
 
         const never = async (): Promise<never> => {
             throw new Error("must not run a tool when no worker exists");
@@ -892,7 +1086,7 @@ test("decision dry-run applies the same selected-kind filter as delivery", async
         provider: "codex",
         deps: {
             codexWorkerFor: () => "fixture-worker",
-            runTool: async () => ({ success: true, stdout: "", stderr: "" }),
+            runTool: async () => ({ success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}', stderr: "" }),
         },
     });
     expect(sent.text).toBe(preview.text);

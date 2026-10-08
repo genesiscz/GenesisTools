@@ -727,7 +727,7 @@ describe("inbox answer: the hub's argv", () => {
                     deliver: {
                         runTool: async (args) => {
                             runs.push(args);
-                            return { success: true, stdout: "", stderr: "" };
+                            return { success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}', stderr: "" };
                         },
                         codexWorkerFor: (session) => (session === "s-codex" ? "w1" : null),
                     },
@@ -735,12 +735,12 @@ describe("inbox answer: the hub's argv", () => {
             }
         );
 
-        expect(runs).toEqual([["codex", "steer", "--name", "w1", "--prompt", "DECISION 1: b) note"]]);
+        expect(runs).toEqual([["codex", "steer", "--name", "w1", "--json", "--prompt-file", expect.any(String)]]);
         expect(printed).toMatchObject({
             channel: "codex",
             delivered: true,
-            target: "codex worker w1",
-            detail: "codex worker w1",
+            target: "codex worker w1 · input acknowledged (turn fixture-turn)",
+            detail: "codex worker w1 · input acknowledged (turn fixture-turn)",
         });
     });
 

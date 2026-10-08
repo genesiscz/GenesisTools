@@ -4,7 +4,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { json2md } from "@genesiscz/utils/json2md";
 import { isTestProcess } from "@genesiscz/utils/test-process";
-import { DeliveryUnknownError } from "./deliver";
+import { DeliveryUnknownError, NotDeliveredError } from "./deliver";
 import {
     boundContext,
     cleanBlock,
@@ -180,7 +180,7 @@ export function deliverDecisions(
     rows: DecisionRecord[],
     send: (text: string) => void
 ): { text: string; numbers: number[] } {
-    const due = rows.filter((row) => row.state === "answered" && hasAnswer(row));
+    const due = rows.filter((row) => row.state === "answered" && !row.delivery?.queueId && hasAnswer(row));
 
     if (due.length === 0) {
         throw new Error("nothing to send");
@@ -258,7 +258,13 @@ export async function sendSessionDecisions({
         await emit(sent.text, sent.numbers);
     } catch (error) {
         if (!(error instanceof DeliveryUnknownError)) {
-            await restoreUndelivered(file, events, ids);
+            const queued = error instanceof NotDeliveredError && error.result.queueId ? error.result : undefined;
+            await restoreUndelivered({
+                file,
+                events,
+                ids,
+                ...(queued ? { delivery: { route: "queued", queueId: queued.queueId, error: queued.error } } : {}),
+            });
         }
         throw error;
     }

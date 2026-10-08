@@ -160,6 +160,8 @@ export const widgetOutgoingSchema = z.object({
             at: z.number(),
             detail: z.string().optional(),
             entryId: z.string().optional(),
+            payloadHash: z.string().optional(),
+            payloadRevision: z.string().optional(),
         })
         .optional(),
     dispatchedAt: z.number().optional(),
