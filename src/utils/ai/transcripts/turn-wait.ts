@@ -10,9 +10,10 @@
  * moves is the time of the newest turn-level record, not the state. That time can be whole seconds (Grok), so
  * a RUNNING state seen after the call started also marks the turn that ends next as new.
  *
- * A question the agent asks in passing (a message that ends in `?` while the turn keeps running, which is
- * how Codex and Grok ask) does not end the wait. It is collected in `questions`, so the caller still sees
- * it when the turn ends. A blocking question (Claude `AskUserQuestion`) ends the turn and the wait.
+ * Questions come from the agents' question tools, never from the wording of a message. A blocking one
+ * (Claude `AskUserQuestion`, Codex `request_user_input`, Grok `ask_user_question`) ends the wait with
+ * `asksQuestion`. One asked while the turn keeps running (Codex `request_user_input_async` before more work)
+ * does not end it; it is collected in `questions`, so the caller still sees it when the turn ends.
  *
  * `TurnJudge` decides from one snapshot at a time. `waitForTurn` drives it with an injected clock and
  * sleep (the unit tests); `watchTurn` drives it with the shared file watcher, so a write to the transcript
@@ -24,15 +25,12 @@ import type { TurnSnapshot } from "./turn-state";
 
 export type TurnWaitOutcome = "done" | "stalled" | "timeout";
 
-export interface TurnWaitResult {
-    outcome: TurnWaitOutcome;
-    /** The last snapshot read. Null when the transcript never held a record. */
-    snapshot: TurnSnapshot | null;
-    /** How long this call waited. */
-    waitedMs: number;
-    /** Questions the agent asked while the turn ran and then went on working, oldest first. */
-    questions: string[];
-}
+/**
+ * Off: a question is what the agent's question tool says (`snapshot.question`). On: a message whose last
+ * paragraph ends in `?` or holds `❓` also counts. That wording is one user's prompt convention, so it is a
+ * hint at most and never the detector.
+ */
+export const DECISION_HEURISTICS = false;
 
 /** True when the text's last paragraph asks something: it ends in `?`, or it carries a `❓` marker. */
 export function looksLikeQuestion(text: string): boolean {
@@ -44,6 +42,25 @@ export function looksLikeQuestion(text: string): boolean {
             ?.trim() ?? "";
 
     return last.endsWith("?") || last.includes("❓");
+}
+
+/** The question a snapshot carries: the tool call's, else (only with `DECISION_HEURISTICS`) the wording's. */
+export function questionOf(snapshot: TurnSnapshot, heuristics: boolean = DECISION_HEURISTICS): string | null {
+    if (snapshot.question) {
+        return snapshot.question;
+    }
+
+    return heuristics && snapshot.lastText && looksLikeQuestion(snapshot.lastText) ? snapshot.lastText.trim() : null;
+}
+
+export interface TurnWaitResult {
+    outcome: TurnWaitOutcome;
+    /** The last snapshot read. Null when the transcript never held a record. */
+    snapshot: TurnSnapshot | null;
+    /** How long this call waited. */
+    waitedMs: number;
+    /** Questions the agent asked while the turn ran and then went on working, oldest first. */
+    questions: string[];
 }
 
 function endedTurn(snapshot: TurnSnapshot): boolean {
@@ -95,12 +112,10 @@ export class TurnJudge {
             return this.result("done");
         }
 
-        if (!ended && snapshot.lastText && looksLikeQuestion(snapshot.lastText)) {
-            const question = snapshot.lastText.trim();
+        const question = ended ? null : questionOf(snapshot);
 
-            if (this.questions.at(-1) !== question) {
-                this.questions.push(question);
-            }
+        if (question && this.questions.at(-1) !== question) {
+            this.questions.push(question);
         }
 
         return snapshot.state === "STALLED" ? this.result("stalled") : null;

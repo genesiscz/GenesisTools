@@ -137,7 +137,10 @@ session is back at its prompt (the final assistant message goes to stdout, a sta
 3 when a running turn has written nothing for `--stall-timeout` seconds (default 900, `0` never),
 124 on `--timeout`, 1 when no session matches. An idle session returns at once; `--next` waits for the
 next turn instead. `--json` prints `{outcome, state, sessionId, lastText, asksQuestion, durationMs, ...}`;
-`asksQuestion` is true when the turn ended on `AskUserQuestion`. The same verb exists as
+`asksQuestion` is true when the session waits on its question tool: Claude `AskUserQuestion`, Codex
+`request_user_input` (unanswered) or a turn that ended on `request_user_input_async`, Grok `ask_user_question` or
+`exit_plan` (no result yet). It is decided from the tool calls, never from the wording; the old `?`/`❓` wording
+check is kept behind `DECISION_HEURISTICS` (off) in `turn-wait.ts`. The same verb exists as
 `tools grok wait` and `tools codex wait`. `<session>` is an id (8+ characters), a transcript path or a
 `/rename` title (Grok: the session summary; Codex: the thread name).
 

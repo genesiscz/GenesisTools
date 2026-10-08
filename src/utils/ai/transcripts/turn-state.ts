@@ -13,6 +13,7 @@
  * one `stat`, one bounded tail read, no process spawn and no write.
  */
 import { statSync } from "node:fs";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type ActivityEvent, type ActivityState, classifyActivity, claudeRecordsToEvents } from "./activity";
 import { readTail } from "./native-scan";
@@ -29,8 +30,18 @@ export interface TurnSnapshot {
     state: ActivityState;
     /** The text of the last assistant message. Empty when the tail holds none. */
     lastText: string;
-    /** True when the turn ended on a question for the user (Claude `AskUserQuestion`). */
+    /**
+     * True when the session waits on a question for the user: the turn ended on one (Claude `AskUserQuestion`,
+     * Codex `request_user_input_async`), or a blocking question tool has no answer yet (Codex
+     * `request_user_input`, Grok `ask_user_question` or `exit_plan`). Decided from the tool calls, never from
+     * the wording of the message.
+     */
     asksQuestion: boolean;
+    /**
+     * The text of the newest question tool call in the current turn, answered or not. A Codex
+     * `request_user_input_async` asked while the turn keeps running shows up here with `asksQuestion` false.
+     */
+    question: string | null;
     /** True when the user stopped the turn (Esc in Claude, `turn_aborted` in Codex). The turn has ended. */
     interrupted: boolean;
     /** Epoch ms of the newest turn-level record. Null when the tail holds none. Grows when a turn ends. */
@@ -74,11 +85,48 @@ function toEpochMs(value: unknown): number | undefined {
     return undefined;
 }
 
+/** The first question in a question tool's input: `questions[0].question`, else its `title` or `header`. */
+function questionTextOf(input: unknown): string | null {
+    let value = input;
+
+    if (typeof input === "string") {
+        try {
+            value = SafeJSON.parse(input, { strict: true });
+        } catch (err) {
+            logger.debug({ err }, "[transcripts] question tool arguments are not JSON; using them as the text");
+            return input.trim() || null;
+        }
+    }
+
+    const first = isRecord(value) && Array.isArray(value.questions) ? value.questions[0] : undefined;
+
+    if (!isRecord(first)) {
+        return null;
+    }
+
+    for (const key of ["question", "title", "header"]) {
+        const text = first[key];
+
+        if (typeof text === "string" && text.trim()) {
+            return text.trim();
+        }
+    }
+
+    return null;
+}
+
+/** A blocking question still open: the session waits on the user, so the last event becomes a question. */
+function waitingOn(events: ActivityEvent[]): ActivityEvent[] {
+    const last = events.at(-1);
+    return last ? [...events.slice(0, -1), { ...last, kind: "question" as const }] : events;
+}
+
 function snapshotOf({
     input,
     events,
     lastText,
     asksQuestion,
+    question = null,
     endedTurn,
     interrupted = false,
 }: {
@@ -86,6 +134,7 @@ function snapshotOf({
     events: ActivityEvent[];
     lastText: string;
     asksQuestion: boolean;
+    question?: string | null;
     endedTurn: boolean;
     interrupted?: boolean;
 }): TurnSnapshot {
@@ -103,6 +152,7 @@ function snapshotOf({
         state: endedTurn && state === "STALLED" ? "AWAITING-INPUT" : state,
         lastText,
         asksQuestion,
+        question,
         interrupted,
         lastEventAt,
         lastActivityAt,
@@ -129,38 +179,47 @@ function claudeTextBlocks(record: JsonRecord): string[] {
     );
 }
 
-function claudeAsksQuestion(record: JsonRecord): boolean {
+/** The question of an `AskUserQuestion` call in this record, `""` when it has no readable text, else null. */
+function claudeQuestionOf(record: JsonRecord): string | null {
     const message = isRecord(record.message) ? record.message : null;
     const content = message?.content;
 
-    return (
-        Array.isArray(content) &&
-        content.some((block) => isRecord(block) && block.type === "tool_use" && block.name === "AskUserQuestion")
+    if (!Array.isArray(content)) {
+        return null;
+    }
+
+    const call = content.find(
+        (block) => isRecord(block) && block.type === "tool_use" && block.name === "AskUserQuestion"
     );
+    return isRecord(call) ? (questionTextOf(call.input) ?? "") : null;
 }
 
 /**
  * Claude writes one record per content block, all with the same `message.id`. The final message is
  * therefore the run of assistant records at the end that share the id of the last one.
  */
-function claudeFinalMessage(records: ReadonlyArray<JsonRecord>): { text: string; asksQuestion: boolean } {
+function claudeFinalMessage(records: ReadonlyArray<JsonRecord>): {
+    text: string;
+    asksQuestion: boolean;
+    question: string | null;
+} {
     const lastConversation = records.findLastIndex(
         (record) => typeof record.type === "string" && CLAUDE_CONVERSATION.has(record.type)
     );
     const last = records[lastConversation];
 
     if (!last) {
-        return { text: "", asksQuestion: false };
+        return { text: "", asksQuestion: false, question: null };
     }
 
     if (last.type === "result") {
-        return { text: typeof last.result === "string" ? last.result : "", asksQuestion: false };
+        return { text: typeof last.result === "string" ? last.result : "", asksQuestion: false, question: null };
     }
 
     const lastMessage = isRecord(last.message) ? last.message : null;
     const messageId = typeof lastMessage?.id === "string" ? lastMessage.id : null;
     const texts: string[] = [];
-    let asksQuestion = false;
+    let question: string | null = null;
 
     for (let index = lastConversation; index >= 0; index--) {
         const record = records[index];
@@ -180,14 +239,14 @@ function claudeFinalMessage(records: ReadonlyArray<JsonRecord>): { text: string;
         }
 
         texts.unshift(...claudeTextBlocks(record));
-        asksQuestion = asksQuestion || claudeAsksQuestion(record);
+        question = question ?? claudeQuestionOf(record);
 
         if (messageId === null) {
             break;
         }
     }
 
-    return { text: texts.join("\n").trim(), asksQuestion };
+    return { text: texts.join("\n").trim(), asksQuestion: question !== null, question: question || null };
 }
 
 /**
@@ -221,6 +280,7 @@ export function claudeTurnState(input: TurnStateInput): TurnSnapshot {
         events,
         lastText: final.text,
         asksQuestion: final.asksQuestion && last?.kind === "question",
+        question: final.question,
         endedTurn: interrupted || last?.kind === "question" || last?.kind === "exit",
         interrupted,
     });
@@ -258,10 +318,22 @@ const GROK_WORK: ReadonlySet<string> = new Set([
     "turn_completed",
 ]);
 
+/** Grok tools that stop the turn until the user answers: a question, and a plan to approve. */
+const GROK_WAITING_TOOLS: ReadonlySet<string> = new Set(["ask_user", "exit_plan"]);
+
+function grokToolKind(update: JsonRecord): string | null {
+    const meta = isRecord(update._meta) ? update._meta : null;
+    const tool = meta && isRecord(meta["x.ai/tool"]) ? meta["x.ai/tool"] : null;
+    return typeof tool?.kind === "string" ? tool.kind : null;
+}
+
 export function grokTurnState(input: TurnStateInput): TurnSnapshot {
     const events: ActivityEvent[] = [];
     let message = "";
     let ended = false;
+    let question: string | null = null;
+    // toolCallId → question text, until a `tool_call_update` with a status answers it.
+    const open = new Map<string, string>();
 
     for (const record of input.records) {
         const parsed = grokUpdateOf(record);
@@ -272,15 +344,38 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
 
         ended = parsed.kind === "turn_completed";
         events.push({ ts: parsed.ts, kind: ended ? "question" : "output" });
+        const callId = typeof parsed.update.toolCallId === "string" ? parsed.update.toolCallId : null;
 
         if (parsed.kind === "agent_message_chunk") {
             message += grokText(parsed.update.content);
         } else if (parsed.kind === "tool_call" || parsed.kind === "user_message_chunk") {
             message = "";
         }
+
+        if (parsed.kind === "user_message_chunk") {
+            question = null;
+        }
+
+        const toolKind = grokToolKind(parsed.update);
+
+        if (parsed.kind === "tool_call" && callId && toolKind && GROK_WAITING_TOOLS.has(toolKind)) {
+            question = questionTextOf(parsed.update.rawInput) ?? (toolKind === "exit_plan" ? "Approve the plan?" : "");
+            open.set(callId, question);
+        } else if (parsed.kind === "tool_call_update" && callId && typeof parsed.update.status === "string") {
+            open.delete(callId);
+        }
     }
 
-    return snapshotOf({ input, events, lastText: message.trim(), asksQuestion: false, endedTurn: ended });
+    const waiting = open.size > 0;
+
+    return snapshotOf({
+        input,
+        events: waiting ? waitingOn(events) : events,
+        lastText: message.trim(),
+        asksQuestion: waiting,
+        question: question || null,
+        endedTurn: ended || waiting,
+    });
 }
 
 function codexPayloadOf(record: JsonRecord): { type: string; payload: JsonRecord } | null {
@@ -309,6 +404,11 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
     let message = "";
     let ended = false;
     let aborted = false;
+    let question: string | null = null;
+    // call_id → question text of a `request_user_input` with no `function_call_output` yet.
+    const open = new Map<string, string>();
+    // The turn's last tool call was `request_user_input_async`: the turn ends on that question.
+    let lastCallAsks = false;
 
     for (const record of input.records) {
         const ts = toEpochMs(record.timestamp);
@@ -346,6 +446,26 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
 
         if (record.type === "event_msg" && parsed.type === "task_started") {
             message = "";
+            question = null;
+            lastCallAsks = false;
+            open.clear();
+        }
+
+        const callId = typeof parsed.payload.call_id === "string" ? parsed.payload.call_id : null;
+
+        if (record.type === "response_item" && parsed.type === "function_call") {
+            const name = parsed.payload.name;
+            lastCallAsks = name === "request_user_input_async";
+
+            if (name === "request_user_input" || name === "request_user_input_async") {
+                question = questionTextOf(parsed.payload.arguments) ?? "";
+
+                if (name === "request_user_input" && callId) {
+                    open.set(callId, question);
+                }
+            }
+        } else if (record.type === "response_item" && parsed.type === "function_call_output" && callId) {
+            open.delete(callId);
         }
 
         ended = false;
@@ -353,12 +473,15 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
         events.push({ ts, kind: "output" });
     }
 
+    const waiting = !ended && open.size > 0;
+
     return snapshotOf({
         input,
-        events,
+        events: waiting ? waitingOn(events) : events,
         lastText: message.trim(),
-        asksQuestion: false,
-        endedTurn: ended,
+        asksQuestion: waiting || (ended && !aborted && lastCallAsks),
+        question: question || null,
+        endedTurn: ended || waiting,
         interrupted: aborted,
     });
 }

@@ -5,14 +5,15 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { ActivityState } from "./activity";
 import type { TurnSnapshot } from "./turn-state";
-import { readTurnState } from "./turn-state";
-import { looksLikeQuestion, TRANSCRIPT_GONE_MS, waitForTurn, watchTurn } from "./turn-wait";
+import { codexTurnState, grokTurnState, readTurnState } from "./turn-state";
+import { looksLikeQuestion, questionOf, TRANSCRIPT_GONE_MS, waitForTurn, watchTurn } from "./turn-wait";
 
 function snap(state: ActivityState, lastEventAt: number | null): TurnSnapshot {
     return {
         state,
         lastText: `text@${lastEventAt}`,
         asksQuestion: false,
+        question: null,
         interrupted: false,
         lastEventAt,
         lastActivityAt: 0,
@@ -171,11 +172,11 @@ describe("waitForTurn", () => {
 
 describe("questions asked while the turn keeps running", () => {
     it("are collected once each and returned with the finished turn, without ending the wait", async () => {
-        const asking = (text: string, at: number): TurnSnapshot => ({ ...snap("RUNNING", at), lastText: text });
+        const asking = (question: string | null, at: number): TurnSnapshot => ({ ...snap("RUNNING", at), question });
         const reader = script(
             asking("Should I also update the README?", 10),
             asking("Should I also update the README?", 11),
-            asking("Working on it.", 12),
+            asking(null, 12),
             snap("AWAITING-INPUT", 20)
         );
         const result = await waitForTurn({ read: reader.read, pollMs: 1000, ...clock() });
@@ -184,10 +185,78 @@ describe("questions asked while the turn keeps running", () => {
         expect(result.questions).toEqual(["Should I also update the README?"]);
     });
 
-    it("recognises a question in the last paragraph only", () => {
-        expect(looksLikeQuestion("Done with A.\n\nShall I do B?")).toBe(true);
+    it("the wording heuristic is kept but off: it counts only when switched on", () => {
+        const worded = { ...snap("RUNNING", 1), lastText: "Done with A.\n\nShall I do B?" };
+
         expect(looksLikeQuestion("❓ DECISION 3: pick a or b")).toBe(true);
         expect(looksLikeQuestion("Is it? No.\n\nIt is fixed.")).toBe(false);
+        expect(questionOf(worded)).toBeNull();
+        expect(questionOf(worded, true)).toBe("Done with A.\n\nShall I do B?");
+    });
+
+    const input = (records: Record<string, unknown>[]) => ({
+        records,
+        lastModified: 1_000,
+        now: 2_000,
+        stallTimeoutMs: Number.POSITIVE_INFINITY,
+    });
+    const codexCall = (name: string, id: string, question: string) => ({
+        type: "response_item",
+        timestamp: 900,
+        payload: {
+            type: "function_call",
+            name,
+            call_id: id,
+            arguments: SafeJSON.stringify({ questions: [{ id: "q", question, options: [] }] }),
+        },
+    });
+    const codexOutput = (id: string) => ({
+        type: "response_item",
+        timestamp: 950,
+        payload: { type: "function_call_output", call_id: id, output: "{}" },
+    });
+    const taskComplete = { type: "event_msg", timestamp: 990, payload: { type: "task_complete" } };
+
+    it("Codex: an unanswered request_user_input waits on the user; an answered one does not", () => {
+        const open = codexTurnState(input([codexCall("request_user_input", "c1", "Which branch?")]));
+        expect(open).toMatchObject({ state: "AWAITING-INPUT", asksQuestion: true, question: "Which branch?" });
+
+        const answered = codexTurnState(
+            input([codexCall("request_user_input", "c1", "Which branch?"), codexOutput("c1")])
+        );
+        expect(answered.asksQuestion).toBe(false);
+    });
+
+    it("Codex: a turn whose last call is request_user_input_async ends on that question", () => {
+        const asked = [codexCall("request_user_input_async", "c2", "Ship it?"), codexOutput("c2")];
+
+        expect(codexTurnState(input([...asked, taskComplete]))).toMatchObject({
+            asksQuestion: true,
+            question: "Ship it?",
+        });
+        // Still running: the question is visible for `wait` to collect, but nothing waits on it.
+        expect(codexTurnState(input(asked))).toMatchObject({ asksQuestion: false, question: "Ship it?" });
+    });
+
+    it("Grok: ask_user_question is open until its tool_call_update; message wording never counts", () => {
+        const update = (sessionUpdate: string, extra: Record<string, unknown>) => ({
+            timestamp: 1,
+            params: { update: { sessionUpdate, ...extra } },
+        });
+        const ask = update("tool_call", {
+            toolCallId: "t1",
+            rawInput: { questions: [{ question: "Keep the old API?" }] },
+            _meta: { "x.ai/tool": { kind: "ask_user" } },
+        });
+
+        expect(grokTurnState(input([ask]))).toMatchObject({ state: "AWAITING-INPUT", asksQuestion: true });
+        expect(
+            grokTurnState(input([ask, update("tool_call_update", { toolCallId: "t1", status: "completed" })]))
+                .asksQuestion
+        ).toBe(false);
+
+        const wording = update("agent_message_chunk", { content: { type: "text", text: "Shall I do B? ❓" } });
+        expect(grokTurnState(input([wording]))).toMatchObject({ asksQuestion: false, question: null });
     });
 });
 
