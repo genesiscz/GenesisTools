@@ -67,7 +67,8 @@ function scheduleSweep(): void {
         if (sessions.size > 0) {
             scheduleSweep();
         }
-    }, IDLE_MS);
+        // A quarter of the window: a session goes at most 12.5 minutes after its last ask, not up to 20.
+    }, IDLE_MS / 4);
     // Never what keeps a process alive.
     sweep.unref?.();
 }

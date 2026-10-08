@@ -90,7 +90,8 @@ function mergeAnalysis(into: CommandAnalysis, from: CommandAnalysis): void {
 /**
  * Scans by command text, newest last. A session's changes analyze every earlier command again on each ask, and in a
  * resident process (the hub server) the scan was about 40% of a warm ask (2026-10-08). A scan depends on the text
- * alone and `analyzeCommand` only reads it. Bounded by the commands' total length.
+ * alone and `analyzeCommand` only reads it. Bounded by the commands' total length; a scan also holds the cleaned
+ * text and its statements, so the memory is a few times that.
  */
 const scans = new Map<string, ShellScan>();
 const SCAN_CHARS_KEPT = 8 * 1024 * 1024;

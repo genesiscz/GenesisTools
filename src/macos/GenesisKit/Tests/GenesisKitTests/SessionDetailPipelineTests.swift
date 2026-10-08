@@ -86,20 +86,49 @@ final class SessionDetailPipelineTests: XCTestCase {
         XCTAssertEqual(batches.count, 2)
     }
 
-    /// A server answer stores no blobs: the first "more context" on one of its files names the call whose run stores
-    /// them, once; every file of that call is then stored, and a file of another call keeps its own owner.
-    func testUnstoredBlobsNameTheirCallOnce() {
+    /// A server answer stores no blobs: "more context" on one of its files names the call whose run stores them. A file
+    /// edited in two calls shares a blob between them and still names its own call; a failed run is tried again; a
+    /// successful one forgets every file of that call.
+    func testUnstoredBlobsNameTheirOwnCallAndForgetOnlyAfterAStore() async {
         let unstored = UnstoredBlobs()
-        let a = ToolFileChange(path: "/r/a.ts", status: "modified", beforeBlob: "b1", afterBlob: "a1")
-        let b = ToolFileChange(path: "/r/b.ts", status: "added", afterBlob: "a2")
-        let c = ToolFileChange(path: "/r/c.ts", status: "modified", beforeBlob: "b3", afterBlob: "a3")
-        unstored.add([a, b], sessionId: "s", toolUseId: "t1")
-        unstored.add([c], sessionId: "s", toolUseId: "t2")
+        let first = ToolFileChange(path: "/r/a.ts", status: "modified", beforeBlob: "A", afterBlob: "B")
+        let second = ToolFileChange(path: "/r/a.ts", status: "modified", beforeBlob: "B", afterBlob: "C")
+        let other = ToolFileChange(path: "/r/b.ts", status: "added", afterBlob: "D")
+        unstored.add([first, other], sessionId: "s", toolUseId: "t1")
+        unstored.add([second], sessionId: "s", toolUseId: "t2")
 
-        XCTAssertEqual(unstored.take(b), UnstoredBlobs.Owner(sessionId: "s", toolUseId: "t1"))
-        XCTAssertNil(unstored.take(a), "the run for t1 stored a's blobs too")
-        XCTAssertEqual(unstored.take(c)?.toolUseId, "t2")
-        XCTAssertNil(unstored.take(ToolFileChange(path: "/r/d.ts", status: "modified", afterBlob: "zz")))
+        XCTAssertEqual(unstored.owner(of: first)?.toolUseId, "t1")
+        XCTAssertEqual(unstored.owner(of: second)?.toolUseId, "t2")
+
+        let t1 = UnstoredBlobs.Owner(sessionId: "s", toolUseId: "t1")
+        let failed = await unstored.store(t1) { false }
+        XCTAssertFalse(failed)
+        XCTAssertEqual(unstored.owner(of: first)?.toolUseId, "t1", "a failed run keeps the file for the next click")
+
+        let stored = await unstored.store(t1) { true }
+        XCTAssertTrue(stored)
+        XCTAssertNil(unstored.owner(of: first))
+        XCTAssertNil(unstored.owner(of: other), "the run stored every file of t1")
+        XCTAssertEqual(unstored.owner(of: second)?.toolUseId, "t2")
+    }
+
+    /// Two clicks while a store runs share that one run.
+    func testConcurrentStoresOfOneCallShareOneRun() async {
+        let unstored = UnstoredBlobs()
+        let owner = UnstoredBlobs.Owner(sessionId: "s", toolUseId: "t1")
+        unstored.add([ToolFileChange(path: "/r/a.ts", status: "added", afterBlob: "A")], sessionId: "s", toolUseId: "t1")
+        let counter = RunCounter()
+        let run: @Sendable () async -> Bool = {
+            await counter.hit()
+            try? await Task.sleep(for: .milliseconds(100))
+            return true
+        }
+        async let one = unstored.store(owner, run: run)
+        async let two = unstored.store(owner, run: run)
+        let results = await [one, two]
+        XCTAssertEqual(results, [true, true])
+        let runs = await counter.count
+        XCTAssertEqual(runs, 1)
     }
 
     func testTheBatchOutputDecodesPerToolCall() {
@@ -201,4 +230,9 @@ final class SessionDetailPipelineTests: XCTestCase {
         let after = meter.read()
         XCTAssertEqual(after, reading, "a stopped meter counts nothing more")
     }
+}
+
+private actor RunCounter {
+    private(set) var count = 0
+    func hit() { count += 1 }
 }

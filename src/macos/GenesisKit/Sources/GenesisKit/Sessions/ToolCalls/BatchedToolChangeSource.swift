@@ -46,9 +46,10 @@ public final class BatchedToolChangeSource: ToolChangeSource, @unchecked Sendabl
             return diff
         }
 
-        guard let binary, let owner = unstored.take(change) else { return nil }
+        guard let binary, let owner = unstored.owner(of: change) else { return nil }
         let argv = ["agents", "changes", owner.sessionId, "--tool", owner.toolUseId, "--json", "--store-blobs"]
-        guard await CLIToolChangeSource.run(binary, argv, timeout: 30) != nil else { return nil }
+        let stored = await unstored.store(owner) { await CLIToolChangeSource.run(binary, argv, timeout: 30) != nil }
+        guard stored else { return nil }
         return await cli.expandedDiff(for: change, context: context)
     }
 
@@ -225,34 +226,51 @@ public actor ToolChangeBatcher {
     }
 }
 
-/// Blobs of answers the server gave (it stores none), by object id: whose call stores them when a diff needs them.
+/// Files of answers the server gave (it stores no blobs): which call's run stores a file's blobs when its diff needs
+/// them. Keyed by the whole change (path and both blobs), never by one blob: a file edited in two calls shares a blob
+/// between them (call 1's after is call 2's before), and the other call's run does not store this call's before.
 final class UnstoredBlobs: @unchecked Sendable {
-    struct Owner: Equatable {
+    struct Owner: Hashable {
         let sessionId: String
         let toolUseId: String
     }
 
     private let lock = NSLock()
     private var owners: [String: Owner] = [:]
+    private var running: [Owner: Task<Bool, Never>] = [:]
+
+    static func key(_ change: ToolFileChange) -> String {
+        "\(change.path)|\(change.beforeBlob ?? "")|\(change.afterBlob ?? "")"
+    }
 
     func add(_ files: [ToolFileChange], sessionId: String, toolUseId: String) {
         let owner = Owner(sessionId: sessionId, toolUseId: toolUseId)
         lock.withLock {
             for file in files {
-                for oid in [file.beforeBlob, file.afterBlob].compactMap({ $0 }) {
-                    owners[oid] = owner
-                }
+                owners[Self.key(file)] = owner
             }
         }
     }
 
-    /// The call whose run stores this file's blobs; nil when they are stored already (or were asked once).
-    func take(_ change: ToolFileChange) -> Owner? {
-        lock.withLock {
-            let owner = [change.afterBlob, change.beforeBlob].compactMap { $0 }.lazy.compactMap { self.owners[$0] }.first
-            guard let owner else { return nil }
-            owners = owners.filter { $0.value != owner }
-            return owner
+    /// The call whose run stores this file's blobs; nil when a run stored them already.
+    func owner(of change: ToolFileChange) -> Owner? {
+        lock.withLock { owners[Self.key(change)] }
+    }
+
+    /// One `run` per call at a time (a second click waits for the first); the call's files are forgotten only when
+    /// it succeeded, so a failed or timed-out run is tried again on the next click.
+    func store(_ owner: Owner, run: @escaping @Sendable () async -> Bool) async -> Bool {
+        let task = lock.withLock { () -> Task<Bool, Never> in
+            if let running = running[owner] { return running }
+            let task = Task { await run() }
+            running[owner] = task
+            return task
         }
+        let stored = await task.value
+        lock.withLock {
+            if running[owner] == task { running[owner] = nil }
+            if stored { owners = owners.filter { $0.value != owner } }
+        }
+        return stored
     }
 }
