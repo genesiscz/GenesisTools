@@ -365,6 +365,44 @@ test("Codex driver rejects a reused name before the native control primitive and
     }
 });
 
+test("Codex driver refuses an unsupported turn guard and keeps a daemon-proven refusal typed", async () => {
+    const primitive = spyOn(controlChannel, "sendControlRequest");
+    primitive.mockImplementation(async () => {
+        throw new Error("Native primitive must not be reached");
+    });
+    try {
+        await expect(
+            Promise.resolve().then(() =>
+                codexDriver.steer(codexMessageFixture(), {
+                    prompt: "guarded",
+                    extras: { expectSession: "thread-1", expectHome: "/fixture/codex", expectTurn: "3" },
+                })
+            )
+        ).rejects.toBeInstanceOf(WorkerDeliveryRejectedError);
+        expect(primitive).not.toHaveBeenCalled();
+
+        primitive.mockImplementation(async () => ({ ok: false, error: "thread changed", code: "rejected" }));
+        await expect(
+            codexDriver.steer(codexMessageFixture(), {
+                prompt: "guarded",
+                extras: { expectSession: "thread-1", expectHome: "/fixture/codex" },
+            })
+        ).rejects.toBeInstanceOf(WorkerDeliveryRejectedError);
+
+        primitive.mockImplementation(async () => ({ ok: false, error: "daemon failed" }));
+        const failure = await codexDriver
+            .steer(codexMessageFixture(), {
+                prompt: "guarded",
+                extras: { expectSession: "thread-1", expectHome: "/fixture/codex" },
+            })
+            .catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(Error);
+        expect(failure).not.toBeInstanceOf(WorkerDeliveryRejectedError);
+    } finally {
+        primitive.mockRestore();
+    }
+});
+
 test("the wrapped named steer preserves structured pre-dispatch rejection receipts", async () => {
     const previousExitCode = process.exitCode;
     const program = new Command().exitOverride();

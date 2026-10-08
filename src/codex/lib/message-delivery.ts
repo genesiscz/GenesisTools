@@ -87,7 +87,7 @@ export async function queueCodexMessage({
         channel: "session-queue",
         delivered: message.state === "received",
         queued: message.state === "queued",
-        accepted: true,
+        accepted: message.state !== "cancelled",
         message,
     };
 }

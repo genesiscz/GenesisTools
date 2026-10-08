@@ -63,6 +63,9 @@ export async function mutateWidgetState<T>(root: string | undefined, update: (st
     );
 }
 
+const INBOX_READ_LIMIT = 4096;
+const INBOX_READ_RETAINED = 3072;
+
 export async function acknowledgeWidgetInbox({
     root,
     key,
@@ -83,8 +86,13 @@ export async function acknowledgeWidgetInbox({
             return { saved: false };
         }
 
-        if (!(token in state.inboxRead) && Object.keys(state.inboxRead).length >= 4096) {
-            throw new Error("The saved inbox read history is full; no notification was marked read.");
+        const entries = Object.entries(state.inboxRead);
+        if (!(token in state.inboxRead) && entries.length >= INBOX_READ_LIMIT) {
+            // Forget the oldest marks instead of refusing every later read once the history fills up.
+            entries.sort((a, b) => a[1] - b[1]);
+            for (const [stale] of entries.slice(0, entries.length - INBOX_READ_RETAINED)) {
+                delete state.inboxRead[stale];
+            }
         }
 
         state.inboxRead[token] = at;

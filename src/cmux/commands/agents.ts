@@ -4,7 +4,6 @@ import { basename, resolve } from "node:path";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
@@ -351,7 +350,7 @@ function addNewOptions(command: Command): Command {
             "Account (required). Omit it to list every account with its 5h and weekly budget left"
         )
         .option("--model <id>", "Model id or alias, passed to tools <agent> run -m")
-        .option("--prompt <text>", `Initial prompt. Passed after -- to ${toolCommand("<agent> run")}.`)
+        .option("--prompt <text>", "Initial prompt. Passed after -- to tools <agent> run.")
         .option("--prompt-file <path>", "Read the prompt from a file when the workspace command runs")
         .option("--name <title>", "Session name and workspace title")
         .option("--via-tmux", "Run the agent inside a detached tmux session and attach the workspace to it")

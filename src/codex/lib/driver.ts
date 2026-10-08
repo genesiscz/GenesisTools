@@ -24,6 +24,10 @@ async function control(name: string, request: CodexControl, fallback: unknown = 
     const response = await sendControlRequest(name, request);
 
     if (!response.ok) {
+        if (response.code === "rejected") {
+            throw new WorkerDeliveryRejectedError(response.error);
+        }
+
         throw new Error(response.error);
     }
 
@@ -129,7 +133,13 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
     },
 
     steer(meta, input) {
-        const { expectSession, expectHome } = input.extras;
+        const { expectSession, expectHome, expectTurn } = input.extras;
+        if (expectTurn !== undefined) {
+            throw new WorkerDeliveryRejectedError(
+                "Codex steering has no turn guard; omit --expect-turn. No prompt was sent."
+            );
+        }
+
         const expectedTarget =
             expectSession === undefined && expectHome === undefined
                 ? undefined

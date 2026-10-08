@@ -319,15 +319,21 @@ export async function transcribeVoiceNote({
         });
     } catch (error) {
         signal?.throwIfAborted();
-        await mutate({
-            root,
-            change: (index) => {
-                const note = noteAt(index, id);
-                note.transcription = "failed";
-                note.error = error instanceof Error ? error.message : String(error);
-                note.revision++;
-            },
-        });
+        try {
+            await mutate({
+                root,
+                change: (index) => {
+                    const note = noteAt(index, id);
+                    note.transcription = "failed";
+                    note.error = error instanceof Error ? error.message : String(error);
+                    note.revision++;
+                },
+            });
+        } catch (recordError) {
+            // The note may have been discarded meanwhile; the provider failure stays the reported error.
+            logger.warn({ error: recordError, id }, "Could not record the transcription failure on the voice note");
+        }
+
         throw error;
     }
 }
@@ -348,11 +354,29 @@ export async function discardVoiceNote({
         change: (index) => {
             const note = noteAt(index, id);
             expectRevision(note, expectedRevision);
-            clipPath({ root, note });
+            const expected = resolve(voiceNotesDirectory(root), "clips", `${note.id}.pcm`);
+            if (resolve(note.clip.path) !== expected) {
+                throw new Error("Voice recording is outside its private note storage");
+            }
+
+            // A clip deleted outside the tool must not pin its note forever; an existing one is fully checked.
+            if (existsSync(expected)) {
+                clipPath({ root, note });
+            }
+
             index.notes = index.notes.filter((entry) => entry.id !== id);
             return note;
         },
     });
-    await unlink(removed.clip.path);
+    try {
+        await unlink(removed.clip.path);
+    } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+            throw error;
+        }
+
+        logger.debug({ error, id }, "Discarded voice note had no clip file left");
+    }
+
     return { discarded: true, id };
 }

@@ -367,8 +367,8 @@ export async function deliverToSession(
         const { worker } = target;
         const directory = mkdtempSync(join(tmpdir(), "worker-delivery-"));
         const promptFile = join(directory, "prompt.txt");
-        writeFileSync(promptFile, text, { mode: 0o600 });
         try {
+            writeFileSync(promptFile, text, { mode: 0o600 });
             const prefix = worker.provider === "claude" ? ["claude", "worker", "steer"] : ["grok", "steer"];
             const result = await run([
                 ...prefix,

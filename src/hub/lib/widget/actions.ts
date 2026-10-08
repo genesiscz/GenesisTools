@@ -13,6 +13,7 @@ import { confirmVideoAsset, importWidgetAsset, reviseVideoAsset } from "../compo
 import { changeOutgoing, enqueueWidgetMessage } from "../composer/outbox";
 import { createWidgetHandoff } from "./handoff";
 import { readShelfAttachment } from "./shelf";
+import { widgetProvider } from "./snapshot";
 import { acknowledgeWidgetInbox, mutateWidgetState, readWidgetState, widgetRoot } from "./storage";
 import {
     parseWidgetSessionKey,
@@ -211,8 +212,11 @@ export async function performWidgetAction({
                 const db = openReadModel(toolDataDir("question", "qa.db"));
                 try {
                     const row = getEntryById(db, sourceId);
-                    const provider = row?.agent === "claude-code" ? "claude" : row?.agent;
-                    if (!row || (row.sessionId || row.id) !== target.sessionId || provider !== target.provider) {
+                    if (
+                        !row ||
+                        (row.sessionId || row.id) !== target.sessionId ||
+                        widgetProvider(row.agent) !== target.provider
+                    ) {
                         throw new Error("The answer belongs to a different session.");
                     }
 

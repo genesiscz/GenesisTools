@@ -5,6 +5,7 @@ import GenesisKit
 final class LivePreviewDelegate: NSObject, NSApplicationDelegate {
     private var widget: WidgetCoordinator?
     private var terminating = false
+    private var terminationReplied = false
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let binary = Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetCLI") as? String
         else {
@@ -53,9 +54,21 @@ final class LivePreviewDelegate: NSObject, NSApplicationDelegate {
         terminating = true
         Task { [self] in
             await widget?.shutdown()
-            sender.reply(toApplicationShouldTerminate: true)
+            replyToTermination(sender)
+        }
+        Task { [self] in
+            try? await Task.sleep(for: .seconds(5))
+            replyToTermination(sender, timedOut: true)
         }
         return .terminateLater
+    }
+
+    /// Shutdown awaits child processes and runtimes; a hung one must not leave the app unable to quit.
+    private func replyToTermination(_ sender: NSApplication, timedOut: Bool = false) {
+        guard !terminationReplied else { return }
+        terminationReplied = true
+        if timedOut { NSLog("Shutdown did not finish within 5 seconds; quitting anyway") }
+        sender.reply(toApplicationShouldTerminate: true)
     }
     func applicationWillTerminate(_ notification: Notification) { widget?.stop() }
 }

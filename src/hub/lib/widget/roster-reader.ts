@@ -94,7 +94,6 @@ export class WidgetRosterReader {
         logger.warn({ error: message }, "Widget roster refresh failed; retaining the last completed roster");
         this.worker?.terminate();
         this.worker = undefined;
-        this.again = false;
         this.finish();
     }
 

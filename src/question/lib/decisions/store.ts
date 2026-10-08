@@ -925,6 +925,11 @@ export async function reconcileQueuedDecision({
     });
 }
 
+/**
+ * Moves several decisions to one state as ONE transition: one lock, every move validated before
+ * any is written, one rewrite. A send that delivered a batch must mark the whole batch, or none,
+ * so a crash between rows cannot leave answers that the next send delivers again.
+ */
 export async function moveDecisions(
     file: string,
     events: string,

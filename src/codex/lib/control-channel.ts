@@ -20,7 +20,8 @@ export interface ControlRequest {
     control: CodexControl;
 }
 
-export type ControlResponse = { ok: true; result?: unknown } | { ok: false; error: string };
+/** `code: "rejected"` marks a refusal proven before the prompt reached the provider. */
+export type ControlResponse = { ok: true; result?: unknown } | { ok: false; error: string; code?: "rejected" };
 
 export interface ControlLogReadSample {
     bytes: number;
