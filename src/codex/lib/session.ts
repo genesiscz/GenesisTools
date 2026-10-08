@@ -1,6 +1,7 @@
 import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
+import { WorkerDeliveryRejectedError, workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import type {
     ReviewStartParams,
     ReviewTarget,
@@ -202,6 +203,17 @@ export class CodexSessionRuntime {
     async execute(control: CodexControl): Promise<unknown> {
         switch (control.op) {
             case "steer":
+                if (
+                    control.expectedTarget &&
+                    (this.meta.threadId !== control.expectedTarget.threadId ||
+                        !this.meta.home ||
+                        workerSourceHome(this.meta.home) !== workerSourceHome(control.expectedTarget.home))
+                ) {
+                    throw new WorkerDeliveryRejectedError(
+                        "The Codex thread or source home changed; no prompt was sent."
+                    );
+                }
+
                 return this.steer(control.body, control.force);
             case "interrupt":
                 return this.interrupt();

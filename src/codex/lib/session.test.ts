@@ -465,3 +465,38 @@ test("account-bound workers authenticate before thread start and route refresh o
         }
     });
 });
+
+test("the daemon refuses stale thread/home guards before RPC even when the worker name still matches", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-guard-"));
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+        const store = new CodexSessionStore();
+        const meta = makeMeta(home);
+        store.writeMeta(meta);
+        const client = new FakeRpcClient();
+        const runtime = new CodexSessionRuntime({ client, store, meta });
+        await runtime.start({});
+        client.requests.length = 0;
+        client.rejectNextTurn = new Error("Native turn/start must not be called for a stale identity");
+
+        for (const expectedTarget of [
+            { threadId: "replacement", home },
+            { threadId: "thread-1", home: join(home, "other") },
+        ]) {
+            await expect(
+                runtime.execute({ op: "steer", body: "guarded", force: true, expectedTarget })
+            ).rejects.toThrow("no prompt was sent");
+            expect(client.requests).toEqual([]);
+        }
+
+        client.rejectNextTurn = null;
+        expect(
+            await runtime.execute({
+                op: "steer",
+                body: "normal",
+                force: false,
+                expectedTarget: { threadId: "thread-1", home },
+            })
+        ).toMatchObject({ turnId: "turn-1", queued: false });
+        expect(client.requests.map((request) => request.method)).toEqual(["turn/start"]);
+    });
+});
