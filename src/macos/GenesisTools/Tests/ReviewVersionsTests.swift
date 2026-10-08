@@ -148,6 +148,48 @@ final class ReviewVersionsTests: XCTestCase {
         XCTAssertEqual(try git("diff", "--name-only", replayed.tree, to.head), "a.txt", "u.txt still left out")
     }
 
+    @MainActor
+    func testANewerHeadQueuedDuringAVersionsReadLoadsAfterSuccessOrFailure() async throws {
+        for failsFirst in [false, true] {
+            let started = expectation(description: "the first read started")
+            let changed = expectation(description: "the requested latest head arrived")
+            let release = DispatchSemaphore(value: 0)
+            let lock = NSLock()
+            var reads = 0
+            let old = PRVersionsPayload(versions: [PRVersion(id: "old", headSha: "old", baseSha: "base", createdAt: nil, pushedBy: nil, commits: [])], history: true)
+            let newest = PRVersionsPayload(versions: [PRVersion(id: "newest", headSha: "newest", baseSha: "base", createdAt: nil, pushedBy: nil, commits: [])], history: true)
+            let store = PRVersionsStore(target: .ref("https://github.com/acme/app/pull/7"), loader: { _ in
+                let read = lock.withLock {
+                    reads += 1
+                    return reads
+                }
+                if read == 1 {
+                    started.fulfill()
+                    guard release.wait(timeout: .now() + 2) == .success else { throw ReviewError.git("test loader deadline") }
+                    if failsFirst { throw ReviewError.git("test load failed") }
+                    return old
+                }
+                return newest
+            })
+            store.onChange = { [weak store] in
+                if store?.loadedForHead == "newest" { changed.fulfill() }
+            }
+            store.load(forHead: "old")
+            await fulfillment(of: [started], timeout: 2)
+            store.load(forHead: "middle")
+            store.load(forHead: "newest")
+            release.signal()
+            await fulfillment(of: [changed], timeout: 2)
+            XCTAssertEqual(store.payload, newest)
+            XCTAssertEqual(store.loadedForHead, "newest")
+            XCTAssertFalse(store.loading)
+            store.load(forHead: "newest")
+            lock.withLock {
+                XCTAssertEqual(reads, 2, "only the active and latest queued requests run; a loaded head is reused")
+            }
+        }
+    }
+
     func testANewCommitWithTheSameTitleIsStillNewWithoutARebase() throws {
         let old = PRVersion(id: "1", headSha: "old", baseSha: "base", createdAt: nil, pushedBy: nil,
                             commits: [.init(sha: "c1", title: "fix", author: nil)])

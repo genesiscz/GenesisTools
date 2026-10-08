@@ -98,23 +98,37 @@ final class PRVersionsStore: ObservableObject {
     private(set) var loadedForHead: String?
     /// Called on the main thread after an answer lands.
     var onChange: (() -> Void)?
+    private let loader: ([String]) throws -> PRVersionsPayload
+    private var pendingLoad = false
+    private var pendingHead: String?
 
-    init(target: PRTarget) {
+    init(target: PRTarget, loader: @escaping ([String]) throws -> PRVersionsPayload = {
+        try JSONDecoder().decode(PRVersionsPayload.self, from: PRCLI.run($0))
+    }) {
         self.target = target
+        self.loader = loader
     }
 
     func load(forHead head: String? = nil) {
-        guard !loading else { return }
+        if loading {
+            pendingLoad = true
+            pendingHead = head
+            return
+        }
         if let head, head == loadedForHead, payload != nil { return }
         loading = true
         let args = ["hub", "pr", "versions"] + target.argv + ["--json"]
         DispatchQueue.global(qos: .userInitiated).async {
             let span = HubPerf.begin("pr.versions", args.suffix(from: 3).joined(separator: " "))
-            let result = Result { try JSONDecoder().decode(PRVersionsPayload.self, from: PRCLI.run(args)) }
+            let result = Result { try self.loader(args) }
             span.end((try? result.get()).map { "\($0.versions.count) versions" } ?? "failed")
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.loading = false
+                let retry = self.pendingLoad
+                let retryHead = self.pendingHead
+                self.pendingLoad = false
+                self.pendingHead = nil
                 switch result {
                 case .success(let payload):
                     self.payload = payload
@@ -124,6 +138,9 @@ final class PRVersionsStore: ObservableObject {
                 case .failure(let failure):
                     self.error = "\(failure)"
                     HubPerf.log("pr.versions failed: \(failure)")
+                }
+                if retry {
+                    self.load(forHead: retryHead)
                 }
             }
         }
