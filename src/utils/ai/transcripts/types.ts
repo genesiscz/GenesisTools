@@ -1,5 +1,5 @@
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-import { sliceWhole } from "@genesiscz/utils/string";
+import { detachedCopy, sliceWhole } from "@genesiscz/utils/string";
 import type { PromptPart } from "./prompt-parts";
 
 export type TranscriptProvider = AccountProviderAlias;
@@ -172,7 +172,8 @@ export function clipResult(text: string, max = DEFAULT_RESULT_CHARS): string {
     if (text.length <= max) {
         return text;
     }
-    return `${sliceWhole(text, max - 1)}…`;
+    // A copy: turns are kept (caches, live follows), and a slice would keep the whole output alive.
+    return detachedCopy(`${sliceWhole(text, max - 1)}…`);
 }
 
 /** The widest epoch a JS Date accepts; beyond it `toISOString()` throws RangeError. */

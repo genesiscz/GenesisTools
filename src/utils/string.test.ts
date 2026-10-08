@@ -1,5 +1,7 @@
+import { heapStats } from "bun:jsc";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { skip } from "@genesiscz/utils/test/skip";
+import { clipResult } from "./ai/transcripts/types";
 import {
     escapeShellArg,
     fuzzyFind,
@@ -15,6 +17,26 @@ import {
     truncateText,
 } from "./string";
 import { promptVariables, renderPrompt } from "./template";
+
+describe("kept previews of long texts", () => {
+    it("do not keep the long texts alive (truncateText, clipResult)", () => {
+        const heapMb = () => {
+            Bun.gc(true);
+            return heapStats().heapSize / 1048576;
+        };
+        const before = heapMb();
+        const kept: string[] = [];
+        for (let i = 0; i < 60; i++) {
+            const long = `${i}${"x".repeat(1_000_000)}`;
+            kept.push(truncateText(long, 200), clipResult(long, 200));
+        }
+
+        // A slice that points into its source would hold the 60 MB of sources; copies hold ~24 KB.
+        expect(heapMb() - before).toBeLessThan(20);
+        expect(kept[2]).toStartWith("1x");
+        expect(kept[3]).toEndWith("…");
+    });
+});
 
 describe("slugify", () => {
     it("replaces spaces and special chars with dashes", () => {

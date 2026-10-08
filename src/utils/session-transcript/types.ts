@@ -1,4 +1,5 @@
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { detachedCopy } from "@genesiscz/utils/string";
 
 export type TranscriptProvider = AccountProviderAlias;
 
@@ -59,5 +60,5 @@ export function clipResult(text: string, max = DEFAULT_RESULT_CHARS): string {
     if (text.length <= max) {
         return text;
     }
-    return `${text.slice(0, max - 1)}…`;
+    return detachedCopy(`${text.slice(0, max - 1)}…`);
 }

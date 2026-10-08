@@ -109,16 +109,29 @@ export function sliceWhole(text: string, end: number): string {
 }
 
 /**
- * Truncate text to a maximum length, appending "..." if truncated.
+ * `text` as a string of its own. In JavaScriptCore (Bun) a `slice`, `trim` or template of a long string can point
+ * into it instead of copying, so a 2,000-character preview kept from a 1 MB tool output keeps the whole megabyte
+ * alive. Measured 2026-10-08: the parsed turns of a 163 MB Codex rollout held 42 MB of heap, 17 MB once their
+ * clipped results were copied; 200 slices of 2,000 chars from 1 MB strings held 191 MB, copied 2 MB.
+ * `structuredClone` copies (1.8 µs for 2,000 chars); `normalize`, `padEnd` and templates do not.
+ * Use it where a short piece of a long text is KEPT (a preview, a clipped result, a cache entry).
+ */
+export function detachedCopy(text: string): string {
+    return structuredClone(text);
+}
+
+/**
+ * Truncate text to a maximum length, appending "..." if truncated. A truncated result is a copy of its own, so
+ * keeping it does not keep the long text alive (see `detachedCopy`).
  */
 export function truncateText(text: string, maxLength: number = 100): string {
     if (text.length <= maxLength) {
         return text;
     }
     if (maxLength <= 3) {
-        return sliceWhole(text, maxLength);
+        return detachedCopy(sliceWhole(text, maxLength));
     }
-    return `${sliceWhole(text, maxLength - 3)}...`;
+    return detachedCopy(`${sliceWhole(text, maxLength - 3)}...`);
 }
 
 function collapse(text: string): string {
