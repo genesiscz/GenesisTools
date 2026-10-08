@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import {
@@ -127,7 +128,7 @@ export function registerSessionCommand(program: Command): void {
         .description("Create a background workspace in the focused cmux window and start Claude there")
         .requiredOption("--repo <name|path>", "Project name under ~/Tresors/Projects, or a directory path")
         .option("--account <name>", "Claude account. Omit to use the default account.")
-        .option("--prompt <text>", "Initial prompt. Passed after -- to tools claude run.")
+        .option("--prompt <text>", `Initial prompt. Passed after -- to ${toolCommand("claude run")}.`)
         .option("--prompt-file <path>", "Read the prompt from a file when the workspace command runs")
         .option("--name <title>", "Workspace title. Rename is best-effort.")
         .option("--via-tmux", "Run Claude inside a detached tmux session and attach the workspace to it")
