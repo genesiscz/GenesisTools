@@ -4,6 +4,7 @@ import GenesisKit
 @MainActor
 final class LivePreviewDelegate: NSObject, NSApplicationDelegate {
     private var widget: WidgetCoordinator?
+    private var terminating = false
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let binary = Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetCLI") as? String
         else {
@@ -13,7 +14,15 @@ final class LivePreviewDelegate: NSObject, NSApplicationDelegate {
         }
         let stateRoot =
             Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetStateRoot") as? String
-        widget = WidgetCoordinator(binaryPath: binary, stateRoot: stateRoot) { session in
+        guard let stateRoot else {
+            NSLog("Preview requires an isolated state root")
+            NSApp.terminate(nil)
+            return
+        }
+        let runtime = FlowFocusRuntime(dataRoot: URL(fileURLWithPath: stateRoot).appendingPathComponent("flow-focus"),
+            hostID: Bundle.main.bundleIdentifier, liveServices: false, presentsWindows: true, sharedModels: false)
+        widget = WidgetCoordinator(binaryPath: binary, stateRoot: stateRoot, flowRuntime: runtime,
+            micLauncher: nil) { session in
             var components = URLComponents(string: "genesis-tools://hub")!
             components.queryItems = [URLQueryItem(name: "mode", value: "agents")]
             if let session {
@@ -39,5 +48,14 @@ final class LivePreviewDelegate: NSObject, NSApplicationDelegate {
         widget?.start(showSettings: true)
     }
     @objc private func showSettings() { widget?.showSettings() }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminating else { return .terminateLater }
+        terminating = true
+        Task { [self] in
+            await widget?.shutdown()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
     func applicationWillTerminate(_ notification: Notification) { widget?.stop() }
 }

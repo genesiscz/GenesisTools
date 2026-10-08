@@ -10,6 +10,10 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
     private let descriptor: Int32
     private let initialPageID: String?
     private var widgetModel: WidgetModel?
+    private var flowRuntime: FlowFocusRuntime?
+    private var transforms: FlowTransformTools?
+    private var runtimeStart: Task<Void, Never>?
+    private var terminating = false
 
     init(descriptor: Int32, pageID: String?) {
         self.descriptor = descriptor
@@ -25,12 +29,29 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
                 ClickyHost.shared.showSettings(pageID: notification.userInfo?["page"] as? String)
             }
         }
+        let stateRoot = Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetStateRoot") as? String
+        let runtime: FlowFocusRuntime
+        do { runtime = try NativeFlowRuntime.resolve(stateRoot: stateRoot) }
+        catch {
+            NSLog("Feature runtime setup failed: %@", error.localizedDescription)
+            NSApp.terminate(nil)
+            return
+        }
+        flowRuntime = runtime
         let model = WidgetModel(
             binaryPath: ToolsBridge.defaultBinaryPath(),
-            stateRoot: Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetStateRoot") as? String)
+            stateRoot: stateRoot)
         widgetModel = model
+        let transforms = FlowTransformTools(bridge: model.bridge, configuration: runtime.configuration)
+        self.transforms = transforms
+        FlowFocusHost.shared.openSettings = { ClickyHost.shared.showSettings(pageID: "focus.general") }
+        FlowFocusHost.shared.runTransform = { [weak transforms] request in
+            guard let transforms else { throw CancellationError() }
+            return try await transforms.run(request)
+        }
+        runtimeStart = Task { await runtime.start() }
         for section in WidgetFeatureSettings.sections(
-            model: model, modules: WidgetModuleChoice.builtins,
+            model: model, modules: WidgetModuleChoice.builtins, flowRuntime: runtime, transforms: transforms,
             openSession: { session in
                 WidgetLaunch.start(["--widget", "--session-key", session.key])
             })
@@ -59,6 +80,19 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showSettings() { ClickyHost.shared.showSettings() }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminating else { return .terminateLater }
+        terminating = true
+        Task { [self] in
+            runtimeStart?.cancel()
+            await runtimeStart?.value
+            widgetModel?.stop()
+            await flowRuntime?.stop()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
         widgetModel?.stop()
