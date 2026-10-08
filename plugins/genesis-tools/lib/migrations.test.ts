@@ -58,7 +58,9 @@ async function run(
     args: string[] = []
 ): Promise<{ code: number; stdout: string; stderr: string }> {
     const proc = Bun.spawn(["bun", script, ...args], {
-        env: { ...process.env, GENESIS_TOOLS_HOME: home },
+        // bun test runs in UTC while a spawned bun uses the machine's zone; between local midnight and
+        // the UTC one they disagree on the date the archive name carries, so the child gets UTC too.
+        env: { ...process.env, GENESIS_TOOLS_HOME: home, TZ: "UTC" },
         stdout: "pipe",
         stderr: "pipe",
     });
