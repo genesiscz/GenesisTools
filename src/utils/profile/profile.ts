@@ -343,32 +343,28 @@ function formatMeta(input: ProfileMetaInput | undefined): string {
         return "";
     }
 
-    let meta: ProfileMeta;
     try {
-        meta = typeof input === "function" ? input() : input;
+        const meta = typeof input === "function" ? input() : input;
+        let text = "";
+        for (const [key, raw] of Object.entries(meta)) {
+            if (raw === undefined || raw === null || raw === "") {
+                continue;
+            }
+
+            let value = String(raw).replace(/\s+/g, "_");
+            if (value.length > META_VALUE_CHARS) {
+                value = `${value.slice(0, META_VALUE_CHARS - 1)}…`;
+            }
+
+            text += ` ${key}=${value}`;
+        }
+
+        return text;
     } catch (error) {
-        // Shown on the line itself rather than logged: the profiler sits below the logger.
         return ` meta=unavailable(${String(error instanceof Error ? error.message : error)
             .replace(/\s+/g, "_")
             .slice(0, 60)})`;
     }
-
-    let text = "";
-    for (const [key, raw] of Object.entries(meta)) {
-        if (raw === undefined || raw === null || raw === "") {
-            continue;
-        }
-
-        // One token per value: the line stays one space-separated record a pattern can read.
-        let value = String(raw).replace(/\s+/g, "_");
-        if (value.length > META_VALUE_CHARS) {
-            value = `${value.slice(0, META_VALUE_CHARS - 1)}…`;
-        }
-
-        text += ` ${key}=${value}`;
-    }
-
-    return text;
 }
 
 interface Stat {

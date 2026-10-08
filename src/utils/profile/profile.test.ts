@@ -180,6 +180,28 @@ describe("profiler config gate", () => {
         ).toContain("walk");
     });
 
+    it("metadata getters cannot reject a successful measurement or replace its error", async () => {
+        await setProfilingConfig({ enabled: true });
+        reloadProfiler();
+        const meta = {
+            get source(): string {
+                throw new Error("getter failed");
+            },
+        };
+        expect(profiler.scope("t").measure("getter", () => 7, meta)).toBe(7);
+        expect(await profiler.scope("t").measureAsync("getter-async", async () => 8, meta)).toBe(8);
+        expect(() =>
+            profiler.scope("t").measure(
+                "original",
+                () => {
+                    throw new Error("original failure");
+                },
+                meta
+            )
+        ).toThrow("original failure");
+        expect(profilingLogBodies()).toContain("meta=unavailable(getter_failed)");
+    });
+
     it("builds no metadata while the scope is off", async () => {
         await setProfilingConfig({ enabled: false });
         reloadProfiler();
