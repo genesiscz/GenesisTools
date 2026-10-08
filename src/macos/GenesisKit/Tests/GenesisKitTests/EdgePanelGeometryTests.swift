@@ -999,11 +999,22 @@ final class WidgetRosterTests: XCTestCase {
                 }
                 let hovered = await probe.identities
                 XCTAssertEqual(hovered, [pointed.key], "Hover must not warm the previously selected agent")
+                model.hoverSession(pointed.key, on: surface, inside: false)
+                model.hover(surface, inside: true)
+                try await Task.sleep(for: .milliseconds(250))
+                let afterReflow = await probe.identities
+                XCTAssertEqual(afterReflow, [pointed.key], "Preview expansion must not switch a stationary pointer's preload back to the selected session")
                 XCTAssertEqual(model.selectedKey, selected, "Pointer movement must not change the reply destination")
                 _ = try await cache.value(for: .init(identity: pointed.key, query: pointed.target.sessionId, provider: "codex"))
                 let opened = await probe.identities
                 XCTAssertEqual(opened, [pointed.key], "Opening must reuse the hovered agent's load")
                 model.hoverSession(pointed.key, on: surface, inside: false)
+                model.hover(surface, inside: false)
+                try await Task.sleep(for: .milliseconds(250))
+                model.hover(surface, inside: true)
+                try await Task.sleep(for: .milliseconds(250))
+                let afterLeaving = await probe.identities
+                XCTAssertEqual(afterLeaving, [pointed.key, selected], "Reentering the surface must not retain an old agent target")
             }
         }
     }
