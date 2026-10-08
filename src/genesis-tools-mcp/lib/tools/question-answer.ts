@@ -1,6 +1,7 @@
 import { type RecordDeps, recordAnswer } from "@app/question/lib/record";
 import type { QaRef, QaTag } from "@app/question/lib/types";
 import { SOURCE_MESSAGE_INPUT_SCHEMA, type SourceMessage } from "@genesiscz/utils/agent/source-anchor";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { IMAGE_ATTACHMENT_INPUT_SCHEMA, type ImageAttachmentInput } from "@genesiscz/utils/image/attachments";
 
 export interface QuestionAnswerArgs {
@@ -38,7 +39,7 @@ export async function handleQuestionAnswer(args: QuestionAnswerArgs, deps: Recor
         warnings:
             res.context.sessionId === "unknown"
                 ? [
-                      "This gateway could not identify the originating session. Supply its known sessionHint and projectPath, or use tools question record from the agent's worktree. Do not invent an ID.",
+                      `This gateway could not identify the originating session. Supply its known sessionHint and projectPath, or use ${toolCommand("question record")} from the agent's worktree. Do not invent an ID.`,
                   ]
                 : [],
         attachments: res.attachments ?? [],

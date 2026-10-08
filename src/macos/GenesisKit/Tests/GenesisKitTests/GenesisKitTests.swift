@@ -388,8 +388,29 @@ private final class ShelfDraftBackend {
 @MainActor
 private final class ShelfDraftGate {
     private var continuation: CheckedContinuation<Void, Never>?
-    func wait() async { await withCheckedContinuation { continuation = $0 } }
-    func open() { continuation?.resume(); continuation = nil }
+    private var deadline: Task<Void, Never>?
+
+    func wait(timeout: Duration) async {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            deadline = Task { [weak self] in
+                do { try await Task.sleep(for: timeout) }
+                catch is CancellationError { return }
+                catch { XCTFail("Gate deadline failed: \(error)"); return }
+                guard let self, self.continuation != nil else { return }
+                XCTFail("Shelf draft gate was not released before its deadline")
+                self.open()
+            }
+        }
+    }
+
+    func open() {
+        deadline?.cancel()
+        deadline = nil
+        let pending = continuation
+        continuation = nil
+        pending?.resume()
+    }
 }
 
 @MainActor
@@ -431,7 +452,7 @@ final class WidgetShelfDraftOrderingTests: XCTestCase {
         let began = expectation(description: "Descriptor read begins")
         let gate = ShelfDraftGate()
         let backend = ShelfDraftBackend()
-        backend.resolve = { began.fulfill(); await gate.wait() }
+        backend.resolve = { began.fulfill(); await gate.wait(timeout: .seconds(5)) }
         let model = model(backend)
         defer { model.stop() }
         model.selectedKey = "chosen"
@@ -454,7 +475,7 @@ final class WidgetShelfDraftOrderingTests: XCTestCase {
         let laterText = expectation(description: "Actual debounce saves newer text")
         let gate = ShelfDraftGate()
         let backend = ShelfDraftBackend()
-        backend.beforeSave = { began.fulfill(); await gate.wait() }
+        backend.beforeSave = { began.fulfill(); await gate.wait(timeout: .seconds(5)) }
         backend.textSaved = { laterText.fulfill() }
         let model = model(backend)
         defer { model.stop() }
