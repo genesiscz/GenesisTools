@@ -7,7 +7,8 @@
  * time budget:
  *
  * - Claude: the last `custom-title` record (`/rename`) of each transcript modified within `maxAgeDays`.
- * - Grok:   `summary.json` -> `session_summary` of each session directory.
+ * - Grok:   `summary.json` of each session directory: the `/rename` name (`generated_title` with
+ *           `title_is_manual: true`), else the generated `session_summary`.
  * - Codex:  `session_index.jsonl` -> `thread_name`, in every home `CODEX_HOME` names (else `~/.codex`).
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -162,6 +163,19 @@ function claudeSessions({
     return found;
 }
 
+/** A Grok `/rename` lands in `generated_title` with `title_is_manual: true`; it beats the generated summary. */
+export function grokTitleOf(summary: Record<string, unknown>): string | null {
+    const manual = summary.title_is_manual === true ? summary.generated_title : undefined;
+
+    if (typeof manual === "string" && manual.trim() !== "") {
+        return manual;
+    }
+
+    return typeof summary.session_summary === "string" && summary.session_summary.trim() !== ""
+        ? summary.session_summary
+        : null;
+}
+
 function grokSessions(roots: string[]): TitledSession[] {
     const found: TitledSession[] = [];
 
@@ -178,10 +192,7 @@ function grokSessions(roots: string[]): TitledSession[] {
 
                 try {
                     const summary: unknown = SafeJSON.parse(readFileSync(summaryPath, "utf8"), { strict: true });
-                    const title =
-                        isRecord(summary) && typeof summary.session_summary === "string"
-                            ? summary.session_summary
-                            : null;
+                    const title = isRecord(summary) ? grokTitleOf(summary) : null;
 
                     if (title) {
                         found.push({ sessionId: id, title, mtime: mtimeOf(updates), locator: updates });

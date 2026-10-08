@@ -370,15 +370,3 @@ export function registerAgentsCommand(program: Command): void {
         await guarded(() => runSessionClose(query, options));
     });
 }
-
-/** `tools cmux session new`: the old Claude-only door, kept as an alias of `agents new claude`. */
-export function registerSessionCommand(program: Command): void {
-    const session = program.command("session").description("Deprecated: use tools cmux agents");
-
-    addNewOptions(session.command("new").description("Deprecated: tools cmux agents new claude (same flags)")).action(
-        async (options: SessionNewFlags) => {
-            process.stderr.write("tools cmux session new is deprecated; use: tools cmux agents new claude\n");
-            await guarded(() => runSessionNew("claude", options));
-        }
-    );
-}

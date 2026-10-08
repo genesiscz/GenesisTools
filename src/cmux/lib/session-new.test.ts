@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
-import { registerSessionCommand, runSessionNew } from "../commands/session";
+import { registerAgentsCommand, runSessionNew } from "../commands/agents";
 import { accountChoiceMessage, budgetsFromSnapshots } from "./account-budgets";
 import { agentRunCommand, pickSessionAccount, sessionAgent, withPidNote } from "./session-agents";
 import {
@@ -453,14 +453,14 @@ test("a codex session runs tools codex run with its only account, and a taken na
     );
 });
 
-test("session new advertises repo, account, prompt, tmux, focus, and json", async () => {
+test("agents new advertises repo, account, prompt, tmux, focus, and json", async () => {
     const program = new Command().exitOverride();
-    registerSessionCommand(program);
-    const session = program.commands.find((command) => command.name() === "session");
-    const created = session?.commands.find((command) => command.name() === "new");
+    registerAgentsCommand(program);
+    const agents = program.commands.find((command) => command.name() === "agents");
+    const created = agents?.commands.find((command) => command.name() === "new");
 
     if (!created) {
-        throw new Error("session new was not registered");
+        throw new Error("agents new was not registered");
     }
 
     created.exitOverride();
@@ -473,7 +473,19 @@ test("session new advertises repo, account, prompt, tmux, focus, and json", asyn
 
     await expect(
         program.parseAsync(
-            ["session", "new", "--repo", "demo", "--account", "work", "--via-tmux", "--focus", "false", "--json"],
+            [
+                "agents",
+                "new",
+                "claude",
+                "--repo",
+                "demo",
+                "--account",
+                "work",
+                "--via-tmux",
+                "--focus",
+                "false",
+                "--json",
+            ],
             { from: "user" }
         )
     ).rejects.toBe(stop);

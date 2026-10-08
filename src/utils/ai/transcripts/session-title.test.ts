@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { findSessionsByTitle, lastClaudeTitle, rankByTitle } from "./session-title";
+import { findSessionsByTitle, grokTitleOf, lastClaudeTitle, rankByTitle } from "./session-title";
 
 const titled = (title: string, mtime: number) => ({ sessionId: title, title, mtime, locator: title });
 
@@ -89,6 +89,17 @@ describe("findSessionsByTitle", () => {
 
         expect(findSessionsByTitle("old name", { provider: "codex", codexIndexPath: index })).toEqual([]);
         expect(findSessionsByTitle("new name", { provider: "codex", codexIndexPath: index })).toHaveLength(1);
+    });
+
+    it("finds a Grok session by its /rename name, which beats the generated summary", () => {
+        expect(
+            grokTitleOf({ generated_title: "shop", title_is_manual: true, session_summary: "Shop layout notes" })
+        ).toBe("shop");
+        // Not renamed: the generated title is Grok's own guess, the summary stays the name.
+        expect(
+            grokTitleOf({ generated_title: "guess", title_is_manual: false, session_summary: "Shop layout notes" })
+        ).toBe("Shop layout notes");
+        expect(grokTitleOf({})).toBeNull();
     });
 
     it("reads the session index of every home CODEX_HOME names", async () => {

@@ -15,8 +15,7 @@ export const CMUX_REGISTRARS: LazyRegistrar[] = [
     { names: ["send-self"], load: async () => (await import("./commands/send-self")).registerSendSelfCommand },
     { names: ["doctor"], load: async () => (await import("./commands/doctor")).registerDoctorCommand },
     { names: ["launch"], load: async () => (await import("./commands/launch")).registerLaunchCommand },
-    { names: ["agents"], load: async () => (await import("./commands/session")).registerAgentsCommand },
-    { names: ["session"], load: async () => (await import("./commands/session")).registerSessionCommand },
+    { names: ["agents"], load: async () => (await import("./commands/agents")).registerAgentsCommand },
     { names: ["rescue"], load: async () => (await import("./commands/rescue")).registerRescueCommand },
     { names: ["tree"], load: async () => (await import("./commands/tree")).registerTreeCommand },
 ];
