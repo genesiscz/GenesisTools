@@ -1,5 +1,7 @@
 /** Scope names tools already pass to `profiler.scope()`. `--scopes` help lists these. */
 export const PROFILER_SCOPE_NAMES = [
+    // One line per `tools` command run (runTool): wall time from process start, CPU, peak memory, caller.
+    "cli",
     "claude-history",
     "agent-sessions",
     "agent-history",

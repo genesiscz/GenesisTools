@@ -96,6 +96,13 @@ files with no log line, and new `Genesis*` crash reports in `~/Library/Logs/Diag
 the stack says otherwise; read the file before you change anything else. Source:
 src/hub/lib/dev-monitor.ts.
 
+It also follows the day's profiling log (`~/.genesis-tools/logs/<date>-profiling.log`, written by
+every `tools` process while `tools config profiling` is on) and reports each timer of 1 s or more
+(`--min-profile-ms`) as a `slow` event, repeats in one batch collapsed to "×N, max …". Every command
+run writes one `[profile:cli] <command> exit= cpu= rss= caller=app|shell <wall>` line at exit
+(`runTool`), so a slow command shows up even with no timer inside it; `caller=app` means
+GenesisTools.app started it, and those are the ones to take down first.
+
 ## Measure every load
 
 Every load that can be slow runs in a span: `HubPerf.begin("area.what", detail)` then

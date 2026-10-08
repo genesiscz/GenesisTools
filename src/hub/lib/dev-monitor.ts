@@ -1,6 +1,7 @@
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { formatLocalDate } from "@genesiscz/utils/date";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
@@ -12,22 +13,58 @@ const log = logger.child({ component: "hub:dev-monitor" });
  * agent on each instead of the user finding a "not responding" banner first.
  */
 export interface DevEvent {
-    kind: "wedge" | "hang" | "stall" | "layout-loop" | "slow-main" | "jank" | "error" | "relay" | "crash";
+    kind: "wedge" | "hang" | "stall" | "layout-loop" | "slow-main" | "jank" | "error" | "relay" | "crash" | "slow";
     /** The time the source line carries ("01:46:40.479"), or the file's time for a crash or a hang file. */
     time: string;
     text: string;
     /** A file to read for the details: the hang sample, the stall stacks, the crash report. */
     file?: string;
+    /** Events with one key inside a batch print as one line with a count (a timer that is slow every call). */
+    key?: string;
+    /** The duration, for the "max" of a collapsed line. */
+    ms?: number;
 }
 
 export interface ClassifyOptions {
     /** A recovered stall shorter than this is left out. */
     minStallMs: number;
+    /** A profiling line (`tools config profiling`) shorter than this is left out. */
+    minProfileMs: number;
     /** A SLOW span on the main thread shorter than this is left out. */
     minSlowMainMs: number;
 }
 
-export const DEFAULT_CLASSIFY: ClassifyOptions = { minStallMs: 500, minSlowMainMs: 400 };
+export const DEFAULT_CLASSIFY: ClassifyOptions = { minStallMs: 500, minSlowMainMs: 400, minProfileMs: 1000 };
+
+const profilePattern = /^\[profile:([^\]]+)\] (.*?) (\d+(?:\.\d+)?)(ms|s)(?: trace=(\S+))?$/;
+
+/**
+ * A line of the day's profiling log as an event when it took at least `minProfileMs`: a timer inside a
+ * `tools` command, or the `cli` line of a whole command run. Summary rows and `@` marks are not durations.
+ */
+export function classifyProfileLine(line: string, options: ClassifyOptions = DEFAULT_CLASSIFY): DevEvent | null {
+    const match = line.match(profilePattern);
+
+    if (!match || match[2].startsWith("@") || /^\s|── /.test(match[2])) {
+        return null;
+    }
+
+    const ms = Number(match[3]) * (match[4] === "s" ? 1000 : 1);
+
+    if (ms < options.minProfileMs) {
+        return null;
+    }
+
+    const [, scope, label, , , trace] = match;
+    const duration = ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`;
+    return {
+        kind: "slow",
+        time: "",
+        text: `${scope} ${label} ${duration}${trace ? ` trace=${trace}` : ""}`.slice(0, 300),
+        key: `${scope} ${label.replace(/\d+/g, "N")}`,
+        ms,
+    };
+}
 
 const timePattern = /^\[(\d\d:\d\d:\d\d(?:\.\d+)?)\]\s*/;
 
@@ -101,19 +138,36 @@ export function formatEvent(event: DevEvent): string {
     return `[${event.time || new Date().toTimeString().slice(0, 8)}] ${event.kind} ${event.text}${event.file ? ` (${event.file})` : ""}`;
 }
 
-/** Reads what was appended to one text file since the last call, line by line; a rotated file starts over. */
+/**
+ * Reads what was appended to one text file since the last call, line by line; a rotated file starts over.
+ * A path function follows a day-stamped log to the next day's file, from its start.
+ */
 class TextTail {
     private offset: number;
     private partial = "";
+    private path: string;
 
     constructor(
-        readonly path: string,
+        private readonly pathOf: string | (() => string),
         fromStart: boolean
     ) {
-        this.offset = fromStart || !existsSync(path) ? 0 : statSync(path).size;
+        this.path = this.current();
+        this.offset = fromStart || !existsSync(this.path) ? 0 : statSync(this.path).size;
+    }
+
+    private current(): string {
+        return typeof this.pathOf === "string" ? this.pathOf : this.pathOf();
     }
 
     read(): string[] {
+        const now = this.current();
+
+        if (now !== this.path) {
+            this.path = now;
+            this.offset = 0;
+            this.partial = "";
+        }
+
         if (!existsSync(this.path)) {
             return [];
         }
@@ -215,15 +269,51 @@ export class EventBatcher {
         const batch = this.pending;
         this.pending = [];
         this.lastFlush = now;
-        this.emit(batch);
+        this.emit(collapse(batch));
         return batch.length;
     }
+}
+
+/** Events with one key become the first of them plus "×N, max …", in the place of the first. */
+export function collapse(events: DevEvent[]): DevEvent[] {
+    const groups = new Map<string, DevEvent[]>();
+    const result: DevEvent[] = [];
+
+    for (const event of events) {
+        if (!event.key) {
+            result.push(event);
+            continue;
+        }
+
+        const group = groups.get(event.key);
+
+        if (group) {
+            group.push(event);
+            continue;
+        }
+
+        const fresh = [event];
+        groups.set(event.key, fresh);
+        result.push(event);
+    }
+
+    return result.map((event) => {
+        const group = event.key ? groups.get(event.key) : undefined;
+
+        if (!group || group.length === 1) {
+            return event;
+        }
+
+        const max = Math.max(...group.map((item) => item.ms ?? 0));
+        return { ...event, text: `${event.text} (×${group.length}, max ${(max / 1000).toFixed(2)}s)` };
+    });
 }
 
 /** The files the monitor reads, for its start line and for tests. */
 export function devMonitorSources() {
     return {
         perfLog: genesisToolsDir("logs", "app-perf.log"),
+        profileLog: () => genesisToolsDir("logs", `${formatLocalDate(new Date())}-profiling.log`),
         relayLog: genesisToolsDir("app", "link-relay.log"),
         hangs: genesisToolsDir("logs", "hangs"),
         crashes: join(homedir(), "Library", "Logs", "DiagnosticReports"),
@@ -235,6 +325,7 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
     const sources = devMonitorSources();
     const perf = new TextTail(sources.perfLog, options.fromStart);
     const relay = new TextTail(sources.relayLog, options.fromStart);
+    const profile = new TextTail(sources.profileLog, options.fromStart);
     const crashes = new FolderWatch(sources.crashes, (name) => /^Genesis/.test(name) && /\.(ips|crash)$/.test(name));
     // Hang files are announced by their app-perf.log line already; a file with no line means the
     // process could not log any more, which is the case worth a separate event.
@@ -251,6 +342,13 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
                 }
 
                 batcher.add(event);
+            }
+        }
+
+        for (const line of profile.read()) {
+            const event = classifyProfileLine(line, options);
+            if (event) {
+                batcher.add({ ...event, time: new Date().toTimeString().slice(0, 8) });
             }
         }
 

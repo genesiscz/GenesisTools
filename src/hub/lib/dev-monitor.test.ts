@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
     classifyPerfLine,
+    classifyProfileLine,
     classifyRelayLine,
+    collapse,
+    DEFAULT_CLASSIFY,
     type DevEvent,
     describeCrash,
     EventBatcher,
@@ -72,6 +75,39 @@ describe("classifyPerfLine", () => {
             classifyPerfLine("[01:46:34.305] mark frames 1 dropped of 471 in 5.0s, worst 62ms, lost 52ms")
         ).toBeNull();
         expect(classifyPerfLine("[22:21:38.373] mark hub.link forward failed: some error")?.kind).toBe("error");
+    });
+});
+
+describe("classifyProfileLine", () => {
+    test("a timer or a command run of a second or more is an event; summaries, marks and quick ones are not", () => {
+        expect(classifyProfileLine("[profile:agent-sessions] discover.walk 1.234s trace=ab12")).toMatchObject({
+            kind: "slow",
+            text: "agent-sessions discover.walk 1.23s trace=ab12",
+            ms: 1234,
+        });
+        expect(
+            classifyProfileLine("[profile:cli] agents changes exit=0 cpu=1353ms rss=2470MB caller=app 1.117s")?.text
+        ).toBe("cli agents changes exit=0 cpu=1353ms rss=2470MB caller=app 1.12s");
+        expect(classifyProfileLine("[profile:widget] sessions 53.89ms")).toBeNull();
+        expect(classifyProfileLine("[profile:agent-sessions] @sync.discover-full-skipped 4.5s")).toBeNull();
+        expect(
+            classifyProfileLine(
+                "[profile:cmux]   list-workspaces          n=    1  total=  3000ms  avg=  3000ms  max=  3000ms"
+            )
+        ).toBeNull();
+        expect(
+            classifyProfileLine("[profile:widget] sessions 653ms", { ...DEFAULT_CLASSIFY, minProfileMs: 500 })?.kind
+        ).toBe("slow");
+    });
+
+    test("a batch shows one line per slow timer with its count and maximum", () => {
+        const events = [
+            classifyProfileLine("[profile:a] walk 1.0s"),
+            { kind: "stall" as const, time: "", text: "x" },
+            classifyProfileLine("[profile:a] walk 3.0s"),
+            classifyProfileLine("[profile:a] walk 2.0s"),
+        ].filter((event): event is DevEvent => event !== null);
+        expect(collapse(events).map((event) => event.text)).toEqual(["a walk 1.00s (×3, max 3.00s)", "x"]);
     });
 });
 

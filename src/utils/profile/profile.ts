@@ -333,6 +333,8 @@ export interface ProfilerScope {
     measure<T>(label: string, fn: () => T): T;
     /** Time an async fn, record under `label`, return its value. */
     measureAsync<T>(label: string, fn: () => Promise<T>): Promise<T>;
+    /** Record a duration measured elsewhere (a whole process run, from its start), with an optional outcome. */
+    record(label: string, ms: number, outcome?: string): void;
     /** Record an instantaneous mark (ms since this scope was created). */
     mark(label: string): void;
     /** `using`-friendly section: stops on dispose or explicit .end(). */
@@ -377,6 +379,7 @@ function makeScope(name: string): ProfilerScope {
             start: () => noopEnd,
             measure: (_label, fn) => fn(),
             measureAsync: (_label, fn) => fn(),
+            record: () => {},
             mark: () => {},
             section: () => ({ end: noopEnd, [Symbol.dispose]() {} }),
             entries: () => [],
@@ -385,12 +388,16 @@ function makeScope(name: string): ProfilerScope {
         };
     }
 
+    const recordLine = (label: string, dur: number, outcome?: string): void => {
+        record(label, dur);
+        write(`[profile:${name}] ${label}${outcome ? ` ${outcome}` : ""} ${fmtMs(dur)}`, dur);
+    };
+
     const start = (label: string): ((outcome?: string) => number) => {
         const s = performance.now();
         return (outcome) => {
             const dur = performance.now() - s;
-            record(label, dur);
-            write(`[profile:${name}] ${label}${outcome ? ` ${outcome}` : ""} ${fmtMs(dur)}`, dur);
+            recordLine(label, dur, outcome);
             return dur;
         };
     };
@@ -414,6 +421,7 @@ function makeScope(name: string): ProfilerScope {
                 end();
             }
         },
+        record: recordLine,
         mark: (label) => {
             write(`[profile:${name}] @${label} ${fmtMs(performance.now() - t0)}`);
         },
@@ -493,6 +501,7 @@ export const profiler: Profiler = {
     start: (label) => globalScope().start(label),
     measure: (label, fn) => globalScope().measure(label, fn),
     measureAsync: (label, fn) => globalScope().measureAsync(label, fn),
+    record: (label, ms, outcome) => globalScope().record(label, ms, outcome),
     mark: (label) => globalScope().mark(label),
     section: (label) => globalScope().section(label),
     entries: () => globalScope().entries(),

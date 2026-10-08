@@ -2,6 +2,8 @@ import { basename, dirname } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger, setBaseBinding, setConsoleLevel } from "@genesiscz/utils/logger";
 import { consoleFloorFor } from "@genesiscz/utils/logging/tool-policy";
+import { flushProfilerFile, profiler } from "@genesiscz/utils/profile";
+import { currentTraceId } from "@genesiscz/utils/trace";
 import { type Command, CommanderError } from "commander";
 import { setCurrentCommand } from "./current-command";
 import { enhanceHelp, markRequiredOptionsDeep, setSuggestCommandProgram, showHelpAfterErrorDeep } from "./executor";
@@ -209,6 +211,47 @@ export function reportUnhandledToolError(error: unknown): void {
     process.exitCode = 1;
 }
 
+/** The command a run executed, as `agents changes`: names only, never argument values. */
+let runCommandPath: string | null = null;
+
+function commandPath(command: Command): string {
+    const names: string[] = [];
+
+    for (let current: Command | null = command; current; current = current.parent) {
+        names.unshift(current.name());
+    }
+
+    return names.join(" ");
+}
+
+/**
+ * One `[profile:cli]` line per command run, written at exit: wall time since the process started (Bun
+ * startup and imports included, which is what a caller waits for), CPU time, peak memory, and
+ * `caller=app` when GenesisTools.app started it (its trace id is set). `tools hub dev monitor` reports
+ * the slow ones, so a command that costs seconds is seen without a timer inside it.
+ */
+function recordRunOnExit(tool: string): void {
+    const cli = profiler.scope("cli");
+
+    if (!cli.enabled) {
+        return;
+    }
+
+    process.once("exit", (code) => {
+        const cpu = process.cpuUsage();
+        const cpuMs = Math.round((cpu.user + cpu.system) / 1000);
+        const rssMb = Math.round(process.resourceUsage().maxRSS / 1024);
+        const caller = currentTraceId() ? "app" : "shell";
+        cli.record(
+            runCommandPath ?? tool,
+            performance.now(),
+            `exit=${code} cpu=${cpuMs}ms rss=${rssMb}MB caller=${caller}`
+        );
+        // The profiler's own exit flush may already have run.
+        flushProfilerFile();
+    });
+}
+
 export async function runTool(
     program: Command,
     opts: RunToolOpts = {},
@@ -248,6 +291,10 @@ export async function runTool(
 
     const tool = opts.tool ?? program.name() ?? basename(argv[1] ?? "tool");
 
+    if (argv === process.argv) {
+        recordRunOnExit(tool);
+    }
+
     if (!opts.ignoreParams?.includes("verbose")) {
         addGlobalVerboseOption(program, { trace: opts.trace === true });
     }
@@ -279,6 +326,7 @@ export async function runTool(
 
     program.hook("preAction", async (_thisCommand, actionCommand) => {
         setCurrentCommand(actionCommand);
+        runCommandPath = commandPath(actionCommand);
         if (program.opts().readme) {
             const { printReadmeAndExit } = await import("@genesiscz/utils/readme");
             printReadmeAndExit(callerDirOf(argv));

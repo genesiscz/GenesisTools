@@ -19,6 +19,7 @@ interface MonitorFlags {
     fromStart?: boolean;
     minStallMs: number;
     minSlowMainMs: number;
+    minProfileMs: number;
     intervalMs: number;
     minDelayMs: number;
 }
@@ -47,6 +48,12 @@ export function registerDevCommands(program: Command): void {
             positiveNumber,
             DEFAULT_CLASSIFY.minSlowMainMs
         )
+        .option(
+            "--min-profile-ms <ms>",
+            "report profiling lines (tools config profiling: CLI timers and whole command runs) at least this long",
+            positiveNumber,
+            DEFAULT_CLASSIFY.minProfileMs
+        )
         .option("--interval-ms <ms>", "how often the files are read", positiveNumber, 500)
         .option(
             "--min-delay-ms <ms>",
@@ -56,13 +63,14 @@ export function registerDevCommands(program: Command): void {
         )
         .action(async (flags: MonitorFlags) => {
             const sources = devMonitorSources();
-            const start = `[${new Date().toTimeString().slice(0, 8)}] monitor watching ${sources.perfLog}, ${sources.relayLog}, ${sources.hangs}, ${sources.crashes}`;
+            const start = `[${new Date().toTimeString().slice(0, 8)}] monitor watching ${sources.perfLog}, ${sources.profileLog()}, ${sources.relayLog}, ${sources.hangs}, ${sources.crashes}`;
             out.print(`${flags.json ? SafeJSON.stringify({ kind: "start", text: start }) : start}\n`);
             await withInterrupt((signal) =>
                 runDevMonitor({
                     fromStart: flags.fromStart === true,
                     minStallMs: flags.minStallMs,
                     minSlowMainMs: flags.minSlowMainMs,
+                    minProfileMs: flags.minProfileMs,
                     intervalMs: Math.max(100, flags.intervalMs),
                     minDelayMs: flags.minDelayMs,
                     signal,
