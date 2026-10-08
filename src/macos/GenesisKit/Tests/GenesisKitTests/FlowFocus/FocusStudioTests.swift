@@ -501,7 +501,7 @@ final class FocusStudioModelTests: XCTestCase {
         let a = try store.openSegment(genesis)
         try store.closeSegment(id: a, at: start + 10 * 60_000)
         var other = ActivityStore.Segment(startedMs: start + 10 * 60_000, appBundle: "com.brave.Browser", appName: "Brave")
-        other.project = "col-fe"
+        other.project = "Other project"
         let b = try store.openSegment(other)
         try store.closeSegment(id: b, at: start + 20 * 60_000)
 

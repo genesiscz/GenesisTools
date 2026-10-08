@@ -169,7 +169,7 @@ final class PomodoroEngineTests: XCTestCase {
         engine.beginDND = { begun += 1 }
         engine.endDND = { ended += 1 }
 
-        engine.start(.flow, tag: "col-fe")
+        engine.start(.flow, tag: "Example project")
         XCTAssertEqual(engine.state, .running)
         XCTAssertEqual(engine.remainingSec, 300)
         XCTAssertEqual(begun, 1)
@@ -177,7 +177,7 @@ final class PomodoroEngineTests: XCTestCase {
 
         let open = try XCTUnwrap(try store.openSession())
         XCTAssertEqual(open.kind, "flow")
-        XCTAssertEqual(open.tag, "col-fe")
+        XCTAssertEqual(open.tag, "Example project")
         XCTAssertEqual(open.state, "running")
 
         engine.stop()
@@ -231,11 +231,11 @@ final class PomodoroEngineTests: XCTestCase {
     func testCrashResumeTakesRemainingFromTheWallClock() throws {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         _ = try store.startSession(.init(kind: "flow", plannedSec: 300, startedMs: now - 60_000,
-                                         state: "running", cycleIndex: 2, tag: "col-fe"))
+                                         state: "running", cycleIndex: 2, tag: "Example project"))
         engine.resumeOpenSessionIfAny()
         XCTAssertEqual(engine.state, .running)
         XCTAssertEqual(engine.phase, .flow)
-        XCTAssertEqual(engine.tag, "col-fe")
+        XCTAssertEqual(engine.tag, "Example project")
         XCTAssertEqual(Double(engine.remainingSec), 240, accuracy: 2,
                        "a minute of downtime costs a minute of the phase")
     }
@@ -410,15 +410,15 @@ final class FocusSettingsTests: XCTestCase {
 
     func testProjectRulePrecedenceIsCmuxThenTitleThenHost() {
         let rules: [[String: Any]] = [
-            ["name": "col-fe", "cmuxSession": "col-"],
+            ["name": "Example project", "cmuxSession": "project-"],
             ["name": "genesis", "titleContains": "GenesisPlayground"],
             ["name": "vault", "host": "obsidian.md"],
         ]
         let config: [String: Any] = ["focus": ["projects": rules] as [String: Any]]
         let settings = FocusSettings.from(appConfig: config)
 
-        XCTAssertEqual(settings.project(cmuxSession: "col-302921-pr", title: "GenesisPlayground", host: nil),
-                       "col-fe", "cmux wins over a title match")
+        XCTAssertEqual(settings.project(cmuxSession: "project-fixture", title: "GenesisPlayground", host: nil),
+                       "Example project", "cmux wins over a title match")
         XCTAssertEqual(settings.project(cmuxSession: nil, title: "GenesisPlayground — x", host: "obsidian.md"),
                        "genesis", "a title match wins over a host match")
         XCTAssertEqual(settings.project(cmuxSession: nil, title: nil, host: "help.obsidian.md"),

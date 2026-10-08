@@ -212,7 +212,7 @@ public struct FocusSettingsView: View {
                     Text("No rules yet. A rule matches a cmux session, a window title fragment, or a host, in that order, and the first match wins.")
                         .font(GenTypography.caption(11))
                         .foregroundStyle(Color.settingsTextSecondary)
-                    Text(#"Add them under app.focus.projects in ~/.genesis/client.json, e.g. {"name":"col-fe","cmuxSession":"col-"}"#)
+                    Text(#"Add them under app.focus.projects in ~/.genesis/client.json, e.g. {"name":"Example project","cmuxSession":"project-"}"#)
                         .font(GenTypography.mono(10))
                         .foregroundStyle(Color.settingsTextMuted)
                 } else {

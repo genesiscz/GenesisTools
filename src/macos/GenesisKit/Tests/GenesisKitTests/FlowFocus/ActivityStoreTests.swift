@@ -126,11 +126,11 @@ final class ActivityStoreTests: XCTestCase {
         let id = try store.startSession(.init(kind: ActivityStore.SessionKind.flow.rawValue,
                                               plannedSec: 1_500, startedMs: 1_000,
                                               state: ActivityStore.SessionState.running.rawValue,
-                                              cycleIndex: 0, tag: "col-fe"))
+                                              cycleIndex: 0, tag: "Example project"))
         // Mid-flow crash: the next launch must find this session and resume it.
         let recovered = try store.openSession()
         XCTAssertEqual(recovered?.id, id)
-        XCTAssertEqual(recovered?.tag, "col-fe")
+        XCTAssertEqual(recovered?.tag, "Example project")
 
         try store.endSession(id: id, at: 2_500, state: .done)
         XCTAssertNil(try store.openSession())

@@ -54,7 +54,7 @@ public struct FlowView: View {
         // NOTE: no `.accessibilityIdentifier` on this container. Setting one
         // here propagates to every descendant and clobbers their own ids —
         // the whole subtree came back as "flow-view" and the section rail
-        // became unaddressable. See GenesisBrain/Dev/Swift/
+        // became unaddressable. Keep identifiers on leaves to avoid propagation.
         // AccessibilityIdentifierPropagationClobbersChildren.md. The marker
         // lives on a leaf instead.
     }
