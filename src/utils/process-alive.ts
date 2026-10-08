@@ -26,6 +26,17 @@ export function isProcessAlive(pid: number): boolean {
         return false;
     }
 
+    return probeProcess(pid);
+}
+
+export function isProcessGroupAlive(ownerPid: number): boolean {
+    if (!Number.isInteger(ownerPid) || ownerPid <= 0) {
+        return false;
+    }
+    return probeProcess(-ownerPid);
+}
+
+function probeProcess(pid: number): boolean {
     try {
         process.kill(pid, 0);
         return true;
