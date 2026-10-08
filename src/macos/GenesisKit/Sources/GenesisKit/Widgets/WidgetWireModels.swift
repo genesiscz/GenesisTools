@@ -163,6 +163,29 @@ public struct WidgetVideoSettings: Codable, Equatable, Sendable {
     public var fps: Int
     public var framesPerImage: Int
     public var minimumDifferencePct: Double
+    public var startUs: Double? = nil
+    public var endUs: Double? = nil
+
+    func sampleRange(durationUs: Double) -> ClosedRange<Double> {
+        let duration = max(1, durationUs)
+        let end = min(duration, max(1, endUs ?? duration))
+        let start = min(end - 1, max(0, startUs ?? 0))
+        return start...end
+    }
+
+    mutating func setSampleStart(seconds: Double, durationUs: Double) {
+        guard seconds.isFinite, durationUs > 0 else { return }
+        let range = sampleRange(durationUs: durationUs)
+        let value = max(0, min((seconds * 1_000_000).rounded(), range.upperBound - min(10_000, durationUs)))
+        startUs = value == 0 ? nil : value
+    }
+
+    mutating func setSampleEnd(seconds: Double, durationUs: Double) {
+        guard seconds.isFinite, durationUs > 0 else { return }
+        let range = sampleRange(durationUs: durationUs)
+        let value = min(durationUs, max((seconds * 1_000_000).rounded(), range.lowerBound + min(10_000, durationUs)))
+        endUs = value == durationUs ? nil : value
+    }
 }
 public struct WidgetAsset: Codable, Identifiable, Equatable, Sendable {
     public struct Progress: Codable, Equatable, Sendable {
