@@ -516,9 +516,19 @@ final class PRThreadsStore: ObservableObject {
     private func show(_ next: PRThreadsPayload) {
         let before = Dictionary((payload?.threads ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let moved: Set<String> = before.isEmpty ? [] : Set(next.threads.filter { before[$0.id] != $0 }.map(\.id))
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+        // `show` runs on the main queue (load's completion), so the busy reading can start here.
+        MainActor.assumeIsolated { HubMainBusy.measure("prs.threads.show") }
+        // Animate only a few threads changing in a list already on screen. A first load (or a refresh that
+        // changes most threads) under a spring made SwiftUI build an animated insertion for every row of
+        // the non-lazy list at once: a 1.4 s main-thread stall opening a PR (2026-10-08).
+        if before.isEmpty || moved.count > Self.animatedChangeLimit {
             payload = next
             changed = moved
+        } else {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                payload = next
+                changed = moved
+            }
         }
         guard !moved.isEmpty else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
@@ -526,6 +536,9 @@ final class PRThreadsStore: ObservableObject {
             withAnimation(.easeOut(duration: 0.6)) { self.changed = [] }
         }
     }
+
+    /// More changed threads than this appear without the spring (see `show`).
+    static let animatedChangeLimit = 8
 
     /// The app became active again: load only when the last answer is older than the CLI's cache.
     func reloadIfStale() {
