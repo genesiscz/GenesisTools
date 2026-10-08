@@ -347,27 +347,14 @@ private struct ClickySettingsPageContent: View {
 
     private var stats: some View {
         VStack(spacing: 18) {
-            HStack(spacing: 14) {
-                metric("Key presses", value: model.statistics.presses, symbol: "arrow.down")
-                metric("Key releases", value: model.statistics.releases, symbol: "arrow.up")
-            }
-            card {
-                HStack {
-                    Label("Sessions enabled", systemImage: "power").font(.system(size: 13))
-                    Spacer()
-                    Text(model.statistics.sessions.formatted()).font(
-                        .system(size: 24, weight: .semibold, design: .rounded)
-                    ).monospacedDigit()
-                }
-                Text("Since \(model.statistics.startedAt.formatted(date: .abbreviated, time: .omitted))").font(
-                    .system(size: 11)
-                ).foregroundStyle(.secondary)
-            }
+            ClickyAnalyticsView(store: model.analytics)
             card("Privacy") {
                 setting(
                     "Keep local statistics",
-                    detail: "Save only total presses, releases and sessions. No words, key history or app history.",
+                    detail: "Minute and hour totals, daily totals and aggregate physical-key counts. No typed text, key sequence or application history.",
                     value: $model.preferences.collectStats)
+                Text("Minute history: 30 days · Hourly: 1 year · Daily: 2 years. Earlier lifetime totals are preserved without inventing historical detail.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Divider()
                 Button("Reset statistics…", role: .destructive) { confirmReset = true }.buttonStyle(.genHoverPlain())
             }
