@@ -21,6 +21,12 @@ final class ModelRoomDocument: NSDocument {
         undoManager = UndoManager()
         fileType = "public.json"
     }
+    convenience init(reviewedFile: ModelRoomFile) throws {
+        self.init()
+        try read(from: JSONEncoder().encode(reviewedFile), ofType: "public.json")
+        updateChangeCount(.changeDone)
+    }
+
     override class var autosavesInPlace: Bool { true }
     override class var readableTypes: [String] { ["public.json"] }
     override class var writableTypes: [String] { ["public.json"] }
@@ -82,6 +88,7 @@ final class ModelRoomDocument: NSDocument {
         return true
     }
 
+    @objc func draftWithAI(_ sender: Any?) { model.showAIProposal = true }
     @objc func exportHTML(_ sender: Any?) { model.exportDocument(format: "html") }
     @objc func exportResults(_ sender: Any?) { model.exportDocument(format: "results") }
     @objc func exportAssumptions(_ sender: Any?) { model.exportDocument(format: "assumptions") }
@@ -120,6 +127,7 @@ private final class ModelRoomAppDelegate: NSObject, NSApplicationDelegate {
             item.target = self
         }
         file.addItem(.separator())
+        file.addItem(withTitle: "Draft with AI…", action: #selector(ModelRoomDocument.draftWithAI(_:)), keyEquivalent: "")
         file.addItem(withTitle: "Save", action: #selector(NSDocument.save(_:)), keyEquivalent: "s")
         file.addItem(withTitle: "Save As…", action: #selector(NSDocument.saveAs(_:)), keyEquivalent: "s").keyEquivalentModifierMask = [.command, .shift]
         file.addItem(.separator())
@@ -160,9 +168,10 @@ private final class ModelRoomAppDelegate: NSObject, NSApplicationDelegate {
         sender.reply(toOpenOrPrint: modelFiles.isEmpty ? .cancel : .success)
     }
 
-    func create(example: String = "support", url: URL? = nil) {
-        let document = ModelRoomDocument()
+    @discardableResult
+    func create(example: String = "support", url: URL? = nil, reviewedFile: ModelRoomFile? = nil) -> ModelRoomDocument? {
         do {
+            let document = try reviewedFile.map { try ModelRoomDocument(reviewedFile: $0) } ?? ModelRoomDocument()
             if let url {
                 try document.read(from: url, ofType: "public.json")
                 document.fileURL = url
@@ -175,6 +184,12 @@ private final class ModelRoomAppDelegate: NSObject, NSApplicationDelegate {
                 self?.documents.removeAll { $0 === document }
             }
             document.model.mode = snapshotMode
+            document.model.openReviewedModel = { [weak self] file in
+                try file.validateForEditing()
+                guard self?.create(reviewedFile: file) != nil else {
+                    throw NSError(domain: "ModelRoom", code: 21, userInfo: [NSLocalizedDescriptionKey: "The new model window could not be opened."])
+                }
+            }
             document.model.tick = snapshotTick
             if snapshotPath == nil, let source = initialDataURL {
                 initialDataURL = nil
@@ -191,7 +206,7 @@ private final class ModelRoomAppDelegate: NSObject, NSApplicationDelegate {
                     model.prepareSubsystemImport(url: source)
                 }
             }
-            guard let window = document.windowControllers.first?.window else { return }
+            guard let window = document.windowControllers.first?.window else { return nil }
             if let snapshotPath {
                 window.setContentSize(NSSize(width: snapshotWidth, height: 920))
                 document.model.onEvaluated = { [weak self, weak window] in
@@ -213,14 +228,16 @@ private final class ModelRoomAppDelegate: NSObject, NSApplicationDelegate {
                 document.showWindows()
                 window.makeKeyAndOrderFront(nil)
             }
-            if url == nil { document.model.loadExample(example) }
+            if url == nil && reviewedFile == nil { document.model.loadExample(example) }
             else { document.model.evaluate(immediate: true) }
+            return document
         } catch {
             if snapshotPath != nil {
                 FileHandle.standardError.write(Data("model-room: \(error)\n".utf8))
                 exit(1)
             }
             NSApp.presentError(error)
+            return nil
         }
     }
 }

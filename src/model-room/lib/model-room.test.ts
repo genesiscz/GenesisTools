@@ -15,6 +15,7 @@ import { convertModelTime } from "./document-operations";
 import { comparisonValue, evaluateDocument } from "./evaluation";
 import { classroomModel, projectBudgetModel, supportCapacityModel } from "./examples";
 import { assumptionsCSV, resultsCSV, scriptJSON, serializedModel } from "./exports";
+import { inspectModelProposal, resolveModelProposal } from "./proposal";
 import { CalculationStopped, simulate, simulateAsync, sweepModel } from "./simulation";
 import {
     extractSubsystem,
@@ -867,5 +868,187 @@ describe("portable model subsystems", () => {
         const imported = await importSubsystem({ input, packageInput: packageFile, namespace: "copy" });
         expect(imported.added).toEqual(["copy_toString"]);
         expect(simulate({ model: compileModel({ input: imported.document }) }).frames[0].values.copy_toString).toBe(2);
+    });
+});
+
+describe("reviewed AI model proposals", () => {
+    const unknown = () => ({ value: null, sourceQuote: null, question: "Choose a value." });
+    const supplied = (value: number, sourceQuote: string) => ({ value, sourceQuote, question: "" });
+    const sourceText = "Use 10 days, a 1 day step and 3 people.";
+    function proposal() {
+        return {
+            format: "genesis-model-room-proposal",
+            version: 1,
+            title: "Support capacity",
+            explanation: "A draft relationship between staffing and capacity.",
+            time: { unit: "day", duration: supplied(10, "10 days"), step: supplied(1, "1 day step") },
+            quantities: [
+                {
+                    id: "staff",
+                    label: "Staff",
+                    unit: "people",
+                    kind: "input",
+                    description: "Available staff",
+                    seed: null,
+                    value: supplied(3, "3 people"),
+                },
+                {
+                    id: "rate",
+                    label: "Rate",
+                    unit: "ticket/person/day",
+                    kind: "input",
+                    description: "Explicit unknown productivity",
+                    seed: null,
+                    value: unknown(),
+                },
+                {
+                    id: "capacity",
+                    label: "Capacity",
+                    unit: "ticket/day",
+                    kind: "formula",
+                    description: "Capacity assumes constant productivity",
+                    seed: null,
+                    expression: "staff * rate",
+                },
+            ],
+            outputs: ["capacity"],
+        };
+    }
+
+    test("keeps unknown coefficients unresolved and does not mutate the proposal", async () => {
+        const input = proposal();
+        const before = structuredClone(input);
+        const review = inspectModelProposal({ input, sourceText });
+
+        expect(review.missing).toEqual([
+            { key: "rate.value", label: "Rate", unit: "ticket/person/day", question: "Choose a value." },
+        ]);
+        expect(input).toEqual(before);
+        await expect(resolveModelProposal({ input, sourceText })).rejects.toThrow("rate.value");
+    });
+
+    test("only builds an executable document after all missing values are supplied", async () => {
+        const document = await resolveModelProposal({
+            input: proposal(),
+            sourceText,
+            answers: { "rate.value": 20 },
+        });
+        const result = simulate({ model: compileModel({ input: document }) });
+
+        expect(document.quantities).toHaveLength(3);
+        expect(result.frames[0].values.capacity).toBeCloseTo(60, 10);
+        expect(document.description).toContain("require human review");
+        expect(document.quantities.find((quantity) => quantity.id === "rate")?.provenance).toBe("assumption");
+        expect(document.quantities.find((quantity) => quantity.id === "capacity")?.provenance).toBe("assumption");
+        expect(document.quantities.find((quantity) => quantity.id === "rate")?.description).toContain(
+            "Author-reviewed value: 20 ticket/person/day."
+        );
+    });
+
+    test("an invented source quote becomes a required author answer", () => {
+        const input = proposal();
+        input.time.duration = supplied(30, "30 days");
+        const review = inspectModelProposal({ input, sourceText });
+
+        expect(review.proposal.time.duration.value).toBeNull();
+        expect(review.missing.map((field) => field.key)).toContain("time.duration");
+        expect(review.warnings).toHaveLength(2);
+    });
+
+    test("a real quote containing a different number cannot justify a value", () => {
+        const input = proposal();
+        input.time.duration = supplied(30, "10 days");
+
+        expect(inspectModelProposal({ input, sourceText }).proposal.time.duration.value).toBeNull();
+    });
+
+    test("refuses hidden inline coefficients and accepts explicit zero boundaries", () => {
+        const input = proposal();
+        Object.assign(input.quantities[2], { expression: "staff * rate * 2" });
+
+        expect(() => inspectModelProposal({ input, sourceText })).toThrow("named inputs");
+        Object.assign(input.quantities[2], { expression: "max(0[ticket/day], staff * rate)" });
+        expect(inspectModelProposal({ input, sourceText }).missing).toHaveLength(1);
+    });
+
+    test("rejects code, unit mismatches, cycles and unknown outputs before review", () => {
+        for (const expression of ["process.exit()", "staff + rate", "capacity + rate"]) {
+            const input = proposal();
+            Object.assign(input.quantities[2], { expression });
+            expect(() => inspectModelProposal({ input, sourceText })).toThrow();
+        }
+        const input = proposal();
+        input.outputs = ["missing"];
+        expect(() => inspectModelProposal({ input, sourceText })).toThrow();
+    });
+
+    test("rejects extra answer fields and non-finite values", async () => {
+        await expect(
+            resolveModelProposal({
+                input: proposal(),
+                sourceText,
+                answers: { "rate.value": 10, "typo.value": 2 },
+            })
+        ).rejects.toThrow("Unknown proposal answer");
+        await expect(
+            resolveModelProposal({
+                input: proposal(),
+                sourceText,
+                answers: { "rate.value": Number.NaN },
+            })
+        ).rejects.toThrow();
+    });
+
+    test("evaluates dynamics before returning a reviewed model", async () => {
+        const input = proposal();
+        Object.assign(input.quantities[2], { expression: "staff / rate", unit: "person^2 * day / ticket" });
+
+        await expect(
+            resolveModelProposal({
+                input,
+                sourceText,
+                answers: { "rate.value": 0 },
+            })
+        ).rejects.toThrow("non-finite");
+    });
+
+    test("requires a positive compatible clock and respects cancellation", async () => {
+        await expect(
+            resolveModelProposal({
+                input: proposal(),
+                sourceText,
+                answers: { "rate.value": 10, "time.step": 0 },
+            })
+        ).rejects.toThrow();
+        await expect(
+            resolveModelProposal({
+                input: proposal(),
+                sourceText,
+                answers: { "rate.value": 10, "time.step": 3 },
+            })
+        ).rejects.toThrow("exact multiple");
+        const controller = new AbortController();
+        controller.abort(new Error("review cancelled"));
+
+        await expect(
+            resolveModelProposal({
+                input: proposal(),
+                sourceText,
+                answers: { "rate.value": 10 },
+                signal: controller.signal,
+            })
+        ).rejects.toThrow("review cancelled");
+    });
+
+    test("bounds the proposal and refuses generated datasets or extra properties", () => {
+        const input = proposal();
+        expect(() => inspectModelProposal({ input: { ...input, execute: "command" }, sourceText })).toThrow();
+        expect(() => inspectModelProposal({ input, sourceText: "x".repeat(16001) })).toThrow("16,000");
+        expect(() =>
+            inspectModelProposal({
+                input: { ...input, quantities: Array.from({ length: 25 }, () => input.quantities[0]) },
+                sourceText,
+            })
+        ).toThrow();
     });
 });

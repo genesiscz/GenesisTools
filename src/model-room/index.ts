@@ -95,6 +95,62 @@ async function openNativeModel({
     out.result({ opened: true, file: filePath ? resolve(filePath) : null });
 }
 
+program
+    .command("propose")
+    .description("Generate an AI model draft for review; sends only the supplied request to your configured model")
+    .requiredOption("--request <file>", "UTF-8 description, at most 16,000 characters")
+    .option("--model <reference>", "ModelRef; otherwise use the model-room app or chat default")
+    .action(async (options: { request: string; model?: string }) => {
+        const file = Bun.file(options.request);
+
+        if (file.size > 64000) {
+            throw new Error("The request file is too large.");
+        }
+
+        const { generateModelProposal } = await import("./lib/proposal-generation");
+        const sourceText = await file.text();
+        await withInterrupt(async (signal) => {
+            out.result(await generateModelProposal({ sourceText, model: options.model, signal }));
+        });
+    });
+
+program
+    .command("review-proposal")
+    .description("Check an AI draft locally without generating or applying anything")
+    .requiredOption("--proposal <file>", "Proposal review JSON")
+    .action(async (options: { proposal: string }) => {
+        const receipt = z
+            .object({ proposal: z.unknown(), sourceText: z.string().max(16000) })
+            .passthrough()
+            .parse(await readJSONInput(options.proposal));
+        const { inspectModelProposal } = await import("./lib/proposal");
+        out.result(inspectModelProposal({ input: receipt.proposal, sourceText: receipt.sourceText }));
+    });
+
+program
+    .command("resolve-proposal")
+    .description("Fill reviewed assumptions and validate a complete local model")
+    .requiredOption("--proposal <file>", "Proposal review JSON")
+    .requiredOption("--answers <file>", "JSON map from field keys to author-supplied numbers")
+    .action(async (options: { proposal: string; answers: string }) => {
+        const receipt = z
+            .object({ proposal: z.unknown(), sourceText: z.string().max(16000) })
+            .passthrough()
+            .parse(await readJSONInput(options.proposal));
+        const answers = z.record(z.string(), z.number().finite()).parse(await readJSONInput(options.answers));
+        const { resolveModelProposal } = await import("./lib/proposal");
+        await withInterrupt(async (signal) => {
+            out.result(
+                await resolveModelProposal({
+                    input: receipt.proposal,
+                    sourceText: receipt.sourceText,
+                    answers,
+                    signal,
+                })
+            );
+        });
+    });
+
 program.action(() => openNativeModel());
 program
     .command("open")

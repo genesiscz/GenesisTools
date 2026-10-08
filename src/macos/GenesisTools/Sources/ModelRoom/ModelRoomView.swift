@@ -39,6 +39,8 @@ struct ModelRoomView: View {
                         Text("Subsystems export the baseline.")
                     } label: { Label("Subsystems", systemImage: "square.stack.3d.up").labelStyle(.iconOnly) }
                         .menuStyle(.borderlessButton).frame(width: 24).help("Reusable subsystems").accessibilityIdentifier("model-room.subsystems")
+                    Button("Draft with AI", systemImage: "sparkles") { model.showAIProposal = true }
+                        .buttonStyle(.genHoverPlain())
                     Button(model.importing ? "Reading data…" : "Import data", systemImage: "tablecells") { model.chooseObservationTable() }
                         .buttonStyle(.genHoverPlain()).disabled(model.importing)
                     Button("Explore ranges", systemImage: "chart.xyaxis.line") { model.showSweep = true }
@@ -113,6 +115,7 @@ struct ModelRoomView: View {
         .preferredColorScheme(.dark)
         .sheet(isPresented: $model.showAddQuantity) { ModelRoomAddQuantity(model: model) }
         .sheet(isPresented: $model.showSweep) { ModelRoomSweepSheet(model: model) }
+        .sheet(isPresented: $model.showAIProposal) { ModelRoomProposalSheet(model: model) }
         .sheet(isPresented: $model.showEditor) {
             if let file = model.file { ModelRoomEditor(model: model, file: file) }
         }

@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import type { LanguageModel } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
-import { type CallTarget, coreChat } from "../core/call";
+import { z } from "zod";
+import { type CallTarget, callLLMStructured, coreChat } from "../core/call";
+import type { ResolvedBinding } from "../core/types";
 import { usageDir } from "./paths";
 import { queryUsage } from "./query";
 
@@ -168,5 +170,102 @@ describe("coreChat → recordUsage", () => {
         });
 
         expect(queryUsage(todayWindow()).total.events).toBe(0);
+    });
+});
+
+describe("callLLMStructured → recordUsage", () => {
+    function structuredBinding(config: { missingUsage?: boolean; onGenerate?: () => void } = {}): ResolvedBinding {
+        const model = new MockLanguageModelV4({
+            doGenerate: async (): Promise<GenerateResult> => {
+                config.onGenerate?.();
+
+                return {
+                    content: [{ type: "text", text: '{"answer":"review me"}' }],
+                    finishReason: STOP,
+                    usage: {
+                        inputTokens: {
+                            total: config.missingUsage ? undefined : 100,
+                            noCache: config.missingUsage ? undefined : 25,
+                            cacheRead: config.missingUsage ? undefined : 60,
+                            cacheWrite: config.missingUsage ? undefined : 15,
+                        },
+                        outputTokens: {
+                            total: config.missingUsage ? undefined : 5,
+                            text: config.missingUsage ? undefined : 5,
+                            reasoning: undefined,
+                        },
+                    },
+                    providerMetadata: { openrouter: { usage: { cost: 0.0123 } } },
+                    warnings: [],
+                };
+            },
+        }) as unknown as LanguageModel;
+
+        return {
+            account: { id: "acc_personal", name: "personal", provider: "openrouter" },
+            plugin: { id: "openrouter" },
+            model: { id: "fake-model" },
+            binding: { language: () => model },
+        } as unknown as ResolvedBinding;
+    }
+
+    const structuredOptions = {
+        systemPrompt: "Return a reviewable proposal.",
+        userPrompt: "A bounded test.",
+        schema: z.object({ answer: z.string() }),
+        app: "model-room",
+    };
+
+    test("attributes one structured event with cache counts and provider-reported cost", async () => {
+        const result = await callLLMStructured({ ...structuredOptions, model: structuredBinding() });
+
+        expect(result.object.answer).toBe("review me");
+        const events = queryUsage(todayWindow()).events;
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({
+            app: "model-room",
+            accountId: "acc_personal",
+            provider: "openrouter",
+            modelId: "fake-model",
+            inputTokens: 25,
+            outputTokens: 5,
+            costUsd: 0.0123,
+            costSource: "supplied",
+            meta: { cacheReadTokens: 60, cacheWriteTokens: 15 },
+        });
+    });
+
+    test("does not invent a zero-usage event when structured usage is absent", async () => {
+        await callLLMStructured({
+            ...structuredOptions,
+            model: structuredBinding({ missingUsage: true }),
+        });
+
+        expect(queryUsage(todayWindow()).total.events).toBe(0);
+    });
+
+    test("returns the structured result even if usage storage is unwritable", async () => {
+        mkdirSync(join(home, ".genesis-tools", "ai"), { recursive: true });
+        writeFileSync(usageDir(), "not a directory");
+
+        const result = await callLLMStructured({ ...structuredOptions, model: structuredBinding() });
+
+        expect(result.object.answer).toBe("review me");
+        expect(result.usage?.outputTokens).toBe(5);
+    });
+
+    test("keeps completed spend when cancellation discards the proposal", async () => {
+        const controller = new AbortController();
+
+        await expect(
+            callLLMStructured({
+                ...structuredOptions,
+                model: structuredBinding({
+                    onGenerate: () => controller.abort(new Error("proposal cancelled")),
+                }),
+                abortSignal: controller.signal,
+            })
+        ).rejects.toThrow("proposal cancelled");
+        expect(queryUsage(todayWindow()).events).toHaveLength(1);
     });
 });

@@ -106,6 +106,22 @@ tools model-room import-subsystem \
 
 Without --document-only, import prints a receipt containing the document, identifier mapping, added/bound inputs and exposed outputs. Optional --bindings accepts a JSON object mapping package input IDs to destination input IDs. The CLI leaves both source files untouched. Native preview retains the exact package snapshot it displays.
 
+## Reviewed AI drafts
+
+**Draft with AI** opens a separate review sheet. Describe the model and optionally name a configured ModelRef. Generation sends only that request to the selected model; it uses the existing app/task/account defaults and records reported usage. It never starts automatically when a window opens. Stop cancels the owned operation, and a two-minute generation deadline prevents an indefinite request.
+
+The result is an incomplete proposal, separate from an executable model. Review its relationships and source excerpts, then fill the numeric assumptions. Numbers without an exact matching source excerpt become unanswered questions. That excerpt check does not establish that the number was interpreted correctly. Inline coefficients other than zero and one must be explicit inputs. Model Room checks units, graph structure, clock constraints and a complete numerical run before enabling **Open new model**. The originating document stays unchanged; the result opens as a new unsaved document.
+
+A proposal currently supports up to 24 inputs, formulas and stocks, with at most eight outputs. Generated datasets, scenarios and arbitrary code are excluded. You can extend the reviewed model using the ordinary editor. **Load draft** reads a saved proposal locally without contacting a model.
+
+~~~bash
+tools model-room propose --request description.txt > proposal.json
+tools model-room review-proposal --proposal proposal.json
+tools model-room resolve-proposal --proposal proposal.json --answers answers.json > reviewed.modelroom.json
+~~~
+
+The proposal receipt contains the original description, the proposed structure, warnings and missing-field keys. The answers file maps those keys to finite numbers, for example {"unit_cost.value":0.01,"time.duration":10,"time.step":1}. Author answers can also replace cited values. Neither review nor resolution invokes AI; invalid or unresolved proposals produce no model.
+
 ## Calculation semantics
 
 - Expressions support numeric literals, named references, `+`, `-`, `*`, `/`, integer powers, parentheses, `min`, `max`, `abs`, `clamp` and `lag`.
@@ -133,7 +149,7 @@ A formula has at most 4096 characters, 512 tokens and 64 nested parsing levels. 
 
 Ordinary evaluation has a deadline, and a sweep contains at most ten thousand runs. Cancellation keeps complete sweep results and discards an incomplete run. The native window cancels superseded calculations and rejects a result from an older document revision. Invalid formulas preserve the last valid display with a stale-result indicator.
 
-Native chart samples are prepared away from the UI thread and retain endpoints and bucket extrema; exact frames remain available to the time rail and exports. The render budget is shared across the model's plotted series. Browser chart downsampling, AI proposals, richer explanations and additional numerical techniques remain release work. These limits do not imply that every maximum-size model already meets an interactive performance target.
+Native chart samples are prepared away from the UI thread and retain endpoints and bucket extrema; exact frames remain available to the time rail and exports. The render budget is shared across the model's plotted series. Browser chart downsampling, richer explanations and additional numerical techniques remain release work. These limits do not imply that every maximum-size model already meets an interactive performance target.
 
 ## Verification
 

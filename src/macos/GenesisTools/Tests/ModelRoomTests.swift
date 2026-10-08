@@ -17,6 +17,56 @@ final class ModelRoomTests: XCTestCase {
         return document
     }
 
+    func testProposalRoundTripKeepsNullEvidenceAndRequiresFiniteAnswers() throws {
+        let source = #"""
+        {"sourceText":"Use 10 days with a 1 day step.",
+         "proposal":{"format":"genesis-model-room-proposal","version":1,"title":"Draft","explanation":"Review me.",
+         "time":{"unit":"day","duration":{"value":10,"sourceQuote":"10 days","question":""},
+                 "step":{"value":1,"sourceQuote":"1 day step","question":""}},
+         "quantities":[{"id":"rate","label":"Rate","kind":"input","unit":"ticket/day","description":"Unknown",
+                        "seed":null,"value":{"value":null,"sourceQuote":null,"question":"Choose the rate."}}],
+         "outputs":["rate"]},
+         "missing":[{"key":"rate.value","label":"Rate","unit":"ticket/day","question":"Choose the rate."}],
+         "warnings":["Check assumptions."]}
+        """#
+        let review = try JSONDecoder().decode(ModelRoomProposalReview.self, from: Data(source.utf8))
+        let encoded = try JSONEncoder().encode(review)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let proposal = try XCTUnwrap(object["proposal"] as? [String: Any])
+        let quantities = try XCTUnwrap(proposal["quantities"] as? [[String: Any]])
+        XCTAssertTrue(quantities[0]["seed"] is NSNull)
+        let number = try XCTUnwrap(quantities[0]["value"] as? [String: Any])
+        XCTAssertTrue(number["value"] is NSNull)
+        XCTAssertTrue(number["sourceQuote"] is NSNull)
+        XCTAssertNil(quantities[0]["expression"])
+
+        let clock = ["time.duration": "10", "time.step": "1"]
+        for raw in ["", " ", "-", "nan", "inf", "1,2"] {
+            XCTAssertThrowsError(try review.answers(from: clock.merging(["rate.value": raw]) { _, new in new }))
+        }
+        let answers = try review.answers(from: clock.merging(["rate.value": " 2.5e1 "]) { _, new in new })
+        XCTAssertEqual(answers["rate.value"], 25)
+        XCTAssertEqual(review.assumptions.count, 3)
+    }
+
+    @MainActor
+    func testReviewedProposalCreatesANewDirtyUntitledDocument() async throws {
+        let original = fixture()
+        defer { original.model.stop() }
+        let before = try XCTUnwrap(original.model.file)
+        var proposed = before
+        proposed.title = "Reviewed proposal"
+        proposed.quantities[0].value = 7
+        let created = try ModelRoomDocument(reviewedFile: proposed)
+        defer { created.model.stop() }
+
+        XCTAssertNil(created.fileURL)
+        XCTAssertEqual(created.model.file, proposed)
+        XCTAssertEqual(original.model.file, before)
+        await assertEdited(created, true)
+        await assertEdited(original, false)
+    }
+
     @MainActor
     func testLongSliderGestureIsOneUndoAndRedo() async throws {
         let document = fixture()
