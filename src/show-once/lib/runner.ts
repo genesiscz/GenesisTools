@@ -3,7 +3,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 import { type BrowserSession, connectSession, Refusal } from "./browser";
 import { fileEvidence, moveVerified } from "./files";
-import { expand, parseRecipe, type Recipe, resolvedInputs, safeUrl } from "./recipe";
+import { downloadOrigin, expand, parseRecipe, type Recipe, resolvedInputs, safeUrl } from "./recipe";
 
 export interface RunEvent {
     runId: string;
@@ -175,8 +175,7 @@ export async function runRecipe(options: {
                     timeoutMs: 20000,
                     signal: options.signal,
                 });
-                safeUrl(download.url);
-                if (!recipe.allowedOrigins.includes(new URL(download.url).origin)) {
+                if (!recipe.allowedOrigins.includes(downloadOrigin(download.url))) {
                     throw new Error("Downloaded URL is outside allowed origins.");
                 }
                 const file = await fileEvidence(

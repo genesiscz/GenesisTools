@@ -14,7 +14,7 @@ import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 import { type BrowserSession, connectSession } from "./browser";
 import { fileEvidence } from "./files";
-import { parseRecipe, type Recipe, type Step } from "./recipe";
+import { downloadOrigin, parseRecipe, type Recipe, type Step } from "./recipe";
 import { type RunEvent, runReceiptSchema, runRecipe } from "./runner";
 
 const commonRecord = {
@@ -57,6 +57,7 @@ interface RecordingState {
     browser: BrowserSession;
     destinationDirectory: string;
     before: Set<string>;
+    timer?: ReturnType<typeof setTimeout>;
 }
 async function folderFiles(folder: string): Promise<string[]> {
     const entries = await readdir(folder, { withFileTypes: true });
@@ -75,6 +76,7 @@ export function recipeFromRecording(options: {
     moveWarning?: string;
 }): Recipe {
     const snapshot = options.snapshot;
+    const downloadOrigins = new Set<string>();
     let url = snapshot.initialUrl;
     const evidence = (eventId: string, at: number, detail: string) => ({ eventId, at, url, detail });
     const steps: Step[] = [
@@ -137,6 +139,7 @@ export function recipeFromRecording(options: {
                   )
                 : undefined;
         if (download) {
+            downloadOrigins.add(downloadOrigin(download.url));
             used.add(download.filename);
             steps.push({
                 ...base,
@@ -222,7 +225,10 @@ export function recipeFromRecording(options: {
         title: options.title,
         createdAt: new Date().toISOString(),
         allowedOrigins: [
-            ...new Set(steps.flatMap((step) => (step.kind === "navigate" ? [new URL(step.url).origin] : []))),
+            ...new Set([
+                ...steps.flatMap((step) => (step.kind === "navigate" ? [new URL(step.url).origin] : [])),
+                ...downloadOrigins,
+            ]),
         ],
         parameters: [],
         steps,
@@ -339,6 +345,7 @@ export class ShowOnceService {
                 const state = this.recording;
                 this.recording = undefined;
                 state.controller.abort();
+                clearTimeout(state.timer);
                 await state.recorder.stop();
                 await state.browser.close();
             }
@@ -380,6 +387,7 @@ export class ShowOnceService {
                     signal: controller.signal,
                 });
                 browser.onDownload = (download) => this.onEvent({ type: "download", download });
+                const recordingDeadline = Date.now() + 300000;
                 recorder = await startActionRecording({
                     port: command.port,
                     targetId: command.targetId,
@@ -389,7 +397,16 @@ export class ShowOnceService {
                 });
                 await browser.configureDownloads({ named: false, signal: controller.signal, recordingAdmitted: true });
                 controller.signal.throwIfAborted();
-                this.recording = { controller, recorder, browser, destinationDirectory, before };
+                const state: RecordingState = { controller, recorder, browser, destinationDirectory, before };
+                this.recording = state;
+                state.timer = setTimeout(
+                    () => {
+                        void this.expireRecording(state).catch((error) =>
+                            logger.warn({ error }, "Show Once recording expiry cleanup failed")
+                        );
+                    },
+                    Math.max(0, recordingDeadline - Date.now())
+                );
                 logger.info({ targetId: command.targetId }, "Show Once recording started");
                 return { recording: true };
             } catch (error) {
@@ -410,6 +427,7 @@ export class ShowOnceService {
             }
             this.recording = undefined;
             this.starting = true;
+            clearTimeout(state.timer);
             this.startingController = state.controller;
             try {
                 const snapshot = await state.recorder.stop();
@@ -502,6 +520,26 @@ export class ShowOnceService {
         }
         throw new Error("Unsupported command.");
     }
+    private async expireRecording(state: RecordingState): Promise<void> {
+        if (this.recording !== state) {
+            return;
+        }
+
+        this.recording = undefined;
+        this.starting = true;
+        state.controller.abort();
+        try {
+            await state.recorder.stop();
+            await state.browser.close();
+        } finally {
+            this.starting = false;
+            this.onEvent({
+                type: "recording-ended",
+                reason: "Recording reached its five-minute limit and was cancelled.",
+            });
+        }
+    }
+
     private waitCheckpoint(event: RunEvent, signal: AbortSignal): Promise<void> {
         return new Promise((resolve, reject) => {
             const done = () => {

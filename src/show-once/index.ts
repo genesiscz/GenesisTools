@@ -172,27 +172,33 @@ program
             }
             const service = new ShowOnceService();
             try {
-                await service.dispatch({
-                    op: "record-start",
-                    port: Number(options.port),
-                    targetId: options.target,
-                    downloadDirectory: resolve(options.downloads),
-                    destinationDirectory: resolve(options.destination),
-                });
+                await service.dispatch(
+                    {
+                        op: "record-start",
+                        port: Number(options.port),
+                        targetId: options.target,
+                        downloadDirectory: resolve(options.downloads),
+                        destinationDirectory: resolve(options.destination),
+                    },
+                    signal
+                );
+                signal.throwIfAborted();
                 out.log.info(
                     "Recording. Demonstrate the browser download, then rename and move the file into the chosen destination."
                 );
                 await new Promise<void>((resolveWait) => {
-                    const timer = setTimeout(resolveWait, seconds * 1000);
-                    signal.addEventListener(
-                        "abort",
-                        () => {
-                            clearTimeout(timer);
-                            resolveWait();
-                        },
-                        { once: true }
-                    );
+                    const finish = () => {
+                        clearTimeout(timer);
+                        signal.removeEventListener("abort", finish);
+                        resolveWait();
+                    };
+                    const timer = setTimeout(finish, seconds * 1000);
+                    signal.addEventListener("abort", finish, { once: true });
+                    if (signal.aborted) {
+                        finish();
+                    }
                 });
+                signal.throwIfAborted();
                 const result = await service.dispatch({ op: "record-stop", title: options.title });
                 if (!result || typeof result !== "object" || !("recipe" in result)) {
                     throw new Error("Recorder returned no recipe.");

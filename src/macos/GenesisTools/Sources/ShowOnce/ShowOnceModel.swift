@@ -30,7 +30,15 @@ struct ShowOnceBrowser: Decodable, Identifiable { var id: String; var name: Stri
 struct ShowOnceBrowserLaunch: Decodable { var port: Int }
 
 @MainActor
-final class ShowOnceBridge {
+protocol ShowOnceEngine: AnyObject {
+    var onEvent: (([String: Any]) -> Void)? { get set }
+    var onExit: ((String) -> Void)? { get set }
+    func request(_ command: [String: Any]) async throws -> Data
+    func stop()
+}
+
+@MainActor
+final class ShowOnceBridge: ShowOnceEngine {
     private let process = Process(), input = Pipe(), output = Pipe(), errors = Pipe()
     private let writeQueue = DispatchQueue(label: "show-once.bridge.write")
     private var partial = Data(), stderr = Data()
@@ -45,10 +53,12 @@ final class ShowOnceBridge {
         process.standardInput = input; process.standardOutput = output; process.standardError = errors
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
+            guard !data.isEmpty else { handle.readabilityHandler = nil; return }
             Task { @MainActor in self?.receive(data) }
         }
         errors.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
+            guard !data.isEmpty else { handle.readabilityHandler = nil; return }
             Task { @MainActor in
                 guard let self else { return }; self.stderr.append(data)
                 if self.stderr.count > 8192 { self.stderr = Data(self.stderr.suffix(8192)) }
@@ -59,6 +69,7 @@ final class ShowOnceBridge {
             Task { @MainActor in
                 guard let self else { return }
                 let message = "Workflow engine ended (\(code)). " + (String(data: self.stderr, encoding: .utf8) ?? "")
+                self.stopReadingPipes()
                 self.fail(message); self.onExit?(message)
             }
         }
@@ -110,8 +121,14 @@ final class ShowOnceBridge {
         deadlines.removeAll()
         for call in calls { call.resume(throwing: showOnceError(message)) }
     }
-    func stop() {
+    var isReadingPipes: Bool {
+        output.fileHandleForReading.readabilityHandler != nil || errors.fileHandleForReading.readabilityHandler != nil
+    }
+    private func stopReadingPipes() {
         output.fileHandleForReading.readabilityHandler = nil; errors.fileHandleForReading.readabilityHandler = nil
+    }
+    func stop() {
+        stopReadingPipes()
         try? input.fileHandleForWriting.close(); fail("Workflow window closed.")
         if process.isRunning {
             process.terminate()
@@ -140,6 +157,7 @@ final class ShowOnceModel: ObservableObject {
     @Published var recording = false
     @Published var running = false
     @Published var busy = false
+    @Published var starting = false
     @Published var dirty = false
     @Published var recordingCount = 0
     @Published var capturedDownloads = 0
@@ -155,11 +173,14 @@ final class ShowOnceModel: ObservableObject {
     @Published var showJSON = false
     @Published var jsonDraft = ""
     @Published var checkpoint: ShowOnceProgress?
-    private let bridge: ShowOnceBridge
-    init(toolsPath: String) throws {
-        bridge = try ShowOnceBridge(toolsPath: toolsPath)
+    private let bridge: any ShowOnceEngine
+    convenience init(toolsPath: String) throws {
+        self.init(bridge: try ShowOnceBridge(toolsPath: toolsPath))
+    }
+    init(bridge: any ShowOnceEngine) {
+        self.bridge = bridge
         bridge.onEvent = { [weak self] event in self?.receive(event) }
-        bridge.onExit = { [weak self] message in self?.notice = message; self?.running = false; self?.recording = false; self?.busy = false }
+        bridge.onExit = { [weak self] message in self?.notice = message; self?.running = false; self?.recording = false; self?.busy = false; self?.starting = false }
         task { [self] in
             let data = try await bridge.request(["op": "browsers"])
             browsers = try JSONDecoder().decode([ShowOnceBrowser].self, from: data)
@@ -167,7 +188,12 @@ final class ShowOnceModel: ObservableObject {
         }
     }
     var selected: ShowOnceStep? { recipe?.steps.first { $0.id == selectedStep } }
+    var canCancel: Bool { running || recording || starting }
     private func receive(_ event: [String: Any]) {
+        if event["type"] as? String == "recording-ended" {
+            recording = false
+            notice = event["reason"] as? String ?? "Recording ended."
+        }
         if event["type"] as? String == "download" { capturedDownloads += 1; notice = "Download content captured. Rename and move it into the chosen destination, then stop recording." }
         if event["type"] as? String == "recording", let snapshot = event["snapshot"] as? [String: Any], let actions = snapshot["actions"] as? [Any] { recordingCount = actions.count }
         if event["type"] as? String == "progress", let raw = event["event"],
@@ -204,9 +230,9 @@ final class ShowOnceModel: ObservableObject {
     }
     func openRecordingBrowser() {
         guard !busy, !running, !recording, !browserId.isEmpty else { return }
-        busy = true
+        busy = true; starting = true
         task { [self] in
-            defer { busy = false }
+            defer { busy = false; starting = false }
             let data = try await bridge.request(["op": "open-browser", "browserId": browserId, "url": browserURL])
             let opened = try JSONDecoder().decode(ShowOnceBrowserLaunch.self, from: data)
             port = String(opened.port)
@@ -226,9 +252,9 @@ final class ShowOnceModel: ObservableObject {
     }
     func startRecording() {
         guard !running, !recording, !busy, confirmDiscard() else { return }
-        busy = true
+        busy = true; starting = true
         task { [self] in
-            defer { busy = false }
+            defer { busy = false; starting = false }
             guard let number = Int(port), !targetId.isEmpty else { throw showOnceError("Choose a connected browser tab first.") }
             _ = try await bridge.request(["op": "record-start", "port": number, "targetId": targetId,
                 "downloadDirectory": downloads, "destinationDirectory": destination])
@@ -313,7 +339,10 @@ final class ShowOnceModel: ObservableObject {
     func cancel() { task { [self] in _ = try await bridge.request(["op": "cancel"]); recording = false; notice = "Cancellation requested. Dispatched actions are not undone or repeated." } }
     func resume() {
         guard let event = checkpoint else { return }
-        task { [self] in _ = try await bridge.request(["op": "resume", "runId": event.runId, "stepId": event.stepId]); checkpoint = nil }
+        task { [self] in
+            _ = try await bridge.request(["op": "resume", "runId": event.runId, "stepId": event.stepId])
+            if checkpoint?.runId == event.runId && checkpoint?.stepId == event.stepId { checkpoint = nil }
+        }
     }
     func save(export: Bool = false) {
         guard let value = recipe, !recording, !running else { return }

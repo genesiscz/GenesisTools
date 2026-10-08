@@ -1,12 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { runInNewContext } from "node:vm";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 import { connectSession } from "./browser";
 import { moveVerified } from "./files";
-import { expand, parseRecipe, type Recipe, resolvedInputs, safeUrl } from "./recipe";
+import { downloadOrigin, expand, parseRecipe, type Recipe, resolvedInputs, safeUrl } from "./recipe";
 import { runRecipe } from "./runner";
 import { recipeFromRecording, ShowOnceService } from "./service";
 
@@ -384,6 +386,414 @@ test("attachment setup aborts a pending domain call and normal attachment still 
         await normal.close();
     } finally {
         controller.abort();
+        server.stop(true);
+    }
+});
+
+function cdpFixture(
+    options: { evaluate?: (expression: string) => unknown; onCommand?: (method: string) => boolean | undefined } = {}
+) {
+    const routing: string[] = [];
+    const identity = crypto.randomUUID();
+    const server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch(request, host) {
+            const pathname = new URL(request.url).pathname;
+            if (pathname === "/json/list") {
+                return Response.json(
+                    ["first", "second"].map((id) => ({
+                        id,
+                        type: "page",
+                        title: id,
+                        url: "https://example.com/",
+                        webSocketDebuggerUrl: `ws://127.0.0.1:${host.port}/${id}`,
+                    }))
+                );
+            }
+            if (pathname === "/json/version") {
+                return Response.json({ webSocketDebuggerUrl: `ws://127.0.0.1:${host.port}/browser/${identity}` });
+            }
+            if (host.upgrade(request)) {
+                return;
+            }
+            return new Response("Not found", { status: 404 });
+        },
+        websocket: {
+            message(socket, raw) {
+                const request = z
+                    .object({ id: z.number(), method: z.string(), params: z.record(z.string(), z.unknown()) })
+                    .parse(SafeJSON.parse(String(raw), { strict: true }));
+                if (options.onCommand?.(request.method) === false) {
+                    return;
+                }
+                let result: unknown = {};
+                if (request.method === "Browser.setDownloadBehavior") {
+                    routing.push(String(request.params.behavior));
+                }
+                if (request.method === "Page.getFrameTree") {
+                    result = { frameTree: { frame: { id: "fixture-frame" } } };
+                }
+                if (request.method === "Runtime.evaluate") {
+                    const expression = String(request.params.expression);
+                    try {
+                        result = {
+                            result: {
+                                value:
+                                    options.evaluate?.(expression) ??
+                                    !expression.includes("typeof window.__genesisRecordingCleanup"),
+                            },
+                        };
+                    } catch (error) {
+                        result = { exceptionDetails: { text: String(error) } };
+                    }
+                }
+                if (request.method === "Page.addScriptToEvaluateOnNewDocument") {
+                    result = { identifier: "fixture-script" };
+                }
+                socket.send(SafeJSON.stringify({ id: request.id, result }, { strict: true }));
+            },
+        },
+    });
+    return { server, routing };
+}
+
+test("password changes between probe and mutation refuse literals and preserve runtime-secret fill", async () => {
+    const input = {
+        tagName: "INPUT",
+        type: "text",
+        value: "",
+        disabled: false,
+        getAttribute: (name: string) => (name === "data-testid" ? "customer" : null),
+        getBoundingClientRect: () => ({ x: 0, y: 0, width: 100, height: 20 }),
+        closest: () => null,
+        contains: () => false,
+        focus: () => {},
+        scrollIntoView: () => {},
+        dispatchEvent: () => {},
+    };
+    let writes = 0;
+    const prototype = Object.create(null);
+    Object.defineProperty(prototype, "value", {
+        set(value: string) {
+            writes++;
+            input.value = value;
+        },
+    });
+    const { server } = cdpFixture({
+        evaluate: (expression) => {
+            const value: unknown = runInNewContext(expression, {
+                location: { href: "https://example.com/" },
+                window: {},
+                document: { querySelectorAll: () => [input], elementFromPoint: () => input },
+                getComputedStyle: () => ({ visibility: "visible", display: "block" }),
+                HTMLInputElement: { prototype },
+                Event: class {},
+            });
+            if (expression.includes("return result;")) {
+                input.type = "password";
+            }
+            return value;
+        },
+    });
+    const browser = await connectSession({ port: server.port!, targetId: "first", directory: "/unused" });
+    const base = {
+        locator: { kind: "testId" as const, value: "customer" },
+        expectedUrl: "https://example.com/",
+        value: "literal",
+        onDispatch: () => {},
+    };
+    try {
+        await expect(browser.action({ ...base, kind: "fill" })).rejects.toThrow("Target changed");
+        expect(writes).toBe(0);
+        input.type = "text";
+        await expect(browser.action({ ...base, kind: "press", value: "Enter" })).rejects.toThrow("Target changed");
+        expect(writes).toBe(0);
+        await expect(browser.action({ ...base, kind: "fill", secret: true })).resolves.toBe(
+            "Exact value readback matched."
+        );
+        expect(writes).toBe(1);
+        expect(input.value).toBe("literal");
+    } finally {
+        await browser.close();
+        server.stop(true);
+    }
+});
+
+test("routing lease rejects another tab and releases only the owning browser session", async () => {
+    const { server, routing } = cdpFixture();
+    const connect = (targetId: string) => connectSession({ port: server.port!, targetId, directory: "/unused" });
+    const first = await connect("first");
+    const second = await connect("second");
+    let third: Awaited<ReturnType<typeof connect>> | undefined;
+    try {
+        await first.configureDownloads();
+        const script = `import { connectSession, Refusal } from ${SafeJSON.stringify(join(import.meta.dir, "browser.ts"), { strict: true })};
+            const browser = await connectSession({port:${server.port},targetId:'second',directory:'/unused'});
+            try { await browser.configureDownloads(); process.exitCode = 43; }
+            catch (error) { process.exitCode = error instanceof Refusal ? 42 : 44; }
+            finally { await browser.close(); }`;
+        const competingProcess = Bun.spawn([process.execPath, "--eval", script], {
+            env: { GENESIS_TOOLS_HOME: dirname(genesisToolsDir()) },
+            stdout: "ignore",
+            stderr: "pipe",
+            signal: AbortSignal.timeout(3000),
+        });
+        const competingErrors = new Response(competingProcess.stderr).text();
+        expect(await competingProcess.exited).toBe(42);
+        expect(await competingErrors).toBe("");
+        await expect(second.configureDownloads()).rejects.toThrow("Another workflow owns");
+        await second.close();
+        expect(routing).toEqual(["allowAndName"]);
+        await first.close();
+        expect(routing).toEqual(["allowAndName", "default"]);
+        third = await connect("second");
+        await third.configureDownloads({ named: false, recordingAdmitted: true });
+        expect(routing).toEqual(["allowAndName", "default", "allow"]);
+    } finally {
+        await first.close();
+        await second.close();
+        await third?.close();
+        server.stop(true);
+    }
+});
+
+test("recording expiry stops service state, releases routing, and notifies the native model", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "gt-show-once-test-")));
+    const destination = join(root, "destination");
+    await mkdir(destination);
+    const { server, routing } = cdpFixture();
+    const deadlines: (() => void)[] = [];
+    const original = globalThis.setTimeout;
+    const captureTimer = new Proxy(original, {
+        apply(target, receiver, args: unknown[]) {
+            const [callback, delay, ...parameters] = args;
+            if (typeof delay === "number" && delay >= 299000 && delay <= 300000 && typeof callback === "function") {
+                deadlines.push(() => callback(...parameters));
+            }
+            return Reflect.apply(target, receiver, args);
+        },
+    });
+    const timerSpy = spyOn(globalThis, "setTimeout").mockImplementation(captureTimer);
+    let ended: (value: unknown) => void = () => {};
+    const endedEvent = new Promise<unknown>((resolveEnded) => {
+        ended = resolveEnded;
+    });
+    const service = new ShowOnceService((event) => {
+        if (event && typeof event === "object" && "type" in event && event.type === "recording-ended") {
+            ended(event);
+        }
+    });
+    try {
+        await service.dispatch({
+            op: "record-start",
+            port: server.port!,
+            targetId: "first",
+            downloadDirectory: root,
+            destinationDirectory: destination,
+        });
+        expect(deadlines).toHaveLength(2);
+        deadlines[0]();
+        deadlines[1]();
+        const event = await Promise.race([
+            endedEvent,
+            new Promise<never>((_resolve, reject) => {
+                const timer = original(() => reject(new Error("Expiry did not finish")), 1000);
+                void endedEvent.finally(() => clearTimeout(timer));
+            }),
+        ]);
+        expect(event).toMatchObject({ type: "recording-ended" });
+        expect(await service.dispatch({ op: "status" })).toMatchObject({ recording: false, starting: false });
+        expect(routing).toEqual(["allow", "default"]);
+        await service.dispatch({
+            op: "record-start",
+            port: server.port!,
+            targetId: "second",
+            downloadDirectory: root,
+            destinationDirectory: destination,
+        });
+        await service.dispatch({ op: "record-stop", title: "Normal recording" });
+        expect(routing).toEqual(["allow", "default", "allow", "default"]);
+    } finally {
+        timerSpy.mockRestore();
+        await service.close();
+        server.stop(true);
+    }
+});
+
+test("CLI Ctrl-C cancels attachment and active recording without saving a recipe", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "gt-show-once-test-")));
+    const destination = join(root, "destination");
+    await mkdir(destination);
+    for (const phase of ["setup", "recording"] as const) {
+        let reached: () => void = () => {};
+        const ready = new Promise<void>((resolveReady) => {
+            reached = resolveReady;
+        });
+        const { server } = cdpFixture({
+            onCommand: (method) => {
+                if (phase === "setup" && method === "Page.enable") {
+                    reached();
+                    return false;
+                }
+            },
+        });
+        const file = join(root, `${phase}.showonce.json`);
+        const child = Bun.spawn(
+            [
+                process.execPath,
+                "src/show-once/index.ts",
+                "record",
+                "--port",
+                String(server.port),
+                "--target",
+                "first",
+                "--downloads",
+                root,
+                "--destination",
+                destination,
+                "--out",
+                file,
+                "--seconds",
+                "300",
+            ],
+            { cwd: join(import.meta.dir, "../../.."), stdout: "pipe", stderr: "pipe" }
+        );
+        const output = new Response(child.stdout).text();
+        let errors = "";
+        const stderr = (async () => {
+            const decoder = new TextDecoder();
+            for await (const bytes of child.stderr) {
+                errors += decoder.decode(bytes, { stream: true });
+                if (phase === "recording" && errors.includes("Recording. Demonstrate")) {
+                    reached();
+                }
+            }
+        })();
+        let deadline: ReturnType<typeof setTimeout> | undefined;
+        try {
+            await Promise.race([
+                ready,
+                new Promise<never>((_resolve, reject) => {
+                    deadline = setTimeout(() => reject(new Error(`CLI never reached ${phase}: ${errors}`)), 3000);
+                }),
+            ]);
+            clearTimeout(deadline);
+            child.kill("SIGINT");
+            const exit = await Promise.race([
+                child.exited,
+                new Promise<never>((_resolve, reject) => {
+                    deadline = setTimeout(() => reject(new Error(`CLI did not stop during ${phase}: ${errors}`)), 1000);
+                }),
+            ]);
+            await stderr;
+            expect(exit).not.toBe(0);
+            expect(await Bun.file(file).exists()).toBe(false);
+            expect(await output).toBe("");
+        } finally {
+            clearTimeout(deadline);
+            child.kill("SIGKILL");
+            await child.exited;
+            await stderr;
+            server.stop(true);
+        }
+    }
+});
+
+test("recording retains bound CDN and blob origins while originless downloads remain refused", () => {
+    for (const url of ["https://cdn.example.com/report.csv", "blob:https://example.com/report-id"]) {
+        const recipe = recipeFromRecording({
+            title: "Browser report",
+            downloads: [{ filename: "report.csv", url, at: 2 }],
+            snapshot: {
+                initialUrl: "https://example.com/",
+                evidence: [],
+                actions: [
+                    {
+                        id: "download",
+                        kind: "click",
+                        locator: { kind: "testId", value: "download" },
+                        excluded: false,
+                        at: 1,
+                    },
+                ],
+            },
+        });
+        expect(recipe.steps[1].kind).toBe("download");
+        expect(recipe.allowedOrigins).toContain(downloadOrigin(url));
+    }
+    for (const url of [
+        "data:text/csv,shop",
+        "blob:null/report",
+        "blob:https://alice:secret@example.com/report-id",
+        "file:///tmp/report.csv",
+        "https://alice:secret@example.com/report.csv",
+    ]) {
+        expect(() => downloadOrigin(url)).toThrow();
+    }
+});
+
+test("replay verifies allowed blob and CDN output, and refuses unapproved download origins", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "gt-show-once-test-")));
+    const file = join(root, "report.csv");
+    await Bun.write(file, "shop,2026-10,sales,42");
+    const { server } = cdpFixture();
+    try {
+        for (const url of [
+            "blob:https://example.com/report-id",
+            "https://cdn.example.com/report.csv",
+            "https://unapproved.example.com/report.csv",
+        ]) {
+            const browser = await connectSession({ port: server.port!, targetId: "first", directory: root });
+            spyOn(browser, "action").mockImplementation(async (options) => {
+                options.onDispatch();
+                return "Download click dispatched";
+            });
+            spyOn(browser, "waitDownload").mockResolvedValue({
+                guid: "download",
+                filename: "report.csv",
+                url,
+                path: file,
+                at: 1,
+            });
+            const recipe = parseRecipe({
+                ...sampleRecipe(),
+                parameters: [],
+                allowedOrigins: ["https://example.com", "https://cdn.example.com"],
+                steps: [
+                    {
+                        id: "download",
+                        title: "Download",
+                        kind: "download",
+                        enabled: true,
+                        evidence,
+                        pageUrl: "https://example.com/",
+                        locator: { kind: "testId", value: "download" },
+                        filename: "report.csv",
+                        contains: ["shop,2026-10,sales,42"],
+                    },
+                ],
+            });
+            const receipt = await runRecipe({
+                recipe,
+                inputs: {},
+                port: server.port!,
+                targetId: "first",
+                downloadDirectory: root,
+                connect: async () => browser,
+            });
+            if (url.includes("unapproved")) {
+                expect(receipt.status).toBe("failed");
+                expect(receipt.files).toHaveLength(0);
+                expect(receipt.events.at(-1)?.message).toContain("outside allowed origins");
+            } else {
+                expect(receipt.status).toBe("completed");
+                expect(receipt.files[0].path).toBe(file);
+                expect(receipt.files[0].sha256).toHaveLength(64);
+                expect(receipt.events.at(-1)?.status).toBe("verified");
+            }
+        }
+    } finally {
         server.stop(true);
     }
 });

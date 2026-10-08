@@ -208,6 +208,15 @@ export function safeUrl(value: string): URL {
     }
     return url;
 }
+export function downloadOrigin(value: string): string {
+    const url = new URL(value);
+    if (url.protocol === "blob:") {
+        return safeUrl(url.pathname).origin;
+    }
+
+    return safeUrl(value).origin;
+}
+
 export function resolvedInputs(recipe: Recipe, supplied: Record<string, string>): Record<string, string> {
     const inputs: Record<string, string> = {};
     for (const parameter of recipe.parameters) {

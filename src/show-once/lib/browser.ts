@@ -1,7 +1,9 @@
 import { join } from "node:path";
 import { Conn, localDebuggerUrl, Page, targets } from "@app/chrome-devtools/lib/cdp";
+import { acquireLock, type LockHandle } from "@genesiscz/utils/fs/lock";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 import { type Locator, safeUrl } from "./recipe";
 
@@ -33,17 +35,26 @@ export class BrowserSession {
     private completed = new Set<string>();
     private named = true;
     private configured = false;
+    private routingLease?: LockHandle;
+    private routingIdentity: string;
     readonly page: Page;
     readonly directory: string;
     private connection: Conn;
     private frameId: string;
     private captureWork: Promise<void>[] = [];
     private downloadWaiters = new Set<() => void>();
-    constructor(options: { page: Page; connection: Conn; directory: string; frameId: string }) {
+    constructor(options: {
+        page: Page;
+        connection: Conn;
+        directory: string;
+        frameId: string;
+        browserIdentity: string;
+    }) {
         this.page = options.page;
         this.connection = options.connection;
         this.directory = options.directory;
         this.frameId = options.frameId;
+        this.routingIdentity = new Bun.CryptoHasher("sha256").update(options.browserIdentity).digest("hex");
         options.page.on((method, data) => {
             const frame = z.object({ id: z.string(), parentId: z.string().optional() }).safeParse(data.frame);
             if (method === "Page.frameNavigated" && frame.success && !frame.data.parentId) {
@@ -104,6 +115,20 @@ export class BrowserSession {
         ) {
             throw new Refusal("A recording owns this tab. Stop it before replaying or changing download routing.");
         }
+        options.signal?.throwIfAborted();
+        if (this.routingLease) {
+            throw new Refusal("This session already owns browser download routing.");
+        }
+
+        try {
+            this.routingLease = await acquireLock(toolDataDir("show-once", "routing", this.routingIdentity));
+        } catch (error) {
+            if (error instanceof Error && "code" in error && error.code === "ELOCKED") {
+                throw new Refusal("Another workflow owns this browser's download routing. Stop it first.");
+            }
+            throw error;
+        }
+
         options.signal?.throwIfAborted();
         this.named = options.named ?? true;
         this.configured = true;
@@ -251,7 +276,8 @@ export class BrowserSession {
         const value = SafeJSON.stringify(options.value ?? "", { strict: true });
         const kind = SafeJSON.stringify(options.kind, { strict: true });
         const expected = SafeJSON.stringify(options.expectedUrl, { strict: true });
-        const operation = `if (nodes.length !== 1 || !visible || disabled || !identity || covered || location.href !== ${expected}) return {refused:true};
+        const secret = options.secret === true;
+        const operation = `if (nodes.length !== 1 || !visible || disabled || !identity || covered || (result.password && !${secret}) || location.href !== ${expected}) return {refused:true};
             const kind = ${kind}; const value = ${value}; el.scrollIntoView({block:'center'}); el.focus();
             if (kind === 'click') el.click();
             if (kind === 'fill') {
@@ -271,7 +297,7 @@ export class BrowserSession {
             await this.page.evaluate(
                 this.expression(
                     locator,
-                    `if(nodes.length !== 1 || !identity || !visible || disabled || covered || location.href !== ${expected}) throw Error('Target changed'); el.focus(); return true;`
+                    `if(nodes.length !== 1 || !identity || !visible || disabled || covered || (result.password && !${secret}) || location.href !== ${expected}) throw Error('Target changed'); el.focus(); return true;`
                 ),
                 { signal }
             );
@@ -357,8 +383,11 @@ export class BrowserSession {
         } catch (error) {
             logger.warn({ error }, "Could not restore browser download behavior");
         } finally {
+            this.configured = false;
             this.page.close();
             this.connection.close();
+            await this.routingLease?.release();
+            this.routingLease = undefined;
         }
     }
 }
@@ -399,6 +428,7 @@ export async function connectSession(options: {
             connection: browser,
             directory: options.directory,
             frameId: frame.frameTree.frame.id,
+            browserIdentity: localDebuggerUrl({ webSocketDebuggerUrl: version.webSocketDebuggerUrl }, options.port),
         });
     } catch (error) {
         page.close();

@@ -24,6 +24,10 @@ struct ShowOnceView: View {
                 }
             }
             connection.padding(14).hubSurface(.bar)
+            if model.canCancel {
+                HStack { Spacer(); Button("Cancel workflow", action: model.cancel).buttonStyle(.genHoverPlain()) }
+                    .padding(.horizontal, 14).padding(.bottom, 10).hubSurface(.bar)
+            }
             Rectangle().fill(ReviewPalette.hairline).frame(height: 1)
             GeometryReader { proxy in
                 HStack(spacing: 0) {
@@ -222,7 +226,6 @@ struct ShowOnceView: View {
                 if recipe.parameters.isEmpty { Text("Select a changing input step and add its parameter below.").font(.system(size: 12)).foregroundStyle(ReviewPalette.dim) }
                 HStack {
                     Button("Run workflow", action: model.run).buttonStyle(.genHoverPlain()).disabled(locked || model.targetId.isEmpty)
-                    Button("Cancel", action: model.cancel).buttonStyle(.genHoverPlain()).disabled(!model.running && !model.recording)
                 }
                 if let checkpoint = model.checkpoint {
                     Text(checkpoint.message).font(.system(size: 12)).foregroundStyle(ReviewPalette.modified)
