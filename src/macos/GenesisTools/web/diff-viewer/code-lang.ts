@@ -69,23 +69,43 @@ export function fenceInfo(line: string): string | null {
 export type FencedPart = { kind: "prose"; text: string } | { kind: "code"; text: string; language: string };
 
 export function fencedParts(text: string): FencedPart[] {
-    const parts = text.split(/```([a-zA-Z0-9_+-]*)[^\n]*\n?/);
     const result: FencedPart[] = [];
+    let fence: { mark: string; width: number; language: string } | null = null;
+    let pending: string[] = [];
+    const flush = () => {
+        const body = pending.join("\n");
 
-    // Both fences match: prose, opening language, code, closing language, prose.
-    for (let index = 0; index < parts.length; index += 4) {
-        const prose = parts[index];
-
-        if (prose?.trim()) {
-            result.push({ kind: "prose", text: prose.trim() });
+        if (body.trim()) {
+            result.push(
+                fence ? { kind: "code", text: body, language: fence.language } : { kind: "prose", text: body.trim() }
+            );
         }
 
-        const code = parts[index + 2];
+        pending = [];
+    };
 
-        if (code?.trim()) {
-            result.push({ kind: "code", text: code.replace(/\n$/, ""), language: parts[index + 1] ?? "" });
+    for (const line of text.split("\n")) {
+        if (fence) {
+            const closing = /^ {0,3}(`{3,}|~{3,})\s*$/.exec(line);
+
+            if (closing && closing[1][0] === fence.mark && closing[1].length >= fence.width) {
+                flush();
+                fence = null;
+            } else {
+                pending.push(line);
+            }
+        } else {
+            const opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+
+            if (opening && !(opening[1][0] === "`" && opening[2].includes("`"))) {
+                flush();
+                fence = { mark: opening[1][0], width: opening[1].length, language: opening[2].trim() };
+            } else {
+                pending.push(line);
+            }
         }
     }
 
+    flush();
     return result;
 }

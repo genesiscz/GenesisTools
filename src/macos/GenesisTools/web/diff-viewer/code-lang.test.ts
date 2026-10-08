@@ -49,3 +49,28 @@ describe("fencedParts", () => {
         expect(fencedParts("```ts\ncode")).toEqual([{ kind: "code", text: "code", language: "ts" }]);
     });
 });
+
+test("fences close on marker lines and keep literal backticks and nested shorter fences in code", () => {
+    const literal = 'console.log("``` literal");';
+    expect(fencedParts(`before\n\`\`\`ts\n${literal}\n\`\`\`\nafter`)).toEqual([
+        { kind: "prose", text: "before" },
+        { kind: "code", text: literal, language: "ts" },
+        { kind: "prose", text: "after" },
+    ]);
+    expect(fencedParts("````md\n```ts\ncode\n```\n````\nend")).toEqual([
+        { kind: "code", text: "```ts\ncode\n```", language: "md" },
+        { kind: "prose", text: "end" },
+    ]);
+});
+
+test("tilde fences and mismatched marker lines follow the same code-block contract", () => {
+    expect(fencedParts("~~~ts\n```\nbody\n~~~\nend")).toEqual([
+        { kind: "code", text: "```\nbody", language: "ts" },
+        { kind: "prose", text: "end" },
+    ]);
+    expect(fencedParts("    ```ts\nplain")).toEqual([{ kind: "prose", text: "```ts\nplain" }]);
+    expect(fencedParts("before\n```ts\nline\n``` not a close\nlast")).toEqual([
+        { kind: "prose", text: "before" },
+        { kind: "code", text: "line\n``` not a close\nlast", language: "ts" },
+    ]);
+});
