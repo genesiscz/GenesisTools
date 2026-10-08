@@ -18,7 +18,7 @@ import {
     removeShelfItem,
     stageShelfImage,
 } from "./lib/widget/shelf";
-import { widgetSnapshot } from "./lib/widget/snapshot";
+import { realWidgetSources, widgetSnapshot } from "./lib/widget/snapshot";
 import { watchWidget } from "./lib/widget/watch";
 import { registerWidgetTasks } from "./widget-tasks-cli";
 import { registerWidgetVoiceNotes } from "./widget-voice-notes-cli";
@@ -45,6 +45,13 @@ widget
         out.result(
             await performWidgetAction({ root, input: { action: "visibility", key: candidates[0].key, pinned: true } })
         );
+    });
+widget
+    .command("discover")
+    .description("Refresh the shared session catalog independently of inbox snapshots")
+    .action(async () => {
+        const sessions = await realWidgetSources.sessions(true);
+        out.result({ sessions: sessions.length });
     });
 widget
     .command("snapshot")
