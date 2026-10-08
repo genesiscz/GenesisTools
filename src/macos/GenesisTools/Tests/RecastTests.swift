@@ -848,6 +848,31 @@ extension RecastTests {
 
 extension RecastTests {
     @MainActor
+    func testRememberingExportCannotRestoreAnotherCollectionsPreview() async throws {
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 { root.deleteLastPathComponent() }
+        let model = RecastModel(toolsPath: root.appendingPathComponent("tools").path)
+        defer { model.stop() }
+        var reviewed = try evidenceFixture()
+        reviewed.file.records[0].state = "accepted"
+        reviewed.file.records[0].cells["name"]?.state = "accepted"
+        var other = reviewed.file.collections[0]; other.id = "other"
+        reviewed.file.collections.append(other)
+        model.install(reviewed)
+        let rendered = try JSONDecoder().decode(RecastRendering.self, from: Data(try await model.command("render",
+            file: reviewed.file, arguments: ["--collection", "table", "--format", "csv"]).utf8))
+        try await model.rememberRendering(rendered)
+        XCTAssertEqual(model.rendering?.contentHash, rendered.contentHash, "Normal receipt saving keeps its preview")
+        model.install(reviewed)
+        let remembering = Task { try await model.rememberRendering(rendered) }
+        model.selectedCollection = "other"
+        try await remembering.value
+        XCTAssertTrue(model.file?.renderings?.contains { $0.id == rendered.receipt.id } == true,
+            "The export receipt remains valid even after choosing another collection")
+        XCTAssertNil(model.rendering, "Saving a receipt must not restore the previous collection's preview")
+    }
+
+    @MainActor
     func testExportDiscardsResultsAfterSelectionChangesAwayAndBack() async throws {
         var root = URL(fileURLWithPath: #filePath)
         for _ in 0..<5 { root.deleteLastPathComponent() }

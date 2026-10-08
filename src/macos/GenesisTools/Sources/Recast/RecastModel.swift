@@ -502,7 +502,10 @@ final class RecastModel: ObservableObject {
                 $0.collectionId == rendering.receipt.collectionId && $0.format == rendering.format)
         }) { return }
         try await apply([recastOperation("record-rendering", ["receipt": try .encoded(rendering.receipt)])], title: "Remember export")
-        self.rendering = rendering
+        if file?.id == rendering.receipt.documentId, selectedCollection == rendering.receipt.collectionId,
+           exportFormat == rendering.format, exportIncludeRecordIDs == rendering.receipt.includeRecordIds {
+            self.rendering = rendering
+        }
     }
 
     func forgetRendering(_ receipt: RecastRenderingReceipt) {
