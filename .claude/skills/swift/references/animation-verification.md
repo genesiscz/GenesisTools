@@ -152,3 +152,52 @@ A first or last icon outside the shape is a layout failure even if the window is
 ## Drag a moving window using screen coordinates
 
 A gesture's window-local translation is unstable when that gesture moves the window. Capture the mouse-down and subsequent event positions in screen coordinates, preserve the rail's current height while dragging, and clamp only the final normalized position. A native NSView handle can own mouse-down/drag/up without a tracking poll. Give it its own accessibility identity; identifying the decorative image underneath it makes hit tests disagree. Verify real pointer input as well as injected coordinate arithmetic. A screenshot-based drag tool may deliberately reject moving windows, so record that refusal separately from application behavior.
+
+## Intrinsic targets versus intermediate layout proposals
+
+A top bar needs two widths: its unproposed intrinsic target and the width available in the current
+animated native frame. Cache the target from child intrinsic sizes, but let sizeThatFits respect the
+smaller proposed width during expansion. Place controls against the current bounds rather than the
+future frame. Returning the full target at every frame made a hosted button start at x=-53 and x=-33
+in a 120/160-point host; the corrected layout keeps its minimum x at zero. The regression deliberately
+restores the wrong sizeThatFits result and must fail those actual hosted-view assertions.
+
+When no physical cutout is reserved, keep control groups next to each other. Positioning the second
+group against the final right edge makes it jump ahead of the animated frame. Defer intrinsic-size
+notifications until after the SwiftUI transaction and ignore unchanged whole-point measurements.
+
+## Reconfigure retained panels
+
+Changing module membership should reconcile panels by stable surface identity and display. Replace
+only surfaces whose identity/display changed; update an existing NSHostingView root and animate its
+new geometry. Hiding and recreating every controller for one toggle discards animation continuity.
+Verify native window IDs survive both insertion and removal, and restore the exact original preference.
+The live fixture retained its top/side IDs through 360↔393-point width and 239↔278-point height changes.
+
+## Interactive chart verification
+
+A horizontal scroll view does not prove mouse-drag support on macOS. Verify wheel/trackpad scrolling,
+direct mouse dragging, zoom buttons, and changing plot style separately. Keep drag origin stable for a
+gesture, clamp to the data domain, and clear it on cancellation. An injected drag refused by automation
+is neither a passed interaction nor proof of an application bug. The verified direct mouse drag moved
+the timeline start from23:29 to23:07; a preceding background attempt was refused before input.
+
+Bound marks before handing data to Swift Charts, select visible ranges with binary search, and bin
+counts without changing their sum. Use Calendar boundaries for daily bins over daylight-saving changes.
+Preserve sparse samples: a single point needs a visible mark, and an unrecorded interval is not known zero.
+Publish coalesced snapshots rather than copying growing dictionaries per keystroke. Clearly label sample
+data and keep its reference day fixed so a midnight change does not turn its summary into a false zero.
+
+## Window-only recording and controlled motion
+
+Screen-region recording captures whichever application covers the region. It does not isolate the
+intended window. A selected-window recording was verified behind another foreground window; inspect
+actual decoded frames, not merely successful ffprobe output. Attached sheets may still need their own
+selection. Preserve logical-point bounds, actual pixel dimensions and native build identity.
+
+Keep the recorder alive until its real completion and dispatch the intended interactions inside that
+same bounded capture interval. A detached child can be terminated when its tool invocation ends; model
+round trips can also outlast a short movie. A clean recording with no action in it proves no animation.
+When the user is interacting concurrently, record that limitation and repeat in a quiet interval before
+attributing hover or window changes to a layout regression. Record callback timing separately from
+movie FPS; neither establishes compositor frame delivery.
