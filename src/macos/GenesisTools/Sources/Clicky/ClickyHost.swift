@@ -27,10 +27,15 @@ final class ClickyHost: NSObject {
         }
     }
 
-    func showSettings() {
+    @discardableResult
+    func registerSettingsSection(_ section: NativeSettingsSection) -> Bool {
+        settings.register(section: section)
+    }
+
+    func showSettings(pageID: String? = nil) {
         start(standalone: standalone)
         popover?.close()
-        settings.show()
+        settings.show(pageID: pageID)
     }
 
     func stop() {

@@ -44,85 +44,95 @@ public enum ClickyPage: String, CaseIterable, Identifiable {
     }
 }
 
-private struct ClickyWindowBackdrop: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .underWindowBackground
-        view.blendingMode = .behindWindow
-        view.state = .active
-        return view
+@MainActor
+public enum ClickySettingsPages {
+    public static func pageID(_ page: ClickyPage) -> String {
+        switch page {
+        case .general: return "general"
+        case .about: return "about"
+        default: return "clicky.\(page.rawValue.lowercased())"
+        }
     }
 
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
-}
-
-private struct ClickyGlass: ViewModifier {
-    @Environment(\.accessibilityReduceTransparency) private var systemOpaque
-    let opaque: Bool
-    var radius: CGFloat = 18
-    func body(content: Content) -> some View {
-        if systemOpaque || opaque {
-            content.background(Color(white: 0.17), in: RoundedRectangle(cornerRadius: radius))
-                .overlay(RoundedRectangle(cornerRadius: radius).stroke(.white.opacity(0.08), lineWidth: 1))
-        } else if #available(macOS 26, *) {
-            content.foregroundStyle(Color.white).glassEffect(
-                .regular.tint(.white.opacity(0.035)), in: RoundedRectangle(cornerRadius: radius))
-        } else {
-            content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: radius))
+    public static func sections(model: ClickyModel) -> [NativeSettingsSection] {
+        func page(_ item: ClickyPage) -> NativeSettingsPage {
+            NativeSettingsPage(
+                id: pageID(item), title: item.rawValue, symbol: item.symbol,
+                tint: item.tint, subtitle: item.subtitle
+            ) {
+                ClickySettingsPageContent(model: model, page: item)
+            }
         }
+        return [
+            NativeSettingsSection(
+                id: "general", title: "",
+                pages: [
+                    NativeSettingsPage(
+                        id: "general", title: "General", symbol: "gearshape.fill", tint: .gray,
+                        subtitle: "GenesisTools appearance and accessibility."
+                    ) {
+                        NativeSettingsGeneralPage()
+                    }
+                ], order: 0),
+            NativeSettingsSection(
+                id: "settings", title: "Settings", pages: [ClickyPage.sound, .sleep, .notifications].map(page),
+                order: 10),
+            NativeSettingsSection(
+                id: "clicky", title: "Clicky", pages: [ClickyPage.stats, .visualizer].map(page), order: 20),
+            NativeSettingsSection(
+                id: "about", title: "",
+                pages: [
+                    NativeSettingsPage(
+                        id: "about", title: "About", symbol: "info.circle.fill", tint: .gray,
+                        subtitle: "GenesisTools for your Mac."
+                    ) {
+                        NativeSettingsAboutPage(additionalInfo: [
+                            "Clicky includes seven original synthesized switch voices. No third-party recordings are bundled."
+                        ])
+                    }
+                ], order: 90),
+        ]
     }
 }
 
 @MainActor
 public struct ClickySettingsView: View {
-    @ObservedObject private var model: ClickyModel
-    @State private var page: ClickyPage
-    @State private var confirmReset = false
-    @State private var copied = false
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    @Environment(\.accessibilityReduceTransparency) private var systemOpaque
-
+    @StateObject private var store: NativeSettingsStore
     public init(model: ClickyModel, page: ClickyPage = .sound) {
-        self.model = model
-        _page = State(initialValue: page)
+        _store = StateObject(
+            wrappedValue: NativeSettingsStore(
+                sections: ClickySettingsPages.sections(model: model),
+                defaults: model.settingsDefaults, initialPageID: ClickySettingsPages.pageID(page),
+                appearance: model.appearance))
     }
+    public var body: some View { FeatureSettingsView(store: store) }
+}
 
-    public var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-            Divider()
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 12) {
-                    pageIcon(page, size: 34)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(page.rawValue).font(.system(size: 23, weight: .semibold))
-                        Text(page.subtitle).font(.system(size: 12)).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Circle().fill(model.enabled && !model.isPaused ? .mint : .secondary).frame(width: 7, height: 7)
-                    Text(model.enabled ? "On" : "Off").font(.system(size: 11, weight: .medium))
-                }.padding(26)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        if let error = model.error {
-                            HStack(alignment: .top, spacing: 12) {
-                                Label(error, systemImage: "exclamationmark.triangle.fill")
-                                    .font(.system(size: 12)).foregroundStyle(.orange)
-                                Spacer(minLength: 0)
-                                IconButton(systemName: "xmark", tooltip: "Dismiss message", action: model.dismissError)
-                            }.padding(14)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .modifier(ClickyGlass(opaque: model.preferences.reduceTransparency))
-                        }
-                        pageContent
-                    }.padding(.horizontal, 26).padding(.bottom, 28)
-                }
-            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+@MainActor
+private struct ClickySettingsPageContent: View {
+    @ObservedObject var model: ClickyModel
+    let page: ClickyPage
+    @State private var confirmReset = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            if let error = model.error {
+                HStack(alignment: .top, spacing: 12) {
+                    Label(error, systemImage: "exclamationmark.triangle.fill").font(.system(size: 12)).foregroundStyle(
+                        .orange)
+                    Spacer(minLength: 0)
+                    IconButton(systemName: "xmark", tooltip: "Dismiss message", action: model.dismissError)
+                }.padding(16).nativeGlassSurface()
+            }
+            switch page {
+            case .general, .sound: sound
+            case .sleep: sleep
+            case .visualizer: visualizer
+            case .notifications: notifications
+            case .stats: stats
+            case .about: NativeSettingsAboutPage()
+            }
         }
-        .titlebarBackground(windowBackdrop)
-        .titlebarZone()
-        .frame(minWidth: 860, minHeight: 650)
-        .preferredColorScheme(.dark)
         .alert("Reset Clicky statistics?", isPresented: $confirmReset) {
             Button("Cancel", role: .cancel) {}
             Button("Reset", role: .destructive) { model.resetStatistics() }
@@ -131,144 +141,46 @@ public struct ClickySettingsView: View {
         }
     }
 
-    @ViewBuilder private var windowBackdrop: some View {
-        if systemOpaque || model.preferences.reduceTransparency {
-            Color(nsColor: .windowBackgroundColor)
-        } else {
-            ClickyWindowBackdrop()
-                .overlay(Color.black.opacity(0.08))
-        }
-    }
-
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 10) {
-                Image(systemName: "keyboard.fill").font(.system(size: 20)).foregroundStyle(.pink)
-                Text("Clicky").font(.system(size: 23, weight: .bold, design: .rounded))
-            }.padding(.horizontal, 14).padding(.top, 26).padding(.bottom, 25)
-            pageRow(.general)
-            Text("Settings").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                .padding(.horizontal, 14).padding(.top, 23).padding(.bottom, 6)
-            ForEach([ClickyPage.sound, .sleep, .visualizer, .notifications]) { pageRow($0) }
-            Text("Clicky").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                .padding(.horizontal, 14).padding(.top, 23).padding(.bottom, 6)
-            pageRow(.stats)
-            pageRow(.about)
-            Spacer()
-            VStack(alignment: .leading, spacing: 8) {
-                Text(model.status).font(.system(size: 11)).foregroundStyle(.secondary)
-                Button(model.enabled ? "Turn off" : "Enable Clicky") {
-                    if model.enabled { model.deactivate() } else { model.activate() }
-                }.buttonStyle(.bordered).controlSize(.small)
-            }.padding(14)
-        }.padding(.horizontal, 14).frame(width: 228)
-            .titlebarBackground(Color.white.opacity(systemOpaque || model.preferences.reduceTransparency ? 0 : 0.025))
-    }
-
-    private func pageRow(_ item: ClickyPage) -> some View {
-        Button {
-            if systemReduceMotion || model.preferences.reduceMotion {
-                page = item
-            } else {
-                withAnimation(.easeInOut(duration: 0.16)) { page = item }
-            }
-        } label: {
-            HStack(spacing: 10) {
-                pageIcon(item, size: 27)
-                Text(item.rawValue).font(.system(size: 13, weight: page == item ? .semibold : .regular))
-                Spacer(minLength: 0)
-            }.padding(.horizontal, 10).padding(.vertical, 9).contentShape(Rectangle())
-        }
-        .buttonStyle(.genHoverRow())
-        .background(page == item ? Color.primary.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 11))
-        .accessibilityAddTraits(page == item ? .isSelected : [])
-        .accessibilityIdentifier("clicky.page.\(item.id)")
-    }
-
-    private func pageIcon(_ item: ClickyPage, size: CGFloat) -> some View {
-        Image(systemName: item.symbol).font(.system(size: size * 0.51, weight: .semibold))
-            .foregroundStyle(.white).frame(width: size, height: size)
-            .background(item.tint.gradient, in: RoundedRectangle(cornerRadius: size * 0.25))
-            .accessibilityHidden(true)
-    }
-
-    @ViewBuilder private var pageContent: some View {
-        switch page {
-        case .general: general
-        case .sound: sound
-        case .sleep: sleep
-        case .visualizer: visualizer
-        case .notifications: notifications
-        case .stats: stats
-        case .about: about
-        }
-    }
-
     private func card<Content: View>(_ title: String? = nil, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 15) {
-            if let title { Text(title).font(.system(size: 13, weight: .semibold)) }
-            content()
-        }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
-            .modifier(ClickyGlass(opaque: model.preferences.reduceTransparency))
+        NativeSettingsCard(title, content: content)
     }
 
     private func setting(_ title: String, detail: String, value: Binding<Bool>) -> some View {
-        HStack(spacing: 20) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.system(size: 13, weight: .medium))
-                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(
-                    horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-            Toggle(title, isOn: value).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                .accessibilityIdentifier("clicky.setting.\(title)")
-        }
+        NativeSettingsToggle(title, detail: detail, identifier: "clicky.setting.\(title)", isOn: value)
     }
 
-    private var general: some View {
-        VStack(spacing: 18) {
-            card {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Give your keyboard a voice.").font(.system(size: 22, weight: .semibold, design: .rounded))
-                        Text("Clicky plays a small sound as you press and release a key.")
-                            .font(.system(size: 12)).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Image(systemName: "waveform").font(.system(size: 34)).foregroundStyle(.pink)
-                }
-                Divider()
-                HStack {
-                    Text(model.status).font(.system(size: 12))
-                    Spacer()
-                    Button(model.enabled ? "Turn off" : "Enable Clicky") {
-                        if model.enabled { model.deactivate() } else { model.activate() }
-                    }.buttonStyle(.borderedProminent).tint(.purple)
-                }
+    private var activation: some View {
+        card {
+            NativeSettingsRow("Keyboard sounds", detail: model.status) {
+                Toggle(
+                    "Enable Clicky",
+                    isOn: Binding(
+                        get: { model.enabled },
+                        set: { enabled in
+                            if enabled { model.activate() } else { model.deactivate() }
+                        })
+                ).labelsHidden().toggleStyle(.switch).accessibilityIdentifier("clicky.enabled")
             }
-            card("Input permission") {
-                Text(
-                    "Enable Clicky to request Input Monitoring. Only physical key positions are used to play sounds. Typed text and passwords are never read or saved. Secure Input automatically silences Clicky."
-                )
-                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Button("Open Input Monitoring settings", action: model.openInputSettings).buttonStyle(.genHoverPlain())
-            }
-            card("Appearance") {
-                setting(
-                    "Reduce motion", detail: "Keep page changes and the visualizer still.",
-                    value: $model.preferences.reduceMotion)
-                Divider()
-                setting(
-                    "Reduce transparency", detail: "Use solid panels. macOS accessibility settings are also respected.",
-                    value: $model.preferences.reduceTransparency)
-            }
-            Text("Clicky starts off each time you open it. Enable it when you want keyboard sounds.")
-                .font(.system(size: 11)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+            DisclosureGroup("Input permission and privacy") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Label(model.hasInputPermission ? "Input Monitoring is allowed" : "Input Monitoring is required",
+                          systemImage: model.hasInputPermission ? "checkmark.shield" : "hand.raised")
+                        .font(.system(size: 11, weight: .medium))
+                    Text(
+                        "Enable Clicky to request Input Monitoring. Only physical key positions are used for sounds. Typed text and passwords are never read or saved. Secure Input automatically silences Clicky."
+                    )
+                    .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Button("Open Input Monitoring settings", action: model.openInputSettings).buttonStyle(
+                        .genHoverPlain())
+                    Text("Clicky starts off each time you open it.").font(.system(size: 11)).foregroundStyle(.secondary)
+                }.padding(.top, 8)
+            }.font(.system(size: 12))
         }
     }
 
     private var sound: some View {
         VStack(spacing: 18) {
+            activation
             card {
                 HStack {
                     VStack(alignment: .leading, spacing: 5) {
@@ -490,43 +402,6 @@ public struct ClickySettingsView: View {
         }
     }
 
-    private var about: some View {
-        VStack(spacing: 18) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 20).fill(
-                    LinearGradient(
-                        colors: [.indigo, .purple.opacity(0.6), .blue], startPoint: .topLeading,
-                        endPoint: .bottomTrailing))
-                VStack(spacing: 18) {
-                    ClickyDemoKeys(model: model)
-                    Text("Clicky").font(.system(size: 34, weight: .bold, design: .rounded))
-                    Text("A GenesisTools native feature").font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
-                }.padding(30)
-            }.frame(height: 230)
-            card("Made for the keys you already love.") {
-                Text(
-                    "Seven original switch voices. Separate press and release sounds. Small pitch variations and stereo positioning, all generated on your Mac."
-                )
-                .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Divider()
-                HStack {
-                    Text("Version \(model.version)").font(.system(size: 12)).foregroundStyle(.secondary)
-                    Spacer()
-                    Button(copied ? "Copied" : "Copy feedback details") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(
-                            "Clicky \(model.version)\nmacOS \(ProcessInfo.processInfo.operatingSystemVersionString)\nSwitch: \(model.preferences.selectedSwitch.name)\n\nFeedback:\n",
-                            forType: .string)
-                        copied = true
-                    }.buttonStyle(.bordered)
-                }
-            }
-            Text(
-                "Sound synthesis is original to Clicky. No third-party recordings are bundled. Feedback details contain the app version, macOS version and chosen switch only."
-            )
-            .font(.system(size: 11)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
 }
 
 @MainActor
@@ -540,7 +415,7 @@ private struct ClickyDemoKeys: View {
                 } label: {
                     Text(label).font(.system(size: 21, weight: .semibold, design: .rounded))
                         .frame(width: 49, height: 49)
-                        .modifier(ClickyGlass(opaque: model.preferences.reduceTransparency, radius: 12))
+                        .nativeGlassControl(radius: 12)
                         .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.14), lineWidth: 1))
                 }.buttonStyle(.genHoverPlain()).instantTooltip("Preview key press and release")
                     .accessibilityIdentifier("clicky.demo.\(label)")
@@ -558,6 +433,7 @@ private struct ClickyDemoKeys: View {
 private struct ClickyKeyboard: View {
     @ObservedObject var model: ClickyModel
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.nativeSettingsReduceMotion) private var sharedReduceMotion
     @State private var lit = false
     var body: some View {
         VStack(spacing: 7) {
@@ -576,7 +452,7 @@ private struct ClickyKeyboard: View {
         }.accessibilityLabel("Keyboard sound visualization")
             .task(id: model.pulse) {
                 guard model.pulse > 0, model.preferences.visualizer,
-                    !systemReduceMotion, !model.preferences.reduceMotion
+                    !systemReduceMotion, !sharedReduceMotion
                 else {
                     lit = false
                     return
@@ -587,6 +463,9 @@ private struct ClickyKeyboard: View {
             }
             .onChange(of: model.preferences.visualizer) { _, enabled in
                 if !enabled { lit = false }
+            }
+            .onChange(of: sharedReduceMotion) { _, reduced in
+                if reduced { lit = false }
             }
     }
 }

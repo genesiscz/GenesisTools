@@ -11,7 +11,7 @@ private final class ClickyPreviewDelegate: NSObject, NSApplicationDelegate {
         let args = CommandLine.arguments
         let snapshotIndex = args.firstIndex(of: "--snapshot")
         let defaults = UserDefaults(suiteName: "dev.genesis.clicky.preview.settings")!
-        let model = ClickyModel(defaults: defaults, previewOnly: true)
+        let model = ClickyModel(defaults: defaults, previewOnly: snapshotIndex != nil)
         self.model = model
         if args.contains("--opaque") { model.preferences.reduceTransparency = true }
         if args.contains("--reduce-motion") { model.preferences.reduceMotion = true }
@@ -72,6 +72,7 @@ private final class ClickyPreviewDelegate: NSObject, NSApplicationDelegate {
 @main
 private enum ClickyPreviewMain {
     @MainActor static func main() {
+        if SettingsAppearanceFixture.runIfRequested(CommandLine.arguments) { return }
         let app = NSApplication.shared
         let delegate = ClickyPreviewDelegate()
         app.delegate = delegate

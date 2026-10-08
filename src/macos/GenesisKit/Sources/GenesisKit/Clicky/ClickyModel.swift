@@ -8,7 +8,8 @@ import os
 
 @MainActor
 public final class ClickyModel: ObservableObject {
-    @Published public var preferences: ClickyPreferences { didSet { savePreferences() } }
+    @Published public var preferences: ClickyPreferences { didSet { savePreferences(previous: oldValue) } }
+    public let appearance: NativeSettingsAppearance
     @Published public private(set) var enabled = false
     @Published public private(set) var status = "Clicky is off"
     @Published public private(set) var statistics: ClickyStatistics
@@ -19,11 +20,13 @@ public final class ClickyModel: ObservableObject {
     @Published public private(set) var error: String?
     public var stateDidChange: (() -> Void)?
     private let defaults: UserDefaults
+    var settingsDefaults: UserDefaults { defaults }
+    private var appearanceSubscription: AnyCancellable?
+    private var syncingAppearance = false
     private let log = Logger(subsystem: "dev.genesis.tools", category: "Clicky")
     private var audio: ClickyAudio?
     private var previewGeneration = 0
-    private var eventTap: CFMachPort?
-    private var eventSource: CFRunLoopSource?
+    private let inputMonitor: any ClickyInputMonitoring
     private var observers: [NSObjectProtocol] = []
     private var boundaryTimer: Timer?
     private var inputState = ClickyInputState()
@@ -33,9 +36,15 @@ public final class ClickyModel: ObservableObject {
     private var persistenceWork: DispatchWorkItem?
     private let previewOnly: Bool
 
-    public init(defaults: UserDefaults = .standard, previewOnly: Bool = false) {
+    public init(
+        defaults: UserDefaults = .standard, previewOnly: Bool = false, appearance: NativeSettingsAppearance? = nil,
+        inputMonitor: (any ClickyInputMonitoring)? = nil, observeSystemEvents: Bool = true
+    ) {
         self.defaults = defaults
         self.previewOnly = previewOnly
+        self.inputMonitor = inputMonitor ?? SystemClickyInputMonitor()
+        self.appearance =
+            appearance ?? NativeSettingsAppearance(defaults: defaults, observeExternalChanges: !previewOnly)
         if let data = defaults.data(forKey: "clicky.preferences.v1"),
             var saved = try? JSONDecoder().decode(ClickyPreferences.self, from: data)
         {
@@ -51,7 +60,16 @@ public final class ClickyModel: ObservableObject {
         } else {
             statistics = ClickyStatistics()
         }
-        guard !previewOnly else { return }
+        if defaults.data(forKey: "clicky.preferences.v1") != nil {
+            self.appearance.migrateIfNeeded(
+                reduceMotion: preferences.reduceMotion,
+                reduceTransparency: preferences.reduceTransparency)
+        }
+        syncAppearance()
+        appearanceSubscription = self.appearance.objectWillChange.sink { [weak self] _ in
+            Task { @MainActor in self?.syncAppearance() }
+        }
+        guard !previewOnly && observeSystemEvents else { return }
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [
             NSWorkspace.didActivateApplicationNotification, NSWorkspace.willSleepNotification,
@@ -83,7 +101,13 @@ public final class ClickyModel: ObservableObject {
         refreshContext()
     }
 
-    public var hasInputPermission: Bool { CGPreflightListenEventAccess() }
+    public var applicationName: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
+            ?? ProcessInfo.processInfo.processName
+    }
+
+    public var hasInputPermission: Bool { inputMonitor.hasPermission }
     public var isPaused: Bool {
         systemSleeping || preferences.isQuiet(at: Date()) || excluded || (sleepingUntil.map { $0 > Date() } ?? false)
     }
@@ -93,39 +117,28 @@ public final class ClickyModel: ObservableObject {
 
     public func activate() {
         guard !previewOnly else {
-            error = "Live input is disabled in the preview. Sound previews still work."
+            error = "Live input is disabled during snapshot capture. Sound previews still work."
             return
         }
         guard !enabled else { return }
         error = nil
-        guard CGPreflightListenEventAccess() || CGRequestListenEventAccess() else {
-            error = "Allow Input Monitoring for this app in System Settings, then click Enable Clicky again."
-            log.notice("Activation needs Input Monitoring permission")
+        guard inputMonitor.hasPermission || inputMonitor.requestPermission() else {
+            permissionNeeded()
             return
         }
-        if audio == nil { audio = ClickyAudio() }
-        let mask =
-            (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
-            | (1 << CGEventType.flagsChanged.rawValue)
-        guard
-            let tap = CGEvent.tapCreate(
-                tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly,
-                eventsOfInterest: CGEventMask(mask),
-                callback: { _, type, event, context in
-                    guard let context else { return Unmanaged.passUnretained(event) }
-                    let model = Unmanaged<ClickyModel>.fromOpaque(context).takeUnretainedValue()
-                    MainActor.assumeIsolated { model.receive(type: type, event: event) }
-                    return Unmanaged.passUnretained(event)
-                }, userInfo: Unmanaged.passUnretained(self).toOpaque())
-        else {
-            error = "macOS could not start Input Monitoring. Check the permission and try again."
+        switch inputMonitor.start(handler: { [weak self] type, event in self?.receive(type: type, event: event) }) {
+        case .permissionRequired:
+            permissionNeeded()
+            return
+        case .unavailable:
+            status = "Input Monitoring could not start"
+            error = "macOS could not start Input Monitoring for \(applicationName). Check the permission and try again."
+            stateDidChange?()
             log.error("Listen-only event tap creation failed")
             return
+        case .started: break
         }
-        eventTap = tap
-        eventSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), eventSource, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
+        if audio == nil { audio = ClickyAudio() }
         enabled = true
         if preferences.collectStats {
             statistics.sessions += 1
@@ -136,15 +149,16 @@ public final class ClickyModel: ObservableObject {
         log.notice("Input feedback activated; no input content is retained")
     }
 
+    private func permissionNeeded() {
+        status = "Input Monitoring permission needed"
+        error = "Allow Input Monitoring for \(applicationName) in System Settings, then enable Clicky again."
+        stateDidChange?()
+        log.notice("Activation needs Input Monitoring permission")
+    }
+
     public func deactivate() {
         previewGeneration &+= 1
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            CFMachPortInvalidate(tap)
-        }
-        if let source = eventSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
-        eventTap = nil
-        eventSource = nil
+        inputMonitor.stop()
         inputState.clear()
         enabled = false
         audio?.stop()
@@ -237,7 +251,23 @@ public final class ClickyModel: ObservableObject {
         }
     }
 
-    private func savePreferences() {
+    private func syncAppearance() {
+        var updated = preferences
+        updated.reduceMotion = appearance.reduceMotion
+        updated.reduceTransparency = appearance.reduceTransparency
+        guard updated != preferences else { return }
+        syncingAppearance = true
+        preferences = updated
+        syncingAppearance = false
+    }
+
+    private func savePreferences(previous: ClickyPreferences) {
+        if !syncingAppearance {
+            if previous.reduceMotion != preferences.reduceMotion { appearance.reduceMotion = preferences.reduceMotion }
+            if previous.reduceTransparency != preferences.reduceTransparency {
+                appearance.reduceTransparency = preferences.reduceTransparency
+            }
+        }
         if let data = try? JSONEncoder().encode(preferences) { defaults.set(data, forKey: "clicky.preferences.v1") }
         refreshContext()
     }
