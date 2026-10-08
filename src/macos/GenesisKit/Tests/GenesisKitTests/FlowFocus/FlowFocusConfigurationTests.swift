@@ -17,6 +17,68 @@ final class FlowFocusConfigurationTests: XCTestCase {
     }
 
     @MainActor
+    func testToolsTransformKeepsInputPrivateAndUsesTheSelectedAccountReference() async throws {
+        let config = FlowFocusConfiguration(directory: directory)
+        config.allowsWrites = true
+        let adapter = FlowTransformTools(bridge: ToolsBridge(binaryPath: "/missing/fixture-tools"), configuration: config)
+        adapter.save(accountID: "acc_work", model: "fixture-writer")
+        await config.flush()
+        var inputURL: URL?
+        adapter.runCommand = { args, timeout in
+            XCTAssertEqual(Array(args.prefix(2)), ["transforms", "run"])
+            XCTAssertTrue(args.contains("@account/acc_work:fixture-writer"))
+            XCTAssertFalse(args.contains("Private dictated fixture"))
+            XCTAssertEqual(timeout, 35)
+            let index = try XCTUnwrap(args.firstIndex(of: "--input"))
+            let url = URL(fileURLWithPath: args[index + 1])
+            inputURL = url
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let parent = try FileManager.default.attributesOfItem(atPath: url.deletingLastPathComponent().path)
+            XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+            XCTAssertEqual((parent[.posixPermissions] as? NSNumber)?.intValue, 0o700)
+            let request = try JSONDecoder().decode(FlowTransformRequest.self, from: Data(contentsOf: url))
+            XCTAssertEqual(request.text, "Private dictated fixture")
+            return ToolsRunResult(stdout: #"{"text":"Rewritten fixture"}"#, stderr: "", exitCode: 0, wallMs: 1)
+        }
+        let result = try await adapter.run(.init(systemPrompt: "Rewrite faithfully.", text: "Private dictated fixture"))
+        XCTAssertEqual(result, "Rewritten fixture")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(inputURL).path))
+        let saved = try String(contentsOf: client, encoding: .utf8)
+        let persisted = FlowFocusConfiguration(directory: directory)
+        XCTAssertEqual((persisted.app["flowTransforms"] as? [String: String])?["modelRef"], "@account/acc_work:fixture-writer")
+        XCTAssertFalse(saved.contains("Private dictated fixture"))
+        adapter.runCommand = { args, _ in
+            let index = try XCTUnwrap(args.firstIndex(of: "--input"))
+            inputURL = URL(fileURLWithPath: args[index + 1])
+            throw CocoaError(.fileReadUnknown)
+        }
+        do {
+            _ = try await adapter.run(.init(systemPrompt: "Rewrite.", text: "Fixture"))
+            XCTFail("expected execution failure")
+        } catch { XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(inputURL).path)) }
+    }
+
+    @MainActor
+    func testToolsTransformMetadataAndMissingSelectionNeverExecuteARewrite() async throws {
+        let config = FlowFocusConfiguration(directory: directory)
+        let adapter = FlowTransformTools(bridge: ToolsBridge(binaryPath: "/missing/fixture-tools"), configuration: config)
+        var calls = 0
+        adapter.runCommand = { args, _ in
+            calls += 1
+            XCTAssertEqual(args, ["transforms", "configuration", "--json"])
+            return ToolsRunResult(stdout: #"{"providers":[]}"#, stderr: "", exitCode: 0, wallMs: 1)
+        }
+        let choices = try await adapter.choices()
+        XCTAssertTrue(choices.providers.isEmpty)
+        do {
+            _ = try await adapter.run(.init(systemPrompt: "Rewrite.", text: "Fixture"))
+            XCTFail("missing account must not execute")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Choose an AI account")) }
+        XCTAssertEqual(calls, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: client.path))
+    }
+
+    @MainActor
     func testFailedAsyncWriteRollsBackOptimisticStateAndPublishesTheError() async throws {
         try Data("{\"app\":{\"focusWhileListening\":true}}".utf8).write(to: client)
         let config = FlowFocusConfiguration(directory: directory)

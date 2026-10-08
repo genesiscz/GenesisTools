@@ -10,8 +10,21 @@ public final class FlowFocusHost {
     public var notificationsEnabled = false
     public var soundsEnabled = false
     public var transformConfiguration: (() -> FlowTransformConfiguration)?
+    public var runTransform: ((FlowTransformRequest) async throws -> String)?
 
     private init() {}
+}
+
+public struct FlowTransformRequest: Codable, Sendable {
+    public let systemPrompt: String
+    public let text: String
+    public let timeout: TimeInterval
+
+    public init(systemPrompt: String, text: String, timeout: TimeInterval = 30) {
+        self.systemPrompt = systemPrompt
+        self.text = text
+        self.timeout = timeout
+    }
 }
 
 public struct FlowTransformConfiguration: Sendable {

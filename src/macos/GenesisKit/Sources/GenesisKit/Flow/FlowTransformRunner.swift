@@ -55,6 +55,11 @@ public enum FlowTransformRunner {
 
         let words = trimmed.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
         guard words <= wordLimit else { throw RunError.tooLong(words) }
+        if let rewritten = try await hostTransform(.init(systemPrompt: systemPrompt(for: transform), text: trimmed, timeout: timeout)) {
+            let output = rewritten.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !output.isEmpty else { throw RunError.empty }
+            return output
+        }
 
         // Settings live on the main actor; read them once, up front, so the
         // network call itself stays off it.
@@ -102,6 +107,12 @@ public enum FlowTransformRunner {
         let result = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !result.isEmpty else { throw RunError.empty }
         return result
+    }
+
+    @MainActor
+    private static func hostTransform(_ request: FlowTransformRequest) async throws -> String? {
+        guard let run = FlowFocusHost.shared.runTransform else { return nil }
+        return try await run(request)
     }
 
     @MainActor
