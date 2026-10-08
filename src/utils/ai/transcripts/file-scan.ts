@@ -105,7 +105,8 @@ interface ScanEntry<S> {
 
 const MARK_BYTES = 64;
 
-function markBefore(fd: number, offset: number): string {
+/** The file's first bytes and the bytes just before `offset`, to tell an appended file from a rewritten one. */
+export function markBefore(fd: number, offset: number): string {
     const head = Buffer.alloc(Math.min(MARK_BYTES, offset));
     readSync(fd, head, 0, head.length, 0);
     const start = Math.max(0, offset - MARK_BYTES);

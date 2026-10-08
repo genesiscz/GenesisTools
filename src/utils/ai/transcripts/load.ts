@@ -6,7 +6,7 @@ import type { WorkerEvent } from "@genesiscz/utils/worker/events";
 import { claudeMessagesToTurns } from "./claude";
 import { codexNativeLinesToTurns } from "./codex";
 import { grokNativeLinesToTurns, grokWorkerTextToTurns } from "./grok";
-import { parseTranscriptLine } from "./parse-line";
+import { readRecordsAppendOnly } from "./record-cache";
 import type { ResolvedTranscript } from "./resolve";
 import { indexedClaudeEnvelope } from "./turn-index";
 import {
@@ -23,14 +23,8 @@ function readRecords(path: string): unknown[] {
     if (!existsSync(path)) {
         return [];
     }
-    const records: unknown[] = [];
-    for (const line of readFileSync(path, "utf8").split("\n")) {
-        const parsed = parseTranscriptLine(line);
-        if (parsed) {
-            records.push(parsed);
-        }
-    }
-    return records;
+    // A live Codex or Grok file is read again on every write: only its new lines are parsed (record-cache.ts).
+    return readRecordsAppendOnly(path);
 }
 
 function looksLikeCodexGt(records: unknown[]): boolean {

@@ -32,7 +32,8 @@ describe("transcriptEnvelope", () => {
             sessionId: "fixture",
             filePath: file,
         };
-        const reader = spyOn(fs, "readFileSync");
+        // One open of the file per snapshot: records are read through `readRecordsAppendOnly`.
+        const reader = spyOn(fs, "openSync");
         try {
             const page = await transcriptSnapshot(resolved);
             const all = [
