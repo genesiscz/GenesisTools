@@ -60,11 +60,16 @@ function singleAnswer(flags: AnswerFlags): DecisionAnswer {
         throw new Error("--decision takes a number");
     }
 
+    const expectedRevision = flags.expectedRevision === undefined ? undefined : Number(flags.expectedRevision);
+    if (expectedRevision !== undefined && (!Number.isInteger(expectedRevision) || expectedRevision < 1)) {
+        throw new Error("--expected-revision must be a positive integer");
+    }
+
     return {
         number,
         ...(flags.option ? { option: flags.option } : {}),
         ...(flags.text ? { text: flags.text } : {}),
-        ...(flags.expectedRevision !== undefined ? { expectedRevision: Number(flags.expectedRevision) } : {}),
+        ...(expectedRevision !== undefined ? { expectedRevision } : {}),
     };
 }
 

@@ -42,11 +42,17 @@ export function registerVideoCommands(program: Command): void {
                     }
                 }
 
-                const settings = videoSettingsSchema.parse({
+                const parsed = videoSettingsSchema.safeParse({
                     fps: Number(options.fps),
                     framesPerImage: Number(options.framesPerImage),
                     minimumDifferencePct: Number(options.difference),
                 });
+                if (!parsed.success) {
+                    out.log.error(`--difference must be a percentage between 0 and 100 (got "${options.difference}")`);
+                    process.exitCode = 1;
+                    return;
+                }
+                const settings = parsed.data;
                 await withInterrupt(
                     async (signal) => {
                         const manifest = await prepareVideoEvidence({
