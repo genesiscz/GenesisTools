@@ -51,7 +51,7 @@ export function registerDevCommands(program: Command): void {
         )
         .option(
             "--min-profile-ms <ms>",
-            `report profiling lines (${toolCommand("config profiling")}: CLI timers and whole command runs) at least this long`,
+            `report profiling lines (${toolCommand("config", "profiling")}: CLI timers and whole command runs) at least this long`,
             positiveNumber,
             DEFAULT_CLASSIFY.minProfileMs
         )
