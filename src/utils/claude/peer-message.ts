@@ -10,7 +10,7 @@ import { logger } from "@genesiscz/utils/logger";
  * that socket reaches the RUNNING session: a busy one reads it between tool calls, an idle one starts a
  * turn. No keystrokes, so it cannot land in a half-typed prompt or an open dialog.
  *
- * Research and the wire format: GenesisBrain/Dev/Agents/MessageAgentsWithoutTmuxOrCmux.md (Part B 1.3).
+ * The wire format was read from Claude Code 2.1.224 and verified against a live session.
  * The receiver checks `session_id` against its own id and drops a mismatch, which protects against pid
  * reuse. A bare sender binds no reply socket, so an accepted message gets no receipt; silence after a
  * clean write is the success case.
