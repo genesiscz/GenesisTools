@@ -62,7 +62,11 @@ private final class BugToTestDelegate: NSObject, NSApplicationDelegate, NSWindow
                 content.cacheDisplay(in: content.bounds, to: bitmap)
                 guard let png = bitmap.representation(using: .png, properties: [:]) else { throw bugToTestError("Native PNG encoding failed.") }
                 try png.write(to: URL(fileURLWithPath: path), options: .atomic)
-                NSApp.terminate(nil)
+                Task {
+                    await self.model.shutdown()
+                    self.closing = true
+                    NSApp.terminate(nil)
+                }
             } catch { FileHandle.standardError.write(Data((error.localizedDescription + "\n").utf8)); exit(1) }
         }
     }
@@ -71,7 +75,8 @@ func runBugToTest(_ args: [String]) -> Never {
     MainActor.assumeIsolated {
         func value(_ flag: String) -> String? { guard let index = args.firstIndex(of: flag), index + 1 < args.count else { return nil }; return args[index + 1] }
         let delegate = BugToTestDelegate()
-        do { delegate.model = BugToTestModel(toolsPath: try value("--tools") ?? AppToolsOrigin.binaryPath()) }
+        let snapshotStorage = value("--snapshot").map { URL(fileURLWithPath: $0).deletingLastPathComponent() }
+        do { delegate.model = BugToTestModel(toolsPath: try value("--tools") ?? AppToolsOrigin.binaryPath(), storageDirectory: snapshotStorage) }
         catch { FileHandle.standardError.write(Data((error.localizedDescription + "\n").utf8)); exit(1) }
         delegate.openURL = value("--open").map { URL(fileURLWithPath: $0) }; delegate.snapshotPath = value("--snapshot")
         if let page = value("--pane") { delegate.model.reviewPage = page }

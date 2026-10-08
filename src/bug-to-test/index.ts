@@ -9,6 +9,7 @@ import { showTrace } from "./lib/trace";
 import {
     exportWorkspace,
     generateWorkspace,
+    inspectWorkspace,
     loadRecording,
     minimizeWorkspace,
     saveRecording,
@@ -97,6 +98,16 @@ program
     .command("inspect")
     .requiredOption("--input <path>")
     .action(async (options) => out.result(await loadRecording(options.input)));
+program
+    .command("workspace")
+    .description("Inspect a saved workspace against the reviewed recording without executing it")
+    .requiredOption("--workspace <path>")
+    .requiredOption("--input <path>")
+    .action(async (options) =>
+        out.result(
+            await inspectWorkspace({ directory: options.workspace, recording: await loadRecording(options.input) })
+        )
+    );
 program
     .command("generate")
     .requiredOption("--input <path>")

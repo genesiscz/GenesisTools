@@ -40,9 +40,9 @@ final class BugToTestModel: ObservableObject {
     private var traceStream: ToolsLineStream?
     private(set) var epoch = UUID()
 
-    init(toolsPath: String) {
+    init(toolsPath: String, storageDirectory: URL? = nil) {
         bridge = ToolsBridge(binaryPath: toolsPath, server: nil)
-        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let folder = (storageDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0])
             .appendingPathComponent("GenesisTools/BugToTest/" + UUID().uuidString)
         recordingURL = folder.appendingPathComponent("recording.json")
         stopURL = folder.appendingPathComponent("stop")
@@ -51,7 +51,11 @@ final class BugToTestModel: ObservableObject {
         BugToTestExpectation(description: description, kind: assertionKind,
             locator: assertionKind == "url" ? nil : BugToTestLocator(kind: locatorKind, value: locatorValue, name: locatorKind == "role" ? locatorName : nil), expected: expected)
     }
-    var canGenerate: Bool { recording != nil && expectation.valid && !busy }
+    var canGenerate: Bool {
+        guard var file = recording, !busy else { return false }
+        file.title = title; file.expectation = expectation
+        return file.validForGeneration
+    }
     var workspace: String? { recording?.workspace }
     var localRecordingPath: String { recordingURL.path }
 
@@ -74,7 +78,7 @@ final class BugToTestModel: ObservableObject {
         }
     }
     func command<T: Decodable>(_ command: String, args: [String], timeout: Int = 45, as type: T.Type) async throws -> T {
-        let answer = try await bridge.run(subcommand: "bug-to-test", args: [command] + args, timeoutSeconds: timeout)
+        let answer = try await bridge.run(subcommand: "bug-to-test", args: [command] + args, timeoutSeconds: timeout, cancellationGraceSeconds: 4)
         try Task.checkCancellation()
         guard answer.exitCode == 0 else { throw bugToTestError(String(answer.stderr.suffix(4000))) }
         return try JSONDecoder().decode(T.self, from: Data(answer.stdout.utf8))
@@ -163,17 +167,17 @@ final class BugToTestModel: ObservableObject {
 
     }
     func loadWorkspace(_ workspace: String) async {
+        let identity = epoch
         do {
-            let content = try await Task.detached { () -> (String, BugToTestResult?) in
-                let folder = URL(fileURLWithPath: workspace)
-                let source = try String(contentsOf: folder.appendingPathComponent("repro.spec.ts"), encoding: .utf8)
-                let resultURL = folder.appendingPathComponent("verification.json")
-                let result = FileManager.default.fileExists(atPath: resultURL.path) ? try JSONDecoder().decode(BugToTestResult.self, from: Data(contentsOf: resultURL)) : nil
-                return (source, result)
-            }.value
-            guard self.workspace == workspace else { return }
-            source = content.0; result = content.1
-        } catch { self.error = "Saved workspace is unavailable: " + error.localizedDescription }
+            try await persist()
+            let content = try await command("workspace", args: ["--workspace", workspace, "--input", recordingURL.path], as: BugToTestWorkspace.self)
+            guard self.workspace == workspace, epoch == identity else { return }
+            source = content.source; result = content.result
+        } catch {
+            guard self.workspace == workspace, epoch == identity else { return }
+            recording?.workspace = nil; source = ""; result = nil
+            self.error = "Saved workspace is unavailable: " + error.localizedDescription
+        }
     }
     func changed() {
         if busy && !isRecording { task?.cancel() }

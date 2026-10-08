@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isProcessGroupAlive } from "@genesiscz/utils/process-alive";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { stripAnsi } from "@genesiscz/utils/string";
@@ -164,6 +165,30 @@ async function checkedWorkspace(input: string): Promise<{ directory: string; has
     }
     return { directory, hash };
 }
+export async function inspectWorkspace(options: {
+    directory: string;
+    recording: BugRecording;
+}): Promise<{ source: string; result?: VerificationResult }> {
+    const { directory, hash } = await checkedWorkspace(options.directory);
+    const source = await readFile(join(directory, "repro.spec.ts"), "utf8");
+    if (source !== generateRepro(options.recording)) {
+        throw new Error("Saved workspace does not match the reviewed recording. Generate a new workspace.");
+    }
+    const resultPath = join(directory, "verification.json");
+    try {
+        const result = SafeJSON.parse(await readFile(resultPath, "utf8"), { strict: true }) as VerificationResult;
+        if (result.testHash === hash) {
+            return { source, result };
+        }
+        log.warn({ directory }, "saved verification result has a stale test fingerprint");
+    } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+            throw error;
+        }
+    }
+    return { source };
+}
+
 async function checkedOutput(options: { directory: string; name: string; isDirectory?: boolean }): Promise<string> {
     const file = join(options.directory, options.name);
     try {
@@ -284,6 +309,7 @@ export async function verifyWorkspace(options: {
                 if (process.platform === "win32") {
                     processChild.kill(signal);
                 } else {
+                    // pid-verified: detached process group created by this live owned child; never a stored PID.
                     process.kill(-pid, signal);
                 }
             } catch (error) {
@@ -322,18 +348,7 @@ export async function verifyWorkspace(options: {
         await termination;
         if (termination && process.platform !== "win32" && processChild.pid) {
             const deadline = Date.now() + 1000;
-            while (true) {
-                try {
-                    process.kill(-processChild.pid, 0);
-                } catch (error) {
-                    if (error instanceof Error && "code" in error && error.code === "ESRCH") {
-                        break;
-                    }
-                    if (!(error instanceof Error && "code" in error && error.code === "EPERM")) {
-                        throw error;
-                    }
-                }
-
+            while (isProcessGroupAlive(processChild.pid)) {
                 if (Date.now() >= deadline) {
                     throw new Error("Owned Playwright process group did not exit after forced termination.");
                 }

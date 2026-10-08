@@ -28,6 +28,50 @@ final class BugToTestTests: XCTestCase {
         XCTAssertFalse(file.validForGeneration)
     }
     @MainActor
+    func testGenerationUsesTheCurrentRecordingURLAndLocatorContract() throws {
+        let model = BugToTestModel(toolsPath: "/fixture/tools")
+        model.install(try recording())
+        XCTAssertTrue(model.canGenerate)
+        for url in ["[redacted]", "http:relative", "https://fixture:secret@site.test/", "about:blank"] {
+            model.recording?.initialUrl = url
+            XCTAssertFalse(model.canGenerate, url)
+        }
+        model.install(try recording())
+        model.recording?.actions[0].sourceUrl = "[redacted]"
+        XCTAssertFalse(model.canGenerate)
+        model.recording?.actions[0].sourceUrl = nil
+        model.recording?.actions[0].locator?.value = ""
+        XCTAssertFalse(model.canGenerate)
+        model.recording?.actions[0].locator?.value = "add"
+        XCTAssertTrue(model.canGenerate)
+        model.recording?.actions[0].kind = "navigate"
+        model.recording?.actions[0].url = "about:blank"
+        XCTAssertFalse(model.canGenerate)
+        model.recording?.actions[0].url = "https://site.test/redacted"
+        XCTAssertTrue(model.canGenerate)
+        model.assertionKind = "url"; model.expected = "https://fixture:secret@site.test/"
+        XCTAssertFalse(model.canGenerate)
+        model.expected = "https://site.test/redacted"
+        XCTAssertTrue(model.canGenerate)
+    }
+    @MainActor
+    func testRejectedWorkspaceClearsPriorSourceResultAndRerunTarget() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("bug-to-test-native-restore-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let tools = folder.appendingPathComponent("tools")
+        try "#!/bin/sh\nprintf 'Saved workspace does not match the reviewed recording' >&2\nexit 1\n".write(to: tools, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: tools.path)
+        let model = BugToTestModel(toolsPath: tools.path, storageDirectory: folder)
+        model.install(try recording())
+        model.result = BugToTestResult(status: "passed", message: "Old assertion", testHash: "old", report: "fixture", durationMs: 1, exitCode: 0)
+        model.source = "old source"
+        await model.loadWorkspace(model.workspace!)
+        XCTAssertNil(model.workspace)
+        XCTAssertNil(model.result)
+        XCTAssertEqual(model.source, "")
+        XCTAssertTrue(model.error?.contains("does not match") == true)
+    }
+    @MainActor
     func testEditingAnExpectationInvalidatesPriorWorkspaceAndGreenResult() throws {
         let model = BugToTestModel(toolsPath: "/fixture/tools")
         model.install(try recording())

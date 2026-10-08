@@ -1,5 +1,13 @@
 import Foundation
 
+func bugToTestHTTPURL(_ value: String) -> Bool {
+    guard value.count <= 4000, let url = URL(string: value),
+          let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
+          url.host?.isEmpty == false,
+          (url.user ?? "").isEmpty, (url.password ?? "").isEmpty else { return false }
+    return true
+}
+
 struct BugToTestFingerprint: Codable, Equatable {
     var tag: String
     var role: String
@@ -11,6 +19,11 @@ struct BugToTestLocator: Codable, Equatable {
     var name: String?
     var fingerprint: BugToTestFingerprint?
     var label: String { kind == "role" ? value + " “" + (name ?? "") + "”" : kind + ": " + value }
+    var valid: Bool {
+        guard ["testId", "role", "css"].contains(kind), !value.isEmpty, value.count < 1000 else { return false }
+        if let fingerprint, [fingerprint.tag, fingerprint.role, fingerprint.name].contains(where: { $0.count >= 1000 }) { return false }
+        return true
+    }
 }
 struct BugToTestAction: Codable, Identifiable, Equatable {
     var id: String
@@ -22,6 +35,14 @@ struct BugToTestAction: Codable, Identifiable, Equatable {
     var excluded: Bool
     var at: Double
     var label: String { kind + " · " + (locator?.label ?? url ?? "") }
+    var valid: Bool {
+        guard ["click", "fill", "select", "press", "navigate"].contains(kind), id.count <= 100, at.isFinite else { return false }
+        if let sourceUrl, !bugToTestHTTPURL(sourceUrl) { return false }
+        if kind == "navigate" { return url.map(bugToTestHTTPURL) == true }
+        guard locator?.valid == true else { return false }
+        if ["fill", "select", "press"].contains(kind) { return value.map { $0.count <= 4000 } == true }
+        return value.map { $0.count <= 4000 } ?? true
+    }
 }
 struct BugToTestEvidence: Codable, Identifiable, Equatable {
     var id: String
@@ -36,12 +57,13 @@ struct BugToTestExpectation: Codable, Equatable {
     var locator: BugToTestLocator?
     var expected: String
     var valid: Bool {
-        guard !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        guard description.count <= 4000, expected.count <= 4000,
+              !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !expected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               ["text", "value", "visible", "url"].contains(kind) else { return false }
         if kind == "visible" && !["true", "false"].contains(expected) { return false }
-        if kind != "url" && (locator?.value.isEmpty != false) { return false }
-        if kind == "url" && URL(string: expected)?.scheme.map({ ["http", "https"].contains($0) }) != true { return false }
+        if kind != "url" && locator?.valid != true { return false }
+        if kind == "url" && !bugToTestHTTPURL(expected) { return false }
         return true
     }
 }
@@ -56,7 +78,10 @@ struct BugToTestRecording: Codable, Equatable {
     var workspace: String?
     var removedActionIds: [String]?
     var triggerActionId: String?
-    var validForGeneration: Bool { version == 1 && expectation?.valid == true && URL(string: initialUrl)?.scheme.map { ["http", "https"].contains($0) } == true }
+    var validForGeneration: Bool {
+        version == 1 && id.count <= 100 && title.count <= 200 && actions.count <= 200 && evidence.count <= 500
+            && expectation?.valid == true && bugToTestHTTPURL(initialUrl) && actions.allSatisfy(\.valid)
+    }
 }
 struct BugToTestBrowser: Decodable, Identifiable {
     var id: String
@@ -91,6 +116,10 @@ struct BugToTestResult: Codable, Equatable {
         default: return "Setup or selector failed"
         }
     }
+}
+struct BugToTestWorkspace: Decodable {
+    var source: String
+    var result: BugToTestResult?
 }
 struct BugToTestGeneration: Decodable {
     var directory: String

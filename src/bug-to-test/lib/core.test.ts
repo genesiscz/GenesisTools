@@ -6,10 +6,18 @@ import { redactBrowserText } from "@app/chrome-devtools/lib/action-recording";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { recordingSnapshot } from "./capture";
 import { EXPECTATION_MARKER, generateRepro } from "./generate";
 import { type BugRecording, parseExpectation, parseRecording } from "./types";
-import { classifyReport, exportWorkspace, generateWorkspace, testHash, verifyWorkspace } from "./workspace";
+import {
+    classifyReport,
+    exportWorkspace,
+    generateWorkspace,
+    inspectWorkspace,
+    testHash,
+    verifyWorkspace,
+} from "./workspace";
 
 const recording: BugRecording = {
     version: 1,
@@ -243,6 +251,31 @@ describe("bug repro contract", () => {
         );
         await expect(verifyWorkspace({ directory })).rejects.toThrow("imported module aliases");
     });
+    test("restored workspaces match the current executable recording and verified hash", async () => {
+        const root = await mkdtemp(join(tmpdir(), "bug-to-test-restore-"));
+        const directory = await generateWorkspace({ recording, directory: join(root, "workspace") });
+        const result = {
+            status: "passed",
+            testHash: testHash(generateRepro(recording)),
+            report: "fixture.json",
+            message: "passed",
+            durationMs: 1,
+            exitCode: 0,
+        };
+        await Bun.write(join(directory, "verification.json"), SafeJSON.stringify(result));
+        expect((await inspectWorkspace({ directory, recording })).result?.status).toBe("passed");
+        await expect(
+            inspectWorkspace({
+                directory,
+                recording: { ...recording, expectation: { ...recording.expectation!, expected: "2" } },
+            })
+        ).rejects.toThrow("does not match");
+        await expect(inspectWorkspace({ directory, recording: { ...recording, actions: [] } })).rejects.toThrow(
+            "does not match"
+        );
+        await Bun.write(join(directory, "verification.json"), SafeJSON.stringify({ ...result, testHash: "stale" }));
+        expect((await inspectWorkspace({ directory, recording })).result).toBeUndefined();
+    });
     test("imported package scripts never enter a portable executable bundle", async () => {
         const root = await mkdtemp(join(tmpdir(), "bug-to-test-package-"));
         const directory = await generateWorkspace({ recording, directory: join(root, "workspace") });
@@ -275,17 +308,7 @@ setInterval(() => {}, 1000);
             const which = spyOn(Bun, "which").mockImplementation((name) => (name === "node" ? runner : null));
             const controller = new AbortController();
             let childPid: number | undefined;
-            const alive = (pid: number) => {
-                try {
-                    process.kill(pid, 0);
-                    return true;
-                } catch (error) {
-                    if (error instanceof Error && "code" in error && error.code === "ESRCH") {
-                        return false;
-                    }
-                    throw error;
-                }
-            };
+            const alive = isProcessAlive;
             const pending = verifyWorkspace({ directory, signal: controller.signal });
             try {
                 await waitForPath(childPidFile, { timeoutMs: 5000 });

@@ -103,6 +103,8 @@ struct BugToTestView: View {
                     PathLabel(path: model.localRecordingPath, title: "Autosaved recording")
                     TextField("Starting URL (edit to redact)", text: Binding(get: { recording.initialUrl }, set: { model.recording?.initialUrl = $0; model.changed() }), axis: .vertical)
                         .textFieldStyle(.roundedBorder).font(.system(size: 10, design: .monospaced)).disabled(model.busy)
+                    Text("Keep HTTP URLs valid when redacting. Edit the path or query instead of replacing the whole URL.")
+                        .font(.system(size: 10)).foregroundStyle(ReviewPalette.dim)
                 }
                 Divider()
                 Text("Execution browser").font(.system(size: 11, weight: .medium))

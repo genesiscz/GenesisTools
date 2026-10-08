@@ -8,6 +8,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { batchPsInfo, collectProcessTree, listPsTable } from "@genesiscz/utils/process/ps";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { chromium } from "@playwright/test";
 import { recordBug } from "../lib/capture";
 import type { BugRecording } from "../lib/types";
@@ -205,6 +206,7 @@ process.on('SIGTERM', () => server.close(() => process.exit(0)));
         });
         const timer = setTimeout(() => {
             if (child.pid) {
+                // pid-verified: group created by this live detached child, never loaded from durable state.
                 process.kill(-child.pid, "SIGKILL");
             }
         }, 60_000);
@@ -336,15 +338,7 @@ process.on('SIGTERM', () => server.close(() => process.exit(0)));
             }, 1000);
         },
     });
-    let alive = false;
-    try {
-        process.kill(ownedPid, 0);
-        alive = true;
-    } catch (error) {
-        if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) {
-            throw error;
-        }
-    }
+    const alive = isProcessAlive(ownedPid);
     if (observationError) {
         throw observationError;
     }
