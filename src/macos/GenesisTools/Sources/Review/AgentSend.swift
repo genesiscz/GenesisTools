@@ -186,6 +186,8 @@ struct AgentSendForm: View {
             ))
             .toggleStyle(.checkbox)
             .labelsHidden()
+            // The visible label is hidden and the tooltip is hover-only, so VoiceOver needs its own name.
+            .accessibilityLabel("Send the comment on \(item.path):\(item.lines)")
             .instantTooltip("Send this comment with the others; unticked, it waits for a later send")
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {

@@ -217,11 +217,13 @@ test("log tails read bounded chunks without losing lines or UTF-8 at chunk bound
     const dir = mkdtempSync(join(tmpdir(), "monitor-tail-"));
     const file = join(dir, "app.log");
     const first = `${"a".repeat(65_535)}é\n`;
-    const lines = Array.from({ length: 3000 }, (_, index) => `line ${index} ${"x".repeat(90)}`);
+    const lines = Array.from({ length: 12_000 }, (_, index) => `line ${index} ${"x".repeat(90)}`);
     writeFileSync(file, `${first}${lines.join("\n")}\n`);
     try {
         const tail = new TextTail(file, true);
         const read = tail.read();
+        // One pass drains several 64 KB chunks (about 650 lines each) but stops at its byte budget.
+        expect(read.length).toBeGreaterThan(5000);
         expect(read.length).toBeLessThan(lines.length);
         const all = [...read];
         for (let index = 0; index < 10; index++) {

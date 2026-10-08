@@ -183,6 +183,11 @@ private final class ReviewAppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    /// A change made in the last second before the window closed is still waiting to be saved.
+    func applicationWillTerminate(_ notification: Notification) {
+        ReviewSessionPersistence.flushBeforeExit()
+    }
+
     /// Every face shares one Dock tile: a click that lands here goes on to the running hub too.
     @MainActor
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

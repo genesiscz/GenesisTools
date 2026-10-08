@@ -31,13 +31,19 @@ enum RelayJournal {
         lock.lock()
         defer { lock.unlock() }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        guard let handle = FileHandle(forWritingAtPath: logFile.path) else {
-            try? line.write(to: logFile, atomically: true, encoding: .utf8)
+        // O_APPEND: the relay and every window face write this file, and NSLock serializes only one
+        // process. Each record goes out in one write at the end the kernel picks, so none overwrites another.
+        let descriptor = open(logFile.path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o644)
+        guard descriptor >= 0 else {
+            FileHandle.standardError.write(Data("link relay journal: \(logFile.path) not writable (errno \(errno))\n".utf8))
             return
         }
-        defer { try? handle.close() }
-        _ = try? handle.seekToEnd()
-        try? handle.write(contentsOf: Data(line.utf8))
+        defer { close(descriptor) }
+        let bytes = Array(line.utf8)
+        let written = bytes.withUnsafeBufferPointer { Darwin.write(descriptor, $0.baseAddress, $0.count) }
+        if written != bytes.count {
+            FileHandle.standardError.write(Data("link relay journal: wrote \(written) of \(bytes.count) bytes (errno \(errno))\n".utf8))
+        }
     }
 
     /// A link's scheme, host and path, without the query (it can carry tokens).

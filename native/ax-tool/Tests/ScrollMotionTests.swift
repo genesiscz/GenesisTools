@@ -25,7 +25,7 @@ final class ScrollMotionTests: XCTestCase {
             }
         }
         for values in [["--pixels": "0"], ["--time": "31"], ["--repeat": "201"], ["--pause": "-1"],
-                       ["--amount": String(Int.max)]] {
+                       ["--amount": String(Int.max)], ["--amount": "0", "--pixels": "200"]] {
             XCTAssertThrowsError(try ScrollNumericOptions(values))
         }
     }

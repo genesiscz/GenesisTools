@@ -283,6 +283,20 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.saveDelay, execute: work)
     }
 
+    /// Before the process exits: a save still waiting out `saveDelay` runs now, and every queued write
+    /// finishes. Main thread only (`applicationWillTerminate`).
+    static func flushBeforeExit() {
+        active?.flushNow()
+        writer.sync {}
+    }
+
+    private func flushNow() {
+        guard let pending = pendingSave else { return }
+        pending.cancel()
+        pendingSave = nil
+        save()
+    }
+
     private func save() {
         guard let model else { return }
         let state = Self.capture(model: model, defaults: HubDefaults.store, page: page)

@@ -87,12 +87,9 @@ public struct ScrollNumericOptions {
         }
         let explicitPixels = try integer("--pixels")
         amount = try integer("--amount") ?? 3
-        if let explicitPixels {
-            pixels = explicitPixels
-        } else {
-            guard (1...2500).contains(amount) else { throw ScrollNumericError.outOfRange("--amount must be 1–2500") }
-            pixels = amount * 40
-        }
+        // Checked even when --pixels sets the distance: the result reports `amount` either way.
+        guard (1...2500).contains(amount) else { throw ScrollNumericError.outOfRange("--amount must be 1–2500") }
+        pixels = explicitPixels ?? amount * 40
         guard (1...100_000).contains(pixels) else { throw ScrollNumericError.outOfRange("--pixels must be 1–100000") }
         seconds = try decimal("--time")
         if let seconds, !(0.05...30).contains(seconds) { throw ScrollNumericError.outOfRange("--time must be 0.05–30 seconds") }

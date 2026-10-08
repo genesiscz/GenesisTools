@@ -197,6 +197,9 @@ export function formatEvent(event: DevEvent): string {
     return `[${event.time || new Date().toTimeString().slice(0, 8)}] ${event.kind} ${event.text}${event.file ? ` (${event.file})` : ""}`;
 }
 
+const TAIL_CHUNK_BYTES = 65_536;
+const TAIL_PASS_BYTES = 16 * TAIL_CHUNK_BYTES;
+
 /**
  * Reads what was appended to one text file since the last call, line by line; a rotated file starts over.
  * A path function follows a day-stamped log to the next day's file, from its start.
@@ -246,13 +249,30 @@ export class TextTail {
                 return [];
             }
 
-            const buffer = Buffer.alloc(Math.min(65_536, size - this.offset));
-            const bytes = readSync(fd, buffer, 0, buffer.length, this.offset);
-            this.offset += bytes;
-            const text = this.partial + this.decoder.write(buffer.subarray(0, bytes));
-            const lines = text.split("\n");
-            this.partial = lines.pop() ?? "";
-            return lines.filter((line) => line.length > 0);
+            // 64 KB chunks, up to TAIL_PASS_BYTES per call: a replayed log drains in a few passes
+            // instead of one chunk per polling interval, and one pass never holds the whole file.
+            const buffer = Buffer.alloc(Math.min(TAIL_CHUNK_BYTES, size - this.offset));
+            const lines: string[] = [];
+            let budget = TAIL_PASS_BYTES;
+
+            while (this.offset < size && budget > 0) {
+                const bytes = readSync(fd, buffer, 0, Math.min(buffer.length, size - this.offset), this.offset);
+                if (bytes === 0) {
+                    break;
+                }
+
+                this.offset += bytes;
+                budget -= bytes;
+                const parts = (this.partial + this.decoder.write(buffer.subarray(0, bytes))).split("\n");
+                this.partial = parts.pop() ?? "";
+                for (const line of parts) {
+                    if (line.length > 0) {
+                        lines.push(line);
+                    }
+                }
+            }
+
+            return lines;
         } finally {
             closeSync(fd);
         }
