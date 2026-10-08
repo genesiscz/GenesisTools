@@ -31,6 +31,10 @@ tools agents listen                                            # human-facing co
 
 There is no separate `register` command — `login` auto-registers on first use for a given `--agent-name`/`--agent-id`. There is no separate `respond` command — replies go through `message --reply <msg-id>`. `request` is a thin send-and-wait primitive over those same replies; it does not introduce a second channel.
 
+**Joining.** `{"type":"agent_joined","agent_name":…,"present":[…]}` reaches every other agent when an agent comes onto
+the bus (its first login, or its first after leaving). A `--once` receiver's later cycles are not joins, so the
+channel costs one event at each end and nothing per message.
+
 **Leaving.** `{"type":"agent_left","agent_name":…,"reason":…,"remaining":[…]}` reaches every other agent (it wakes a
 `--once` receiver) when an agent runs `leave`, when a stream login ends, when any login is killed by a signal, and when a
 dead login is reaped. One `--once` cycle (a message or a timeout) is not leaving. `remaining` names the agents that

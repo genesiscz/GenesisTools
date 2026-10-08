@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { filterForAgent, isVisibleToAgent } from "../lib/filter";
-import { loginEndIsLeave, remainingAgentNames } from "../lib/leave";
+import { loginEndIsLeave, presentAgents, remainingAgentNames } from "../lib/leave";
 import type { AgentRecord, FeedEvent } from "../lib/types";
 
 const agentAlpha: AgentRecord = {
@@ -297,6 +297,10 @@ describe("agent_left", () => {
         ];
 
         expect(remainingAgentNames(events, "agt_alpha")).toEqual(["beta"]);
+        // A join is announced only for an agent that is not present: beta's next --once login is silent,
+        // gamma's next login after leaving is a new join.
+        expect(presentAgents(events).has("agt_beta")).toBe(true);
+        expect(presentAgents(events).has("agt_gamma")).toBe(false);
         expect(loginEndIsLeave("once", "clean_exit")).toBe(false);
         expect(loginEndIsLeave("once", "signal")).toBe(true);
         expect(loginEndIsLeave("stream", "cap")).toBe(true);

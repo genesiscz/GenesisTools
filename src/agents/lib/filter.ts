@@ -14,7 +14,7 @@ export function isVisibleToAgent(event: FeedEvent, agent: AgentRecord, meta?: Se
         return Boolean(meta?.debug);
     }
 
-    if (event.type === "agent_left") {
+    if (event.type === "agent_left" || event.type === "agent_joined") {
         return event.agent_id !== agent.agent_id;
     }
 

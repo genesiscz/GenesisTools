@@ -1,6 +1,12 @@
 export type AgentMode = "stream" | "once";
 
-export type LifecycleEventType = "registered" | "logged_in" | "logged_out" | "stale_lock_reaped" | "agent_left";
+export type LifecycleEventType =
+    | "registered"
+    | "logged_in"
+    | "logged_out"
+    | "stale_lock_reaped"
+    | "agent_joined"
+    | "agent_left";
 
 export type CommEventType = "message";
 
@@ -34,6 +40,19 @@ export interface LoggedOutEvent extends FeedEventBase {
     agent_id: string;
     reason: "signal" | "clean_exit" | "dead_pid" | "cap";
     mode?: AgentMode;
+}
+
+/**
+ * An agent came onto the bus: its first login, or its first after an `agent_left`. A `--once` receiver logs in
+ * again after every message, and those logins are not joins. Every other agent sees it, so the agent that asked
+ * for the channel learns the moment its peer is listening.
+ */
+export interface AgentJoinedEvent extends FeedEventBase {
+    type: "agent_joined";
+    agent_id: string;
+    agent_name: string;
+    /** Names of the other agents already on the bus. */
+    present: string[];
 }
 
 /**
@@ -75,6 +94,7 @@ export type FeedEvent =
     | LoggedInEvent
     | LoggedOutEvent
     | StaleLockReapedEvent
+    | AgentJoinedEvent
     | AgentLeftEvent
     | MessageEvent;
 
