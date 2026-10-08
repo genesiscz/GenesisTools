@@ -128,14 +128,14 @@ private struct WidgetGeneralSettings: View {
                         Text("Both").tag("both")
                         Text("Top").tag("top")
                         Text("Side").tag("side")
-                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250)
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
                 Divider()
                 NativeSettingsRow("Side edge") {
                     Picker("Side edge", selection: string("side", prefs?.side ?? "right")) {
                         Text("Left").tag("left")
                         Text("Right").tag("right")
-                    }.labelsHidden().pickerStyle(.segmented).frame(width: 170)
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 170, alignment: .trailing)
                 }
                 Divider()
                 NativeSettingsRow("Display") {
@@ -144,7 +144,7 @@ private struct WidgetGeneralSettings: View {
                         ForEach(NSScreen.screens, id: \.self) { screen in
                             Text(screen.localizedName).tag(WidgetCoordinator.id(screen))
                         }
-                    }.labelsHidden().frame(width: 220)
+                    }.labelsHidden().frame(width: 220, alignment: .trailing)
                 }
             }
             NativeSettingsCard("Side widgets") {
@@ -152,7 +152,7 @@ private struct WidgetGeneralSettings: View {
                     Picker("Side arrangement", selection: string("sideLayout", prefs?.sideLayout ?? "joined")) {
                         Text("Joined").tag("joined")
                         Text("Three bubbles").tag("separated")
-                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250)
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
                 Divider()
                 NativeSettingsRow("Vertical position", detail: "You can also drag the handle on any side bubble.") {
@@ -173,7 +173,7 @@ private struct WidgetGeneralSettings: View {
                     Picker("Side style", selection: string("sideStyle", prefs?.sideStyle ?? "modular")) {
                         Text("Modular").tag("modular")
                         Text("Classic").tag("classic")
-                    }.labelsHidden().pickerStyle(.segmented).frame(width: 220)
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 220, alignment: .trailing)
                 }
                 Divider()
                 NativeSettingsToggle(
@@ -203,7 +203,7 @@ private struct WidgetGeneralSettings: View {
                         Text("15 seconds").tag(15)
                         Text("30 seconds").tag(30)
                         Text("1 minute").tag(60)
-                    }.labelsHidden().frame(width: 150)
+                    }.labelsHidden().frame(width: 150, alignment: .trailing)
                 }
                 Divider()
                 NativeSettingsToggle(
@@ -364,7 +364,7 @@ private struct WidgetDictationSettings: View {
                             set: { patch(["voiceProvider": .string($0), "voiceAccount": .null, "voiceModel": .null]) })
                     ) {
                         ForEach(configuration?.providers ?? []) { item in Text(item.title).tag(item.id) }
-                    }.labelsHidden().frame(width: 230)
+                    }.labelsHidden().frame(width: 230, alignment: .trailing)
                 }
                 Divider()
                 NativeSettingsRow("Account", detail: "Uses your existing enabled API accounts.") {
@@ -381,7 +381,7 @@ private struct WidgetDictationSettings: View {
                         {
                             Text("Unavailable — select another account").tag(missing)
                         }
-                    }.labelsHidden().frame(width: 230)
+                    }.labelsHidden().frame(width: 230, alignment: .trailing)
                 }
                 if provider?.accounts.isEmpty == true {
                     Text("No enabled API account for this provider. Add one in the Hub's AI account settings.")
@@ -400,7 +400,7 @@ private struct WidgetDictationSettings: View {
                         if let custom = prefs?.voiceModel, provider?.models.contains(custom) != true {
                             Text(custom).tag(custom)
                         }
-                    }.labelsHidden().frame(width: 280)
+                    }.labelsHidden().frame(width: 280, alignment: .trailing)
                 }
                 Divider()
                 NativeSettingsRow("Language", detail: "Language codes such as en or cs. Leave empty for automatic.") {
