@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { withDatabaseReadSnapshot } from "@genesiscz/utils/database/read-snapshot";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { parseJsonlChunk, readJsonlRows } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
@@ -29,6 +30,11 @@ export function openReadModel(dbPath: string): Database {
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new Database(dbPath);
     db.exec("PRAGMA journal_mode = WAL;");
+    initializeReadModel(db);
+    return db;
+}
+
+function initializeReadModel(db: Database): void {
     db.exec(`CREATE TABLE IF NOT EXISTS entries (
         id TEXT PRIMARY KEY, ts INTEGER, session_id TEXT, session_title TEXT,
         project TEXT, repo_root TEXT, cwd TEXT, branch TEXT, commit_sha TEXT,
@@ -44,7 +50,14 @@ export function openReadModel(dbPath: string): Database {
     ensureColumn(db, "entries", "agent", "ALTER TABLE entries ADD COLUMN agent TEXT");
     ensureColumn(db, "entries", "attachments_json", "ALTER TABLE entries ADD COLUMN attachments_json TEXT");
     db.exec("CREATE INDEX IF NOT EXISTS idx_entries_missing_images ON entries(id) WHERE attachments_json IS NULL");
-    return db;
+}
+
+export function queryEntriesSnapshot({ dbPath, opts = {} }: { dbPath: string; opts?: QueryOpts }): QaRow[] {
+    return withDatabaseReadSnapshot({
+        path: dbPath,
+        initialize: initializeReadModel,
+        read: (db) => queryEntries(db, opts),
+    });
 }
 
 function dedupeKey(en: QaEntry): string {

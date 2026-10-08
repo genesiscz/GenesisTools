@@ -29,6 +29,7 @@ export const PROFILER_SCOPE_NAMES = [
     "forge-http",
     // Every `cached()` lookup: hit, or miss and why.
     "cache",
+    "database-snapshot",
     "claude-cmux-tree",
     "claude-cmux-open",
     "claude-sessions",

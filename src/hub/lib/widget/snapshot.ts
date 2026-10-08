@@ -4,9 +4,9 @@ import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { type DecisionRecord, kindOf, readDecisions } from "@app/question/lib/decisions/store";
 import { renderFormAnswer } from "@app/question/lib/pending/render";
-import { listForms, openPendingStore } from "@app/question/lib/pending/store";
+import { listFormsSnapshot } from "@app/question/lib/pending/store";
 import type { AskForm, AskItem } from "@app/question/lib/pending/types";
-import { openReadModel, type QaRow, queryEntries } from "@app/question/lib/read-model";
+import { type QaRow, queryEntriesSnapshot } from "@app/question/lib/read-model";
 import { resolveTranscript, transcriptEnvelope } from "@genesiscz/utils/ai/transcripts";
 import type { ImageAttachment } from "@genesiscz/utils/image/attachments";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
@@ -158,25 +158,16 @@ export const realWidgetSources: WidgetSources = {
     sessions: (refresh) =>
         listAgentSessionRows({ hours: 168, withUsage: false, refresh, maxDiscoveryAgeMs: 15_000, failClosed: true }),
     decisions: () => readDecisions(decisionFiles().file),
-    forms: (sessionHint) => {
-        const db = openPendingStore();
-        try {
-            return listForms(db, {
-                ...(sessionHint ? { sessionHint } : { status: "pending" }),
-                limit: sessionHint ? 80 : 250,
-            });
-        } finally {
-            db.close();
-        }
-    },
-    answers: (sessionId) => {
-        const db = openReadModel(toolDataDir("question", "qa.db"));
-        try {
-            return queryEntries(db, { sessionId, limit: sessionId ? 80 : 100 });
-        } finally {
-            db.close();
-        }
-    },
+    forms: (sessionHint) =>
+        listFormsSnapshot({
+            dbPath: toolDataDir("question", "qa.db"),
+            opts: { ...(sessionHint ? { sessionHint } : { status: "pending" }), limit: sessionHint ? 80 : 250 },
+        }),
+    answers: (sessionId) =>
+        queryEntriesSnapshot({
+            dbPath: toolDataDir("question", "qa.db"),
+            opts: { sessionId, limit: sessionId ? 80 : 100 },
+        }),
     agents: () => widgetAgents(),
     events: (ids) => readWidgetDecisionEvents({ ids }),
 };

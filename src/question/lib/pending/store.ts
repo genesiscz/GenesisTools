@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
+import { withDatabaseReadSnapshot } from "@genesiscz/utils/database/read-snapshot";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -65,6 +66,20 @@ export function openPendingStore(dbPath: string = defaultPendingDbPath()): Datab
     log.debug({ dbPath }, "opened the pending ask store");
 
     return db;
+}
+
+export function listFormsSnapshot({
+    dbPath = defaultPendingDbPath(),
+    opts = {},
+}: {
+    dbPath?: string;
+    opts?: ListFormsOpts;
+} = {}): AskForm[] {
+    return withDatabaseReadSnapshot({
+        path: dbPath,
+        initialize: (db) => runMigrations(db, PENDING_MIGRATIONS, { tableName: "qa_pending" }),
+        read: (db) => listForms(db, opts),
+    });
 }
 
 interface PendingRow {

@@ -1,9 +1,19 @@
-import { describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { describe, expect, it, spyOn } from "bun:test";
+import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { clearDatabaseReadSnapshots } from "@genesiscz/utils/database/read-snapshot";
 import { appendEntry } from "./log-store";
-import { getEntryById, markEntriesRead, markEntriesUnread, openReadModel, queryEntries } from "./read-model";
+import { insertForm, listFormsSnapshot, openPendingStore } from "./pending/store";
+import {
+    getEntryById,
+    markEntriesRead,
+    markEntriesUnread,
+    openReadModel,
+    queryEntries,
+    queryEntriesSnapshot,
+} from "./read-model";
 import type { QaEntry } from "./types";
 
 function e(id: string, over: Partial<QaEntry> = {}): QaEntry {
@@ -214,5 +224,121 @@ it("backfills around corrupt JSONL rows already consumed by an older reader", ()
         expect(getEntryById(db, "recover", { logBase })?.attachments).toEqual([image]);
     } finally {
         db.close();
+    }
+});
+
+function directoryBytes(root: string): Record<string, string> {
+    const files: Record<string, string> = {};
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+        const path = join(root, entry.name);
+        if (entry.isDirectory()) {
+            for (const [child, data] of Object.entries(directoryBytes(path))) {
+                files[`${entry.name}/${child}`] = data;
+            }
+        } else {
+            files[entry.name] = readFileSync(path).toString("base64");
+        }
+    }
+    return files;
+}
+
+function durableDirectoryBytes(root: string): Record<string, string> {
+    // SQLite readers update transient SHM read marks; durable DB, WAL and JSONL bytes must not change.
+    return Object.fromEntries(Object.entries(directoryBytes(root)).filter(([path]) => !path.endsWith("-shm")));
+}
+
+it("snapshot readers ingest fresh JSONL without creating a missing store or directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "qa-snapshot-missing-"));
+    const dbPath = join(root, "missing", "qa.db");
+    const logBase = join(root, "log");
+    appendEntry(e("first", { ts: 1_779_000_000_000 }), logBase);
+    const before = directoryBytes(root);
+    try {
+        expect(listFormsSnapshot({ dbPath })).toEqual([]);
+        expect(queryEntriesSnapshot({ dbPath, opts: { logBase } }).map((row) => row.id)).toEqual(["first"]);
+        expect(directoryBytes(root)).toEqual(before);
+        appendEntry(e("fresh", { ts: 1_779_000_010_000 }), logBase);
+        const appended = directoryBytes(root);
+        expect(queryEntriesSnapshot({ dbPath, opts: { logBase } }).map((row) => row.id)).toEqual(["first", "fresh"]);
+        expect(directoryBytes(root)).toEqual(appended);
+    } finally {
+        clearDatabaseReadSnapshots();
+    }
+});
+
+it("snapshot readers preserve stored metadata and pending WAL changes without altering store bytes", () => {
+    const root = mkdtempSync(join(tmpdir(), "qa-snapshot-wal-"));
+    const dbPath = join(root, "qa.db");
+    const logBase = join(root, "log");
+    const image = {
+        type: "image" as const,
+        id: "image",
+        path: "/fixture/image.png",
+        name: "image.png",
+        mimeType: "image/png" as const,
+        width: 1,
+        height: 1,
+        bytes: 100,
+        sha256: "fixture",
+    };
+    appendEntry(e("stored", { ts: 1_779_000_000_000, attachments: [image] }), logBase);
+    const db = openReadModel(dbPath);
+    const pending = openPendingStore(dbPath);
+    try {
+        queryEntries(db, { logBase });
+        markEntriesRead(db, ["stored"], { logBase });
+        insertForm(pending, {
+            id: "fixture-form",
+            createdAt: 1_779_000_000_000,
+            projectPath: "/fixture",
+            cwd: "/fixture",
+            sessionHint: "s",
+            items: [{ id: "item", promptMarkdown: "Proceed?" }],
+            status: "pending",
+        });
+        appendEntry(e("fresh", { ts: 1_779_000_010_000 }), logBase);
+        const before = durableDirectoryBytes(root);
+        const rows = queryEntriesSnapshot({ dbPath, opts: { logBase } });
+        expect(rows.map((row) => row.id)).toEqual(["stored", "fresh"]);
+        expect(rows[0].readAt).not.toBeNull();
+        expect(rows[0].attachments).toEqual([image]);
+        expect(listFormsSnapshot({ dbPath })[0]?.id).toBe("fixture-form");
+        expect(durableDirectoryBytes(root)).toEqual(before);
+        // Intentional writers remain durable and invalidate the transient copy.
+        markEntriesUnread(db, ["stored"], { logBase });
+        expect(queryEntriesSnapshot({ dbPath, opts: { logBase } })[0].readAt).toBeNull();
+        expect(durableDirectoryBytes(root)).not.toEqual(before);
+    } finally {
+        clearDatabaseReadSnapshots();
+        pending.close();
+        db.close();
+    }
+});
+
+it("warm snapshot reads reuse the database copy and migrate a legacy schema only in memory", () => {
+    const root = mkdtempSync(join(tmpdir(), "qa-snapshot-legacy-"));
+    const dbPath = join(root, "qa.db");
+    const db = openReadModel(dbPath);
+    db.exec("DROP INDEX idx_entries_missing_images; ALTER TABLE entries DROP COLUMN attachments_json");
+    db.close();
+    const before = directoryBytes(root);
+    const serialize = spyOn(Database.prototype, "serialize");
+    try {
+        expect(queryEntriesSnapshot({ dbPath, opts: { logBase: join(root, "log") } })).toEqual([]);
+        expect(listFormsSnapshot({ dbPath })).toEqual([]);
+        expect(queryEntriesSnapshot({ dbPath, opts: { logBase: join(root, "log") } })).toEqual([]);
+        expect(serialize).toHaveBeenCalledTimes(1);
+        expect(directoryBytes(root)).toEqual(before);
+        const check = new Database(dbPath, { readonly: true });
+        try {
+            expect(
+                check.query("SELECT name FROM pragma_table_info('entries') WHERE name='attachments_json'").all()
+            ).toEqual([]);
+        } finally {
+            check.close();
+        }
+    } finally {
+        serialize.mockRestore();
+        clearDatabaseReadSnapshots();
     }
 });
