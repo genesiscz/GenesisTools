@@ -113,6 +113,19 @@ enum AppMainMenu {
 final class AppMenuTarget: NSObject {
     static let shared = AppMenuTarget()
 
+    func openBugToTest() {
+        guard let executable = Bundle.main.executablePath else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        do {
+            process.arguments = ["--bug-to-test", "--tools", try AppToolsOrigin.binaryPath()]
+            try process.run()
+        } catch {
+            HubPerf.log("menu: Bug to Test did not start: \(error)")
+            NSApp.presentError(error)
+        }
+    }
+
     /// The settings window is its own face (`GenesisTools --window`, App/GenesisToolsApp.swift).
     @objc func openSettings(_ sender: Any?) {
         guard let executable = Bundle.main.executablePath else { return }
@@ -159,6 +172,7 @@ enum HubMenuCommands {
         HubMenuCommand(title: "New Handoff…", key: "h", modifiers: [.command, .shift], run: { overlay($0, "--handoff") },
                        enabled: { $0.selectedID != nil }),
         HubMenuCommand(title: "Prompt Library…", key: "p", modifiers: [.command, .shift], run: { overlay($0, "--prompts") }),
+        HubMenuCommand(title: "Bug to Test…", run: { _ in AppMenuTarget.shared.openBugToTest() }),
         HubMenuCommand(title: "Open Project in Cursor", run: { hub in
             if let path = hub.paletteContext.currentPath { hub.runPalette(.openCursor(path), toggleGlass: toggleGlass) }
         }, enabled: { $0.paletteContext.currentPath != nil }, separated: true),
