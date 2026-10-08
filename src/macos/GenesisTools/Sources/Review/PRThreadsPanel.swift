@@ -62,10 +62,6 @@ struct PRReviewBar: View {
                     Text(busy).foregroundColor(ReviewPalette.dim).fixedSize()
                 }
                 Spacer(minLength: 8)
-                if let notice = store.notice {
-                    NoticePill(text: notice, isError: notice.hasPrefix("Failed")) { store.notice = nil }
-                        .layoutPriority(-1)
-                }
                 if !listInPanel {
                     IconButton(systemName: open ? "rectangle.topthird.inset.filled" : "list.bullet.rectangle",
                                tooltip: open ? "Hide the PR threads list" : "Show the PR threads list: reply, resolve, edit your drafts") {
@@ -109,6 +105,23 @@ struct PRReviewBar: View {
             .buttonStyle(.genHoverPlain())
             .padding(.horizontal, 14)
             .frame(height: 34)
+            // Under the row, not in it: as the row's lowest-priority item a full row squeezed the pill into
+            // a narrow column that wrapped over the bar ("Draft reply saved; Submit review publishes it."
+            // on three lines, 2026-10-08). A success note leaves on its own; an error stays until dismissed.
+            .overlay(alignment: .topTrailing) {
+                if let notice = store.notice {
+                    let isError = notice.hasPrefix("Failed")
+                    NoticePill(text: notice, isError: isError) { store.notice = nil }
+                        .fixedSize()
+                        .padding(.trailing, 14)
+                        .offset(y: 38)
+                        .task(id: notice) {
+                            guard !isError else { return }
+                            try? await Task.sleep(for: .seconds(6))
+                            if store.notice == notice { store.notice = nil }
+                        }
+                }
+            }
             if model.showsAgentSendInline {
                 // A `--snapshot --agent-send` run: the header's "Send N…" form as its popover shows it.
                 AgentSendForm(model: model, previewOpen: true) { model.showsAgentSendInline = false }
@@ -442,12 +455,13 @@ struct PRThreadsList: View {
         VStack(spacing: 0) {
             toolbar(all: all, placed: placed, shown: threads, files: groups.count)
             PanelFindBar(find: find)
+            AgentDraftsList(model: model)
             if threads.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: store.payload == nil ? "bubble.left.and.bubble.right" : "checkmark.bubble")
                         .font(.system(size: 20))
                         .foregroundColor(ReviewPalette.dim)
-                    Text(store.payload == nil ? "No threads loaded yet." : showClosed || onlyThisFile ? "No thread matches these filters." : "No open threads.")
+                    Text(store.payload == nil ? "No threads loaded yet." : showClosed || onlyThisFile ? "No thread matches these filters." : model.proposal?.drafts.isEmpty == false ? "No open PR threads." : "No open threads.")
                         .font(.system(size: 12))
                         .foregroundColor(ReviewPalette.dim)
                 }

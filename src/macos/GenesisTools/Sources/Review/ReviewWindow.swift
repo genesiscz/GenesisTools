@@ -348,6 +348,12 @@ final class ReviewModel: ObservableObject {
     private var pendingRevealPath: String?
     /// A PR thread's card asked for by `reveal(path:thread:)` before the page showed it.
     private var pendingThreadCard: String?
+    /// The agent's draft cards on this diff, in diff order: the drafts list, the banner's Next draft.
+    private(set) var draftCards: [RenderedComment] = []
+    /// The proposal whose first open draft was already brought into view, so a reload never jumps again.
+    private var revealedProposal: String?
+    /// True when the window restored a saved scroll place: the page returns there, so no first-draft jump.
+    var resumesSavedPlace = false
     /// When the last file set went to the renderer; `.rendered` closes the span.
     private var renderStart: CFAbsoluteTime?
     private let createdAt = CFAbsoluteTimeGetCurrent()
@@ -879,7 +885,7 @@ final class ReviewModel: ObservableObject {
 
     private func focusPendingThread() {
         guard let pending = pendingThreadCard else { return }
-        guard let card = Self.cardToFocus(pending, rendered: rendered, cards: threadCards) else {
+        guard let card = Self.cardToFocus(pending, rendered: rendered, cards: threadCards + draftCards) else {
             HubPerf.log("review.reveal-thread \(pending) waits: rendered=\(rendered) cards=\(threadCards.count)")
             return
         }
@@ -887,6 +893,40 @@ final class ReviewModel: ObservableObject {
         focusedCard = card
         HubPerf.log("review.reveal-thread \(card) focused")
         renderer.focusThread(cardID: card, reply: false)
+    }
+
+    /// Opens the draft's file and marks its card: the drafts list, the banner, a fresh proposal.
+    func revealDraft(_ id: String) {
+        guard let draft = proposal?.drafts.first(where: { $0.id == id }) else { return }
+        reveal(path: draft.path)
+        pendingThreadCard = "draft:\(id)"
+        focusPendingThread()
+    }
+
+    /// The next undecided draft after the marked card, in diff order, wrapping around.
+    func revealNextOpenDraft() {
+        let open = draftCards.filter { $0.state == "proposed" }
+        guard !open.isEmpty else {
+            notice = "No undecided agent draft sits on this diff."
+            return
+        }
+        let index = focusedCard.flatMap { id in open.firstIndex { $0.id == id } }
+        let next = index.map { open[($0 + 1) % open.count] } ?? open[0]
+        revealDraft(String(next.id.dropFirst("draft:".count)))
+    }
+
+    /// Undecided drafts per repository path, for the file list's badges.
+    var openDraftsByPath: [String: Int] {
+        Dictionary(grouping: (proposal?.drafts ?? []).filter { $0.status == "proposed" }, by: \.path).mapValues(\.count)
+    }
+
+    /// A proposal opens at its first undecided draft once: nothing else on screen says where it is.
+    private func revealFirstOpenDraftOnce() {
+        guard let proposal, !resumesSavedPlace, revealedProposal != proposal.url.path, pendingThreadCard == nil, focusedCard == nil,
+              let first = draftCards.first(where: { $0.state == "proposed" }) else { return }
+        revealedProposal = proposal.url.path
+        HubPerf.log("review.proposal opens at its first open draft \(first.id)")
+        revealDraft(String(first.id.dropFirst("draft:".count)))
     }
 
     /// The pending card, once the page has drawn the diff and holds that card; nil until then.
@@ -1109,13 +1149,15 @@ final class ReviewModel: ObservableObject {
         let all = ReviewThreadReplies.attach(local + Self.globalized(threadComments, primary))
         renderer.showComments(all)
         threadCards = ReviewKeyNav.threadCards(all, files: files)
-        if let focusedCard, !threadCards.contains(where: { $0.id == focusedCard }) {
+        draftCards = ReviewKeyNav.draftCards(all, files: files)
+        if let focusedCard, !(threadCards + draftCards).contains(where: { $0.id == focusedCard }) {
             self.focusedCard = nil
             // The page keeps its own mark: without this, a card that comes back (a scope switch and
             // back) shows the mark while e and x say there is none.
             renderer.focusThread(cardID: nil, reply: false)
         }
         focusPendingThread()
+        revealFirstOpenDraftOnce()
         commentCount = owned.reduce(0) { $0 + $1.store.comments.count }
         unsentCount = owned.reduce(0) { $0 + $1.store.comments.filter { $0.state == .local || $0.state == .queued }.count }
     }
@@ -2511,6 +2553,18 @@ private struct ProposalBanner: View {
                             .foregroundColor(ReviewPalette.dim)
                             .fixedSize()
                     }
+                    if proposal.drafts.contains(where: { $0.status == "proposed" }) {
+                        Button {
+                            model.revealNextOpenDraft()
+                        } label: {
+                            Label("Next draft", systemImage: "arrow.down.to.line")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundColor(color)
+                        .fixedSize()
+                        .instantTooltip("Open the next undecided agent draft in the diff")
+                    }
                 }
                 ViewThatFits(in: .horizontal) {
                     line(drafts + extra)
@@ -2691,6 +2745,7 @@ struct FileSidebar: View {
 
     var body: some View {
         let rows = sidebarRows(model.filteredFiles, tree: model.treeMode && model.filter.isEmpty, collapsed: model.collapsed, roots: model.roots)
+        let drafts = model.openDraftsByPath
         VStack(spacing: 0) {
             HStack(spacing: 6) {
                 HStack(spacing: 6) {
@@ -2765,7 +2820,8 @@ struct FileSidebar: View {
                                 .padding(.horizontal, 6)
                                 .padding(.top, tree ? 0 : 8)
                             case .file(let file):
-                                FileRow(file: file, selected: file.id == model.selectedID, depth: row.depth)
+                                FileRow(file: file, selected: file.id == model.selectedID, depth: row.depth,
+                                        drafts: model.repoPath(of: file.id).flatMap { drafts[$0] } ?? 0)
                                     .id(file.id)
                                     .rowButton(cornerRadius: 6) { model.select(file.id) }
                                     .contextMenu { fileMenu(file) }
@@ -3006,6 +3062,8 @@ private struct FileRow: View {
     let file: DiffFile
     let selected: Bool
     var depth = 0
+    /// Undecided agent drafts on this file.
+    var drafts = 0
 
     var body: some View {
         HStack(spacing: 8) {
@@ -3017,6 +3075,12 @@ private struct FileRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 4)
+            if drafts > 0 {
+                Label(String(drafts), systemImage: "text.bubble.fill")
+                    .labelStyle(.titleAndIcon)
+                    .foregroundColor(ReviewPalette.modified)
+                    .instantTooltip(drafts == 1 ? "1 agent draft to decide" : "\(drafts) agent drafts to decide")
+            }
             if file.skipped != nil {
                 Image(systemName: "doc.badge.ellipsis")
                     .foregroundColor(ReviewPalette.dim)

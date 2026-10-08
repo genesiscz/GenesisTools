@@ -3009,6 +3009,28 @@ function glideTo(target: CodeViewItemScrollTarget | CodeViewLineScrollTarget): v
 /** A file asked for before its batch arrived; the batch that brings it scrolls there. */
 let pendingReveal: string | null = null;
 
+/**
+ * A card focused before its file was on the page. Swift counts the page as rendered once the cached
+ * paint went out, so a first-draft focus can arrive before the batch that holds the draft's file
+ * (measured 2026-10-08: focus at .668, the files at .744), and a glide to a line that is not there does
+ * nothing. The batch that brings the file runs the focus.
+ */
+let pendingFocus: { id: string; reply?: boolean } | null = null;
+
+function applyPendingFocus(): void {
+    if (pendingFocus === null) {
+        return;
+    }
+
+    const target = pendingFocus;
+    const card = comments.find((comment) => comment.id === target.id);
+
+    if (card && viewer.getItem(card.fileId)) {
+        pendingFocus = null;
+        window.genesisDiff.focusThread(target);
+    }
+}
+
 function applyPendingReveal(): void {
     if (pendingReveal !== null && viewer.getItem(pendingReveal)) {
         const id = pendingReveal;
@@ -3099,6 +3121,7 @@ function addFiles(batch: FilesBatch): void {
                 post({ type: "log", message: "diff.refresh swapped in after the scroll ended" });
                 addFiles(waiting);
                 reviewState.afterFiles(true);
+                applyPendingFocus();
             };
             return;
         }
@@ -3185,6 +3208,7 @@ window.genesisDiff = {
             // now, against the old set, would drop a restored place whose file only the new set has.
             if (deferredLoad === null || deferredLoad === waitingBefore) {
                 reviewState.afterFiles(batch.last);
+                applyPendingFocus();
             }
         } catch (error) {
             post({ type: "error", message: error instanceof Error ? error.message : String(error) });
@@ -3208,6 +3232,7 @@ window.genesisDiff = {
         const shown = new Set(files.map((file) => file.id));
         refreshAnnotations([...touched].filter((id) => shown.has(id)));
         reviewState.afterComments();
+        applyPendingFocus();
     },
     threadDone({ id, ok }) {
         busyThreads.delete(id);
@@ -3269,6 +3294,14 @@ window.genesisDiff = {
         const previous = focusedCard;
         focusedCard = id;
         const card = comments.find((comment) => comment.id === id);
+
+        if (id !== null && (!card || !viewer.getItem(card.fileId))) {
+            pendingFocus = { id, reply };
+            post({ type: "log", message: `focusThread ${id} waits for its file` });
+            return;
+        }
+
+        pendingFocus = null;
         const touched = [previous, id].flatMap((cardId) => comments.filter((comment) => comment.id === cardId));
 
         if (card) {

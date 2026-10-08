@@ -122,6 +122,14 @@ enum ReviewKeyNav {
             .sorted { (order[$0.fileId] ?? .max, $0.endLine, $0.id) < (order[$1.fileId] ?? .max, $1.endLine, $1.id) }
     }
 
+    /// The agent's proposal draft cards in the order the diff shows them.
+    static func draftCards(_ comments: [RenderedComment], files: [DiffFile]) -> [RenderedComment] {
+        let order = Dictionary(files.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return comments
+            .filter { $0.kind == "draft" }
+            .sorted { (order[$0.fileId] ?? .max, $0.endLine, $0.id) < (order[$1.fileId] ?? .max, $1.endLine, $1.id) }
+    }
+
     /// The card j / k lands on. From no card, j starts at the first card in or after the selected file
     /// and k at the last card before or in it; both wrap around at the ends.
     static func step(_ cards: [RenderedComment], from current: String?, by delta: Int, files: [DiffFile], selectedFile: String?) -> String? {

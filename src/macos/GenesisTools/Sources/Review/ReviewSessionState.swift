@@ -221,6 +221,9 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
             // The first load keeps a selection its files contain (ReviewModel.apply), else it picks the first.
             model.selectedID = file
         }
+        // The page puts the reader back at this place after the files arrive, which would undo a jump to
+        // the first agent draft; a window read before resumes, a first open goes to the draft.
+        model.resumesSavedPlace = state.page?.anchor != nil
         if let filter = state.filter { model.filter = filter }
         if let treeMode = state.treeMode { model.treeMode = treeMode }
         if let collapsed = state.collapsed { model.collapsed = Set(collapsed) }

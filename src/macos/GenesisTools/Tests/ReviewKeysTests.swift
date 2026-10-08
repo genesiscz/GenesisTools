@@ -65,6 +65,17 @@ final class ReviewKeysTests: XCTestCase {
         XCTAssertEqual(cards.map(\.id), ["live:b1", "live:b2", "live:c"])
     }
 
+    func testDraftCardsAreOnlyTheAgentsDraftsInDiffOrder() {
+        let cards = ReviewKeyNav.draftCards([
+            card("draft:late", file: "f3", line: 1, kind: "draft", live: false),
+            card("live:a", file: "f1", line: 1),
+            card("draft:b9", file: "f2", line: 90, kind: "draft", live: false),
+            card("draft:b2", file: "f2", line: 2, kind: "draft", live: false),
+            card("local:x", file: "f1", line: 1, kind: "local", live: false),
+        ], files: files)
+        XCTAssertEqual(cards.map(\.id), ["draft:b2", "draft:b9", "draft:late"])
+    }
+
     func testJAndKWrapAroundFromTheMarkedCard() {
         let cards = ReviewKeyNav.threadCards([card("live:1", file: "f1", line: 1), card("live:2", file: "f2", line: 1), card("live:3", file: "f3", line: 1)], files: files)
         XCTAssertEqual(ReviewKeyNav.step(cards, from: "live:2", by: 1, files: files, selectedFile: nil), "live:3")
