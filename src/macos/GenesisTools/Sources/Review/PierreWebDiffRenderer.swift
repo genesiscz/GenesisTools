@@ -9,6 +9,33 @@ import WebKit
 final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandler, WKNavigationDelegate {
     static let scheme = "genesis-diff"
 
+    /// One renderer made ahead, for the hub's next review. A new web view costs the main thread
+    /// 140 ms (median) to 1.2 s while its web content process starts (130 times on 2026-10-08), and the
+    /// hub makes one for every session, worktree or PR it shows changes for: that wait sat on the click.
+    /// The spare is a fresh page with no review's state; it is made in a quiet moment after one is taken.
+    @MainActor private static var spare: PierreWebDiffRenderer?
+    @MainActor private static var spareScheduled = false
+
+    /// The spare when there is one, else a new renderer; either way the next spare comes 2 s later.
+    @MainActor static func make() -> PierreWebDiffRenderer {
+        let made = spare ?? PierreWebDiffRenderer()
+        spare = nil
+        scheduleSpare()
+        return made
+    }
+
+    @MainActor private static func scheduleSpare() {
+        guard !spareScheduled else { return }
+        spareScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            MainActor.assumeIsolated {
+                spareScheduled = false
+                guard spare == nil else { return }
+                spare = HubPerf.measure("review.renderer.spare") { PierreWebDiffRenderer() }
+            }
+        }
+    }
+
     let webView: WKWebView
     var view: NSView { webView }
     var onEvent: ((DiffRendererEvent) -> Void)?

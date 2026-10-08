@@ -106,7 +106,8 @@ func runReview(_ args: [String]) -> Never {
     } else if let commit, !commit.isEmpty {
         scope = .commit(sha: commit, title: rangeLabel ?? String(commit.prefix(10)))
     }
-    let model = ReviewModel(repo: URL(fileURLWithPath: repoPath).standardizedFileURL, options: options, session: session)
+    // A review window shows one review: its own renderer, and no spare kept for a next one.
+    let model = ReviewModel(repo: URL(fileURLWithPath: repoPath).standardizedFileURL, options: options, session: session, renderer: PierreWebDiffRenderer())
     model.scope = scope
     // A PR without a local worktree (`openInReviewWindow`): its files open on the host, as in the hub.
     model.remoteHead = ReviewRemoteHead(launchArguments: args)
@@ -352,7 +353,7 @@ final class ReviewModel: ObservableObject {
     private let createdAt = CFAbsoluteTimeGetCurrent()
     private var commentsObserver: NSObjectProtocol?
 
-    init(repo: URL, options: DiffViewOptions, session: String? = nil, renderer: @autoclosure @escaping () -> DiffRenderer = PierreWebDiffRenderer()) {
+    init(repo: URL, options: DiffViewOptions, session: String? = nil, renderer: @autoclosure @escaping () -> DiffRenderer = MainActor.assumeIsolated { PierreWebDiffRenderer.make() }) {
         self.repo = repo
         home = repo
         self.options = options
