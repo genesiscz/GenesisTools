@@ -62,7 +62,8 @@ public struct WidgetLayoutConfiguration: Codable, Equatable, Sendable {
 
 struct WidgetSideStripMetrics {
     static let width: CGFloat = 44
-    static let verticalPadding: CGFloat = 4
+    static let verticalPadding: CGFloat = 12
+    static let badgedModuleHeight: CGFloat = 42
     static let dragWidth: CGFloat = 40
     static let dragHeight: CGFloat = 21
     static let settingsWidth: CGFloat = 32
@@ -78,10 +79,12 @@ struct WidgetSideStripMetrics {
     let classic: Bool
     let moduleCount: Int
     let sessionCount: Int
+    let hasInboxBadge: Bool
 
-    init(classic: Bool, moduleIDs: [String], visibleSessionCount: Int) {
+    init(classic: Bool, moduleIDs: [String], visibleSessionCount: Int, hasInboxBadge: Bool = false) {
         self.classic = classic
         moduleCount = moduleIDs.count
+        self.hasInboxBadge = hasInboxBadge && moduleIDs.contains("agents")
         sessionCount = moduleIDs.contains("agents") ? min(Self.sessionLimit, max(0, visibleSessionCount)) : 0
     }
 
@@ -94,6 +97,7 @@ struct WidgetSideStripMetrics {
 
     var minimumHeight: CGFloat {
         let modules = moduleCount == 0 ? Self.addHeight : CGFloat(moduleCount) * moduleSize
+            + (hasInboxBadge ? Self.badgedModuleHeight - moduleSize : 0)
         let sessions = CGFloat(sessionCount) * Self.sessionHeight
             + CGFloat(max(0, sessionCount - 1)) * Self.sessionSpacing
         // Drag handle, settings and flexible spacer are always arranged children.
