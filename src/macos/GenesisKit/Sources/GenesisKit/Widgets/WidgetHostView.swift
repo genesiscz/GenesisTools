@@ -91,7 +91,7 @@ struct WidgetHostView: View {
                 if selected?.id == "agents", model.inboxCount > 0 {
                     WidgetInboxCount(count: model.inboxCount, needsAnswer: model.inbox.needsAnswer > 0,
                         pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
-                        .allowsHitTesting(false).offset(x: 3, y: -3)
+                        .allowsHitTesting(false)
                 }
             }
             .instantTooltip("Inbox: \(model.inbox.unread) unread, \(model.inbox.needsAnswer) need an answer")
@@ -170,25 +170,23 @@ struct WidgetHostView: View {
     private var sideStrip: some View {
         GeometryReader { geometry in
             if geometry.size.height + 0.5 >= sideMetrics.minimumHeight {
-                sideStripContents
+                sideStripContents.frame(height: sideMetrics.minimumHeight)
+                    .frame(maxHeight: .infinity, alignment: .center)
             } else if geometry.size.height >= sideMetrics.fixedOverflowChromeHeight + sideMetrics.moduleSize {
                 VStack(spacing: sideMetrics.spacing) {
                     if !classicSide { dragHandle }
-                    ScrollView(.vertical) {
+                    OverlayScrollViewport(width: WidgetSideStripMetrics.width) {
                         VStack(spacing: sideMetrics.spacing) { sideModuleControls }
-                            .frame(width: WidgetSideStripMetrics.width)
                     }
-                    .scrollIndicators(.visible)
                     .accessibilityLabel("Scrollable widgets and sessions")
                     sideSettingsButton
                     if classicSide { dragHandle }
                 }
                 .padding(.vertical, WidgetSideStripMetrics.verticalPadding)
             } else {
-                ScrollView(.vertical) {
+                OverlayScrollViewport(width: WidgetSideStripMetrics.width) {
                     sideStripContents.fixedSize(horizontal: false, vertical: true)
                 }
-                .scrollIndicators(.visible)
                 .accessibilityLabel("Scrollable widget controls")
             }
         }
@@ -219,7 +217,7 @@ struct WidgetHostView: View {
             moduleButton(id, size: sideMetrics.moduleSize)
             if id == "agents", sideMetrics.sessionCount > 0 {
                 VStack(spacing: WidgetSideStripMetrics.sessionSpacing) {
-                    ForEach(Array(model.sessions.prefix(sideMetrics.sessionCount))) { session in
+                    ForEach(Array(model.railSessions.prefix(sideMetrics.sessionCount))) { session in
                         Button {
                             model.openInboxNotification(on: surface, key: session.key)
                         } label: {
@@ -306,7 +304,7 @@ struct WidgetHostView: View {
             if id == "agents", model.inboxCount > 0 {
                 WidgetInboxCount(count: model.inboxCount, needsAnswer: model.inbox.needsAnswer > 0,
                         pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
-                        .allowsHitTesting(false).offset(x: 3, y: -3)
+                        .allowsHitTesting(false)
             }
         }
         .instantTooltip(id == "agents" ? "Inbox: \(model.inbox.unread) unread, \(model.inbox.needsAnswer) need an answer" : registry.module(id)?.title ?? id)
