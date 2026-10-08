@@ -370,6 +370,8 @@ private final class ShelfDraftBackend {
     var resolve: (() async throws -> Void)?
     var beforeSave: (() async throws -> Void)?
     var textSaved: (() -> Void)?
+    var beforeAppend: (() async throws -> Void)?
+    var beforeTextSave: (() async throws -> Void)?
 
     func run(_ value: WidgetJSON) async throws -> WidgetJSON {
         guard case .object(let fields) = value, case .string(let action) = fields["action"] else {
@@ -388,7 +390,16 @@ private final class ShelfDraftBackend {
         case "draft":
             try await beforeSave?()
             drafts[key] = try JSONDecoder().decode(WidgetDraft.self, from: JSONEncoder().encode(fields["draft"]))
+        case "append-draft":
+            try await beforeAppend?()
+            var draft = drafts[key] ?? WidgetDraft()
+            if case .string(let text) = fields["text"] {
+                draft.text = [draft.text, text].filter { !$0.isEmpty }.joined(separator: " ")
+            }
+            drafts[key] = draft
+            return try .value(draft)
         case "draft-text":
+            try await beforeTextSave?()
             if case .string(let text) = fields["text"] {
                 var draft = drafts[key] ?? WidgetDraft()
                 draft.text = text
@@ -426,6 +437,169 @@ private final class ShelfDraftGate {
         let pending = continuation
         continuation = nil
         pending?.resume()
+    }
+}
+
+@MainActor
+final class WidgetVoiceDraftOrderingTests: XCTestCase {
+    private func model(_ backend: ShelfDraftBackend) -> WidgetModel {
+        let defaults = UserDefaults(suiteName: "voice-attach-\(UUID().uuidString)")!
+        let appearance = NativeSettingsAppearance(defaults: defaults, notificationNamespace: "voice.fixture.\(UUID())", observeExternalChanges: false)
+        let model = WidgetModel(binaryPath: "/fixture/no-process", defaults: defaults, appearance: appearance)
+        model.actionRunner = backend.run
+        return model
+    }
+    private func note() throws -> WidgetVoiceNote {
+        try JSONDecoder().decode(WidgetVoiceNote.self, from: Data(#"{"id":"note-fixture","revision":1,"createdAt":1,"clip":{"path":"/fixture/audio.pcm","bytes":3200,"durationMs":100},"text":"Voice words","recognizedText":"Voice words","transcription":"ready"}"#.utf8))
+    }
+    private func barrier(_ model: WidgetModel) async {
+        let saved = expectation(description: "queue drained")
+        model.action(["action": "fixture-barrier"], completed: { saved.fulfill() })
+        await fulfillment(of: [saved], timeout: 2)
+    }
+    func testHostVoiceActionOpensNotesWithoutStartingLegacyListener() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("voice-routing-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let binary = root.appendingPathComponent("tools")
+        let marker = root.appendingPathComponent("voice-invoked")
+        let snapshot = #"{"version":1,"state":{"version":1,"revision":0,"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"fixture","voiceLanguage":"en"},"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}"#
+        try "#!/bin/sh\nif [ \"$1\" = voice ]; then echo \"$*\" > '\(marker.path)'; exit 0; fi\nprintf '%s\\n' '\(snapshot)'\n".write(to: binary, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
+        let defaults = UserDefaults(suiteName: "voice-routing-\(UUID())")!
+        let model = WidgetModel(binaryPath: binary.path, stateRoot: root.path, defaults: defaults)
+        defer { model.stop() }
+        let loaded = expectation(description: "snapshot loaded")
+        let subscription = model.$snapshot.compactMap { $0 }.prefix(1).sink { _ in loaded.fulfill() }
+        model.startSettings()
+        await fulfillment(of: [loaded], timeout: 3)
+        model.selectedKey = "pinned-recipient"
+        var requested: [String] = []
+        model.recordVoiceNote = { requested.append($0) }
+        model.toggleVoice()
+        XCTAssertEqual(requested, ["pinned-recipient"])
+        XCTAssertEqual(model.voiceActionLabel, "Record voice note")
+        XCTAssertFalse(model.voiceActive)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+        // Control: the same model and executable can still reach the standalone legacy listener.
+        model.recordVoiceNote = nil
+        let finished = expectation(description: "legacy fixture exits")
+        let voiceSubscription = model.$voiceActive.dropFirst().filter { !$0 }.prefix(1).sink { _ in finished.fulfill() }
+        model.toggleVoice()
+        await fulfillment(of: [finished], timeout: 3)
+        XCTAssertTrue(try String(contentsOf: marker, encoding: .utf8).contains("voice listen"))
+        withExtendedLifetime((subscription, voiceSubscription)) {}
+    }
+
+    func testCoordinatorRegistersModulesAndSettingsOverInjectedRuntimeWithoutStartingIt() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("voice-host-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let runtime = FlowFocusRuntime(dataRoot: directory, hostID: "fixture.preview", liveServices: false,
+            presentsWindows: false, sharedModels: false)
+        let coordinator = WidgetCoordinator(binaryPath: "/fixture/no-process", stateRoot: directory.path,
+            flowRuntime: runtime, micLauncher: "/fixture/Preview", openHub: { _ in })
+        XCTAssertTrue(coordinator.flowRuntime === runtime)
+        XCTAssertEqual(runtime.role, .stopped)
+        XCTAssertNotNil(coordinator.modules.module("focus"))
+        XCTAssertNotNil(coordinator.modules.module("voice"))
+        let sections = WidgetFeatureSettings.sections(model: coordinator.model, modules: WidgetModuleChoice.builtins,
+            flowRuntime: runtime, transforms: coordinator.transforms, openSession: { _ in })
+        let ids = sections.flatMap(\.pages).map(\.id)
+        XCTAssertEqual(Set(ids).count, ids.count)
+        XCTAssertTrue(ids.contains("dictation.voice"))
+        XCTAssertTrue(ids.contains("dictation.flow"))
+        XCTAssertTrue(ids.contains("dictation.transforms"))
+        XCTAssertTrue(ids.contains("focus.general"))
+        await coordinator.shutdown()
+        await coordinator.shutdown()
+        XCTAssertEqual(runtime.role, .stopped)
+    }
+
+    func testExplicitAttachPreservesDirtyTextFilesAndNonselectedRecipient() async throws {
+        let backend = ShelfDraftBackend()
+        backend.drafts["chosen"] = WidgetDraft(text: "Old", assetIds: ["existing-file"])
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        model.setText("Fresh")
+        model.selectedKey = "another"
+        try await model.attachVoiceNote(note(), to: "chosen")
+        XCTAssertEqual(backend.drafts["chosen"]?.text, "Fresh Voice words")
+        XCTAssertEqual(backend.drafts["chosen"]?.assetIds, ["existing-file"])
+        XCTAssertEqual(model.drafts["chosen"], backend.drafts["chosen"])
+        XCTAssertNil(backend.drafts["another"])
+        XCTAssertEqual(model.selectedKey, "another")
+        XCTAssertFalse(backend.calls.contains("enqueue"))
+    }
+    func testTypingDuringAppendIsMergedAndLaterTypingWinsFinalSave() async throws {
+        let backend = ShelfDraftBackend()
+        backend.drafts["chosen"] = WidgetDraft(text: "Initial", assetIds: ["image"])
+        let appendStarted = expectation(description: "append")
+        let gate = ShelfDraftGate()
+        backend.beforeAppend = { appendStarted.fulfill(); await gate.wait() }
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        let attachment = Task { try await model.attachVoiceNote(self.note(), to: "chosen") }
+        await fulfillment(of: [appendStarted], timeout: 2)
+        model.setText("Typed during append")
+        gate.open()
+        try await attachment.value
+        XCTAssertEqual(model.drafts["chosen"]?.text, "Typed during append Voice words")
+        XCTAssertEqual(backend.drafts["chosen"]?.text, "Typed during append Voice words")
+        XCTAssertEqual(backend.drafts["chosen"]?.assetIds, ["image"])
+    }
+    func testTypingDuringInitialFlushIsNotLost() async throws {
+        let backend = ShelfDraftBackend()
+        let flushStarted = expectation(description: "initial flush")
+        let gate = ShelfDraftGate()
+        var writes = 0
+        backend.beforeTextSave = { writes += 1; if writes == 1 { flushStarted.fulfill(); await gate.wait() } }
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        model.setText("First")
+        let attachment = Task { try await model.attachVoiceNote(self.note(), to: "chosen") }
+        await fulfillment(of: [flushStarted], timeout: 2)
+        model.setText("New typing")
+        gate.open()
+        try await attachment.value
+        XCTAssertEqual(backend.drafts["chosen"]?.text, "New typing Voice words")
+    }
+    func testTypingDuringFinalSaveRemainsQueuedAfterAttachment() async throws {
+        let backend = ShelfDraftBackend()
+        backend.drafts["chosen"] = WidgetDraft(text: "Initial", assetIds: ["file"])
+        let saving = expectation(description: "final save")
+        let gate = ShelfDraftGate()
+        var writes = 0
+        backend.beforeTextSave = { writes += 1; if writes == 1 { saving.fulfill(); await gate.wait() } }
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        let attachment = Task { try await model.attachVoiceNote(self.note(), to: "chosen") }
+        await fulfillment(of: [saving], timeout: 2)
+        model.setText("Reviewed after attachment")
+        model.action(["action": "draft-text", "key": "chosen", "text": "Reviewed after attachment"])
+        gate.open()
+        try await attachment.value
+        await barrier(model)
+        XCTAssertEqual(backend.drafts["chosen"]?.text, "Reviewed after attachment")
+        XCTAssertEqual(model.drafts["chosen"]?.text, "Reviewed after attachment")
+        XCTAssertEqual(backend.drafts["chosen"]?.assetIds, ["file"])
+    }
+    func testCancellationBeforeAppendDoesNotSendOrAppendText() async throws {
+        let backend = ShelfDraftBackend()
+        backend.drafts["chosen"] = WidgetDraft(text: "Keep", assetIds: ["file"])
+        let began = expectation(description: "append begins")
+        backend.beforeAppend = { began.fulfill(); try await Task.sleep(for: .seconds(30)) }
+        let model = model(backend)
+        defer { model.stop() }
+        let attachment = Task { try await model.attachVoiceNote(self.note(), to: "chosen") }
+        await fulfillment(of: [began], timeout: 2)
+        attachment.cancel()
+        do { try await attachment.value; XCTFail("must cancel") } catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertEqual(backend.drafts["chosen"]?.text, "Keep")
+        XCTAssertFalse(backend.calls.contains("enqueue"))
     }
 }
 

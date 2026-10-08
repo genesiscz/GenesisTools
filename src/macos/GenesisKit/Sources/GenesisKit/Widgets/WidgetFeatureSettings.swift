@@ -27,9 +27,28 @@ public enum WidgetFeatureSettings {
 
     public static func sections(
         model: WidgetModel, modules: [WidgetModuleChoice],
+        flowRuntime: FlowFocusRuntime? = nil, transforms: FlowTransformTools? = nil,
         openSession: @escaping (WidgetSession) -> Void
     ) -> [NativeSettingsSection] {
-        [
+        var dictationPages = [NativeSettingsPage(
+            id: "dictation.voice", title: "Voice Notes", symbol: "waveform", tint: .pink,
+            subtitle: "Choose the speech provider for voice notes and agent drafts.") {
+                WidgetDictationSettings(model: model)
+            }]
+        if let flowRuntime {
+            dictationPages.append(NativeSettingsPage(id: "dictation.flow", title: "Dictation", symbol: "mic",
+                tint: .cyan, subtitle: "Dictate with Apple Speech and your Flow controls.") {
+                    FlowView(session: flowRuntime.flow, initialSection: .settings).frame(minHeight: 580)
+                })
+        }
+        if let transforms {
+            dictationPages.append(NativeSettingsPage(id: "dictation.transforms", title: "Text transforms",
+                symbol: "wand.and.stars", tint: .purple,
+                subtitle: "Choose an existing AI account and model for explicit text transforms.") {
+                    FlowTransformSettingsView(tools: transforms)
+                })
+        }
+        var sections = [
             NativeSettingsSection(
                 id: "widgets", title: "Widgets",
                 pages: [
@@ -74,15 +93,17 @@ public enum WidgetFeatureSettings {
                 ], order: 30),
             NativeSettingsSection(
                 id: "dictation", title: "Dictation",
-                pages: [
-                    NativeSettingsPage(
-                        id: "dictation.voice", title: "Dictation", symbol: "waveform",
-                        tint: .pink, subtitle: "Your voice, with the provider and account you choose."
-                    ) {
-                        WidgetDictationSettings(model: model)
-                    }
-                ], order: 40),
+                pages: dictationPages, order: 40),
         ]
+        if let flowRuntime {
+            sections.append(NativeSettingsSection(id: "focus", title: "Focus", pages: [
+                NativeSettingsPage(id: "focus.general", title: "Focus", symbol: "timer", tint: .orange,
+                    subtitle: "Timer, capture, privacy and project settings.") {
+                        FocusSettingsView(controller: flowRuntime.focus, configuration: flowRuntime.configuration)
+                    }
+            ], order: 45))
+        }
+        return sections
     }
 }
 

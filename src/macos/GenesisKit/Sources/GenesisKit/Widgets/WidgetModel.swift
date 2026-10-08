@@ -65,6 +65,10 @@ public final class WidgetModel: ObservableObject {
     public var showSettings: (() -> Void)?
     public var showMedia: ((WidgetMediaSelection) -> Void)?
     public var openHub: ((WidgetSession?) -> Void)?
+    public var recordVoiceNote: ((String) -> Void)?
+    public var voiceActionLabel: String {
+        voiceActive ? "Stop dictation" : (recordVoiceNote == nil ? "Dictate" : "Record voice note")
+    }
     public var openDestination: ((WidgetSession, String, String?) -> Void)?
     /// Called with each preference patch once the hub has stored it.
     public var preferencesSaved: (([String: WidgetJSON]) -> Void)?
@@ -494,6 +498,43 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    public func attachVoiceNote(_ note: WidgetVoiceNote, to key: String) async throws {
+        guard !note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ToolsBridgeError.refused("The voice note has no text to attach.")
+        }
+        let previous = mutationTask
+        let operation = Task { [weak self] in
+            await previous?.value
+            try Task.checkCancellation()
+            guard let self, !self.stopping else { throw CancellationError() }
+            let revisionBeforeAppend = self.draftRevisions[key, default: 0]
+            if self.dirtyDrafts.contains(key), let local = self.drafts[key] {
+                _ = try await self.call(["action": "draft-text", "key": .string(key), "text": .string(local.text)])
+            }
+            try Task.checkCancellation()
+            let response = try await self.call(["action": "append-draft", "key": .string(key), "text": .string(note.text)])
+            try Task.checkCancellation()
+            guard !self.stopping else { throw CancellationError() }
+            var merged = try JSONDecoder().decode(WidgetDraft.self, from: JSONEncoder().encode(response))
+            if self.draftRevisions[key, default: 0] != revisionBeforeAppend, let local = self.drafts[key] {
+                merged.text = [local.text, note.text].filter { !$0.isEmpty }.joined(separator: " ")
+            }
+            guard merged.text.count <= 64_000 else { throw ToolsBridgeError.refused("The combined draft is too long. Shorten it before attaching.") }
+            self.draftTasks[key]?.cancel()
+            self.draftRevisions[key, default: 0] += 1
+            let savedRevision = self.draftRevisions[key, default: 0]
+            self.drafts[key] = merged
+            self.dirtyDrafts.insert(key)
+            _ = try await self.call(["action": "draft-text", "key": .string(key), "text": .string(merged.text)])
+            try Task.checkCancellation()
+            if self.draftRevisions[key, default: 0] == savedRevision, self.drafts[key]?.text == merged.text {
+                self.dirtyDrafts.remove(key)
+            }
+        }
+        mutationTask = Task { _ = await operation.result }
+        try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
+    }
+
     private func mergingPreferences(
         _ patch: [String: WidgetJSON], into preferences: WidgetPreferences
     ) throws -> WidgetPreferences {
@@ -839,6 +880,11 @@ public final class WidgetModel: ObservableObject {
     }
 
     public func toggleVoice() {
+        if let recordVoiceNote {
+            guard !selectedKey.isEmpty else { return }
+            recordVoiceNote(selectedKey)
+            return
+        }
         if voiceActive {
             voice?.finishInput()
             return

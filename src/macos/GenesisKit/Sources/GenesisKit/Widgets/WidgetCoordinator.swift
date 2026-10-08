@@ -5,6 +5,16 @@ import SwiftUI
 public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     public let model: WidgetModel
     public let modules = WidgetModuleRegistry()
+    private var shelf: WidgetShelfStore?
+    private var tasks: WidgetTasksStore?
+    private var voiceNotes: WidgetVoiceNotesStore?
+    public let flowRuntime: FlowFocusRuntime
+    public let transforms: FlowTransformTools
+    private var runtimeStart: Task<Void, Never>?
+    private var shutdownTask: Task<Void, Never>?
+    private var started = false
+    private var stopped = false
+    private var featureSettings: FeatureSettingsWindowController?
     private var panels: [WidgetSurfaceID: EdgePanelController<WidgetHostView>] = [:]
     private var display: NSScreen?
     private var lastLayout: WidgetLayoutConfiguration?
@@ -29,18 +39,67 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     public var panelsEnabled: Bool { model.snapshot?.state.preferences.showWidget ?? false }
     private var topHeaderHeight: CGFloat = 36
     private var topCompactWidth: CGFloat = 360
-    private var availableCardHeight: CGFloat = 660
     private var screenID: String {
         model.snapshot?.state.preferences.display
             ?? UserDefaults.standard.string(forKey: "widget.display") ?? ""
     }
 
     public init(
-        binaryPath: String, stateRoot: String? = nil, openHub: @escaping (WidgetSession?) -> Void,
+        binaryPath: String, stateRoot: String? = nil, flowRuntime: FlowFocusRuntime? = nil,
+        micLauncher: String? = nil, openHub: @escaping (WidgetSession?) -> Void,
         openDestination: ((WidgetSession, String, String?) -> Void)? = nil, model injected: WidgetModel? = nil
     ) {
         model = injected ?? WidgetModel(binaryPath: binaryPath, stateRoot: stateRoot)
+        let runtime = flowRuntime ?? .shared
+        self.flowRuntime = runtime
+        transforms = FlowTransformTools(bridge: model.bridge, configuration: runtime.configuration)
         super.init()
+        FlowFocusHost.shared.openSettings = { [weak self] in self?.showSettings(pageID: "focus.general") }
+        FlowFocusHost.shared.runTransform = { [weak transforms] request in
+            guard let transforms else { throw CancellationError() }
+            return try await transforms.run(request)
+        }
+        let shelf = WidgetShelfStore(
+            binaryPath: binaryPath, stateRoot: stateRoot,
+            recipients: { [weak model] in model?.snapshot?.sessions ?? [] },
+            didAttach: { [weak self] session in self?.showShelfDraft(for: session) },
+            onCaptureWillBegin: { [weak model] in model?.collapse() },
+            onDialogVisibilityChanged: { [weak self] visible in
+                guard let self else { return }
+                self.model.dialogOpen = visible || self.settings?.isVisible == true || self.mediaWindow?.isVisible == true
+            },
+            attachToDraft: { [weak model] item, recipient in
+                guard let model else { throw CancellationError() }
+                try await model.attachShelfItem(item.id, to: recipient.key)
+            })
+        self.shelf = shelf
+        let tasks = WidgetTasksStore(
+            binaryPath: binaryPath,
+            sessions: { [weak model] in model?.snapshot?.sessions ?? [] },
+            openSession: { [weak self] session, cardID in
+                self?.showShelfDraft(for: session)
+                self?.model.selectedCardID = cardID
+            })
+        self.tasks = tasks
+        let voiceNotes = WidgetVoiceNotesStore(binaryPath: binaryPath, stateRoot: stateRoot,
+            micLauncher: micLauncher ?? "", acquireAudio: { try await runtime.acquireExternalAudio() },
+            settings: { [weak model] in
+                let preferences = model?.snapshot?.state.preferences
+                return WidgetVoiceNoteSettings(provider: preferences?.voiceProvider ?? "openai",
+                    account: preferences?.voiceAccount, model: preferences?.voiceModel, language: preferences?.voiceLanguage)
+            }, sessions: { [weak model] in model?.snapshot?.sessions ?? [] },
+            attachDraft: { [weak self, weak model] session, note in
+                guard let model else { throw CancellationError() }
+                try await model.attachVoiceNote(note, to: session.key)
+                self?.showShelfDraft(for: session)
+                return "Added to \(session.title)'s draft. Nothing has been sent."
+            })
+        voiceNotes.recipientPickerVisibilityChanged = { [weak self] visible in
+            guard let self else { return }
+            self.model.dialogOpen = visible || self.settings?.isVisible == true || self.mediaWindow?.isVisible == true
+        }
+        self.voiceNotes = voiceNotes
+        model.recordVoiceNote = { [weak self] key in self?.openVoiceNotes(for: key) }
         do {
             try modules.register(
                 WidgetModuleDescriptor(
@@ -48,6 +107,11 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                     symbol: WidgetModuleChoice.agents.symbol, tint: .blue,
                     summary: { [weak model] in model?.selected?.title ?? "Your local agents" }
                 ) { [model] presentation in AgentWidgetModuleView(model: model, presentation: presentation) })
+            try modules.register(shelf.captureModule())
+            try modules.register(shelf.shelfModule())
+            try modules.register(tasks.taskModule())
+            try modules.register(FlowWidget.module(runtime: runtime))
+            try modules.register(voiceNotes.voiceNotesModule())
         } catch { model.error = error.localizedDescription }
         model.openHub = openHub
         model.openDestination =
@@ -76,6 +140,9 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     /// Without `showSettings`, a widget that is off opens the settings once the first snapshot arrives,
     /// so the user sees why no panel appeared.
     public func start(showSettings: Bool = false) {
+        guard !started, !stopped else { return }
+        started = true
+        runtimeStart = Task { [flowRuntime] in await flowRuntime.start() }
         rebuildPanels()
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
@@ -83,6 +150,18 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         launchPending = !showSettings
         model.start()
         if showSettings { self.showSettings() }
+    }
+
+    public func shutdown() async {
+        if let shutdownTask { await shutdownTask.value; return }
+        let task = Task { [self] in
+            stop()
+            await voiceNotes?.shutdown()
+            await runtimeStart?.value
+            await flowRuntime.stop()
+        }
+        shutdownTask = task
+        await task.value
     }
 
     /// Opens a session in the agents panel, or the settings while the widget is off.
@@ -143,6 +222,12 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     }
 
     public func stop() {
+        guard !stopped else { return }
+        stopped = true
+        runtimeStart?.cancel()
+        voiceNotes?.stop()
+        shelf?.stop()
+        tasks?.stop()
         model.stop()
         modules.removeAllSurfaces()
         removePanelMonitors()
@@ -160,8 +245,25 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     private func compactHeight(_ ids: [String]) -> CGFloat {
         WidgetSideStripMetrics(
             classic: model.snapshot?.state.preferences.sideStyle == "classic",
-            moduleIDs: ids, visibleSessionCount: model.sessions.count
+            moduleIDs: ids, visibleSessionCount: model.railActivitySessions.count, hasInboxBadge: model.inboxCount > 0
         ).minimumHeight
+    }
+
+    private func compactSideAllocation() -> (surfaces: [WidgetSurfaceID], heights: [CGFloat], gap: CGFloat) {
+        guard let screen = display else { return ([], [], 0) }
+        let surfaces = panels.keys.filter { $0.edge != .top }.sorted { $0.group < $1.group }
+        let heights = surfaces.map { compactHeight(moduleIDs(for: $0)) }
+        let allocation = WidgetClusterGeometry.allocate(
+            heights: heights.map { ($0, $0) }, visibleHeight: screen.visibleFrame.height)
+        return (surfaces, allocation.heights, allocation.gap)
+    }
+
+    private func compactRailCenter(for surface: WidgetSurfaceID) -> CGFloat? {
+        guard surface.edge != .top, let screen = display else { return nil }
+        let compact = compactSideAllocation()
+        guard let index = compact.surfaces.firstIndex(of: surface) else { return nil }
+        return WidgetClusterGeometry.centers(heights: compact.heights, position: model.sidePosition,
+            visible: screen.visibleFrame, gap: compact.gap)[index]
     }
 
     private func moduleIDs(for surface: WidgetSurfaceID) -> [String] {
@@ -179,21 +281,25 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func rebuildPanels() {
-        let previous = Set(panels.keys)
-        panels.values.forEach { $0.hide() }
-        panels = [:]
+        let previous = panels
         // The one gate for the edge panels: while "Show the widget" is off, none exist and no monitor runs.
         lastShown = panelsEnabled
         guard panelsEnabled else {
+            previous.values.forEach { $0.hide() }
+            panels = [:]
             removePanelMonitors()
             display = nil
-            for surface in previous { modules.update(surface: surface, moduleID: nil) }
+            for surface in previous.keys { modules.update(surface: surface, moduleID: nil) }
             if model.expanded != nil { model.collapse() }
             return
         }
         installPanelMonitors()
         let requested = NSScreen.screens.first { Self.id($0) == screenID }
-        guard let screen = requested ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        let retained = screenID.isEmpty ? display.flatMap { previous in
+            NSScreen.screens.first { Self.id($0) == Self.id(previous) }
+        } : nil
+        guard let screen = requested ?? retained ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        let sameDisplay = display.map { Self.id($0) == Self.id(screen) && $0.frame == screen.frame } ?? false
         display = screen
         lastDisplayID = screenID
         let cutout: CGFloat
@@ -204,10 +310,11 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         } else {
             cutout = 0
         }
-        topHeaderHeight = max(36, screen.safeAreaInsets.top + 6)
-        topCompactWidth = WidgetClusterGeometry.topWidth(
-            cutout: cutout, moduleCount: moduleIDs(for: WidgetSurfaceID(edge: .top)).count)
-        availableCardHeight = min(660, screen.visibleFrame.height - 20)
+        if !sameDisplay {
+            topHeaderHeight = max(36, screen.safeAreaInsets.top + 6)
+            topCompactWidth = WidgetClusterGeometry.topWidth(
+                cutout: cutout, moduleCount: moduleIDs(for: WidgetSurfaceID(edge: .top)).count)
+        }
         lastSide = model.side
         var layout = model.layout
         layout.sidePosition = 0.5
@@ -216,6 +323,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         let surfaces =
             [WidgetSurfaceID(edge: .top)]
             + sideGroups.indices.map { WidgetSurfaceID(edge: model.side, group: $0) }
+        var nextPanels: [WidgetSurfaceID: EdgePanelController<WidgetHostView>] = [:]
         for surface in surfaces {
             let ids = moduleIDs(for: surface)
             model.resolveModules(ids, on: surface)
@@ -223,18 +331,44 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             let compact = CGSize(
                 width: top ? topCompactWidth : 44,
                 height: top ? topHeaderHeight : compactHeight(ids))
-            panels[surface] = EdgePanelController(
-                placement: surface.edge, screen: screen, compactSize: compact,
-                expandedSize: CGSize(width: top ? 432 : 476, height: 600),
-                title: top ? "Widgets · top" : "Widgets · side \(surface.group + 1)"
-            ) {
+            let content = { [self] in
                 WidgetHostView(
                     model: model, registry: modules, surface: surface, moduleIDs: ids,
                     cutout: cutout, headerHeight: topHeaderHeight,
-                    visibleHeight: screen.visibleFrame.height)
+                    headerMinimumHeight: max(36, screen.safeAreaInsets.top + 6),
+                    visibleHeight: screen.visibleFrame.height,
+                    railScreenCenterY: { [weak self] in self?.compactRailCenter(for: surface) },
+                    expandedContentWidth: { [weak self] id in
+                        guard id == "agents", let visible = self?.display?.visibleFrame.size else { return nil }
+                        return WidgetClusterGeometry.detailSize(visible: visible).width
+                    },
+                    topSizeChanged: { [weak self] size in
+                        DispatchQueue.main.async { self?.updateTopSize(size) }
+                    })
+            }
+            if sameDisplay, let controller = previous[surface] {
+                controller.updateContent(content)
+                nextPanels[surface] = controller
+            } else {
+                nextPanels[surface] = EdgePanelController(
+                    placement: surface.edge, screen: screen, compactSize: compact,
+                    expandedSize: CGSize(width: top ? 432 : 476, height: 600),
+                    title: top ? "Widgets · top" : "Widgets · side \(surface.group + 1)", content: content)
             }
         }
-        for surface in previous.subtracting(panels.keys) { modules.update(surface: surface, moduleID: nil) }
+        panels = nextPanels
+        for (surface, controller) in previous where panels[surface] !== controller {
+            controller.hide()
+            if panels[surface] == nil { modules.update(surface: surface, moduleID: nil) }
+        }
+        sync()
+    }
+
+    private func updateTopSize(_ size: CGSize) {
+        guard size.width > 0, size.height > 0,
+              size.width != topCompactWidth || size.height != topHeaderHeight else { return }
+        topCompactWidth = size.width
+        topHeaderHeight = size.height
         sync()
     }
 
@@ -260,26 +394,30 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         }
         guard let screen = display else { return }
         let sideSurfaces = panels.keys.filter { $0.edge != .top }.sorted { $0.group < $1.group }
-        var sideHeights = sideSurfaces.map { surface -> CGFloat in
+        let requestedHeights = sideSurfaces.map { surface -> (minimum: CGFloat, preferred: CGFloat) in
             let compact = compactHeight(moduleIDs(for: surface))
             let module = selectedModule(for: surface)
+            let preferred: CGFloat
             switch model.presentation(for: surface) {
-            case .compact: return compact
-            case .preview: return max(compact, module?.id == "agents" ? model.previewHeight : 245)
+            case .compact: preferred = compact
+            case .preview: preferred = max(compact, module?.id == "agents" ? model.previewHeight : (module?.previewSize.height ?? 310))
             case .expanded:
-                let height = module?.id == "agents" ? model.preferredHeight : (module?.expandedSize.height ?? 440)
-                return max(compact, min(availableCardHeight, height + 40))
+                let height = module?.id == "agents"
+                    ? WidgetClusterGeometry.detailSize(visible: screen.visibleFrame.size).height
+                    : (module?.expandedSize.height ?? 440) + 40
+                preferred = max(compact, height)
             }
+            return (compact, preferred)
         }
-        let gaps = CGFloat(max(0, sideSurfaces.count - 1)) * 12
-        let total = sideHeights.reduce(0, +) + gaps
-        if total > screen.visibleFrame.height {
-            let scale = (screen.visibleFrame.height - gaps) / max(1, sideHeights.reduce(0, +))
-            sideHeights = sideHeights.map { max(1, $0 * scale) }
-        }
-        model.sideClusterHeight = sideHeights.reduce(0, +) + gaps
+        let allocation = WidgetClusterGeometry.allocate(
+            heights: requestedHeights, visibleHeight: screen.visibleFrame.height)
+        let sideHeights = allocation.heights
+        let compactAllocation = compactSideAllocation()
+        model.sideClusterHeight = compactAllocation.heights.reduce(0, +)
+            + CGFloat(max(0, sideSurfaces.count - 1)) * compactAllocation.gap
         let centers = WidgetClusterGeometry.centers(
-            heights: sideHeights, position: model.sidePosition, visible: screen.visibleFrame)
+            heights: compactAllocation.heights, position: model.sidePosition,
+            visible: screen.visibleFrame, gap: compactAllocation.gap)
         for (surface, controller) in panels {
             let top = surface.edge == .top
             let visible = model.placement == "both" || (model.placement == "top" ? top : !top)
@@ -290,55 +428,56 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             }
             let module = selectedModule(for: surface)
             let presentation = model.presentation(for: surface)
-            let contentHeight = module?.id == "agents" ? model.preferredHeight : (module?.expandedSize.height ?? 440)
-            let width = module?.expandedSize.width ?? 432
+            let detailSize = WidgetClusterGeometry.detailSize(visible: screen.visibleFrame.size)
+            let contentHeight = module?.id == "agents" ? detailSize.height : (module?.expandedSize.height ?? 440) + 40
+            let width = module?.id == "agents" ? detailSize.width : (module?.expandedSize.width ?? 432)
+            let previewSize = CGSize(width: module?.previewSize.width ?? 324,
+                height: module?.id == "agents" ? model.previewHeight : (module?.previewSize.height ?? 310))
             if top {
+                controller.setCompactSize(CGSize(width: topCompactWidth, height: topHeaderHeight))
                 controller.setExpandedSize(
                     CGSize(
                         width: max(topCompactWidth, width),
-                        height: min(availableCardHeight, contentHeight + 40) + topHeaderHeight))
+                        height: min(screen.visibleFrame.height - 20, contentHeight + topHeaderHeight)))
                 controller.setPreviewSize(
                     CGSize(
-                        width: max(topCompactWidth, width),
-                        height: (module?.id == "agents" ? model.previewHeight : 245) + topHeaderHeight))
+                        width: max(topCompactWidth, previewSize.width),
+                        height: min(screen.visibleFrame.height - 20, previewSize.height + topHeaderHeight)))
             } else if let index = sideSurfaces.firstIndex(of: surface) {
                 controller.setSideCenterY(centers[index])
-                controller.setCompactSize(CGSize(width: 44, height: sideHeights[index]))
-                controller.setPreviewSize(CGSize(width: 368, height: sideHeights[index]))
+                controller.setCompactSize(CGSize(width: 44, height: compactAllocation.heights[index]))
+                controller.setPreviewSize(CGSize(width: previewSize.width + 44, height: sideHeights[index]))
                 controller.setExpandedSize(CGSize(width: width + 44, height: sideHeights[index]))
             }
-            orderFront(controller)
             controller.setPresentation(presentation, reduceMotion: model.effectiveReduceMotion || model.draggingSide)
+            orderFront(controller)
             modules.update(surface: surface, moduleID: module?.id, presentation: presentation)
+        }
+        if let active = panels.first(where: { model.presentation(for: $0.key) != .compact && $0.key.edge != .top }) {
+            for (surface, controller) in panels where surface.edge != .top && surface != active.key && controller.panel.isVisible {
+                controller.panel.order(.above, relativeTo: active.value.panel.windowNumber)
+            }
         }
     }
 
-    public func showSettings() {
+    public func showSettings(pageID: String = "widgets.general") {
         model.collapse()
         if let settingsPresenter {
-            settingsPresenter("widgets.general")
+            settingsPresenter(pageID)
             return
         }
         if settings == nil {
-            let view = WidgetSettingsView(
-                model: model, display: screenID,
-                onDisplay: { [weak self] id in
-                    UserDefaults.standard.set(id, forKey: "widget.display")
-                    self?.rebuildPanels()
-                })
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 660, height: 670),
-                styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered,
-                defer: false)
-            window.title = "Widget sessions"
-            window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: view)
-            window.appearance = NSAppearance(named: .darkAqua)
-            window.minSize = NSSize(width: 590, height: 500)
-            window.center()
+            let controller = FeatureSettingsWindowController(title: "Feature settings",
+                sections: WidgetFeatureSettings.sections(model: model, modules: WidgetModuleChoice.builtins,
+                    flowRuntime: flowRuntime, transforms: transforms,
+                    openSession: { [weak self] in self?.showShelfDraft(for: $0) }),
+                initialPageID: pageID, appearance: model.appearance)
+            featureSettings = controller
+            let window = controller.prepare(pageID: pageID)
             window.delegate = self
             settings = window
         }
+        featureSettings?.store.select(pageID: pageID)
         model.dialogOpen = true
         settings?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -353,9 +492,13 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         let frame = EdgePanelGeometry.mediaFrame(
             anchor: anchor?.frame ?? screen.visibleFrame, visible: screen.visibleFrame)
         let window = NSWindow(
-            contentRect: frame, styleMask: [.titled, .closable, .resizable],
+            contentRect: frame, styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
         window.title = "Media"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isOpaque = false
+        window.backgroundColor = .clear
         window.isReleasedWhenClosed = false
         window.level = .floating
         window.appearance = NSAppearance(named: .darkAqua)
@@ -381,6 +524,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         if notification.object as? NSWindow === settings {
             model.dialogOpen = false
             settings = nil
+            featureSettings = nil
         }
     }
 
@@ -398,6 +542,31 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         model.collapse()
     }
 
+    private func openVoiceNotes(for key: String) {
+        voiceNotes?.recipientKey = key
+        let candidates = panels.keys.filter { moduleIDs(for: $0).contains("voice") }.sorted { $0.key < $1.key }
+        guard let surface = candidates.first(where: { $0.edge == model.expanded }) ?? candidates.first else {
+            model.notice = "Enable Voice Notes on an edge to record and attach to this draft."
+            showSettings(pageID: "widgets.modules")
+            return
+        }
+        model.openModule("voice", on: surface)
+    }
+
+    private func showShelfDraft(for session: WidgetSession) {
+        model.select(session.key)
+        model.section = "Inbox"
+        let candidates = panels.keys.filter { moduleIDs(for: $0).contains("agents") }
+            .sorted { $0.key < $1.key }
+        let surface = candidates.first { $0.edge == model.expanded } ?? candidates.first
+        if let surface {
+            model.openModule("agents", on: surface)
+        } else {
+            model.notice = "Added to the selected session's draft."
+            model.openHub?(session)
+        }
+    }
+
     private func handleKey(_ event: NSEvent) -> NSEvent? {
         guard let expanded = model.expanded,
             let panel = panels[WidgetSurfaceID(edge: expanded, group: expanded == .top ? 0 : model.activeSideGroup)]?
@@ -405,11 +574,14 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             event.window === panel, panel.isKeyWindow
         else { return event }
         let active = WidgetSurfaceID(edge: expanded, group: expanded == .top ? 0 : model.activeSideGroup)
-        let isAgent = selectedModule(for: active)?.id == "agents"
-        if isAgent, event.modifierFlags.contains(.command),
-            event.charactersIgnoringModifiers?.lowercased() == "v"
-        {
-            return model.pasteMedia() ? nil : event
+        let moduleID = selectedModule(for: active)?.id
+        let isAgent = moduleID == "agents"
+        if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "v" {
+            if isAgent { return model.pasteMedia() ? nil : event }
+            if ["capture", "shelf"].contains(moduleID ?? ""), !(panel.firstResponder is NSTextView) {
+                shelf?.paste(asImages: moduleID == "capture")
+                return nil
+            }
         }
         guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else {
             return event

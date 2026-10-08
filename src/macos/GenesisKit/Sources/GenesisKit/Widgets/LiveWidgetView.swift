@@ -630,8 +630,7 @@ public struct LiveWidgetView: View {
                 }
                 .modifier(WidgetGlassControl())
                 .foregroundStyle(model.voiceActive ? .red : .secondary)
-                .help(model.voiceActive ? "Stop dictation" : "Dictate").accessibilityLabel(
-                    model.voiceActive ? "Stop dictation" : "Dictate")
+                .help(model.voiceActionLabel).accessibilityLabel(model.voiceActionLabel)
                 Spacer()
                 Text("⌘V media · Esc close").font(.system(size: 9)).foregroundStyle(.tertiary)
             }.font(.system(size: 12)).foregroundStyle(.secondary).buttonStyle(.plain)
