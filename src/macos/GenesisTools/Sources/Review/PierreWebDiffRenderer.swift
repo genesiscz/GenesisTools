@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GenesisKit
 import WebKit
 
 /// DiffRenderer backed by @pierre/diffs (the renderer behind t3code / diffs.com) in a WKWebView.
@@ -16,7 +17,7 @@ final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandle
     @MainActor private static var spare: PierreWebDiffRenderer?
     @MainActor private static var spareScheduled = false
 
-    /// The spare when there is one, else a new renderer; either way the next spare comes 2 s later.
+    /// The spare when there is one, else a new renderer; another is prepared once interaction settles.
     @MainActor static func make() -> PierreWebDiffRenderer {
         let made = spare ?? PierreWebDiffRenderer()
         spare = nil
@@ -27,13 +28,34 @@ final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessageHandle
     @MainActor private static func scheduleSpare() {
         guard !spareScheduled else { return }
         spareScheduled = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            MainActor.assumeIsolated {
-                spareScheduled = false
-                guard spare == nil else { return }
-                spare = HubPerf.measure("review.renderer.spare") { PierreWebDiffRenderer() }
-            }
+        let meter = MainBusy.Meter()
+        meter.start()
+        let deadline = CFAbsoluteTimeGetCurrent() + 10
+        var lastBusy = 0.0
+        var quiet = 0
+        var lastInput = CFAbsoluteTimeGetCurrent()
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged, .scrollWheel, .mouseMoved]) { event in
+            lastInput = CFAbsoluteTimeGetCurrent()
+            return event
         }
+        func check() {
+            let now = CFAbsoluteTimeGetCurrent()
+            let busy = meter.read().busyMs
+            let step = busy - lastBusy
+            lastBusy = busy
+            let interacting = now - lastInput < 0.75 || NSEvent.pressedMouseButtons != 0 || NSApp.windows.contains(where: \.inLiveResize)
+            quiet = !interacting && step < 20 ? quiet + 1 : 0
+            guard quiet >= 3 || now >= deadline else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { MainActor.assumeIsolated { check() } }
+                return
+            }
+            meter.stop()
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            spareScheduled = false
+            guard quiet >= 3, spare == nil else { return }
+            spare = HubPerf.measure("review.renderer.spare") { PierreWebDiffRenderer() }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { MainActor.assumeIsolated { check() } }
     }
 
     let webView: WKWebView
