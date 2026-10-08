@@ -4,22 +4,26 @@ import SwiftUI
 /// Measures both wings before placing them, keeping a hardware cutout at the screen's center.
 struct WidgetTopBarLayout: Layout {
     var cutout: CGFloat
+    var intrinsicSizeChanged: (CGSize) -> Void = { _ in }
+    func makeCache(subviews: Subviews) -> CGSize { .zero }
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout CGSize) -> CGSize {
         let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
         guard sizes.count == 2 else { return .zero }
         let width = cutout > 0
             ? max(sizes[0].width, sizes[1].width) * 2 + cutout + 16
             : sizes[0].width + sizes[1].width + 16
-        return CGSize(width: width, height: max(sizes[0].height, sizes[1].height))
+        let intrinsic = CGSize(width: width, height: max(sizes[0].height, sizes[1].height))
+        if cache != intrinsic { cache = intrinsic; intrinsicSizeChanged(intrinsic) }
+        return CGSize(width: min(proposal.width ?? width, width), height: intrinsic.height)
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout CGSize) {
         guard subviews.count == 2 else { return }
         let left = subviews[0].sizeThatFits(.unspecified)
         let right = subviews[1].sizeThatFits(.unspecified)
         subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(left))
-        let rightX = cutout > 0 ? bounds.midX + cutout / 2 + 8 : bounds.maxX - right.width
+        let rightX = cutout > 0 ? bounds.midX + cutout / 2 + 8 : bounds.minX + left.width + 16
         subviews[1].place(at: CGPoint(x: rightX, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(right))
     }
 }
