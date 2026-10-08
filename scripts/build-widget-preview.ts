@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { cp, mkdir, readFile, rename } from "node:fs/promises";
+import { cp, mkdir, rename } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { buildDiffViewer } from "@app/macos/lib/permissions/app";
 import { env } from "@genesiscz/utils/env";

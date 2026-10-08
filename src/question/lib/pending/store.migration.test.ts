@@ -141,7 +141,11 @@ describe("the qa_pending migration against a populated qa.db", () => {
         }[];
         check.close();
 
-        expect(applied).toEqual([{ id: "qa_pending:001-qa-pending" }, { id: "qa_pending:002-qa-pending-claim" }]);
+        expect(applied).toEqual([
+            { id: "qa_pending:001-qa-pending" },
+            { id: "qa_pending:002-qa-pending-claim" },
+            { id: "qa_pending:003-qa-pending-provenance" },
+        ]);
         expect(readHistory(dbPath)).toEqual(before);
     });
 
@@ -215,6 +219,8 @@ describe("the qa_pending migration against a populated qa.db", () => {
             timeout_ms: 60_000,
             entry_id: null,
             claimed_at: null,
+            poster_json: null,
+            transcript_anchor_json: null,
         });
     });
 
