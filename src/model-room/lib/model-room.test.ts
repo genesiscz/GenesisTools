@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { SafeJSON } from "@genesiscz/utils/json";
 import {
     evaluateExpression,
     expressionReferences,
@@ -8,6 +9,7 @@ import {
 } from "@genesiscz/utils/quantities/expression";
 import { convertValue, parseUnit, sameDimension } from "@genesiscz/utils/quantities/units";
 import { parseDelimited } from "@genesiscz/utils/tabular/delimited";
+import { skip } from "@genesiscz/utils/test/skip";
 import { compileModel } from "./compiler";
 import { importObservationQuantity, verifyObservationDigest } from "./data-import";
 import { readModelDocument } from "./document";
@@ -419,6 +421,116 @@ describe("document time conversion", () => {
 });
 
 describe("portable model exports", () => {
+    test("presentation steps accept known branches and reject unknown branches", async () => {
+        const document = supportCapacityModel();
+        document.presentation.steps = [{ title: "Branch", text: "", scenario: document.scenarios[0].id }];
+        expect(readModelDocument(document).presentation.steps[0].scenario).toBe(document.scenarios[0].id);
+        document.presentation.steps[0].scenario = "missing_branch";
+        expect(() => readModelDocument(document)).toThrow("unknown scenario");
+        await expect(evaluateDocument({ input: document })).rejects.toThrow("unknown scenario");
+    });
+
+    test("wide CSV rejects sparse scenario expansion before allocating its cells", async () => {
+        const document = readModelDocument({
+            format: "genesis-model-room",
+            version: 1,
+            id: "sparse",
+            title: "Sparse branches",
+            time: { unit: "day", duration: 309, step: 1 },
+            quantities: [{ id: "base", label: "Base", kind: "input", unit: "1", value: 1 }],
+            scenarios: Array.from({ length: 8 }, (_, branch) => ({
+                id: `branch_${branch}`,
+                label: `Branch ${branch}`,
+                replacements: Array.from({ length: 100 }, (_, column) => ({
+                    id: `value_${branch}_${column}`,
+                    label: `Value ${branch} ${column}`,
+                    kind: "input",
+                    unit: "1",
+                    value: column,
+                })),
+            })),
+        });
+        const evaluation = await evaluateDocument({ input: document });
+        expect(evaluation.scenarios.every((scenario) => scenario.result)).toBe(true);
+        expect(() => resultsCSV(document, evaluation.scenarios)).toThrow("CSV exceeds two million cells");
+    });
+
+    test.skipIf(skip.e2e)(
+        "offline HTML preserves branch focus, inherited-name inputs and downloadable remixes",
+        async () => {
+            const { chromium } = await import("@playwright/test");
+            const { standaloneModelHTML } = await import("./html-export");
+            const document = readModelDocument({
+                format: "genesis-model-room",
+                version: 1,
+                id: "offline",
+                title: "Offline fixture",
+                time: { unit: "day", duration: 1, step: 1 },
+                quantities: [
+                    { id: "toString", label: "Assumption", kind: "input", unit: "1", value: 2 },
+                    { id: "outcome", label: "Outcome", kind: "formula", unit: "1", expression: "10 / toString" },
+                ],
+                scenarios: [{ id: "branch", label: "Branch" }],
+                presentation: { controls: ["toString"], outputs: ["outcome"], steps: [] },
+            });
+            const html = await standaloneModelHTML(document);
+            const browser = await chromium.launch();
+            try {
+                const context = await browser.newContext({ offline: true, acceptDownloads: true });
+                const page = await context.newPage();
+                const errors: string[] = [];
+                const requests: string[] = [];
+                page.on("pageerror", (error) => errors.push(error.message));
+                page.on("request", (request) => requests.push(request.url()));
+                await page.setContent(html);
+                await page.getByRole("status").filter({ hasText: "Ready" }).waitFor();
+                expect(await page.locator('[data-quantity="outcome"]').getAttribute("data-value")).toBe("5");
+                const scenario = page.getByRole("combobox", { name: "Scenario to edit" });
+                await scenario.focus();
+                await scenario.selectOption("branch");
+                expect(await scenario.evaluate((node) => node === node.ownerDocument.activeElement)).toBe(true);
+                expect(await page.locator("#toString").inputValue()).toBe("2");
+                await page.locator("#toString").fill("4");
+                await page.waitForFunction(
+                    () =>
+                        globalThis.document.querySelector('[data-quantity="outcome"]')?.getAttribute("data-value") ===
+                        "2.5"
+                );
+                const downloadPromise = page.waitForEvent("download");
+                await page.getByRole("button", { name: "Remix this model" }).click();
+                const download = await downloadPromise;
+                const stream = await download.createReadStream();
+                if (!stream) {
+                    throw new Error("Remix download has no readable contents.");
+                }
+
+                let text = "";
+                for await (const chunk of stream) {
+                    text += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+                }
+
+                const remix = readModelDocument(SafeJSON.parse(text, { strict: true }));
+                expect(Object.entries(remix.scenarios[0].overrides).find(([id]) => id === "toString")?.[1]).toBe(4);
+                expect(remix.quantities[0]).toMatchObject({ value: 2 });
+                await page.locator("#toString").fill("0");
+                await page.getByRole("status").filter({ hasText: "finite" }).waitFor();
+                expect(await page.locator('[data-quantity="outcome"]').count()).toBe(0);
+                await scenario.selectOption("");
+                await page.locator("#toString").fill("0");
+                await page.getByRole("status").filter({ hasText: "Last valid results are retained" }).waitFor();
+                expect(await page.locator('[data-quantity="outcome"]').getAttribute("data-value")).toBe("5");
+                await page.getByRole("button", { name: "Reset", exact: true }).click();
+                await page.getByRole("status").filter({ hasText: "Ready" }).waitFor();
+                expect(await page.locator("#toString").inputValue()).toBe("2");
+                expect(errors).toEqual([]);
+                expect(requests).toEqual([]);
+            } finally {
+                await browser.close();
+            }
+        },
+        20_000
+    );
+
     test("document rendering metadata has bounded positions, sliders and presentation times", () => {
         const document = supportCapacityModel();
         document.quantities[0].position.x = 1e12;

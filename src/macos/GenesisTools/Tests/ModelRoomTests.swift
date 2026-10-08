@@ -17,6 +17,62 @@ final class ModelRoomTests: XCTestCase {
         return document
     }
 
+    @MainActor
+    func testCancellingObservationImportCannotCommitAndNormalImportStillRuns() async throws {
+        let document = fixture()
+        defer { document.model.stop() }
+        let before = try XCTUnwrap(document.model.file)
+        let model = ModelRoomModel(toolsPath: "/usr/bin/false")
+        model.file = before
+        defer { model.stop() }
+        let source = ModelRoomTableSource(url: URL(fileURLWithPath: "/nonexistent/observations.csv"), delimiter: "comma",
+                                          table: ModelRoomTablePreview(headers: ["time", "value"], preview: [], rowCount: 2, sha256: "fixture"))
+        model.importObservations(source: source, timeColumn: "time", valueColumn: "value", label: "Observed", unit: "1", interpolation: "hold", decimal: "dot")
+        model.cancelObservationImport()
+        await Task.yield()
+        XCTAssertEqual(model.file, before)
+        XCTAssertFalse(model.importing)
+        XCTAssertNil(model.error)
+        XCTAssertNil(model.notice)
+
+        model.importObservations(source: source, timeColumn: "time", valueColumn: "value", label: "Observed", unit: "1", interpolation: "hold", decimal: "dot")
+        let failure = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            MainActor.assumeIsolated { model.error != nil }
+        }, object: nil)
+        await fulfillment(of: [failure], timeout: 3)
+        XCTAssertNotNil(model.error, "An uncancelled import still reaches the tool.")
+        XCTAssertEqual(model.file, before)
+        XCTAssertFalse(model.importing)
+    }
+
+    @MainActor
+    func testSweepAxesUseBranchUnitsValuesAndStructure() throws {
+        let document = fixture()
+        defer { document.model.stop() }
+        var file = try XCTUnwrap(document.model.file)
+        file.quantities = [
+            ModelRoomQuantity(id: "length", label: "Length", unit: "m", position: ModelRoomPoint(x: 0, y: 0), kind: "input", value: 2),
+            ModelRoomQuantity(id: "removed", label: "Removed", unit: "1", position: ModelRoomPoint(x: 0, y: 0), kind: "input", value: 7),
+            ModelRoomQuantity(id: "retyped", label: "Retyped", unit: "1", position: ModelRoomPoint(x: 0, y: 0), kind: "input", value: 3),
+        ]
+        file.scenarios = [ModelRoomScenario(id: "branch", label: "Branch", overrides: ["added": 9], replacements: [
+            ModelRoomQuantity(id: "length", label: "Length", unit: "cm", position: ModelRoomPoint(x: 0, y: 0), kind: "input", value: 300),
+            ModelRoomQuantity(id: "added", label: "Added", unit: "1", position: ModelRoomPoint(x: 0, y: 0), kind: "input", value: 4),
+            ModelRoomQuantity(id: "retyped", label: "Retyped", unit: "1", position: ModelRoomPoint(x: 0, y: 0), kind: "formula", expression: "2"),
+        ], removed: ["removed"])]
+        let baseline = ModelRoomSweepDraft.inputs(file: file, scenarioID: "")
+        XCTAssertEqual(baseline.first?.unit, "m")
+        XCTAssertEqual(baseline.first?.lower, "2.0")
+        let branch = ModelRoomSweepDraft.inputs(file: file, scenarioID: "branch", included: ["length", "removed", "retyped"])
+        XCTAssertEqual(branch.map(\.id), ["length", "added"])
+        XCTAssertEqual(branch.first?.unit, "cm")
+        XCTAssertEqual(branch.first?.lower, "300.0")
+        XCTAssertEqual(branch.first?.upper, "301.0")
+        XCTAssertEqual(branch.first?.included, true)
+        XCTAssertEqual(branch.last?.lower, "9.0")
+        XCTAssertEqual(branch.last?.included, false)
+    }
+
     func testProposalRoundTripKeepsNullEvidenceAndRequiresFiniteAnswers() throws {
         let source = #"""
         {"sourceText":"Use 10 days with a 1 day step.",

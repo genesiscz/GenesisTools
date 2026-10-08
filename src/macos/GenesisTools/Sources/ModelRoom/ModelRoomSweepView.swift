@@ -2,7 +2,7 @@ import AppKit
 import GenesisKit
 import SwiftUI
 
-private struct ModelRoomSweepDraft: Identifiable {
+struct ModelRoomSweepDraft: Identifiable {
     var id: String
     var label: String
     var unit: String
@@ -10,6 +10,16 @@ private struct ModelRoomSweepDraft: Identifiable {
     var lower: String
     var upper: String
     var count = "5"
+
+    static func inputs(file: ModelRoomFile, scenarioID: String, included: Set<String>? = nil) -> [Self] {
+        let overrides = file.scenarios.first { $0.id == scenarioID }?.overrides ?? [:]
+        return file.effectiveQuantities(scenarioID: scenarioID).filter { $0.kind == "input" }.enumerated().map { index, quantity in
+            let value = overrides[quantity.id] ?? quantity.baseValue
+            return Self(id: quantity.id, label: quantity.label, unit: quantity.unit,
+                        included: included?.contains(quantity.id) ?? (index == 0),
+                        lower: String(quantity.range?.min ?? value), upper: String(quantity.range?.max ?? value + 1))
+        }
+    }
 }
 
 struct ModelRoomSweepSheet: View {
@@ -65,7 +75,7 @@ struct ModelRoomSweepSheet: View {
                     ForEach(model.file?.scenarios ?? []) { Text($0.label).tag($0.id) }
                 }
                 Picker("Final outcome", selection: $output) {
-                    ForEach(model.file?.quantities ?? []) { Text("\($0.label) (\($0.unit))").tag($0.id) }
+                    ForEach(model.file?.effectiveQuantities(scenarioID: scenario) ?? []) { Text("\($0.label) (\($0.unit))").tag($0.id) }
                 }
             }.disabled(runner.running)
             HStack {
@@ -114,18 +124,25 @@ struct ModelRoomSweepSheet: View {
         }
         .padding(24).frame(width: 820)
         .onAppear {
-            let inputs = (model.file?.quantities ?? []).filter { $0.kind == "input" }
-            axes = inputs.enumerated().map { index, quantity in
-                ModelRoomSweepDraft(id: quantity.id, label: quantity.label, unit: quantity.unit, included: index == 0,
-                                    lower: String(quantity.range?.min ?? quantity.baseValue), upper: String(quantity.range?.max ?? quantity.baseValue + 1))
-            }
             scenario = model.selectedScenario
-            output = model.file?.presentation.outputs.first ?? model.file?.quantities.first?.id ?? ""
+            rebuildAxes()
         }
+        .onChange(of: scenario) { _, _ in rebuildAxes() }
         .onDisappear { runner.stop() }
     }
 
-    private func label(_ id: String) -> String { model.file?.quantities.first { $0.id == id }?.label ?? id }
+    private func rebuildAxes() {
+        guard let file = model.file else { return }
+        let included = axes.isEmpty ? nil : Set(axes.filter(\.included).map(\.id))
+        axes = ModelRoomSweepDraft.inputs(file: file, scenarioID: scenario, included: included)
+        let quantities = file.effectiveQuantities(scenarioID: scenario)
+        let ids = Set(quantities.map(\.id))
+        if !ids.contains(output) {
+            output = file.presentation.outputs.first(where: { ids.contains($0) }) ?? quantities.first?.id ?? ""
+        }
+    }
+
+    private func label(_ id: String) -> String { model.file?.effectiveQuantities(scenarioID: usedScenario).first { $0.id == id }?.label ?? id }
 
     private func start() {
         let editor = model.owner?.windowControllers.first?.window?.attachedSheet ?? NSApp.keyWindow

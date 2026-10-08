@@ -78,7 +78,7 @@ struct ModelRoomImportSheet: View {
             }
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }.buttonStyle(.genHoverPlain()).keyboardShortcut(.cancelAction)
+                Button("Cancel") { model.cancelObservationImport(); dismiss() }.buttonStyle(.genHoverPlain()).keyboardShortcut(.cancelAction)
                 Button("Import as measured quantity") {
                     let editor = model.owner?.windowControllers.first?.window?.attachedSheet ?? NSApp.keyWindow
                     editor?.makeFirstResponder(nil)
@@ -94,5 +94,6 @@ struct ModelRoomImportSheet: View {
             delimiter = source.delimiter
             label = source.url.deletingPathExtension().lastPathComponent
         }
+        .onDisappear { model.cancelObservationImport() }
     }
 }

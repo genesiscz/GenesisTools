@@ -147,6 +147,12 @@ export function readModelDocument(input: unknown): ModelDocument {
         throw new Error("A presentation step is outside the model time range.");
     }
 
+    const scenarios = new Set(document.scenarios.map((scenario) => scenario.id));
+
+    if (document.presentation.steps.some((step) => step.scenario !== undefined && !scenarios.has(step.scenario))) {
+        throw new Error("A presentation step names an unknown scenario.");
+    }
+
     return document;
 }
 

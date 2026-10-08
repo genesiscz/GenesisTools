@@ -24,6 +24,12 @@ export function resultsCSV(document: ModelDocument, scenarios: EvaluatedScenario
             return { scenario, units: new Map(effective.quantities.map((quantity) => [quantity.id, quantity.unit])) };
         });
     const quantities = [...columns.values()];
+    const rowCount = 1 + branches.reduce((count, { scenario }) => count + (scenario.result?.frames.length ?? 0), 0);
+
+    if (rowCount * (quantities.length + 2) > 2_000_000) {
+        throw new Error("The CSV exceeds two million cells. Reduce its steps, quantities or scenarios.");
+    }
+
     const rows: (string | number)[][] = [
         [
             "Scenario",

@@ -38,6 +38,7 @@ final class ModelRoomModel: ObservableObject {
     private var playback: Task<Void, Never>?
     private var exportTask: Task<Void, Never>?
     private var importTask: Task<Void, Never>?
+    private var importID = UUID()
     private var revision = 0
     private var gestureBefore: ModelRoomFile?
     private var gestureScenarioBefore = ""
@@ -381,7 +382,7 @@ final class ModelRoomModel: ObservableObject {
     }
 
     func stopPlayback() { playback?.cancel(); playback = nil; playing = false }
-    func stop() { calculation?.cancel(); exportTask?.cancel(); importTask?.cancel(); subsystemTask?.cancel(); proposalTask?.cancel(); revision += 1; busy = false; exporting = false; importing = false; stopPlayback() }
+    func stop() { calculation?.cancel(); exportTask?.cancel(); cancelObservationImport(); subsystemTask?.cancel(); proposalTask?.cancel(); revision += 1; busy = false; exporting = false; stopPlayback() }
 
     func chooseObservationTable() {
         guard let window = owner?.windowControllers.first?.window, !importing else { return }
@@ -395,14 +396,24 @@ final class ModelRoomModel: ObservableObject {
         }
     }
 
-    func previewTable(url: URL, delimiter: String) {
+    func cancelObservationImport() {
         importTask?.cancel()
+        importTask = nil
+        importID = UUID()
+        importing = false
+    }
+
+    func previewTable(url: URL, delimiter: String) {
+        cancelObservationImport()
+        let requestID = UUID()
+        importID = requestID
         importing = true
         importTask = Task { [weak self] in
             guard let self else { return }
             let span = HubPerf.begin("model-room.table.preview", url.lastPathComponent)
-            defer { span.end(); importing = false }
+            defer { span.end(); if importID == requestID { importing = false } }
             do {
+                try Task.checkCancellation()
                 let answer = try await bridge.run(subcommand: "model-room", args: ["inspect-table", "--data", url.path, "--delimiter", delimiter], timeoutSeconds: 15)
                 try Task.checkCancellation()
                 guard answer.exitCode == 0 else { throw modelRoomCommandFailure(answer) }
@@ -418,12 +429,15 @@ final class ModelRoomModel: ObservableObject {
         guard let file, !importing else { return }
         let revisionAtStart = revision
         let id = "data_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let requestID = UUID()
+        importID = requestID
         importing = true
         importTask = Task { [weak self] in
             guard let self else { return }
             let span = HubPerf.begin("model-room.table.import", source.url.lastPathComponent)
-            defer { span.end(); importing = false }
+            defer { span.end(); if importID == requestID { importing = false } }
             do {
+                try Task.checkCancellation()
                 let input = try await Task.detached(priority: .userInitiated) {
                     let url = FileManager.default.temporaryDirectory.appendingPathComponent("model-room-import-" + UUID().uuidString + ".json")
                     try JSONEncoder().encode(file).write(to: url, options: .atomic)

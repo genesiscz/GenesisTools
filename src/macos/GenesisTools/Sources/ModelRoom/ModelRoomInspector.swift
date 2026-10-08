@@ -107,11 +107,24 @@ struct ModelRoomInspector: View {
                 Button("Delete quantity", role: .destructive) { model.removeSelected() }.buttonStyle(.genHoverPlain())
             }.padding(16)
         }
-        .task(id: quantity.id + quantity.formula + quantity.unit + quantity.label + model.selectedScenario) {
+        .task(id: quantity.id + ":" + model.selectedScenario) {
             formula = quantity.formula; label = quantity.label; unit = quantity.unit
             quantityDescription = quantity.description; provenance = quantity.provenance
             rangeMin = String(quantity.range?.min ?? 0); rangeMax = String(quantity.range?.max ?? 100); rangeStep = String(quantity.range?.step ?? 1)
             value = String(quantity.kind == "input" ? model.inputValue(quantity) : quantity.baseValue)
+        }
+        .onChange(of: quantity) { previous, next in
+            if previous.formula != next.formula { formula = next.formula }
+            if previous.label != next.label { label = next.label }
+            if previous.unit != next.unit { unit = next.unit }
+            if previous.description != next.description { quantityDescription = next.description }
+            if previous.provenance != next.provenance { provenance = next.provenance }
+            if previous.initial != next.initial || previous.kind != next.kind {
+                value = String(next.kind == "input" ? model.inputValue(next) : next.baseValue)
+            }
+            if previous.range != next.range {
+                rangeMin = String(next.range?.min ?? 0); rangeMax = String(next.range?.max ?? 100); rangeStep = String(next.range?.step ?? 1)
+            }
         }
         .onChange(of: model.inputValue(quantity)) { _, next in
             if quantity.kind == "input" { value = String(next) }

@@ -63,11 +63,16 @@ actions.append(
     ),
     button("Results CSV", () => {
         if (evaluation) {
-            download({
-                text: resultsCSV(model, evaluation.scenarios),
-                filename: `${model.id}-results.csv`,
-                type: "text/csv",
-            });
+            try {
+                download({
+                    text: resultsCSV(model, evaluation.scenarios),
+                    filename: `${model.id}-results.csv`,
+                    type: "text/csv",
+                });
+            } catch (error) {
+                status.textContent = error instanceof Error ? error.message : String(error);
+                status.className = "error";
+            }
         }
     }),
     button("Assumptions CSV", () =>
@@ -149,6 +154,7 @@ app.append(
 );
 
 function renderControls(): void {
+    const restoreScenarioFocus = controls.querySelector("select") === document.activeElement;
     controls.replaceChildren(element("h2", "Your assumptions"));
     const scenarioSelect = element("select");
     scenarioSelect.setAttribute("aria-label", "Scenario to edit");
@@ -168,6 +174,11 @@ function renderControls(): void {
         renderResults();
     });
     controls.append(scenarioSelect);
+
+    if (restoreScenarioFocus) {
+        scenarioSelect.focus();
+    }
+
     let quantities = model.quantities;
     try {
         quantities = scenarioDocument(model, selectedScenario || undefined).document.quantities;
@@ -185,9 +196,8 @@ function renderControls(): void {
         const slider = element("input");
         slider.id = quantity.id;
         slider.type = quantity.range ? "range" : "number";
-        const value =
-            model.scenarios.find((scenario) => scenario.id === selectedScenario)?.overrides[quantity.id] ??
-            quantity.value;
+        const overrides = model.scenarios.find((scenario) => scenario.id === selectedScenario)?.overrides;
+        const value = overrides && Object.hasOwn(overrides, quantity.id) ? overrides[quantity.id] : quantity.value;
         const readout = element("output", String(value));
         readout.htmlFor = slider.id;
         readout.className = "value";
