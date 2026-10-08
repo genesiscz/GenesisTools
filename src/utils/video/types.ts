@@ -7,8 +7,14 @@ export const videoSettingsSchema = z
         fps: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
         framesPerImage: z.union([z.literal(1), z.literal(4), z.literal(8), z.literal(16), z.literal(32)]),
         minimumDifferencePct: z.number().finite().min(0).max(100).default(0),
+        startUs: z.number().int().min(0).max(600_000_000).optional(),
+        endUs: z.number().int().positive().max(600_000_000).optional(),
     })
-    .strict();
+    .strict()
+    .refine((settings) => settings.endUs === undefined || settings.endUs > (settings.startUs ?? 0), {
+        message: "The selected video range must end after it starts",
+        path: ["endUs"],
+    });
 
 export type VideoSettings = z.infer<typeof videoSettingsSchema>;
 export interface VideoInfo {

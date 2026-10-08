@@ -6,6 +6,7 @@ import { importImageAttachments } from "@genesiscz/utils/image/attachments";
 import { logger } from "@genesiscz/utils/logger";
 import { prepareVideoEvidence, videoDigest } from "@genesiscz/utils/video/evidence";
 import { probeVideo } from "@genesiscz/utils/video/probe";
+import { planVideoSamples } from "@genesiscz/utils/video/sampling";
 import { type VideoSettings, videoSettingsSchema } from "@genesiscz/utils/video/types";
 import { mutateWidgetState, readWidgetState, widgetRoot } from "../widget/storage";
 import type { WidgetAsset, WidgetState } from "../widget/types";
@@ -120,11 +121,14 @@ export async function reviseVideoAsset({
             throw new Error("No such video attachment");
         }
 
+        planVideoSamples({ durationUs: asset.durationUs, ...parsed });
         if (
             asset.status !== "failed" &&
             asset.settings.fps === parsed.fps &&
             asset.settings.framesPerImage === parsed.framesPerImage &&
-            asset.settings.minimumDifferencePct === parsed.minimumDifferencePct
+            asset.settings.minimumDifferencePct === parsed.minimumDifferencePct &&
+            (asset.settings.startUs ?? 0) === (parsed.startUs ?? 0) &&
+            (asset.settings.endUs ?? asset.durationUs) === (parsed.endUs ?? asset.durationUs)
         ) {
             return asset;
         }

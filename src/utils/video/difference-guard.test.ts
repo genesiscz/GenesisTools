@@ -115,6 +115,32 @@ describe("video sample planning and preparation ownership", () => {
         expect(planVideoSamples({ durationUs: 12_400_000, fps: 4, framesPerImage: 8 }).lastImageFrames).toBe(2);
     });
 
+    it("samples a selected interval at original timestamps with an exclusive end", () => {
+        const plan = planVideoSamples({
+            durationUs: 12_000_000,
+            fps: 4,
+            framesPerImage: 4,
+            startUs: 2_100_000,
+            endUs: 3_200_000,
+        });
+        expect(plan.timestampsUs).toEqual([2_100_000, 2_350_000, 2_600_000, 2_850_000, 3_100_000]);
+        expect(plan).toMatchObject({ candidates: 5, images: 2, lastImageFrames: 1 });
+        expect(
+            planVideoSamples({ durationUs: 12_000_000, fps: 2, framesPerImage: 4, startUs: 11_999_999 }).timestampsUs
+        ).toEqual([11_999_999]);
+        for (const range of [
+            { startUs: -1 },
+            { startUs: 1.5 },
+            { startUs: Number.NaN },
+            { startUs: 12_000_000 },
+            { endUs: 12_000_001 },
+            { endUs: 0 },
+            { startUs: 2_000_000, endUs: 1_000_000 },
+        ]) {
+            expect(() => planVideoSamples({ durationUs: 12_000_000, fps: 2, framesPerImage: 4, ...range })).toThrow();
+        }
+    });
+
     it("retains actual VFR source times independently from requested sample times", () => {
         expect(
             locateVideoSamples({
@@ -211,6 +237,17 @@ describe.skipIf(skip.integration)("real local video evidence", () => {
         });
         expect(all.counts).toEqual({ candidates: 5, kept: 5, skipped: 0, images: 2, lastImageFrames: 1 });
         expect(all.frames.map((frame) => frame.actualUs)).toEqual([0, 250000, 500000, 750000, 1000000]);
+        const clipped = await prepareVideoEvidence({
+            input: source,
+            outputRoot,
+            settings: { fps: 4, framesPerImage: 4, minimumDifferencePct: 0, startUs: 400_000, endUs: 900_000 },
+        });
+        expect(clipped.source.durationUs).toBe(1_250_000);
+        expect(clipped.source.sha256).toBe(all.source.sha256);
+        expect(clipped.frames.map((frame) => frame.requestedUs)).toEqual([400_000, 650_000]);
+        expect(clipped.frames.map((frame) => frame.actualUs)).toEqual([250_000, 500_000]);
+        expect(clipped.counts).toEqual({ candidates: 2, kept: 2, skipped: 0, images: 1, lastImageFrames: 2 });
+        expect(clipped.sheets[0]).toMatchObject({ firstUs: 250_000, lastUs: 500_000 });
         const reduced = await prepareVideoEvidence({
             input: source,
             outputRoot,

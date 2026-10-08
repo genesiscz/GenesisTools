@@ -35,10 +35,14 @@ export function planVideoSamples({
     durationUs,
     fps,
     framesPerImage,
+    startUs = 0,
+    endUs = durationUs,
 }: {
     durationUs: number;
     fps: number;
     framesPerImage: number;
+    startUs?: number;
+    endUs?: number;
 }) {
     if (!Number.isSafeInteger(durationUs) || durationUs <= 0 || durationUs > 600_000_000) {
         throw new Error("Video must be longer than zero and no longer than 10 minutes");
@@ -48,9 +52,19 @@ export function planVideoSamples({
         throw new Error("Choose 1–4 FPS and 1, 4, 8, 16, or 32 frames per image");
     }
 
-    const count = Math.ceil((durationUs * fps) / 1_000_000);
+    if (
+        !Number.isSafeInteger(startUs) ||
+        !Number.isSafeInteger(endUs) ||
+        startUs < 0 ||
+        endUs > durationUs ||
+        endUs <= startUs
+    ) {
+        throw new Error("Choose a nonempty video range within the original duration, in whole microseconds");
+    }
+
+    const count = Math.ceil(((endUs - startUs) * fps) / 1_000_000);
     return {
-        timestampsUs: Array.from({ length: count }, (_, index) => (index * 1_000_000) / fps),
+        timestampsUs: Array.from({ length: count }, (_, index) => startUs + (index * 1_000_000) / fps),
         candidates: count,
         images: Math.ceil(count / framesPerImage),
         lastImageFrames: ((count - 1) % framesPerImage) + 1,
