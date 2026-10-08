@@ -4,7 +4,7 @@ import { openSessions, type SessionCreatedRecord, type SessionStore } from "./se
 export type CloseReason =
     | "not-found"
     | "ambiguous"
-    | "not-created-by-session-new"
+    | "not-recorded"
     | "workspace-moved"
     | "own-workspace"
     | "turn-running"
@@ -20,6 +20,8 @@ export interface CloseSteps {
 export interface CloseReport {
     session: string;
     agent: string | null;
+    /** True when the session was not opened by `agents new` and was found through the cmux-refs journal. */
+    adopted: boolean;
     sessionId: string | null;
     turnState: string | null;
     workspace: string;
@@ -39,16 +41,39 @@ export interface ListedWorkspace {
     cwd: string | null;
 }
 
+/**
+ * An agent session `agents new` did not open, found through the cmux-refs journal (every Claude, Codex
+ * and Grok session records its surface there). It has no pid file and may share its workspace with
+ * other panes, so `close` quits the agent and closes only its surface.
+ */
+export interface AdoptedSession extends Omit<SessionCreatedRecord, "createdBy"> {
+    createdBy: "adopted";
+    sessionId: string;
+    /** The surface's terminal (`ttys012`): the agent counts as running while a process on it is the agent. */
+    tty: string | null;
+}
+
+export type CloseSubject = SessionCreatedRecord | AdoptedSession;
+
+export function isAdopted(subject: CloseSubject): subject is AdoptedSession {
+    return subject.createdBy === "adopted";
+}
+
 export interface SessionCloseIO {
     store: SessionStore;
     listWorkspaces(window: string | null): Promise<ListedWorkspace[]>;
+    /** A live agent session by session id (or 8+ char prefix), surface ref or workspace ref; null when none or several. */
+    adopt?(query: string): Promise<AdoptedSession | null>;
+    /** True while cmux still lists the surface. */
+    surfaceListed(surface: string): Promise<boolean>;
+    closeSurface(surface: string, window: string | null): Promise<void>;
     /** The workspace this command runs in (`CMUX_WORKSPACE_ID`), never closed. */
     callerWorkspaceId(): string | undefined;
     /** The agent session in the record's surface and its turn state, or null when no hook recorded one. */
-    turnState(record: SessionCreatedRecord): Promise<{ sessionId: string; state: string } | null>;
-    sendExit(record: SessionCreatedRecord, text: string): Promise<void>;
-    /** True while the shell that ran the agent still has a child (the agent). */
-    agentRunning(record: SessionCreatedRecord): Promise<boolean>;
+    turnState(record: CloseSubject): Promise<{ sessionId: string; state: string } | null>;
+    sendExit(record: CloseSubject, text: string): Promise<void>;
+    /** True while the agent still runs: a child of the recorded shell, or the agent's process on an adopted surface's tty. */
+    agentRunning(record: CloseSubject): Promise<boolean>;
     closeWorkspace(workspace: string, window: string | null): Promise<void>;
     killTmux(session: string): Promise<void>;
     sleep(ms: number): Promise<void>;
@@ -67,7 +92,7 @@ const EXIT_POLL_MS = 500;
 const CLOSE_SETTLE_MS = 3_000;
 
 type Target =
-    | { kind: "record"; record: SessionCreatedRecord }
+    | { kind: "record"; record: CloseSubject }
     | { kind: "bare"; workspace: string }
     | { kind: "none"; reason: "not-found" | "ambiguous"; note: string };
 
@@ -98,7 +123,11 @@ export function resolveCloseTarget(query: string, records: readonly SessionCreat
         return { kind: "bare", workspace: trimmed };
     }
 
-    return { kind: "none", reason: "not-found", note: `no open session named "${trimmed}" (see: session agent list)` };
+    return {
+        kind: "none",
+        reason: "not-found",
+        note: `no open session named "${trimmed}" (see: tools cmux agents list --all)`,
+    };
 }
 
 function emptySteps(): CloseSteps {
@@ -106,19 +135,34 @@ function emptySteps(): CloseSteps {
 }
 
 /**
- * Close a session `session agent new` opened: quit the agent, then close its workspace.
+ * Close an agent session: quit the agent, then close its workspace (a session `agents new` opened) or its
+ * surface (an adopted session, which may share the workspace with other panes).
  *
  * Order and refusals follow `GenesisBot/Common/Dev/proposals/cmux-session-close.md`. It never closes the
- * caller's own workspace, never a workspace without a record unless `force`, never an agent in the middle of
- * a turn unless `force`, and never kills tmux unless `killTmux`. The transcript always stays.
+ * caller's own workspace, never a workspace with no recorded or adoptable agent unless `force`, never an agent
+ * in the middle of a turn unless `force`, and never kills tmux unless `killTmux`. The transcript always stays.
  */
 export async function closeSession(query: string, options: CloseOptions, io: SessionCloseIO): Promise<CloseReport> {
-    const target = resolveCloseTarget(query, openSessions(io.store.read()));
+    const open = openSessions(io.store.read());
+    let target = resolveCloseTarget(query, open);
+
+    if (io.adopt && (target.kind === "bare" || (target.kind === "none" && target.reason === "not-found"))) {
+        const adopted = await io.adopt(query.trim());
+        // A session id that lives in a surface `agents new` opened closes as that recorded session.
+        const recorded = adopted ? open.find((entry) => entry.surface === adopted.surface) : undefined;
+
+        if (adopted) {
+            target = { kind: "record", record: recorded ?? adopted };
+        }
+    }
+
     const record = target.kind === "record" ? target.record : null;
+    const adopted = record !== null && isAdopted(record);
     const report: CloseReport = {
         session: record?.name ?? query.trim(),
         agent: record?.agent ?? null,
-        sessionId: null,
+        adopted,
+        sessionId: record && isAdopted(record) ? record.sessionId : null,
         turnState: null,
         workspace: record?.workspace ?? (target.kind === "bare" ? target.workspace : ""),
         window: record?.window ?? null,
@@ -142,19 +186,25 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
 
     if (target.kind === "bare" && !options.force) {
         return refuse(
-            "not-created-by-session-new",
-            `${target.workspace} has no session record; pass --force to close the workspace anyway`
+            "not-recorded",
+            `${target.workspace} has no session record and no agent session to adopt; pass --force to close the workspace anyway`
         );
     }
 
     const listed = (await io.listWorkspaces(report.window)).find((workspace) => workspace.ref === report.workspace);
     const caller = io.callerWorkspaceId();
 
-    if (listed && caller && listed.id === caller) {
+    // An adopted session closes only its own surface, so sharing the caller's workspace is fine; `adopt`
+    // never returns the caller's own surface.
+    if (!adopted && listed && caller && listed.id === caller) {
         return refuse("own-workspace", `${report.workspace} is the workspace this command runs in; it is never closed`);
     }
 
-    if (record && listed && listed.cwd && listed.cwd !== record.cwd && !options.force) {
+    if (record && adopted && !(await io.surfaceListed(record.surface))) {
+        return refuse("not-found", `${record.surface} is gone; the session is no longer open in cmux`);
+    }
+
+    if (record && !adopted && listed?.cwd && listed.cwd !== record.cwd && !options.force) {
         return refuse(
             "workspace-moved",
             `${record.workspace} now holds ${listed.cwd}, not ${record.cwd}; cmux refs renumber after a restart. Pass --force if it is the right one`
@@ -163,7 +213,7 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
 
     if (record) {
         const turn = await io.turnState(record);
-        report.sessionId = turn?.sessionId ?? null;
+        report.sessionId = turn?.sessionId ?? report.sessionId;
         report.turnState = turn?.state ?? null;
 
         if (!turn) {
@@ -181,12 +231,17 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
     if (options.dryRun) {
         report.outcome = "planned";
         report.notes.push(
-            listed ? `would quit the agent and close ${report.workspace}` : `${report.workspace} is already gone`
+            adopted && record
+                ? `would quit the agent and close its surface ${record.surface} (the workspace stays)`
+                : listed
+                  ? `would quit the agent and close ${report.workspace}`
+                  : `${report.workspace} is already gone`
         );
         return report;
     }
 
-    if (record && listed && (await io.agentRunning(record))) {
+    // An adopted session's surface was checked live above; its workspace may sit in another window.
+    if (record && (listed || adopted) && (await io.agentRunning(record))) {
         await io.sendExit(record, sessionAgent(record.agent).exitCommand);
         report.steps.exitSent = true;
 
@@ -210,12 +265,16 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
         report.steps.agentExited = true;
     }
 
-    if (listed) {
+    if (adopted && record) {
+        await io.closeSurface(record.surface, report.window);
+    } else if (listed) {
         await io.closeWorkspace(report.workspace, report.window);
     }
 
     const listedNow = async () =>
-        (await io.listWorkspaces(report.window)).some((workspace) => workspace.ref === report.workspace);
+        adopted && record
+            ? io.surfaceListed(record.surface)
+            : (await io.listWorkspaces(report.window)).some((workspace) => workspace.ref === report.workspace);
     const settleBy = io.now() + CLOSE_SETTLE_MS;
     let stillThere = await listedNow();
 
@@ -240,7 +299,7 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
     report.outcome = report.steps.workspaceClosed ? "closed" : "partial";
 
     // A partial close keeps the record open, so a second `close` can finish the job.
-    if (record && report.outcome === "closed") {
+    if (record && !isAdopted(record) && report.outcome === "closed") {
         io.store.append({
             type: "closed",
             name: record.name,

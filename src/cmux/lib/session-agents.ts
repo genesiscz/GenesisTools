@@ -2,7 +2,7 @@ import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
 import { shellCommandLine, shellQuote } from "@genesiscz/utils/shell/quote";
 
-/** The agents `tools cmux session agent new` can start. Each one has a `tools <id> run` door with the same shape. */
+/** The agents `tools cmux agents new` can start. Each one has a `tools <id> run` door with the same shape. */
 export const SESSION_AGENT_IDS = ["claude", "grok", "codex"] as const;
 
 export type SessionAgentId = (typeof SESSION_AGENT_IDS)[number];

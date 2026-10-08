@@ -15,7 +15,7 @@ import {
     sessionAgent,
 } from "../lib/session-agents";
 import { closeSession } from "../lib/session-close";
-import { liveSessionCloseIO } from "../lib/session-close-live";
+import { liveAdoptableSessions, liveSessionCloseIO } from "../lib/session-close-live";
 import {
     liveSessionIO,
     parseFocusFlag,
@@ -83,7 +83,7 @@ function printHuman(name: string, result: SessionNewResult): void {
     out.println(result.command);
 }
 
-/** `tools cmux session agent new <agent>`: a background workspace in the focused window, running that agent. */
+/** `tools cmux agents new <agent>`: a background workspace in the focused window, running that agent. */
 export async function runSessionNew(
     agent: SessionAgentId,
     options: SessionNewFlags,
@@ -94,7 +94,7 @@ export async function runSessionNew(
     if (!focus.ok) {
         out.error(
             suggestEnumFlag("tools cmux", "--focus", ["true", "false"], {
-                subcommand: ["session", "agent", "new", agent],
+                subcommand: ["agents", "new", agent],
                 given: focus.given,
             })
         );
@@ -180,7 +180,7 @@ export async function runSessionNew(
         pidFile,
         command: result.command,
         createdAt: new Date().toISOString(),
-        createdBy: "session-agent-new",
+        createdBy: "agents-new",
     });
     log.debug({ name, agent, workspace: result.workspace }, "session recorded");
 
@@ -235,24 +235,37 @@ async function runSessionClose(query: string, options: CloseFlags): Promise<void
     await out.flush();
 }
 
-function runSessionList(options: { agent?: string; json?: boolean }): void {
-    const open = openSessions(fileSessionStore().read()).filter(
-        (record) => !options.agent || record.agent === options.agent
-    );
+async function runSessionList(options: { agent?: string; all?: boolean; json?: boolean }): Promise<void> {
+    const wanted = (agent: string) => !options.agent || agent === options.agent;
+    const open = openSessions(fileSessionStore().read()).filter((record) => wanted(record.agent));
+    const recordedSurfaces = new Set(open.map((record) => record.surface));
+    const adoptable = options.all
+        ? (await liveAdoptableSessions()).filter(
+              (session) => wanted(session.agent) && !recordedSurfaces.has(session.surface)
+          )
+        : [];
 
     if (options.json) {
-        out.result(open);
+        out.result(options.all ? { recorded: open, adoptable } : open);
         return;
     }
 
-    if (open.length === 0) {
-        out.println("No open sessions from session agent new.");
+    if (open.length === 0 && adoptable.length === 0) {
+        out.println(
+            options.all ? "No agent sessions in cmux." : "No open sessions from agents new (--all adds the others)."
+        );
         return;
     }
 
     for (const record of open) {
         out.println(
             `${record.name}  ${record.agent}  ${record.account}  ${record.workspace}  ${record.tmuxSession ?? "-"}  ${record.cwd}`
+        );
+    }
+
+    for (const session of adoptable) {
+        out.println(
+            `${session.sessionId}  ${session.agent}  adoptable  ${session.workspace}  ${session.surface}  ${session.cwd}`
         );
     }
 }
@@ -272,7 +285,7 @@ function addNewOptions(command: Command): Command {
 
 function addCloseOptions(command: Command): Command {
     return command
-        .option("--force", "Close a workspace with no record, a running turn, or an agent that did not quit")
+        .option("--force", "Close a workspace with no agent session, a running turn, or an agent that did not quit")
         .option("--kill-tmux", "Also kill the tmux session of a --via-tmux session")
         .option("--grace <seconds>", "How long to wait for the agent to quit", "10")
         .option("--dry-run", "Print the plan and the checks, close nothing")
@@ -288,19 +301,21 @@ async function guarded(run: () => Promise<void>): Promise<void> {
     }
 }
 
-export function registerSessionCommand(program: Command): void {
-    const session = program.command("session").description("Open and close agent sessions in cmux workspaces");
-    const agent = session.command("agent").description("Claude, Grok or Codex sessions in background workspaces");
+/** `tools cmux agents new|list|close`: agent sessions in cmux workspaces. */
+export function registerAgentsCommand(program: Command): void {
+    const agents = program
+        .command("agents")
+        .description("Start, list and close Claude, Grok or Codex sessions in cmux workspaces");
 
     addNewOptions(
-        agent
+        agents
             .command("new [agent]")
             .description(`Start ${SESSION_AGENT_IDS.join(", ")} in a background workspace of the focused window`)
     ).action(async (name: string | undefined, options: SessionNewFlags) => {
         if (!name || !isSessionAgentId(name)) {
             out.error(
                 `${name ? `"${name}" is not an agent. ` : ""}Choose one of: ${SESSION_AGENT_IDS.join(", ")}\n` +
-                    `  tools cmux session agent new ${SESSION_AGENT_IDS[0]} --repo <name>`
+                    `  tools cmux agents new ${SESSION_AGENT_IDS[0]} --repo <name>`
             );
             process.exitCode = 2;
             return;
@@ -309,29 +324,35 @@ export function registerSessionCommand(program: Command): void {
         await guarded(() => runSessionNew(name, options));
     });
 
-    agent
+    agents
         .command("list")
-        .description("Sessions session agent new opened that are not closed yet")
+        .description("Sessions agents new opened that are not closed yet; --all adds every other agent session in cmux")
         .option("--agent <id>", `Only this agent: ${SESSION_AGENT_IDS.join(", ")}`)
+        .option("--all", "Also list agent sessions agents new did not open (close can adopt them)")
         .option("--json", "Print the records as JSON")
-        .action((options: { agent?: string; json?: boolean }) => {
-            runSessionList(options);
+        .action(async (options: { agent?: string; all?: boolean; json?: boolean }) => {
+            await guarded(() => runSessionList(options));
         });
 
-    for (const parent of [agent, session]) {
-        addCloseOptions(
-            parent
-                .command("close <session>")
-                .description("Quit the agent, then close the workspace session agent new created")
-        ).action(async (query: string, options: CloseFlags) => {
-            await guarded(() => runSessionClose(query, options));
-        });
-    }
-
-    addNewOptions(
-        session.command("new").description("Deprecated: tools cmux session agent new claude (same flags)")
-    ).action(async (options: SessionNewFlags) => {
-        process.stderr.write("tools cmux session new is deprecated; use: tools cmux session agent new claude\n");
-        await guarded(() => runSessionNew("claude", options));
+    addCloseOptions(
+        agents
+            .command("close <session>")
+            .description(
+                "Quit the agent, then close its workspace (agents new) or only its surface (an adopted session: a session id, surface or workspace ref)"
+            )
+    ).action(async (query: string, options: CloseFlags) => {
+        await guarded(() => runSessionClose(query, options));
     });
+}
+
+/** `tools cmux session new`: the old Claude-only door, kept as an alias of `agents new claude`. */
+export function registerSessionCommand(program: Command): void {
+    const session = program.command("session").description("Deprecated: use tools cmux agents");
+
+    addNewOptions(session.command("new").description("Deprecated: tools cmux agents new claude (same flags)")).action(
+        async (options: SessionNewFlags) => {
+            process.stderr.write("tools cmux session new is deprecated; use: tools cmux agents new claude\n");
+            await guarded(() => runSessionNew("claude", options));
+        }
+    );
 }

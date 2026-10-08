@@ -15,7 +15,10 @@ Crash recovery and repeatable layouts for cmux. A profile captures the workspace
 | `doctor` | Read-only health probe: is cmux running, does its socket answer, is the UI thread starved |
 | `rescue [name]` | Guided recovery from a livelocked cmux — offline capture, confirmed kill, clean relaunch, command replay |
 | `send-self <text>` | Type text into the terminal surface this process is running in, then press Enter |
-| `session new --repo <name\|path>` | Open a background workspace in the focused cmux window and start `tools claude run` there |
+| `agents new <claude\|grok\|codex> --repo <name\|path>` | Open a background workspace in the focused cmux window and start `tools <agent> run` there; the session is recorded under its name |
+| `agents list [--all]` | Sessions `agents new` opened; `--all` adds every other live agent session in cmux (from the cmux-refs journal) |
+| `agents close <name\|session-id\|surface\|workspace>` | Quit the agent (`/exit`, Codex `/quit`), then close its workspace; an adopted session (not opened by `agents new`) closes only its surface |
+| `session new --repo <name\|path>` | Deprecated alias of `agents new claude` |
 
 ### `profiles` subcommands
 

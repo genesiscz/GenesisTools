@@ -7,7 +7,7 @@ import type { SessionAgentId } from "./session-agents";
 
 const { log } = logger.scoped("cmux-session");
 
-/** One line per session `session agent new` opened. `close` refuses a workspace without one unless --force. */
+/** One line per session `tools cmux agents new` opened. `close` adopts other agent sessions through cmux-refs. */
 export interface SessionCreatedRecord {
     type: "created";
     name: string;
@@ -23,7 +23,8 @@ export interface SessionCreatedRecord {
     pidFile: string;
     command: string;
     createdAt: string;
-    createdBy: "session-agent-new";
+    /** `session-agent-new` on lines written before the command moved to `tools cmux agents new`. */
+    createdBy: "agents-new" | "session-agent-new";
 }
 
 export interface SessionClosedRecord {

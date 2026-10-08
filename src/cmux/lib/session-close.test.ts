@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { closeSession, type ListedWorkspace, type SessionCloseIO } from "./session-close";
+import { type AdoptedSession, closeSession, type ListedWorkspace, type SessionCloseIO } from "./session-close";
 import { openSessions, type SessionCreatedRecord, type SessionRecordLine } from "./session-store";
 
 function created(overrides: Partial<SessionCreatedRecord> = {}): SessionCreatedRecord {
@@ -17,7 +17,7 @@ function created(overrides: Partial<SessionCreatedRecord> = {}): SessionCreatedR
         pidFile: "/state/sessions/codex-app-ab12cd.pid",
         command: "tools codex run side",
         createdAt: "2026-10-08T17:00:00.000Z",
-        createdBy: "session-agent-new",
+        createdBy: "agents-new",
         ...overrides,
     };
 }
@@ -35,10 +35,12 @@ function fake(input: {
     turn?: { sessionId: string; state: string } | null;
     /** How many `agentRunning` checks answer true before the agent is gone. */
     runningChecks?: number;
+    adoptable?: AdoptedSession | null;
 }): Fake {
     const calls: string[] = [];
     const lines = [...(input.lines ?? [created()])];
     let workspaces = input.workspaces ?? [{ ref: "workspace:9", id: "W9", cwd: "/repo/app" }];
+    let surfaces = new Set(["surface:8", "surface:21"]);
     let running = input.runningChecks ?? 2;
     let clock = 0;
     const io: SessionCloseIO = {
@@ -50,6 +52,15 @@ function fake(input: {
             pidFile: (name) => `/state/sessions/${name}.pid`,
         },
         listWorkspaces: async () => workspaces,
+        adopt: async (query) => {
+            calls.push(`adopt ${query}`);
+            return input.adoptable ?? null;
+        },
+        surfaceListed: async (surface) => surfaces.has(surface),
+        closeSurface: async (surface) => {
+            calls.push(`close-surface ${surface}`);
+            surfaces = new Set([...surfaces].filter((entry) => entry !== surface));
+        },
         callerWorkspaceId: () => input.caller,
         turnState: async () => (input.turn === undefined ? { sessionId: "s-1", state: "AWAITING-INPUT" } : input.turn),
         sendExit: async (_record, text) => {
@@ -92,7 +103,7 @@ test("a recorded session quits its agent with the agent's own command, then its 
 
 test("no record, the caller's own workspace, a moved ref and a running turn are refused", async () => {
     expect((await closeSession("nobody", { graceMs: 0 }, fake({}).io)).reason).toBe("not-found");
-    expect((await closeSession("workspace:4", { graceMs: 0 }, fake({}).io)).reason).toBe("not-created-by-session-new");
+    expect((await closeSession("workspace:4", { graceMs: 0 }, fake({}).io)).reason).toBe("not-recorded");
 
     const own = fake({ caller: "W9" });
     const ownReport = await closeSession("codex-app-ab12cd", { graceMs: 0, force: true }, own.io);
@@ -133,4 +144,55 @@ test("a dry run plans and touches nothing, and tmux stays unless --kill-tmux", a
     const killed = fake({ lines: tmux });
     await closeSession("codex-app-ab12cd", { graceMs: 1_000, killTmux: true }, killed.io);
     expect(killed.calls).toContain("kill cmux-app-ab12cd");
+});
+test("an agent session agents new did not open is adopted: the agent quits, only its surface closes, nothing is recorded", async () => {
+    const adoptable: AdoptedSession = {
+        ...created({
+            name: "0199aa11-2222-7333-8444-555566667777",
+            agent: "grok",
+            workspace: "workspace:3",
+            surface: "surface:21",
+            pidFile: "",
+        }),
+        createdBy: "adopted",
+        sessionId: "0199aa11-2222-7333-8444-555566667777",
+        tty: "ttys009",
+    };
+    const { io, calls, lines } = fake({ adoptable, runningChecks: 2, caller: "W3" });
+    const report = await closeSession("0199aa11", { graceMs: 5_000 }, io);
+
+    expect(report).toMatchObject({
+        adopted: true,
+        agent: "grok",
+        outcome: "closed",
+        sessionId: "s-1",
+        steps: { exitSent: true, agentExited: true, workspaceClosed: true },
+    });
+    expect(calls).toEqual(["adopt 0199aa11", "exit /exit", "close-surface surface:21"]);
+    expect(lines.filter((line) => line.type === "closed")).toEqual([]);
+});
+
+test("adoption runs only when no record matches, and a refused adopt leaves the bare-workspace rule in place", async () => {
+    const recorded = fake({ runningChecks: 0 });
+    await closeSession("codex-app", { graceMs: 0 }, recorded.io);
+    expect(recorded.calls.some((call) => call.startsWith("adopt"))).toBe(false);
+
+    const nothing = fake({ adoptable: null });
+    const report = await closeSession("workspace:4", { graceMs: 0 }, nothing.io);
+    expect(report.reason).toBe("not-recorded");
+    expect(nothing.calls).toEqual(["adopt workspace:4"]);
+});
+
+test("a session id whose surface agents new recorded closes as the recorded session", async () => {
+    const adoptable: AdoptedSession = {
+        ...created({ name: "0199bb22-0000-7000-8000-000000000001", surface: "surface:8", pidFile: "" }),
+        createdBy: "adopted",
+        sessionId: "0199bb22-0000-7000-8000-000000000001",
+        tty: "ttys010",
+    };
+    const { io, calls } = fake({ adoptable, runningChecks: 1 });
+    const report = await closeSession("0199bb22", { graceMs: 5_000 }, io);
+
+    expect(report).toMatchObject({ adopted: false, session: "codex-app-ab12cd", outcome: "closed" });
+    expect(calls).toContain("close workspace:9");
 });

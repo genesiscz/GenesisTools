@@ -3,12 +3,19 @@ import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { readTurnState } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { runCmux, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
-import { loadAllSessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
+import { loadAllSessionCmuxRefs, resolveRefsProvider } from "@genesiscz/utils/cmux/session-refs";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
-import type { ListedWorkspace, SessionCloseIO } from "./session-close";
+import { parseCmuxTree, pickAdoptable, ttyRunsAgent } from "./session-adopt";
+import {
+    type AdoptedSession,
+    type CloseSubject,
+    isAdopted,
+    type ListedWorkspace,
+    type SessionCloseIO,
+} from "./session-close";
 import type { SessionCreatedRecord, SessionStore } from "./session-store";
 
 const { log } = logger.scoped("cmux-session");
@@ -50,6 +57,16 @@ function parseWorkspaces(stdout: string): ListedWorkspace[] {
     return listed;
 }
 
+/** An adopted surface has no pid file: the agent runs while a process on the surface's tty is the agent. */
+async function adoptedAgentRunning(record: CloseSubject & { tty: string | null }): Promise<boolean> {
+    if (!record.tty) {
+        return false;
+    }
+
+    const ps = await spawnOk(["ps", "-t", record.tty, "-o", "args="]);
+    return ps.code === 0 && ttyRunsAgent(ps.stdout, record.agent);
+}
+
 function readPid(record: SessionCreatedRecord): number | null {
     if (!existsSync(record.pidFile)) {
         return null;
@@ -69,6 +86,16 @@ function isAlive(pid: number): boolean {
     }
 }
 
+async function liveTree() {
+    const result = await runCmux(["tree"], { json: true });
+
+    if (result.code !== 0) {
+        throw new Error(`cmux tree failed (${result.code}): ${result.stderr.trim()}`);
+    }
+
+    return parseCmuxTree(result.stdout);
+}
+
 async function spawnOk(argv: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
     const proc = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, code] = await Promise.all([
@@ -77,6 +104,29 @@ async function spawnOk(argv: string[]): Promise<{ code: number; stdout: string; 
         proc.exited,
     ]);
     return { code, stdout, stderr };
+}
+
+/** Every live agent session in cmux that `close` could adopt (newest session per surface, caller excluded). */
+export async function liveAdoptableSessions(): Promise<AdoptedSession[]> {
+    const tree = await liveTree();
+    const refs = [...loadAllSessionCmuxRefs().values()];
+    const surfaces = new Set(refs.map((entry) => entry.surfaceRef).filter((ref): ref is string => ref !== null));
+    const found: AdoptedSession[] = [];
+
+    for (const surface of surfaces) {
+        const adopted = pickAdoptable({
+            query: surface,
+            refs,
+            tree,
+            providerOf: (entry) => resolveRefsProvider(entry, undefined),
+        });
+
+        if (adopted) {
+            found.push(adopted);
+        }
+    }
+
+    return found;
 }
 
 export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
@@ -93,12 +143,30 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
 
             return parseWorkspaces(result.stdout);
         },
+        async adopt(query) {
+            const adopted = pickAdoptable({
+                query,
+                refs: loadAllSessionCmuxRefs().values(),
+                tree: await liveTree(),
+                providerOf: (entry) => resolveRefsProvider(entry, undefined),
+            });
+            log.debug({ query, adopted: adopted?.sessionId ?? null, surface: adopted?.surface ?? null }, "adopt");
+            return adopted;
+        },
+        async surfaceListed(surface) {
+            return (await liveTree()).surfaces.has(surface);
+        },
+        async closeSurface(surface, window) {
+            await runCmuxOk(["close-surface", "--surface", surface, ...(window ? ["--window", window] : [])]);
+        },
         callerWorkspaceId: () => env.device.getCmuxWorkspaceId(),
         async turnState(record) {
             const createdAt = Date.parse(record.createdAt);
-            let newest: { sessionId: string; at: number } | null = null;
+            let newest: { sessionId: string; at: number } | null = isAdopted(record)
+                ? { sessionId: record.sessionId, at: createdAt }
+                : null;
 
-            for (const refs of loadAllSessionCmuxRefs().values()) {
+            for (const refs of isAdopted(record) ? [] : loadAllSessionCmuxRefs().values()) {
                 if (refs.surfaceRef === record.surface && refs.at >= createdAt - 60_000) {
                     if (!newest || refs.at > newest.at) {
                         newest = { sessionId: refs.sessionId, at: refs.at };
@@ -134,6 +202,10 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
             await runCmuxOk(["send-key", ...where, "enter"]);
         },
         async agentRunning(record) {
+            if (isAdopted(record)) {
+                return adoptedAgentRunning(record);
+            }
+
             const pid = readPid(record);
 
             if (pid === null || !isAlive(pid)) {

@@ -380,7 +380,7 @@ const ACCOUNTS = async () => ({
     ],
 });
 
-test("session agent new prints the result JSON, records the session, and rejects a bad focus first", async () => {
+test("agents new prints the result JSON, records the session, and rejects a bad focus first", async () => {
     const { io, calls } = harness();
     const store = memoryStore();
     const deps = { io, store, accounts: ACCOUNTS };
