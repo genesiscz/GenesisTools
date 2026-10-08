@@ -489,7 +489,11 @@ public struct ToolCallRowView: View, Equatable {
                 )
             }
 
-            if editsFiles, let source = services.changes, verbosity != .minimal {
+            // Only a finished command: its changes are logged when it ends. A row of a live session appears
+            // while its command runs; asking then cost a whole `agents changes` run (~1.5 s CPU on a 223 MB
+            // session) for an empty answer, and the lookup is keyed by tool id, so it never asked again
+            // once the command finished. Created only when finished, the view asks once, for the real answer.
+            if editsFiles, finished, let source = services.changes, verbosity != .minimal {
                 ToolChangesView(sessionId: services.sessionId, toolId: toolId, source: source, cwd: services.cwd, showChange: services.showChange, startOpen: verbosity.opensTools)
             }
         }
