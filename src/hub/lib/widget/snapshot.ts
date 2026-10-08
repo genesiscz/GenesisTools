@@ -45,6 +45,13 @@ export interface WidgetSession {
     parentSessionId?: string;
     agentId?: string;
     transcriptPath?: string;
+    parentKey?: string;
+    role?: string;
+    model?: string;
+    account?: string;
+    startedAt?: number;
+    toolCalls?: number;
+    agentStatus?: string;
 }
 export interface WidgetCard {
     transcriptAnchor?: TranscriptAnchor;
@@ -87,6 +94,7 @@ export interface WidgetSources {
     agents(refresh?: boolean): Promise<AgentsTree>;
     events?(ids: string[]): WidgetActivityEvent[];
     inboxData?(): WidgetInboxData;
+    rosterStatus?(): { loading: boolean; error?: string };
 }
 export interface WidgetInboxGroup {
     id: string;
@@ -243,6 +251,10 @@ export function readWidgetDecisionEvents({
         .slice(-100);
 }
 let cachedAgents: { at: number; refreshed: boolean; promise: Promise<AgentsTree> } | undefined;
+export function invalidateWidgetAgents(): void {
+    cachedAgents = undefined;
+}
+
 export function widgetAgents({ refresh = false }: { refresh?: boolean } = {}): Promise<AgentsTree> {
     if (!cachedAgents || Date.now() - cachedAgents.at > 15_000 || (refresh && !cachedAgents.refreshed)) {
         const promise = hubAgents({ hours: 168, limit: 150, refresh });
@@ -305,6 +317,14 @@ export const realWidgetSources: WidgetSources = {
     events: (ids) => readWidgetDecisionEvents({ ids }),
 };
 
+/** Refreshes both catalogs the Widget reads: indexed sessions and the agent roster, which the sessions scope excludes. */
+export async function discoverWidgetCatalog(
+    sources: Pick<WidgetSources, "agents" | "sessions"> = realWidgetSources
+): Promise<{ sessions: number; agents: number }> {
+    const [sessions, tree] = await Promise.all([sources.sessions(true), sources.agents(true)]);
+    return { sessions: sessions.length, agents: tree.parents.length + tree.orphans.length };
+}
+
 /** The provider name a Widget session key carries: unsupported agents become "unknown". */
 export function widgetProvider(value: string | null | undefined): WidgetTarget["provider"] {
     if (value === "claude" || value === "claude-code") {
@@ -338,6 +358,49 @@ function cleanVisibleContext(text: string): string {
 }
 function flattenAgents(nodes: AgentNode[]): AgentNode[] {
     return nodes.flatMap((node) => [node, ...flattenAgents(node.children)]);
+}
+
+/** Only a finished agent has a result; an idle teammate or a ready worker is still part of the work. */
+function hasResult(node: AgentNode): boolean {
+    return node.status === "completed" || node.status === "failed" || node.status === "killed";
+}
+
+/**
+ * The finished agent an inbox read names, when it still belongs to that Widget session: either the
+ * session is the agent's own (`sessionId === agent id`), or it is the indexed session whose
+ * transcript is the agent's file, which is how the snapshot maps a worker onto an indexed row.
+ */
+export async function widgetResultNode({
+    target,
+    agentId,
+    sources = realWidgetSources,
+}: {
+    target: WidgetTarget;
+    agentId: string;
+    sources?: Pick<WidgetSources, "agents" | "sessions">;
+}): Promise<AgentNode | undefined> {
+    const tree = await sources.agents(false);
+    const node = [...tree.parents.flatMap((parent) => flattenAgents(parent.children)), ...flattenAgents(tree.orphans)]
+        .filter(
+            (entry) => entry.id === agentId && widgetProvider(entry.harness) === target.provider && hasResult(entry)
+        )
+        .sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt))[0];
+    if (!node || node.id === target.sessionId) {
+        return node;
+    }
+
+    if (!node.filePath) {
+        return undefined;
+    }
+
+    const rows = await sources.sessions(false);
+    const owned = rows.some(
+        (row) =>
+            row.sessionId === target.sessionId &&
+            widgetProvider(row.provider) === target.provider &&
+            row.filePath === node.filePath
+    );
+    return owned ? node : undefined;
 }
 
 type WidgetChanges = { available: boolean; files: { path: string; at: string; source: string }[] };
@@ -419,13 +482,21 @@ export async function widgetSnapshot({
     const state = await readWidgetState(root);
     selectedKey ??= state.selectedKey ?? undefined;
     const errors: string[] = [];
+    const rosterStatus = sources.rosterStatus?.();
+    if (rosterStatus?.error) {
+        errors.push(`Agent list: ${rosterStatus.error}. Showing the last completed list.`);
+    }
     async function read<T>(name: string, fn: () => T | Promise<T>, fallback: T): Promise<T> {
+        const stop = prof.start(name);
         try {
-            return await prof.measureAsync(name, async () => fn());
+            const value = fn();
+            return value instanceof Promise ? await value : value;
         } catch (error) {
             logger.warn({ error, name }, "Widget source unavailable");
             errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
             return fallback;
+        } finally {
+            stop();
         }
     }
     const [rows, decisions, waitingForms, agents, answerRoster] = await Promise.all([
@@ -443,7 +514,7 @@ export async function widgetSnapshot({
                   .map((row) => ({
                       id: row.id,
                       sessionId: row.sessionId,
-                      provider: row.agent,
+                      provider: widgetProvider(row.agent),
                       title: row.sessionTitle ?? row.sessionId,
                       project: row.project,
                       cwd: row.cwd,
@@ -500,6 +571,8 @@ export async function widgetSnapshot({
                 row.mtime
             );
             session.transcriptPath = row.filePath;
+            session.model = row.model ?? undefined;
+            session.account = row.account ?? undefined;
         }
     }
     const findSession = (id: string, hint?: string | null) => {
@@ -508,26 +581,53 @@ export async function widgetSnapshot({
         );
         return matches.length === 1 ? matches[0] : undefined;
     };
+    // A worker reusing an indexed session keeps that session's id; `agentId` is what names the worker then.
+    const findResultSession = (node: AgentNode) =>
+        [...sessions.values()].find(
+            (entry) => entry.agentId === node.id && entry.target.provider === widgetProvider(node.harness)
+        ) ?? findSession(node.id, node.harness);
     const addWorker = (node: AgentNode, parent?: WidgetSession) => {
+        const indexed = [...sessions.values()].filter(
+            (entry) =>
+                entry.target.provider === node.harness &&
+                (node.filePath ? entry.transcriptPath === node.filePath : entry.target.sessionId === node.id)
+        );
         const target = targetOf(
             {
                 provider: node.harness,
                 sessionId: node.id,
                 cwd: parent?.target.cwd,
-                sourceHome: parent?.target.sourceHome,
+                sourceHome: parent?.target.provider === node.harness ? parent.target.sourceHome : undefined,
             },
             node.id
         );
-        const session = addSession(
-            target,
-            node.name ?? node.description ?? node.id,
-            parent?.project ?? "Agent",
-            timeOf(node.lastAt)
-        );
+        const session =
+            indexed.length === 1
+                ? indexed[0]
+                : addSession(
+                      target,
+                      node.name ?? node.description ?? node.id,
+                      parent?.project ?? "Agent",
+                      timeOf(node.lastAt)
+                  );
+        session.title = node.name ?? node.description ?? session.title;
         session.status = node.status === "running" ? "working" : node.status === "completed" ? "finished" : "recent";
         session.agentId = node.id;
         session.parentSessionId = parent?.target.sessionId;
+        session.parentKey = parent?.key;
         session.transcriptPath = node.filePath ?? undefined;
+        session.role = node.kind;
+        session.model = node.model ?? session.model;
+        session.account = node.account ?? session.account;
+        session.toolCalls = node.toolCalls;
+        session.agentStatus = node.status;
+        const startedAt = Date.parse(node.startedAt ?? "");
+        if (Number.isFinite(startedAt)) {
+            session.startedAt = startedAt;
+        }
+        for (const child of node.children) {
+            addWorker(child, session);
+        }
         return session;
     };
     for (const parent of agents.parents) {
@@ -540,15 +640,23 @@ export async function widgetSnapshot({
                 timeOf(parent.lastAt)
             );
         session.transcriptPath ??= parent.filePath;
+        session.role = "lead";
+        session.model = parent.model ?? session.model;
+        session.account = parent.account ?? session.account;
+        session.agentStatus = parent.live ? "running" : "idle";
+        const startedAt = Date.parse(parent.startedAt ?? "");
+        if (Number.isFinite(startedAt)) {
+            session.startedAt = startedAt;
+        }
         const nodes = flattenAgents(parent.children);
-        for (const node of nodes) {
+        for (const node of parent.children) {
             addWorker(node, session);
         }
-        if (nodes.some((node) => node.status === "running")) {
+        if (parent.live || nodes.some((node) => node.status === "running")) {
             session.status = "working";
         }
     }
-    for (const node of flattenAgents(agents.orphans)) {
+    for (const node of agents.orphans) {
         addWorker(node);
     }
     for (const decision of decisions) {
@@ -621,8 +729,9 @@ export async function widgetSnapshot({
         ["form", inboxData.forms],
     ] as const) {
         for (const row of groups) {
+            // "unknown" is the SQL fallback, not evidence: match by session id alone, as the card loops do.
             const session =
-                findSession(row.sessionId, row.provider) ??
+                findSession(row.sessionId, row.provider === "unknown" ? undefined : row.provider) ??
                 addSession(
                     targetOf({ sessionId: row.sessionId, provider: row.provider, cwd: row.cwd }, row.id),
                     row.title,
@@ -663,7 +772,7 @@ export async function widgetSnapshot({
                 sourceId: row.id,
                 kind: "decision",
                 key: session.key,
-                at: Date.parse(row.updatedTs),
+                at: timeOf(row.updatedTs),
                 needsAnswer: true,
             },
             1
@@ -682,10 +791,10 @@ export async function widgetSnapshot({
         }
     }
     for (const node of resultNodes.values()) {
-        if (node.status === "running") {
+        if (!hasResult(node)) {
             continue;
         }
-        const session = findSession(node.id, node.harness);
+        const session = findResultSession(node);
         const at = Date.parse(node.lastAt);
         if (!session || !Number.isFinite(at)) {
             continue;
@@ -858,8 +967,8 @@ export async function widgetSnapshot({
         ...agents.parents.flatMap((parent) => flattenAgents(parent.children)),
         ...flattenAgents(agents.orphans),
     ]) {
-        const session = findSession(node.id, node.harness);
-        if (!session || node.status === "running" || (selectedKey && session.key !== selectedKey)) {
+        const session = findResultSession(node);
+        if (!session || !hasResult(node) || (selectedKey && session.key !== selectedKey)) {
             continue;
         }
         const result = selectedKey ? await read("agent result", () => widgetResult(node), "") : "";
@@ -909,6 +1018,15 @@ export async function widgetSnapshot({
                   files: [],
               })
             : null;
+    // The window keeps the newest cards plus each card a notification names, so opening it can acknowledge it.
+    const selectedCards = cards
+        .filter((card) => !selectedKey || card.sessionKey === selectedKey)
+        .sort((a, b) => a.at - b.at);
+    const notified = new Set(
+        notifications.sessions.flatMap((session) => [session.unreadItem?.id, session.pendingItem?.id])
+    );
+    const windowStart = Math.max(0, selectedCards.length - 100);
+    const visibleCards = selectedCards.filter((card, index) => index >= windowStart || notified.has(card.id));
     const activity =
         selectedId && sources.events
             ? await read(
@@ -921,14 +1039,12 @@ export async function widgetSnapshot({
         version: 1,
         state,
         ...inboxMetadata,
+        ...(rosterStatus ? { rosterLoading: rosterStatus.loading } : {}),
         activity,
         sessions: [...sessions.values()].sort(
             (a, b) => Number(b.status === "waiting") - Number(a.status === "waiting") || b.activityAt - a.activityAt
         ),
-        cards: cards
-            .filter((card) => !selectedKey || card.sessionKey === selectedKey)
-            .sort((a, b) => a.at - b.at)
-            .slice(-100),
+        cards: visibleCards,
         manifests,
         changes,
         errors,
