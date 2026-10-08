@@ -93,7 +93,14 @@ final class BrowserURLForwarder: NSObject {
                   app.bundleIdentifier != Bundle.main.bundleIdentifier
             else { return }
             self?.lastOtherApp = app
-            self?.stackBeforeDelivery = Self.onScreenStack()
+            // The stacking is only needed by a face a link can reach. With the relay running, links go to the
+            // relay, which has no windows to put back: no window-list query on every app switch of the machine
+            // (it showed in an idle hub's samples, 2026-10-08). Without a relay, this face is the fallback.
+            if LinkRelay.isRunning {
+                self?.stackBeforeDelivery = []
+            } else {
+                self?.stackBeforeDelivery = Self.onScreenStack()
+            }
             // The click's own action brought another app forward (Brave for an `open`): it keeps the focus.
             if let target = self?.focusReturn?.app, target.processIdentifier != app.processIdentifier {
                 self?.focusReturn = nil
