@@ -18,7 +18,7 @@ import os.log
 /// The pill is a non-activating panel, so in the common case focus never
 /// actually moves — but the main Genesis window being open, or the user
 /// clicking the pill, both break that assumption. Capturing costs nothing.
-public struct FlowFocusTarget: Equatable {
+public struct FlowFocusTarget: Codable, Equatable {
     public let bundleIdentifier: String?
     public let localizedName: String?
     public let processIdentifier: pid_t
@@ -43,7 +43,7 @@ public struct FlowFocusTarget: Equatable {
         guard let app = NSRunningApplication(processIdentifier: processIdentifier) else {
             return false
         }
-        guard !app.isTerminated else { return false }
+        guard !app.isTerminated, bundleIdentifier == nil || app.bundleIdentifier == bundleIdentifier else { return false }
         if app.isActive { return true }
         return app.activate(options: [])
     }

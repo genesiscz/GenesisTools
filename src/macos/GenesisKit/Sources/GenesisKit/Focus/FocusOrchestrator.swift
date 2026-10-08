@@ -75,6 +75,30 @@ public final class FocusOrchestrator: ObservableObject {
     /// Opens Shortcuts URLs; injectable no-op in tests.
     public var openURL: (URL) -> Void
     private var terminateObserver: NSObjectProtocol?
+    var remoteCommand: ((String, Data) -> Void)?
+    var configuration = FlowFocusConfiguration.shared
+
+    func configure(stateURL: URL) { self.stateURL = stateURL }
+
+    var liveSnapshot: FocusDNDSnapshot {
+        FocusDNDSnapshot(isActive: isActive, activeReason: activeReason,
+                         suppressesSystemNotifications: suppressesSystemNotifications, recoveryNotice: recoveryNotice)
+    }
+
+    func applyRemote(_ snapshot: FocusDNDSnapshot) {
+        guard remoteCommand != nil else { return }
+        if isActive != snapshot.isActive { isActive = snapshot.isActive }
+        if activeReason != snapshot.activeReason { activeReason = snapshot.activeReason }
+        if suppressesSystemNotifications != snapshot.suppressesSystemNotifications {
+            suppressesSystemNotifications = snapshot.suppressesSystemNotifications
+        }
+        if recoveryNotice != snapshot.recoveryNotice { recoveryNotice = snapshot.recoveryNotice }
+    }
+
+    func uninstallTerminateHook() {
+        if let terminateObserver { NotificationCenter.default.removeObserver(terminateObserver) }
+        terminateObserver = nil
+    }
 
     public init(
         stateURL: URL? = nil,
@@ -97,15 +121,15 @@ public final class FocusOrchestrator: ObservableObject {
     /// Default **on** — feature is useful daily; toggle still available.
     public var focusWhileListeningEnabled: Bool {
         get {
-            if let v = FlowFocusConfiguration.shared.app[ConfigKey.focusWhileListening] as? Bool { return v }
+            if let v = configuration.app[ConfigKey.focusWhileListening] as? Bool { return v }
             return true
         }
-        set { FlowFocusConfiguration.shared.setAppValue(newValue, forKey: ConfigKey.focusWhileListening) }
+        set { configuration.setAppValue(newValue, forKey: ConfigKey.focusWhileListening) }
     }
 
     public var focusShortcutName: String {
-        get { (FlowFocusConfiguration.shared.app[ConfigKey.focusShortcutName] as? String) ?? "" }
-        set { FlowFocusConfiguration.shared.setAppValue(newValue, forKey: ConfigKey.focusShortcutName) }
+        get { (configuration.app[ConfigKey.focusShortcutName] as? String) ?? "" }
+        set { configuration.setAppValue(newValue, forKey: ConfigKey.focusShortcutName) }
     }
 
     // MARK: - Mode label (file-backed probe; not OS Focus id)
@@ -126,6 +150,9 @@ public final class FocusOrchestrator: ObservableObject {
     /// recover first so `previousMode` cannot chain-corrupt to `genesis-listening`.
     @discardableResult
     public func beginSession(reason: String = "genesis-voice") throws -> Snapshot {
+        guard remoteCommand == nil else {
+            throw FlowFocusMailbox.Failure.unavailable("Use the active Flow and Focus owner to begin a mute session.")
+        }
         if isActive, let existing = try? loadSnapshot() {
             return existing
         }
@@ -159,6 +186,9 @@ public final class FocusOrchestrator: ObservableObject {
     /// Restore prior mode, clear suppression, delete snapshot.
     @discardableResult
     public func endSession() throws -> Snapshot? {
+        guard remoteCommand == nil else {
+            throw FlowFocusMailbox.Failure.unavailable("Use the active Flow and Focus owner to end a mute session.")
+        }
         guard fileManager.fileExists(atPath: stateURL.path) else {
             clearLiveState()
             return nil
@@ -183,6 +213,7 @@ public final class FocusOrchestrator: ObservableObject {
     ///   do not fire Shortcuts "end" (avoids end→begin race) and skip recovery notice.
     @discardableResult
     public func recoverIfNeeded(skipShortcut: Bool = false) -> Snapshot? {
+        guard remoteCommand == nil else { return nil }
         guard fileManager.fileExists(atPath: stateURL.path) else {
             clearLiveState()
             return nil
@@ -218,6 +249,10 @@ public final class FocusOrchestrator: ObservableObject {
     /// Voice path: begin only when Settings toggle is on. Failures are logged;
     /// voice must not block on Focus.
     public func beginForVoiceIfEnabled() {
+        if let remoteCommand {
+            if focusWhileListeningEnabled { remoteCommand("focus.dnd.begin", Data("genesis-voice".utf8)) }
+            return
+        }
         guard focusWhileListeningEnabled else { return }
         do {
             try beginSession(reason: "genesis-voice")
@@ -227,6 +262,7 @@ public final class FocusOrchestrator: ObservableObject {
     }
 
     public func endForVoiceIfNeeded() {
+        if let remoteCommand { remoteCommand("focus.dnd.end", Data()); return }
         guard isActive || fileManager.fileExists(atPath: stateURL.path) else { return }
         do {
             _ = try endSession()
@@ -241,6 +277,7 @@ public final class FocusOrchestrator: ObservableObject {
     /// Ends **synchronously** on the main queue — a nested `Task` may not complete
     /// before process exit (P1 G4.2).
     public func installTerminateHook() {
+        guard remoteCommand == nil else { return }
         guard terminateObserver == nil else { return }
         terminateObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,

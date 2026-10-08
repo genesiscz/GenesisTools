@@ -7,7 +7,7 @@ import Foundation
 /// The phase table is a value type (`PomodoroPlan`) so the rules can be tested without a store,
 /// a clock or a main actor. The engine around it owns persistence, so a crash mid-flow resumes
 /// with the right remaining time instead of restarting the phase.
-public struct PomodoroPlan: Equatable {
+public struct PomodoroPlan: Codable, Equatable {
     public init(
         flowSec: Int = 25 * 60, shortBreakSec: Int = 5 * 60, longBreakSec: Int = 30 * 60,
         cycleLength: Int = 4, autoStartBreaks: Bool = true, autoStartFlows: Bool = false,
@@ -28,7 +28,7 @@ public struct PomodoroPlan: Equatable {
         self.nudgeEverySec = nudgeEverySec
     }
 
-    public enum Phase: String, Equatable {
+    public enum Phase: String, Codable, Equatable {
         case flow
         case shortBreak = "short_break"
         case longBreak = "long_break"
@@ -115,7 +115,7 @@ public struct PomodoroPlan: Equatable {
 
 @MainActor
 public final class PomodoroEngine: ObservableObject {
-    public enum State: String, Equatable { case idle, running, paused, overrun }
+    public enum State: String, Codable, Equatable { case idle, running, paused, overrun }
 
     @Published public private(set) var state: State = .idle
     @Published public private(set) var phase: PomodoroPlan.Phase = .flow
@@ -135,6 +135,7 @@ public final class PomodoroEngine: ObservableObject {
     public var onBoundary: (() -> Void)?
     public var beginDND: (() -> Void)?
     public var endDND: (() -> Void)?
+    var remoteCommand: ((String, Data) -> Void)?
 
     private let store: ActivityStore
     private var sessionId: Int64?
@@ -155,6 +156,7 @@ public final class PomodoroEngine: ObservableObject {
     // MARK: - Commands
 
     public func start(_ phase: PomodoroPlan.Phase = .flow, seconds: Int? = nil, tag: String? = nil) {
+        if forward("focus.start", FocusStartCommand(phase: phase, seconds: seconds, tag: tag)) { return }
         endCurrent(state: .abandoned)
         let duration = seconds ?? plan.duration(of: phase)
         let now = nowMs()
@@ -182,6 +184,7 @@ public final class PomodoroEngine: ObservableObject {
     /// `since` backdates the pause: an idle pause starts when the input stopped, not when the
     /// threshold noticed it, so the minute you were away is not charged to the flow.
     public func pause(reason: ActivityStore.PauseReason = .manual, since: Date? = nil) {
+        if forward("focus.pause", FocusPauseCommand(reason: reason, since: since)) { return }
         guard state == .running || state == .overrun, let sessionId else { return }
         let now = nowMs()
         // A row this engine forgot (a restart, a double press) must be closed before a new one
@@ -202,6 +205,7 @@ public final class PomodoroEngine: ObservableObject {
     }
 
     public func resume() {
+        if forward("focus.resume") { return }
         guard state == .paused else { return }
         pauseReason = nil
         let now = nowMs()
@@ -238,6 +242,7 @@ public final class PomodoroEngine: ObservableObject {
     /// Ends the phase early and moves on. The session is still recorded — a skipped flow is data,
     /// not an absence.
     public func skip() {
+        if forward("focus.skip") { return }
         let finished = phase
         endCurrent(state: .done)
         advance(after: finished, auto: plan.autoStarts(plan.next(after: finished, completedFlows: completedFlows)))
@@ -249,6 +254,7 @@ public final class PomodoroEngine: ObservableObject {
     /// The phase you return to starts fresh rather than resuming, because the session you
     /// skipped is already closed in the ledger and inventing time back into it would be a lie.
     public func goBack() {
+        if forward("focus.back") { return }
         let current = phase
         let target = plan.previous(before: current, completedFlows: completedFlows)
         endCurrent(state: .abandoned)
@@ -258,6 +264,7 @@ public final class PomodoroEngine: ObservableObject {
     }
 
     public func stop() {
+        if forward("focus.stop") { return }
         endCurrent(state: .abandoned)
         state = .idle
         remainingSec = 0
@@ -265,18 +272,21 @@ public final class PomodoroEngine: ObservableObject {
     }
 
     public func setTag(_ value: String?) {
+        if forward("focus.tag", value) { return }
         tag = value
         guard let sessionId else { return }
         try? store.updateSession(id: sessionId, tag: value, note: nil, interruptions: nil)
     }
 
     public func setNote(_ value: String) {
+        if forward("focus.note", value) { return }
         guard let sessionId else { return }
         try? store.updateSession(id: sessionId, tag: nil, note: value, interruptions: nil)
     }
 
     /// Called by the recorder when focus left the tagged work for longer than the threshold.
     public func recordInterruption() {
+        guard remoteCommand == nil else { return }
         guard state == .running || state == .overrun, phase == .flow else { return }
         interruptions += 1
         guard let sessionId else { return }
@@ -289,6 +299,7 @@ public final class PomodoroEngine: ObservableObject {
     /// five-minute crash costs five minutes of the phase, exactly as it would have if the app
     /// had stayed up.
     public func resumeOpenSessionIfAny() {
+        guard remoteCommand == nil else { return }
         guard let open = try? store.openSession(), let phase = PomodoroPlan.Phase(rawValue: open.kind) else { return }
         sessionId = open.id
         self.phase = phase
@@ -367,6 +378,7 @@ public final class PomodoroEngine: ObservableObject {
 
     /// Internal rather than private so a test can step the clock without waiting a second.
     public func tick() {
+        guard remoteCommand == nil else { return }
         guard state == .running || state == .overrun else { return }
         // Remaining is derived from the clock, never decremented, so a missed tick or a sleeping
         // machine cannot drift the timer.
@@ -458,6 +470,46 @@ public final class PomodoroEngine: ObservableObject {
         guard dndActive else { return }
         dndActive = false
         endDND?()
+    }
+
+    var liveSnapshot: FocusEngineSnapshot {
+        FocusEngineSnapshot(state: state, phase: phase, remainingSec: remainingSec,
+                            completedFlows: completedFlows, tag: tag, interruptions: interruptions,
+                            pauseReason: pauseReason, plan: plan, plannedSec: plannedSec, sessionId: sessionId)
+    }
+
+    func applyRemote(_ snapshot: FocusEngineSnapshot) {
+        guard remoteCommand != nil else { return }
+        if state != snapshot.state { state = snapshot.state }
+        if phase != snapshot.phase { phase = snapshot.phase }
+        if remainingSec != snapshot.remainingSec { remainingSec = snapshot.remainingSec }
+        if completedFlows != snapshot.completedFlows { completedFlows = snapshot.completedFlows }
+        if tag != snapshot.tag { tag = snapshot.tag }
+        if interruptions != snapshot.interruptions { interruptions = snapshot.interruptions }
+        if pauseReason != snapshot.pauseReason { pauseReason = snapshot.pauseReason }
+        if plan != snapshot.plan { plan = snapshot.plan }
+        plannedSec = snapshot.plannedSec
+        sessionId = snapshot.sessionId
+    }
+
+    /// Relinquishes the clock and DND without abandoning the durable session. The next owner
+    /// resumes from its stored wall-clock anchor rather than starting another independent timer.
+    func suspendForHandoff() {
+        stopTicker()
+        releaseDND()
+    }
+
+    private func forward<T: Encodable>(_ action: String, _ payload: T) -> Bool {
+        guard let remoteCommand else { return false }
+        do { remoteCommand(action, try JSONEncoder().encode(payload)) }
+        catch { FlowFocusLog.focus.error("focus command encoding failed: \(error.localizedDescription)") }
+        return true
+    }
+
+    private func forward(_ action: String) -> Bool {
+        guard let remoteCommand else { return false }
+        remoteCommand(action, Data())
+        return true
     }
 
     /// The engine's only clock. Tests move it instead of sleeping.

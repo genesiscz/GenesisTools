@@ -1,5 +1,6 @@
 // Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Sources/Genesis/Flow/FlowStore.swift at 2026-10-08T05:04:08+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
 import Foundation
+import Darwin
 
 /// On-disk home for everything Flow owns: `~/.genesis/flow/`.
 ///
@@ -15,15 +16,21 @@ import Foundation
 @MainActor
 public final class FlowStore {
 
-    public static let shared = FlowStore()
+    public static var shared = FlowStore(writesEnabled: false)
 
-    private let directory: URL
+    public let directory: URL
+    public var writesEnabled: Bool
+    public var forwardWrite: ((String, Data) -> Void)?
+    public var didWrite: (() -> Void)?
+    public var onFailure: ((String) -> Void)?
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private var writeFailure: Error?
 
-    private init() {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        directory = home.appendingPathComponent(".genesis/flow", isDirectory: true)
+    public init(directory: URL? = nil, writesEnabled: Bool = true) {
+        self.directory = directory ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".genesis/flow", isDirectory: true)
+        self.writesEnabled = writesEnabled
 
         encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -31,8 +38,6 @@ public final class FlowStore {
 
         decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-
-        ensureDirectory()
     }
 
     // MARK: - Paths
@@ -50,6 +55,10 @@ public final class FlowStore {
 
     public func loadConfig() -> FlowConfig { load(configURL) ?? FlowConfig() }
     public func saveConfig(_ value: FlowConfig) { save(value, to: configURL) }
+
+    func persistConfig(_ value: FlowConfig) throws {
+        try writeOwned(encoder.encode(value), to: configURL)
+    }
 
     public func loadHistory() -> [FlowEntry] { load(historyURL) ?? [] }
     public func saveHistory(_ value: [FlowEntry]) { save(value, to: historyURL) }
@@ -116,18 +125,12 @@ public final class FlowStore {
 
     // MARK: - IO
 
-    private func ensureDirectory() {
-        let fm = FileManager.default
-        guard !fm.fileExists(atPath: directory.path) else { return }
-        do {
-            try fm.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
-        } catch {
-            FlowFocusLog.flow.error("FlowStore: could not create \(self.directory.path): \(error.localizedDescription)")
-        }
+    private func ensureDirectory() throws {
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
     }
 
     private func load<T: Decodable>(_ url: URL) -> T? {
@@ -138,8 +141,8 @@ public final class FlowStore {
             // A corrupt file is moved aside, never overwritten in place. The
             // user keeps a chance of recovering it by hand, and the next save
             // starts clean instead of failing forever.
-            backupCorrupt(url)
-            FlowFocusLog.flow.error("FlowStore: \(url.lastPathComponent) was unreadable, moved aside: \(error.localizedDescription)")
+            if writesEnabled { backupCorrupt(url) }
+            FlowFocusLog.flow.error("FlowStore: \(url.lastPathComponent) was unreadable: \(error.localizedDescription)")
             return nil
         }
     }
@@ -149,6 +152,8 @@ public final class FlowStore {
             writeAtomic(try encoder.encode(value), to: url)
         } catch {
             FlowFocusLog.flow.error("FlowStore: encoding \(url.lastPathComponent) failed: \(error.localizedDescription)")
+            writeFailure = error
+            onFailure?(error.localizedDescription)
         }
     }
 
@@ -156,16 +161,52 @@ public final class FlowStore {
     /// target. Rename is atomic within a filesystem, so a reader never sees a
     /// half-written file and a crash mid-write cannot truncate the old one.
     private func writeAtomic(_ data: Data, to url: URL) {
-        ensureDirectory()
+        if let forwardWrite {
+            forwardWrite(url.lastPathComponent, data)
+            return
+        }
+        do {
+            try writeOwned(data, to: url)
+        } catch {
+            FlowFocusLog.flow.error("FlowStore: writing \(url.lastPathComponent) failed: \(error.localizedDescription)")
+            writeFailure = error
+            onFailure?(error.localizedDescription)
+        }
+    }
+
+    private func writeOwned(_ data: Data, to url: URL) throws {
+        guard writesEnabled else {
+            throw FlowFocusMailbox.Failure.unavailable("Only the active Flow and Focus owner can save changes.")
+        }
+        try ensureDirectory()
         let temp = directory.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
         do {
             try data.write(to: temp, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temp.path)
-            _ = try FileManager.default.replaceItemAt(url, withItemAt: temp)
+            guard rename(temp.path, url.path) == 0 else {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+            }
+            didWrite?()
         } catch {
             try? FileManager.default.removeItem(at: temp)
-            FlowFocusLog.flow.error("FlowStore: writing \(url.lastPathComponent) failed: \(error.localizedDescription)")
+            throw error
         }
+    }
+
+    func verifyingWrites<T>(_ operation: () throws -> T) throws -> T {
+        let previous = writeFailure
+        writeFailure = nil
+        defer { writeFailure = previous }
+        let value = try operation()
+        if let writeFailure { throw writeFailure }
+        return value
+    }
+
+    func writeFromClient(name: String, data: Data) throws {
+        guard ["scratchpad.md"].contains(name), writesEnabled else {
+            throw FlowFocusMailbox.Failure.unavailable("That Flow file is not writable through the client channel.")
+        }
+        try writeOwned(data, to: directory.appendingPathComponent(name))
     }
 
     private func backupCorrupt(_ url: URL) {

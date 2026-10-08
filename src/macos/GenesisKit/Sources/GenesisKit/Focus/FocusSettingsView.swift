@@ -13,7 +13,7 @@ public struct FocusSettingsView: View {
     @State private var settings = FocusSettings()
     @State private var plan = PomodoroPlan()
     @State private var hudStyle = FocusHUDWindowController.savedStyle
-    @State private var saveError: String?
+    @ObservedObject private var configuration = FlowFocusConfiguration.shared
 
     private let accent = Color.neonAmber
 
@@ -22,6 +22,9 @@ public struct FocusSettingsView: View {
         // already scrolls and pads every tab. The nested copies indented this
         // tab 24pt deeper than the others.
         VStack(alignment: .leading, spacing: 16) {
+            if let error = configuration.lastError {
+                NoticePill(text: error, isError: true, dismiss: configuration.dismissError)
+            }
             if !controller.available {
                 unavailableCard
             }
@@ -31,6 +34,7 @@ public struct FocusSettingsView: View {
             projectsCard
         }
         .onAppear(perform: load)
+        .onChange(of: configuration.revision) { _, _ in load() }
         // `.contain` first: on a plain VStack a bare identifier propagates to
         // every child and clobbers their own ids (the ScrollView that carried
         // it before was its own AX element).

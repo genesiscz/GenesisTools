@@ -35,9 +35,28 @@ public final class FlowSession: ObservableObject {
     @Published public var config: FlowConfig {
         didSet {
             guard config != oldValue else { return }   // @Published has no value-skip
-            store.saveConfig(config)
-            applyHotkeyBinding()
-            applyPreRoll()
+            guard !applyingRemoteState else { return }
+            if let remoteCommand {
+                do {
+                    let before = try JSONSerialization.jsonObject(with: JSONEncoder().encode(oldValue)) as? [String: Any] ?? [:]
+                    let after = try JSONSerialization.jsonObject(with: JSONEncoder().encode(config)) as? [String: Any] ?? [:]
+                    let patch = after.filter { key, value in
+                        !NSDictionary(dictionary: [key: value]).isEqual(to: [key: before[key] ?? NSNull()])
+                    }
+                    remoteCommand("flow.config", try JSONSerialization.data(withJSONObject: patch))
+                } catch { reportFailure(error.localizedDescription) }
+                return
+            }
+            do {
+                try store.persistConfig(config)
+                applyHotkeyBinding()
+                applyPreRoll()
+            } catch {
+                applyingRemoteState = true
+                config = oldValue
+                applyingRemoteState = false
+                reportFailure(error.localizedDescription)
+            }
         }
     }
 
@@ -55,7 +74,11 @@ public final class FlowSession: ObservableObject {
 
     // MARK: - Private
 
-    private let store = FlowStore.shared
+    private var store: FlowStore
+    private var started = false
+    private var applyingRemoteState = false
+    var remoteCommand: ((String, Data) -> Void)?
+    var configuration = FlowFocusConfiguration.shared
     private var hotKey: CompanionHotKey?
     private var startedAt: Date?
     private var target: FlowFocusTarget?
@@ -75,7 +98,9 @@ public final class FlowSession: ObservableObject {
         }
     }()
 
-    private init() {
+    public init(store: FlowStore? = nil) {
+        let store = store ?? .shared
+        self.store = store
         let loaded = store.loadConfig()
         let migrated = loaded.migratingLegacyChord()
         if migrated != loaded {
@@ -96,7 +121,9 @@ public final class FlowSession: ObservableObject {
 
     /// Register the global hotkey. Safe to call more than once.
     public func start() {
-        labEnabled = FlowFocusConfiguration.shared.dictationEnabled
+        guard store.writesEnabled, remoteCommand == nil else { return }
+        started = true
+        labEnabled = configuration.dictationEnabled
         activate()
     }
 
@@ -113,6 +140,7 @@ public final class FlowSession: ObservableObject {
 
     /// Labs switch. Off drops the hotkey and any turn in flight.
     public func setLabEnabled(_ on: Bool) {
+        if forward("flow.lab", on) { return }
         guard labEnabled != on else { return }
         labEnabled = on
         FlowFocusLog.flow.info("dictation lab \(on ? "on" : "off")")
@@ -173,7 +201,7 @@ public final class FlowSession: ObservableObject {
 
     /// Start or stop the rolling capture to match the setting.
     private func applyPreRoll() {
-        guard isOn, config.preRoll else {
+        guard started, remoteCommand == nil, isOn, config.preRoll else {
             preRoll.stop()
             return
         }
@@ -185,7 +213,7 @@ public final class FlowSession: ObservableObject {
     /// The pill lingers briefly after a turn so the user sees the confirmation
     /// rather than a panel that vanishes the instant the text lands.
     private func syncPill() {
-        guard config.showPill else { return }
+        guard started, remoteCommand == nil, config.showPill else { return }
         pillHideTask?.cancel()
         pillHideTask = nil
 
@@ -209,6 +237,12 @@ public final class FlowSession: ObservableObject {
     }
 
     public func stop() {
+        started = false
+        remoteCommand = nil
+        preRoll.stop()
+        pillHideTask?.cancel()
+        pillHideTask = nil
+        pill.hide()
         hotKey?.stop()
         hotKey = nil
         hotkeyStatus = .off
@@ -216,7 +250,7 @@ public final class FlowSession: ObservableObject {
     }
 
     private func applyHotkeyBinding() {
-        guard isOn else {
+        guard started, remoteCommand == nil, isOn else {
             hotKey?.stop()
             hotKey = nil
             hotkeyStatus = .off
@@ -279,7 +313,17 @@ public final class FlowSession: ObservableObject {
     /// Start capturing. The focus target is grabbed FIRST, before any Flow UI
     /// can appear — see `FlowFocusTarget` for why that ordering is the whole
     /// trick.
-    public func beginTurn() {
+    public func beginTurn(target capturedTarget: FlowFocusTarget? = nil, captureCurrentTarget: Bool = true) {
+        if let remoteCommand {
+            let destination = captureCurrentTarget ? FlowFocusTarget.capture() : capturedTarget
+            do { remoteCommand("flow.begin", try JSONEncoder().encode(destination)) }
+            catch { reportFailure(error.localizedDescription) }
+            return
+        }
+        guard started, store.writesEnabled else {
+            reportFailure("Flow is waiting for its active owner.")
+            return
+        }
         switch Self.turnStart(phase: phase, labEnabled: labEnabled, enabled: config.enabled) {
         case .busy:
             return
@@ -297,7 +341,7 @@ public final class FlowSession: ObservableObject {
         finishTask?.cancel()
         finishTask = nil
 
-        target = FlowFocusTarget.capture()
+        target = captureCurrentTarget ? FlowFocusTarget.capture() : capturedTarget
         startedAt = Date()
         lastError = nil
         lastInjected = nil
@@ -323,6 +367,7 @@ public final class FlowSession: ObservableObject {
 
     /// Stop capturing and run the rest of the pipeline.
     public func endTurn() {
+        if forward("flow.end") { return }
         guard phase == .listening else { return }
         phase = .transcribing
 
@@ -344,6 +389,7 @@ public final class FlowSession: ObservableObject {
 
     /// Abandon the turn without injecting anything.
     public func cancelTurn() {
+        if forward("flow.cancel") { return }
         finishTask?.cancel()
         finishTask = nil
         recognizer.cancel()
@@ -403,6 +449,78 @@ public final class FlowSession: ObservableObject {
         FlowFocusLog.flow.info("turn done words=\(text.split(separator: " ").count) outcome=\(String(describing: outcome))")
     }
 
+    var liveSnapshot: FlowLiveSnapshot {
+        FlowLiveSnapshot(phase: phase, lastError: lastError, lastInjected: lastInjected,
+                         labEnabled: labEnabled, hotkeyStatus: hotkeyStatus,
+                         partialText: recognizer.partialText, micLevel: recognizer.micLevel)
+    }
+
+    func applyRemote(_ snapshot: FlowLiveSnapshot) {
+        guard remoteCommand != nil else { return }
+        if phase != snapshot.phase { phase = snapshot.phase }
+        if lastError != snapshot.lastError { lastError = snapshot.lastError }
+        if lastInjected != snapshot.lastInjected { lastInjected = snapshot.lastInjected }
+        if labEnabled != snapshot.labEnabled { labEnabled = snapshot.labEnabled }
+        if hotkeyStatus != snapshot.hotkeyStatus { hotkeyStatus = snapshot.hotkeyStatus }
+        recognizer.applyRemote(partialText: snapshot.partialText, micLevel: snapshot.micLevel)
+    }
+
+    func persistConfiguration(_ value: FlowConfig) throws {
+        try store.persistConfig(value)
+        applyingRemoteState = true
+        config = value
+        applyingRemoteState = false
+        applyHotkeyBinding()
+        applyPreRoll()
+    }
+
+    func configure(store: FlowStore) {
+        self.store = store
+        reloadStoredState()
+        store.onFailure = { [weak self] message in
+            self?.reloadStoredState(preserveConfiguration: true)
+            self?.reportFailure(message)
+        }
+    }
+
+    func reloadStoredState(preserveConfiguration: Bool = false) {
+        applyingRemoteState = true
+        defer { applyingRemoteState = false }
+        if !preserveConfiguration {
+            let next = store.loadConfig().migratingLegacyChord()
+            if config != next { config = next }
+        }
+        let entries = store.loadHistory()
+        if history != entries { history = entries }
+        let nextStats = store.loadStats()
+        if stats != nextStats { stats = nextStats }
+        let rules = store.loadDictionary()
+        if dictionary != rules { dictionary = rules }
+        let nextSnippets = store.loadSnippets()
+        if snippets != nextSnippets { snippets = nextSnippets }
+        let nextTransforms = store.loadTransforms()
+        if transforms != nextTransforms { transforms = nextTransforms }
+        let nextSuggestions = store.loadSuggestions()
+        if suggestions != nextSuggestions { suggestions = nextSuggestions }
+    }
+
+    func reportFailure(_ message: String) {
+        lastError = message
+    }
+
+    private func forward<T: Encodable>(_ action: String, _ payload: T) -> Bool {
+        guard let remoteCommand else { return false }
+        do { remoteCommand(action, try JSONEncoder().encode(payload)) }
+        catch { reportFailure(error.localizedDescription) }
+        return true
+    }
+
+    private func forward(_ action: String) -> Bool {
+        guard let remoteCommand else { return false }
+        remoteCommand(action, Data())
+        return true
+    }
+
     // MARK: - Persistence
 
     private func record(raw: String, final: String, duration: Double, injected: Bool) {
@@ -459,17 +577,20 @@ public final class FlowSession: ObservableObject {
     // MARK: - Mutations from the UI
 
     public func addRule(from: String, to: String) {
+        if forward("flow.rule.add", [from, to]) { return }
         let rule = FlowDictionaryRule(from: from, to: to)
         dictionary.append(rule)
         store.saveDictionary(dictionary)
     }
 
     public func removeRule(_ id: UUID) {
+        if forward("flow.rule.remove", id) { return }
         dictionary.removeAll { $0.id == id }
         store.saveDictionary(dictionary)
     }
 
     public func acceptSuggestion(_ suggestion: FlowSuggestion, replacement: String) {
+        if forward("flow.suggestion.accept", FlowSuggestionAcceptance(suggestion: suggestion, replacement: replacement)) { return }
         dictionary.append(
             FlowDictionaryRule(from: suggestion.heard, to: replacement, learned: true)
         )
@@ -479,27 +600,32 @@ public final class FlowSession: ObservableObject {
     }
 
     public func dismissSuggestion(_ suggestion: FlowSuggestion) {
+        if forward("flow.suggestion.dismiss", suggestion) { return }
         dismissedTokens.insert(suggestion.heard.lowercased())
         suggestions.removeAll { $0.id == suggestion.id }
         store.saveSuggestions(suggestions)
     }
 
     public func addSnippet(trigger: String, body: String) {
+        if forward("flow.snippet.add", [trigger, body]) { return }
         snippets.append(FlowSnippet(trigger: trigger, body: body))
         store.saveSnippets(snippets)
     }
 
     public func removeSnippet(_ id: UUID) {
+        if forward("flow.snippet.remove", id) { return }
         snippets.removeAll { $0.id == id }
         store.saveSnippets(snippets)
     }
 
     public func deleteEntry(_ id: UUID) {
+        if forward("flow.history.delete", id) { return }
         history.removeAll { $0.id == id }
         store.saveHistory(history)
     }
 
     public func clearHistory() {
+        if forward("flow.history.clear") { return }
         history.removeAll()
         store.saveHistory(history)
     }

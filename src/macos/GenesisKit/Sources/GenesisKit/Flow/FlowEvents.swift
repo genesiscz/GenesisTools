@@ -51,10 +51,8 @@ public enum FlowEvents {
         return e
     }()
 
-    private static var logURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".genesis/flow/events.jsonl")
-    }
+    static var logURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".genesis/flow/events.jsonl")
 
     /// Announce a completed turn.
     public static func publish(_ entry: FlowEntry) {

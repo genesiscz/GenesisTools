@@ -151,6 +151,12 @@ public final class CompanionSpeechRecognizer: ObservableObject {
 
     public private(set) var lastHold: HoldReport?
 
+    func applyRemote(partialText: String, micLevel: Double) {
+        guard !isActive else { return }
+        if self.partialText != partialText { self.partialText = partialText }
+        if self.micLevel != micLevel { self.micLevel = micLevel }
+    }
+
     private var recognizer: SFSpeechRecognizer?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?

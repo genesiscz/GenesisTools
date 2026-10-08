@@ -1,14 +1,19 @@
+import Combine
 import Darwin
 import Foundation
 
 /// The existing client.json contract. Only app keys belonging to Flow/Focus are merged.
 /// Genesis can supply its live configuration reader; standalone hosts use the same file.
 @MainActor
-public final class FlowFocusConfiguration {
+public final class FlowFocusConfiguration: ObservableObject {
     public static var shared = FlowFocusConfiguration()
     public var readApp: (() -> [String: Any])?
     public var forwardPatch: (([String: Any]) -> Void)?
     public var onFailure: ((String) -> Void)?
+    public var didPersist: (() -> Void)?
+    @Published public private(set) var revision: UInt64 = 0
+    @Published public private(set) var lastError: String?
+    private var pendingWrites: [(id: UUID, patch: [String: Any])] = []
     public var allowsWrites = false
     public let directory: URL
     private var cachedApp: [String: Any]
@@ -19,7 +24,9 @@ public final class FlowFocusConfiguration {
         cachedApp = Self.readRaw(directory: directory)["app"] as? [String: Any] ?? [:]
     }
 
-    public var app: [String: Any] { readApp?() ?? cachedApp }
+    public var app: [String: Any] {
+        pendingWrites.reduce(readApp?() ?? cachedApp) { Self.merge($0, $1.patch) }
+    }
     public var dictationEnabled: Bool { (app["labs"] as? [String: Any])?["dictation"] as? Bool ?? true }
 
     public var transformConfiguration: FlowTransformConfiguration {
@@ -53,7 +60,18 @@ public final class FlowFocusConfiguration {
     }
 
     public func reload() {
-        cachedApp = Self.readRaw(directory: directory)["app"] as? [String: Any] ?? [:]
+        do {
+            cachedApp = try Self.readForWrite(directory: directory)["app"] as? [String: Any] ?? [:]
+            revision &+= 1
+        } catch { reportFailure(error.localizedDescription) }
+    }
+
+    public func dismissError() { lastError = nil }
+
+    func reportFailure(_ message: String) {
+        lastError = message
+        revision &+= 1
+        onFailure?(message)
     }
 
     public func setAppValue(_ value: Any, forKey key: String) {
@@ -87,23 +105,36 @@ public final class FlowFocusConfiguration {
             return
         }
         guard allowsWrites else {
-            onFailure?("Flow and Focus are waiting for their runtime owner.")
+            reportFailure("Flow and Focus are waiting for their runtime owner.")
             return
         }
-        cachedApp = Self.merge(cachedApp, patch)
         do {
             let data = try JSONSerialization.data(withJSONObject: patch)
+            let id = UUID()
+            pendingWrites.append((id, patch))
+            lastError = nil
+            revision &+= 1
             let directory = self.directory
             writes.async { [weak self] in
                 do {
                     try Self.persist(data, directory: directory)
+                    Task { @MainActor in self?.finishedWrite(id, error: nil) }
                 } catch {
                     FlowFocusLog.focus.error("configuration write failed: \(error.localizedDescription)")
-                    Task { @MainActor in self?.onFailure?(error.localizedDescription) }
+                    let message = error.localizedDescription
+                    Task { @MainActor in self?.finishedWrite(id, error: message) }
                 }
             }
-        } catch {
-            onFailure?(error.localizedDescription)
+        } catch { reportFailure(error.localizedDescription) }
+    }
+
+    private func finishedWrite(_ id: UUID, error: String?) {
+        pendingWrites.removeAll { $0.id == id }
+        if let error {
+            reportFailure(error)
+        } else {
+            didPersist?()
+            reload()
         }
     }
 

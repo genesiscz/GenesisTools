@@ -16,6 +16,23 @@ final class FlowFocusConfigurationTests: XCTestCase {
         try FileManager.default.removeItem(at: directory)
     }
 
+    @MainActor
+    func testFailedAsyncWriteRollsBackOptimisticStateAndPublishesTheError() async throws {
+        try Data("{\"app\":{\"focusWhileListening\":true}}".utf8).write(to: client)
+        let config = FlowFocusConfiguration(directory: directory)
+        config.allowsWrites = true
+        let corrupt = Data("{corrupt-after-loading".utf8)
+        try corrupt.write(to: client)
+        let failure = expectation(description: "visible persistence failure")
+        config.onFailure = { _ in failure.fulfill() }
+        config.setAppValue(false, forKey: "focusWhileListening")
+        XCTAssertEqual(config.app["focusWhileListening"] as? Bool, false, "optimistic value while the write is pending")
+        await fulfillment(of: [failure], timeout: 2)
+        XCTAssertEqual(config.app["focusWhileListening"] as? Bool, true, "failed value rolls back")
+        XCTAssertNotNil(config.lastError)
+        XCTAssertEqual(try Data(contentsOf: client), corrupt)
+    }
+
     func testNormalWriteMergesFreshUnknownTopLevelAndNestedKeys() throws {
         let original: [String: Any] = [
             "unknown": ["future": "preserved"],

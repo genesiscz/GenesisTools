@@ -8,7 +8,7 @@ import Foundation
 /// `injecting` is deliberately its own phase rather than a tail of `thinking`:
 /// paste is the step that can fail visibly (no Accessibility permission), and
 /// the user needs to see WHICH step failed.
-public enum FlowPhase: String, Equatable {
+public enum FlowPhase: String, Codable, Equatable {
     case idle
     case listening
     case transcribing
@@ -237,7 +237,7 @@ public struct FlowConfig: Codable, Equatable {
 /// reports a refusal inside this process; another app owning the same chord
 /// is invisible to it (probed 2026-09-25: even `kEventHotKeyExclusive`
 /// returned noErr for ⌃⌥D while Magnet held it).
-public enum GlobalHotkeyStatus: Equatable {
+public enum GlobalHotkeyStatus: Codable, Equatable {
     /// Turned off (Labs or the feature's own switch).
     case off
     case registered(chord: String)

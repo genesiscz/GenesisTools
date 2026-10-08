@@ -35,7 +35,7 @@ public final class ActivityStore {
 
     public enum SessionKind: String { case flow, shortBreak = "short_break", longBreak = "long_break" }
     public enum SessionState: String { case running, paused, done, abandoned }
-    public enum PauseReason: String { case manual, idle, auto }
+    public enum PauseReason: String, Codable { case manual, idle, auto }
 
     public struct FocusSession: Equatable {
         public var id: Int64 = 0
@@ -86,21 +86,25 @@ public final class ActivityStore {
     public static let defaultPath = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".genesis/activity.db").path
 
-    public init(path: String = ActivityStore.defaultPath) throws {
+    public init(path: String = ActivityStore.defaultPath, readOnly: Bool = false) throws {
         dbPath = path
-        let dir = (path as NSString).deletingLastPathComponent
-        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        if !readOnly {
+            let dir = (path as NSString).deletingLastPathComponent
+            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        }
         var handle: OpaquePointer?
-        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+        let flags = (readOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) | SQLITE_OPEN_FULLMUTEX
         guard sqlite3_open_v2(path, &handle, flags, nil) == SQLITE_OK else {
             let message = handle.map { String(cString: sqlite3_errmsg($0)) } ?? "open failed"
             sqlite3_close(handle)
             throw StoreError.sqlite(message)
         }
         db = handle
-        try queue.sync { try migrate() }
-        // The ledger knows where you were all day. Nobody else on this machine needs to read it.
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
+        if !readOnly {
+            try queue.sync { try migrate() }
+            // The ledger knows where you were all day. Nobody else on this machine needs to read it.
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
+        }
     }
 
     deinit { sqlite3_close(db) }

@@ -1,0 +1,337 @@
+import Foundation
+import XCTest
+@testable import GenesisKit
+
+@MainActor
+final class FlowFocusRuntimeTests: XCTestCase {
+    private var directory: URL!
+
+    override func setUp() async throws {
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("flow-focus-runtime-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() async throws {
+        try FileManager.default.removeItem(at: directory)
+    }
+
+    func testTwoHostsShareOneClockAndClientCommandsReachItsOwner() async throws {
+        let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.owner", liveServices: false, presentsWindows: false)
+        let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.client", liveServices: false, presentsWindows: false)
+        await owner.start()
+        await client.start()
+        XCTAssertTrue(owner.role.isOwner)
+        XCTAssertEqual(client.role, .client("test.owner"))
+        XCTAssertFalse(client.focus.ownsRuntime)
+        XCTAssertFalse(client.focus.recorder?.isCapturing ?? true)
+        do {
+            let payload = try JSONEncoder().encode(FocusStartCommand(phase: .flow, seconds: 600, tag: "Shared fixture"))
+            _ = try await client.send(action: "focus.start", payload: payload)
+            try await waitUntil { client.focus.engine?.state == .running }
+            XCTAssertTrue(owner.focus.engine?.isTicking ?? false, "normal owner path really starts its clock")
+            XCTAssertFalse(client.focus.engine?.isTicking ?? true, "a mirrored running state must never create a second clock")
+            XCTAssertEqual(client.focus.engine?.tag, "Shared fixture")
+            let sessions = try owner.focus.store?.sessions(from: 0, to: Int64.max)
+            XCTAssertEqual(sessions?.count, 1)
+            XCTAssertThrowsError(try client.focus.store?.pushIntent(kind: "start"), "client ledger connection is SQLite READONLY")
+            let rules = try JSONEncoder().encode(["recognised phrase", "Canonical phrase"])
+            _ = try await client.send(action: "flow.rule.add", payload: rules)
+            try await waitUntil { client.flow.dictionary.count == 1 }
+            let persisted = FlowStore(directory: directory.appendingPathComponent("flow"), writesEnabled: false)
+            XCTAssertEqual(persisted.loadDictionary(), client.flow.dictionary, "client mirrors the existing ISO-8601 on-disk schema")
+            XCTAssertEqual(owner.flow.dictionary.map(\.id), client.flow.dictionary.map(\.id))
+            XCTAssertEqual(owner.flow.dictionary.first?.to, "Canonical phrase")
+        } catch {
+            await client.stop()
+            await owner.stop()
+            throw error
+        }
+        await client.stop()
+        await owner.stop()
+    }
+
+    func testGracefulTakeoverResumesTheSameSessionAfterTheOldClockStops() async throws {
+        let first = FlowFocusRuntime(dataRoot: directory, hostID: "test.first", liveServices: false, presentsWindows: false)
+        let next = FlowFocusRuntime(dataRoot: directory, hostID: "test.next", liveServices: false, presentsWindows: false)
+        await first.start()
+        await next.start()
+        first.focus.engine?.start(.flow, seconds: 600, tag: "Continue this session")
+        let firstEngine = first.focus.engine
+        let sessionID = try first.focus.store?.openSession()?.id
+        XCTAssertTrue(firstEngine?.isTicking ?? false)
+        await first.stop()
+        XCTAssertFalse(firstEngine?.isTicking ?? true, "the actual old ticker is gone before the lease is reused")
+        do {
+            try await waitUntil { next.role.isOwner }
+            XCTAssertEqual(try next.focus.store?.openSession()?.id, sessionID)
+            XCTAssertTrue(next.focus.engine?.isTicking ?? false)
+            XCTAssertEqual(try next.focus.store?.sessions(from: 0, to: Int64.max).count, 1)
+            XCTAssertEqual(next.focus.engine?.tag, "Continue this session")
+        } catch {
+            await next.stop()
+            throw error
+        }
+        await next.stop()
+    }
+
+    func testStoreFirstWriteWorksAndPassiveStoreDoesNotCreateOrQuarantineFiles() throws {
+        let root = directory.appendingPathComponent("flow", isDirectory: true)
+        let passive = FlowStore(directory: root, writesEnabled: false)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+        passive.saveScratchpad("Must not write")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+        let writer = FlowStore(directory: root)
+        writer.saveScratchpad("First durable note")
+        XCTAssertEqual(writer.loadScratchpad(), "First durable note")
+        writer.saveScratchpad("Atomic replacement")
+        XCTAssertEqual(passive.loadScratchpad(), "Atomic replacement")
+        let file = root.appendingPathComponent("config.json")
+        let corrupt = Data("{broken".utf8)
+        try corrupt.write(to: file)
+        _ = passive.loadConfig()
+        XCTAssertEqual(try Data(contentsOf: file), corrupt)
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: root.path).contains { $0.contains("corrupt-") })
+    }
+
+    func testRemoteBeginPreservesTheInitiatingTargetsIdentityWithoutStartingCapture() throws {
+        let session = FlowSession(store: FlowStore(directory: directory.appendingPathComponent("flow"), writesEnabled: false))
+        var actions: [String] = []
+        var received: FlowFocusTarget?
+        session.remoteCommand = { action, payload in
+            actions.append(action)
+            received = try? JSONDecoder().decode(FlowFocusTarget?.self, from: payload)
+        }
+        let target = FlowFocusTarget(bundleIdentifier: "test.editor", localizedName: "Fixture editor", processIdentifier: 42)
+        session.beginTurn(target: target, captureCurrentTarget: false)
+        XCTAssertEqual(actions, ["flow.begin"])
+        XCTAssertEqual(received, target)
+        XCTAssertEqual(session.phase, .idle)
+        XCTAssertEqual(session.hotkeyStatus, .off)
+    }
+
+    func testStartupFailureStopsServicesBeforeReleasingTheLease() async throws {
+        let runtimeDirectory = directory.appendingPathComponent("feature-runtime", isDirectory: true)
+        try FileManager.default.createDirectory(at: runtimeDirectory, withIntermediateDirectories: true)
+        try Data("blocks the request directory".utf8).write(to: runtimeDirectory.appendingPathComponent("requests"))
+        let runtime = FlowFocusRuntime(dataRoot: directory, hostID: "test.failure", liveServices: false, presentsWindows: false)
+        await runtime.start()
+        XCTAssertFalse(runtime.role.isOwner)
+        XCTAssertNil(runtime.focus.engine)
+        XCTAssertFalse(runtime.focus.ownsRuntime)
+        let lease = try XCTUnwrap(FlowFocusLease.acquire(directory: runtimeDirectory, hostID: "test.replacement"))
+        lease.release()
+        await runtime.stop()
+    }
+
+    func testInitialSnapshotFailureDoesNotAdvertiseOrRetainAnOwner() async throws {
+        let root = directory.appendingPathComponent("feature-runtime", isDirectory: true)
+        let state = root.appendingPathComponent("state.json", isDirectory: true)
+        try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        let runtime = FlowFocusRuntime(dataRoot: directory, hostID: "test.snapshot-failure", liveServices: false, presentsWindows: false)
+        await runtime.start()
+        XCTAssertFalse(runtime.role.isOwner)
+        XCTAssertNil(runtime.focus.engine)
+        XCTAssertFalse(runtime.focus.ownsRuntime)
+        XCTAssertNotNil(runtime.lastError)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("owner.json").path))
+        XCTAssertEqual(runtime.publicationAttempts, 1)
+        let lease = try XCTUnwrap(FlowFocusLease.acquire(directory: root, hostID: "test.replacement"))
+        lease.release()
+        await runtime.stop()
+    }
+
+    func testPublicationFailureDoesNotRescheduleItselfAndLaterChangesCanRecover() async throws {
+        let runtime = FlowFocusRuntime(dataRoot: directory, hostID: "test.snapshot-recovery", liveServices: false, presentsWindows: false)
+        await runtime.start()
+        XCTAssertTrue(runtime.role.isOwner)
+        let state = runtime.directory.appendingPathComponent("state.json")
+        try FileManager.default.moveItem(at: state, to: runtime.directory.appendingPathComponent("state.saved"))
+        try FileManager.default.createDirectory(at: state, withIntermediateDirectories: false)
+        runtime.flow.reportFailure("Trigger a changed snapshot")
+        try await waitUntil { runtime.lastError != nil }
+        let attempts = runtime.publicationAttempts
+        try await Task.sleep(nanoseconds: 450_000_000)
+        XCTAssertEqual(runtime.publicationAttempts, attempts, "reporting a disk error must not create a 100 ms retry loop")
+        try FileManager.default.removeItem(at: state)
+        runtime.flow.reportFailure("Trigger recovery after the path is repaired")
+        try await waitUntil { (try? Data(contentsOf: state)) != nil }
+        XCTAssertEqual(runtime.publicationAttempts, attempts + 1)
+        await runtime.stop()
+    }
+
+    func testForwardedWritesFailBeforeAcknowledgementAndConfigurationRollsBack() async throws {
+        let runtime = FlowFocusRuntime(dataRoot: directory, hostID: "test.write-failure", liveServices: false, presentsWindows: false)
+        await runtime.start()
+        let flowRoot = directory.appendingPathComponent("flow", isDirectory: true)
+        let scratchpad = flowRoot.appendingPathComponent("scratchpad.md")
+        let configFile = flowRoot.appendingPathComponent("config.json")
+        runtime.flow.config.localeIdentifier = "fr-FR"
+        let original = runtime.flow.config
+        try FileManager.default.moveItem(at: configFile, to: flowRoot.appendingPathComponent("config.saved"))
+        try FileManager.default.createDirectory(at: scratchpad, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: configFile, withIntermediateDirectories: false)
+        let payload = try JSONEncoder().encode(FlowStoreWrite(name: "scratchpad.md", data: Data("A durable note".utf8)))
+        do {
+            _ = try await runtime.send(action: "flow.file", payload: payload)
+            XCTFail("a failed rename must not be acknowledged as a saved note")
+        } catch {
+            XCTAssertFalse(error.localizedDescription.isEmpty)
+        }
+        let patch = try JSONSerialization.data(withJSONObject: ["enabled": !original.enabled])
+        do {
+            _ = try await runtime.send(action: "flow.config", payload: patch)
+            XCTFail("failed config persistence must not be acknowledged")
+        } catch {
+            XCTAssertEqual(runtime.flow.config, original)
+        }
+        var changed = original
+        changed.enabled.toggle()
+        runtime.flow.config = changed
+        XCTAssertEqual(runtime.flow.config, original, "direct settings bindings also roll back")
+        XCTAssertNotNil(runtime.flow.lastError)
+        XCTAssertEqual(runtime.flow.hotkeyStatus, .off)
+        let dictionaryFile = flowRoot.appendingPathComponent("dictionary.json")
+        try FileManager.default.createDirectory(at: dictionaryFile, withIntermediateDirectories: false)
+        let rule = try JSONEncoder().encode(["spoken phrase", "Written phrase"])
+        do {
+            _ = try await runtime.send(action: "flow.rule.add", payload: rule)
+            XCTFail("legacy nonthrowing saves must still fail at the owner command boundary")
+        } catch {
+            XCTAssertTrue(runtime.flow.dictionary.isEmpty, "failed optimistic mutations reload durable state")
+        }
+        try FileManager.default.removeItem(at: dictionaryFile)
+        _ = try await runtime.send(action: "flow.rule.add", payload: rule)
+        XCTAssertEqual(runtime.flow.dictionary.first?.to, "Written phrase")
+        try FileManager.default.removeItem(at: scratchpad)
+        try FileManager.default.removeItem(at: configFile)
+        _ = try await runtime.send(action: "flow.file", payload: payload)
+        XCTAssertEqual(try String(contentsOf: scratchpad, encoding: .utf8), "A durable note")
+        _ = try await runtime.send(action: "flow.config", payload: patch)
+        XCTAssertEqual(runtime.flow.config, changed)
+        let reader = FlowStore(directory: flowRoot, writesEnabled: false)
+        XCTAssertEqual(reader.loadConfig(), changed, "normal owner persistence still reaches disk")
+        await runtime.stop()
+    }
+
+    func testShutdownFlushesAnAcceptedSettingsWriteBeforeUnlocking() async throws {
+        let runtime = FlowFocusRuntime(dataRoot: directory, hostID: "test.flush", liveServices: false, presentsWindows: false)
+        await runtime.start()
+        runtime.configuration.setAppValue(false, forKey: "focusWhileListening")
+        await runtime.stop()
+        let data = try Data(contentsOf: directory.appendingPathComponent("client.json"))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual((json["app"] as? [String: Any])?["focusWhileListening"] as? Bool, false)
+        let lease = try XCTUnwrap(FlowFocusLease.acquire(directory: runtime.directory, hostID: "test.after-flush"))
+        lease.release()
+    }
+
+    private func waitUntil(_ predicate: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(3)
+        while !predicate() {
+            guard Date() < deadline else { throw FlowFocusMailbox.Failure.unavailable("Timed out waiting for runtime state") }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+    }
+
+    func testOnlyOneHostOwnsTheStableLockAndReleaseAllowsTakeover() throws {
+        let first = try XCTUnwrap(FlowFocusLease.acquire(directory: directory, hostID: "test.host.one"))
+        try first.advertise()
+        let lock = directory.appendingPathComponent("owner.lock")
+        let initial = try FileManager.default.attributesOfItem(atPath: lock.path)[.systemFileNumber] as? NSNumber
+        XCTAssertNil(try FlowFocusLease.acquire(directory: directory, hostID: "test.host.two"))
+        XCTAssertEqual(try FlowFocusLease.readOwner(directory: directory), first.owner)
+        first.release()
+        let second = try XCTUnwrap(FlowFocusLease.acquire(directory: directory, hostID: "test.host.two"))
+        defer { second.release() }
+        try second.advertise()
+        let final = try FileManager.default.attributesOfItem(atPath: lock.path)[.systemFileNumber] as? NSNumber
+        XCTAssertEqual(initial, final, "lock file is never atomically replaced")
+        XCTAssertNotEqual(first.owner.nonce, second.owner.nonce)
+        first.release()
+        XCTAssertEqual(try FlowFocusLease.readOwner(directory: directory), second.owner)
+    }
+
+    func testAStaleAdvertisementDoesNotConferOwnershipOrBlockANewOwner() throws {
+        let stale = FlowFocusLease.Owner(hostID: "test.stale", pid: 999_999)
+        try FlowFocusLease.writePrivate(try JSONEncoder().encode(stale),
+                                       to: directory.appendingPathComponent("owner.json"))
+        let owner = try XCTUnwrap(FlowFocusLease.acquire(directory: directory, hostID: "test.current"))
+        defer { owner.release() }
+        try owner.advertise()
+        XCTAssertNotEqual(try FlowFocusLease.readOwner(directory: directory).nonce, stale.nonce)
+        let attributes = try FileManager.default.attributesOfItem(atPath: directory.path)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o700)
+        let record = try FileManager.default.attributesOfItem(atPath: directory.appendingPathComponent("owner.json").path)
+        XCTAssertEqual((record[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    }
+
+    func testDuplicateCommandsReturnTheFirstResultWithoutRepeatingTheEffect() async throws {
+        let lease = try XCTUnwrap(FlowFocusLease.acquire(directory: directory, hostID: "test.owner"))
+        defer { lease.release() }
+        try lease.advertise()
+        var calls = 0
+        let owner = try FlowFocusMailbox(directory: directory, owner: lease.owner) { command in
+            calls += 1
+            return command.payload
+        }
+        defer { owner.stop() }
+        let id = UUID()
+        let payload = Data("exact destination".utf8)
+        let first = try await owner.request(action: "flow.begin", payload: payload, id: id)
+        let retry = try await owner.request(action: "flow.begin", payload: Data("ignored retry".utf8), id: id)
+        XCTAssertEqual(first, payload)
+        XCTAssertEqual(retry, payload)
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testClientForwardsPayloadAndNeverRunsAnOwnerHandler() async throws {
+        let lease = try XCTUnwrap(FlowFocusLease.acquire(directory: directory, hostID: "test.owner"))
+        defer { lease.release() }
+        try lease.advertise()
+        var received: [String] = []
+        let owner = try FlowFocusMailbox(directory: directory, owner: lease.owner) { command in
+            received.append(command.action)
+            return command.payload
+        }
+        let client = try FlowFocusMailbox(directory: directory, owner: lease.owner)
+        owner.start()
+        client.start()
+        defer { client.stop(); owner.stop() }
+        let payload = Data("targetPID:42".utf8)
+        let reply = try await client.request(action: "flow.begin", payload: payload, timeout: 2)
+        XCTAssertEqual(reply, payload)
+        XCTAssertEqual(received, ["flow.begin"])
+    }
+
+    func testClientRefusesAReplacementOwnerBeforeWritingACommand() async throws {
+        let first = try XCTUnwrap(FlowFocusLease.acquire(directory: directory, hostID: "test.one"))
+        try first.advertise()
+        let client = try FlowFocusMailbox(directory: directory, owner: first.owner)
+        first.release()
+        let second = try XCTUnwrap(FlowFocusLease.acquire(directory: directory, hostID: "test.two"))
+        defer { second.release(); client.stop() }
+        try second.advertise()
+        do {
+            _ = try await client.request(action: "focus.start")
+            XCTFail("stale client must not execute against another ownership epoch")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("owner changed"))
+        }
+    }
+
+    func testMissingReplyHasABoundedVisibleFailure() async throws {
+        let lease = try XCTUnwrap(FlowFocusLease.acquire(directory: directory, hostID: "test.owner"))
+        defer { lease.release() }
+        try lease.advertise()
+        let owner = try FlowFocusMailbox(directory: directory, owner: lease.owner) { _ in Data() }
+        let client = try FlowFocusMailbox(directory: directory, owner: lease.owner)
+        defer { client.stop(); owner.stop() }
+        do {
+            _ = try await client.request(action: "focus.start", timeout: 0.1)
+            XCTFail("an owner that never drains the queue cannot acknowledge a command")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("did not answer"))
+        }
+    }
+}

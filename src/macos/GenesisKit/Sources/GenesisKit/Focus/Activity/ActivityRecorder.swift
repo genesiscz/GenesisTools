@@ -16,7 +16,7 @@ import Foundation
 @MainActor
 public final class ActivityRecorder: ObservableObject {
     /// What the desktop looks like right now, after the privacy policy has been applied.
-    public struct FocusSnapshot: Equatable {
+    public struct FocusSnapshot: Codable, Equatable {
         public var appBundle: String
         public var appName: String
         public var windowTitle: String?
@@ -47,12 +47,29 @@ public final class ActivityRecorder: ObservableObject {
     @Published public private(set) var currentMix: [AppShare] = []
 
     /// One app's share of the current phase.
-    public struct AppShare: Identifiable, Equatable {
+    public struct AppShare: Codable, Identifiable, Equatable {
         public let appName: String
         public let bundleId: String?
         public let ms: Int64
         public let share: Double
         public var id: String { appName }
+    }
+
+    var remoteCommand: ((String, Data) -> Void)?
+
+    var liveSnapshot: FocusRecorderSnapshot {
+        FocusRecorderSnapshot(isCapturing: isCapturing, isIdle: isIdle, current: current,
+                              pausedUntil: pausedUntil, inputHistory: inputHistory, currentMix: currentMix)
+    }
+
+    func applyRemote(_ snapshot: FocusRecorderSnapshot) {
+        guard remoteCommand != nil else { return }
+        if isCapturing != snapshot.isCapturing { isCapturing = snapshot.isCapturing }
+        if isIdle != snapshot.isIdle { isIdle = snapshot.isIdle }
+        if current != snapshot.current { current = snapshot.current }
+        if pausedUntil != snapshot.pausedUntil { pausedUntil = snapshot.pausedUntil }
+        if inputHistory != snapshot.inputHistory { inputHistory = snapshot.inputHistory }
+        if currentMix != snapshot.currentMix { currentMix = snapshot.currentMix }
     }
 
     private let store: ActivityStore
@@ -98,6 +115,7 @@ public final class ActivityRecorder: ObservableObject {
     /// measured, and the ledger says so rather than leaving a hole the views would have to
     /// guess about.
     public func closeDowntime(launchedAt: Date = Date()) {
+        guard remoteCommand == nil else { return }
         let launch = Int64(launchedAt.timeIntervalSince1970 * 1000)
         // An unclean exit can leave a segment with no end at all; finish it where it was.
         for segment in (try? store.openSegments()) ?? [] {
@@ -113,6 +131,7 @@ public final class ActivityRecorder: ObservableObject {
     }
 
     public func start() {
+        guard remoteCommand == nil else { return }
         guard !isCapturing, settings.captureEnabled else { return }
         isCapturing = true
         closeOpenGap()
@@ -132,6 +151,7 @@ public final class ActivityRecorder: ObservableObject {
     /// Ends the record cleanly on quit. Synchronous on the main queue on purpose: a nested Task
     /// may not run before the process exits (the same trap FocusOrchestrator documents).
     public func installTerminateHook() {
+        guard remoteCommand == nil else { return }
         guard terminateObserver == nil else { return }
         terminateObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
@@ -151,6 +171,10 @@ public final class ActivityRecorder: ObservableObject {
     }
 
     public func stop() {
+        if remoteCommand != nil {
+            isCapturing = false
+            return
+        }
         guard isCapturing else { return }
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         pollTimer?.invalidate()
@@ -165,6 +189,7 @@ public final class ActivityRecorder: ObservableObject {
     }
 
     public func apply(settings newValue: FocusSettings) {
+        if remoteCommand != nil { settings = newValue; return }
         let wasEnabled = settings.captureEnabled
         settings = newValue
         if !newValue.captureEnabled, isCapturing {
@@ -177,6 +202,11 @@ public final class ActivityRecorder: ObservableObject {
     /// Pauses capture for a while. The current segment closes immediately — a paused recorder
     /// must never leave a segment open that later looks like hours of focus.
     public func pauseCapture(until date: Date) {
+        if let remoteCommand {
+            do { remoteCommand("focus.capture.pause", try JSONEncoder().encode(date)) }
+            catch { FlowFocusLog.focus.error("capture pause encoding failed: \(error.localizedDescription)") }
+            return
+        }
         pausedUntil = date
         // Stop first: its final flush is written against the segment that is still open.
         counter.stop()
@@ -193,6 +223,7 @@ public final class ActivityRecorder: ObservableObject {
     }
 
     public func resumeCapture() {
+        if let remoteCommand { remoteCommand("focus.capture.resume", Data()); return }
         pausedUntil = nil
         closeOpenGap()
         guard isCapturing else { return }
@@ -204,6 +235,7 @@ public final class ActivityRecorder: ObservableObject {
     /// the gap the pause opened is closed; left open, it would read as "not measured" up to
     /// now while capture was in fact running, and block the next pause from recording its own.
     public func resumeIfPauseExpired(now: Date = Date()) -> Bool {
+        if remoteCommand != nil { return pausedUntil.map { now >= $0 } ?? true }
         guard let until = pausedUntil else { return true }
         if now < until { return false }
         pausedUntil = nil
@@ -221,6 +253,7 @@ public final class ActivityRecorder: ObservableObject {
     /// The pomodoro engine calls this on every phase boundary: the current segment is split so
     /// no segment ever straddles two sessions.
     public func attach(sessionId newValue: Int64?) {
+        guard remoteCommand == nil else { return }
         let now = nowMs()
         let snapshot = current
         closeCurrentSegment(at: now)

@@ -36,16 +36,24 @@ public final class FocusController: ObservableObject {
     private var flowAnchorBundle: String?
     private var cancellables: Set<AnyCancellable> = []
 
-    private init() {}
+    public init() {}
+
+    var ownsRuntime = false
+    var configuration = FlowFocusConfiguration.shared
+    var orchestrator = FocusOrchestrator.shared
+    var remoteCommand: ((String, Data) -> Void)?
+    private var presentsWindows = true
 
     // MARK: - Lifecycle
 
     /// Called once at startup. A failure here disables the feature and says why; it never takes
     /// the app down, because a ledger is not worth a launch failure.
-    public func start(appConfig: [String: Any]) {
-        guard store == nil else { return }
+    public func start(appConfig: [String: Any], databasePath: String = ActivityStore.defaultPath,
+                      liveServices: Bool = true, presentsWindows: Bool = true) {
+        guard ownsRuntime, store == nil else { return }
+        self.presentsWindows = presentsWindows
         do {
-            let store = try ActivityStore()
+            let store = try PerfLog.span("focus.store.open") { try ActivityStore(path: databasePath) }
             let settings = FocusSettings.from(appConfig: appConfig)
             self.settings = settings
             let plan = PomodoroPlan.from(appConfig: appConfig)
@@ -56,16 +64,16 @@ public final class FocusController: ObservableObject {
                 recorder?.attach(sessionId: sessionId)
                 // Starting a phase shows the timer, wherever the start came from: the HUD, the
                 // menu bar, a keyboard shortcut or `genesis focus start`.
-                if sessionId != nil { self?.hud?.show() }
+                if sessionId != nil, self?.presentsWindows == true { self?.hud?.show() }
             }
             // Spec 17 already solved snapshot-and-restore; the pomodoro just has its own
             // reason string and its own gate (plan.dndWhileFlowing), not the voice toggle.
-            engine.beginDND = {
-                do { _ = try FocusOrchestrator.shared.beginSession(reason: "genesis-focus-flow") }
+            engine.beginDND = { [weak self] in
+                do { _ = try self?.orchestrator.beginSession(reason: "genesis-focus-flow") }
                 catch { FlowFocusLog.focus.warning("focus DND begin failed: \(error.localizedDescription)") }
             }
-            engine.endDND = {
-                do { _ = try FocusOrchestrator.shared.endSession() }
+            engine.endDND = { [weak self] in
+                do { _ = try self?.orchestrator.endSession() }
                 catch { FlowFocusLog.focus.warning("focus DND end failed: \(error.localizedDescription)") }
             }
 
@@ -78,29 +86,13 @@ public final class FocusController: ObservableObject {
             studioModel.onOpenSession = { [weak self] id in self?.openSession(id) }
             self.studioModel = studioModel
 
-            let flash = self.flash
-            hud = FocusHUDWindowController { [weak self] in
-                AnyView(FocusHUDView(
-                    engine: engine,
-                    recorder: recorder,
-                    onOpenStudio: { self?.openStudio() },
-                    onOpenSettings: { FlowFocusHost.shared.openSettings() },
-                    onToggleStyle: { self?.hud?.toggleStyle() },
-                    // The panel refuses key status; naming a tag needs it back for as long as
-                    // the field is open, and not one moment longer.
-                    onBeginEditing: { self?.hud?.beginTextEditing() },
-                    onEndEditing: { self?.hud?.endTextEditing() },
-                    recentTags: self?.recentTags() ?? [],
-                    style: self?.hud?.style ?? FocusHUDWindowController.savedStyle,
-                    flash: flash,
-                    onPlanChange: { self?.updatePlan($0) }))
-            }
+            hud = makeHUD(engine: engine, recorder: recorder)
             let statusItem = FocusStatusItem(
                 engine: engine, recorder: recorder, store: store,
                 onOpenStudio: { [weak self] in self?.openStudio() },
                 onToggleHUD: { [weak self] in self?.toggleHUD() })
             statusItem.isHUDVisible = { [weak self] in self?.hud?.isVisible ?? false }
-            statusItem.install(style: settings.menuBarStyle)
+            if presentsWindows { statusItem.install(style: settings.menuBarStyle) }
             self.statusItem = statusItem
 
             // Every moment worth a look blinks the HUD: a phase boundary, an idle pause, the
@@ -114,36 +106,107 @@ public final class FocusController: ObservableObject {
                 FocusChime.nudge()
                 self?.callAttention(bringForward: true)
             }
-            idleWatch.start()
+            if liveServices { idleWatch.start() }
             self.idleWatch = idleWatch
 
             // Order matters: the downtime gap is measured from what is already on disk, so it
             // must be written before the recorder opens today's first segment.
             recorder.closeDowntime()
             recorder.installTerminateHook()
-            if settings.captureEnabled { recorder.start() }
+            if liveServices && settings.captureEnabled { recorder.start() }
             engine.resumeOpenSessionIfAny()
             observeFocusForInterruptions()
             startIntentTimer()
             // The timer window comes back exactly as it was left: visible if it was visible,
             // and visible anyway while a phase is running, because a running timer you cannot
             // see is the thing this window exists to prevent.
-            if FocusHUDWindowController.wasVisible || engine.state != .idle { hud?.show() }
+            if presentsWindows && (FocusHUDWindowController.wasVisible || engine.state != .idle) { hud?.show() }
         } catch {
             available = false
             lastError = String(describing: error)
         }
     }
 
-    public func stop() {
+    public func stop(preservingSession: Bool = false) {
         intentTimer?.invalidate()
         intentTimer = nil
         hud?.hide()
         idleWatch?.stop()
         statusItem?.remove()
         recorder?.stop()
-        engine?.stop()
+        if preservingSession || remoteCommand != nil { engine?.suspendForHandoff() }
+        else { engine?.stop() }
+        cancellables.removeAll()
+        studio?.close()
+        for window in sessionWindows.values { window.close() }
+        sessionWindows.removeAll()
+        studio = nil
+        hud = nil
+        statusItem = nil
+        idleWatch = nil
+        engine = nil
+        recorder = nil
+        store = nil
+        studioModel = nil
+        available = false
+        ownsRuntime = false
+        remoteCommand = nil
     }
+
+    private func makeHUD(engine: PomodoroEngine, recorder: ActivityRecorder) -> FocusHUDWindowController {
+        let flash = self.flash
+        return FocusHUDWindowController { [weak self] in
+            AnyView(FocusHUDView(
+                engine: engine,
+                recorder: recorder,
+                onOpenStudio: { self?.openStudio() },
+                onOpenSettings: { FlowFocusHost.shared.openSettings() },
+                onToggleStyle: { self?.hud?.toggleStyle() },
+                // The panel refuses key status; naming a tag needs it back for as long as
+                // the field is open, and not one moment longer.
+                onBeginEditing: { self?.hud?.beginTextEditing() },
+                onEndEditing: { self?.hud?.endTextEditing() },
+                recentTags: self?.recentTags() ?? [],
+                style: self?.hud?.style ?? FocusHUDWindowController.savedStyle,
+                flash: flash,
+                onPlanChange: { self?.updatePlan($0) }))
+        }
+    }
+
+    func attachClient(databasePath: String, command: @escaping (String, Data) -> Void) throws {
+        guard store == nil else { return }
+        remoteCommand = command
+        let store = try ActivityStore(path: databasePath, readOnly: true)
+        let settings = FocusSettings.from(appConfig: configuration.app)
+        let engine = PomodoroEngine(store: store, plan: PomodoroPlan.from(appConfig: configuration.app))
+        let recorder = ActivityRecorder(store: store, settings: settings)
+        engine.remoteCommand = command
+        recorder.remoteCommand = command
+        self.settings = settings
+        self.store = store
+        self.engine = engine
+        self.recorder = recorder
+        let model = FocusStudioModel(store: store)
+        model.onOpenSession = { [weak self] in self?.openSession($0) }
+        studioModel = model
+        hud = makeHUD(engine: engine, recorder: recorder)
+        available = true
+    }
+
+    var liveSnapshot: FocusLiveSnapshot {
+        FocusLiveSnapshot(available: available, lastError: lastError,
+                          engine: engine?.liveSnapshot, recorder: recorder?.liveSnapshot)
+    }
+
+    func applyRemote(_ snapshot: FocusLiveSnapshot) {
+        guard remoteCommand != nil else { return }
+        if available != snapshot.available { available = snapshot.available }
+        if lastError != snapshot.lastError { lastError = snapshot.lastError }
+        if let state = snapshot.engine { engine?.applyRemote(state) }
+        if let state = snapshot.recorder { recorder?.applyRemote(state) }
+    }
+
+    func reportFailure(_ message: String) { lastError = message }
 
     // MARK: - Surfaces
 
@@ -171,8 +234,8 @@ public final class FocusController: ObservableObject {
 
     /// Saves a plan edited from the HUD menu and applies it: the same path Settings uses.
     public func updatePlan(_ plan: PomodoroPlan) {
-        FlowFocusConfiguration.shared.updateFocus(settings: settings, plan: plan)
-        apply(appConfig: FlowFocusConfiguration.shared.app)
+        configuration.updateFocus(settings: settings, plan: plan)
+        apply(appConfig: configuration.app)
     }
 
     public func openStudio() {
@@ -274,6 +337,7 @@ public final class FocusController: ObservableObject {
     }
 
     public func drainIntents() {
+        guard ownsRuntime else { return }
         guard let store, let engine else { return }
         guard let intents = try? store.takeIntents(), !intents.isEmpty else { return }
         for intent in intents {
