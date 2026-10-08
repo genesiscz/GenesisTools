@@ -17,6 +17,9 @@ tools grok status --name fix-auth                    # one session; omit --name 
 tools grok stop --name fix-auth                      # kill the running turn (alias: interrupt)
 tools grok sessions [--json]
 tools grok who [--json]                              # live grok processes and the account each one bills
+tools grok wait <id|title> [--timeout S] [--next] [--json]   # TUI session: block until its turn ends (exit 0/3 stalled/124 timeout)
+tools grok cmux send <session> "<text>"              # type into the TUI pane and press Enter (--no-enter to leave it unsubmitted)
+tools grok cmux focus <session>
 
 tools grok login [name]                      # browser OIDC login (PKCE) stored in the vault, no Grok CLI needed
 tools grok login [name] --home ~/.grok       # the same login written into that GROK_HOME's auth.json instead

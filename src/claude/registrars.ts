@@ -50,6 +50,14 @@ export const CLAUDE_REGISTRARS: LazyRegistrar[] = [
     { names: ["proxy"], load: async () => (await import("./commands/run")).registerRunCommand },
     { names: ["teams"], load: async () => (await import("./commands/teams")).registerTeamsCommand },
     { names: ["cmux"], load: async () => (await import("./commands/cmux")).registerCmuxCommand },
+    {
+        names: ["wait"],
+        load: async () => {
+            const register = (await import("@app/ai/commands/agent/wait")).registerAgentWaitCommand;
+
+            return (program: Command) => register(program, "claude");
+        },
+    },
     { names: ["decide"], load: async () => (await import("./commands/decide")).registerDecideCommand },
     { names: ["who", "active"], load: async () => (await import("./commands/who")).registerWhoCommand },
     { names: ["worker"], load: async () => (await import("./commands/worker")).registerWorkerCommand },

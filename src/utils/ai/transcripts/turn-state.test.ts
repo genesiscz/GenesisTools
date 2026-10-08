@@ -1,0 +1,237 @@
+import { describe, expect, it } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { claudeTurnState, codexTurnState, grokTurnState, readTurnState, type TurnStateInput } from "./turn-state";
+
+const T0 = Date.parse("2026-10-08T12:00:00.000Z");
+const iso = (offsetSec: number): string => new Date(T0 + offsetSec * 1000).toISOString();
+
+function input(records: Record<string, unknown>[], nowOffsetSec: number, stallSec = 900): TurnStateInput {
+    return { records, lastModified: T0, now: T0 + nowOffsetSec * 1000, stallTimeoutMs: stallSec * 1000 };
+}
+
+function claudeUser(sec: number, content: unknown = "do it"): Record<string, unknown> {
+    return { type: "user", timestamp: iso(sec), message: { role: "user", content } };
+}
+
+function claudeAssistant(
+    sec: number,
+    blocks: unknown[],
+    stopReason: string | null,
+    id = "msg_1"
+): Record<string, unknown> {
+    return {
+        type: "assistant",
+        timestamp: iso(sec),
+        message: { id, role: "assistant", content: blocks, stop_reason: stopReason },
+    };
+}
+
+describe("claudeTurnState", () => {
+    it("is RUNNING while the last record is a tool call", () => {
+        const snap = claudeTurnState(
+            input([claudeUser(0), claudeAssistant(5, [{ type: "tool_use", name: "Bash", input: {} }], "tool_use")], 10)
+        );
+
+        expect(snap.state).toBe("RUNNING");
+    });
+
+    it("ends the turn on end_turn and returns the whole last message across its records", () => {
+        const snap = claudeTurnState(
+            input(
+                [
+                    claudeUser(0),
+                    claudeAssistant(5, [{ type: "text", text: "first part" }], null, "msg_2"),
+                    claudeAssistant(6, [{ type: "text", text: "second part" }], "end_turn", "msg_2"),
+                    { type: "system", timestamp: iso(7), subtype: "bookkeeping" },
+                ],
+                30
+            )
+        );
+
+        expect(snap.state).toBe("AWAITING-INPUT");
+        expect(snap.lastText).toBe("first part\nsecond part");
+        expect(snap.asksQuestion).toBe(false);
+        expect(snap.lastEventAt).toBe(T0 + 6000);
+    });
+
+    it("keeps an earlier message out of the last message text", () => {
+        const snap = claudeTurnState(
+            input(
+                [
+                    claudeUser(0),
+                    claudeAssistant(2, [{ type: "text", text: "old narration" }], "tool_use", "msg_a"),
+                    claudeUser(3, [{ type: "tool_result", content: "ok" }]),
+                    claudeAssistant(5, [{ type: "text", text: "the answer" }], "end_turn", "msg_b"),
+                ],
+                30
+            )
+        );
+
+        expect(snap.lastText).toBe("the answer");
+    });
+
+    it("flags a turn that ended on AskUserQuestion", () => {
+        const snap = claudeTurnState(
+            input(
+                [
+                    claudeUser(0),
+                    claudeAssistant(
+                        5,
+                        [
+                            { type: "text", text: "Which one?" },
+                            { type: "tool_use", name: "AskUserQuestion", input: { questions: [] } },
+                        ],
+                        "tool_use"
+                    ),
+                ],
+                30
+            )
+        );
+
+        expect(snap.state).toBe("AWAITING-INPUT");
+        expect(snap.asksQuestion).toBe(true);
+        expect(snap.lastText).toBe("Which one?");
+    });
+
+    it("reports STALLED after the silence limit, but never for a finished turn", () => {
+        const running = [
+            claudeUser(0),
+            claudeAssistant(5, [{ type: "tool_use", name: "Bash", input: {} }], "tool_use"),
+        ];
+        const finished = [claudeUser(0), claudeAssistant(5, [{ type: "text", text: "done" }], "end_turn")];
+
+        expect(claudeTurnState(input(running, 2000)).state).toBe("STALLED");
+        expect(claudeTurnState(input(finished, 2000)).state).toBe("AWAITING-INPUT");
+    });
+
+    it("ends the turn when the user pressed Esc, also mid tool call, and never calls it a stall", () => {
+        const interrupt = (text: string) => claudeUser(9, [{ type: "text", text }]);
+        const running = [
+            claudeUser(0),
+            claudeAssistant(5, [{ type: "tool_use", name: "Bash", input: {} }], "tool_use"),
+        ];
+        const plain = claudeTurnState(input([...running, interrupt("[Request interrupted by user]")], 2000));
+        const tool = claudeTurnState(input([...running, interrupt("[Request interrupted by user for tool use]")], 30));
+
+        expect(plain.state).toBe("AWAITING-INPUT");
+        expect(plain.interrupted).toBe(true);
+        expect(tool.state).toBe("AWAITING-INPUT");
+        expect(tool.lastEventAt).toBe(T0 + 9000);
+    });
+
+    it("does not call an ordinary prompt an interrupt", () => {
+        const snap = claudeTurnState(input([claudeUser(0, "please [Request interrupted by user] quote")], 10));
+
+        expect(snap.state).toBe("RUNNING");
+        expect(snap.interrupted).toBe(false);
+    });
+
+    it("never stalls when the limit is infinite", () => {
+        const running = [
+            claudeUser(0),
+            claudeAssistant(5, [{ type: "tool_use", name: "Bash", input: {} }], "tool_use"),
+        ];
+        const snap = claudeTurnState({ ...input(running, 100000), stallTimeoutMs: Number.POSITIVE_INFINITY });
+
+        expect(snap.state).toBe("RUNNING");
+    });
+});
+
+function grokLine(sec: number, sessionUpdate: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+    const seconds = Math.floor(T0 / 1000) + sec;
+
+    return { timestamp: seconds, method: "_x.ai/session/update", params: { update: { sessionUpdate, ...extra } } };
+}
+
+describe("grokTurnState", () => {
+    it("is RUNNING while tool calls arrive and ignores hook records", () => {
+        const snap = grokTurnState(
+            input(
+                [
+                    grokLine(0, "user_message_chunk", { content: { type: "text", text: "go" } }),
+                    grokLine(2, "tool_call"),
+                    grokLine(3, "hook_execution"),
+                ],
+                10
+            )
+        );
+
+        expect(snap.state).toBe("RUNNING");
+        expect(snap.lastEventAt).toBe(T0 + 2000);
+    });
+
+    it("ends the turn on turn_completed and joins the message chunks after the last tool call", () => {
+        const snap = grokTurnState(
+            input(
+                [
+                    grokLine(0, "user_message_chunk", { content: { type: "text", text: "go" } }),
+                    grokLine(1, "agent_message_chunk", { content: { type: "text", text: "narration" } }),
+                    grokLine(2, "tool_call"),
+                    grokLine(3, "agent_message_chunk", { content: { type: "text", text: "All " } }),
+                    grokLine(4, "agent_message_chunk", { content: { type: "text", text: "done." } }),
+                    grokLine(5, "turn_completed", { stop_reason: "end_turn" }),
+                    grokLine(5, "hook_execution"),
+                ],
+                60
+            )
+        );
+
+        expect(snap.state).toBe("AWAITING-INPUT");
+        expect(snap.lastText).toBe("All done.");
+        expect(snap.lastEventAt).toBe(T0 + 5000);
+    });
+});
+
+function codexLine(sec: number, type: string, payload: Record<string, unknown>): Record<string, unknown> {
+    return { timestamp: iso(sec), type, payload };
+}
+
+describe("codexTurnState", () => {
+    it("is RUNNING after task_started and AWAITING-INPUT after task_complete, with its last message", () => {
+        const running = codexTurnState(
+            input(
+                [
+                    codexLine(0, "event_msg", { type: "task_started" }),
+                    codexLine(2, "response_item", { type: "reasoning" }),
+                ],
+                5
+            )
+        );
+        const finished = codexTurnState(
+            input(
+                [
+                    codexLine(0, "event_msg", { type: "task_started" }),
+                    codexLine(4, "event_msg", { type: "task_complete", last_agent_message: "Shipped." }),
+                    codexLine(4, "event_msg", { type: "token_count" }),
+                ],
+                60
+            )
+        );
+
+        expect(running.state).toBe("RUNNING");
+        expect(finished.state).toBe("AWAITING-INPUT");
+        expect(finished.lastText).toBe("Shipped.");
+        expect(finished.lastEventAt).toBe(T0 + 4000);
+    });
+});
+
+describe("readTurnState", () => {
+    it("reads a real file's tail, and returns null for an empty or missing one", () => {
+        const dir = mkdtempSync(join(tmpdir(), "turn-state-"));
+        const file = join(dir, "s.jsonl");
+        const lines = [claudeUser(0), claudeAssistant(5, [{ type: "text", text: "hi" }], "end_turn")];
+        writeFileSync(file, `${lines.map((line) => SafeJSON.stringify(line)).join("\n")}\n`);
+        const empty = join(dir, "empty.jsonl");
+        writeFileSync(empty, "");
+
+        const snap = readTurnState("claude", file, { stallTimeoutMs: 900_000 });
+
+        expect(snap?.state).toBe("AWAITING-INPUT");
+        expect(snap?.lastText).toBe("hi");
+        expect(readTurnState("claude", empty, { stallTimeoutMs: 900_000 })).toBeNull();
+        expect(readTurnState("claude", join(dir, "missing.jsonl"), { stallTimeoutMs: 900_000 })).toBeNull();
+    });
+});

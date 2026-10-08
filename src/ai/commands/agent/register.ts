@@ -1,11 +1,13 @@
 import { registerAccountLoginCommand } from "@app/ai/commands/accounts/login";
 import { registerWarmupCommand } from "@app/ai/commands/warmup";
 import { registerAgentHistoryCommand } from "@genesiscz/utils/agent-sessions/history-cli";
+import { isTurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
 import type { Command } from "commander";
 import { registerProviderUsageCommand } from "../usage/provider-usage";
 import { registerAgentCmuxCommand } from "./cmux";
 import { registerAgentResumeCommand, registerAgentRunCommand } from "./run";
 import { type AgentToolSpec, type SharedVerb, toolName } from "./spec";
+import { registerAgentWaitCommand } from "./wait";
 import { registerAgentWhoCommand } from "./who";
 import { registerWorkerVerbs } from "./worker";
 
@@ -56,6 +58,12 @@ export function registerAgentTool(program: Command, spec: AgentToolSpec): void {
 
     shared("cmux", () => {
         registerAgentCmuxCommand(program, spec);
+    });
+
+    shared("wait", () => {
+        if (isTurnProvider(spec.alias)) {
+            registerAgentWaitCommand(program, spec.alias);
+        }
     });
 
     shared("who", () => {

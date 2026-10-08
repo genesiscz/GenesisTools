@@ -16,6 +16,7 @@ tools agents login --agent-name lead --agent-main              # auto-registers 
 tools agents login --agent-name researcher                     # auto-registers + attaches (stream mode)
 tools agents login --agent-id agt_xxx --agent-name X            # attach with a chosen id
 tools agents login --agent-name X --once                       # drain queued batch, or block for mail
+tools agents login --agent-name X --once --timeout 300         # same, but give up after 300 s: {"type":"timeout"}, exit 124
 tools agents login --agent-name lead --kinds message,error     # receiver-side verbosity filter
 tools agents login --agent-name lead --filter '.op=="approval_request"'
 tools agents message --from X --to Y --body '...'

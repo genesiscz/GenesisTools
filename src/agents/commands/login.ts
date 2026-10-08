@@ -37,6 +37,7 @@ interface LoginOpts {
     meta?: string;
     debug?: boolean;
     once?: boolean;
+    timeout?: string;
     session?: string;
     observer?: boolean;
     format?: "pretty" | "json";
@@ -324,7 +325,9 @@ async function drainPending(active: ActiveLogin): Promise<number> {
     return emitted;
 }
 
-async function watchUntilDeadline(active: ActiveLogin, deadlineAt: number, exitOnFirst: boolean): Promise<void> {
+async function watchUntilDeadline(active: ActiveLogin, deadlineAt: number, exitOnFirst: boolean): Promise<boolean> {
+    let emittedAny = false;
+
     await watchFileFeed({
         path: active.paths.feedPath,
         deadlineAt,
@@ -335,6 +338,7 @@ async function watchUntilDeadline(active: ActiveLogin, deadlineAt: number, exitO
             const emitted = await drainPending(active);
 
             if (emitted > 0) {
+                emittedAny = true;
                 log.debug({ before, after: active.cursorSeq }, "drained while watching");
 
                 if (exitOnFirst) {
@@ -343,6 +347,35 @@ async function watchUntilDeadline(active: ActiveLogin, deadlineAt: number, exitO
             }
         },
     });
+
+    return emittedAny;
+}
+
+/** Exit status of a `--once --timeout` that expired with an empty mailbox. 124 is what coreutils `timeout` uses. */
+export const LOGIN_TIMEOUT_EXIT = 124;
+
+function parseTimeoutSeconds(opts: LoginOpts): number | undefined {
+    if (opts.timeout === undefined) {
+        return undefined;
+    }
+
+    if (!opts.once) {
+        throw new FriendlyError(
+            "--timeout only applies to --once",
+            "Add --once, or bound a stream with your own timeout."
+        );
+    }
+
+    const seconds = Number(opts.timeout.trim());
+
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+        throw new FriendlyError(
+            `--timeout must be a positive number of seconds (got ${opts.timeout})`,
+            "Example: --timeout 300"
+        );
+    }
+
+    return seconds;
 }
 
 async function emitLoggedIn({
@@ -400,6 +433,7 @@ function emitResumeHint(record: AgentRecord, mode: "stream" | "once"): void {
 }
 
 async function runLoginImpl(opts: LoginOpts): Promise<void> {
+    const timeoutSeconds = parseTimeoutSeconds(opts);
     const resolved = resolveSession(opts.session);
 
     if (resolved.note) {
@@ -505,8 +539,20 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
                         "mailbox empty — waiting for the first message (stderr silenced for monitor)"
                     );
                 }
-                const deadline = Date.now() + LISTEN_CAP_MS;
-                await watchUntilDeadline(active, deadline, true);
+                const startedAt = Date.now();
+                const deadline =
+                    startedAt + Math.min(LISTEN_CAP_MS, (timeoutSeconds ?? Number.POSITIVE_INFINITY) * 1000);
+                const received = await watchUntilDeadline(active, deadline, true);
+
+                if (!received && timeoutSeconds !== undefined) {
+                    process.exitCode = LOGIN_TIMEOUT_EXIT;
+                    await writeLoginJsonLine({
+                        type: "timeout",
+                        agent_name: record.agent_name,
+                        session: paths.session,
+                        waited_ms: Date.now() - startedAt,
+                    });
+                }
             }
         } else {
             const deadline = Date.now() + LISTEN_CAP_MS;
@@ -547,6 +593,10 @@ export function registerLoginCommand(program: Command): void {
         .option("--meta <json>", "Optional JSON object stored on the agent record")
         .option("--debug", "Enable session debug mode: lifecycle events visible to all agents on the feed")
         .option("--once", "Read pending and exit (or wait for first message, then exit)")
+        .option(
+            "--timeout <seconds>",
+            'With --once and an empty mailbox: give up after this long, print {"type":"timeout"} and exit 124'
+        )
         .option("--session <id>", "Override session resolution")
         .option("--observer", "Read-only: bypass per-agent visibility filter and see ALL events")
         .option("--format <fmt>", "pretty | json (default: json; observer in TTY → pretty)")

@@ -123,9 +123,19 @@ tools claude cmux open-session <id> --workspace workspace:1   # resume as a new 
 tools claude cmux send <id> "run the tests"   # type into the session's own pane
 tools claude cmux send <id> "/compact" --no-enter --dry-run
 tools claude cmux read <id> --lines 40       # print that pane's text
+tools claude wait <id|title> [--timeout S] [--next] [--stream] [--json]   # block until the turn ends
 ```
 
 `tree` (`--json` for machines) enumerates every cmux window and annotates each surface with
+`wait` reads the session's transcript, never the pane, and exits when the current turn ends: 0 when the
+session is back at its prompt (the final assistant message goes to stdout, a status line to stderr),
+3 when a running turn has written nothing for `--stall-timeout` seconds (default 900, `0` never),
+124 on `--timeout`, 1 when no session matches. An idle session returns at once; `--next` waits for the
+next turn instead. `--json` prints `{outcome, state, sessionId, lastText, asksQuestion, durationMs, ...}`;
+`asksQuestion` is true when the turn ended on `AskUserQuestion`. The same verb exists as
+`tools grok wait` and `tools codex wait`. `<session>` is an id (8+ characters), a transcript path or a
+`/rename` title (Grok: the session summary; Codex: the thread name).
+
 the Claude Code session it hosts, from the refs journal plus the `· 8hex` tab-title marker.
 `open-session` resumes one session at a chosen level: `--window` makes a new workspace,
 `--workspace` a new pane, `--workspace --pane` a new tab, `--workspace --surface` types the

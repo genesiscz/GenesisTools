@@ -179,3 +179,60 @@ describe("agents login stream (monitor contract)", () => {
         }
     }, 30_000);
 });
+describe("agents login --once --timeout", () => {
+    async function runOnce(home: string, args: string[]): Promise<{ code: number; lines: JsonLine[] }> {
+        const proc = spawnAgents(home, ["login", "--once", "--format", "json", ...args]);
+        const [code, text] = await Promise.all([proc.exited, new Response(proc.stdout).text()]);
+        const lines = text
+            .split("\n")
+            .filter((line) => line.startsWith("{"))
+            .map((line) => SafeJSON.parse(line, { strict: true }) as JsonLine);
+
+        return { code, lines };
+    }
+
+    test("an empty mailbox exits 124 with a timeout line; queued mail still exits 0 without one", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-login-timeout-"));
+        const session = `timeout-${Date.now()}`;
+
+        const sender = await runOnce(home, ["--agent-name", "alpha", "--session", session, "--timeout", "1"]);
+        expect(sender.code).toBe(124);
+
+        const empty = await runOnce(home, ["--agent-name", "beta", "--session", session, "--timeout", "1"]);
+        expect(empty.code).toBe(124);
+        expect(empty.lines.at(-1)).toMatchObject({ type: "timeout", agent_name: "beta", session });
+
+        const sent = spawnAgents(home, [
+            "message",
+            "--from",
+            "alpha",
+            "--to",
+            "beta",
+            "--body",
+            "queued",
+            "--session",
+            session,
+        ]);
+        expect(await sent.exited).toBe(0);
+
+        const queued = await runOnce(home, ["--agent-name", "beta", "--session", session, "--timeout", "30"]);
+        expect(queued.code).toBe(0);
+        expect(queued.lines.some((line) => line.type === "message" && line.body === "queued")).toBe(true);
+        expect(queued.lines.some((line) => line.type === "timeout")).toBe(false);
+    }, 30_000);
+
+    test("--timeout without --once is refused", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-login-timeout-"));
+        const proc = spawnAgents(home, [
+            "login",
+            "--agent-name",
+            "x",
+            "--session",
+            `refuse-${Date.now()}`,
+            "--timeout",
+            "1",
+        ]);
+
+        expect(await proc.exited).not.toBe(0);
+    }, 15_000);
+});
