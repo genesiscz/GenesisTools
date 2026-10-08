@@ -97,6 +97,13 @@ final class WorkflowArgumentsTests: XCTestCase {
         ], command: "act"))
     }
 
+    func testDragCanPinTheObservedHandleInALiveUpdatingWindow() {
+        let base = ["--app", "Fixture", "--snapshot", "token", "--element", "3", "--action", "drag",
+                    "--to", "200,300", "--duration", "1", "--revalidate-scope", "element"]
+        XCTAssertNoThrow(try WorkflowArguments(base + ["--target-key", String(repeating: "a", count: 64)], command: "act"))
+        XCTAssertThrowsError(try WorkflowArguments(base, command: "act"), "An unpinned index cannot bypass full-window validation")
+    }
+
     func testRevalidateScopeOffersOnlyTheScopesThatAreImplemented() {
         // `app` was accepted and behaved exactly like `window`: no app-wide check existed.
         let base = ["--app", "Fixture", "--snapshot", "token", "--element", "0", "--action", "press"]
