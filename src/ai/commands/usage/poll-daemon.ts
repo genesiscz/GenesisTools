@@ -9,6 +9,7 @@ import { pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";
 import { usagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/usage-poll/types";
 import { withTimeout } from "@genesiscz/utils/async";
+import { recordRunOnExit } from "@genesiscz/utils/cli/run-record";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 
@@ -200,6 +201,8 @@ function releaseTempHomesOnSignal(): void {
 
 if (import.meta.main) {
     releaseTempHomesOnSignal();
+    // One `[profile:cli]` line per tick (CPU, memory, wall): the tick runs every minute in a new process.
+    recordRunOnExit("ai usage poll-daemon");
 
     try {
         await main();

@@ -13,6 +13,7 @@ export {
 } from "./executor";
 export { isQuietOutput } from "./output-mode";
 export { commandWords, parseNonNegativeInt } from "./parse";
+export { recordRunOnExit } from "./run-record";
 export { printLn, writeStdout } from "./stdout";
 export { toolCommand } from "./tool-command";
 export type { CollectedOutput, RunToolOptions } from "./tools";
