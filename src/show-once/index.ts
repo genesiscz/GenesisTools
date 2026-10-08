@@ -179,6 +179,7 @@ program
                         targetId: options.target,
                         downloadDirectory: resolve(options.downloads),
                         destinationDirectory: resolve(options.destination),
+                        maxSeconds: seconds + 60,
                     },
                     signal
                 );
@@ -200,6 +201,8 @@ program
                 });
                 signal.throwIfAborted();
                 const result = await service.dispatch({ op: "record-stop", title: options.title });
+                signal.throwIfAborted();
+
                 if (!result || typeof result !== "object" || !("recipe" in result)) {
                     throw new Error("Recorder returned no recipe.");
                 }

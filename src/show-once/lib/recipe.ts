@@ -190,16 +190,17 @@ export function parseRecipe(input: unknown): Recipe {
     return recipeSchema.parse(input);
 }
 export function expand(value: string, inputs: Record<string, string>): string {
-    const result = value.replace(/\{\{([a-z][a-zA-Z0-9_]{0,63})\}\}/g, (_match, key: string) => {
+    const reference = /\{\{([a-z][a-zA-Z0-9_]{0,63})\}\}/g;
+    if (/\{\{|\}\}/.test(value.replace(reference, ""))) {
+        throw new Error("Malformed or unresolved parameter reference.");
+    }
+
+    return value.replace(reference, (_match, key: string) => {
         if (!Object.hasOwn(inputs, key)) {
             throw new Error(`Missing input: ${key}`);
         }
         return inputs[key];
     });
-    if (/\{\{|\}\}/.test(result)) {
-        throw new Error("Malformed or unresolved parameter reference.");
-    }
-    return result;
 }
 export function safeUrl(value: string): URL {
     const url = new URL(value);

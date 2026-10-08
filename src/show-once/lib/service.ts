@@ -14,7 +14,7 @@ import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 import { type BrowserSession, connectSession } from "./browser";
 import { fileEvidence } from "./files";
-import { downloadOrigin, parseRecipe, type Recipe, type Step } from "./recipe";
+import { downloadOrigin, parseRecipe, type Recipe, type Step, safeUrl } from "./recipe";
 import { type RunEvent, runReceiptSchema, runRecipe } from "./runner";
 
 const commonRecord = {
@@ -32,7 +32,13 @@ export const commandSchema = z.discriminatedUnion("op", [
         .object({ op: z.literal("open-browser"), browserId: z.string().min(1), url: z.string().url().optional() })
         .strict(),
     z.object({ op: z.literal("tabs"), port: commonRecord.port.optional() }).strict(),
-    z.object({ op: z.literal("record-start"), ...commonRecord }).strict(),
+    z
+        .object({
+            op: z.literal("record-start"),
+            ...commonRecord,
+            maxSeconds: z.number().int().min(1).max(360).optional(),
+        })
+        .strict(),
     z.object({ op: z.literal("record-stop"), title: z.string().min(1).max(300) }).strict(),
     z
         .object({
@@ -77,6 +83,7 @@ export function recipeFromRecording(options: {
 }): Recipe {
     const snapshot = options.snapshot;
     const downloadOrigins = new Set<string>();
+    const initialOrigin = safeUrl(snapshot.initialUrl).origin;
     let url = snapshot.initialUrl;
     const evidence = (eventId: string, at: number, detail: string) => ({ eventId, at, url, detail });
     const steps: Step[] = [
@@ -96,6 +103,21 @@ export function recipeFromRecording(options: {
         }
         if (action.kind === "navigate" && action.url) {
             url = action.url;
+            try {
+                safeUrl(url);
+            } catch (error) {
+                logger.debug({ error }, "Recording contains an unsupported navigation URL");
+                steps.push({
+                    id: action.id,
+                    title: "Unsupported navigation",
+                    enabled: true,
+                    kind: "unsupported",
+                    reason: "This recorded navigation URL cannot be replayed. Repair this step explicitly.",
+                    evidence: evidence(action.id, action.at, "Observed unsupported main-frame navigation"),
+                });
+                continue;
+            }
+
             steps.push({
                 id: action.id,
                 title: "Navigate to recorded page",
@@ -118,6 +140,24 @@ export function recipeFromRecording(options: {
             continue;
         }
         url = action.sourceUrl ?? url;
+        try {
+            safeUrl(url);
+        } catch (error) {
+            logger.debug({ error }, "Recording contains an action on an unsupported page");
+            steps.push({
+                id: action.id,
+                title: "Unsupported page action",
+                enabled: true,
+                kind: "unsupported",
+                reason: "This action was observed on an unsupported page URL. Repair it explicitly.",
+                evidence: {
+                    ...evidence(action.id, action.at, "Browser event on an unsupported page"),
+                    recordedValue: action.value,
+                    recordedLocator: action.locator,
+                },
+            });
+            continue;
+        }
         const base = {
             id: action.id,
             title: `${action.kind} ${action.locator.name ?? action.locator.value}`,
@@ -139,8 +179,22 @@ export function recipeFromRecording(options: {
                   )
                 : undefined;
         if (download) {
-            downloadOrigins.add(downloadOrigin(download.url));
             used.add(download.filename);
+            try {
+                downloadOrigins.add(downloadOrigin(download.url));
+            } catch (error) {
+                logger.debug({ error }, "Recording contains an unsupported download origin");
+                steps.push({
+                    id: action.id,
+                    title: "Unsupported download",
+                    enabled: true,
+                    kind: "unsupported",
+                    reason: "This download has no supported replay origin. Repair it explicitly.",
+                    evidence: { ...base.evidence, recordedFilename: download.filename, sha256: download.sha256 },
+                });
+                continue;
+            }
+
             steps.push({
                 ...base,
                 title: "Download report",
@@ -226,7 +280,8 @@ export function recipeFromRecording(options: {
         createdAt: new Date().toISOString(),
         allowedOrigins: [
             ...new Set([
-                ...steps.flatMap((step) => (step.kind === "navigate" ? [new URL(step.url).origin] : [])),
+                initialOrigin,
+                ...steps.flatMap((step) => (step.kind === "navigate" ? [safeUrl(step.url).origin] : [])),
                 ...downloadOrigins,
             ]),
         ],
@@ -391,14 +446,15 @@ export class ShowOnceService {
                     signal: controller.signal,
                 });
                 browser.onDownload = (download) => this.onEvent({ type: "download", download });
-                const recordingDeadline = Date.now() + 300000;
+                const recordingSeconds = command.maxSeconds ?? 300;
                 recorder = await startActionRecording({
                     port: command.port,
                     targetId: command.targetId,
                     signal: controller.signal,
-                    maxSeconds: 300,
+                    maxSeconds: recordingSeconds,
                     onUpdate: (snapshot) => this.onEvent({ type: "recording", snapshot }),
                 });
+                const recordingDeadline = Date.now() + recordingSeconds * 1000;
                 await browser.configureDownloads({ named: false, signal: controller.signal, recordingAdmitted: true });
                 controller.signal.throwIfAborted();
                 const state: RecordingState = { controller, recorder, browser, destinationDirectory, before };
@@ -567,7 +623,7 @@ export class ShowOnceService {
             this.starting = false;
             this.onEvent({
                 type: "recording-ended",
-                reason: "Recording reached its five-minute limit and was cancelled.",
+                reason: "Recording reached its time limit and was cancelled.",
             });
         }
     }

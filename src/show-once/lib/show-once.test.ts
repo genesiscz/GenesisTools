@@ -43,6 +43,11 @@ describe("portable recipe data", () => {
         expect(expand("{{customer}}-{{month}}.csv", { customer: "shop", month: "2026-10" })).toBe("shop-2026-10.csv");
         expect(expand("{{customer}}", { customer: "$(echo never-executed)" })).toBe("$(echo never-executed)");
         expect(() => expand("{{missing}}", {})).toThrow("Missing input");
+        for (const value of ["a}}b", "a{{b", "{{other}}", "{{customer}}", "$&$$"]) {
+            expect(expand("{{customer}}", { customer: value })).toBe(value);
+        }
+        expect(() => expand("{{bad-reference}}", {})).toThrow("Malformed");
+        expect(() => expand("{{customer}}}}", { customer: "shop" })).toThrow("Malformed");
     });
     test("rejects unknown executable fields and versions", () => {
         expect(() => parseRecipe({ ...sampleRecipe(), shell: "ignored?" })).toThrow();
@@ -663,6 +668,122 @@ test("recording expiry stops service state, releases routing, and notifies the n
     }
 });
 
+test("CLI recording duration leaves recorder and service deadline headroom", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "gt-show-once-test-")));
+    const destination = join(root, "destination");
+    await mkdir(destination);
+    const delays: number[] = [];
+    const original = globalThis.setTimeout;
+    const timer = spyOn(globalThis, "setTimeout").mockImplementation(
+        new Proxy(original, {
+            apply(fn, receiver, args: unknown[]) {
+                if (typeof args[1] === "number" && args[1] >= 299000) {
+                    delays.push(args[1]);
+                }
+                return Reflect.apply(fn, receiver, args);
+            },
+        })
+    );
+    const { server } = cdpFixture();
+    const service = new ShowOnceService();
+    try {
+        await service.dispatch({
+            op: "record-start",
+            port: server.port!,
+            targetId: "first",
+            downloadDirectory: root,
+            destinationDirectory: destination,
+            maxSeconds: 360,
+        });
+        expect(delays).toHaveLength(2);
+        expect(delays.every((delay) => delay > 300000)).toBe(true);
+        await service.dispatch({ op: "record-stop", title: "Full duration" });
+        expect(await service.dispatch({ op: "status" })).toMatchObject({ recording: false, starting: false });
+    } finally {
+        timer.mockRestore();
+        await service.close();
+        server.stop(true);
+    }
+});
+
+test("CLI saves normal stop output but never saves after cancellation during stop", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "gt-show-once-test-")));
+    for (const cancel of [false, true]) {
+        const file = join(root, `${cancel}.showonce.json`);
+        const preload = join(root, `${cancel}-preload.ts`);
+        await Bun.write(
+            preload,
+            `import {ShowOnceService} from ${SafeJSON.stringify(join(import.meta.dir, "service.ts"), { strict: true })};
+            const originalTimer = globalThis.setTimeout;
+            globalThis.setTimeout = new Proxy(originalTimer, {apply(fn, receiver, args) {
+                if(args[1] === 300000) args[1] = 0; return Reflect.apply(fn, receiver, args);
+            }});
+            ShowOnceService.prototype.dispatch = async function(command) {
+                if(command.op === 'record-start') {
+                    if(command.maxSeconds !== 360) throw Error('Missing CLI deadline headroom');
+                    return {recording:true};
+                }
+                if(command.op === 'record-stop') {
+                    if(${cancel}) process.emit('SIGINT');
+                    await Promise.resolve();
+                    return {recipe:{id:'fixture'}};
+                }
+                if(command.op === 'save') await Bun.write(command.file,'saved');
+                return {};
+            };`
+        );
+        const child = Bun.spawn(
+            [
+                process.execPath,
+                "--preload",
+                preload,
+                "src/show-once/index.ts",
+                "record",
+                "--port",
+                "1234",
+                "--target",
+                "first",
+                "--downloads",
+                root,
+                "--destination",
+                root,
+                "--out",
+                file,
+                "--seconds",
+                "300",
+            ],
+            { cwd: join(import.meta.dir, "../../.."), env: process.env, stdout: "pipe", stderr: "pipe" }
+        );
+        const output = new Response(child.stdout).text();
+        const errors = new Response(child.stderr).text();
+        let deadline: ReturnType<typeof setTimeout> | undefined;
+        try {
+            const exit = await Promise.race([
+                child.exited,
+                new Promise<never>((_resolve, reject) => {
+                    deadline = setTimeout(() => reject(new Error("Mock CLI did not stop")), 2000);
+                }),
+            ]);
+            clearTimeout(deadline);
+            expect(await errors).not.toContain("Missing CLI deadline headroom");
+            expect(await Bun.file(file).exists()).toBe(!cancel);
+            if (cancel) {
+                expect(exit).not.toBe(0);
+                expect(await output).toBe("");
+            } else {
+                expect(exit).toBe(0);
+                expect(await output).toContain("fixture");
+            }
+        } finally {
+            clearTimeout(deadline);
+            child.kill("SIGKILL");
+            await child.exited;
+            await output;
+            await errors;
+        }
+    }
+});
+
 test("CLI Ctrl-C cancels attachment and active recording without saving a recipe", async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "gt-show-once-test-")));
     const destination = join(root, "destination");
@@ -739,6 +860,60 @@ test("CLI Ctrl-C cancels attachment and active recording without saving a recipe
             await stderr;
             server.stop(true);
         }
+    }
+});
+
+test("recording preserves unsupported navigation and later page actions as review steps", () => {
+    const recipe = recipeFromRecording({
+        title: "Unsupported navigation",
+        downloads: [],
+        snapshot: {
+            initialUrl: "https://example.com/",
+            evidence: [],
+            actions: [
+                { id: "blank", kind: "navigate", url: "about:blank", at: 1, excluded: false },
+                {
+                    id: "input",
+                    kind: "fill",
+                    sourceUrl: "about:blank",
+                    value: "shop",
+                    locator: { kind: "testId", value: "customer" },
+                    at: 2,
+                    excluded: false,
+                },
+                { id: "return", kind: "navigate", url: "https://example.com/report", at: 3, excluded: false },
+            ],
+        },
+    });
+    expect(recipe.steps.map((step) => step.kind)).toEqual(["navigate", "unsupported", "unsupported", "navigate"]);
+    expect(recipe.allowedOrigins).toEqual(["https://example.com"]);
+    expect(recipe.steps[1].evidence.url).toBe("about:blank");
+    expect(recipe.steps[2].evidence.url).toBe("about:blank");
+});
+
+test("recording preserves unsupported download evidence without a replayable click", () => {
+    for (const url of ["data:text/csv,shop", "blob:null/report", "https://alice:secret@example.com/report.csv"]) {
+        const recipe = recipeFromRecording({
+            title: "Unsupported download",
+            downloads: [{ filename: "report.csv", url, at: 2, sha256: "a".repeat(64) }],
+            snapshot: {
+                initialUrl: "https://example.com/",
+                evidence: [],
+                actions: [
+                    {
+                        id: "download",
+                        kind: "click",
+                        locator: { kind: "testId", value: "download" },
+                        at: 1,
+                        excluded: false,
+                    },
+                ],
+            },
+        });
+        expect(recipe.steps.map((step) => step.kind)).toEqual(["navigate", "unsupported"]);
+        expect(recipe.steps[1].evidence.recordedFilename).toBe("report.csv");
+        expect(recipe.steps[1].evidence.sha256).toBe("a".repeat(64));
+        expect(recipe.allowedOrigins).toEqual(["https://example.com"]);
     }
 });
 
