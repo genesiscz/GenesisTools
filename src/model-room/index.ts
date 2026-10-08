@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import * as prompts from "@clack/prompts";
-import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { isInteractive, runTool, suggestEnumFlag, toolCommand } from "@genesiscz/utils/cli";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -177,7 +177,7 @@ program
     .requiredOption("--data <file>", "CSV or TSV table")
     .option("--delimiter [delimiter]", "comma, semicolon, or tab", "comma")
     .action(async (options: { data: string; delimiter: string | true }) => {
-        const delimiter = await delimiterArgument(options.delimiter, "tools model-room inspect-table");
+        const delimiter = await delimiterArgument(options.delimiter, toolCommand("model-room inspect-table"));
         const text = await readTable(options.data);
         out.result({
             ...previewObservationTable({ text, delimiter }),
@@ -213,7 +213,7 @@ program
             interpolation: string | true;
             decimal: string | true;
         }) => {
-            const command = "tools model-room import-data";
+            const command = toolCommand("model-room import-data");
             const delimiter = await delimiterArgument(options.delimiter, command);
             const interpolation = await choice({
                 raw: options.interpolation,
@@ -447,7 +447,7 @@ program
     .action(async (options: { input: string; output: string; format: string | true }) => {
         const format = await choice({
             raw: options.format,
-            command: "tools model-room export",
+            command: toolCommand("model-room export"),
             flag: "--format",
             values: ["html", "results", "assumptions"] as const,
         });
