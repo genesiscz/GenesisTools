@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { parseControlBody } from "./control";
 
 describe("parseControlBody", () => {
@@ -24,4 +25,26 @@ describe("parseControlBody", () => {
         expect(() => parseControlBody('{"op":"rollback","turns":0}')).toThrow("turns must be at least 1");
         expect(() => parseControlBody('{"op":"explode"}')).toThrow("Unsupported control op");
     });
+});
+
+test("guarded steer carries the exact daemon identity and rejects partial or relative homes", () => {
+    expect(
+        parseControlBody(
+            '{"op":"steer","body":"fixture","expectedTarget":{"threadId":"thread-1","home":"/fixture/home"}}'
+        )
+    ).toEqual({
+        op: "steer",
+        body: "fixture",
+        force: false,
+        expectedTarget: { threadId: "thread-1", home: "/fixture/home" },
+    });
+    for (const expectedTarget of [
+        { threadId: "thread-1" },
+        { threadId: "", home: "/fixture/home" },
+        { threadId: "thread-1", home: "relative" },
+    ]) {
+        expect(() => parseControlBody(SafeJSON.stringify({ op: "steer", body: "fixture", expectedTarget }))).toThrow(
+            "expected Codex target"
+        );
+    }
 });

@@ -1,7 +1,13 @@
+import { isAbsolute } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 
+export interface CodexControlTarget {
+    threadId: string;
+    home: string;
+}
+
 export type CodexControl =
-    | { op: "steer"; body: string; force: boolean }
+    | { op: "steer"; body: string; force: boolean; expectedTarget?: CodexControlTarget }
     | { op: "interrupt" }
     | { op: "rollback"; turns: number }
     | { op: "read" }
@@ -11,6 +17,21 @@ export type CodexControl =
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function parseControlTarget(value: unknown): CodexControlTarget {
+    if (
+        !isRecord(value) ||
+        typeof value.threadId !== "string" ||
+        !value.threadId.trim() ||
+        typeof value.home !== "string" ||
+        !value.home.trim() ||
+        !isAbsolute(value.home)
+    ) {
+        throw new Error("An expected Codex target requires an exact thread and absolute source home.");
+    }
+
+    return { threadId: value.threadId, home: value.home };
 }
 
 function requiredRequestId(value: unknown): string {
@@ -31,12 +52,20 @@ function rollbackTurns(value: unknown): number {
 
 function parseStructuredControl(value: Record<string, unknown>): CodexControl {
     switch (value.op) {
-        case "steer":
+        case "steer": {
             if (typeof value.body !== "string" || !value.body.trim()) {
                 throw new Error("steer body is required");
             }
 
-            return { op: "steer", body: value.body, force: Boolean(value.force) };
+            return {
+                op: "steer",
+                body: value.body,
+                force: Boolean(value.force),
+                ...(value.expectedTarget === undefined
+                    ? {}
+                    : { expectedTarget: parseControlTarget(value.expectedTarget) }),
+            };
+        }
         case "interrupt":
             return { op: "interrupt" };
         case "rollback":
