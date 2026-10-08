@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import XCTest
 @testable import GenesisKit
@@ -156,5 +157,412 @@ final class SpinningArcTests: XCTestCase {
         XCTAssertNil(arc.animation(forKey: "genesis.spin"))
         XCTAssertEqual(arc.strokeStart, 0.12)
         XCTAssertEqual(arc.strokeEnd, 0.78)
+    }
+}
+
+@MainActor
+final class WidgetShelfStoreTests: XCTestCase {
+    private let item = WidgetShelfItem(
+        id: "fixture-item", kind: .file, name: "notes.pdf", path: "/fixture/managed/notes.pdf",
+        sourcePath: "/fixture/original/notes.pdf", sha256: "fixture-hash", bytes: 128,
+        createdAt: 1, assetId: nil
+    )
+    private let empty = Data(#"{"revision":0,"items":[],"statePath":"/fixture/widget-shelf/state.json"}"#.utf8)
+
+    private func complete(_ store: WidgetShelfStore, action: () -> Void) async {
+        let finished = expectation(description: "Shelf operation finishes")
+        let subscription = store.$isBusy.dropFirst().filter { !$0 }.prefix(1).sink { _ in finished.fulfill() }
+        action()
+        await fulfillment(of: [finished], timeout: 2)
+        withExtendedLifetime(subscription) {}
+    }
+
+    func testGeneralImportNeverCallsImageOrAttachAndOwnerRejectsConcurrentMutation() async {
+        var calls: [[String]] = []
+        let store = WidgetShelfStore(request: { args, _ in
+            calls.append(args)
+            return self.empty
+        })
+        await complete(store) {
+            store.importFiles([URL(fileURLWithPath: "/fixture/report.pdf")])
+            store.capture()
+            store.importFiles([URL(fileURLWithPath: "/fixture/ignored.txt")])
+        }
+        XCTAssertEqual(calls.filter { $0.first != "list" }, [["import", "/fixture/report.pdf"]])
+        XCTAssertFalse(store.isBusy)
+        XCTAssertNil(store.error)
+    }
+
+    func testFailedDraftDelegateDoesNotUseIndependentClientOrCallDidAttach() async {
+        let recipient = WidgetSession(
+            key: "chosen", target: WidgetTarget(hostId: "local", provider: "codex", sessionId: "chosen", sourceHome: "/fixture/home", cwd: "/fixture/project"),
+            title: "Fixture", project: "Fixture", activityAt: 0, status: "recent", pinned: false, visible: true, hiddenByFilter: false
+        )
+        var calls: [[String]] = []
+        var callbacks = 0
+        let store = WidgetShelfStore(request: { args, _ in calls.append(args); return self.empty },
+                                    didAttach: { _ in callbacks += 1 },
+                                    attachToDraft: { _, _ in throw ToolsBridgeError.refused("Could not save fixture draft") })
+        await complete(store) { store.attach(item, to: recipient) }
+        XCTAssertFalse(calls.contains { $0.first == "attach" })
+        XCTAssertEqual(callbacks, 0)
+        XCTAssertTrue(store.error?.contains("Could not save fixture draft") == true)
+        XCTAssertNil(store.notice)
+    }
+
+    func testWebURLCannotBeMistakenForALocalFilePath() {
+        var calls = 0
+        let store = WidgetShelfStore(request: { _, _ in
+            calls += 1
+            return self.empty
+        })
+        store.importFiles([URL(string: "https://example.com/etc/hosts")!])
+        XCTAssertEqual(calls, 0)
+        XCTAssertFalse(store.isBusy)
+        XCTAssertEqual(store.error, "Only local files can be staged.")
+    }
+
+    func testFailedImportContinuesOtherFilesAndReleasesOwnerForRetry() async {
+        var imports: [String] = []
+        let store = WidgetShelfStore(request: { args, _ in
+            if args.first == "import" {
+                imports.append(args[1])
+                if args[1].hasSuffix("missing") { throw ToolsBridgeError.refused("Missing fixture") }
+            }
+            return self.empty
+        })
+        await complete(store) {
+            store.importFiles([URL(fileURLWithPath: "/fixture/missing"), URL(fileURLWithPath: "/fixture/good")])
+        }
+        XCTAssertEqual(imports, ["/fixture/missing", "/fixture/good"])
+        XCTAssertTrue(store.error?.contains("Missing fixture") == true)
+        await complete(store) { store.importFiles([URL(fileURLWithPath: "/fixture/retry")]) }
+        XCTAssertEqual(imports.last, "/fixture/retry")
+        XCTAssertNil(store.error)
+    }
+
+    func testCancelThenRestartCaptureAndHideDoesNotCancelAnActiveSelection() async {
+        let began = expectation(description: "Capture begins")
+        let cancelled = expectation(description: "Capture releases owner")
+        var captures = 0
+        var prepareCount = 0
+        let store = WidgetShelfStore(request: { args, _ in
+            if args.first == "capture" {
+                captures += 1
+                if captures == 1 {
+                    began.fulfill()
+                    try await Task.sleep(for: .seconds(30))
+                }
+                return Data(#"{"id":"fixture-capture","kind":"capture","name":"Screenshot.png","path":"/fixture/capture.png","sha256":"hash","bytes":1,"createdAt":1,"assetId":"fixture-image"}"#.utf8)
+            }
+            return self.empty
+        }, onCaptureWillBegin: { prepareCount += 1 })
+        let subscription = store.$isBusy.dropFirst().filter { !$0 }.prefix(1).sink { _ in cancelled.fulfill() }
+        store.capture()
+        await fulfillment(of: [began], timeout: 2)
+        store.visibilityChanged(module: "capture", presentation: nil)
+        XCTAssertTrue(store.isCapturing)
+        store.cancelCapture()
+        await fulfillment(of: [cancelled], timeout: 2)
+        XCTAssertFalse(store.isCapturing)
+        XCTAssertNil(store.error)
+        XCTAssertEqual(store.notice, "Capture cancelled.")
+        await complete(store) { store.capture() }
+        XCTAssertEqual(captures, 2)
+        XCTAssertEqual(prepareCount, 2)
+        withExtendedLifetime(subscription) {}
+    }
+
+    func testSuccessfulEmptyCaptureShowsNeutralCancellationWithoutPermissionWarning() async {
+        let store = WidgetShelfStore(request: { args, _ in
+            args.first == "capture" ? Data(#"{"cancelled":true}"#.utf8) : self.empty
+        }, screenCaptureAccess: { false })
+        await complete(store) { store.capture() }
+        XCTAssertEqual(store.notice, "Capture cancelled.")
+        XCTAssertNil(store.error)
+        XCTAssertEqual(store.captureAccessGranted, false)
+    }
+
+    func testCaptureFailureReportsAppCapabilityWithoutClaimingCancellation() async {
+        let store = WidgetShelfStore(request: { args, _ in
+            if args.first == "capture" { throw ToolsBridgeError.refused("could not create image from window") }
+            return self.empty
+        }, screenCaptureAccess: { false })
+        await complete(store) { store.capture() }
+        XCTAssertTrue(store.error?.contains("could not create image from window") == true)
+        XCTAssertTrue(store.error?.contains("System Settings") == true)
+        XCTAssertNil(store.notice)
+    }
+
+    func testMalformedCaptureResponseCannotClaimAnImageWasStaged() async {
+        let store = WidgetShelfStore(request: { args, _ in args.first == "capture" ? Data("{}".utf8) : self.empty })
+        await complete(store) { store.capture() }
+        XCTAssertNotNil(store.error)
+        XCTAssertNil(store.notice)
+    }
+
+    func testCoordinatorStopCancelsCaptureWithoutRestartingRefreshOrPublishingLateState() async {
+        let began = expectation(description: "Capture begins")
+        let ended = expectation(description: "Capture task cancelled")
+        var calls: [[String]] = []
+        let store = WidgetShelfStore(request: { args, _ in
+            calls.append(args)
+            began.fulfill()
+            defer { ended.fulfill() }
+            try await Task.sleep(for: .seconds(30))
+            return self.empty
+        })
+        store.capture()
+        await fulfillment(of: [began], timeout: 2)
+        store.stop()
+        store.stop()
+        store.refresh()
+        store.capture()
+        await fulfillment(of: [ended], timeout: 2)
+        XCTAssertEqual(calls, [["capture"]])
+        XCTAssertFalse(store.isBusy)
+        XCTAssertFalse(store.isCapturing)
+        XCTAssertNil(store.error)
+        XCTAssertNil(store.notice)
+    }
+
+    func testAttachUsesExplicitRecipientAndOnlyReportsSuccessAfterMutation() async {
+        let recipient = WidgetSession(
+            key: "chosen-recipient", target: WidgetTarget(hostId: "local", provider: "codex", sessionId: "chosen", sourceHome: "/fixture/home", cwd: "/fixture/project"),
+            title: "Fixture inbox", project: "Fixture", activityAt: 0, status: "recent",
+            pinned: false, visible: true, hiddenByFilter: false
+        )
+        var attached: [String] = []
+        var calls: [[String]] = []
+        let store = WidgetShelfStore(request: { args, _ in
+            calls.append(args)
+            return self.empty
+        }, didAttach: { attached.append($0.key) })
+        await complete(store) { store.attach(item, to: recipient) }
+        XCTAssertEqual(calls.first, ["attach", item.id, "--session-key", "chosen-recipient"])
+        XCTAssertEqual(attached, ["chosen-recipient"])
+        XCTAssertTrue(store.notice?.contains("Nothing has been sent") == true)
+    }
+}
+
+@MainActor
+private final class ShelfDraftBackend {
+    var drafts: [String: WidgetDraft] = [:]
+    var calls: [String] = []
+    var reference: String? = "File: notes.pdf\nLocal path: /fixture/notes.pdf"
+    var assetId: String?
+    var resolve: (() async throws -> Void)?
+    var beforeSave: (() async throws -> Void)?
+    var textSaved: (() -> Void)?
+
+    func run(_ value: WidgetJSON) async throws -> WidgetJSON {
+        guard case .object(let fields) = value, case .string(let action) = fields["action"] else {
+            throw ToolsBridgeError.refused("Invalid fixture request")
+        }
+        calls.append(action)
+        let key: String
+        if case .string(let value) = fields["key"] { key = value } else { key = "" }
+        switch action {
+        case "shelf-attachment":
+            try await resolve?()
+            return try .value(WidgetShelfAttachment(
+                mode: assetId == nil ? "file-reference" : "image", reference: reference, assetId: assetId,
+                draft: drafts[key] ?? WidgetDraft()
+            ))
+        case "draft":
+            try await beforeSave?()
+            drafts[key] = try JSONDecoder().decode(WidgetDraft.self, from: JSONEncoder().encode(fields["draft"]))
+        case "draft-text":
+            if case .string(let text) = fields["text"] {
+                var draft = drafts[key] ?? WidgetDraft()
+                draft.text = text
+                drafts[key] = draft
+                textSaved?()
+            }
+        default: break
+        }
+        return ["ok": .bool(true)]
+    }
+}
+
+@MainActor
+private final class ShelfDraftGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait() async { await withCheckedContinuation { continuation = $0 } }
+    func open() { continuation?.resume(); continuation = nil }
+}
+
+@MainActor
+final class WidgetShelfDraftOrderingTests: XCTestCase {
+    private func model(_ backend: ShelfDraftBackend) -> WidgetModel {
+        let defaults = UserDefaults(suiteName: "widget-shelf-test-\(UUID().uuidString)")!
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("widget-shelf-model-\(UUID().uuidString)")
+        let appearance = NativeSettingsAppearance(defaults: defaults, notificationNamespace: "fixture.shelf.\(UUID().uuidString)", observeExternalChanges: false)
+        let model = WidgetModel(binaryPath: "/fixture/no-process", stateRoot: root.path, defaults: defaults, appearance: appearance)
+        model.actionRunner = backend.run
+        return model
+    }
+
+    private func barrier(_ model: WidgetModel) async {
+        let done = expectation(description: "Mutation queue drained")
+        model.action(["action": "fixture-barrier"], completed: { done.fulfill() })
+        await fulfillment(of: [done], timeout: 2)
+    }
+
+    func testTypingThenSwitchingRecipientKeepsTextAndStagesOnlyIntoChosenDraft() async throws {
+        let backend = ShelfDraftBackend()
+        backend.drafts["chosen"] = WidgetDraft(text: "Older persisted text")
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        model.setText("Typed just before switching")
+        model.selectedKey = "another"
+        try await model.attachShelfItem("file", to: "chosen")
+        await barrier(model)
+        let expected = "Typed just before switching\n\n" + backend.reference!
+        XCTAssertEqual(model.drafts["chosen"]?.text, expected)
+        XCTAssertEqual(backend.drafts["chosen"]?.text, expected)
+        XCTAssertNil(model.drafts["another"])
+        XCTAssertEqual(model.selectedKey, "another")
+        XCTAssertFalse(backend.calls.contains("draft-text"))
+    }
+
+    func testTypingDuringDescriptorResolutionInvalidatesAlreadyQueuedStaleTextSave() async throws {
+        let began = expectation(description: "Descriptor read begins")
+        let gate = ShelfDraftGate()
+        let backend = ShelfDraftBackend()
+        backend.resolve = { began.fulfill(); await gate.wait() }
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        model.setText("Before")
+        let attachment = Task { try await model.attachShelfItem("file", to: "chosen") }
+        await fulfillment(of: [began], timeout: 2)
+        model.setText("Typed while resolving")
+        model.action(["action": "draft-text", "key": "chosen", "text": "Typed while resolving"])
+        gate.open()
+        try await attachment.value
+        await barrier(model)
+        let expected = "Typed while resolving\n\n" + backend.reference!
+        XCTAssertEqual(model.drafts["chosen"]?.text, expected)
+        XCTAssertEqual(backend.drafts["chosen"]?.text, expected)
+        XCTAssertFalse(backend.calls.contains("draft-text"))
+    }
+
+    func testTypingDuringDelayedDraftSavePersistsNewerTextWithAttachment() async throws {
+        let began = expectation(description: "Draft write begins")
+        let laterText = expectation(description: "Actual debounce saves newer text")
+        let gate = ShelfDraftGate()
+        let backend = ShelfDraftBackend()
+        backend.beforeSave = { began.fulfill(); await gate.wait() }
+        backend.textSaved = { laterText.fulfill() }
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        model.setText("Before")
+        let attachment = Task { try await model.attachShelfItem("file", to: "chosen") }
+        await fulfillment(of: [began], timeout: 2)
+        let edited = "Edited while saving\n\n" + backend.reference!
+        model.setText(edited)
+        gate.open()
+        try await attachment.value
+        await fulfillment(of: [laterText], timeout: 2)
+        XCTAssertEqual(model.drafts["chosen"]?.text, edited)
+        XCTAssertEqual(backend.drafts["chosen"]?.text, edited)
+    }
+
+    func testImageAttachmentPreservesExistingIDsAndIsIdempotentForNonselectedRecipient() async throws {
+        let backend = ShelfDraftBackend()
+        backend.reference = nil
+        backend.assetId = "new-image"
+        backend.drafts["chosen"] = WidgetDraft(text: "Existing draft", assetIds: ["old-image"])
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "another"
+        try await model.attachShelfItem("image", to: "chosen")
+        try await model.attachShelfItem("image", to: "chosen")
+        XCTAssertEqual(model.drafts["chosen"]?.assetIds, ["old-image", "new-image"])
+        XCTAssertEqual(backend.drafts["chosen"]?.assetIds, ["old-image", "new-image"])
+        XCTAssertEqual(model.drafts["chosen"]?.text, "Existing draft")
+        XCTAssertEqual(model.selectedKey, "another")
+        XCTAssertNil(backend.drafts["another"])
+    }
+
+    func testResolutionFailureLeavesLocalDraftUntouchedAndSaveFailureRetainsRecoverableMerge() async {
+        let backend = ShelfDraftBackend()
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        model.setText("Keep this text")
+        backend.resolve = { throw ToolsBridgeError.refused("Missing managed item") }
+        do {
+            try await model.attachShelfItem("file", to: "chosen")
+            XCTFail("Expected resolution failure")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Missing managed item")) }
+        XCTAssertEqual(model.drafts["chosen"]?.text, "Keep this text")
+        XCTAssertNil(backend.drafts["chosen"])
+        backend.resolve = nil
+        backend.beforeSave = { throw ToolsBridgeError.refused("Disk fixture full") }
+        do {
+            try await model.attachShelfItem("file", to: "chosen")
+            XCTFail("Expected persistence failure")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Disk fixture full")) }
+        XCTAssertEqual(model.drafts["chosen"]?.text, "Keep this text\n\n" + backend.reference!)
+        XCTAssertNil(backend.drafts["chosen"])
+        backend.beforeSave = nil
+        do { try await model.attachShelfItem("file", to: "chosen") }
+        catch { XCTFail("Retry failed: \(error)") }
+        XCTAssertEqual(backend.drafts["chosen"]?.text, model.drafts["chosen"]?.text)
+    }
+
+    func testDirtyLocalTextCannotEraseDurableImageIDsThatHaveNotReachedTheSnapshot() async throws {
+        let backend = ShelfDraftBackend()
+        backend.assetId = "new-image"
+        backend.reference = nil
+        backend.drafts["chosen"] = WidgetDraft(text: "Persisted", assetIds: ["existing-image"])
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        model.setText("Fresh local text")
+        XCTAssertEqual(model.drafts["chosen"]?.assetIds, [])
+        try await model.attachShelfItem("image", to: "chosen")
+        XCTAssertEqual(backend.drafts["chosen"]?.assetIds, ["existing-image", "new-image"])
+        XCTAssertEqual(backend.drafts["chosen"]?.text, "Fresh local text")
+    }
+
+    func testCancellationDuringSaveKeepsRecoverableLocalDraftWithoutClaimingSuccess() async {
+        let began = expectation(description: "Draft write begins")
+        let backend = ShelfDraftBackend()
+        backend.beforeSave = { began.fulfill(); try await Task.sleep(for: .seconds(30)) }
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        model.setText("Keep this text")
+        let attachment = Task { try await model.attachShelfItem("file", to: "chosen") }
+        await fulfillment(of: [began], timeout: 2)
+        attachment.cancel()
+        do {
+            try await attachment.value
+            XCTFail("Expected cancellation")
+        } catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertEqual(model.drafts["chosen"]?.text, "Keep this text\n\n" + backend.reference!)
+        XCTAssertNil(backend.drafts["chosen"])
+    }
+
+    func testCancellationBeforeMergeDoesNotChangeDraftOrIssueWrite() async {
+        let began = expectation(description: "Descriptor read begins")
+        let backend = ShelfDraftBackend()
+        backend.resolve = { began.fulfill(); try await Task.sleep(for: .seconds(30)) }
+        let model = model(backend)
+        defer { model.stop() }
+        let attachment = Task { try await model.attachShelfItem("file", to: "chosen") }
+        await fulfillment(of: [began], timeout: 2)
+        attachment.cancel()
+        do {
+            try await attachment.value
+            XCTFail("Expected cancellation")
+        } catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertNil(model.drafts["chosen"])
+        XCTAssertEqual(backend.calls, ["shelf-attachment"])
     }
 }

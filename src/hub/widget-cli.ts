@@ -9,6 +9,15 @@ import { processWidgetOutbox } from "./lib/composer/engine";
 import { performWidgetAction } from "./lib/widget/actions";
 import { readWidgetReceiptContext } from "./lib/widget/context";
 import { readWidgetText } from "./lib/widget/readback";
+import {
+    attachShelfItem,
+    captureShelfImage,
+    importShelfFile,
+    listWidgetShelf,
+    readShelfAttachment,
+    removeShelfItem,
+    stageShelfImage,
+} from "./lib/widget/shelf";
 import { widgetSnapshot } from "./lib/widget/snapshot";
 import { watchWidget } from "./lib/widget/watch";
 import { registerWidgetTasks } from "./widget-tasks-cli";
@@ -148,4 +157,57 @@ widget
             { handleTermination: true }
         );
     });
+const shelf = widget.command("shelf").description("Stage captures and files before choosing an inbox recipient");
+shelf
+    .command("list")
+    .option("--json")
+    .action(async (_options, command) => {
+        out.result(await listWidgetShelf(command.optsWithGlobals().stateRoot));
+    });
+shelf.command("import <input>").action(async (input: string, _options, command) => {
+    await withInterrupt(
+        async (signal) => {
+            out.result(await importShelfFile({ root: command.optsWithGlobals().stateRoot, input, signal }));
+        },
+        { handleTermination: true }
+    );
+});
+shelf
+    .command("image <input>")
+    .description("Stage an image for later attachment")
+    .action(async (input: string, _options, command) => {
+        await withInterrupt(
+            async (signal) => {
+                out.result(await stageShelfImage({ root: command.optsWithGlobals().stateRoot, input, signal }));
+            },
+            { handleTermination: true }
+        );
+    });
+shelf.command("capture").action(async (_options, command) => {
+    await withInterrupt(
+        async (signal) => {
+            out.result(await captureShelfImage({ root: command.optsWithGlobals().stateRoot, signal }));
+        },
+        { handleTermination: true }
+    );
+});
+shelf.command("remove <id>").action(async (id: string, _options, command) => {
+    await removeShelfItem({ root: command.optsWithGlobals().stateRoot, id });
+    out.result({ removed: true });
+});
+shelf
+    .command("attachment <id>")
+    .requiredOption("--session-key <key>")
+    .action(async (id: string, options, command) => {
+        out.result(
+            await readShelfAttachment({ root: command.optsWithGlobals().stateRoot, id, key: options.sessionKey })
+        );
+    });
+shelf
+    .command("attach <id>")
+    .requiredOption("--session-key <key>")
+    .action(async (id: string, options, command) => {
+        out.result(await attachShelfItem({ root: command.optsWithGlobals().stateRoot, id, key: options.sessionKey }));
+    });
+
 await runTool(program, { tool: "hub" });

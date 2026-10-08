@@ -12,6 +12,7 @@ import { z } from "zod";
 import { confirmVideoAsset, importWidgetAsset, reviseVideoAsset } from "../composer/assets";
 import { changeOutgoing, enqueueWidgetMessage } from "../composer/outbox";
 import { createWidgetHandoff } from "./handoff";
+import { readShelfAttachment } from "./shelf";
 import { mutateWidgetState, readWidgetState, widgetRoot } from "./storage";
 import {
     widgetDraftSchema,
@@ -24,6 +25,7 @@ import {
 export const widgetActionSchema = z.discriminatedUnion("action", [
     z.object({ action: z.literal("selection"), key: z.string().nullable() }),
     z.object({ action: z.literal("handoff"), key: z.string() }),
+    z.object({ action: z.literal("shelf-attachment"), key: z.string(), id: z.string() }),
     z.object({
         action: z.literal("ledger"),
         id: z.string(),
@@ -68,6 +70,8 @@ export async function performWidgetAction({
 }): Promise<unknown> {
     const request = widgetActionSchema.parse(input);
     switch (request.action) {
+        case "shelf-attachment":
+            return readShelfAttachment({ root, key: request.key, id: request.id });
         case "handoff":
             return createWidgetHandoff({ root, key: request.key });
         case "ledger": {

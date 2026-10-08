@@ -88,6 +88,8 @@ public final class WidgetModel: ObservableObject {
     private var pendingPreferences: [String: WidgetJSON] = [:]
     private var draftTasks: [String: Task<Void, Never>] = [:]
     private var dirtyDrafts: Set<String> = []
+    private var draftRevisions: [String: Int] = [:]
+    var actionRunner: ((WidgetJSON) async throws -> WidgetJSON)?
     private var submittedAssets: Set<String> = []
     private var submittedCards: Set<String> = []
     private var lastSelected: WidgetSession?
@@ -436,18 +438,56 @@ public final class WidgetModel: ObservableObject {
         value.text = String(text.prefix(64_000))
         drafts[key] = value
         dirtyDrafts.insert(key)
+        draftRevisions[key, default: 0] += 1
+        let revision = draftRevisions[key, default: 0]
         draftTasks[key]?.cancel()
         let captured = value.text
         draftTasks[key] = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
-            guard let self else { return }
-            self.action(["action": "draft-text", "key": .string(key), "text": .string(captured)]) {
+            guard let self, self.draftRevisions[key, default: 0] == revision else { return }
+            self.action(["action": "draft-text", "key": .string(key), "text": .string(captured)], completed: {
                 [weak self] in
-                guard let self, self.drafts[key]?.text == captured else { return }
+                guard let self, self.draftRevisions[key, default: 0] == revision,
+                    self.drafts[key]?.text == captured else { return }
+                self.dirtyDrafts.remove(key)
+            })
+        }
+        scheduleQuietReduction()
+    }
+
+    public func attachShelfItem(_ id: String, to key: String) async throws {
+        let previous = mutationTask
+        let operation = Task { [weak self] in
+            await previous?.value
+            try Task.checkCancellation()
+            guard let self, !self.stopping else { throw CancellationError() }
+            let response = try await self.call(["action": "shelf-attachment", "key": .string(key), "id": .string(id)])
+            try Task.checkCancellation()
+            guard !self.stopping else { throw CancellationError() }
+            let attachment = try JSONDecoder().decode(WidgetShelfAttachment.self, from: JSONEncoder().encode(response))
+            var latest = attachment.draft
+            if self.dirtyDrafts.contains(key), let local = self.drafts[key] { latest.text = local.text }
+            let merged = try attachment.merging(into: latest)
+            self.draftTasks[key]?.cancel()
+            self.draftRevisions[key, default: 0] += 1
+            let revision = self.draftRevisions[key, default: 0]
+            self.drafts[key] = merged
+            self.dirtyDrafts.insert(key)
+            if let assetId = attachment.assetId { self.submittedAssets.remove(assetId) }
+            _ = try await self.call(["action": "draft", "key": .string(key), "draft": try .value(merged)])
+            try Task.checkCancellation()
+            guard !self.stopping else { throw CancellationError() }
+            if self.draftRevisions[key, default: 0] == revision, self.drafts[key] == merged {
                 self.dirtyDrafts.remove(key)
             }
         }
-        scheduleQuietReduction()
+        // The queue tail waits for completion; the originating caller owns the throwing result.
+        mutationTask = Task { _ = await operation.result }
+        try await withTaskCancellationHandler {
+            try await operation.value
+        } onCancel: {
+            operation.cancel()
+        }
     }
 
     private func mergingPreferences(
@@ -503,10 +543,18 @@ public final class WidgetModel: ObservableObject {
             updatePreferences(patch)
             return
         }
+        let draftKey: String?
+        if case .object(let fields) = value, fields["action"] == .string("draft-text"), case .string(let key) = fields["key"] {
+            draftKey = key
+        } else {
+            draftKey = nil
+        }
+        let draftRevision = draftKey.map { draftRevisions[$0, default: 0] }
         let previous = mutationTask
         mutationTask = Task { [weak self] in
             await previous?.value
             guard let self else { return }
+            if let draftKey, self.draftRevisions[draftKey, default: 0] != draftRevision { return }
             do {
                 _ = try await self.call(value)
                 completed?()
@@ -520,6 +568,7 @@ public final class WidgetModel: ObservableObject {
 
     @discardableResult
     private func call(_ value: WidgetJSON) async throws -> WidgetJSON {
+        if let actionRunner { return try await actionRunner(value) }
         let file = journal.appendingPathComponent("action-" + UUID().uuidString + ".tmp")
         try JSONEncoder().encode(value).write(to: file, options: .atomic)
         defer {
