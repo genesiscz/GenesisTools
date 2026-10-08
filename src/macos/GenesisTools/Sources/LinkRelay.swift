@@ -191,11 +191,20 @@ enum LinkRelay {
         }
     }
 
+    /// A startup probe holds a shared lock briefly. Give it time to release without mistaking it for a relay.
+    static func acquireLock(_ descriptor: Int32) -> Bool {
+        for attempt in 0..<4 {
+            if flock(descriptor, LOCK_EX | LOCK_NB) == 0 { return true }
+            if attempt < 3 { Thread.sleep(forTimeInterval: 0.1) }
+        }
+        return false
+    }
+
     private static func claim() -> Bool {
         try? FileManager.default.createDirectory(at: lockFile.deletingLastPathComponent(), withIntermediateDirectories: true)
         let descriptor = open(lockFile.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
         guard descriptor >= 0 else { return true }
-        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+        guard acquireLock(descriptor) else {
             close(descriptor)
             return false
         }

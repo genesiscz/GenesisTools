@@ -37,6 +37,32 @@ final class LinkRelayTests: XCTestCase {
         XCTAssertNil(RelayJournal.previousEnd(nil, isAlive: { _ in false }, crashReport: { _ in nil }))
     }
 
+    func testAStartingRelayRetriesATransientProbeLock() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("relay-lock-\(UUID())")
+        FileManager.default.createFile(atPath: file.path, contents: nil)
+        let probe = open(file.path, O_RDWR)
+        let relay = open(file.path, O_RDWR)
+        defer { close(probe); close(relay); try? FileManager.default.removeItem(at: file) }
+        XCTAssertEqual(flock(probe, LOCK_SH | LOCK_NB), 0)
+        let released = DispatchSemaphore(value: 0)
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
+            flock(probe, LOCK_UN)
+            released.signal()
+        }
+        XCTAssertTrue(LinkRelay.acquireLock(relay))
+        XCTAssertEqual(released.wait(timeout: .now() + 1), .success)
+    }
+
+    func testAnotherRelayStillExcludesASecondClaim() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("relay-lock-\(UUID())")
+        FileManager.default.createFile(atPath: file.path, contents: nil)
+        let first = open(file.path, O_RDWR)
+        let second = open(file.path, O_RDWR)
+        defer { close(first); close(second); try? FileManager.default.removeItem(at: file) }
+        XCTAssertEqual(flock(first, LOCK_EX | LOCK_NB), 0)
+        XCTAssertFalse(LinkRelay.acquireLock(second))
+    }
+
     func testTheStateFileRoundTrips() throws {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("relay-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: file) }
