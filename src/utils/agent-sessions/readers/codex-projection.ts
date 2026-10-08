@@ -90,21 +90,29 @@ export function codexProjectionCachePath(): string {
     return join(dirname(historyDatabasePath()), "codex-projection-cache.json");
 }
 
-/** Undefined when the database cannot be stat'ed; a missing `-wal` means nothing is pending. */
-function projectionStamp(path: string): string | undefined {
+/** Undefined when the database cannot be stat'ed; a missing WAL means nothing is pending. */
+export function projectionFileState(path: string): { identity: string; generation: string } | undefined {
     try {
-        const database = statSync(path);
-        let wal = { mtimeMs: 0, size: 0 };
-
+        const database = statSync(path, { bigint: true });
+        let wal = "";
         if (existsSync(`${path}-wal`)) {
-            wal = statSync(`${path}-wal`);
+            const status = statSync(`${path}-wal`, { bigint: true });
+            wal = `${status.dev}:${status.ino}:${status.size}:${status.mtimeNs}:${status.ctimeNs}`;
         }
 
-        return `${database.mtimeMs}:${database.size}:${wal.mtimeMs}:${wal.size}`;
+        const identity = `${database.dev}:${database.ino}`;
+        return {
+            identity,
+            generation: `${identity}:${database.size}:${database.mtimeNs}:${database.ctimeNs}:${wal}`,
+        };
     } catch (error) {
         logger.debug({ error, path }, "[codex] projection database stat failed");
         return undefined;
     }
+}
+
+function projectionStamp(path: string): string | undefined {
+    return projectionFileState(path)?.generation;
 }
 
 function readProjectionCache(): ProjectionCache {

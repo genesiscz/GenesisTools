@@ -23,7 +23,12 @@ import type {
     NativeSessionSource,
     NativeSourceIssue,
 } from "../types";
-import { type CodexProjectionIndex, type ProjectionFingerprintPart, sqliteColumns } from "./codex-projection";
+import {
+    type CodexProjectionIndex,
+    type ProjectionFingerprintPart,
+    projectionFileState,
+    sqliteColumns,
+} from "./codex-projection";
 
 export { type CodexProjectionIndex, codexProjectionCachePath, readCodexProjectionIndex } from "./codex-projection";
 
@@ -627,6 +632,11 @@ export async function readCodexProjectionFingerprint(
  */
 /** One thread's paginated projection folded up to `ordinal`: what the metadata read takes from its rows. */
 interface ProjectionFold {
+    identity?: string;
+    generation?: string;
+    revision?: number;
+    revisionIndex?: string;
+    schemaVersion?: number;
     rows: number;
     ordinal: number;
     firstTimestamp: string | null;
@@ -642,7 +652,8 @@ interface ProjectionFold {
  * Folds kept in this process, by projection path and thread. An active thread's rows only grow (one per rollout
  * item, by `rollout_ordinal`), and a long one is thousands of rows: 8,688 rows and 29 MB of JSON took 55 ms CPU to
  * parse again on every metadata read (2026-10-08). A kept fold reads only the rows past its ordinal, and is used
- * only while the rows up to that ordinal are still the same count; anything else folds the thread from the start.
+ * only while the prefix count and native revision agree. Older schemas without revisions reuse only an unchanged
+ * database/WAL generation; a changed one folds from the start. A replaced database always starts over.
  */
 const projectionFolds = new Map<string, ProjectionFold>();
 const PROJECTION_FOLDS_KEPT = 32;
@@ -652,16 +663,57 @@ function foldProjection(args: {
     path: string;
     threadId: string;
     hasCreatedAt: boolean;
+    hasRevision: boolean;
     signal?: AbortSignal;
 }): ProjectionFold {
     const key = `${args.path}\0${args.threadId}`;
+    const state = projectionFileState(args.path);
     const kept = projectionFolds.get(key);
+    const schema = args.database.query("PRAGMA schema_version").get() as { schema_version: number };
+    const schemaVersion = schema.schema_version;
+    const revisionIndex =
+        args.hasRevision && kept?.identity === state?.identity && kept?.schemaVersion === schemaVersion
+            ? kept.revisionIndex
+            : args.hasRevision
+              ? (
+                    args.database.query("PRAGMA index_list(thread_items)").all() as { name: string; partial: number }[]
+                ).find((index) => {
+                    if (index.partial !== 0) {
+                        return false;
+                    }
+
+                    const quoted = index.name.replaceAll('"', '""');
+                    const columns = args.database.query(`PRAGMA index_info("${quoted}")`).all() as { name: string }[];
+                    return columns[0]?.name === "thread_id" && columns[1]?.name === "updated_at_ordinal";
+                })?.name
+              : undefined;
+    const revisionAt = (ordinal: number): number | undefined => {
+        if (!revisionIndex || !Number.isFinite(ordinal)) {
+            return undefined;
+        }
+
+        const quoted = revisionIndex.replaceAll('"', '""');
+        const row = args.database
+            .query(
+                `SELECT updated_at_ordinal AS revision FROM thread_items INDEXED BY "${quoted}" WHERE thread_id = ? AND rollout_ordinal <= ? ORDER BY updated_at_ordinal DESC LIMIT 1`
+            )
+            .get(args.threadId, ordinal) as { revision: number | null } | null;
+        return row?.revision ?? 0;
+    };
     let fold: ProjectionFold | undefined;
-    if (kept) {
-        const prefix = args.database
-            .query("SELECT COUNT(*) AS n FROM thread_items WHERE thread_id = ? AND rollout_ordinal <= ?")
-            .get(args.threadId, kept.ordinal) as { n: number } | null;
-        if (prefix?.n === kept.rows) {
+    if (kept && state && kept.identity === state.identity) {
+        const sameGeneration = kept.generation === state.generation && kept.schemaVersion === schemaVersion;
+        const prefix = sameGeneration
+            ? { n: kept.rows }
+            : (args.database
+                  .query("SELECT COUNT(*) AS n FROM thread_items WHERE thread_id = ? AND rollout_ordinal <= ?")
+                  .get(args.threadId, kept.ordinal) as { n: number } | null);
+        const unchanged =
+            sameGeneration ||
+            (revisionIndex !== undefined &&
+                revisionIndex === kept.revisionIndex &&
+                kept.revision === revisionAt(kept.ordinal));
+        if (prefix?.n === kept.rows && unchanged) {
             fold = { ...kept, parts: [...kept.parts] };
         }
     }
@@ -710,9 +762,17 @@ function foldProjection(args: {
         }
     }
 
+    if (fold.generation !== state?.generation) {
+        fold.revision = revisionAt(fold.ordinal);
+    }
     projectionFolds.delete(key);
-    if (fold.rows > 0 && Number.isFinite(fold.ordinal)) {
-        projectionFolds.set(key, { ...fold, parts: [...fold.parts] });
+    if (
+        fold.rows > 0 &&
+        Number.isFinite(fold.ordinal) &&
+        state !== undefined &&
+        projectionFileState(args.path)?.generation === state.generation
+    ) {
+        projectionFolds.set(key, { ...fold, ...state, schemaVersion, revisionIndex, parts: [...fold.parts] });
         if (projectionFolds.size > PROJECTION_FOLDS_KEPT) {
             const oldest = projectionFolds.keys().next().value;
             if (oldest !== undefined) {
@@ -1189,6 +1249,7 @@ async function readCodexMetadataUncounted(
                     path,
                     threadId: header.nativeId,
                     hasCreatedAt: columns.includes("created_at_ms"),
+                    hasRevision: columns.includes("updated_at_ordinal"),
                     signal: options.signal,
                 });
                 if (fold.rows === 0) {

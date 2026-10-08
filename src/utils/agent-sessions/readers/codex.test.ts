@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1155,6 +1155,16 @@ test("a paginated rollout with a projection ignores its own replayed records", a
     }
 
     expect(locators).toEqual(["projection:0:1:0"]);
+
+    const edited = new Database(projectionPath);
+    edited.run("UPDATE thread_items SET item_json = ?", [
+        SafeJSON.stringify({ type: "agentMessage", text: "projection reply" }, { strict: true }),
+    ]);
+    edited.close();
+    const noUser = await readCodexMetadata(source);
+    expect(noUser.metadata?.firstPrompt).toBeNull();
+    expect(noUser.metadata?.allUserText).toBeNull();
+    expect(noUser.complete).toBe(true);
 });
 
 test("a paginated rollout with no projection is a COMPLETE read, so sync keeps its metadata", async () => {
@@ -1229,3 +1239,79 @@ test("negative control: any other issue still fails the read", async () => {
     expect(result.issues.map((issue) => issue.message)).toContain("Paginated projection schema unsupported");
     expect(result.complete).toBe(false);
 });
+
+test.each([true, false, "partial"] as const)(
+    "paginated metadata invalidates same-count updates with revision column %s",
+    async (mode) => {
+        const hasRevision = mode !== false;
+        const partialIndex = mode === "partial";
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-projection-update-"));
+        const root = join(home, "sessions");
+        mkdirSync(root);
+        const path = join(root, `rollout-${CHILD_ID}.jsonl`);
+        writeFileSync(path, line({ type: "session_meta", payload: { id: CHILD_ID, history_mode: "paginated" } }));
+        const projectionPath = join(home, "thread_history_1.sqlite");
+        const projection = new Database(projectionPath);
+        projection.run(
+            `CREATE TABLE thread_items (thread_id TEXT, rollout_ordinal INTEGER, created_at_ms INTEGER, item_json TEXT${hasRevision ? ", updated_at_ordinal INTEGER" : ""})`
+        );
+        projection.run("CREATE INDEX projection_order ON thread_items(thread_id, rollout_ordinal)");
+        if (hasRevision) {
+            projection.run(
+                `CREATE INDEX projection_revision ON thread_items(thread_id, updated_at_ordinal)${partialIndex ? " WHERE rollout_ordinal > 10000" : ""}`
+            );
+        }
+
+        const firstItem = SafeJSON.stringify({ type: "userMessage", content: "first ask" }, { strict: true });
+        projection.run(`INSERT INTO thread_items VALUES (?, 1, 1000, ?${hasRevision ? ", 1" : ""})`, [
+            CHILD_ID,
+            firstItem,
+        ]);
+        projection.run(`INSERT INTO thread_items VALUES (?, 2, 2000, '{'${hasRevision ? ", 2" : ""})`, [CHILD_ID]);
+        const source: NativeSessionSource<"codex"> = {
+            kind: "codex",
+            root,
+            sourceHome: home,
+            filePath: path,
+            dataPaths: [path],
+            metadataPaths: [projectionPath],
+        };
+        const first = await readCodexMetadata(source);
+        expect(first.metadata?.firstPrompt).toBe("first ask");
+        expect(first.issues.filter((issue) => issue.message === "Malformed paginated metadata item")).toHaveLength(1);
+
+        const parse = spyOn(SafeJSON, "parse");
+        try {
+            await readCodexMetadata(source);
+            expect(parse.mock.calls.filter(([text]) => text === firstItem)).toHaveLength(0);
+            const rewritten = SafeJSON.stringify({ type: "userMessage", content: "newer ask" }, { strict: true });
+            projection.run(
+                `UPDATE thread_items SET item_json = ?, created_at_ms = 3000${hasRevision ? ", updated_at_ordinal = 3" : ""} WHERE rollout_ordinal = 1`,
+                [rewritten]
+            );
+            projection.run(
+                `UPDATE thread_items SET item_json = ?, created_at_ms = 4000${hasRevision ? ", updated_at_ordinal = 4" : ""} WHERE rollout_ordinal = 2`,
+                [SafeJSON.stringify({ type: "userMessage", content: "fixed row" }, { strict: true })]
+            );
+            const updated = await readCodexMetadata(source);
+            expect(updated.metadata?.firstPrompt).toBe("newer ask");
+            expect(updated.metadata?.allUserText).toBe("newer ask fixed row");
+            expect(updated.metadata?.lastTimestamp).toBe(new Date(4000).toISOString());
+            expect(updated.issues).toEqual([]);
+
+            parse.mockClear();
+            projection.run(`INSERT INTO thread_items VALUES (?, 3, 5000, ?${hasRevision ? ", 5" : ""})`, [
+                CHILD_ID,
+                SafeJSON.stringify({ type: "userMessage", content: "appended ask" }, { strict: true }),
+            ]);
+            const appended = await readCodexMetadata(source);
+            expect(appended.metadata?.allUserText).toBe("newer ask fixed row appended ask");
+            expect(parse.mock.calls.filter(([text]) => text === rewritten)).toHaveLength(
+                hasRevision && !partialIndex ? 0 : 1
+            );
+        } finally {
+            parse.mockRestore();
+            projection.close();
+        }
+    }
+);
