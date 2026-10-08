@@ -2,6 +2,9 @@
 
 Use `tools control capture` for a short transition and inspect the resulting frames. A still
 image cannot prove timing, cursor animation or a complete sequence. Keep publishing separate.
+For a resize or animation demonstration, follow [capturing-animations.md](capturing-animations.md):
+one bounded recording/action timeline, saved/restored state, then decoded contact sheets and
+full-resolution frame inspection.
 
 ## Backend and permissions
 
@@ -38,6 +41,71 @@ An overlay is a separate window: a content-only window recording may omit it. Us
 capture when the claim concerns cursor feedback, and review it before claiming visibility.
 Negative global origins are valid. Region geometry uses global logical points; crop/annotation
 geometry uses frame pixels. Derive scale from captured dimensions; monitors can differ.
+
+## Isolated apps and multiple windows
+
+Use `capture.mode:"isolated"` on macOS 14 or later when every other app and the desktop must
+be excluded. The native recorder starts one ScreenCaptureKit desktop-independent stream per
+selected window and composites only those buffers. A foreground occluder is excluded even
+when it covers a selected window. This also excludes the native cursor and separate cursor
+feedback overlays. Do not substitute a region capture for isolation.
+
+Select exact observed `windowIds`, or `apps` with exact PIDs, app names or bundle IDs. Prefer
+PIDs when multiple app faces share a bundle ID. App selection pins all currently visible
+shareable windows of that process, including panels and popups. New windows are not added during recording. An explicit ID
+can select a panel. Missing IDs or apps without visible shareable windows fail before capture;
+there is a 16-window limit. Hidden, minimized or closed windows disappear from the composite.
+
+- `canvas:"crop"` follows the selected windows' combined bounds, including windows on different displays.
+- `canvas:"display"` uses `screenIndex`, default 0, and clips the selected windows to that display.
+- `outputSize:{width:200,height:800}` sets exact output pixels. `outputScale:2` sets pixels per
+  logical point. Omit both for the initial native backing scale. The two fields are mutually exclusive.
+- A 100×400-point window on a Retina 2× display supplies 200×800 backing pixels. The same window
+  on a 1× display supplies 100×400; requesting 200×800 interpolates those pixels and creates no
+  new detail. Metadata records `nativeScale`, `pixelsPerPoint`, and `interpolatedUpscale`.
+- Movie dimensions stay fixed. A cropped canvas follows moves and resizes, then fits into that
+  output without stretching. Aspect changes add padding. Geometry refresh is bounded at 250 ms;
+  native content is delivered at the configured frame rate. Geometry history records the changes.
+- `transparent:true` gives transparent PNG background. Transparent video requires
+  `codec:"prores4444"` and a `.mov` path. H.264/MP4 has no alpha and is refused with transparent
+  video. Transparent pixels may look black in a player; decode a frame and inspect alpha.
+- `indicator` defaults to `true`. A pulsing red border surrounds the selected windows or the
+  display canvas. The content filters exclude that border. Set `indicator:false` or use
+  `--no-indicator` to disable it. SIGINT/SIGTERM finalize recording and remove the border;
+  the runner skips remaining actions after cancellation.
+
+These options work in the same `capture` object as timed actions:
+
+```json
+{
+  "capture": {
+    "mode": "isolated", "windowIds": [12345, 12346], "canvas": "display", "screenIndex": 1,
+    "outputSize": { "width": 1920, "height": 1080 }, "transparent": true,
+    "codec": "prores4444", "videoOut": "/absolute/path/isolated.mov", "duration": 4,
+    "indicator": true
+  },
+  "actions": []
+}
+```
+
+Replace the IDs and output path, then add only authorized timed actions. Direct recordings
+and plan generation expose the same flags:
+
+```bash
+tools control capture record --window-ids 12345,12346 --canvas crop \
+  --output-scale 2 --duration 4 --video-out /absolute/path/isolated.mp4
+
+tools control record-plan capture --include-app 1234 --include-app 5678 \
+  --canvas display --screen-index 1 --transparent --codec prores4444 \
+  --video-out /absolute/path/isolated.mov --duration 4 --out /absolute/path/plan.json
+
+tools control capture /absolute/path/plan.json
+```
+
+`record-plan capture` generates a capture plan. Existing `record-plan start/stop` records
+input actions into the separate `control run` or semantic `replay-plan` format; it does not
+record a movie or automatically authorize replay. Movie output refuses to overwrite an
+existing file. Plan geometry and codec errors are rejected before focus or input actions.
 
 ## One process owns a timed sequence
 

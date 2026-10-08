@@ -665,6 +665,43 @@ export function captureSessionsRoot(): string {
     return join(tmpdir({ preferRoot: false }), "peekaboo", "capture-sessions");
 }
 
+export function recordingErrorFromStdout(stdout: string): string {
+    const jsonStart = stdout.indexOf("{");
+    if (jsonStart < 0) {
+        return "";
+    }
+
+    let parsed: unknown;
+    try {
+        parsed = SafeJSON.parse(stdout.slice(jsonStart));
+    } catch (error) {
+        logger.debug({ error }, "Recorder output is not a JSON error envelope");
+        return "";
+    }
+
+    if (parsed === null || typeof parsed !== "object" || !("error" in parsed)) {
+        return "";
+    }
+
+    const reason = parsed.error;
+    if (typeof reason === "string") {
+        return reason;
+    }
+
+    if (reason === null || typeof reason !== "object") {
+        return "";
+    }
+
+    const code = "code" in reason ? reason.code : undefined;
+    const message = "message" in reason ? reason.message : undefined;
+    return [
+        typeof code === "string" || typeof code === "number" ? String(code) : "",
+        typeof message === "string" ? message : "",
+    ]
+        .filter(Boolean)
+        .join(": ");
+}
+
 export interface CaptureAttempt {
     proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
     sessionDir: string | null;
@@ -724,18 +761,7 @@ export async function startCapture(argv: string[]): Promise<CaptureAttempt> {
         // Reading only stderr here is how a fast, explicit peekaboo error once
         // masqueraded as "recording never started ... stderr: [Visualizer][INFO] ...".
         const [so, se] = await Promise.all([stdoutText, stderrText]);
-        let envelope = "";
-        const jsonStart = so.indexOf("{");
-        if (jsonStart >= 0) {
-            try {
-                const parsed = SafeJSON.parse(so.slice(jsonStart)) as { error?: { code?: string; message?: string } };
-                if (parsed.error) {
-                    envelope = `${parsed.error.code ?? "?"}: ${parsed.error.message ?? "?"}`;
-                }
-            } catch {
-                // not JSON — the raw stdout tail below covers it
-            }
-        }
+        const envelope = recordingErrorFromStdout(so);
 
         failDiag = [
             exitedEarly

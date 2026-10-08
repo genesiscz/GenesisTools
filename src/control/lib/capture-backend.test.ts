@@ -45,7 +45,7 @@ describe("captureToolCommand", () => {
     });
 });
 
-function captureFixture() {
+function captureFixture(options: { noAfter?: boolean } = {}) {
     const calls: string[][] = [];
     let launch = 123;
     let missing = false;
@@ -85,7 +85,7 @@ function captureFixture() {
                         );
                     }
 
-                    return { ok: true, after: snapshot() };
+                    return options.noAfter ? { ok: true } : { ok: true, after: snapshot() };
                 },
             },
         }
@@ -142,6 +142,27 @@ describe("native capture target binding", () => {
         await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 });
         await f.controls.focus({ app: "Fixture" });
         expect(f.calls.filter((args) => args[0] === "window")).toHaveLength(3);
+        f.controls.dispose();
+    });
+
+    it("reobserves the same window after actions that return no refreshed snapshot", async () => {
+        const f = captureFixture({ noAfter: true });
+        for (let step = 0; step < 4; step++) {
+            expect((await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 })).ok).toBe(true);
+        }
+        expect(f.calls.filter((args) => args[0] === "window")).toHaveLength(1);
+        expect(f.calls.filter((args) => args[0] === "act")).toHaveLength(4);
+        f.controls.dispose();
+    });
+
+    it("refuses a restarted app even when an earlier action invalidated the snapshot", async () => {
+        const f = captureFixture({ noAfter: true });
+        expect((await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 })).ok).toBe(true);
+        f.restart();
+        const result = await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 });
+        expect(result.ok).toBe(false);
+        expect(result.stderr).toContain("process changed");
+        expect(f.calls.filter((args) => args[0] === "act")).toHaveLength(1);
         f.controls.dispose();
     });
 

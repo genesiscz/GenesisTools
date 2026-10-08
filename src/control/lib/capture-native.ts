@@ -59,13 +59,36 @@ function coordinates(value: string | { x: number; y: number }) {
 export class NativeCaptureControls {
     private readonly computer: ComputerUse;
     private readonly native: NativeBridge;
+    private readonly identities = new Map<string, { pid: number; processLaunch: number }>();
     private binding: { key: string; windowId: number } | undefined;
     constructor(
         private readonly capture: CaptureSpec,
         options: { native?: NativeBridge } = {}
     ) {
         this.native = options.native ?? { run: runAxAsync };
-        this.computer = new ComputerUse({ native: this.native });
+        this.computer = new ComputerUse({
+            native: {
+                run: async (request) => {
+                    const result = await this.native.run(request);
+                    const appIndex = request.args.indexOf("--app");
+                    if (result.ok && request.args[0] === "see" && appIndex >= 0) {
+                        const app = request.args[appIndex + 1];
+                        const identity = z.object({ pid: z.number(), processLaunch: z.number() }).parse(result);
+                        const previous = this.identities.get(app);
+                        if (
+                            previous &&
+                            (identity.pid !== previous.pid || identity.processLaunch !== previous.processLaunch)
+                        ) {
+                            throw new Error("The recorded app process changed. Start a fresh recording.");
+                        }
+
+                        this.identities.set(app, identity);
+                    }
+
+                    return result;
+                },
+            },
+        });
     }
     private async observe(options: { app: string; windowTitle?: string; action?: Action; image?: boolean }) {
         const key = SafeJSON.stringify({
@@ -76,11 +99,11 @@ export class NativeCaptureControls {
         });
         try {
             if (this.binding?.key === key) {
-                // Require the retained session before observing implicitly. Passing the cached ID
-                // explicitly would bypass ComputerUse's process-launch replacement check.
-                this.computer.get_elements({ app: options.app, limit: 1 });
+                // A dispatched action without a refreshed snapshot invalidates ComputerUse's rows.
+                // Reobserve the pinned window; the bridge retains and checks the app's launch identity.
                 const state = await this.computer.get_app_state({
                     app: options.app,
+                    window_id: this.binding.windowId,
                     image: options.image ?? false,
                     element_limit: 2000,
                 });
@@ -294,6 +317,7 @@ export class NativeCaptureControls {
     }
     dispose() {
         this.binding = undefined;
+        this.identities.clear();
         this.computer.close_session();
     }
     [Symbol.dispose]() {

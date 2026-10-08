@@ -185,6 +185,11 @@ each step, not just process exit. Mutation retries are refused; read retries mus
 `record-plan` is machine-global: other sessions can contribute foreign actions. Review and
 exclude foreign entries before any replay.
 
+`record-plan capture` is separate: it generates a ScreenCaptureKit capture plan with explicit
+window/app selection, canvas, output pixels/scale, alpha codec and indicator settings. Edit its
+`actions` array and execute it with `control capture plan.json`. `capture record` records directly
+with the same flags. See [capture.md](capture.md) for isolation, Retina scaling and transparent MOV.
+
 `snapshot --json` stores mouse/foreground state for `restore`; it is not a `see` token.
 `restore` can move the physical pointer and foreground app, so use it deliberately. A verified
 window-specific action should not be replaced with an unrelated frontmost-app shortcut.

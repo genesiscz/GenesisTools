@@ -8,6 +8,7 @@ import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identi
 import type { Command } from "commander";
 import pc from "picocolors";
 import { attachSemanticPlan } from "../lib/decision/workflow";
+import { addCaptureFlags, captureFromFlags } from "../lib/native-record";
 import { ensureBinary, RECORD_DIR, RECORD_SESSION, recordSource } from "../lib/runner";
 
 const COMMANDS_LOG = join(RECORD_DIR, "commands.jsonl");
@@ -405,8 +406,7 @@ function stopActivityRecorder(session: SessionState): void {
 }
 
 export function registerRecordPlanCommand(program: Command): void {
-    program
-        .command("record-plan [action]")
+    addCaptureFlags(program.command("record-plan [action]"))
         .description(`Record a plan instead of writing one — capture what happens, emit runnable plan JSON.
 
   Modes (--record):
@@ -419,6 +419,9 @@ export function registerRecordPlanCommand(program: Command): void {
     all       both, deduped (default)
 
   Usage:
+    control record-plan capture --window-ids ID --canvas crop --out capture.json
+        # generate a ScreenCaptureKit plan; edit actions, then control capture capture.json
+        # all capture flags below apply to this action, not input start/stop
     control record-plan start --record all      # begin recording
     ...do things (run commands / drive the UI)...
     control record-plan stop --out plan.json    # synthesize + write the plan
@@ -443,7 +446,43 @@ export function registerRecordPlanCommand(program: Command): void {
             "stop: drop commands recorded from OTHER terminals/sessions instead of marking them _foreign"
         )
         .option("--json", "machine output for start/status/stop metadata")
-        .action(async (action: string | undefined, opts) => {
+        .action(async (action: string | undefined, opts, command: Command) => {
+            if (action === "capture") {
+                const plan = { capture: captureFromFlags(opts), actions: [] };
+                const json = `${SafeJSON.stringify(plan, null, 2)}\n`;
+                if (opts.out) {
+                    writeFileSync(opts.out, json);
+                    out.println(
+                        `Capture plan written: ${opts.out}. Add timed actions, then run control capture ${opts.out}`
+                    );
+                } else {
+                    out.result(plan);
+                }
+
+                return;
+            }
+
+            const captureFlags = [
+                "windowIds",
+                "includeApp",
+                "canvas",
+                "screenIndex",
+                "outputSize",
+                "outputScale",
+                "transparent",
+                "codec",
+                "indicator",
+                "videoOut",
+                "activeFps",
+                "idleFps",
+                "threshold",
+            ];
+            if (captureFlags.some((name) => command.getOptionValueSource(name) === "cli")) {
+                throw new Error(
+                    "Capture options require record-plan capture. Input start/stop does not record a movie or filter apps/windows."
+                );
+            }
+
             const mode = String(opts.record) as SessionState["mode"];
             if (!["commands", "activity", "all"].includes(mode)) {
                 logger.error(`--record must be commands|activity|all, got: ${mode}`);

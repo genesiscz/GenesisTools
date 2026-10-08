@@ -31,6 +31,7 @@ Check the command named by help, not just exit zero. Do not guess command plural
 | Cheap read-only discovery | `control apps`, `window`, `find`, `attrs`, `actions`, `dump`, `hittest` |
 | Bounded semantic task, fill, wait, recovery or replay | Shared APIs in [providers.md](references/providers.md) |
 | Recording and frame review | Explicit native capture plan; [capture.md](references/capture.md) |
+| Animation/resize proof and contact sheets | One recording/action timeline; [capturing-animations.md](references/capturing-animations.md) |
 
 Read [automation-playbooks.md](references/automation-playbooks.md) before browser input, modal recovery, a Jev demonstration or multi-app execution. It contains complete examples and the failure-to-fix table. Read [native-cli.md](references/native-cli.md) for selector/snapshot/coordinate/plan contracts. [providers.md](references/providers.md) maps the standalone API, MCP and REPL.
 

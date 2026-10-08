@@ -1,5 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import { nativeCaptureArgv, parseNativeWindowList, parseScreenList } from "./native-record";
+import { Command } from "commander";
+import {
+    addCaptureFlags,
+    captureFromFlags,
+    nativeCaptureArgv,
+    parseNativeWindowList,
+    parseScreenList,
+    validateCaptureOptions,
+} from "./native-record";
 
 describe("nativeCaptureArgv", () => {
     it("records a window by app and title, duration in seconds as the plan says", () => {
@@ -170,5 +178,108 @@ describe("parseNativeWindowList", () => {
         expect(parseNativeWindowList(data)).toEqual([
             { title: "Calculator", index: 0, isMainWindow: false, x: 2137, y: -575, w: 230, h: 408 },
         ]);
+    });
+});
+
+describe("isolated capture contract", () => {
+    it("uses the same flags for direct capture and generated plans", () => {
+        const command = addCaptureFlags(new Command()).option("--duration <s>");
+        command.parse(
+            [
+                "--window-ids",
+                "12,34",
+                "--include-app",
+                "123",
+                "--include-app",
+                "Example App",
+                "--canvas",
+                "display",
+                "--screen-index",
+                "1",
+                "--output-size",
+                "200x800",
+                "--transparent",
+                "--codec",
+                "prores4444",
+                "--no-indicator",
+                "--video-out",
+                "/tmp/example.mov",
+                "--duration",
+                "4",
+            ],
+            { from: "user" }
+        );
+        const capture = captureFromFlags(command.opts());
+        expect(capture).toMatchObject({
+            mode: "isolated",
+            windowIds: [12, 34],
+            apps: ["123", "Example App"],
+            canvas: "display",
+            screenIndex: 1,
+            outputSize: { width: 200, height: 800 },
+            transparent: true,
+            codec: "prores4444",
+            indicator: false,
+            duration: 4,
+        });
+        const argv = nativeCaptureArgv(capture, "/tmp/isolated-fixture");
+        expect(argv.join(" ")).toContain(
+            "--window-ids 12,34 --include-app 123 --include-app Example App --canvas display"
+        );
+        expect(argv).toContain("--no-indicator");
+        expect(argv).toContain("--transparent");
+        expect(argv).toContain("200x800");
+    });
+
+    it("defaults to the visible indicator and native scale without inventing output detail", () => {
+        const command = addCaptureFlags(new Command());
+        command.parse(["--window-ids", "12"], { from: "user" });
+        const capture = captureFromFlags(command.opts());
+        expect(capture.indicator).toBe(true);
+        expect(capture.outputSize).toBeUndefined();
+        expect(capture.outputScale).toBeUndefined();
+        expect(nativeCaptureArgv(capture, "/tmp/o")).not.toContain("--no-indicator");
+    });
+
+    it("supports PNG alpha without a movie and explicit point-to-pixel scaling", () => {
+        expect(
+            nativeCaptureArgv(
+                { mode: "isolated", windowIds: [12], duration: 1, transparent: true, outputScale: 2 },
+                "/tmp/o"
+            )
+        ).toContain("--output-scale");
+        expect(() =>
+            validateCaptureOptions({
+                mode: "isolated",
+                apps: ["Example"],
+                duration: 1,
+                transparent: true,
+                codec: "prores4444",
+                videoOut: "/tmp/alpha.mov",
+                outputSize: { width: 201, height: 801 },
+            })
+        ).not.toThrow();
+    });
+
+    it("refuses unsupported alpha and ambiguous selections before starting any recorder", () => {
+        const base = { mode: "isolated" as const, windowIds: [12], duration: 1 };
+        for (const extra of [
+            { transparent: true, videoOut: "/tmp/a.mp4" },
+            { codec: "prores4444" as const, videoOut: "/tmp/a.mp4" },
+            { backend: "peekaboo" as const },
+            { windowId: 44 },
+            { app: "Example" },
+            { outputSize: { width: 200, height: 800 }, outputScale: 2 },
+            { outputSize: { width: 201, height: 800 }, videoOut: "/tmp/a.mp4" },
+            { outputScale: Number.NaN },
+            { screenIndex: -1 },
+            { duration: 181 },
+        ]) {
+            expect(() => validateCaptureOptions({ ...base, ...extra })).toThrow();
+        }
+        expect(() => captureFromFlags({ windowIds: "12", outputSize: "200x800x2" })).toThrow();
+        expect(() => validateCaptureOptions({ mode: "isolated", duration: 1 })).toThrow();
+        expect(() => validateCaptureOptions({ mode: "isolated", windowIds: [0], duration: 1 })).toThrow();
+        expect(() => validateCaptureOptions({ mode: "screen", windowIds: [12], duration: 1 })).toThrow();
     });
 });

@@ -72,7 +72,10 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       --crop is PIXELS of the captured image; --window fails loud on 0/2+ matches
                       --annotate draws numbered boxes on interactable elements + legend in JSON
       ax-tool ocr     --app <name> [--window W | --window-id ID] | --image <path> [--crop x,y,w,h]   Vision OCR: text blocks + pixel boxes
-      ax-tool capture --mode window|screen|region [--app <name> | --window-id ID] [--window-title T] [--window-index N]
+      ax-tool capture --mode window|screen|region|isolated [--app <name> | --window-id ID] [--window-title T] [--window-index N]
+                      isolated: --window-ids ID,ID and/or repeated --include-app NAME|PID; --canvas crop|display
+                      [--output-size WxH | --output-scale N] [--transparent --codec prores4444 --video-out f.mov]
+                      [--no-indicator] default pulsing border is excluded from capture
                       [--screen-index N] [--region x,y,w,h] --duration <seconds> [--active-fps 8] [--idle-fps 2]
                       [--threshold 2.5] [--video-out f.mp4] [--out DIR]   ScreenCaptureKit recording: change-sampled
                       keep-NNNN.png frames, contact.png, metadata.json; JSON result in the capture-runner shape

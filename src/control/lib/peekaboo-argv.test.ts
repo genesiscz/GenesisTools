@@ -5,6 +5,7 @@ import {
     parseWindowList,
     peekabooChord,
     pressArgv,
+    recordingErrorFromStdout,
     scrollArgv,
     typeArgv,
     windowShotArgv,
@@ -156,5 +157,32 @@ describe("parseWindowList", () => {
     it("is empty for an error envelope", () => {
         expect(parseWindowList(undefined)).toEqual([]);
         expect(parseWindowList({ error: "Command 'peekaboo list' was removed in v4." })).toEqual([]);
+    });
+});
+
+describe("recording error envelopes", () => {
+    it("preserves the native string error before the first frame", () => {
+        expect(recordingErrorFromStdout('{"ok":false,"error":"Selected window is not visible"}')).toBe(
+            "Selected window is not visible"
+        );
+    });
+
+    it("preserves legacy object errors and prefixed diagnostic output", () => {
+        expect(
+            recordingErrorFromStdout('diagnostic\n{"error":{"code":"CAPTURE_DENIED","message":"Permission missing"}}')
+        ).toBe("CAPTURE_DENIED: Permission missing");
+        expect(recordingErrorFromStdout('{"error":{"code":7,"message":"Recording failed"}}')).toBe(
+            "7: Recording failed"
+        );
+    });
+
+    it("keeps a message without inventing a missing error code", () => {
+        expect(recordingErrorFromStdout('{"error":{"message":"Stream closed"}}')).toBe("Stream closed");
+    });
+
+    it("lets the caller retain raw output when no usable envelope exists", () => {
+        for (const value of ["not json", "prefix {bad", '{"ok":true}', '{"error":{}}', '{"error":null}']) {
+            expect(recordingErrorFromStdout(value)).toBe("");
+        }
     });
 });

@@ -8,6 +8,7 @@ import type { Command } from "commander";
 import { nativeCapturePreflight } from "../lib/capture-native";
 import { CAPTURE_HELP, type Plan } from "../lib/capture-plan";
 import { CaptureRunError, type RunResult, runCapturePlan, runClickmap, runRecrop } from "../lib/capture-runner";
+import { addCaptureFlags, type CaptureFlags, captureFromFlags } from "../lib/native-record";
 
 function fail(msg: string, exitCode = 2): never {
     console.error(`capture-with-actions: ${msg}`);
@@ -29,7 +30,7 @@ export function registerCaptureCommands(program: Command): void {
     const capture = program
         .command("capture")
         .description(
-            `Screen recording with timed UI actions (peekaboo capture live) + crop compositing and vitrinka publish.\nSubcommands: run <plan.json> (default — \`capture <plan.json>\` works too), preflight, clickmap, recrop.\nFull plan contract: \`${toolCommand("control capture")} --help\`.`
+            `ScreenCaptureKit recording with timed UI actions + crop compositing and optional publishing.\nSubcommands: run <plan.json> (default — \`capture <plan.json>\` works too), preflight, clickmap, recrop.\nFull plan contract: \`${toolCommand("control capture")} --help\`.`
         )
         .addHelpText("after", `\n${CAPTURE_HELP}`);
 
@@ -75,6 +76,12 @@ export function registerCaptureCommands(program: Command): void {
 
                 throw e;
             }
+        });
+
+    addCaptureFlags(capture.command("record").description("Record only selected windows/apps using ScreenCaptureKit"))
+        .option("--duration <seconds>", "Recording duration, 0.1–180 seconds", "3")
+        .action(async (options: CaptureFlags) => {
+            printRunResult(await runCapturePlan({ capture: captureFromFlags(options), actions: [] }));
         });
 
     capture

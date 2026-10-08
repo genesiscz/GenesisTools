@@ -11,6 +11,8 @@
 
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { abortableSleep } from "@genesiscz/utils/async";
+import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { renderAnnotationPlan } from "@genesiscz/utils/image";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
@@ -27,7 +29,7 @@ import {
     validatePlan,
 } from "./capture-plan";
 import { applyCrops } from "./crop-compositing";
-import { nativeCaptureArgv } from "./native-record";
+import { nativeCaptureArgv, validateCaptureOptions } from "./native-record";
 import {
     AX_TOOL_PATH,
     axToolAvailable,
@@ -204,12 +206,17 @@ async function startPeekabooCapture(cap: CaptureSpec, warnings: string[]): Promi
 }
 
 export async function runCapturePlan(plan: Plan): Promise<RunResult> {
+    return withInterrupt((signal) => runCapturePlanWithSignal({ plan, signal }), { handleTermination: true });
+}
+
+async function runCapturePlanWithSignal({ plan, signal }: { plan: Plan; signal: AbortSignal }): Promise<RunResult> {
     normalizePlan(plan);
     const cap = plan.capture;
     if (!cap?.mode || !cap?.duration) {
         throw new CaptureRunError("plan.capture.mode and plan.capture.duration are required");
     }
 
+    validateCaptureOptions(cap);
     const badBackend = invalidBackend(plan);
     if (badBackend) {
         throw new CaptureRunError(badBackend);
@@ -284,6 +291,33 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
     }
 
     const proc = attempt.proc;
+    let cancellationDeadline: ReturnType<typeof setTimeout> | undefined;
+    const stopRecording = () => {
+        if (proc.exitCode !== null) {
+            return;
+        }
+
+        // This is our spawned launcher; it forwards SIGINT to the recorder for movie finalization.
+        proc.kill("SIGINT");
+        cancellationDeadline = setTimeout(() => {
+            if (proc.exitCode === null) {
+                killTree(proc.pid);
+            }
+        }, 20_000);
+    };
+    signal.addEventListener("abort", stopRecording, { once: true });
+    using _recordingLifetime = {
+        [Symbol.dispose]() {
+            signal.removeEventListener("abort", stopRecording);
+            clearTimeout(cancellationDeadline);
+            if (proc.exitCode === null) {
+                killTree(proc.pid);
+            }
+        },
+    };
+    if (signal.aborted) {
+        stopRecording();
+    }
     // non-null: the retry block above throws when no attempt produced a dir
     const sessionDir = attempt.sessionDir!;
 
@@ -312,14 +346,27 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
         .filter((a) => (a.do === "crop" ? a.target !== undefined && a.region === undefined : a.do !== "crop-stop"))
         .sort((a, b) => a.atMs - b.atMs);
     for (const action of sortedActions) {
-        if (aborted) {
+        if (aborted || signal.aborted) {
             fired.push({ action, plannedMs: action.atMs, actualMs: -1, ok: false, skipped: true });
             continue;
         }
 
         const wait = action.atMs - (Date.now() - t0);
         if (wait > 0) {
-            await Bun.sleep(wait);
+            try {
+                await abortableSleep(wait, signal);
+            } catch (error) {
+                if (!signal.aborted) {
+                    throw error;
+                }
+
+                warnings.push("Recording cancelled; remaining actions were skipped.");
+            }
+        }
+
+        if (signal.aborted) {
+            fired.push({ action, plannedMs: action.atMs, actualMs: -1, ok: false, skipped: true });
+            continue;
         }
 
         const actualMs = Date.now() - t0;
@@ -610,7 +657,7 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
     }
 
     let vitrinka: { ok: boolean; urls: string[]; error?: string } | undefined;
-    if (plan.vitrinka) {
+    if (plan.vitrinka && !signal.aborted) {
         if (motionFired && frames.length <= 1 && !plan.vitrinka.force) {
             vitrinka = {
                 ok: false,
@@ -622,11 +669,13 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
         }
     }
 
-    const captureFailed = (captureResult as { failed?: boolean })?.failed === true;
+    const envelope = captureResult as { failed?: boolean; ok?: boolean; success?: boolean };
+    const captureFailed =
+        envelope?.failed === true || envelope?.ok === false || envelope?.success === false || proc.exitCode !== 0;
     const actionsFailed = fired.some((f) => !f.ok && !f.skipped);
 
     return {
-        ok: !captureFailed && !actionsFailed,
+        ok: !captureFailed && !actionsFailed && !signal.aborted,
         sessionDir,
         exitCode: proc.exitCode,
         warnings,

@@ -13,7 +13,7 @@ public struct FrameSignature: Equatable {
         let step = max(1, stride)
         let columns = max(1, width / step)
         let rows = max(1, height / step)
-        var samples = [UInt8](repeating: 0, count: columns * rows * 3)
+        var samples = [UInt8](repeating: 0, count: columns * rows * 4)
         var out = 0
         for row in 0..<rows {
             let line = bgra.advanced(by: row * step * bytesPerRow)
@@ -22,7 +22,8 @@ public struct FrameSignature: Equatable {
                 samples[out] = pixel.load(as: UInt8.self)
                 samples[out + 1] = pixel.load(fromByteOffset: 1, as: UInt8.self)
                 samples[out + 2] = pixel.load(fromByteOffset: 2, as: UInt8.self)
-                out += 3
+                samples[out + 3] = pixel.load(fromByteOffset: 3, as: UInt8.self)
+                out += 4
             }
         }
         self.width = columns
@@ -37,12 +38,13 @@ public struct FrameSignature: Equatable {
             return 100
         }
         var changed = 0
-        let count = samples.count / 3
+        let count = samples.count / 4
         for index in 0..<count {
-            let base = index * 3
+            let base = index * 4
             if abs(Int(samples[base]) - Int(previous.samples[base])) > tolerance
                 || abs(Int(samples[base + 1]) - Int(previous.samples[base + 1])) > tolerance
-                || abs(Int(samples[base + 2]) - Int(previous.samples[base + 2])) > tolerance {
+                || abs(Int(samples[base + 2]) - Int(previous.samples[base + 2])) > tolerance
+                || abs(Int(samples[base + 3]) - Int(previous.samples[base + 3])) > tolerance {
                 changed += 1
             }
         }
@@ -144,4 +146,23 @@ public func frameInterval(fps: Double) -> (value: Int64, timescale: Int32) {
     let safe = max(0.01, fps)
     let timescale: Int32 = 600
     return (Int64((Double(timescale) / safe).rounded()), timescale)
+}
+
+/// Output stays fixed during a movie. The live canvas fits without stretching; global CG
+/// coordinates are translated before Core Image's bottom-left coordinate flip.
+public struct CaptureCanvasGeometry {
+    public let canvas: CGRect
+    public let output: CGSize
+    public var scale: CGFloat { min(output.width / canvas.width, output.height / canvas.height) }
+    public init(canvas: CGRect, output: CGSize) {
+        self.canvas = canvas
+        self.output = output
+    }
+    public func destination(for window: CGRect) -> CGRect {
+        let paddingX = (output.width - canvas.width * scale) / 2
+        let paddingY = (output.height - canvas.height * scale) / 2
+        return CGRect(x: paddingX + (window.minX - canvas.minX) * scale,
+                      y: paddingY + (canvas.maxY - window.maxY) * scale,
+                      width: window.width * scale, height: window.height * scale)
+    }
 }

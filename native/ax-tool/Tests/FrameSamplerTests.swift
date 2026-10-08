@@ -133,3 +133,35 @@ final class FrameSamplerTests: XCTestCase {
         XCTAssertTrue(policy.consider(moved).keep, "any real change still passes at threshold 0")
     }
 }
+
+final class CaptureCanvasGeometryTests: XCTestCase {
+    func testNegativeDisplayCoordinatesAndCGToImageFlip() {
+        let geometry = CaptureCanvasGeometry(canvas: CGRect(x: -1500, y: -900, width: 800, height: 600),
+                                             output: CGSize(width: 1600, height: 1200))
+        XCTAssertEqual(geometry.destination(for: CGRect(x: -1400, y: -800, width: 100, height: 400)),
+                       CGRect(x: 200, y: 200, width: 200, height: 800))
+    }
+    func testTightCanvasFollowsMoveWithoutShiftingWindowInsideFrame() {
+        let first = CaptureCanvasGeometry(canvas: CGRect(x: 100, y: 200, width: 100, height: 400), output: CGSize(width: 200, height: 800))
+        let moved = CaptureCanvasGeometry(canvas: CGRect(x: -300, y: -500, width: 100, height: 400), output: CGSize(width: 200, height: 800))
+        XCTAssertEqual(first.destination(for: first.canvas), CGRect(x: 0, y: 0, width: 200, height: 800))
+        XCTAssertEqual(moved.destination(for: moved.canvas), first.destination(for: first.canvas))
+    }
+    func testResizeFitsWithoutStretchingAndKeepsOutputDimensions() {
+        let geometry = CaptureCanvasGeometry(canvas: CGRect(x: 10, y: 20, width: 200, height: 400), output: CGSize(width: 200, height: 800))
+        XCTAssertEqual(geometry.scale, 1)
+        XCTAssertEqual(geometry.destination(for: geometry.canvas), CGRect(x: 0, y: 200, width: 200, height: 400))
+    }
+    func testAlphaOnlyChangeIsKept() {
+        var opaque = frame(width: 64, height: 32) { _, _ in (0, 0, 0) }
+        let before = signature(opaque, width: 64, height: 32)
+        for y in 0..<32 {
+            for x in 0..<64 { opaque[y * (64 * 4 + 64) + x * 4 + 3] = 0 }
+        }
+        let after = signature(opaque, width: 64, height: 32)
+        XCTAssertEqual(after.changePercent(from: before), 100)
+        var policy = KeepPolicy(thresholdPercent: 0)
+        XCTAssertTrue(policy.consider(before).keep)
+        XCTAssertTrue(policy.consider(after).keep)
+    }
+}

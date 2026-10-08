@@ -1,6 +1,9 @@
 # Review an existing local video
 
 Offline extraction does not replay UI actions or make a new recording.
+For recording an animation and the exact top/side 36-tile ffmpeg layouts, see
+[capturing-animations.md](capturing-animations.md). Prefer the existing video tool for timestamped
+contact sheets; use the custom layouts only when that shape improves the inspection.
 
 ~~~sh
 tools video probe /absolute/path/demo.mp4 --json
@@ -22,3 +25,10 @@ occurred at the requested time when the manifest reports a different actual time
 Use references/capture.md for a new live screen capture and references/automation-playbooks.md for
 recapturing an interaction. Recapture can repeat real actions, so first decide whether decoding the
 existing video already answers the question. Do not replay actions just to make another contact sheet.
+
+For isolated transparent video, use ProRes 4444 MOV. H.264 MP4 cannot carry alpha.
+A black-looking player background does not prove transparency was lost: inspect decoded PNG
+alpha, with a fully transparent background pixel and an opaque selected-window pixel as the
+controls. The recorder's `geometry` history records the canvas and each selected window's
+logical bounds, source backing scale and output pixels per point. Inspect frames before and
+after a move/resize; the movie keeps fixed dimensions and aspect-fits the live canvas.

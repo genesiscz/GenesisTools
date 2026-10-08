@@ -28,7 +28,8 @@ func cmdScreens() {
 
 // MARK: - record
 
-private struct RecordOptions {
+struct RecordOptions {
+    let selection: CaptureSelectionOptions
     let mode: String
     let screenIndex: Int?
     let app: String?
@@ -47,8 +48,8 @@ private struct RecordOptions {
 
 private func recordOptions() -> RecordOptions {
     let mode = argValue("--mode") ?? "window"
-    guard ["screen", "window", "region"].contains(mode) else {
-        errorExit("--mode must be screen, window or region")
+    guard ["screen", "window", "region", "isolated"].contains(mode) else {
+        errorExit("--mode must be screen, window, region or isolated")
     }
     func number(_ flag: String, default fallback: Double, min lower: Double, max upper: Double) -> Double {
         guard let raw = argValue(flag) else { return fallback }
@@ -77,6 +78,7 @@ private func recordOptions() -> RecordOptions {
     // for MORE frames while nothing moves, which is the opposite of what the flag is for.
     let activeFps = number("--active-fps", default: 8, min: 0.5, max: 30)
     return RecordOptions(
+        selection: captureSelectionOptions(mode: mode),
         mode: mode,
         screenIndex: argValue("--screen-index").flatMap { Int($0) },
         app: argValue("--app"),
@@ -175,7 +177,7 @@ private func resolveRecordWindow(_ options: RecordOptions) -> (id: CGWindowID, b
 /// Metadata only. Holding a thumbnail per kept frame retained about 122 MiB at the default
 /// 800-frame cap and 763 MiB at the 5000 allowed, for pictures already on disk; the contact
 /// sheet reloads each PNG when it needs it and lets it go again.
-private struct KeptFrame {
+struct KeptFrame {
     let index: Int
     let file: String
     let timestampMs: Int
@@ -186,7 +188,7 @@ private struct KeptFrame {
 /// One ScreenCaptureKit stream, the keep policy, PNG output and the optional MP4. Frames arrive
 /// on a serial queue, so the policy and the counters need no locking.
 @available(macOS 13.0, *)
-private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
+final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private let options: RecordOptions
     private let queue = DispatchQueue(label: "ax-tool.record.frames")
     private let context = CIContext(options: [.cacheIntermediates: false])
@@ -195,6 +197,7 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     /// Set once the stream exists, so the recorder can ask it for a different rate. The stream
     /// owns the recorder as its delegate and its output, hence weak.
     weak var stream: SCStream?
+    var rateChanged: ((Double) -> Void)?
     private let configuration: SCStreamConfiguration
     private var firstTimestamp: CMTime?
     private(set) var kept: [KeptFrame] = []
@@ -221,6 +224,7 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private func applyRate(_ fps: Double) {
         let interval = frameInterval(fps: fps)
         configuration.minimumFrameInterval = CMTime(value: interval.value, timescale: interval.timescale)
+        rateChanged?(fps)
         guard let stream else { return }
         let configuration = self.configuration
         Task { [weak stream, weak self] in
@@ -243,10 +247,12 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     func prepareVideo(width: Int, height: Int) throws {
         guard let path = options.videoOut else { return }
         let url = URL(fileURLWithPath: path)
-        try? FileManager.default.removeItem(at: url)
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        guard !FileManager.default.fileExists(atPath: path) else {
+            throw NSError(domain: "ax-tool", code: 1, userInfo: [NSLocalizedDescriptionKey: "video already exists; choose a new output path"])
+        }
+        let writer = try AVAssetWriter(outputURL: url, fileType: options.selection.codec == "prores4444" ? .mov : .mp4)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoCodecKey: options.selection.codec == "prores4444" ? AVVideoCodecType.proRes4444 : AVVideoCodecType.h264,
             AVVideoWidthKey: width,
             AVVideoHeightKey: height,
         ])
@@ -271,7 +277,11 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
               let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
             return
         }
-        let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        consume(pixelBuffer, timestamp: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+    }
+
+    /// Called on frameQueue by either the desktop stream or the isolated-window compositor.
+    func consume(_ pixelBuffer: CVPixelBuffer, timestamp: CMTime) {
         if firstTimestamp == nil {
             firstTimestamp = timestamp
             writer?.startSession(atSourceTime: timestamp)
@@ -335,8 +345,13 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
     var failure: Error? { queue.sync { streamError } }
 
-    func finishVideo() {
+    var videoSucceeded: Bool { options.videoOut == nil || (writer?.status == .completed && !videoAppendFailed) }
+
+    func finishVideo(duration: Double? = nil) {
         guard let writer, let writerInput else { return }
+        if let duration, let firstTimestamp {
+            writer.endSession(atSourceTime: CMTimeAdd(firstTimestamp, CMTime(seconds: duration, preferredTimescale: 600)))
+        }
         writerInput.markAsFinished()
         let done = DispatchSemaphore(value: 0)
         writer.finishWriting { done.signal() }
@@ -369,7 +384,7 @@ private func contactSheetSelection(_ count: Int) -> [Int] {
 /// capture review discipline expects: one PNG that shows the whole motion in one look. Each
 /// thumbnail is read back from its own PNG and released again, so the sheet costs one frame of
 /// memory at a time rather than one per kept frame.
-private func writeContactSheet(_ frames: [KeptFrame], in directory: URL, to url: URL) -> (rows: Int, columns: Int, sampled: [Int])? {
+func writeContactSheet(_ frames: [KeptFrame], in directory: URL, to url: URL) -> (rows: Int, columns: Int, sampled: [Int])? {
     guard !frames.isEmpty else { return nil }
     let selection = contactSheetSelection(frames.count)
     let cell = 200
@@ -444,6 +459,11 @@ func cmdCaptureScreen() {
         errorExit("cannot create --out directory: \(error.localizedDescription)")
     }
 
+    if options.mode == "isolated" {
+        captureIsolatedWindows(options)
+        return
+    }
+
     // Resolve what to capture before touching ScreenCaptureKit, so every refusal names its cause.
     var windowTarget: (id: CGWindowID, bounds: CGRect)?
     var display: DisplayGeometry?
@@ -466,6 +486,10 @@ func cmdCaptureScreen() {
     }
     guard let display else { errorExit("no display for the capture target") }
 
+    let indicator = RecordingIndicator(enabled: options.selection.indicator)
+    indicator.update([windowTarget?.bounds ?? options.region ?? display.bounds])
+    defer { indicator.close() }
+
     let content: SCShareableContent
     do {
         content = try awaitResult { try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }
@@ -484,7 +508,7 @@ func cmdCaptureScreen() {
         guard let scDisplay = content.displays.first(where: { $0.displayID == display.id }) else {
             errorExit("display \(display.id) is not shareable")
         }
-        filter = SCContentFilter(display: scDisplay, excludingWindows: [])
+        filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { indicator.windowIDs.contains($0.windowID) })
         pointSize = sourceRect?.size ?? display.bounds.size
     }
     let configuration = SCStreamConfiguration()
@@ -492,8 +516,9 @@ func cmdCaptureScreen() {
     // odd capture size used to mean SCStream delivered an odd CVPixelBuffer while the writer had
     // been configured one pixel smaller. The adaptor then refused every append and only a
     // generic writer-status warning said so.
-    let width = max(2, Int((pointSize.width * display.scale).rounded()) & ~1)
-    let height = max(2, Int((pointSize.height * display.scale).rounded()) & ~1)
+    let output = options.selection.dimensions(points: pointSize, nativeScale: display.scale, video: options.videoOut != nil)
+    let width = Int(output.width)
+    let height = Int(output.height)
     configuration.width = width
     configuration.height = height
     if let sourceRect {
@@ -504,6 +529,11 @@ func cmdCaptureScreen() {
     configuration.minimumFrameInterval = CMTime(value: activeInterval.value, timescale: activeInterval.timescale)
     configuration.queueDepth = 5
     configuration.showsCursor = true
+    configuration.backgroundColor = options.selection.transparent ? captureClearColor : captureOpaqueColor
+    if #available(macOS 14.0, *) {
+        configuration.ignoreShadowsSingleWindow = true
+        configuration.preservesAspectRatio = true
+    }
 
     let recorder = NativeRecorder(options: options, configuration: configuration)
     do {
@@ -520,7 +550,15 @@ func cmdCaptureScreen() {
         errorExit("recording never started: \(error.localizedDescription)")
     }
     let started = Date()
-    _ = recorder.stopped.wait(timeout: .now() + options.duration)
+    let cancelled = runRecordingLoop(duration: options.duration) {
+        if let target = windowTarget,
+           let rows = CGWindowListCopyWindowInfo([.optionIncludingWindow], target.id) as? [[CFString: Any]],
+           let raw = rows.first?[kCGWindowBounds] as? NSDictionary, let bounds = CGRect(dictionaryRepresentation: raw) {
+            indicator.update([bounds])
+        }
+        return recorder.failure == nil
+    }
+    indicator.close()
     do {
         try awaitResult { try await stream.stopCapture() }
     } catch {
@@ -530,7 +568,7 @@ func cmdCaptureScreen() {
     // Drain the frame queue so the last kept frame is on disk before the sheet is built.
     recorder.frameQueue.sync {}
     let durationMs = Int((Date().timeIntervalSince(started) * 1000).rounded())
-    recorder.finishVideo()
+    recorder.finishVideo(duration: Double(durationMs) / 1000)
     if let failure = recorder.failure {
         errorExit("recording stopped early: \(failure.localizedDescription)")
     }
@@ -548,10 +586,12 @@ func cmdCaptureScreen() {
                  "thumbSize": [200, 200], "sampledFrameIndexes": layout.sampled]
     }
     var data: [String: Any] = [
-        "source": "native", "captureEngine": "ScreenCaptureKit", "scope": options.mode,
+        "source": "native", "captureEngine": "ScreenCaptureKit", "scope": options.mode, "cancelled": cancelled,
         "options": ["mode": options.mode, "duration": options.duration, "activeFps": options.activeFps,
                     "idleFps": options.idleFps, "changeThresholdPercent": options.threshold, "maxFrames": options.maxFrames,
-                    "width": width, "height": height, "scaleFactor": display.scale],
+                    "width": width, "height": height, "scaleFactor": display.scale,
+                    "transparent": options.selection.transparent, "codec": options.selection.codec,
+                    "indicator": options.selection.indicator, "indicatorCaptured": false],
         "frames": frames,
         "stats": ["durationMs": durationMs, "capturedFrames": recorder.captured, "keptFrames": recorder.kept.count,
                   "droppedFrames": recorder.captured - recorder.kept.count],
@@ -573,7 +613,8 @@ func cmdCaptureScreen() {
         try? metadata.write(to: metadataURL, options: .atomic)
         data["metadataFile"] = metadataURL.path
     }
-    jsonOutput(["success": true, "ok": true, "data": data])
+    jsonOutput(["success": recorder.videoSucceeded, "ok": recorder.videoSucceeded, "data": data])
+    if !recorder.videoSucceeded { exit(1) }
 }
 
 /// Runs one async throwing call to completion from a plain command-line entry point.
@@ -583,7 +624,7 @@ func cmdCaptureScreen() {
 /// that ScreenCaptureKit's start and stop are XPC calls, and an XPC call that never answers used to
 /// hold this process forever. The caller's own grace kill exists too, but a timeout here reports a
 /// real error to the user instead of a silent kill.
-private func awaitResult<T>(timeoutSeconds: Double = 30, _ operation: @escaping () async throws -> T) throws -> T {
+func awaitResult<T>(timeoutSeconds: Double = 30, _ operation: @escaping () async throws -> T) throws -> T {
     let done = DispatchSemaphore(value: 0)
     var outcome: Result<T, Error>?
     let task = Task {

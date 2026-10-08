@@ -19,6 +19,30 @@ NATIVE DEFAULT
   Use an exact window ID/index/title when the app has multiple windows.
   Native preflight reads app/window/screen geometry; it does not query browser URLs.
 
+ISOLATED WINDOWS (native, macOS 14+)
+  capture.mode:"isolated" with windowIds:[CG_ID,...] and/or apps:["PID-or-app",...]
+  pins 1–16 currently visible windows. Each uses a desktop-independent ScreenCaptureKit
+  stream, so unrelated apps, desktop and the recording border never enter the composite.
+  canvas:"crop" follows their bounding box; canvas:"display" uses screenIndex (default 0).
+  outputSize:{width:200,height:800} sets exact pixels; outputScale:2 sets pixels/point.
+  Omit both for native backing scale. They are mutually exclusive. Output dimensions stay
+  fixed; resized canvas is aspect-fitted with padding. Scaling beyond source backing pixels
+  interpolates; it creates no detail. Geometry history reports each window's nativeScale.
+  transparent:true preserves PNG alpha. For video use codec:"prores4444" and .mov.
+  H.264/MP4 cannot preserve alpha and is explicitly refused with transparent video.
+  indicator defaults true: a pulsing red border outside selected windows or display canvas.
+  Set indicator:false (CLI --no-indicator) to hide it. Window moves refresh every 250 ms;
+  closed/hidden windows disappear. Newly opened app windows are not silently included.
+  This mode excludes the system cursor and separate cursor overlays. Use region/screen
+  only when those overlays and other desktop content are intentionally part of the proof.
+  All timed actions below work with isolated plans. Recording is not input authorization.
+
+  ${toolCommand("control capture record")} --window-ids ID,ID --canvas crop --duration 4
+  ${toolCommand("control record-plan capture")} --include-app PID --canvas display --screen-index 1
+      --transparent --codec prores4444 --video-out demo.mov --out plan.json
+  record-plan capture emits a capture plan; edit actions and run control capture plan.json.
+  record-plan start/stop still records input actions into a separate replay-plan format.
+
 USAGE
   ${toolCommand("control capture preflight")} [--app "<Name>"]   # RUN THIS FIRST when writing a plan:
       # prints JSON with screens (index/points/scaleFactor/framePixels/originCG),
@@ -80,7 +104,15 @@ PLAN CONTRACT (TypeScript)
   }
 
   interface CaptureSpec {
-      mode: "screen" | "window" | "region";
+      mode: "screen" | "window" | "region" | "isolated";
+    windowIds?: number[];
+    apps?: string[];
+    canvas?: "crop" | "display";
+    outputSize?: { width: number; height: number };
+    outputScale?: number;
+    transparent?: boolean;
+    codec?: "h264" | "prores4444";
+    indicator?: boolean;
       screenIndex?: number;       // screen mode: index from \`peekaboo list screens --json\`
       app?: string;               // window mode
       windowTitle?: string;       // window mode narrowing
@@ -399,7 +431,15 @@ export type Action =
     | { atMs: number; do: "ax-perform"; axId?: string; q?: string; action: string; app: string; onError?: OnError };
 
 export interface CaptureSpec {
-    mode: "screen" | "window" | "region";
+    mode: "screen" | "window" | "region" | "isolated";
+    windowIds?: number[];
+    apps?: string[];
+    canvas?: "crop" | "display";
+    outputSize?: { width: number; height: number };
+    outputScale?: number;
+    transparent?: boolean;
+    codec?: "h264" | "prores4444";
+    indicator?: boolean;
     screenIndex?: number;
     app?: string;
     windowTitle?: string;

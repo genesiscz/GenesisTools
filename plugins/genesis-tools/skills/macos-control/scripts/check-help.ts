@@ -120,6 +120,23 @@ const probes = [
     { argv: [...control, "doctor", "--help"], command: "control doctor", flags: ["--json"] },
     { argv: [...control, "audit", "--help"], command: "control audit", flags: ["--all", "--json"] },
     { argv: [...control, "capture", "--help"], command: "control capture", flags: [] },
+    ...["capture", "record-plan"].map((door) => ({
+        argv: [...control, door, ...(door === "capture" ? ["record"] : []), "--help"],
+        command: door === "capture" ? "control capture record" : "control record-plan capture",
+        flags: [
+            "--window-ids",
+            "--include-app",
+            "--canvas",
+            "--screen-index",
+            "--output-size",
+            "--output-scale",
+            "--transparent",
+            "--codec",
+            "--no-indicator",
+            "--video-out",
+            "--duration",
+        ],
+    })),
     { argv: [...control, "capture", "preflight", "--help"], command: "control capture preflight", flags: ["--app"] },
 ];
 
