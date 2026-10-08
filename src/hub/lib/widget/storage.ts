@@ -62,3 +62,32 @@ export async function mutateWidgetState<T>(root: string | undefined, update: (st
         10_000
     );
 }
+
+export async function acknowledgeWidgetInbox({
+    root,
+    key,
+    id,
+    at,
+    signal,
+}: {
+    root?: string;
+    key: string;
+    id: string;
+    at: number;
+    signal?: AbortSignal;
+}): Promise<{ saved: boolean }> {
+    return mutateWidgetState(root, (state) => {
+        signal?.throwIfAborted();
+        const token = `${key}|${id}`;
+        if ((state.inboxRead[token] ?? -1) >= at) {
+            return { saved: false };
+        }
+
+        if (!(token in state.inboxRead) && Object.keys(state.inboxRead).length >= 4096) {
+            throw new Error("The saved inbox read history is full; no notification was marked read.");
+        }
+
+        state.inboxRead[token] = at;
+        return { saved: true };
+    });
+}

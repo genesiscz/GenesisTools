@@ -979,3 +979,121 @@ final class WidgetTasksStoreTests: XCTestCase {
         XCTAssertNil(store.error)
     }
 }
+
+@MainActor
+final class WidgetInboxNotificationTests: XCTestCase {
+    private let key = "local:codex:fixture-new:"
+    private func model() -> WidgetModel {
+        let defaults = UserDefaults(suiteName: "widget.inbox.fixture." + UUID().uuidString)!
+        let appearance = NativeSettingsAppearance(defaults: defaults,
+            notificationNamespace: "inbox.fixture." + UUID().uuidString, observeExternalChanges: false)
+        return WidgetModel(binaryPath: "/fixture/tools", stateRoot: FileManager.default.temporaryDirectory.path,
+                           defaults: defaults, appearance: appearance)
+    }
+    private func item(_ id: String, at: Double, pending: Bool = false) -> WidgetInboxItem {
+        WidgetInboxItem(id: (pending ? "form:" : "answer:") + id, sourceId: id,
+                        kind: pending ? "form" : "answer", key: key, at: at, needsAnswer: pending)
+    }
+    private func summary(_ item: WidgetInboxItem) -> WidgetInboxSummary {
+        WidgetInboxSummary(unread: item.needsAnswer ? 0 : 1, needsAnswer: item.needsAnswer ? 1 : 0,
+            complete: true, truncated: false, sessions: [WidgetInboxSession(key: key,
+                unread: item.needsAnswer ? 0 : 1, needsAnswer: item.needsAnswer ? 1 : 0, latest: item,
+                unreadItem: item.needsAnswer ? nil : item, pendingItem: item.needsAnswer ? item : nil)])
+    }
+    private func snapshot(_ notification: WidgetInboxItem, cardID: String?, selected: String) throws -> String {
+        let old = "local:codex:fixture-old:"
+        let sessions: [[String: Any]] = [old, key].map { value in
+            ["key": value, "target": ["hostId": "local", "provider": "codex", "sessionId": value == key ? "fixture-new" : "fixture-old",
+                "sourceHome": "", "cwd": "/fixture"], "title": "Fixture", "project": "Fixture", "activityAt": 0,
+             "status": notification.needsAnswer ? "waiting" : "recent", "pinned": true, "visible": true, "hiddenByFilter": false]
+        }
+        let cards: [[String: Any]] = cardID.map { id in [["id": id, "kind": notification.kind,
+            "sourceId": notification.sourceId, "sessionKey": selected, "at": notification.at, "title": "Fixture",
+            "body": "Receipt", "status": notification.needsAnswer ? "pending" : "answered", "choices": [],
+            "attachments": [], "refs": [], "read": false]] } ?? []
+        let encoded = try JSONEncoder().encode(summary(notification))
+        let notifications = try JSONSerialization.jsonObject(with: encoded)
+        let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": ["version": 1, "revision": 0,
+            "selectedKey": selected, "preferences": ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
+                "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en"],
+            "assets": [:], "drafts": [:], "outgoing": []], "sessions": sessions, "cards": cards,
+            "manifests": [:], "errors": [], "selectedKey": selected, "notifications": notifications])
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    func testFirstSnapshotAndOlderUnreadFallbackDoNotReplayAttention() {
+        let model = model()
+        defer { model.stop() }
+        let now = Date().timeIntervalSince1970 * 1000
+        model.updateInbox(summary(item("old", at: now - 1000)))
+        XCTAssertEqual(model.inboxCount, 1)
+        XCTAssertEqual(model.inboxPulse, 0)
+        let fresh = summary(item("fresh", at: now + 100_000))
+        model.updateInbox(fresh)
+        XCTAssertEqual(model.inboxPulse, 1)
+        XCTAssertEqual(model.inboxPulseFor(key), 1)
+        model.updateInbox(fresh)
+        model.updateInbox(summary(item("older", at: now - 2000)))
+        XCTAssertEqual(model.inboxPulse, 1)
+        XCTAssertEqual(model.inboxCount, 1)
+    }
+
+    func testUnavailableThenFirstCompleteSnapshotDoesNotReplayHistoricalItems() {
+        let model = model()
+        defer { model.stop() }
+        model.updateInbox(.empty)
+        model.updateInbox(summary(item("historical", at: 1)))
+        XCTAssertEqual(model.inboxPulse, 0)
+        XCTAssertTrue(model.inbox.complete)
+    }
+
+    func testBadgeNavigationAcknowledgesOnlyTheMatchingOpenedReceipt() async throws {
+        let model = model()
+        defer { model.stop() }
+        let old = "local:codex:fixture-old:"
+        let notification = item("wanted", at: 1)
+        model.selectedKey = old
+        var reads: [WidgetJSON] = []
+        let selected = expectation(description: "Selection saved")
+        let read = expectation(description: "Visible matching receipt acknowledged")
+        model.actionRunner = { value in
+            if case .object(let fields) = value {
+                if fields["action"] == .string("selection") { selected.fulfill() }
+                if fields["action"] == .string("inbox-read") { reads.append(value); read.fulfill() }
+            }
+            return ["ok": true]
+        }
+        model.receive([try snapshot(notification, cardID: "answer:old", selected: old)])
+        model.openInboxNotification(on: .init(edge: .top, group: 0), needsAnswer: false)
+        await fulfillment(of: [selected], timeout: 2)
+        XCTAssertEqual(model.selectedKey, key)
+        XCTAssertEqual(model.selectedCardID, "answer:wanted")
+        XCTAssertTrue(reads.isEmpty)
+        model.receive([try snapshot(notification, cardID: "answer:unrelated", selected: key)])
+        XCTAssertTrue(reads.isEmpty)
+        model.receive([try snapshot(notification, cardID: "answer:wanted", selected: key)])
+        await fulfillment(of: [read], timeout: 2)
+        XCTAssertEqual(reads.count, 1)
+        model.receive([try snapshot(notification, cardID: "answer:wanted", selected: key)])
+        XCTAssertEqual(reads.count, 1)
+    }
+
+    func testReadingPendingQuestionKeepsNeedsAnswerAndCollapseCancelsLateAck() async throws {
+        let model = model()
+        defer { model.stop() }
+        let notification = item("pending", at: 1, pending: true)
+        model.selectedKey = key
+        var reads = 0
+        model.actionRunner = { value in
+            if case .object(let fields) = value, fields["action"] == .string("inbox-read") { reads += 1 }
+            return ["ok": true]
+        }
+        model.receive([try snapshot(notification, cardID: nil, selected: key)])
+        model.openInboxNotification(on: .init(edge: .right, group: 0), needsAnswer: true)
+        model.collapse()
+        model.receive([try snapshot(notification, cardID: notification.id, selected: key)])
+        await Task.yield()
+        XCTAssertEqual(reads, 0)
+        XCTAssertEqual(model.inbox.needsAnswer, 1)
+    }
+}
