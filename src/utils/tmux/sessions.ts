@@ -35,13 +35,8 @@ const TMUX_SESSION_ENV_KEYS = [
     "CLICOLOR_FORCE",
 ] as const;
 
-function resolveLoginShell(shell: string): string {
-    const trimmed = shell.trim();
-
-    if (trimmed.length > 0 && !trimmed.includes("=")) {
-        return trimmed;
-    }
-
+/** The user's login shell: `$SHELL`, else `/bin/zsh`. */
+function resolveLoginShell(): string {
     const fromEnv = env.paths.getShell()?.trim();
 
     if (fromEnv && fromEnv.length > 0 && !fromEnv.includes("=")) {
@@ -51,8 +46,20 @@ function resolveLoginShell(shell: string): string {
     return "/bin/zsh";
 }
 
-/** Initial pane: `env KEY=val … /bin/zsh` so tmux never treats `truecolor` as the command. */
-function tmuxLoginShellArgv(shell: string): string[] {
+/** One word naming a program (`/bin/zsh`, `top`): exec'd as is. Anything with a space,
+ *  a quote, `;`, `=` or other shell syntax is a command line for the login shell. */
+function isBareExecutable(command: string): boolean {
+    return /^[A-Za-z0-9_./+@%:,-]+$/.test(command);
+}
+
+/**
+ * The first pane's argv, always `env KEY=val … <program>` so tmux never treats `truecolor` as
+ * the command. A bare executable (the shell path dev-dashboard ttyd and snapshot restore pass)
+ * is the program itself. A command line runs as `<login shell> -lic <line>`: tmux does no shell
+ * parsing after `--`, so passing the line as one argv word made `env` look for a program named
+ * `echo hi; sleep 300` and the pane died at once. `-i` loads `.zshrc`, where aliases live.
+ */
+export function tmuxPaneArgv(command: string): { argv: string[]; commandLine: boolean } {
     const env = buildTerminalSpawnEnv();
     const argv: string[] = ["/usr/bin/env"];
 
@@ -64,10 +71,23 @@ function tmuxLoginShellArgv(shell: string): string[] {
         }
     }
 
-    argv.push(resolveLoginShell(shell));
+    const trimmed = command.trim();
+    if (trimmed.length === 0) {
+        return { argv: [...argv, resolveLoginShell()], commandLine: false };
+    }
 
-    return argv;
+    if (isBareExecutable(trimmed)) {
+        return { argv: [...argv, trimmed], commandLine: false };
+    }
+
+    // The tmux client splits its argv at any word that ENDS in `;`, so a trailing `;`
+    // would cut the line. Dropping it does not change what the shell runs.
+    return { argv: [...argv, resolveLoginShell(), "-lic", trimmed.replace(/[\s;]+$/, "")], commandLine: true };
 }
+
+/** How long a command-line session is watched for an immediate death before it counts as started. */
+export const TMUX_COMMAND_SETTLE_MS = 1_000;
+const TMUX_COMMAND_POLL_MS = 250;
 
 /**
  * Join several tmux commands into ONE client invocation using tmux's `;`
@@ -395,15 +415,37 @@ export async function sessionExists(sessionName: string): Promise<boolean> {
     return (await listTmuxSessions()).some((session) => session.name === sessionName);
 }
 
-export async function createTmuxSession(sessionName: string, cwd: string, command: string): Promise<void> {
+/**
+ * Create a detached session in `cwd`. `command` is either a bare executable (usually the shell
+ * path) or a command line, which runs through the login shell. A command-line session keeps its
+ * pane after the command ends (`remain-on-exit`), so the output stays readable; when the command
+ * dies with a non-zero status within `settleMs`, the session is killed and this throws with the
+ * pane's last lines instead of reporting a session that no longer works.
+ */
+export async function createTmuxSession(
+    sessionName: string,
+    cwd: string,
+    command: string,
+    opts: { settleMs?: number } = {}
+): Promise<void> {
     const tmuxBin = resolveTmuxBin();
+    const pane = tmuxPaneArgv(command);
+    const newSession = [tmuxBin, "new-session", "-d", "-s", sessionName, "-c", cwd, "--", ...pane.argv];
+    // Chained into the same client call, so the option is set before tmux can reap a command
+    // that fails in its first millisecond.
     const result = await runTmux(
-        [tmuxBin, "new-session", "-d", "-s", sessionName, "-c", cwd, "--", ...tmuxLoginShellArgv(command)],
+        pane.commandLine
+            ? chainTmuxCommands([newSession, ["set-option", "-t", sessionName, "remain-on-exit", "on"]])
+            : newSession,
         { cwd: tmuxServerBootstrapCwd() }
     );
 
     if (result.exitCode !== 0) {
         throw new Error(`Failed to create tmux session ${sessionName}${tmuxErrorDetail(result.stderr)}`);
+    }
+
+    if (pane.commandLine) {
+        await failIfCommandDied(tmuxBin, sessionName, opts.settleMs ?? TMUX_COMMAND_SETTLE_MS);
     }
 
     // Both best-effort and independent — run concurrently.
@@ -412,6 +454,45 @@ export async function createTmuxSession(sessionName: string, cwd: string, comman
         // Pin the (possibly freshly-bootstrapped) server to keep sessions alive.
         ensureTmuxServerPersists(tmuxBin),
     ]);
+}
+
+/** Watch a command-line pane for `settleMs`. A pane that died with a non-zero status takes its
+ *  session down and throws with the last lines it printed. */
+async function failIfCommandDied(tmuxBin: string, sessionName: string, settleMs: number): Promise<void> {
+    const deadline = Date.now() + settleMs;
+
+    while (true) {
+        const state = await runTmux([
+            tmuxBin,
+            "display-message",
+            "-p",
+            "-t",
+            sessionName,
+            "#{pane_dead} #{pane_dead_status}",
+        ]);
+        const [dead, status] = state.stdout.trim().split(" ");
+        if (dead === "1" && status !== undefined && status !== "0") {
+            const captured = await runTmux([tmuxBin, "capture-pane", "-p", "-t", sessionName, "-S", "-20"]);
+            await killTmuxSession(sessionName);
+            // A short-lived pane is mostly empty rows; keep only the lines with text.
+            const output = captured.stdout
+                .split("\n")
+                .filter((line) => line.trim().length > 0)
+                .join("\n");
+            logger.warn({ sessionName, status, output }, "tmux session command exited at once");
+            throw new Error(
+                `tmux session ${sessionName}: the command exited with status ${status}` +
+                    (output.length > 0 ? `:\n${output}` : "")
+            );
+        }
+
+        const remaining = deadline - Date.now();
+        if (dead === "1" || remaining <= 0) {
+            return;
+        }
+
+        await Bun.sleep(Math.min(TMUX_COMMAND_POLL_MS, remaining));
+    }
 }
 
 /**

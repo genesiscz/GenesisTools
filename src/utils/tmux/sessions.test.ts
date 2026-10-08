@@ -19,6 +19,7 @@ import {
     setTmuxSpawnSyncForTests,
     TMUX_CHILD_DEADLINE_MS,
     TMUX_SPAWN_GUARD,
+    tmuxPaneArgv,
     tmuxServerBootstrapCwd,
 } from "@genesiscz/utils/tmux/sessions";
 
@@ -316,6 +317,65 @@ describe("tmux sessions", () => {
                     cmd.includes("truecolor")
             )
         ).toBe(true);
+    });
+
+    test("a command line runs through the login shell, never as one argv word", () => {
+        const shell = env.paths.getShell("/bin/zsh");
+        const pane = tmuxPaneArgv("echo hi; sleep 1");
+
+        expect(pane.commandLine).toBe(true);
+        expect(pane.argv[0]).toBe("/usr/bin/env");
+        expect(pane.argv.slice(-3)).toEqual([shell, "-lic", "echo hi; sleep 1"]);
+        expect(tmuxPaneArgv("FOO=1 bun test").argv.slice(-2)).toEqual(["-lic", "FOO=1 bun test"]);
+        // tmux splits its own argv at a word ending in `;`, so a trailing one is dropped.
+        expect(tmuxPaneArgv("npm test;").argv.at(-1)).toBe("npm test");
+    });
+
+    test("a bare executable or an empty command keeps the plain shell pane (ttyd, snapshot restore)", () => {
+        expect(tmuxPaneArgv("/bin/zsh")).toMatchObject({ commandLine: false });
+        expect(tmuxPaneArgv("/bin/zsh").argv.at(-1)).toBe("/bin/zsh");
+        expect(tmuxPaneArgv("/usr/bin/top").argv.at(-1)).toBe("/usr/bin/top");
+        expect(tmuxPaneArgv("  ").argv.at(-1)).toBe(env.paths.getShell("/bin/zsh"));
+        expect(tmuxPaneArgv("/bin/zsh").argv).not.toContain("-lic");
+    });
+
+    test("a command-line session keeps its pane and is not reported when its command died", async () => {
+        setTmuxBinForTests("/mock/tmux");
+        const calls: string[][] = [];
+        setTmuxSpawnSyncForTests((cmd) => {
+            calls.push(cmd);
+            if (cmd.includes("display-message")) {
+                return { exitCode: 0, stdout: "1 127\n" };
+            }
+
+            if (cmd.includes("capture-pane")) {
+                return { exitCode: 0, stdout: "zsh: command not found: nope\n" };
+            }
+
+            return { exitCode: 0, stdout: "" };
+        });
+
+        await expect(createTmuxSession("dead", "/tmp", "nope --flag", { settleMs: 0 })).rejects.toThrow(
+            /exited with status 127:\nzsh: command not found: nope/
+        );
+
+        const create = calls.find((cmd) => cmd.includes("new-session"));
+        expect(create?.slice(create.indexOf(";"))).toEqual([";", "set-option", "-t", "dead", "remain-on-exit", "on"]);
+        expect(calls.some((cmd) => cmd.includes("kill-session") && cmd.includes("dead"))).toBe(true);
+    });
+
+    test("a command line that finished cleanly, or is still running, is a created session", async () => {
+        setTmuxBinForTests("/mock/tmux");
+        for (const paneState of ["1 0\n", "0 \n"]) {
+            const calls: string[][] = [];
+            setTmuxSpawnSyncForTests((cmd) => {
+                calls.push(cmd);
+                return { exitCode: 0, stdout: cmd.includes("display-message") ? paneState : "" };
+            });
+
+            await createTmuxSession("ok", "/tmp", "echo hi", { settleMs: 0 });
+            expect(calls.some((cmd) => cmd.includes("kill-session"))).toBe(false);
+        }
     });
 
     test("a new session's client runs in the home folder, and -c carries the pane's own folder", async () => {
