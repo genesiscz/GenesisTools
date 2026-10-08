@@ -490,6 +490,44 @@ test("a separate handoff saves the unsent draft without dispatching or clearing 
     expect((await readWidgetState(directory)).outgoing).toHaveLength(0);
 });
 
+test("a handoff preserves an unsent video draft while frame preparation is incomplete", async () => {
+    const directory = await root();
+    const key = widgetSessionKey(target);
+    const videoId = randomUUID();
+    const source = join(directory, "original.mp4");
+    await mutateWidgetState(directory, (state) => {
+        state.drafts[key] = { text: "Inspect the original clip", assetIds: [videoId] };
+        state.preferences.showChanges = false;
+        state.assets[videoId] = {
+            id: videoId,
+            type: "video",
+            name: "original.mp4",
+            path: source,
+            sha256: "fixture-video",
+            durationUs: 1_000_000,
+            width: 128,
+            height: 80,
+            settings: { fps: 2, framesPerImage: 16, minimumDifferencePct: 0 },
+            revision: 1,
+            status: "preparing",
+        };
+    });
+    const sources: WidgetSources = {
+        sessions: async () => [],
+        decisions: () => [],
+        forms: () => [],
+        answers: () => [],
+        agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+    };
+    const result = await createWidgetHandoff({ root: directory, key, sources });
+    const text = await readFile(result.path, "utf8");
+    expect(text).toContain("Inspect the original clip");
+    expect(text).toContain(`Original video (preparation incomplete): ${source}`);
+    expect(result.sent).toBe(false);
+    expect((await readWidgetState(directory)).drafts[key].assetIds).toEqual([videoId]);
+    expect((await readWidgetState(directory)).outgoing).toHaveLength(0);
+});
+
 test("editing an unsent message restores its draft without reviving its cancelled send", async () => {
     const directory = await root();
     const message = await enqueue(directory, "Needs correction");

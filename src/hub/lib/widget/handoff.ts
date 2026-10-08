@@ -9,7 +9,15 @@ import { serializeWidgetMedia } from "../composer/serialize";
 import { composeHandoff } from "../insights/handoff";
 import { type WidgetSources, widgetSnapshot } from "./snapshot";
 import { widgetRoot } from "./storage";
-import { widgetSessionKey } from "./types";
+import { type WidgetAsset, widgetSessionKey } from "./types";
+
+async function handoffMedia(asset: WidgetAsset): Promise<string> {
+    if (asset.type === "video" && asset.status !== "ready") {
+        return `Original video (preparation incomplete): ${asset.path}`;
+    }
+
+    return serializeWidgetMedia([asset]);
+}
 
 export async function createWidgetHandoff({
     root,
@@ -73,11 +81,7 @@ export async function createWidgetHandoff({
             if (!asset) {
                 continue;
             }
-            if (asset.type === "image" || asset.status === "ready") {
-                paragraphs.push(await serializeWidgetMedia([asset]));
-            } else {
-                paragraphs.push(`Original video (preparation incomplete): ${asset.path}`);
-            }
+            paragraphs.push(await handoffMedia(asset));
         }
     }
     const draft = snapshot.state.drafts[key];
@@ -87,8 +91,8 @@ export async function createWidgetHandoff({
     const assets = (draft?.assetIds ?? [])
         .map((id) => snapshot.state.assets[id])
         .filter((asset) => asset !== undefined);
-    if (assets.length) {
-        paragraphs.push(await serializeWidgetMedia(assets));
+    for (const asset of assets) {
+        paragraphs.push(await handoffMedia(asset));
     }
     const folder = join(widgetRoot(root), "handoffs");
     await mkdir(folder, { recursive: true });
