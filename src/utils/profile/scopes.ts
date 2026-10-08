@@ -17,6 +17,8 @@ export const PROFILER_SCOPE_NAMES = [
     "hub-agents",
     // One line per call the resident hub server answers: the door, its exit code, wall time and process CPU.
     "hub-server",
+    // One `tools ai usage poll-daemon` tick by phase: account poll, notifications, warmups, session rows.
+    "ai-usage",
     // `tools hub pr *` phases; with spawn, forge-http and cache below, the hub's PR calls end to end.
     "hub-pr",
     // Every child process an Executor runs (git, gh, glab), with its exit code.

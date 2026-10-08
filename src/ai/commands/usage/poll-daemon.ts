@@ -14,6 +14,7 @@ import { recordRunOnExit } from "@genesiscz/utils/cli/run-record";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 
 const ANTHROPIC_SUB = "anthropic-sub";
 /** The daemon runner kills this task at 60 s (`timeoutMs` in the task log); the tick keeps 10 s of headroom. */
@@ -69,6 +70,8 @@ export function anthropicRows(snapshots: readonly AccountUsageSnapshot[]) {
     return snapshots.filter((s) => s.provider === ANTHROPIC_SUB).map(snapshotToAccountUsage);
 }
 
+const prof = profiler.scope("ai-usage");
+
 async function main(): Promise<void> {
     const startedAt = Date.now();
     logger.info("[ai-usage] daemon poll starting");
@@ -86,7 +89,7 @@ async function main(): Promise<void> {
         // reads its cache for free. Per-provider floors (`usage.minIntervalMs`) still
         // apply inside the shared cache, which is why codex and grok are not refetched on
         // every tick even under force.
-        const snapshots = await pollAccounts({ force: true });
+        const snapshots = await prof.measureAsync("tick.poll-accounts", () => pollAccounts({ force: true }));
 
         if (snapshots.length === 0) {
             logger.warn("[ai-usage] daemon poll found no configured accounts");
@@ -97,6 +100,7 @@ async function main(): Promise<void> {
         // Tells every reader the daemon is refreshing the cache, so they stop refetching themselves.
         touchUsageDaemonHeartbeat();
 
+        const endNotify = prof.start("tick.notifications");
         for (const window of notifiableWindows(snapshots)) {
             try {
                 await notifManager.processUsage(window);
@@ -104,6 +108,7 @@ async function main(): Promise<void> {
                 logger.warn({ err, account: window.accountName, key: window.key }, "[ai-usage] notification failed");
             }
         }
+        endNotify();
 
         notifManager.markFirstPollDone();
 
@@ -120,19 +125,23 @@ async function main(): Promise<void> {
         // endpoint. It runs here rather than inside the poll core so `src/utils` keeps no
         // dependency on the claude config.
         try {
-            await processExtraUsageNotifications(anthropic.filter((row) => !row.stale));
+            await prof.measureAsync("tick.extra-usage", () =>
+                processExtraUsageNotifications(anthropic.filter((row) => !row.stale))
+            );
         } catch (err) {
             logger.warn({ err }, "[ai-usage] extra-usage notification pass failed");
         }
 
         try {
-            const { processWarmupRules } = await import("@app/claude/lib/warmup/service");
-            await processWarmupRules(anthropic.filter((row) => !row.stale));
+            await prof.measureAsync("tick.warmups", async () => {
+                const { processWarmupRules } = await import("@app/claude/lib/warmup/service");
+                await processWarmupRules(anthropic.filter((row) => !row.stale));
+            });
         } catch (err) {
             out.warn(`Warmup check failed: ${err}`);
         }
 
-        db.pruneOlderThan(dashConfig.dataRetentionDays);
+        prof.measure("tick.prune", () => db.pruneOlderThan(dashConfig.dataRetentionDays));
 
         // Genesis.app asks `usage sessions --json --hours 24 --min 10` every 35 s, and a cold
         // answer walks 3,796 directories and stats 12k files for 1.83 s of CPU. This tick is
@@ -180,7 +189,7 @@ async function main(): Promise<void> {
                 }
             };
             const outcome = await withTimeout(
-                refreshSessionRowsCache(listAgentSessionRows, { remote }),
+                prof.measureAsync("tick.session-rows", () => refreshSessionRowsCache(listAgentSessionRows, { remote })),
                 Math.max(0, budgetMs),
                 new Error(`session rows walk passed the tick's budget (${Math.round(budgetMs / 1000)} s left)`)
             );
