@@ -368,7 +368,7 @@ export async function widgetSnapshot({
                 decision.project ?? decision.cwd ?? "",
                 Date.parse(decision.updatedTs)
             );
-        if (["open", "drafted"].includes(decision.state)) {
+        if (kindOf(decision) === "decision" && ["open", "drafted"].includes(decision.state)) {
             session.status = "waiting";
         }
     }

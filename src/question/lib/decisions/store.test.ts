@@ -20,6 +20,7 @@ import {
     stopHookVerdict,
 } from "./read";
 import { DECISION_STATES, decisionUpdateInputSchema, postDecisionsInputSchema } from "./schema";
+import { sendAnsweredDecisions } from "./send";
 import {
     type DecisionRecord,
     harvestDecisions,
@@ -840,4 +841,39 @@ test("an unknown transport outcome is not restored to the automatic decision que
     await expect(
         sendSessionDecisions({ file, events, session: "test-session", emit: () => undefined })
     ).rejects.toThrow("nothing to send");
+});
+
+test("decision dry-run applies the same selected-kind filter as delivery", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-dry-run-"));
+    const file = join(dir, "decisions.jsonl");
+    const events = join(dir, "events.jsonl");
+    const [decision, todo] = await postDecisions(file, events, {
+        sessionId: "test-session",
+        decisions: [
+            { prompt: "Proceed?", options: ["yes"] },
+            { type: "todo", prompt: "Follow up", options: ["done"] },
+        ],
+    });
+    // Existing files may contain legacy answered TODO rows, even though current transitions reject them.
+    writeFileSync(
+        file,
+        `${[decision, todo].map((row) => SafeJSON.stringify({ ...row, state: "answered", option: "a" })).join("\n")}\n`
+    );
+    const files = { file, events };
+    const preview = await sendAnsweredDecisions({ session: "test-session", files, dryRun: true });
+    expect(preview.text).toBe("DECISION 1: a) yes");
+    await expect(
+        sendAnsweredDecisions({ session: "test-session", files, ids: [todo.id], dryRun: true })
+    ).rejects.toThrow("nothing to send");
+    const sent = await sendAnsweredDecisions({
+        session: "test-session",
+        files,
+        provider: "codex",
+        deps: {
+            codexWorkerFor: () => "fixture-worker",
+            runTool: async () => ({ success: true, stdout: "", stderr: "" }),
+        },
+    });
+    expect(sent.text).toBe(preview.text);
+    expect(readDecisions(file).map((row) => row.state)).toEqual(["sent", "answered"]);
 });

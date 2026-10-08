@@ -58,7 +58,7 @@ export async function sendAnsweredDecisions({
     const provider = providerOf(given, rows);
 
     if (dryRun) {
-        const due = rows.filter((row) => row.state === "answered");
+        const due = rows.filter((row) => row.state === "answered" && kindOf(row) === "decision");
 
         if (due.length === 0) {
             throw new Error("nothing to send");

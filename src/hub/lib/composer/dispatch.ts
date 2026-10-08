@@ -157,7 +157,7 @@ export function widgetDispatcher({
                 return {
                     delivered: sent.delivered === true,
                     channel: sent.channel ?? "queued",
-                    certainty: "not-sent",
+                    certainty: sent.delivered ? undefined : "not-sent",
                     detail: sent.target ?? sent.error ?? "Queued in Decisions for this session",
                 };
             }

@@ -276,7 +276,9 @@ describe("widget source and delivery contracts", () => {
             text: "",
         };
         await dispatcher.validate(message);
-        expect((await dispatcher.dispatch(message, "")).delivered).toBe(true);
+        const receipt = await dispatcher.dispatch(message, "");
+        expect(receipt.delivered).toBe(true);
+        expect(receipt.certainty).toBeUndefined();
         expect(sends).toBe(1);
         expect(readDecisions(files.file).find((row) => row.id === two.id)?.state).toBe("open");
         await expect(dispatcher.validate(message)).rejects.toThrow("changed");
@@ -633,4 +635,38 @@ test("legacy preferences gain independent module layouts without accepting off-s
     expect(widgetPreferencesSchema.safeParse({ sidePosition: -1 }).success).toBe(false);
     expect(widgetPreferencesSchema.safeParse({ sideGroups: [["agents"]] }).success).toBe(false);
     expect(widgetPreferencesSchema.safeParse({ topModules: ["../../invalid"] }).success).toBe(false);
+});
+
+test("an open TODO does not mark its session as waiting for an answer", async () => {
+    const directory = await root();
+    const file = join(directory, "decisions.jsonl");
+    const events = join(directory, "events.jsonl");
+    await postDecisions(
+        file,
+        events,
+        {
+            sessionId: "todo-session",
+            provider: "codex",
+            decisions: [{ type: "todo", prompt: "Ship the follow-up", options: [] }],
+        },
+        { env: {} }
+    );
+    const sources: WidgetSources = {
+        sessions: async () => [],
+        decisions: () => readDecisions(file),
+        forms: () => [],
+        answers: () => [],
+        agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+    };
+    const todoOnly = await widgetSnapshot({ root: directory, sources });
+    expect(todoOnly.cards[0]?.kind).toBe("todo");
+    expect(todoOnly.sessions[0]?.status).toBe("recent");
+    await postDecisions(
+        file,
+        events,
+        { sessionId: "todo-session", provider: "codex", decisions: [{ prompt: "Proceed?", options: ["yes"] }] },
+        { env: {} }
+    );
+    const needsAnswer = await widgetSnapshot({ root: directory, sources });
+    expect(needsAnswer.sessions[0]?.status).toBe("waiting");
 });
