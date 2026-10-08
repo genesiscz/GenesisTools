@@ -60,8 +60,10 @@ function parseWorkspaces(stdout: string): ListedWorkspace[] {
 
 /** An adopted surface has no pid file: the agent runs while a process on the surface's tty is the agent. */
 async function adoptedAgentRunning(record: CloseSubject & { tty: string | null }): Promise<boolean> {
+    // No tty means no way to see the agent quit: assume it runs, so close never kills it without --force.
     if (!record.tty) {
-        return false;
+        log.debug({ surface: record.surface }, "adopted surface has no tty; treating the agent as running");
+        return true;
     }
 
     const ps = await spawnOk(["ps", "-t", record.tty, "-o", "args="]);

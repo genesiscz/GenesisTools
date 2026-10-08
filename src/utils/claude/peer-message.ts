@@ -223,9 +223,14 @@ export async function sendClaudePeerMessage(input: {
         priority: input.priority,
     });
     const timeoutMs = input.timeoutMs ?? 5_000;
+    // Bun sockets do not buffer: `write` takes what the kernel accepts (8 KB on a macOS Unix socket) and
+    // returns the count, and the rest goes out from `drain`. Ending after one write cut a long message.
+    const bytes = Buffer.from(payload, "utf8");
+    let written = 0;
 
     await new Promise<void>((resolve, reject) => {
         let settled = false;
+        let open: { end(): void } | null = null;
         const finish = (error?: Error) => {
             if (settled) {
                 return;
@@ -235,6 +240,7 @@ export async function sendClaudePeerMessage(input: {
             clearTimeout(timer);
 
             if (error) {
+                open?.end();
                 reject(error);
             } else {
                 resolve();
@@ -244,17 +250,32 @@ export async function sendClaudePeerMessage(input: {
             () => finish(new Error(`no answer from ${input.session.socketPath} within ${timeoutMs} ms`)),
             timeoutMs
         );
+        const writeRest = (socket: { write(data: Uint8Array): number; end(): void }) => {
+            if (written < bytes.length) {
+                written += Math.max(0, socket.write(bytes.subarray(written)));
+            }
+
+            if (written >= bytes.length) {
+                socket.end();
+            }
+        };
 
         Bun.connect({
             unix: input.session.socketPath,
             socket: {
                 open(socket) {
-                    socket.write(payload);
-                    socket.flush();
-                    socket.end();
+                    open = socket;
+                    writeRest(socket);
+                },
+                drain(socket) {
+                    writeRest(socket);
                 },
                 close() {
-                    finish();
+                    finish(
+                        written < bytes.length
+                            ? new Error(`${input.session.socketPath} closed after ${written} of ${bytes.length} bytes`)
+                            : undefined
+                    );
                 },
                 error(_socket, error) {
                     finish(error);

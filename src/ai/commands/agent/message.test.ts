@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { withCrossMessages } from "@app/claude/lib/cross-messages";
 import type { ClaudeLiveSession } from "@genesiscz/utils/claude/peer-message";
-import { parseRegistryEntry, peerFrames } from "@genesiscz/utils/claude/peer-message";
+import { parseRegistryEntry, peerFrames, sendClaudePeerMessage } from "@genesiscz/utils/claude/peer-message";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { claudeMessageDriver, codexMessageDriver, MessageError, pickClaudeSession } from "./message";
 
@@ -116,4 +119,33 @@ test("--cross-messages puts the accept setting first and refuses a caller's own 
         "fix it",
     ]);
     expect(() => withCrossMessages(["--settings", "/x.json"])).toThrow("cannot be combined");
+});
+
+test("a message longer than one socket write arrives whole (Bun sockets do not buffer)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "peer-"));
+    const socketPath = join(dir, "s.sock");
+    const chunks: Buffer[] = [];
+    const closed = Promise.withResolvers<void>();
+    const server = Bun.listen({
+        unix: socketPath,
+        socket: {
+            data(_socket, data) {
+                chunks.push(Buffer.from(data));
+            },
+            close() {
+                closed.resolve();
+            },
+        },
+    });
+
+    try {
+        const text = "x".repeat(200_000);
+        await sendClaudePeerMessage({ session: { sessionId: "s-1", socketPath, pid: 1 }, text });
+        await closed.promise;
+        const frame: unknown = SafeJSON.parse(Buffer.concat(chunks).toString("utf8").trim(), { strict: true });
+        expect(frame).toMatchObject({ type: "user", session_id: "s-1", message: { content: text } });
+    } finally {
+        server.stop(true);
+        rmSync(dir, { recursive: true, force: true });
+    }
 });
