@@ -4,11 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
     bunCacheCandidates,
+    defaultFallbackRoots,
     KEEP_PARTNER_IDS,
     makePartnerFor,
     packageIdentityOf,
     resolveKeepPartners,
+    spawnCacheCommand,
 } from "@app/macos/lib/clones/keep-partners";
+import { env } from "@genesiscz/utils/env";
 
 function worktreePkg(base: string, name: string, version: string): string {
     const dir = join(base, "node_modules", ...name.split("/"));
@@ -97,6 +100,48 @@ describe("resolveKeepPartners", () => {
             expect(calls[0]).toEqual(["bun", "pm", "cache"]);
             expect(calls[1]).toEqual(["npm", "config", "get", "cache"]);
             expect(calls[2]).toEqual(["pnpm", "store", "path"]);
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("finds bun's cache from a directory without package.json, where `bun pm cache` exits 1", async () => {
+        const outer = mkdtempSync(join(tmpdir(), "gt-cl-kp-nopkg-"));
+        try {
+            const noProject = join(outer, "no-project");
+            const cache = join(outer, "bun-cache");
+            mkdirSync(noProject, { recursive: true });
+            mkdirSync(cache, { recursive: true });
+
+            // The real command, run where the bug was reported: it fails, so the root must come from the fallback.
+            expect(spawnCacheCommand(["bun", "pm", "cache"], noProject)).toBeNull();
+
+            await env.testing.withOverrides({ BUN_INSTALL_CACHE_DIR: cache }, () => {
+                const got = resolveKeepPartners(["bun"], (argv) => spawnCacheCommand(argv, noProject));
+                expect(got).toEqual([{ id: "bun", root: cache }]);
+            });
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("falls back in bun's order and only to roots that exist; other managers have no fallback", async () => {
+        const outer = mkdtempSync(join(tmpdir(), "gt-cl-kp-order-"));
+        try {
+            const home = join(outer, "home");
+            const installed = join(outer, "bun-install");
+            mkdirSync(join(home, ".bun", "install", "cache"), { recursive: true });
+
+            await env.testing.withOverrides({ HOME: home, BUN_INSTALL: installed, BUN_INSTALL_CACHE_DIR: "" }, () => {
+                expect(defaultFallbackRoots("bun")).toEqual([
+                    join(installed, "install", "cache"),
+                    join(home, ".bun", "install", "cache"),
+                ]);
+                expect(resolveKeepPartners(["bun", "npm"], () => null)).toEqual([
+                    { id: "bun", root: join(home, ".bun", "install", "cache") },
+                ]);
+            });
+            expect(defaultFallbackRoots("npm")).toEqual([]);
         } finally {
             rmSync(outer, { recursive: true, force: true });
         }

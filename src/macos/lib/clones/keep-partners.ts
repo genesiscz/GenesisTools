@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { clonesProfile, measureItem } from "./profile";
@@ -28,7 +29,8 @@ export interface ResolvedKeepPartner {
 
 export type RunCommand = (argv: string[]) => string | null;
 
-/** Each manager prints its own store root. Never build one from `$HOME`. */
+/** Each manager prints its own store root. A root built from `$HOME` is only a fallback for a failed command
+ *  (`defaultFallbackRoots`), never the first answer. */
 const CACHE_COMMANDS: Record<KeepPartnerId, string[]> = {
     bun: ["bun", "pm", "cache"],
     npm: ["npm", "config", "get", "cache"],
@@ -37,11 +39,30 @@ const CACHE_COMMANDS: Record<KeepPartnerId, string[]> = {
     composer: ["composer", "config", "--global", "cache-dir"],
 };
 
+/**
+ * Where a manager's store is when its own command cannot say. `bun pm cache` exits 1 outside a project
+ * ("No package.json was found"), so `tools macos clones reclaim stores` run from `/tmp` found no cache.
+ * The fallbacks follow bun's own lookup: `BUN_INSTALL_CACHE_DIR`, then `<BUN_INSTALL>/install/cache`,
+ * then `~/.bun/install/cache`. A bunfig `install.cache.dir` is only visible through the command.
+ */
+export function defaultFallbackRoots(id: KeepPartnerId): string[] {
+    if (id !== "bun") {
+        return [];
+    }
+
+    const bunInstall = env.paths.getBunInstall();
+    return [
+        env.paths.getBunInstallCacheDir(),
+        bunInstall ? join(bunInstall, "install", "cache") : undefined,
+        join(env.paths.getHome(), ".bun", "install", "cache"),
+    ].filter((root): root is string => root !== undefined);
+}
+
 /** Run a cache-root command. Returns stdout, or null when the binary is
  *  missing or exits non-zero. stderr is logged, never discarded. */
-export function spawnCacheCommand(argv: string[]): string | null {
+export function spawnCacheCommand(argv: string[], cwd?: string): string | null {
     const res = measureItem("keep-partners.command", () =>
-        spawnSync(argv[0], argv.slice(1), { encoding: "utf8", timeout: 10_000 })
+        spawnSync(argv[0], argv.slice(1), { encoding: "utf8", timeout: 10_000, ...(cwd ? { cwd } : {}) })
     );
     if (res.error || res.status !== 0) {
         log.debug({ argv, err: res.error, status: res.status, stderr: res.stderr?.trim() }, "cache command failed");
@@ -133,13 +154,24 @@ export function bunCacheCandidates({
 }
 
 /** Ask each requested manager for its store root; keep the ones that answer
- *  with a directory that exists. */
-export function resolveKeepPartners(ids: readonly KeepPartnerId[], run: RunCommand): ResolvedKeepPartner[] {
+ *  with a directory that exists. A manager whose command fails falls back to
+ *  the first existing `fallbackRoots` entry. */
+export function resolveKeepPartners(
+    ids: readonly KeepPartnerId[],
+    run: RunCommand,
+    fallbackRoots: (id: KeepPartnerId) => string[] = defaultFallbackRoots
+): ResolvedKeepPartner[] {
     const end = clonesProfile.start("keep-partners.resolve");
     const out: ResolvedKeepPartner[] = [];
     for (const id of ids) {
         const stdout = run(CACHE_COMMANDS[id]);
         if (stdout === null) {
+            const fallback = fallbackRoots(id).find((root) => existsSync(root));
+            log.info({ id, fallback: fallback ?? null }, "store command failed; fallback root");
+            if (fallback !== undefined) {
+                out.push({ id, root: fallback });
+            }
+
             continue;
         }
 

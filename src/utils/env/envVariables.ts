@@ -241,6 +241,10 @@ export const env = {
         getAppData: () => getTrimmed("APPDATA"),
         /** Where `tools learn-from-fable bootstrap` proposes to put the pack repo. */
         getFablePackPath: () => getTrimmed("GT_FABLE_PACK_PATH"),
+        /** bun's cache override (`BUN_INSTALL_CACHE_DIR`), read when `bun pm cache` cannot answer. */
+        getBunInstallCacheDir: () => getTrimmed("BUN_INSTALL_CACHE_DIR"),
+        /** bun's own directory (`BUN_INSTALL`, default `~/.bun`). */
+        getBunInstall: () => getTrimmed("BUN_INSTALL"),
     },
 
     device: {

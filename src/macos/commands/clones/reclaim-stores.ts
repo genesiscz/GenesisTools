@@ -43,7 +43,10 @@ export function createStoresCommand(): Command {
 
             const report = await reportUnreferencedStore({ minBytes });
             if (report === null) {
-                console.error("bun cache not found (`bun pm cache` gave no directory).");
+                console.error(
+                    "bun cache not found: `bun pm cache` gave no directory, and neither $BUN_INSTALL_CACHE_DIR, " +
+                        "$BUN_INSTALL/install/cache nor ~/.bun/install/cache exists."
+                );
                 process.exitCode = 1;
                 return;
             }
