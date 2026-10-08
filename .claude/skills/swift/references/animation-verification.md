@@ -100,3 +100,25 @@ last control remains reachable. OverlayScrollViewport uses an explicit sizeThatF
 scroller and measured document height; WidgetRosterTests covers both sides, styles and short heights.
 Do not copy the frame-owned window root's sizingOptions=[] onto the measured NSHostingView document:
 its fitting height became 0 in this experiment. Retain document sizing and update its frame from fittingSize.
+
+## Recent-message positioning and transcript preloading
+
+Use separate scroll anchors for initial position, content-size changes and short-content alignment.
+On macOS15+, LatestScrollAnchor opens a conversation at the bottom, follows new content only while
+the reader is near the end, and keeps short conversations top-aligned. Reduce scroll geometry to an
+Equatable Boolean so per-pixel changes do not invalidate the parent view. Keep a version-gated fallback.
+See Apple's [scroll anchor roles](https://developer.apple.com/documentation/swiftui/scrollanchorrole)
+and [scroll geometry callback](https://developer.apple.com/documentation/swiftui/view/onscrollgeometrychange%28for%3Aof%3Aaction%3A%29/).
+
+A first scrollTo can stop short while lazy rows still have estimated heights. Reuse
+ScrollViewPositioning for an explicit jump; it preserves the existing Hub's bounded layout passes.
+Verify the actual native viewport reaches the target after layout, rather than asserting merely that
+its offset became positive. Test both initial latest-message placement and preservation of a reader
+who scrolled up. A successful single-test run does not rule out ordering effects between hosted views.
+
+SessionTranscriptCache bounds hover preloading to three recent envelopes for15seconds. Its key includes
+recipient identity, provider, transcript query/path and requested limit. Preserve the envelope's
+nextOffset when starting the live tail, so intervening turns are caught up. Decode off the main actor,
+coalesce hover/open loads, cancel unused work, and reject late results even if a loader ignores cancellation.
+Measure the added CLI work and resident memory as well as time removed from a click; a cache hit is not
+a rendered-frame or FPS measurement.
