@@ -16,6 +16,11 @@
 - **A restart lowers CPU by itself.** After rebuilding, a fresh process has no accumulated state; prove
   a fix with an A/B or a bench, not only "it is lower now".
 - **`ps -o time` vs `%cpu`:** use CPU-time deltas; `%cpu` is a lifetime-decayed average.
+- **"Main busy" can be WindowServer, not you.** A stall stack whose time sits in `SLSFindWindowAndOwner`
+  (under `FindWindowOfClass`, the hit test of every mouse event) or in `SLSDisplayGetPreferHDR10` (WebKit's
+  `screenPropertiesChanged`) is a synchronous call into an overloaded WindowServer. In one 16 s sample, 783 of
+  ~1980 busy main-thread samples were that hit test. Check `WindowServer` CPU (80-100% here, with a screen
+  recording and a computer-use agent running) before optimizing a view that only looks slow.
 
 ## SwiftUI / AppKit
 
@@ -72,3 +77,9 @@
   belongs to a Codex session; edit there only when Martin says so, commit only your paths.
 - **placeholder-check blocks a push** on internal repo names in fixtures; replace them in a new
   commit (no history rewrite).
+
+## Animated panel verification
+
+For stroke geometry, native animation scheduling, callback-versus-display timing, trace privacy and
+proof that a screenshot came from the new build, see [animation-verification.md](animation-verification.md).
+Keep measured findings separate from hypotheses; faster CPU numbers alone do not prove visual parity.

@@ -40,11 +40,17 @@ GenesisTools checkout.
 | CLI | `readLinesSync` (src/utils/fs/read-lines.ts) for transcripts and sub-agents | ad11cfd9c |
 | CLI | `foldJsonlResumable` (src/utils/agent-sessions/jsonl-fold.ts): Codex metadata resumes across processes | 60ae52883 |
 | Monitor | profiling events, `[profile:cli]` lines, pid → process names | 12cc7ce78, 4e6c946fc, 294937ac9 |
+| Code blocks | `WrappedCodeTextView.converted`: an `NSCache` of the AppKit text by content key, so a transcript row scrolled back into view does not convert its code again | a8a4e1364 |
+| Server | `[profile:hub-server] <door> exit= cpu= <wall>` per call; `callHubServer()` TS client; usage daemon asks the server for rows | f4c883ac3, 57e1d6e7a |
+| CLI | Codex turn fold (`createCodexTurnParser`, `turn-fold-cache.ts`), session-changes fold (`session-changes/fold.ts`), Codex projection via covering indexes | 32616839a, fb68333ba, 6877db4e6 |
 
 ## Open (by measured cost)
 
-- `ai usage` poll daemon (every minute, a fresh process): the session-list recompute is still a cold run
-  (~0.8 s CPU); the Codex metadata part resumes since 60ae52883.
+- `ai usage` poll daemon (every minute, a fresh process): ~1.0-1.1 s CPU per tick after 57e1d6e7a (rows come
+  from the hub server); its phases are timed under `ai-usage` since 1bc8dec38.
+- `agents changes --tools … --store-blobs` from GenesisKit `BatchedToolChangeSource` runs as a process for every
+  new tool row of the session on screen (~1.5 s CPU on a 223 MB session). Needs a server door, which would write
+  blobs: DECISION 63.
 - `hub pr threads` / `readiness` / `list` / `versions`: network-bound, run as processes.
 - `ai-spend session --id … --json` (44 process runs/day, ~500 ms mostly startup): no door yet; goes
   through the generic `runReport`.
