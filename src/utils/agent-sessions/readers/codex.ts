@@ -625,6 +625,123 @@ export async function readCodexProjectionFingerprint(
  * -> return null`). On this machine that was 144 issues and 88 codex sessions indexed with no
  * first prompt at all. Same reasoning as the unsupported-item-kind note above.
  */
+/** One thread's paginated projection folded up to `ordinal`: what the metadata read takes from its rows. */
+interface ProjectionFold {
+    rows: number;
+    ordinal: number;
+    firstTimestamp: string | null;
+    lastTimestamp: string | null;
+    malformed: number;
+    firstPrompt: string | null;
+    parts: string[];
+    characters: number;
+    bounded: boolean;
+}
+
+/**
+ * Folds kept in this process, by projection path and thread. An active thread's rows only grow (one per rollout
+ * item, by `rollout_ordinal`), and a long one is thousands of rows: 8,688 rows and 29 MB of JSON took 55 ms CPU to
+ * parse again on every metadata read (2026-10-08). A kept fold reads only the rows past its ordinal, and is used
+ * only while the rows up to that ordinal are still the same count; anything else folds the thread from the start.
+ */
+const projectionFolds = new Map<string, ProjectionFold>();
+const PROJECTION_FOLDS_KEPT = 32;
+
+function foldProjection(args: {
+    database: Database;
+    path: string;
+    threadId: string;
+    hasCreatedAt: boolean;
+    signal?: AbortSignal;
+}): ProjectionFold {
+    const key = `${args.path}\0${args.threadId}`;
+    const kept = projectionFolds.get(key);
+    let fold: ProjectionFold | undefined;
+    if (kept) {
+        const prefix = args.database
+            .query("SELECT COUNT(*) AS n FROM thread_items WHERE thread_id = ? AND rollout_ordinal <= ?")
+            .get(args.threadId, kept.ordinal) as { n: number } | null;
+        if (prefix?.n === kept.rows) {
+            fold = { ...kept, parts: [...kept.parts] };
+        }
+    }
+
+    fold ??= {
+        rows: 0,
+        ordinal: Number.NEGATIVE_INFINITY,
+        firstTimestamp: null,
+        lastTimestamp: null,
+        malformed: 0,
+        firstPrompt: null,
+        parts: [],
+        characters: 0,
+        bounded: false,
+    };
+    const createdAt = args.hasCreatedAt ? "created_at_ms" : "0 AS created_at_ms";
+    const after = Number.isFinite(fold.ordinal) ? "AND rollout_ordinal > ?" : "";
+    const bindings: (string | number)[] = Number.isFinite(fold.ordinal)
+        ? [args.threadId, fold.ordinal]
+        : [args.threadId];
+    const rows = args.database
+        .query(
+            `SELECT rollout_ordinal, ${createdAt}, item_json FROM thread_items WHERE thread_id = ? ${after} ORDER BY rollout_ordinal`
+        )
+        .iterate(...bindings) as Iterable<{ rollout_ordinal: number; created_at_ms: number; item_json: string }>;
+    for (const row of rows) {
+        args.signal?.throwIfAborted();
+        fold.rows++;
+        fold.ordinal = row.rollout_ordinal;
+        if (Number.isFinite(row.created_at_ms) && row.created_at_ms > 0) {
+            const timestamp = new Date(row.created_at_ms).toISOString();
+            fold.firstTimestamp ??= timestamp;
+            fold.lastTimestamp = timestamp;
+        }
+
+        let item: JsonRecord;
+        try {
+            item = asRecord(SafeJSON.parse(row.item_json, { strict: true }) as JsonValue);
+        } catch {
+            fold.malformed++;
+            continue;
+        }
+
+        if (item.type === "userMessage") {
+            foldProjectionUserText(fold, textBlocks(item.content).join("\n"));
+        }
+    }
+
+    projectionFolds.delete(key);
+    if (fold.rows > 0 && Number.isFinite(fold.ordinal)) {
+        projectionFolds.set(key, { ...fold, parts: [...fold.parts] });
+        if (projectionFolds.size > PROJECTION_FOLDS_KEPT) {
+            const oldest = projectionFolds.keys().next().value;
+            if (oldest !== undefined) {
+                projectionFolds.delete(oldest);
+            }
+        }
+    }
+
+    return fold;
+}
+
+/** The same bound the rollout fold keeps for its user text. */
+function foldProjectionUserText(fold: ProjectionFold, text: string): void {
+    if (!text || isWrapperUserText(text)) {
+        return;
+    }
+
+    fold.firstPrompt ??= text;
+    if (fold.characters >= HISTORY_METADATA_LIMITS.allUserTextCollectedChars) {
+        fold.bounded = true;
+        return;
+    }
+
+    const remaining = HISTORY_METADATA_LIMITS.allUserTextCollectedChars - fold.characters;
+    fold.parts.push(text.slice(0, remaining));
+    fold.characters += text.length;
+    fold.bounded ||= text.length > remaining;
+}
+
 const PROJECTION_UNAVAILABLE = "Paginated projection unavailable for native thread";
 
 /** Issues that fail a read. The advisory one above is reported and then forgiven. */
@@ -982,22 +1099,6 @@ async function readCodexMetadataUncounted(
     let userTextCharacters = folded?.userTextCharacters ?? 0;
     let userTextBounded = folded?.userTextBounded ?? false;
 
-    // The paginated projection below adds its rows' user text the same way the rollout fold does.
-    function applyUserText(text: string): void {
-        if (!text || isWrapperUserText(text)) {
-            return;
-        }
-        firstPrompt ??= text;
-        if (userTextCharacters >= HISTORY_METADATA_LIMITS.allUserTextCollectedChars) {
-            userTextBounded = true;
-            return;
-        }
-        const remaining = HISTORY_METADATA_LIMITS.allUserTextCollectedChars - userTextCharacters;
-        userTextParts.push(text.slice(0, remaining));
-        userTextCharacters += text.length;
-        userTextBounded ||= text.length > remaining;
-    }
-
     if (!header) {
         if (issues.length === 0) {
             reportIssue(source, options, issues, "Native session header missing");
@@ -1035,36 +1136,35 @@ async function readCodexMetadataUncounted(
                     reportIssue(source, options, issues, "Paginated projection schema unsupported");
                     continue;
                 }
-                const createdAt = columns.includes("created_at_ms") ? "created_at_ms" : "0 AS created_at_ms";
-                const rows = database
-                    .query(
-                        `SELECT ${createdAt}, item_json FROM thread_items WHERE thread_id = ? ORDER BY rollout_ordinal`
-                    )
-                    .iterate(header.nativeId) as Iterable<{ created_at_ms: number; item_json: string }>;
-                let foundInDatabase = false;
-                for (const row of rows) {
-                    options.signal?.throwIfAborted();
-                    projectionFound = true;
-                    foundInDatabase = true;
-                    if (Number.isFinite(row.created_at_ms) && row.created_at_ms > 0) {
-                        const timestamp = new Date(row.created_at_ms).toISOString();
-                        firstTimestamp ??= timestamp;
-                        lastTimestamp = timestamp;
-                    }
-                    let item: JsonRecord;
-                    try {
-                        item = asRecord(SafeJSON.parse(row.item_json, { strict: true }) as JsonValue);
-                    } catch {
-                        reportIssue(source, options, issues, "Malformed paginated metadata item");
-                        continue;
-                    }
-                    if (item.type === "userMessage") {
-                        applyUserText(textBlocks(item.content).join("\n"));
-                    }
+                const fold = foldProjection({
+                    database,
+                    path,
+                    threadId: header.nativeId,
+                    hasCreatedAt: columns.includes("created_at_ms"),
+                    signal: options.signal,
+                });
+                if (fold.rows === 0) {
+                    continue;
                 }
-                if (foundInDatabase) {
-                    break;
+
+                projectionFound = true;
+                if (fold.firstTimestamp !== null) {
+                    firstTimestamp ??= fold.firstTimestamp;
                 }
+
+                if (fold.lastTimestamp !== null) {
+                    lastTimestamp = fold.lastTimestamp;
+                }
+
+                for (let index = 0; index < fold.malformed; index++) {
+                    reportIssue(source, options, issues, "Malformed paginated metadata item");
+                }
+
+                firstPrompt = fold.firstPrompt;
+                userTextParts.push(...fold.parts);
+                userTextCharacters = fold.characters;
+                userTextBounded = fold.bounded;
+                break;
             } catch {
                 reportIssue(source, options, issues, "Paginated metadata read failed");
             } finally {

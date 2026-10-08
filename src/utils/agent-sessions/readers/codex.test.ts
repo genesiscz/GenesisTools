@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { JsonRecord } from "@genesiscz/utils/agent-sessions/source-scan";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { NativeSessionSource } from "../types";
 import {
@@ -855,6 +856,69 @@ test("paginated metadata reads bounded user fields from the exact native thread"
     expect(result.metadata?.lastTimestamp).toBe("2026-09-01T10:02:00.000Z");
     expect(SafeJSON.stringify(result.metadata, { strict: true })).not.toContain("PROJECTION_BODY_MUST_NOT_PERSIST");
     expect(SafeJSON.stringify(result.metadata, { strict: true })).not.toContain("parent prompt");
+});
+
+test("paginated metadata reads only new projection rows, and starts over when earlier rows change", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-paginated-resume-"));
+    const root = join(home, "sessions");
+    mkdirSync(root);
+    const path = join(root, `rollout-${CHILD_ID}.jsonl`);
+    writeFileSync(
+        path,
+        line({
+            type: "session_meta",
+            timestamp: "2026-09-01T10:00:00.000Z",
+            payload: { id: CHILD_ID, cwd: "/projects/child", history_mode: "paginated" },
+        })
+    );
+    const projectionPath = join(home, "thread_history_1.sqlite");
+    const projection = new Database(projectionPath);
+    projection.run(
+        "CREATE TABLE thread_items (thread_id TEXT, rollout_ordinal INTEGER, created_at_ms INTEGER, item_json TEXT)"
+    );
+    const insert = (ordinal: number, minute: number, item: JsonRecord): void => {
+        projection.run("INSERT INTO thread_items VALUES (?, ?, ?, ?)", [
+            CHILD_ID,
+            ordinal,
+            Date.parse(`2026-09-01T10:0${minute}:00.000Z`),
+            SafeJSON.stringify(item, { strict: true }),
+        ]);
+    };
+    insert(1, 1, { type: "userMessage", content: "first ask" });
+    const source: NativeSessionSource<"codex"> = {
+        kind: "codex",
+        root,
+        sourceHome: home,
+        filePath: path,
+        dataPaths: [path],
+        metadataPaths: [projectionPath],
+    };
+
+    const first = await readCodexMetadata(source);
+    expect(first.metadata?.allUserText).toBe("first ask");
+
+    insert(2, 2, { type: "userMessage", content: "second ask" });
+    projection.run("INSERT INTO thread_items VALUES (?, 3, ?, ?)", [
+        CHILD_ID,
+        Date.parse("2026-09-01T10:03:00.000Z"),
+        "{",
+    ]);
+    const issues: string[] = [];
+    const resumed = await readCodexMetadata(source, { onIssue: (issue) => issues.push(issue.message) });
+    expect(resumed.metadata?.firstPrompt).toBe("first ask");
+    expect(resumed.metadata?.allUserText).toBe("first ask second ask");
+    expect(resumed.metadata?.lastTimestamp).toBe("2026-09-01T10:03:00.000Z");
+    expect(issues.filter((message) => message === "Malformed paginated metadata item")).toHaveLength(1);
+
+    const again: string[] = [];
+    await readCodexMetadata(source, { onIssue: (issue) => again.push(issue.message) });
+    expect(again.filter((message) => message === "Malformed paginated metadata item")).toHaveLength(1);
+
+    projection.run("DELETE FROM thread_items WHERE rollout_ordinal = 1");
+    const refolded = await readCodexMetadata(source);
+    expect(refolded.metadata?.firstPrompt).toBe("second ask");
+    expect(refolded.metadata?.allUserText).toBe("second ask");
+    projection.close();
 });
 
 test("selected reads report a missing paginated projection instead of empty success", async () => {
