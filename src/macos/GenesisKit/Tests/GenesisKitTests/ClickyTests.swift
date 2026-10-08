@@ -112,6 +112,16 @@ final class ClickyTests: XCTestCase {
         XCTAssertEqual(narrow.reduce(0) { $0 + $1.value }, 10)
     }
 
+    func testExampleStatisticsHaveConsistentTotalsAndRecentDataWithoutStorage() {
+        let example = ClickyStatistics.example(now: date(23, 30), calendar: calendar)
+        XCTAssertEqual(example.keys.values.reduce(0, +), example.presses)
+        XCTAssertEqual(example.minutes.values.reduce(0) { $0 + $1.presses }, example.presses)
+        XCTAssertEqual(example.hours.values.reduce(0) { $0 + $1.presses }, example.presses)
+        XCTAssertEqual(example.days.values.reduce(0) { $0 + $1.presses }, example.presses)
+        let recent = Int(date(23).timeIntervalSince1970 / 60)
+        XCTAssertGreaterThan(example.minutes.filter { $0.key >= recent }.values.reduce(0) { $0 + $1.presses }, 0)
+    }
+
     func testCivilTimeHeatmapAndDailyChartHandleRepeatedDSTHour() {
         let parser = ISO8601DateFormatter()
         var statistics = ClickyStatistics()

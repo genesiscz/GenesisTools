@@ -72,9 +72,9 @@ extension ClickyStatistics {
             let date = start.addingTimeInterval(Double(index) * 60)
             guard date <= now else { break }
             let hourOfDay = calendar.component(.hour, from: date)
-            guard (8..<22).contains(hourOfDay), index % 17 < 12 else { continue }
+            guard index % 17 < 12 else { continue }
             let weekday = calendar.component(.weekday, from: date)
-            let factor = weekday == 1 || weekday == 7 ? 0.3 : 1.0
+            let factor = (weekday == 1 || weekday == 7 ? 0.3 : 1.0) * ((8..<22).contains(hourOfDay) ? 1.0 : 0.12)
             let presses = Int((20 + 90 * abs(sin(Double(index) / 37))) * factor)
             let bucket = ClickyActivityBucket(presses: presses, releases: presses)
             result.minutes[Int(date.timeIntervalSince1970 / 60)] = bucket
@@ -91,6 +91,7 @@ extension ClickyStatistics {
         let weights = positions.enumerated().map { ($0.element.code, 1 + ($0.offset * 13) % 31) }
         let total = weights.reduce(0) { $0 + $1.1 }
         for (code, weight) in weights { result.keys[code] = result.presses * weight / total }
+        result.keys[49, default: 0] += result.presses - result.keys.values.reduce(0, +)
         return result
     }
 }
