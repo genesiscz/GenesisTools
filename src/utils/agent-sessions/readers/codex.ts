@@ -9,6 +9,8 @@ import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { foldJsonlResumable } from "../jsonl-fold";
 import { boundHistoryText, HISTORY_METADATA_LIMITS } from "../metadata";
 import type {
     BoundedMetadataField,
@@ -767,6 +769,44 @@ export async function readCodexRecords(
     return { records, issues, complete: fatalIssueCount(issues) === 0 };
 }
 
+/** What the metadata read gathers from the rollout's rows, in file order (kept between reads). */
+interface RolloutMetadataFold {
+    header: CodexHeader | null;
+    firstPrompt: string | null;
+    firstTimestamp: string | null;
+    lastTimestamp: string | null;
+    userTextParts: string[];
+    userTextCharacters: number;
+    userTextBounded: boolean;
+}
+
+function foldRolloutRow(fold: RolloutMetadataFold, row: JsonRecord): void {
+    const candidate = firstHeader(row);
+    if (!fold.header && candidate) {
+        fold.header = candidate;
+        fold.firstTimestamp = candidate.timestamp;
+    }
+    const timestamp = asText(row.timestamp ?? asRecord(row.payload).timestamp);
+    if (timestamp) {
+        fold.firstTimestamp ??= timestamp;
+        fold.lastTimestamp = timestamp;
+    }
+
+    const text = userMessage(row);
+    if (!text || isWrapperUserText(text)) {
+        return;
+    }
+    fold.firstPrompt ??= text;
+    if (fold.userTextCharacters >= HISTORY_METADATA_LIMITS.allUserTextCollectedChars) {
+        fold.userTextBounded = true;
+        return;
+    }
+    const remaining = HISTORY_METADATA_LIMITS.allUserTextCollectedChars - fold.userTextCharacters;
+    fold.userTextParts.push(text.slice(0, remaining));
+    fold.userTextCharacters += text.length;
+    fold.userTextBounded ||= text.length > remaining;
+}
+
 async function* iterateLegacyRows(
     source: NativeSessionSource<"codex">,
     options: HistoryReadOptions = {},
@@ -912,14 +952,33 @@ async function readCodexMetadataUncounted(
         return { metadata: null, issues, complete: false };
     }
 
-    let header: CodexHeader | undefined;
-    let firstPrompt: string | null = null;
-    let firstTimestamp: string | null = null;
-    let lastTimestamp: string | null = null;
-    const userTextParts: string[] = [];
-    let userTextCharacters = 0;
-    let userTextBounded = false;
+    // Resumable across processes (jsonl-fold.ts): a growing rollout is read only from its last complete line.
+    const folded = foldJsonlResumable<RolloutMetadataFold>({
+        path: source.filePath,
+        storePath: genesisToolsDir("claude-history", "codex-metadata-fold.json"),
+        initial: () => ({
+            header: null,
+            firstPrompt: null,
+            firstTimestamp: null,
+            lastTimestamp: null,
+            userTextParts: [],
+            userTextCharacters: 0,
+            userTextBounded: false,
+        }),
+        copy: (fold) => ({ ...fold, userTextParts: [...fold.userTextParts] }),
+        apply: foldRolloutRow,
+        onIssue: (message) => reportIssue(source, options, issues, message),
+        signal: options.signal,
+    });
+    const header: CodexHeader | undefined = folded?.header ?? undefined;
+    let firstPrompt: string | null = folded?.firstPrompt ?? null;
+    let firstTimestamp: string | null = folded?.firstTimestamp ?? null;
+    let lastTimestamp: string | null = folded?.lastTimestamp ?? null;
+    const userTextParts: string[] = folded ? [...folded.userTextParts] : [];
+    let userTextCharacters = folded?.userTextCharacters ?? 0;
+    let userTextBounded = folded?.userTextBounded ?? false;
 
+    // The paginated projection below adds its rows' user text the same way the rollout fold does.
     function applyUserText(text: string): void {
         if (!text || isWrapperUserText(text)) {
             return;
@@ -933,20 +992,6 @@ async function readCodexMetadataUncounted(
         userTextParts.push(text.slice(0, remaining));
         userTextCharacters += text.length;
         userTextBounded ||= text.length > remaining;
-    }
-
-    for await (const parsed of iterateLegacyRows(source, options, issues)) {
-        const candidate = firstHeader(parsed.row);
-        if (!header && candidate) {
-            header = candidate;
-            firstTimestamp = candidate.timestamp;
-        }
-        const timestamp = asText(parsed.row.timestamp ?? asRecord(parsed.row.payload).timestamp);
-        if (timestamp) {
-            firstTimestamp ??= timestamp;
-            lastTimestamp = timestamp;
-        }
-        applyUserText(userMessage(parsed.row));
     }
 
     if (!header) {

@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, readlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readdirSync, readlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { foldJsonlResumable } from "./jsonl-fold";
 import { scanJsonlRecords } from "./source-scan";
 
 function hasOpenDescriptor(path: string): boolean | undefined {
@@ -122,4 +123,53 @@ test.skipIf(process.platform !== "linux")("abort propagates without a source iss
     await expect(iterator.next()).rejects.toMatchObject({ name: "AbortError" });
     expect(issues).toEqual([]);
     await expectDescriptorClosed(path);
+});
+
+async function fullScan(path: string): Promise<{ rows: unknown[]; issues: string[] }> {
+    const rows: unknown[] = [];
+    const issues: string[] = [];
+    for await (const record of scanJsonlRecords({ path, onIssue: (issue) => issues.push(issue.message) })) {
+        rows.push(record.value);
+    }
+    return { rows, issues };
+}
+
+function resumedFold(path: string, storePath: string): { rows: unknown[]; issues: string[] } {
+    const issues: string[] = [];
+    const rows =
+        foldJsonlResumable<unknown[]>({
+            path,
+            storePath,
+            initial: () => [],
+            copy: (list) => [...list],
+            apply: (list, row) => list.push(row),
+            onIssue: (message) => issues.push(message),
+            resumeMinBytes: 0,
+        }) ?? [];
+    return { rows, issues };
+}
+
+test("a resumed fold sees what a full scan sees after every append: rows, malformed and partial lines", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gt-jsonl-fold-"));
+    const path = join(root, "rollout.jsonl");
+    const storePath = join(root, "store.json");
+    const pieces = [
+        '{"n":1}\n{"n":2}\n',
+        "\n",
+        '{"n":3,"t":"half',
+        ' done"}\n{broken\n',
+        '{"n":4}\r\n{"n":5}',
+        "\n",
+        '{"n":6,"text":"žluťoučký"}\n',
+    ];
+    writeFileSync(path, "");
+    for (const piece of pieces) {
+        appendFileSync(path, piece);
+        expect(resumedFold(path, storePath)).toEqual(await fullScan(path));
+    }
+
+    // Rewritten in place, same inode: folded from the start, not from the stored end.
+    writeFileSync(path, '{"n":9}\n{"n":10}\n{"n":11}\n{"n":12}\n{"n":13}\n{"n":14}\n{"n":15}\n');
+    expect(resumedFold(path, storePath)).toEqual(await fullScan(path));
+    expect(resumedFold(join(root, "missing.jsonl"), storePath)).toEqual({ rows: [], issues: ["Source missing"] });
 });
