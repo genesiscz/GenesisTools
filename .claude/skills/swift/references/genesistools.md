@@ -43,9 +43,8 @@ GenesisTools checkout.
 
 ## Open (by measured cost)
 
-- `ai usage` poll daemon (every minute, a fresh process): session-list recompute 0.8-1.5 s CPU; Codex
-  metadata reads the whole live rollout (`metadata.codex` ~1 s). Needs resumable metadata state kept on
-  disk, without dropping the malformed-line issues the full read reports.
+- `ai usage` poll daemon (every minute, a fresh process): the session-list recompute is still a cold run
+  (~0.8 s CPU); the Codex metadata part resumes since 60ae52883.
 - `hub pr threads` / `readiness` / `list` / `versions`: network-bound, run as processes.
 - `ai-spend session --id … --json` (44 process runs/day, ~500 ms mostly startup): no door yet; goes
   through the generic `runReport`.
