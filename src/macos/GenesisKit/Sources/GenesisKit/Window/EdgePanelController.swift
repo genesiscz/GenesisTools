@@ -7,13 +7,34 @@ private final class EdgeInteractionPanel: NSPanel {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }
 
-private final class EdgeFrameAnimation: NSAnimation {
+private final class EdgeFrameAnimation: NSAnimation, NSAnimationDelegate {
     var render: ((Double) -> Void)?
+    var finished: ((AnimationTiming.Summary) -> Void)?
+    private var timing = AnimationTiming()
+    private var didFinish = false
+
+    override init(duration: TimeInterval, animationCurve: NSAnimation.Curve) {
+        super.init(duration: duration, animationCurve: animationCurve)
+        delegate = self
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    func animationDidEnd(_ animation: NSAnimation) { finish("completed") }
+    func animationDidStop(_ animation: NSAnimation) { finish("interrupted") }
+
+    private func finish(_ outcome: String) {
+        guard !didFinish else { return }
+        didFinish = true
+        finished?(timing.summary(outcome: outcome))
+    }
     override var currentProgress: NSAnimation.Progress {
         get { super.currentProgress }
         set {
+            let start = CACurrentMediaTime()
             super.currentProgress = newValue
             render?(Double(newValue))
+            timing.record(startedAt: start, finishedAt: CACurrentMediaTime())
         }
     }
 }
@@ -33,6 +54,8 @@ public final class EdgePanelController<Content: View> {
     private var animation: EdgeFrameAnimation?
     private var generation = 0
     public private(set) var isExpanded = false
+    /// Driver callback timing only; neither callback count nor gaps establish compositor frame delivery.
+    public private(set) var lastTransitionTiming: AnimationTiming.Summary?
 
     public init(
         placement: EdgePanelPlacement, screen: NSScreen, compactSize: CGSize, expandedSize: CGSize,
@@ -58,7 +81,11 @@ public final class EdgePanelController<Content: View> {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
-        panel.contentView = NSHostingView(rootView: content())
+        let hosting = NSHostingView(rootView: content())
+        // The controller owns the frame. Intrinsic sizing otherwise snaps an opening panel to the
+        // content's full width between animation callbacks, moving its anchored edge off screen.
+        hosting.sizingOptions = []
+        panel.contentView = hosting
         self.panel = panel
     }
 
@@ -113,8 +140,22 @@ public final class EdgePanelController<Content: View> {
             next.render = { [weak self] value in
                 guard let self, self.generation == token else { return }
                 let progress = EdgePanelGeometry.motionProgress(value, opening: expanded)
-                self.panel.setFrame(
-                    EdgePanelGeometry.interpolate(from: start, to: target, progress: progress), display: true)
+                var frame = EdgePanelGeometry.interpolate(from: start, to: target, progress: progress)
+                // AppKit rounds native frames. Re-anchor every step so an interrupted transition
+                // cannot carry that half-point rounding error into the next interpolation.
+                switch self.placement {
+                case .top:
+                    frame.origin.x = target.midX - frame.width / 2
+                    frame.origin.y = target.maxY - frame.height
+                case .right: frame.origin.x = target.maxX - frame.width
+                case .left: frame.origin.x = target.minX
+                }
+                self.panel.setFrame(frame, display: true)
+            }
+            next.finished = { [weak self] summary in
+                guard let self else { return }
+                self.lastTransitionTiming = summary
+                PerfLog.mark("edge.transition edge=\(self.placement.rawValue) state=\(presentation) \(summary.description)")
             }
             animation = next
             next.start()

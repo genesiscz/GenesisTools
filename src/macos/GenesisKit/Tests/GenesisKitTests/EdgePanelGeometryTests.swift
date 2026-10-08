@@ -670,3 +670,154 @@ final class WidgetOutgoingTests: XCTestCase {
         XCTAssertEqual(decision.text, "", "a decision without text stays empty, it is not a form")
     }
 }
+
+final class AnimationTimingTests: XCTestCase {
+    func testTimingReportsDriverGapsAndWorkSeparately() {
+        var timing = AnimationTiming(at: 10)
+        timing.record(startedAt: 10.010, finishedAt: 10.012)
+        timing.record(startedAt: 10.026, finishedAt: 10.029)
+        timing.record(startedAt: 10.090, finishedAt: 10.091)
+        let result = timing.summary(at: 10.100, outcome: "interrupted")
+        XCTAssertEqual(result.outcome, "interrupted")
+        XCTAssertEqual(result.elapsedMs, 100, accuracy: 0.001)
+        XCTAssertEqual(result.callbacks, 3)
+        XCTAssertEqual(result.firstCallbackMs ?? -1, 10, accuracy: 0.001)
+        XCTAssertEqual(result.gapP50Ms, 16, accuracy: 0.001)
+        XCTAssertEqual(result.gapP95Ms, 64, accuracy: 0.001)
+        XCTAssertEqual(result.gapMaxMs, 64, accuracy: 0.001)
+        XCTAssertEqual(result.gapsOver50Ms, 1)
+        XCTAssertEqual(result.workTotalMs, 6, accuracy: 0.001)
+        XCTAssertEqual(result.workMaxMs, 3, accuracy: 0.001)
+    }
+
+    func testEmptyAndSingleCallbackTransitionsHaveNoInventedGaps() {
+        var timing = AnimationTiming(at: 1)
+        let empty = timing.summary(at: 1.1, outcome: "interrupted")
+        XCTAssertEqual(empty.callbacks, 0)
+        XCTAssertNil(empty.firstCallbackMs)
+        XCTAssertEqual(empty.gapMaxMs, 0)
+        timing.record(startedAt: 1.05, finishedAt: 1.05)
+        let single = timing.summary(at: 1.1, outcome: "completed")
+        XCTAssertEqual(single.callbacks, 1)
+        XCTAssertEqual(single.gapP95Ms, 0)
+        XCTAssertEqual(single.workTotalMs, 0)
+    }
+}
+
+@MainActor
+final class EdgePanelControllerTests: XCTestCase {
+    private func controller() throws -> EdgePanelController<Color> {
+        _ = NSApplication.shared
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let value = EdgePanelController(
+            placement: .right, screen: screen, compactSize: CGSize(width: 40, height: 100),
+            expandedSize: CGSize(width: 340, height: 400), title: "Hidden animation test") { Color.black }
+        value.panel.alphaValue = 0
+        value.panel.level = NSWindow.Level(rawValue: -1000)
+        return value
+    }
+
+    func testReduceMotionAndHiddenPanelReachTheExactTargetWithoutCallbacks() throws {
+        let value = try controller()
+        defer { value.hide(); value.panel.close() }
+        value.setPresentation(.expanded, reduceMotion: false)
+        XCTAssertEqual(value.panel.frame.size, CGSize(width: 340, height: 400))
+        XCTAssertNil(value.lastTransitionTiming)
+        value.setPresentation(.compact, reduceMotion: true)
+        XCTAssertEqual(value.panel.frame.size, CGSize(width: 40, height: 100))
+        XCTAssertNil(value.lastTransitionTiming)
+    }
+
+    func testInterruptedOpenCloseReopenEndsAtItsLatestAnchor() async throws {
+        let value = try controller()
+        defer { value.hide(); value.panel.close() }
+        value.show()
+        value.setPresentation(.preview, reduceMotion: false)
+        try await Task.sleep(for: .milliseconds(60))
+        value.setPresentation(.compact, reduceMotion: false)
+        XCTAssertEqual(value.lastTransitionTiming?.outcome, "interrupted")
+        try await Task.sleep(for: .milliseconds(60))
+        value.setPresentation(.expanded, reduceMotion: false)
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(value.panel.frame.size, CGSize(width: 340, height: 400))
+        XCTAssertEqual(value.panel.frame.maxX, NSScreen.screens.first?.frame.maxX)
+        XCTAssertEqual(value.lastTransitionTiming?.outcome, "completed")
+        XCTAssertGreaterThan(value.lastTransitionTiming?.callbacks ?? 0, 1)
+        let final = value.panel.frame
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(value.panel.frame, final, "A cancelled transition must not move the latest target")
+    }
+
+    func testFixedWidthContentCannotPushAnAnimatingPanelOffItsAnchor() async throws {
+        _ = NSApplication.shared
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let screenFrame = screen.frame
+        for placement in [EdgePanelPlacement.right, .top] {
+            let state = EdgeSizingFixtureState()
+            let value = EdgePanelController(
+                placement: placement, screen: screen, compactSize: CGSize(width: 40, height: 36),
+                expandedSize: CGSize(width: 400, height: 300), title: "Hidden sizing test"
+            ) { EdgeSizingFixtureContent(state: state) }
+            value.panel.alphaValue = 0
+            value.panel.level = NSWindow.Level(rawValue: -1000)
+            var errors: [CGFloat] = []
+            let observer = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResizeNotification, object: value.panel, queue: .main
+            ) { _ in
+                MainActor.assumeIsolated {
+                    let frame = value.panel.frame
+                    let error = placement == .right
+                        ? abs(frame.maxX - screenFrame.maxX)
+                        : max(abs(frame.maxY - screenFrame.maxY), abs(frame.midX - screenFrame.midX))
+                    errors.append(error)
+                }
+            }
+            defer {
+                NotificationCenter.default.removeObserver(observer)
+                value.hide()
+                value.panel.close()
+            }
+            value.show()
+            state.expanded = true
+            value.setPresentation(.expanded, reduceMotion: false)
+            try await Task.sleep(for: .milliseconds(60))
+            state.expanded = false
+            value.setPresentation(.compact, reduceMotion: false)
+            try await Task.sleep(for: .milliseconds(60))
+            state.expanded = true
+            value.setPresentation(.expanded, reduceMotion: false)
+            try await Task.sleep(for: .milliseconds(500))
+            XCTAssertGreaterThan(errors.count, 1)
+            XCTAssertLessThanOrEqual(errors.max() ?? .infinity, 0.5, "Hosting constraints must not resize the native frame")
+            XCTAssertEqual(value.panel.frame.size, CGSize(width: 400, height: 300))
+        }
+    }
+
+    func testHideCancelsItsTransitionBeforeAHiddenRetarget() async throws {
+        let value = try controller()
+        defer { value.hide(); value.panel.close() }
+        value.show()
+        value.setPresentation(.preview, reduceMotion: false)
+        try await Task.sleep(for: .milliseconds(40))
+        value.hide()
+        XCTAssertFalse(value.panel.isVisible)
+        XCTAssertEqual(value.lastTransitionTiming?.outcome, "interrupted")
+        value.setPresentation(.compact, reduceMotion: false)
+        let target = value.panel.frame
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertEqual(value.panel.frame, target)
+        XCTAssertEqual(target.size, CGSize(width: 40, height: 100))
+    }
+}
+
+@MainActor
+private final class EdgeSizingFixtureState: ObservableObject {
+    @Published var expanded = false
+}
+
+private struct EdgeSizingFixtureContent: View {
+    @ObservedObject var state: EdgeSizingFixtureState
+    var body: some View {
+        Color.black.frame(width: state.expanded ? 400 : 40, height: state.expanded ? 300 : 36)
+    }
+}
