@@ -89,7 +89,12 @@ public struct FocusSettings: Equatable {
     }
 
     public func records(host: String) -> Bool {
-        !excludedHosts.contains(host)
+        let normalized = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        return !excludedHosts.contains { value in
+            let excluded = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            return !excluded.isEmpty && (normalized == excluded || normalized.hasSuffix("." + excluded))
+        }
     }
 
     /// Applies the title policy. `hashed` keeps switch counting honest (the same window is the

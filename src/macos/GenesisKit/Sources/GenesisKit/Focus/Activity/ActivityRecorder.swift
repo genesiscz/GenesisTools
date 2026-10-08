@@ -25,12 +25,13 @@ public final class ActivityRecorder: ObservableObject {
         public var cmuxSession: String?
         public var cmuxPane: String?
         public var displayId: Int64?
+        public var project: String? = nil
 
         /// Two snapshots are the same *segment* when the triple matches. Anything else is a
         /// switch, and switches are what the breakdown counts.
         public func sameSegment(as other: FocusSnapshot) -> Bool {
             appBundle == other.appBundle && windowTitle == other.windowTitle
-                && urlHost == other.urlHost && urlPath == other.urlPath
+                && urlHost == other.urlHost && urlPath == other.urlPath && project == other.project
         }
     }
 
@@ -81,6 +82,9 @@ public final class ActivityRecorder: ObservableObject {
     private var sessionId: Int64?
     private let probeQueue = DispatchQueue(label: "dev.genesis.activity-probe", qos: .utility)
     private var probing = false
+    private var probeGeneration: UInt64 = 0
+    private let liveServices: Bool
+    private let probeReader: @Sendable (pid_t, String) -> AXFocusProbe.Result
     private var lastKeyCount = 0
     private var sessionStartedMs: Int64?
     private var openGapId: Int64?
@@ -90,9 +94,12 @@ public final class ActivityRecorder: ObservableObject {
 
     public static let pollSeconds: TimeInterval = 2
 
-    public init(store: ActivityStore, settings: FocusSettings = FocusSettings()) {
+    public init(store: ActivityStore, settings: FocusSettings = FocusSettings(), liveServices: Bool = true,
+                probeReader: (@Sendable (pid_t, String) -> AXFocusProbe.Result)? = nil) {
         self.store = store
         self.settings = settings
+        self.liveServices = liveServices
+        self.probeReader = probeReader ?? { AXFocusProbe.read(pid: $0, bundle: $1) }
         counter.onFlush = { [weak self] bucketMs, counts in
             // A flush from stop() runs on the main thread, right before the segment closes.
             // Persisting it in a later Task would find no open segment and drop the counts.
@@ -117,24 +124,37 @@ public final class ActivityRecorder: ObservableObject {
     public func closeDowntime(launchedAt: Date = Date()) {
         guard remoteCommand == nil else { return }
         let launch = Int64(launchedAt.timeIntervalSince1970 * 1000)
-        // An unclean exit can leave a segment with no end at all; finish it where it was.
-        for segment in (try? store.openSegments()) ?? [] {
-            try? store.closeSegment(id: segment.id, at: segment.endedMs ?? segment.startedMs)
+        do {
+            for segment in try store.openSegments() {
+                try store.closeSegment(id: segment.id, at: segment.endedMs ?? segment.startedMs)
+            }
+            for gap in try store.gaps(from: 0, to: launch) where gap.endedMs == nil {
+                try store.closeGap(id: gap.id, at: launch)
+            }
+            openGapId = nil
+            guard var cursor = try store.lastRecordedMs(), launch - cursor >= 60_000 else { return }
+            for gap in try store.gaps(from: cursor, to: launch) {
+                if gap.startedMs - cursor >= 60_000 {
+                    try store.recordGap(startedMs: cursor, endedMs: gap.startedMs, reason: "app_not_running")
+                }
+                cursor = max(cursor, min(gap.endedMs ?? launch, launch))
+            }
+            if launch - cursor >= 60_000 {
+                try store.recordGap(startedMs: cursor, endedMs: launch, reason: "app_not_running")
+            }
+        } catch {
+            FlowFocusLog.focus.error("capture recovery failed: \(error.localizedDescription)")
         }
-        // `try?` flattens the double optional: no record at all means there is no downtime to
-        // draw, because nothing has ever been measured.
-        guard let lastMs = try? store.lastRecordedMs() else { return }
-        let downtime = launch - lastMs
-        // Under a minute is a restart, not a gap worth drawing.
-        guard downtime >= 60_000 else { return }
-        try? store.recordGap(startedMs: lastMs, endedMs: launch, reason: "app_not_running")
     }
 
     public func start() {
         guard remoteCommand == nil else { return }
-        guard !isCapturing, settings.captureEnabled else { return }
+        guard !isCapturing else { return }
+        guard settings.captureEnabled else { excludeCurrent(reason: "capture_off"); return }
         isCapturing = true
+        invalidateProbes()
         closeOpenGap()
+        guard liveServices else { return }
         _ = counter.start()
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(appActivated(_:)),
@@ -171,6 +191,7 @@ public final class ActivityRecorder: ObservableObject {
     }
 
     public func stop() {
+        invalidateProbes()
         if remoteCommand != nil {
             isCapturing = false
             return
@@ -190,6 +211,7 @@ public final class ActivityRecorder: ObservableObject {
 
     public func apply(settings newValue: FocusSettings) {
         if remoteCommand != nil { settings = newValue; return }
+        invalidateProbes()
         let wasEnabled = settings.captureEnabled
         settings = newValue
         if !newValue.captureEnabled, isCapturing {
@@ -207,6 +229,7 @@ public final class ActivityRecorder: ObservableObject {
             catch { FlowFocusLog.focus.error("capture pause encoding failed: \(error.localizedDescription)") }
             return
         }
+        invalidateProbes()
         pausedUntil = date
         // Stop first: its final flush is written against the segment that is still open.
         counter.stop()
@@ -226,7 +249,7 @@ public final class ActivityRecorder: ObservableObject {
         if let remoteCommand { remoteCommand("focus.capture.resume", Data()); return }
         pausedUntil = nil
         closeOpenGap()
-        guard isCapturing else { return }
+        guard isCapturing, liveServices else { return }
         _ = counter.start()
         tick()
     }
@@ -240,7 +263,7 @@ public final class ActivityRecorder: ObservableObject {
         if now < until { return false }
         pausedUntil = nil
         closeOpenGap()
-        _ = counter.start()
+        if isCapturing, liveServices { _ = counter.start() }
         return true
     }
 
@@ -266,11 +289,12 @@ public final class ActivityRecorder: ObservableObject {
     // MARK: - Polling
 
     @objc private func appActivated(_ note: Notification) {
+        invalidateProbes()
         tick()
     }
 
     private func tick() {
-        guard isCapturing else { return }
+        guard isCapturing, liveServices else { return }
         guard resumeIfPauseExpired() else { return }
         counter.flush(now: Date().timeIntervalSince1970 * 1000)
         recordInputSample()
@@ -282,45 +306,78 @@ public final class ActivityRecorder: ObservableObject {
         let idleSeconds = Self.idleSeconds()
         let nowIdle = idleSeconds >= Double(settings.idleThresholdSec)
 
-        guard !probing else { return }
         guard let app = NSWorkspace.shared.frontmostApplication,
               let bundle = app.bundleIdentifier
         else { return }
         let name = app.localizedName ?? bundle
         guard settings.records(bundle: bundle) else {
-            // An excluded app is a real gap in the record, not a continuation of the last one.
-            closeCurrentSegment(at: nowMs())
-            current = nil
+            excludeCurrent(reason: "excluded_app")
             return
         }
 
+        requestProbe(pid: app.processIdentifier, bundle: bundle, appName: name, idle: nowIdle)
+    }
+
+    private func invalidateProbes() {
+        probeGeneration &+= 1
+        probing = false
+    }
+
+    @discardableResult
+    func requestProbe(pid: pid_t, bundle: String, appName: String, idle: Bool) -> Task<Void, Never>? {
+        guard isCapturing, pausedUntil == nil, !probing else { return nil }
         probing = true
-        let pid = app.processIdentifier
-        let settingsCopy = settings
-        probeQueue.async { [weak self] in
-            let probe = AXFocusProbe.read(pid: pid, bundle: bundle)
-            Task { @MainActor in
-                guard let self else { return }
-                self.probing = false
-                self.applyProbe(probe, bundle: bundle, appName: name, settings: settingsCopy, idle: nowIdle)
+        let generation = probeGeneration
+        let reader = probeReader
+        let queue = probeQueue
+        return Task { @MainActor [weak self] in
+            let probe = await withCheckedContinuation { continuation in
+                queue.async { continuation.resume(returning: reader(pid, bundle)) }
             }
+            guard let self, self.probeGeneration == generation else { return }
+            self.probing = false
+            guard self.isCapturing, self.pausedUntil == nil, self.settings.captureEnabled else { return }
+            self.applyProbe(probe, bundle: bundle, appName: appName, settings: self.settings, idle: idle)
         }
     }
 
-    /// Internal, not private: tests feed it probes directly.
+    private func excludeCurrent(reason: String) {
+        invalidateProbes()
+        counter.stop()
+        closeCurrentSegment(at: nowMs())
+        current = nil
+        if openGapId == nil {
+            openGapId = try? store.recordGap(startedMs: nowMs(), endedMs: nil, reason: reason)
+        }
+    }
+
+    /// Direct probe application also enforces privacy; test sources use the same persistence path.
     public func applyProbe(_ probe: AXFocusProbe.Result, bundle: String, appName: String,
                             settings: FocusSettings, idle: Bool) {
+        guard remoteCommand == nil, pausedUntil == nil else { return }
+        guard settings.captureEnabled else { excludeCurrent(reason: "capture_off"); return }
+        guard settings.records(bundle: bundle) else { excludeCurrent(reason: "excluded_app"); return }
+        if let raw = probe.url, let host = URL(string: raw)?.host, !settings.records(host: host) {
+            excludeCurrent(reason: "excluded_host")
+            return
+        }
+        let hadGap = openGapId != nil
+        closeOpenGap()
+        if hadGap, isCapturing, liveServices, pausedUntil == nil { _ = counter.start() }
         let parts = settings.urlParts(probe.url)
         let cmux = CmuxAttribution.parse(title: probe.title, bundle: bundle)
+        let project = settings.project(cmuxSession: cmux.session, title: probe.title,
+                                       host: probe.url.flatMap { URL(string: $0)?.host })
         let snapshot = FocusSnapshot(
             appBundle: bundle,
             appName: appName,
             windowTitle: settings.title(probe.title, appName: appName),
             urlHost: parts.host,
             urlPath: parts.path,
-            cmuxSession: cmux.session,
-            cmuxPane: cmux.pane,
-            displayId: probe.displayId)
+            cmuxSession: settings.titleMode == .appOnly ? nil : settings.title(cmux.session, appName: appName),
+            cmuxPane: settings.titleMode == .appOnly ? nil : settings.title(cmux.pane, appName: appName),
+            displayId: probe.displayId,
+            project: project)
 
         let now = nowMs()
         let changedSegment = current.map { !$0.sameSegment(as: snapshot) } ?? true
@@ -372,9 +429,7 @@ public final class ActivityRecorder: ObservableObject {
         segment.cmuxPane = snapshot.cmuxPane
         segment.displayId = snapshot.displayId
         segment.idle = idle
-        segment.project = settings.project(cmuxSession: snapshot.cmuxSession,
-                                           title: snapshot.windowTitle,
-                                           host: snapshot.urlHost)
+        segment.project = snapshot.project
         segmentId = try? store.openSegment(segment)
         segmentStartedMs = ms
     }
@@ -429,7 +484,7 @@ public final class ActivityRecorder: ObservableObject {
 /// Reads the focused window of one process. Nonisolated on purpose: it runs on a utility queue
 /// with a messaging timeout, so an app that stops answering costs a null title and nothing else.
 public enum AXFocusProbe {
-    public struct Result: Equatable {
+    public struct Result: Equatable, Sendable {
         public var title: String?
         public var url: String?
         public var displayId: Int64?

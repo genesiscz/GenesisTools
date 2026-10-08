@@ -57,7 +57,7 @@ public final class FocusController: ObservableObject {
             let settings = FocusSettings.from(appConfig: appConfig)
             self.settings = settings
             let plan = PomodoroPlan.from(appConfig: appConfig)
-            let recorder = ActivityRecorder(store: store, settings: settings)
+            let recorder = ActivityRecorder(store: store, settings: settings, liveServices: liveServices)
             let engine = PomodoroEngine(store: store, plan: plan)
 
             engine.onSessionChange = { [weak self, weak recorder] sessionId in

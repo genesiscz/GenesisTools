@@ -423,6 +423,114 @@ final class FocusStudioModelTests: XCTestCase {
         XCTAssertNil(recorder.pausedUntil)
     }
 
+    func testRelaunchClosesPersistedOpenGapsEvenWithoutAnyActivityRows() throws {
+        let launch: Int64 = 1_800_000_000_000
+        _ = try store.recordGap(startedMs: launch - 120_000, endedMs: nil, reason: "capture_off")
+        let recorder = ActivityRecorder(store: store)
+        recorder.closeDowntime(launchedAt: Date(timeIntervalSince1970: Double(launch) / 1000))
+        XCTAssertEqual(try store.gaps(from: 0, to: launch + 1).first?.endedMs, launch)
+        XCTAssertTrue(try store.gaps(from: launch, to: launch + 60_000).isEmpty)
+    }
+
+    func testTitlePrivacyAlsoCoversCmuxSessionAndPane() throws {
+        for mode in [FocusSettings.TitleMode.full, .hashed, .appOnly] {
+            var settings = FocusSettings()
+            settings.titleMode = mode
+            settings.projects = [.init(name: "Fixture project", cmuxSession: "fixture-project", titleContains: nil, host: nil)]
+            let recorder = ActivityRecorder(store: store, settings: settings)
+            recorder.applyProbe(.init(title: "fixture-project · fixture-pane", url: nil, displayId: nil),
+                                bundle: "com.cmuxterm.app", appName: "Terminal fixture", settings: settings, idle: false)
+            let row = try XCTUnwrap(try store.segments(from: 0, to: nowMs() + 1).last)
+            XCTAssertEqual(row.project, "Fixture project", "explicit project rules match transient raw metadata in every privacy mode")
+            recorder.attach(sessionId: nil)
+            XCTAssertEqual(try store.segments(from: 0, to: nowMs() + 1).last?.project, "Fixture project", "phase splits preserve resolved attribution")
+            if mode == .full {
+                XCTAssertEqual(row.cmuxSession, "fixture-project")
+                XCTAssertEqual(row.cmuxPane, "fixture-pane")
+            } else if mode == .hashed {
+                XCTAssertTrue(row.cmuxSession?.hasPrefix("sha256:") ?? false)
+                XCTAssertTrue(row.cmuxPane?.hasPrefix("sha256:") ?? false)
+            } else {
+                XCTAssertNil(row.cmuxSession)
+                XCTAssertNil(row.cmuxPane)
+            }
+            if mode != .full {
+                XCTAssertFalse(row.windowTitle?.contains("fixture-project") ?? false)
+                XCTAssertFalse(row.cmuxSession?.contains("fixture-project") ?? false)
+                XCTAssertFalse(row.cmuxPane?.contains("fixture-pane") ?? false)
+            }
+        }
+    }
+
+    func testExcludedAppsAndHostsLeaveGapsWithoutPersistingTheirTitles() throws {
+        var settings = FocusSettings()
+        settings.excludedBundles.insert("test.private-app")
+        settings.excludedHosts = ["example.test"]
+        let recorder = ActivityRecorder(store: store, settings: settings)
+        recorder.applyProbe(.init(title: "Visible fixture", url: nil, displayId: nil),
+                            bundle: "test.editor", appName: "Editor", settings: settings, idle: false)
+        recorder.applyProbe(.init(title: "Private app fixture", url: nil, displayId: nil),
+                            bundle: "test.private-app", appName: "Private app", settings: settings, idle: false)
+        XCTAssertNil(recorder.current)
+        XCTAssertFalse(try store.gaps(from: 0, to: nowMs() + 1).isEmpty)
+        recorder.applyProbe(.init(title: "Private mail fixture", url: "https://mail.example.test/inbox", displayId: nil),
+                            bundle: "com.apple.Safari", appName: "Browser", settings: settings, idle: false)
+        XCTAssertNil(recorder.current)
+        recorder.applyProbe(.init(title: "Visible again", url: nil, displayId: nil),
+                            bundle: "test.editor", appName: "Editor", settings: settings, idle: false)
+        let rows = try store.segments(from: 0, to: nowMs() + 1)
+        XCTAssertFalse(rows.contains { $0.windowTitle?.contains("Private") ?? false })
+        XCTAssertTrue(try store.gaps(from: 0, to: nowMs() + 1).allSatisfy { $0.endedMs != nil })
+    }
+
+    func testDelayedProbeCannotReopenCaptureAfterPauseStopOrPrivacyChange() async throws {
+        for action in ["pause", "stop", "settings"] {
+            let entered = expectation(description: "fixture probe entered for \(action)")
+            let release = DispatchSemaphore(value: 0)
+            let recorder = ActivityRecorder(store: store, liveServices: false, probeReader: { _, _ in
+                entered.fulfill()
+                guard release.wait(timeout: .now() + 2) == .success else {
+                    XCTFail("fixture probe release timed out")
+                    return AXFocusProbe.Result()
+                }
+                return AXFocusProbe.Result(title: "Delayed private fixture", url: nil, displayId: nil)
+            })
+            recorder.start()
+            let pending = try XCTUnwrap(recorder.requestProbe(pid: 42, bundle: "test.editor", appName: "Editor", idle: false))
+            await fulfillment(of: [entered], timeout: 1)
+            if action == "pause" { recorder.pauseCapture(until: Date().addingTimeInterval(60)) }
+            else if action == "stop" { recorder.stop() }
+            else {
+                var settings = FocusSettings()
+                settings.titleMode = .hashed
+                recorder.apply(settings: settings)
+            }
+            release.signal()
+            await pending.value
+            XCTAssertTrue(try store.segments(from: 0, to: nowMs() + 1).isEmpty, action)
+            XCTAssertNil(recorder.current, action)
+            recorder.stop()
+        }
+        let active = ActivityRecorder(store: store, liveServices: false, probeReader: { _, _ in
+            AXFocusProbe.Result(title: "Current fixture", url: nil, displayId: nil)
+        })
+        active.start()
+        let accepted = try XCTUnwrap(active.requestProbe(pid: 42, bundle: "test.editor", appName: "Editor", idle: false))
+        await accepted.value
+        XCTAssertEqual(try store.segments(from: 0, to: nowMs() + 1).first?.windowTitle, "Current fixture")
+        active.stop()
+    }
+
+    func testHostExclusionsCoverSubdomainsAndCaseWithoutSuffixLookalikes() {
+        var settings = FocusSettings()
+        settings.excludedHosts = ["Example.TEST."]
+        XCTAssertFalse(settings.records(host: "example.test"))
+        XCTAssertFalse(settings.records(host: "mail.example.test"))
+        XCTAssertFalse(settings.records(host: "MAIL.EXAMPLE.TEST."))
+        XCTAssertTrue(settings.records(host: "notexample.test"))
+        XCTAssertTrue(settings.records(host: "example.test.other.test"))
+    }
+
     func testCaptureResumedInTheSameWindowOpensANewSegment() throws {
         // PR #82 review: the pause closed the segment but kept the snapshot, so the first probe
         // after it looked like "same segment" and nothing was recorded until a window switch.
