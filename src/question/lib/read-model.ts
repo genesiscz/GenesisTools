@@ -59,6 +59,7 @@ function initializeReadModel(db: Database): void {
     );`);
     db.exec("CREATE TABLE IF NOT EXISTS ingest_offsets (file TEXT PRIMARY KEY, byte_offset INTEGER);");
     db.exec("CREATE INDEX IF NOT EXISTS idx_entries_project_ts ON entries(project, ts);");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_entries_active_ts ON entries(ts DESC) WHERE superseded_by IS NULL;");
     ensureColumn(db, "entries", "commit_message", "ALTER TABLE entries ADD COLUMN commit_message TEXT");
     ensureColumn(db, "entries", "agent", "ALTER TABLE entries ADD COLUMN agent TEXT");
     ensureColumn(db, "entries", "attachments_json", "ALTER TABLE entries ADD COLUMN attachments_json TEXT");
