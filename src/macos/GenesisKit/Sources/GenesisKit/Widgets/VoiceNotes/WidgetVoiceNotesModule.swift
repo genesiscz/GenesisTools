@@ -126,12 +126,9 @@ private struct WidgetVoiceNotesView: View {
                     Spacer()
                     Button("Discard", role: .destructive, action: store.discard).buttonStyle(.borderless)
                 }.font(.caption).disabled(store.isBusy)
-                Picker("Attach to", selection: $store.recipientKey) {
-                    Text("Choose a session").tag("")
-                    ForEach(store.sessions) { session in
-                        Text("\(session.title) · \(session.target.provider)").tag(session.key)
-                    }
-                }.disabled(store.isBusy)
+                WidgetRecipientPicker(sessions: store.sessions, selection: $store.recipientKey,
+                    presentationChanged: store.recipientPickerVisibilityChanged)
+                    .disabled(store.isBusy)
                 Button("Attach text to draft", systemImage: "text.badge.plus", action: store.attach)
                     .buttonStyle(.bordered).disabled(store.isBusy || store.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.recipientKey.isEmpty)
                 Text("You review and send the session draft separately.").font(.caption2).foregroundStyle(.secondary)
