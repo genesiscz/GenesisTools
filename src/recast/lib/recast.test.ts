@@ -1309,6 +1309,8 @@ describe("Recast audio evidence", () => {
                     durationMs: 2000,
                 },
             });
+            const originalDocumentId = input.id;
+            const originalRevision = input.revision;
             let capturedClip = "";
             const transcribe = spyOn(ai, "transcribe").mockImplementation(async (audio, options) => {
                 expect(typeof audio).toBe("string");
@@ -1316,6 +1318,8 @@ describe("Recast audio evidence", () => {
                 expect(await Bun.file(capturedClip).exists()).toBe(true);
                 expect(options?.app).toBe("recast");
                 expect(options?.signal?.aborted).toBe(false);
+                input.id = "replacement_conversion";
+                input.revision++;
                 return {
                     text: "Fixture speech.",
                     segments: [{ text: "Fixture speech.", start: 0.1, end: 0.5 }],
@@ -1333,6 +1337,16 @@ describe("Recast audio evidence", () => {
                     endMs: 1500,
                 });
                 expect(review.engine).toBe("fixture/speech");
+                expect(review.documentId).toBe(originalDocumentId);
+                expect(review.revision).toBe(originalRevision);
+                expect(() =>
+                    captureRecastTranscript({
+                        input,
+                        review,
+                        collectionId: input.collections[0].id,
+                        mode: "readings",
+                    })
+                ).toThrow("conversion changed");
                 expect(review.segments[0]).toMatchObject({ startMs: 600, endMs: 1000 });
                 expect(await Bun.file(capturedClip).exists()).toBe(false);
                 expect(transcribe).toHaveBeenCalledTimes(1);

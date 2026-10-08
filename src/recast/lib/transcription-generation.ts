@@ -25,7 +25,7 @@ export async function transcribeRecastSelection({
     language?: string;
     signal?: AbortSignal;
 }) {
-    const { source } = recastAudioSelection({ input, sourceId, startMs, endMs });
+    const { document, source } = recastAudioSelection({ input, sourceId, startMs, endMs });
     const abortSignal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(600000)]);
     abortSignal.throwIfAborted();
     const info = await lstat(audioPath);
@@ -65,7 +65,7 @@ export async function transcribeRecastSelection({
         const result = await ai.transcribe(clip, { app: "recast", model, language, clean: false, signal: abortSignal });
         abortSignal.throwIfAborted();
         return reviewRecastTranscript({
-            input,
+            input: document,
             sourceId,
             startMs,
             endMs,
