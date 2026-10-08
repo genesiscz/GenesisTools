@@ -76,6 +76,56 @@ describe("bug repro contract", () => {
             "value"
         );
     });
+    test("CLI generation boundary counts UTF-16 strings, locator names, evidence and URL ports", () => {
+        expect(() => parseRecording({ ...recording, title: "\u{1F6D2}".repeat(101) })).toThrow("oversized");
+        expect(parseRecording({ ...recording, title: "\u{1F6D2}".repeat(100) }).title).toHaveLength(200);
+        expect(() =>
+            parseRecording({
+                ...recording,
+                expectation: {
+                    ...recording.expectation!,
+                    locator: { kind: "role", value: "button", name: "n".repeat(1000) },
+                },
+            })
+        ).toThrow("locator");
+        expect(
+            parseRecording({
+                ...recording,
+                expectation: {
+                    ...recording.expectation!,
+                    locator: { kind: "role", value: "button", name: "n".repeat(999) },
+                },
+            }).expectation?.locator?.name
+        ).toHaveLength(999);
+        expect(() =>
+            parseRecording({
+                ...recording,
+                expectation: { ...recording.expectation!, expected: "\u{1F6D2}".repeat(2001) },
+            })
+        ).toThrow("oversized");
+        expect(
+            parseRecording({
+                ...recording,
+                expectation: { ...recording.expectation!, expected: "\u{1F6D2}".repeat(2000) },
+            }).expectation?.expected
+        ).toHaveLength(4000);
+        expect(() =>
+            parseRecording({
+                ...recording,
+                evidence: [{ id: "e", kind: "console", text: "x".repeat(4001), excluded: false, at: 1 }],
+            })
+        ).toThrow("oversized");
+        expect(
+            parseRecording({
+                ...recording,
+                evidence: [{ id: "e", kind: "console", text: "x".repeat(4000), excluded: false, at: 1 }],
+            }).evidence[0].text
+        ).toHaveLength(4000);
+        expect(() => parseRecording({ ...recording, initialUrl: "http://site.test:65536/" })).toThrow();
+        expect(parseRecording({ ...recording, initialUrl: "http://site.test:65535/" }).initialUrl).toBe(
+            "http://site.test:65535/"
+        );
+    });
     test("escapes source strings and keeps user assertion separate from action preflight", () => {
         const source = generateRepro({
             ...recording,
@@ -264,6 +314,24 @@ describe("bug repro contract", () => {
         expect(await readFile(join(directory, "repro.spec.ts"), "utf8")).toContain(
             'page.goto(remap("https://site.test/cart"))'
         );
+    });
+    test("credentialed starting URLs remain saveable without retaining user info", () => {
+        const captured = recordingSnapshot({
+            id: recording.id,
+            title: recording.title,
+            snapshot: {
+                initialUrl: redactBrowserText("https://fixture:fixture-secret@site.test/cart?token=fixture-token"),
+                actions: [],
+                evidence: [],
+            },
+        });
+        const url = new URL(parseRecording(captured).initialUrl);
+        expect(url.username).toBe("");
+        expect(url.password).toBe("");
+        expect(url.hostname).toBe("site.test");
+        expect(url.pathname).toBe("/cart");
+        expect(url.searchParams.get("token")).toBe("[redacted]");
+        expect(SafeJSON.stringify(captured)).not.toContain("fixture-secret");
     });
     test("imported output symlinks are refused before spawning and preserve external data", async () => {
         const root = await mkdtemp(join(tmpdir(), "bug-to-test-output-"));

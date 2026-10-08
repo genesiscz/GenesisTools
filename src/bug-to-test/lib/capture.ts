@@ -18,11 +18,15 @@ export function recordingSnapshot(options: {
             return false;
         }
     };
+    const initialUrl = new URL(options.snapshot.initialUrl);
+    initialUrl.username = "";
+    initialUrl.password = "";
     return {
         version: 1,
         id: options.id,
         title: options.title,
         ...options.snapshot,
+        initialUrl: httpUrl(initialUrl.toString()),
         actions: options.snapshot.actions
             .filter((action) => action.kind !== "navigate" || validUrl(action.url))
             .map((action) =>

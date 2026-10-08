@@ -1,10 +1,13 @@
 import Foundation
 
 func bugToTestHTTPURL(_ value: String) -> Bool {
-    guard value.count <= 4000, let url = URL(string: value),
+    guard value.utf16.count <= 4000, let url = URL(string: value),
           let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
           url.host?.isEmpty == false,
           (url.user ?? "").isEmpty, (url.password ?? "").isEmpty else { return false }
+    if let port = url.port, !(0...65535).contains(port) {
+        return false
+    }
     return true
 }
 
@@ -20,8 +23,11 @@ struct BugToTestLocator: Codable, Equatable {
     var fingerprint: BugToTestFingerprint?
     var label: String { kind == "role" ? value + " “" + (name ?? "") + "”" : kind + ": " + value }
     var valid: Bool {
-        guard ["testId", "role", "css"].contains(kind), !value.isEmpty, value.count < 1000 else { return false }
-        if let fingerprint, [fingerprint.tag, fingerprint.role, fingerprint.name].contains(where: { $0.count >= 1000 }) { return false }
+        guard ["testId", "role", "css"].contains(kind), !value.isEmpty, value.utf16.count < 1000 else { return false }
+        if let name, name.utf16.count >= 1000 {
+            return false
+        }
+        if let fingerprint, [fingerprint.tag, fingerprint.role, fingerprint.name].contains(where: { $0.utf16.count >= 1000 }) { return false }
         return true
     }
 }
@@ -36,12 +42,12 @@ struct BugToTestAction: Codable, Identifiable, Equatable {
     var at: Double
     var label: String { kind + " · " + (locator?.label ?? url ?? "") }
     var valid: Bool {
-        guard ["click", "fill", "select", "press", "navigate"].contains(kind), id.count <= 100, at.isFinite else { return false }
+        guard ["click", "fill", "select", "press", "navigate"].contains(kind), id.utf16.count <= 100, at.isFinite else { return false }
         if let sourceUrl, !bugToTestHTTPURL(sourceUrl) { return false }
         if kind == "navigate" { return url.map(bugToTestHTTPURL) == true }
         guard locator?.valid == true else { return false }
-        if ["fill", "select", "press"].contains(kind) { return value.map { $0.count <= 4000 } == true }
-        return value.map { $0.count <= 4000 } ?? true
+        if ["fill", "select", "press"].contains(kind) { return value.map { $0.utf16.count <= 4000 } == true }
+        return value.map { $0.utf16.count <= 4000 } ?? true
     }
 }
 struct BugToTestEvidence: Codable, Identifiable, Equatable {
@@ -50,6 +56,10 @@ struct BugToTestEvidence: Codable, Identifiable, Equatable {
     var text: String
     var excluded: Bool
     var at: Double
+    var valid: Bool {
+        ["console", "network", "navigation", "warning"].contains(kind) && id.utf16.count <= 100
+            && text.utf16.count <= 4000 && at.isFinite
+    }
 }
 struct BugToTestExpectation: Codable, Equatable {
     var description: String
@@ -57,7 +67,7 @@ struct BugToTestExpectation: Codable, Equatable {
     var locator: BugToTestLocator?
     var expected: String
     var valid: Bool {
-        guard description.count <= 4000, expected.count <= 4000,
+        guard description.utf16.count <= 4000, expected.utf16.count <= 4000,
               !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !expected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               ["text", "value", "visible", "url"].contains(kind) else { return false }
@@ -79,8 +89,9 @@ struct BugToTestRecording: Codable, Equatable {
     var removedActionIds: [String]?
     var triggerActionId: String?
     var validForGeneration: Bool {
-        version == 1 && id.count <= 100 && title.count <= 200 && actions.count <= 200 && evidence.count <= 500
+        version == 1 && id.utf16.count <= 100 && title.utf16.count <= 200 && actions.count <= 200 && evidence.count <= 500
             && expectation?.valid == true && bugToTestHTTPURL(initialUrl) && actions.allSatisfy(\.valid)
+            && evidence.allSatisfy(\.valid)
     }
 }
 struct BugToTestBrowser: Decodable, Identifiable {

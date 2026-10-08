@@ -97,6 +97,33 @@ final class BugToTestTests: XCTestCase {
         XCTAssertEqual(model.source, "prior source")
         XCTAssertNil(model.error)
     }
+    func testNativeGenerationMatchesCLIBoundedStringsAndURLPorts() throws {
+        var file = try recording()
+        file.title = String(repeating: "\u{1F6D2}", count: 101)
+        XCTAssertFalse(file.validForGeneration)
+        file.title = String(repeating: "\u{1F6D2}", count: 100)
+        XCTAssertTrue(file.validForGeneration)
+        file = try recording()
+        file.expectation?.locator = BugToTestLocator(kind: "role", value: "button", name: String(repeating: "n", count: 1000))
+        XCTAssertFalse(file.validForGeneration)
+        file.expectation?.locator?.name = String(repeating: "n", count: 999)
+        XCTAssertTrue(file.validForGeneration)
+        file = try recording()
+        file.expectation?.expected = String(repeating: "\u{1F6D2}", count: 2001)
+        XCTAssertFalse(file.validForGeneration)
+        file.expectation?.expected = String(repeating: "\u{1F6D2}", count: 2000)
+        XCTAssertTrue(file.validForGeneration)
+        file = try recording()
+        file.evidence[0].text = String(repeating: "x", count: 4001)
+        XCTAssertFalse(file.validForGeneration)
+        file.evidence[0].text = String(repeating: "x", count: 4000)
+        XCTAssertTrue(file.validForGeneration)
+        file = try recording()
+        file.initialUrl = "http://site.test:65536/"
+        XCTAssertFalse(file.validForGeneration)
+        file.initialUrl = "http://site.test:65535/"
+        XCTAssertTrue(file.validForGeneration)
+    }
     @MainActor
     func testEditingAnExpectationInvalidatesPriorWorkspaceAndGreenResult() throws {
         let model = BugToTestModel(toolsPath: "/fixture/tools")
