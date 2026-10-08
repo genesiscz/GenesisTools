@@ -85,6 +85,11 @@ final class ModelRoomDocument: NSDocument {
     @objc func exportHTML(_ sender: Any?) { model.exportDocument(format: "html") }
     @objc func exportResults(_ sender: Any?) { model.exportDocument(format: "results") }
     @objc func exportAssumptions(_ sender: Any?) { model.exportDocument(format: "assumptions") }
+    @objc func exportSubsystem(_ sender: Any?) {
+        guard model.selectedScenario.isEmpty else { model.error = "Switch to Baseline to save a reusable subsystem."; return }
+        model.showSubsystemExport = true
+    }
+    @objc func importSubsystem(_ sender: Any?) { model.chooseSubsystem() }
     override func close() { model.stop(); onClose?(); super.close() }
 }
 
@@ -92,6 +97,7 @@ final class ModelRoomDocument: NSDocument {
 private final class ModelRoomAppDelegate: NSObject, NSApplicationDelegate {
     var documents: [ModelRoomDocument] = []
     var initialDataURL: URL?
+    var initialSubsystemURL: URL?
     var snapshotPath: String?
     var snapshotMode = ModelRoomMode.build
     var snapshotTick = 6
@@ -120,6 +126,9 @@ private final class ModelRoomAppDelegate: NSObject, NSApplicationDelegate {
         file.addItem(withTitle: "Export Interactive HTML…", action: #selector(ModelRoomDocument.exportHTML(_:)), keyEquivalent: "e")
         file.addItem(withTitle: "Export Results CSV…", action: #selector(ModelRoomDocument.exportResults(_:)), keyEquivalent: "")
         file.addItem(withTitle: "Export Assumptions CSV…", action: #selector(ModelRoomDocument.exportAssumptions(_:)), keyEquivalent: "")
+        file.addItem(.separator())
+        file.addItem(withTitle: "Save Subsystem…", action: #selector(ModelRoomDocument.exportSubsystem(_:)), keyEquivalent: "")
+        file.addItem(withTitle: "Import Subsystem…", action: #selector(ModelRoomDocument.importSubsystem(_:)), keyEquivalent: "")
         file.addItem(.separator())
         file.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         let item = NSMenuItem(title: "File", action: nil, keyEquivalent: "")
@@ -173,6 +182,13 @@ private final class ModelRoomAppDelegate: NSObject, NSApplicationDelegate {
                     guard let model else { return }
                     model.onEvaluated = nil
                     model.previewTable(url: source, delimiter: source.pathExtension == "tsv" ? "tab" : "comma")
+                }
+            } else if snapshotPath == nil, let source = initialSubsystemURL {
+                initialSubsystemURL = nil
+                document.model.onEvaluated = { [weak model = document.model] in
+                    guard let model else { return }
+                    model.onEvaluated = nil
+                    model.prepareSubsystemImport(url: source)
                 }
             }
             guard let window = document.windowControllers.first?.window else { return }
@@ -231,6 +247,7 @@ func runModelRoom(_ args: [String]) -> Never {
         let delegate = ModelRoomAppDelegate()
         delegate.snapshotPath = value("--snapshot")
         delegate.initialDataURL = value("--data").map { URL(fileURLWithPath: $0) }
+        delegate.initialSubsystemURL = value("--subsystem").map { URL(fileURLWithPath: $0) }
         delegate.snapshotMode = ModelRoomMode(rawValue: value("--mode")?.capitalized ?? "Build") ?? .build
         delegate.snapshotTick = Int(value("--tick") ?? "6") ?? 6
         delegate.snapshotWidth = CGFloat(Double(value("--width") ?? "1460") ?? 1460)

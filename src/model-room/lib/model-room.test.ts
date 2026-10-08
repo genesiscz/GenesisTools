@@ -4,6 +4,7 @@ import {
     expressionReferences,
     expressionUnit,
     parseExpression,
+    rewriteExpressionReferences,
 } from "@genesiscz/utils/quantities/expression";
 import { convertValue, parseUnit, sameDimension } from "@genesiscz/utils/quantities/units";
 import { parseDelimited } from "@genesiscz/utils/tabular/delimited";
@@ -15,6 +16,13 @@ import { comparisonValue, evaluateDocument } from "./evaluation";
 import { classroomModel, projectBudgetModel, supportCapacityModel } from "./examples";
 import { assumptionsCSV, resultsCSV, scriptJSON, serializedModel } from "./exports";
 import { CalculationStopped, simulate, simulateAsync, sweepModel } from "./simulation";
+import {
+    extractSubsystem,
+    importSubsystem,
+    inspectSubsystemSelection,
+    readSubsystemPackage,
+    subsystemBindingChoices,
+} from "./subsystems";
 
 function calculate(source: string): number {
     const expression = parseExpression({ source });
@@ -618,5 +626,246 @@ describe("mapped observation imports", () => {
         );
         expect(document.quantities).toHaveLength(5);
         expect(() => importObservationQuantity({ ...base, text: "day,count\n0,40\n," })).toThrow("not a finite number");
+    });
+});
+
+describe("portable model subsystems", () => {
+    test("rewrites parsed reference spans including delays without touching unit literals or functions", () => {
+        const source = "max( day, 1[day]) + lag((day), 2) + day_count + 1e2[day]";
+        expect(rewriteExpressionReferences({ source, mapping: new Map([["day", "copied_day"]]) })).toBe(
+            "max( copied_day, 1[day]) + lag((copied_day), 2) + day_count + 1e2[day]"
+        );
+        expect(rewriteExpressionReferences({ source: "time / step + x", mapping: new Map([["x", "copied_x"]]) })).toBe(
+            "time / step + copied_x"
+        );
+        expect(() => rewriteExpressionReferences({ source: "x", mapping: new Map([["x", "time"]]) })).toThrow("clock");
+        expect(() => rewriteExpressionReferences({ source: "lag(x, 0)", mapping: new Map([["x", "new_x"]]) })).toThrow(
+            "whole step"
+        );
+        const long = Array.from({ length: 100 }, () => "x").join("+");
+        expect(() => rewriteExpressionReferences({ source: long, mapping: new Map([["x", "a".repeat(64)]]) })).toThrow(
+            "4096"
+        );
+    });
+
+    test("extracts closed equations with copied inputs and reproduces the baseline without source mutation", async () => {
+        const model = supportCapacityModel();
+        const before = structuredClone(model);
+        const packageFile = await extractSubsystem({
+            input: model,
+            members: ["capacity"],
+            outputs: ["capacity"],
+            label: "Support team",
+        });
+        expect(packageFile.boundaryInputs.sort()).toEqual(["agents", "productivity"]);
+        expect(packageFile.model.scenarios).toEqual([]);
+        expect(packageFile.model.presentation.steps).toEqual([]);
+        const original = simulate({ model: compileModel({ input: model }) });
+        const extracted = simulate({ model: compileModel({ input: packageFile.model }) });
+        expect(extracted.frames.map((frame) => frame.values.capacity)).toEqual(
+            original.frames.map((frame) => frame.values.capacity)
+        );
+        expect(model).toEqual(before);
+    });
+
+    test("requires dynamic dependencies instead of silently freezing them", async () => {
+        const model = supportCapacityModel();
+        const selection = inspectSubsystemSelection({ input: model, members: ["backlog"] });
+        expect(selection.missingDependencies.map((entry) => entry.quantity.id)).toEqual(["capacity"]);
+        expect(selection.boundaryInputs.map((entry) => entry.id).sort()).toEqual([
+            "agents",
+            "arrivals",
+            "productivity",
+        ]);
+        await expect(
+            extractSubsystem({ input: model, members: ["backlog"], outputs: ["backlog"], label: "Queue" })
+        ).rejects.toThrow("Service capacity");
+        const packageFile = await extractSubsystem({
+            input: model,
+            members: ["backlog", "capacity"],
+            outputs: ["backlog"],
+            label: "Queue",
+        });
+        expect(simulate({ model: compileModel({ input: packageFile.model }) }).frames[6].values.backlog).toBeCloseTo(
+            20
+        );
+    });
+
+    test("multiple imports use fresh identifiers and preserve existing equations and layout", async () => {
+        const model = supportCapacityModel();
+        const before = structuredClone(model);
+        const packageFile = await extractSubsystem({
+            input: model,
+            members: ["capacity"],
+            outputs: ["capacity"],
+            label: "Team",
+        });
+        const first = await importSubsystem({ input: model, packageInput: packageFile, namespace: "extra" });
+        const second = await importSubsystem({ input: first.document, packageInput: packageFile, namespace: "extra" });
+        expect(first.mapping.capacity).toBe("extra_capacity");
+        expect(second.mapping.capacity).toBe("extra_capacity_2");
+        expect(second.document.quantities.slice(0, model.quantities.length)).toEqual(model.quantities);
+        expect(new Set(second.document.quantities.map((quantity) => quantity.id)).size).toBe(
+            second.document.quantities.length
+        );
+        expect(second.document.subsystems.at(-1)?.quantities).toEqual(["extra_capacity_2"]);
+        const result = simulate({ model: compileModel({ input: second.document }) });
+        expect(result.frames[0].values.extra_capacity_2).toBeCloseTo(100);
+        expect(model).toEqual(before);
+        for (const added of first.document.quantities.filter((quantity) => first.added.includes(quantity.id))) {
+            for (const existing of model.quantities) {
+                const overlap =
+                    Math.abs(added.position.x - existing.position.x) < 240 &&
+                    Math.abs(added.position.y - existing.position.y) < 160;
+                expect(overlap).toBe(false);
+            }
+        }
+    });
+
+    test("input bindings convert compatible aliases and refuse incompatible or non-input targets", async () => {
+        const source = readModelDocument({
+            ...formulaModel("duration"),
+            quantities: [
+                { id: "duration", label: "Duration", kind: "input", value: 1, unit: "day" },
+                { id: "answer", label: "Answer", kind: "formula", expression: "duration", unit: "day" },
+            ],
+        });
+        const destination = readModelDocument({
+            ...formulaModel("1"),
+            quantities: [
+                ...formulaModel("1").quantities,
+                { id: "elapsed", label: "Elapsed", kind: "input", value: 48, unit: "hour" },
+                { id: "distance", label: "Distance", kind: "input", value: 2, unit: "m" },
+            ],
+        });
+        const packageFile = await extractSubsystem({
+            input: source,
+            members: ["answer"],
+            outputs: ["answer"],
+            label: "Timing",
+        });
+        expect(
+            subsystemBindingChoices({ input: destination, packageInput: packageFile })[0].candidates.map(
+                (entry) => entry.id
+            )
+        ).toEqual(["elapsed"]);
+        const imported = await importSubsystem({
+            input: destination,
+            packageInput: packageFile,
+            namespace: "timing",
+            bindings: { duration: "elapsed" },
+        });
+        expect(imported.added).toEqual(["timing_answer"]);
+        expect(simulate({ model: compileModel({ input: imported.document }) }).frames[0].values.timing_answer).toBe(2);
+        await expect(
+            importSubsystem({
+                input: destination,
+                packageInput: packageFile,
+                namespace: "timing",
+                bindings: { duration: "distance" },
+            })
+        ).rejects.toThrow("compatible");
+        await expect(
+            importSubsystem({
+                input: destination,
+                packageInput: packageFile,
+                namespace: "timing",
+                bindings: { duration: "answer" },
+            })
+        ).rejects.toThrow("existing input");
+        await expect(
+            importSubsystem({
+                input: destination,
+                packageInput: packageFile,
+                namespace: "timing",
+                bindings: { answer: "elapsed" },
+            })
+        ).rejects.toThrow("Only subsystem inputs");
+
+        destination.scenarios = [
+            {
+                id: "without_time",
+                label: "Without time",
+                color: "#aabbcc",
+                description: "",
+                overrides: {},
+                interventions: [],
+                replacements: [],
+                removed: ["elapsed"],
+            },
+        ];
+        const before = structuredClone(destination);
+        await expect(
+            importSubsystem({
+                input: destination,
+                packageInput: packageFile,
+                namespace: "timing",
+                bindings: { duration: "elapsed" },
+            })
+        ).rejects.toThrow("Without time");
+        expect(destination).toEqual(before);
+    });
+
+    test("equivalent clocks preserve delayed feedback and incompatible steps fail", async () => {
+        const source = formulaModel("lag(answer, 1) + 1");
+        const packageFile = await extractSubsystem({
+            input: source,
+            members: ["answer"],
+            outputs: ["answer"],
+            label: "Counter",
+        });
+        const destination = convertModelTime({ input: formulaModel("1"), unit: "hour" });
+        const imported = await importSubsystem({ input: destination, packageInput: packageFile, namespace: "counter" });
+        const expected = simulate({ model: compileModel({ input: source }) }).frames.map(
+            (frame) => frame.values.answer
+        );
+        const actual = simulate({ model: compileModel({ input: imported.document }) }).frames.map(
+            (frame) => frame.values.counter_answer
+        );
+        expect(actual).toEqual(expected);
+        destination.time.step = 12;
+        await expect(
+            importSubsystem({ input: destination, packageInput: packageFile, namespace: "counter" })
+        ).rejects.toThrow("physical step");
+    });
+
+    test("validates package manifests and refuses numerically invalid executable modules", async () => {
+        const packageFile = await extractSubsystem({
+            input: formulaModel("1"),
+            members: ["answer"],
+            outputs: ["answer"],
+            label: "Constant",
+        });
+        expect(() => readSubsystemPackage({ ...packageFile, members: ["answer", "answer"] })).toThrow("duplicate");
+        expect(() => readSubsystemPackage({ ...packageFile, outputs: ["missing"] })).toThrow("outputs");
+        expect(() => readSubsystemPackage({ ...packageFile, boundaryInputs: ["answer"] })).toThrow();
+        expect(() => readSubsystemPackage({ ...packageFile, members: ["missing"] })).toThrow("exist");
+        await expect(
+            extractSubsystem({
+                input: formulaModel("1 / 0"),
+                members: ["answer"],
+                outputs: ["answer"],
+                label: "Invalid",
+            })
+        ).rejects.toThrow("non-finite");
+        await expect(
+            importSubsystem({ input: formulaModel("1"), packageInput: packageFile, namespace: "invalid space" })
+        ).rejects.toThrow("namespace");
+    });
+
+    test("does not mistake inherited object properties for explicit bindings", async () => {
+        const input = readModelDocument({
+            ...formulaModel("1"),
+            quantities: [{ id: "toString", label: "Value", kind: "input", value: 2, unit: "1" }],
+        });
+        const packageFile = await extractSubsystem({
+            input,
+            members: ["toString"],
+            outputs: ["toString"],
+            label: "Value",
+        });
+        const imported = await importSubsystem({ input, packageInput: packageFile, namespace: "copy" });
+        expect(imported.added).toEqual(["copy_toString"]);
+        expect(simulate({ model: compileModel({ input: imported.document }) }).frames[0].values.copy_toString).toBe(2);
     });
 });

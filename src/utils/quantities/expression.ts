@@ -29,12 +29,14 @@ export interface ExpressionContext {
     lag: (name: string, steps: number) => number;
 }
 
-export function parseExpression({
+function parseExpressionSource({
     source,
     units = defaultUnits(),
+    references,
 }: {
     source: string;
     units?: ReadonlyMap<string, Unit>;
+    references?: Token[];
 }): Expression {
     if (source.length > 4096) {
         throw new QuantityError("A formula cannot exceed 4096 characters.");
@@ -96,6 +98,7 @@ export function parseExpression({
             left = { kind: "literal", value: finiteValue(Number(token)), unit };
         } else if (token && /^[A-Za-z_][A-Za-z_0-9]*$/.test(token)) {
             if (peek() !== "(") {
+                references?.push(tokens[cursor - 1]);
                 left = { kind: "reference", name: token };
             } else {
                 cursor++;
@@ -172,6 +175,53 @@ export function parseExpression({
     }
 
     return expression;
+}
+
+export function parseExpression(options: { source: string; units?: ReadonlyMap<string, Unit> }): Expression {
+    return parseExpressionSource(options);
+}
+
+export function rewriteExpressionReferences({
+    source,
+    mapping,
+}: {
+    source: string;
+    mapping: ReadonlyMap<string, string>;
+}): string {
+    const reserved = new Set([
+        "time",
+        "step",
+        "min",
+        "max",
+        "abs",
+        "clamp",
+        "lag",
+        "__proto__",
+        "constructor",
+        "prototype",
+    ]);
+    for (const [before, after] of mapping) {
+        if (reserved.has(before) || reserved.has(after) || !/^[A-Za-z_][A-Za-z_0-9]{0,63}$/.test(after)) {
+            throw new QuantityError(
+                "Reference rewrites require ordinary quantity identifiers, never clock or function names."
+            );
+        }
+    }
+
+    const references: Token[] = [];
+    parseExpressionSource({ source, references });
+    let rewritten = source;
+    for (const token of references.reverse()) {
+        const replacement = mapping.get(token.text);
+
+        if (replacement !== undefined) {
+            rewritten =
+                rewritten.slice(0, token.offset) + replacement + rewritten.slice(token.offset + token.text.length);
+        }
+    }
+
+    parseExpression({ source: rewritten });
+    return rewritten;
 }
 
 export function expressionReferences(expression: Expression): { immediate: Set<string>; delayed: Set<string> } {

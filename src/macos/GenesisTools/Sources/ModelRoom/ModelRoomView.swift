@@ -33,6 +33,12 @@ struct ModelRoomView: View {
                             .accessibilityAddTraits(model.mode == mode ? [.isSelected] : [])
                     }
                     Spacer()
+                    Menu {
+                        Button("Save subsystem…") { model.showSubsystemExport = true }.disabled(!model.selectedScenario.isEmpty)
+                        Button("Import subsystem…") { model.chooseSubsystem() }.disabled(model.importing)
+                        Text("Subsystems export the baseline.")
+                    } label: { Label("Subsystems", systemImage: "square.stack.3d.up").labelStyle(.iconOnly) }
+                        .menuStyle(.borderlessButton).frame(width: 24).help("Reusable subsystems").accessibilityIdentifier("model-room.subsystems")
                     Button(model.importing ? "Reading data…" : "Import data", systemImage: "tablecells") { model.chooseObservationTable() }
                         .buttonStyle(.genHoverPlain()).disabled(model.importing)
                     Button("Explore ranges", systemImage: "chart.xyaxis.line") { model.showSweep = true }
@@ -111,6 +117,10 @@ struct ModelRoomView: View {
             if let file = model.file { ModelRoomEditor(model: model, file: file) }
         }
         .sheet(item: $model.tableImport) { source in ModelRoomImportSheet(model: model, source: source) }
+        .sheet(isPresented: $model.showSubsystemExport) {
+            if let file = model.file { ModelRoomSubsystemExportSheet(model: model, file: file) }
+        }
+        .sheet(item: $model.subsystemImport) { source in ModelRoomSubsystemImportSheet(model: model, source: source) }
     }
 
     private func outline(_ file: ModelRoomFile) -> some View {
@@ -142,6 +152,15 @@ struct ModelRoomView: View {
                 Button("New branch", systemImage: "arrow.triangle.branch") { model.forkScenario() }
                     .buttonStyle(.genHoverPlain())
                 Divider()
+                if !file.subsystems.isEmpty {
+                    Text("Subsystems").font(.system(size: 12, weight: .semibold))
+                    ForEach(file.subsystems) { subsystem in
+                        Button(subsystem.label, systemImage: "square.stack.3d.up") {
+                            model.selectedQuantity = subsystem.quantities.first(where: { id in model.effectiveQuantities.contains { $0.id == id } }) ?? model.selectedQuantity
+                        }.buttonStyle(.genHoverPlain())
+                    }
+                    Divider()
+                }
                 Text("Assumptions").font(.system(size: 12, weight: .semibold))
                 Text(file.description).font(.system(size: 11)).foregroundStyle(ReviewPalette.dim).textSelection(.enabled)
             }.padding(14)

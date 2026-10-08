@@ -174,6 +174,40 @@ final class ModelRoomTests: XCTestCase {
         XCTAssertFalse(String(decoding: bytes, as: UTF8.self).contains(stepID.uuidString))
     }
 
+    @MainActor
+    func testSubsystemImportIsOneUndoableRevisionAndRejectsAStalePreview() throws {
+        let document = fixture()
+        defer { document.model.stop() }
+        let original = try XCTUnwrap(document.model.file)
+        let source = ModelRoomSubsystemSource(
+            url: URL(fileURLWithPath: "/fixture/team.subsystem.json"), original: original,
+            preview: ModelRoomSubsystemChoices(
+                packageFile: ModelRoomSubsystemPackage(format: "genesis-model-room-subsystem", version: 1, model: original, members: ["agents"], boundaryInputs: [], outputs: ["agents"]),
+                choices: []
+            )
+        )
+        var result = original
+        var copied = original.quantities[0]
+        copied.id = "team_agents"
+        copied.position.x = 280
+        result.quantities.append(copied)
+        result.subsystems.append(ModelRoomSubsystem(id: "subsystem_team", label: "Team", description: "", quantities: ["team_agents"]))
+        let preview = ModelRoomSubsystemImportResult(document: result, subsystemId: "subsystem_team", mapping: ["agents": "team_agents"], added: ["team_agents"], bound: [], outputs: ["team_agents"])
+        let undo = try XCTUnwrap(document.undoManager)
+        undo.beginUndoGrouping()
+        try document.model.applySubsystemImport(preview, source: source)
+        undo.endUndoGrouping()
+        XCTAssertEqual(document.model.file, result)
+        XCTAssertEqual(document.model.selectedQuantity, "team_agents")
+        XCTAssertThrowsError(try document.model.applySubsystemImport(preview, source: source))
+        XCTAssertEqual(document.model.file, result)
+        undo.undo()
+        XCTAssertEqual(document.model.file, original)
+        XCTAssertFalse(undo.canUndo)
+        undo.redo()
+        XCTAssertEqual(document.model.file, result)
+    }
+
     func testNativeBuildOriginNeverSilentlySwitchesCheckouts() throws {
         let built = "/fixture/feature/tools"
         XCTAssertEqual(try AppToolsOrigin.resolve(configured: built, isExecutable: { $0 == built }, fallback: { "/fixture/main/tools" }), built)

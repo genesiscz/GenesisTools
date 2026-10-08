@@ -21,6 +21,9 @@ final class ModelRoomModel: ObservableObject {
     @Published var showAddQuantity = false
     @Published var showSweep = false
     @Published var showEditor = false
+    @Published var showSubsystemExport = false
+    @Published var subsystemImport: ModelRoomSubsystemSource?
+    var subsystemTask: Task<Void, Never>?
     @Published var exporting = false
     @Published var notice: String?
     @Published var tableImport: ModelRoomTableSource?
@@ -163,11 +166,11 @@ final class ModelRoomModel: ObservableObject {
         apply(after, undo: before, title: title)
     }
 
-    func commitDraft(_ draft: ModelRoomFile, replacing original: ModelRoomFile) throws {
+    func commitDraft(_ draft: ModelRoomFile, replacing original: ModelRoomFile, actionName: String = "Edit model and presentation") throws {
         guard file == original else { throw modelError("The model changed while this editor was open. Reopen the editor to work from the latest revision.") }
         try draft.validateForEditing()
         guard draft != original else { return }
-        apply(draft, undo: original, title: "Edit model and presentation")
+        apply(draft, undo: original, title: actionName)
     }
 
     func validateDraft(_ draft: ModelRoomFile) async throws -> ModelRoomFile {
@@ -190,20 +193,34 @@ final class ModelRoomModel: ObservableObject {
         return converted
     }
 
-    private func documentCommand(_ draft: ModelRoomFile, command: String, arguments: [String] = []) async throws -> String {
+    func documentCommand(_ draft: ModelRoomFile, command: String, arguments: [String] = [], attachments: [ModelRoomCommandAttachment] = []) async throws -> String {
         let span = HubPerf.begin("model-room.author", command)
         defer { span.end() }
-        let input = try await Task.detached(priority: .userInitiated) {
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("model-room-draft-" + UUID().uuidString + ".json")
-            try JSONEncoder().encode(draft).write(to: url, options: .atomic)
-            return url
+        let prepared = try await Task.detached(priority: .userInitiated) {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("model-room-draft-" + UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            do {
+                let input = folder.appendingPathComponent("model.json")
+                try JSONEncoder().encode(draft).write(to: input, options: .atomic)
+                var args = ["--input", input.path]
+                for (index, attachment) in attachments.enumerated() {
+                    let file = folder.appendingPathComponent("attachment-\(index).json")
+                    try attachment.data.write(to: file, options: .atomic)
+                    args += [attachment.flag, file.path]
+                }
+                return (folder, args)
+            } catch {
+                do { try FileManager.default.removeItem(at: folder) }
+                catch { HubPerf.log("model-room: failed draft preparation cleanup: \(error)") }
+                throw error
+            }
         }.value
         defer {
-            do { try FileManager.default.removeItem(at: input) }
+            do { try FileManager.default.removeItem(at: prepared.0) }
             catch { HubPerf.log("model-room: draft temporary cleanup: \(error)") }
         }
         try Task.checkCancellation()
-        let answer = try await bridge.run(subcommand: "model-room", args: [command, "--input", input.path] + arguments, timeoutSeconds: 30)
+        let answer = try await bridge.run(subcommand: "model-room", args: [command] + prepared.1 + arguments, timeoutSeconds: 30)
         try Task.checkCancellation()
         guard answer.exitCode == 0 else { throw modelRoomCommandFailure(answer) }
         return answer.stdout
@@ -354,7 +371,7 @@ final class ModelRoomModel: ObservableObject {
     }
 
     func stopPlayback() { playback?.cancel(); playback = nil; playing = false }
-    func stop() { calculation?.cancel(); exportTask?.cancel(); importTask?.cancel(); revision += 1; busy = false; exporting = false; importing = false; stopPlayback() }
+    func stop() { calculation?.cancel(); exportTask?.cancel(); importTask?.cancel(); subsystemTask?.cancel(); revision += 1; busy = false; exporting = false; importing = false; stopPlayback() }
 
     func chooseObservationTable() {
         guard let window = owner?.windowControllers.first?.window, !importing else { return }

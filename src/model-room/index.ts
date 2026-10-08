@@ -5,6 +5,7 @@ import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
+import { z } from "zod";
 import { compileModel } from "./lib/compiler";
 import { importObservationQuantity, previewObservationTable, verifyObservationDigest } from "./lib/data-import";
 import { readModelDocument } from "./lib/document";
@@ -14,23 +15,44 @@ import { classroomModel, projectBudgetModel, supportCapacityModel } from "./lib/
 import { assumptionsCSV, resultsCSV } from "./lib/exports";
 import { standaloneModelHTML } from "./lib/html-export";
 import { sweepModel } from "./lib/simulation";
+import {
+    extractSubsystem,
+    importSubsystem,
+    inspectSubsystemSelection,
+    readSubsystemPackage,
+    subsystemBindingChoices,
+} from "./lib/subsystems";
 import { readSweepConfiguration } from "./lib/sweep";
 
 const program = new Command("model-room").description("Create and evaluate local, unit-aware system models.");
 
-async function readInput(filePath: string) {
+async function readJSONInput(filePath: string): Promise<unknown> {
     const file = Bun.file(filePath);
-    logger.debug({ filePath, bytes: file.size }, "model-room: reading model document");
+    logger.debug({ filePath, bytes: file.size }, "model-room: reading JSON input");
 
     if (file.size > 16 * 1024 * 1024) {
-        throw new Error("Model documents may not exceed 16 MiB.");
+        throw new Error("Model Room JSON inputs may not exceed 16 MiB.");
     }
 
-    const input: unknown = SafeJSON.parse(await file.text(), { strict: true });
-    return readModelDocument(input);
+    return SafeJSON.parse(await file.text(), { strict: true });
 }
 
-async function openNativeModel({ filePath, dataPath }: { filePath?: string; dataPath?: string } = {}): Promise<void> {
+async function readInput(filePath: string) {
+    return readModelDocument(await readJSONInput(filePath));
+}
+
+async function openNativeModel({
+    filePath,
+    dataPath,
+    subsystemPath,
+}: {
+    filePath?: string;
+    dataPath?: string;
+    subsystemPath?: string;
+} = {}): Promise<void> {
+    if (dataPath && subsystemPath) {
+        throw new Error("Open an observation table or a subsystem, one import at a time.");
+    }
     const { appStatus, buildApp } = await import("@app/macos/lib/permissions/app");
     const status = appStatus();
 
@@ -58,6 +80,10 @@ async function openNativeModel({ filePath, dataPath }: { filePath?: string; data
         args.push("--data", resolve(dataPath));
     }
 
+    if (subsystemPath) {
+        args.push("--subsystem", resolve(subsystemPath));
+    }
+
     logger.debug({ args }, "model-room: opening native document window");
     const child = Bun.spawn(args, { stdout: "pipe", stderr: "pipe", signal: AbortSignal.timeout(10000) });
     const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
@@ -75,8 +101,9 @@ program
     .description("Open the native Model Room window, building the signed app when needed.")
     .argument("[file]", "Existing model document")
     .option("--data <file>", "Open the native observation-mapping sheet for this CSV or TSV")
-    .action((filePath: string | undefined, options: { data?: string }) =>
-        openNativeModel({ filePath, dataPath: options.data })
+    .option("--subsystem <file>", "Open a native subsystem import preview")
+    .action((filePath: string | undefined, options: { data?: string; subsystem?: string }) =>
+        openNativeModel({ filePath, dataPath: options.data, subsystemPath: options.subsystem })
     );
 
 async function readTable(filePath: string): Promise<string> {
@@ -266,6 +293,83 @@ program
     .action(async (options: { input: string; unit: string }) => {
         out.result(convertModelTime({ input: await readInput(options.input), unit: options.unit }));
     });
+
+program
+    .command("inspect-subsystem")
+    .description("Inspect a baseline selection and its required dependencies without changing the model.")
+    .requiredOption("--input <file>", "Model document")
+    .requiredOption("--members <identifiers>", "Comma-separated selected quantity identifiers")
+    .action(async (options: { input: string; members: string }) => {
+        out.result(
+            inspectSubsystemSelection({ input: await readInput(options.input), members: options.members.split(",") })
+        );
+    });
+
+program
+    .command("extract-subsystem")
+    .description("Print an executable subsystem package with selected equations and copied boundary inputs.")
+    .requiredOption("--input <file>", "Source model")
+    .requiredOption("--members <identifiers>", "Comma-separated selected quantity identifiers")
+    .requiredOption("--outputs <identifiers>", "Comma-separated exposed outputs")
+    .requiredOption("--label <text>", "Subsystem name")
+    .action(async (options: { input: string; members: string; outputs: string; label: string }) => {
+        const input = await readInput(options.input);
+        const result = await withInterrupt((signal) =>
+            extractSubsystem({
+                input,
+                members: options.members.split(","),
+                outputs: options.outputs.split(","),
+                label: options.label,
+                control: { signal },
+            })
+        );
+        out.result(result);
+    });
+
+program
+    .command("subsystem-bindings")
+    .description("Inspect a package and compatible existing input choices without changing either file.")
+    .requiredOption("--input <file>", "Destination model")
+    .requiredOption("--subsystem <file>", "Subsystem package")
+    .action(async (options: { input: string; subsystem: string }) => {
+        const input = await readInput(options.input);
+        const packageFile = readSubsystemPackage(await readJSONInput(options.subsystem));
+        out.result({ packageFile, choices: subsystemBindingChoices({ input, packageInput: packageFile }) });
+    });
+
+program
+    .command("import-subsystem")
+    .description("Print a validated model revision and identifier mapping without changing either input file.")
+    .requiredOption("--input <file>", "Destination model")
+    .requiredOption("--subsystem <file>", "Subsystem package")
+    .requiredOption("--namespace <name>", "Prefix for newly copied quantity identifiers")
+    .option("--bindings <file>", "JSON object mapping subsystem input IDs to existing input IDs")
+    .option("--document-only", "Print only the resulting document, ready to save and open")
+    .action(
+        async (options: {
+            input: string;
+            subsystem: string;
+            namespace: string;
+            bindings?: string;
+            documentOnly?: boolean;
+        }) => {
+            const input = await readInput(options.input);
+            const packageInput = await readJSONInput(options.subsystem);
+            const bindings = options.bindings
+                ? z.record(z.string(), z.string()).parse(await readJSONInput(options.bindings))
+                : {};
+            const result = await withInterrupt((signal) =>
+                importSubsystem({
+                    input,
+                    packageInput,
+                    namespace: options.namespace,
+                    bindings,
+                    control: { signal },
+                })
+            );
+            out.result(options.documentOnly ? result.document : result);
+        }
+    );
 
 program
     .command("sweep")

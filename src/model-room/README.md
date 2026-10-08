@@ -79,6 +79,33 @@ tools model-room sweep --input support.modelroom.json --config ranges.json
 
 Add `scenarioId` to the configuration to start from a branch. The sweep changes input overrides; that branch's scheduled interventions still run. Results report final-time values, rather than an inferred probability. At most 10,000 Cartesian combinations are accepted. `--stream` emits `start`, `run` and `end` JSON-line events and ties cancellation to stdin EOF for native clients. Ctrl-C and the calculation deadline also stop a sweep while retaining completed runs.
 
+## Reusable subsystems
+
+Use **Subsystems → Save subsystem** on Baseline. Select members and exposed results; the sheet identifies changing dependencies that must also be included. Ordinary outside inputs are copied with their values, ranges, units and provenance. Stocks, formulas and measured data are never silently replaced with constants.
+
+Use **Import subsystem** to review a package. Each input either becomes a new assumption or connects to a compatible existing input. Existing inputs supply their values, history and scenario changes. Preview validates the resulting baseline and every branch before **Add to Baseline** records one undoable revision. New identifiers avoid collisions, and imported equations retain their local layout in a free board area.
+
+Packages preserve the source clock. Equivalent units convert automatically, but the physical time step must match the destination to preserve delay semantics. The destination duration remains authoritative. Packages currently carry the baseline, selected data and equations; source scenario branches and presentation explanations are excluded.
+
+~~~bash
+tools model-room inspect-subsystem --input support.modelroom.json --members backlog
+tools model-room extract-subsystem \
+  --input support.modelroom.json \
+  --members backlog,capacity \
+  --outputs backlog \
+  --label 'Support queue' > queue.subsystem.json
+
+tools model-room open other.modelroom.json --subsystem queue.subsystem.json
+
+tools model-room import-subsystem \
+  --input other.modelroom.json \
+  --subsystem queue.subsystem.json \
+  --namespace queue \
+  --document-only > combined.modelroom.json
+~~~
+
+Without --document-only, import prints a receipt containing the document, identifier mapping, added/bound inputs and exposed outputs. Optional --bindings accepts a JSON object mapping package input IDs to destination input IDs. The CLI leaves both source files untouched. Native preview retains the exact package snapshot it displays.
+
 ## Calculation semantics
 
 - Expressions support numeric literals, named references, `+`, `-`, `*`, `/`, integer powers, parentheses, `min`, `max`, `abs`, `clamp` and `lag`.
@@ -106,7 +133,7 @@ A formula has at most 4096 characters, 512 tokens and 64 nested parsing levels. 
 
 Ordinary evaluation has a deadline, and a sweep contains at most ten thousand runs. Cancellation keeps complete sweep results and discards an incomplete run. The native window cancels superseded calculations and rejects a result from an older document revision. Invalid formulas preserve the last valid display with a stale-result indicator.
 
-Native chart samples are prepared away from the UI thread and retain endpoints and bucket extrema; exact frames remain available to the time rail and exports. The render budget is shared across the model's plotted series. Browser chart downsampling, subsystem authoring, AI proposals and additional numerical techniques remain release work. These limits do not imply that every maximum-size model already meets an interactive performance target.
+Native chart samples are prepared away from the UI thread and retain endpoints and bucket extrema; exact frames remain available to the time rail and exports. The render budget is shared across the model's plotted series. Browser chart downsampling, AI proposals, richer explanations and additional numerical techniques remain release work. These limits do not imply that every maximum-size model already meets an interactive performance target.
 
 ## Verification
 
