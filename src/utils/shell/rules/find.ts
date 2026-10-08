@@ -82,6 +82,10 @@ export const findFromRoot: ShellRule = {
     detect(scan): ShellMatch | null {
         for (const statements of scan.units) {
             for (const statement of statements) {
+                if (!statement.text.includes("find") && !statement.text.includes("fd")) {
+                    continue;
+                }
+
                 for (const element of splitPipeline(statement)) {
                     const tokens = tokenize(element);
                     const cmd = commandTokenIndex(tokens);

@@ -165,6 +165,76 @@ describe("detectShellViolations: the array", () => {
         expect(() => detectShellViolations(")))((( | tail ; echo $? $(((")).not.toThrow();
     });
 
+    it("keeps literal violations after escaped or quoted commands, substitutions, and comments", () => {
+        const prefixes = [
+            String.raw`r\g -rn foo`,
+            'r""g -rn foo',
+            '"rg" -rn foo',
+            "'rg' -rn foo",
+            String.raw`g\it checkout -- file.ts`,
+            '"git" checkout -- file.ts',
+            String.raw`f\ind / -name x`,
+            'f""d pattern /',
+            String.raw`ls a 2>/dev/n\ull | wc -l`,
+            'ls a 2>"/dev/null" | wc -l',
+            'ls a 2>/dev/""null | wc -l',
+            String.raw`echo $(r\g -rn foo)`,
+            "echo $(printf '%s' \"$(date)\")",
+            "bash -c 'printf harmless'",
+            "# rg -rn ignored; git checkout -- ignored",
+            "printf '%s' 'rg -rn ignored; docker volume prune'",
+        ];
+        const targets = [
+            "rg -rn foo",
+            "find / -name fixture",
+            "fd fixture /",
+            "git checkout -- fixture.ts",
+            "git push --force",
+            "log show",
+            "php artisan migrate:fresh --seed",
+            "docker volume prune -f",
+            "ls a 2>/dev/null | wc -l",
+            "ls a 2>/dev/null | head",
+        ];
+
+        for (const prefix of prefixes) {
+            for (const target of targets) {
+                const separator = `${prefix}\n`;
+                const expected = detectShellViolations(target).map(({ suggestion: _suggestion, ...violation }) => ({
+                    ...violation,
+                    index: separator.length + violation.index,
+                }));
+                const actual = detectShellViolations(separator + target).map(
+                    ({ suggestion: _suggestion, ...violation }) => violation
+                );
+
+                expect(expected.length).toBeGreaterThan(0);
+                expect(actual).toEqual(expected);
+            }
+        }
+    });
+
+    it("keeps command-shaped quoted data and comments quiet while scanning executable shell bodies", () => {
+        const quoted = [
+            "echo 'rg -rn foo; git checkout -- fixture.ts'",
+            'printf "%s" "docker volume prune; php artisan migrate:fresh"',
+            "# find / -name fixture; log show\nprintf harmless",
+            "echo 'ls a 2>/dev/null | wc -l'",
+        ];
+
+        for (const command of quoted) {
+            expect(detectShellViolations(command)).toEqual([]);
+        }
+
+        for (const command of [
+            "echo $(echo $(rg -rn foo))",
+            "bash -c 'rg -rn foo'",
+            "bash -c 'bash -c \"rg -rn foo\"'",
+        ]) {
+            expect(detectShellViolations(command).map((violation) => violation.ruleId)).toEqual(["rg-replace-cluster"]);
+        }
+    });
+
     it("scans a 5000-line script with every rule in well under the hook budget", () => {
         const lines: string[] = [];
 

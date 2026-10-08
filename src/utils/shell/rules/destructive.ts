@@ -19,6 +19,10 @@ export const migrateFreshOutsideTesting: ShellRule = {
     detect(scan): ShellMatch | null {
         for (const statements of scan.units) {
             for (const statement of statements) {
+                if (!statement.text.includes("migrate:fresh")) {
+                    continue;
+                }
+
                 for (const element of splitPipeline(statement)) {
                     const tokens = tokenize(element);
                     const idx = tokens.findIndex((t) => t.text === "migrate:fresh");
@@ -75,6 +79,10 @@ export const dockerVolumeDestroy: ShellRule = {
     detect(scan): ShellMatch | null {
         for (const statements of scan.units) {
             for (const statement of statements) {
+                if (!statement.text.includes("docker")) {
+                    continue;
+                }
+
                 for (const element of splitPipeline(statement)) {
                     const tokens = tokenize(element);
                     const cmd = commandTokenIndex(tokens);

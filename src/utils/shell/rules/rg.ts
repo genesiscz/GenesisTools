@@ -42,6 +42,10 @@ export interface RgClusterMatch extends ShellMatch {
 export function findRgCluster(scan: ShellScan): RgClusterMatch | null {
     for (const statements of scan.units) {
         for (const statement of statements) {
+            if (!statement.text.includes("rg")) {
+                continue;
+            }
+
             for (const element of splitPipeline(statement)) {
                 const tokens = tokenize(element);
                 const cmd = commandTokenIndex(tokens);

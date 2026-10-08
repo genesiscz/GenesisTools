@@ -84,6 +84,10 @@ interface DevnullHit {
 function devnullThen(scan: ShellScan, consumes: (later: string[]) => boolean): DevnullHit | null {
     for (const statements of scan.units) {
         for (const statement of statements) {
+            if (!statement.text.includes("/dev/null")) {
+                continue;
+            }
+
             const elements = splitPipeline(statement);
 
             for (let k = 0; k + 1 < elements.length; k++) {
