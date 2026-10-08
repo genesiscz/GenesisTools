@@ -203,3 +203,12 @@ describe("gitCommonRoot", () => {
         expect(gitCommonRoot(outside)).toBeNull();
     });
 });
+
+it("retains a historical cwd when the checkout has been removed", () => {
+    const cwd = join(mkdtempSync(join(tmpdir(), "agent-origin-")), "removed-checkout");
+    const context = getAgentRuntimeContext({ cwd, sessionId: "historical-session" }, {});
+    expect(context.cwd).toBe(cwd);
+    expect(context.sessionId).toBe("historical-session");
+    expect(context.branch).toBeNull();
+    expect(context.commitSha).toBeNull();
+});

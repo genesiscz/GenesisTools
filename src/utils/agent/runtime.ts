@@ -43,13 +43,17 @@ export function callerCwd(): string {
 }
 
 function gitSync(args: string[], cwd: string): string | null {
-    const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "ignore" });
-    if (r.exitCode !== 0) {
+    try {
+        const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "ignore" });
+        if (r.exitCode !== 0) {
+            return null;
+        }
+        const out = r.stdout.toString().trim();
+        return out.length > 0 ? out : null;
+    } catch (error) {
+        logger.debug({ error, cwd, args }, "Agent context has no readable Git checkout");
         return null;
     }
-
-    const out = r.stdout.toString().trim();
-    return out.length > 0 ? out : null;
 }
 
 /**
