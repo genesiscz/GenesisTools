@@ -131,6 +131,7 @@ func runClicky(_ args: [String] = []) -> Never {
         let app = NSApplication.shared
         let delegate = ClickyAppDelegate(descriptor: descriptor, pageID: pageID)
         app.delegate = delegate
+        installNotificationClicksForWindowFace()
         app.setActivationPolicy(.accessory)
         app.run()
         withExtendedLifetime(delegate) {}
