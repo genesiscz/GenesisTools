@@ -1,7 +1,9 @@
-import { cp, mkdir, rename } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { cp, mkdir, readFile, rename } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { buildDiffViewer } from "@app/macos/lib/permissions/app";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 
@@ -34,7 +36,36 @@ async function command(argv: string[]): Promise<string> {
     }
 }
 
+async function nativeSourceDigest(): Promise<string> {
+    const names = await command([
+        "git",
+        "ls-files",
+        "-z",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+        "src/macos/GenesisKit",
+        "src/macos/GenesisTools",
+        "scripts/build-widget-preview.ts",
+    ]);
+    const hash = createHash("sha256");
+    for (const name of [...new Set(names.split("\0").filter(Boolean))].sort()) {
+        const file = Bun.file(join(repo, name));
+        if (await file.exists()) {
+            hash.update(name)
+                .update("\0")
+                .update(Buffer.from(await file.arrayBuffer()));
+        }
+    }
+    return hash.digest("hex");
+}
+
 async function buildPreview(): Promise<void> {
+    const commit = await command(["git", "rev-parse", "HEAD"]);
+    const sourceDigest = await nativeSourceDigest();
+    const trackedDirty = await command(["git", "diff", "--name-only", "HEAD"]);
+    const untracked = await command(["git", "ls-files", "--others", "--exclude-standard"]);
     await command([
         "swift",
         "build",
@@ -66,6 +97,21 @@ async function buildPreview(): Promise<void> {
     const contents = join(stage, "Contents");
     await mkdir(join(contents, "MacOS"), { recursive: true });
     await cp(join(binPath, "GenesisTools"), join(contents, "MacOS", "GenesisWidgetPreview"));
+    if ((await nativeSourceDigest()) !== sourceDigest) {
+        throw new Error("Native sources changed during the build; retry with a stable source snapshot.");
+    }
+    await Bun.write(
+        join(contents, "Resources", "PreviewBuild.json"),
+        SafeJSON.stringify({
+            commit,
+            nativeSourceDigest: sourceDigest,
+            workingTree: trackedDirty.length > 0 || untracked.length > 0 ? "wip" : "clean",
+            builtAt: new Date().toISOString(),
+            unsignedBinarySHA256: createHash("sha256")
+                .update(Buffer.from(await Bun.file(join(binPath, "GenesisTools")).arrayBuffer()))
+                .digest("hex"),
+        })
+    );
     await buildDiffViewer(contents, (step) => logger.info(step));
     await cp(join(packagePath, "scripts/AppIcon.icns"), join(contents, "Resources/AppIcon.icns"));
     const plist =
