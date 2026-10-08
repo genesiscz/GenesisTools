@@ -118,6 +118,8 @@ export const widgetPayloadSchema = z.discriminatedUnion("kind", [
     z.object({
         kind: z.literal("form"),
         id: z.string(),
+        /** What the user wrote in the composer beside the answers: sent with them as context, kept on Edit. */
+        text: z.string().max(64_000).default(""),
         answers: z.array(
             z.object({
                 itemId: z.string(),

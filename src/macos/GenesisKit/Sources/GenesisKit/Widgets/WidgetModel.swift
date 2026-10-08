@@ -561,7 +561,11 @@ public final class WidgetModel: ObservableObject {
                     let answers = (card.formItems ?? []).map { item in
                         formAnswers[card.id]?[item.id] ?? WidgetFormAnswer(itemId: item.id)
                     }
-                    payload = ["kind": "form", "id": .string(card.sourceId), "answers": try .value(answers)]
+                    // The composer text goes with the answers as their context (dispatch puts it on the first one).
+                    payload = [
+                        "kind": "form", "id": .string(card.sourceId), "text": .string(submitted.text),
+                        "answers": try .value(answers),
+                    ]
                 }
             }
             if !answering && choice == nil
@@ -786,10 +790,16 @@ public final class WidgetModel: ObservableObject {
                 text: [existing, text].filter { !$0.isEmpty }.joined(separator: " "),
                 assetIds: drafts[key]?.assetIds ?? [])
             dirtyDrafts.insert(key)
+            // A typed save still waiting out its delay holds the text from before the dictation; it must not
+            // land after this one and overwrite the merged draft.
+            draftTasks[key]?.cancel()
+            draftTasks[key] = nil
             if !stopping {
-                action([
-                    "action": "draft-text", "key": .string(key), "text": .string(drafts[key]?.text ?? ""),
-                ])
+                let merged = drafts[key]?.text ?? ""
+                action(["action": "draft-text", "key": .string(key), "text": .string(merged)]) { [weak self] in
+                    guard let self, self.drafts[key]?.text == merged else { return }
+                    self.dirtyDrafts.remove(key)
+                }
             }
         }
         voiceKey = nil

@@ -21,6 +21,7 @@ import { importWidgetAsset, reviseVideoAsset } from "./assets";
 import { widgetDeliveryReceipt, widgetDispatcher } from "./dispatch";
 import { processWidgetOutbox } from "./engine";
 import { changeOutgoing, enqueueWidgetMessage, messageReadiness, recoverWidgetOutbox } from "./outbox";
+import { serializeWidgetMessage } from "./serialize";
 
 const target: WidgetTarget = {
     hostId: "local",
@@ -169,6 +170,28 @@ describe("durable widget outbox", () => {
         expect((await readWidgetState(directory)).outgoing[0].state).toBe("cancelled");
     });
 
+    test("a shutdown during validation leaves the message queued and attempts nothing", async () => {
+        const directory = await root();
+        await enqueue(directory, "shutdown while resolving");
+        const controller = new AbortController();
+        let calls = 0;
+        await processWidgetOutbox({
+            root: directory,
+            signal: controller.signal,
+            dispatcher: {
+                validate: async () => {
+                    controller.abort();
+                },
+                dispatch: async () => {
+                    calls += 1;
+                    return { delivered: true, channel: "fixture" };
+                },
+            },
+        });
+        expect(calls).toBe(0);
+        expect((await readWidgetState(directory)).outgoing[0].state).toBe("queued");
+    });
+
     test("changed attachment settings invalidate confirmation and cannot dispatch an old snapshot", async () => {
         const directory = await root();
         const assetId = randomUUID();
@@ -288,7 +311,55 @@ describe("widget source and delivery contracts", () => {
         expect(receipt.certainty).toBeUndefined();
         expect(sends).toBe(1);
         expect(readDecisions(files.file).find((row) => row.id === two.id)?.state).toBe("open");
-        await expect(dispatcher.validate(message)).rejects.toThrow("changed");
+        // A delivered answer settles a repeat of the same message without typing it again.
+        await dispatcher.validate(message);
+        expect(await dispatcher.dispatch(message, "")).toMatchObject({ delivered: true, channel: "decisions" });
+        expect(sends).toBe(1);
+        // Another answer to the same decision is not this message's.
+        await expect(dispatcher.validate({ ...message, payload: { ...message.payload, option: "b" } })).rejects.toThrow(
+            "changed"
+        );
+    });
+
+    test("a refused transport keeps the stored answer, and a Retry sends that same answer", async () => {
+        const directory = await root();
+        const files = { file: join(directory, "decisions.jsonl"), events: join(directory, "events.jsonl") };
+        const [row] = await postDecisions(
+            files.file,
+            files.events,
+            { sessionId: target.sessionId, provider: "codex", decisions: [{ prompt: "Go?", options: ["yes", "no"] }] },
+            { env: {} }
+        );
+        let accept = false;
+        const typed: string[][] = [];
+        const dispatcher = widgetDispatcher({
+            files,
+            deliver: {
+                codexWorkerFor: () => "fixture-worker",
+                runTool: async (args) => {
+                    typed.push(args);
+                    return { success: accept, stdout: "", stderr: accept ? "" : "worker gone" };
+                },
+            },
+        });
+        const message = widgetOutgoingSchema.parse({
+            id: randomUUID(),
+            target,
+            assetIds: [],
+            sequence: 1,
+            createdAt: Date.now(),
+            state: "queued",
+            payload: { kind: "decision", id: row.id, number: row.number, expectedRevision: 1, option: "b" },
+        });
+        await dispatcher.validate(message);
+        expect(await dispatcher.dispatch(message, "")).toMatchObject({ delivered: false, certainty: "not-sent" });
+        expect(readDecisions(files.file)[0]?.state).toBe("answered");
+
+        accept = true;
+        await dispatcher.validate(message);
+        expect((await dispatcher.dispatch(message, "")).delivered).toBe(true);
+        expect(typed).toHaveLength(2);
+        expect(readDecisions(files.file)[0]).toMatchObject({ state: "sent", option: "b" });
     });
 
     test("a missing route leaves the canonical decision unmodified and never claims success", async () => {
@@ -833,6 +904,29 @@ test("screenshot staging is removed after import success and partial capture fai
     }
 });
 
+test("a form answer keeps the composer text: it is serialized with the answers and restored on Edit", async () => {
+    const directory = await root();
+    const message = await enqueueWidgetMessage({
+        root: directory,
+        id: randomUUID(),
+        target,
+        payload: {
+            kind: "form",
+            id: "form-1",
+            text: "picked b because the cache is per machine",
+            answers: [{ itemId: "q1", selectedChoices: ["b"] }],
+        },
+        assetIds: [],
+    });
+    expect(await serializeWidgetMessage(message, await readWidgetState(directory))).toBe(
+        "picked b because the cache is per machine"
+    );
+    await changeOutgoing({ root: directory, id: message.id, action: "edit" });
+    expect((await readWidgetState(directory)).drafts[widgetSessionKey(target)]?.text).toBe(
+        "picked b because the cache is per machine"
+    );
+});
+
 test("unchanged video settings preserve the prepared revision and a real change invalidates it", async () => {
     const directory = await root();
     const id = randomUUID();
@@ -865,6 +959,17 @@ test("unchanged video settings preserve the prepared revision and a real change 
     expect(revised).toMatchObject({ revision: 4, status: "pending" });
     expect(revised).not.toHaveProperty("confirmedRevision");
     expect(revised).not.toHaveProperty("manifestPath");
+
+    await mutateWidgetState(directory, (state) => {
+        const asset = state.assets[id];
+        if (asset?.type === "video") {
+            asset.status = "failed";
+            asset.error = "ffmpeg timed out";
+        }
+    });
+    const retried = await reviseVideoAsset({ root: directory, id, settings: { ...settings, fps: 4 } });
+    expect(retried).toMatchObject({ revision: 5, status: "pending" });
+    expect(retried).not.toHaveProperty("error");
 });
 
 test("widget snapshots request a read-only roster and watch discovery may refresh intentionally", async () => {

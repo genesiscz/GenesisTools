@@ -75,7 +75,7 @@ export async function serializeWidgetMessage(message: WidgetOutgoing, state: Wid
         }
         return asset;
     });
-    const text = message.payload.kind === "form" ? "" : message.payload.text;
+    const text = message.payload.text;
     const media = await serializeWidgetMedia(assets);
     return [text, media].filter(Boolean).join("\n\n");
 }

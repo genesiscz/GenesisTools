@@ -121,12 +121,16 @@ export async function reviseVideoAsset({
         }
 
         if (
+            asset.status !== "failed" &&
             asset.settings.fps === parsed.fps &&
             asset.settings.framesPerImage === parsed.framesPerImage &&
             asset.settings.minimumDifferencePct === parsed.minimumDifferencePct
         ) {
             return asset;
         }
+
+        // A failed preparation with the same settings is the "Prepare again" button: it starts over as a new
+        // revision, since the watcher prepares only a pending asset.
 
         asset.settings = parsed;
         asset.revision += 1;

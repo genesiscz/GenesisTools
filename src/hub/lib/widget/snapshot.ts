@@ -197,23 +197,51 @@ function flattenAgents(nodes: AgentNode[]): AgentNode[] {
     return nodes.flatMap((node) => [node, ...flattenAgents(node.children)]);
 }
 
+type WidgetChanges = { available: boolean; files: { path: string; at: string; source: string }[] };
+
+/**
+ * The last parse of each change ledger, by path, with the file identity it was read at. The widget refreshes every
+ * five seconds; an unchanged ledger (up to 16 MiB) is answered from here instead of being parsed again.
+ */
+const changesCache = new Map<string, { identity: string; sessionId: string; result: WidgetChanges }>();
+const CHANGES_CACHE_LIMIT = 16;
+
 export function readWidgetChanges({
     target,
     path = sessionChangesPath(target.sessionId),
 }: {
     target: WidgetTarget;
     path?: string;
-}): {
-    available: boolean;
-    files: { path: string; at: string; source: string }[];
-} {
+}): WidgetChanges {
     if (!existsSync(path)) {
+        changesCache.delete(path);
         return { available: false, files: [] };
     }
-    if (statSync(path).size > 16 * 1024 * 1024) {
+    const stat = statSync(path, { bigint: true });
+    if (stat.size > 16n * 1024n * 1024n) {
         throw new Error("Change receipt is too large for the widget; open it in Hub");
     }
 
+    const identity = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+    const cached = changesCache.get(path);
+    if (cached && cached.identity === identity && cached.sessionId === target.sessionId) {
+        return cached.result;
+    }
+
+    const result = parseWidgetChanges(path, target);
+    changesCache.delete(path);
+    changesCache.set(path, { identity, sessionId: target.sessionId, result });
+    if (changesCache.size > CHANGES_CACHE_LIMIT) {
+        const oldest = changesCache.keys().next().value;
+        if (oldest !== undefined) {
+            changesCache.delete(oldest);
+        }
+    }
+
+    return result;
+}
+
+function parseWidgetChanges(path: string, target: WidgetTarget): WidgetChanges {
     const rows = readJsonlRows<unknown>(path).rows;
     const files = new Map<string, { path: string; at: string; source: string }>();
     for (const row of rows) {
@@ -527,9 +555,21 @@ export async function widgetSnapshot({
             read: false,
         });
     }
+    // Only the videos the widget can show: those in a draft, and those of the selected session's last 20 outgoing
+    // messages (the list WidgetModel.outgoing draws). Every ready video ever imported stays in state, and each
+    // manifest holds up to 2,400 frames, so reading them all made every five-second refresh grow with history.
+    const shown = new Set(Object.values(state.drafts).flatMap((draft) => draft.assetIds));
+    const recent = selected
+        ? state.outgoing.filter((message) => widgetSessionKey(message.target) === selected.key).slice(-20)
+        : [];
+    for (const message of recent) {
+        for (const id of message.assetIds) {
+            shown.add(id);
+        }
+    }
     const manifests: Record<string, unknown> = {};
     for (const asset of Object.values(state.assets)) {
-        if (asset.type === "video" && asset.status === "ready") {
+        if (asset.type === "video" && asset.status === "ready" && shown.has(asset.id)) {
             const manifest = await read(`video ${asset.id}`, () => readAssetManifest(asset), null);
             if (manifest) {
                 manifests[asset.id] = manifest;

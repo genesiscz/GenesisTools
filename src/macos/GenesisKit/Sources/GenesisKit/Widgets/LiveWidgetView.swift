@@ -14,6 +14,8 @@ public struct LiveWidgetView: View {
     }
 
     @State private var retry: WidgetOutgoing?
+    /// An unknown delivery the user checked in the conversation and wants to drop, so later follow-ups can go.
+    @State private var discard: WidgetOutgoing?
     @FocusState private var editing: Bool
 
     public init(
@@ -56,6 +58,20 @@ public struct LiveWidgetView: View {
             }
         } message: {
             Text("The previous transport did not return a receipt. Retrying may send a second copy.")
+        }
+        .alert(
+            "Discard this message?",
+            isPresented: Binding(get: { discard != nil }, set: { if !$0 { discard = nil } })
+        ) {
+            Button("Keep it", role: .cancel) { discard = nil }
+            Button("I checked — discard", role: .destructive) {
+                if let discard {
+                    model.action(["action": "cancel", "id": .string(discard.id), "confirmedUnknown": true])
+                }
+                discard = nil
+            }
+        } message: {
+            Text("Its delivery is unknown. Discard it only when the conversation shows it arrived, or you no longer want it sent. Later messages to this conversation then go out.")
         }
     }
 
@@ -528,6 +544,8 @@ public struct LiveWidgetView: View {
                     if message.state != "unknown" {
                         Button("Edit") { model.editOutgoing(message) }
                         Button("Cancel") { model.action(["action": "cancel", "id": .string(message.id)]) }
+                    } else {
+                        Button("Discard…") { discard = message }
                     }
                     Menu("Choose destination…") {
                         Button("Resume this session in Hub…") { model.destination("resume") }

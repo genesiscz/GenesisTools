@@ -91,7 +91,7 @@ export async function enqueueWidgetMessage({
         state.outgoing.push(message);
         const key = widgetSessionKey(target);
         const draft = state.drafts[key] ?? { text: "", assetIds: [] };
-        const submittedText = draftSnapshot?.text ?? (payload.kind === "form" ? draft.text : payload.text);
+        const submittedText = draftSnapshot?.text ?? payload.text;
         state.drafts[key] = {
             text: draft.text === submittedText ? "" : draft.text,
             assetIds: draft.assetIds.filter((assetId) => !assetIds.includes(assetId)),
@@ -167,7 +167,7 @@ export async function changeOutgoing({
                 throw new Error("Save or clear your current draft before editing an earlier message.");
             }
             state.drafts[key] = {
-                text: message.payload.kind === "form" ? "" : message.payload.text,
+                text: message.payload.text,
                 assetIds: [...message.assetIds],
             };
             state.selectedKey = key;

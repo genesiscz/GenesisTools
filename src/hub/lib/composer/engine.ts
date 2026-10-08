@@ -65,6 +65,11 @@ export async function processWidgetOutbox({
                         text = await serializeWidgetMessage(first, current);
                         await dispatcher.validate(first);
                     } catch (error) {
+                        // A shutdown during the checks is not a verdict on the message: it stays queued.
+                        if (signal?.aborted) {
+                            return;
+                        }
+
                         await updateOutgoing(directory, first.id, (message) => {
                             if (message.state === "queued") {
                                 message.state = "failed";
@@ -73,9 +78,12 @@ export async function processWidgetOutbox({
                         });
                         return;
                     }
+                    // Checked again at the claim itself, the last point where nothing has been attempted: a cancel
+                    // that arrived during the checks leaves the message queued instead of marked dispatching.
                     const claimed = await mutateWidgetState(directory, (latest) => {
                         const message = latest.outgoing.find((entry) => entry.id === first.id);
                         if (
+                            signal?.aborted ||
                             message?.state !== "queued" ||
                             messageReadiness(message, latest) !== "queued" ||
                             SafeJSON.stringify(message.assetIds.map((id) => latest.assets[id])) !== assetsBefore

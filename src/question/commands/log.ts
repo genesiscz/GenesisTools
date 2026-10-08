@@ -1,4 +1,4 @@
-import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -34,7 +34,7 @@ export function registerLogCommand(program: Command): void {
         .option("-l, --limit <n>", "limit", (v) => Number.parseInt(v, 10))
         .option("--format <fmt>", "ai|json", "ai")
         .action(
-            (o: {
+            async (o: {
                 project?: string;
                 session?: string;
                 tag?: string;
@@ -47,15 +47,17 @@ export function registerLogCommand(program: Command): void {
                 if (o.format === "json") {
                     const db = openReadModel(dbPath);
                     try {
-                        process.stdout.write(`${SafeJSON.stringify(queryEntries(db, query), null, 2)}\n`);
+                        out.result(queryEntries(db, query));
                     } finally {
                         db.close();
                     }
 
+                    await out.flush();
                     process.exit(0);
                 }
 
-                process.stdout.write(`${renderDigest({ ...query, dbPath })}\n`);
+                out.println(renderDigest({ ...query, dbPath }));
+                await out.flush();
                 process.exit(0);
             }
         );

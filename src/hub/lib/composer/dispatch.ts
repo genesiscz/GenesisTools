@@ -6,8 +6,8 @@ import {
     resolveDeliveryTarget,
 } from "@app/question/lib/decisions/deliver";
 import { decisionFiles } from "@app/question/lib/decisions/read";
-
-import { kindOf, readDecisions } from "@app/question/lib/decisions/store";
+import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
+import { type DecisionRecord, kindOf, readDecisions } from "@app/question/lib/decisions/store";
 import { answerInboxDecision } from "@app/question/lib/inbox/answer";
 import { waitingBlock } from "@app/question/lib/inbox/load";
 import { type AskDeps, answerAskForm, checkAskAnswer, getAskForm } from "@app/question/lib/pending/ask";
@@ -76,6 +76,25 @@ export function widgetDeliveryReceipt({
     return { success: result.status === 0, stdout: result.stdout, stderr: result.stderr };
 }
 
+type DecisionPayload = Extract<WidgetOutgoing["payload"], { kind: "decision" }>;
+
+/** States a decision reaches after its answer was typed into the agent. */
+const DELIVERED_DECISION_STATES: ReadonlySet<string> = new Set(["sent", "acknowledged", "implemented"]);
+
+/**
+ * The row holds this message's own answer, stored by an earlier attempt: answering keeps the revision, so the
+ * same revision, the same letter and the same note mean nobody answered it differently since.
+ */
+function holdsThisAnswer(row: DecisionRecord, payload: DecisionPayload): boolean {
+    const option = payload.option?.trim().toLowerCase() || undefined;
+    const note = payload.text.trim();
+    return (
+        (row.revision ?? 1) === payload.expectedRevision &&
+        (row.option || undefined) === option &&
+        (!note || (row.answer ?? "").includes(note))
+    );
+}
+
 export function widgetDispatcher({
     deliver: supplied,
     signal,
@@ -102,7 +121,13 @@ export function widgetDispatcher({
                         row.provider !== message.target.provider &&
                         !(row.provider === "claude-code" && message.target.provider === "claude")) ||
                     (row.revision ?? 1) !== payload.expectedRevision ||
-                    !["open", "drafted"].includes(row.state)
+                    // A refused transport leaves this message's answer stored `answered`; a Retry sends that
+                    // answer again, and a canonical delivery from Hub settles it (see dispatch).
+                    !(
+                        ["open", "drafted"].includes(row.state) ||
+                        ((row.state === "answered" || DELIVERED_DECISION_STATES.has(row.state)) &&
+                            holdsThisAnswer(row, payload))
+                    )
                 ) {
                     throw new Error("The decision changed or belongs to another session; refresh it before answering.");
                 }
@@ -156,7 +181,12 @@ export function widgetDispatcher({
                         "An earlier delivery of this decision is unresolved. Inspect the conversation in Hub."
                     );
                 }
-                if (!row || !["open", "drafted"].includes(row.state)) {
+                const ours = row !== undefined && holdsThisAnswer(row, payload);
+                if (row && ours && DELIVERED_DECISION_STATES.has(row.state)) {
+                    return { delivered: true, channel: "decisions", detail: "Delivered from Decisions" };
+                }
+                const resend = row?.state === "answered" && ours;
+                if (!row || !(resend || ["open", "drafted"].includes(row.state))) {
                     return {
                         delivered: false,
                         certainty: "not-sent",
@@ -171,18 +201,27 @@ export function widgetDispatcher({
                 if (route.kind === "none") {
                     return { delivered: false, certainty: "not-sent", channel: "queued", detail: route.reason };
                 }
-                const sent = await answerInboxDecision(
-                    {
-                        session: message.target.sessionId,
-                        provider: message.target.provider,
-                        cwd: message.target.cwd,
-                        number: payload.number,
-                        expectedRevision: payload.expectedRevision,
-                        option: payload.option,
-                        text,
-                    },
-                    { ...files, block: waitingBlock, deliver }
-                );
+                // An earlier attempt stored the answer and the transport refused it: send that same answer again.
+                const sent = resend
+                    ? await sendAnsweredDecisions({
+                          ids: [row.id],
+                          session: message.target.sessionId,
+                          provider: message.target.provider,
+                          files,
+                          deps: deliver,
+                      })
+                    : await answerInboxDecision(
+                          {
+                              session: message.target.sessionId,
+                              provider: message.target.provider,
+                              cwd: message.target.cwd,
+                              number: payload.number,
+                              expectedRevision: payload.expectedRevision,
+                              option: payload.option,
+                              text,
+                          },
+                          { ...files, block: waitingBlock, deliver }
+                      );
                 return {
                     delivered: sent.delivered === true,
                     channel: sent.channel ?? "queued",

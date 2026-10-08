@@ -70,7 +70,9 @@ export async function createWidgetHandoff({
         paragraphs.push(`## Outgoing message · ${message.state}`);
         paragraphs.push(
             message.payload.kind === "form"
-                ? SafeJSON.stringify(message.payload.answers, null, 2)
+                ? [message.payload.text, SafeJSON.stringify(message.payload.answers, null, 2)]
+                      .filter(Boolean)
+                      .join("\n\n")
                 : message.payload.text
         );
         if (message.state === "unknown") {

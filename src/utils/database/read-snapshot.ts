@@ -1,6 +1,8 @@
 import { constants, Database } from "bun:sqlite";
-import { statSync } from "node:fs";
-import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { statSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -9,7 +11,7 @@ const prof = profiler.scope("database-snapshot");
 const MAX_STORES = 2;
 const MAX_STORE_BYTES = 32 * 1024 * 1024;
 const IDLE_MS = 60_000;
-const snapshots = new Map<string, { signature: string; db: Database; usedAt: number }>();
+const snapshots = new Map<string, { signature: string; db: Database; usedAt: number; file?: string }>();
 
 function signature(path: string): string {
     return [path, `${path}-wal`]
@@ -22,9 +24,25 @@ function signature(path: string): string {
         .join("|");
 }
 
+function removeCopy(file: string): void {
+    for (const part of [file, `${file}-wal`, `${file}-shm`]) {
+        try {
+            unlinkSync(part);
+        } catch (error) {
+            if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+                logger.warn({ error, file: part }, "Read snapshot copy not removed");
+            }
+        }
+    }
+}
+
 function closeSnapshot(path: string): void {
-    snapshots.get(path)?.db.close();
+    const entry = snapshots.get(path);
+    entry?.db.close();
     snapshots.delete(path);
+    if (entry?.file) {
+        removeCopy(entry.file);
+    }
 }
 
 export function clearDatabaseReadSnapshots(): void {
@@ -38,10 +56,13 @@ export function withDatabaseReadSnapshot<T>({
     path: input,
     initialize,
     read,
+    maxMemoryBytes = MAX_STORE_BYTES,
 }: {
     path: string;
     initialize: (db: Database) => void;
     read: (db: Database) => T;
+    /** A store larger than this on disk is copied to a temporary file instead of into memory (tests lower it). */
+    maxMemoryBytes?: number;
 }): T {
     const path = resolve(input);
     const now = Date.now();
@@ -69,16 +90,43 @@ export function withDatabaseReadSnapshot<T>({
                 // A checkpointed store needs no WAL coordination or sidecar creation.
                 const sourcePath = wal && wal.size > 0 ? path : `${pathToFileURL(path).href}?immutable=1`;
                 const source = new Database(sourcePath, constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI);
-                let bytes: Buffer;
+                // serialize() and deserialize() each hold the whole store in memory. A store past the limit is
+                // copied to a temporary file instead, so its size never decides the process's memory.
+                const onDisk = (statSync(path, { throwIfNoEntry: false })?.size ?? 0) + (wal?.size ?? 0);
+                const file = onDisk > maxMemoryBytes ? join(tmpdir(), `read-snapshot-${randomUUID()}.sqlite`) : null;
+                let bytes: Buffer | null = null;
                 try {
-                    bytes = source.serialize();
+                    if (file) {
+                        source.run("VACUUM INTO ?", [file]);
+                    } else {
+                        bytes = source.serialize();
+                    }
+                } catch (error) {
+                    if (file) {
+                        removeCopy(file);
+                    }
+
+                    throw error;
                 } finally {
                     source.close();
                 }
 
                 if (signature(path) !== before) {
                     logger.debug({ path, attempt }, "Store changed while copying the read snapshot");
+                    if (file) {
+                        removeCopy(file);
+                    }
+
                     continue;
+                }
+
+                if (file) {
+                    logger.debug({ path, file, bytes: onDisk }, "Read snapshot copied to a temporary file");
+                    return { db: new Database(file), signature: before, file };
+                }
+
+                if (!bytes) {
+                    throw new Error("The read snapshot produced no image");
                 }
 
                 // SQLite's serialized image retains WAL version bytes. Its in-memory copy has no WAL file.
@@ -105,10 +153,12 @@ export function withDatabaseReadSnapshot<T>({
         closeSnapshot(path);
         throw error;
     } finally {
+        // A copy past the limit is not kept: an in-memory one would hold that memory, and a file one is removed now
+        // rather than left in the temporary folder until the next call's idle sweep.
         if (snapshots.get(path) === entry) {
             const pages = entry.db.query<{ page_count: number }, []>("PRAGMA page_count").get()?.page_count ?? 0;
             const pageSize = entry.db.query<{ page_size: number }, []>("PRAGMA page_size").get()?.page_size ?? 0;
-            if (pages * pageSize > MAX_STORE_BYTES) {
+            if (pages * pageSize > maxMemoryBytes) {
                 closeSnapshot(path);
             }
         }
