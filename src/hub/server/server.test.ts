@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { currentTraceId } from "@genesiscz/utils/trace";
 import { parseArgv } from "./argv";
+import { agentsToolChangesDoor } from "./doors/changes";
 import { repoDoor, usageSessionsDoor } from "./doors/frequent";
 import { transcriptFetchDoor, transcriptLiveDoor } from "./doors/transcript";
 import type { CallDoor, StreamDoor } from "./doors/types";
@@ -293,6 +294,21 @@ describe("hub server argv", () => {
         expect(
             transcriptLiveDoor.match(["ai", "sessions", "tail", "s1", "--live", "--offset", "3", "--provider", "codex"])
         ).toMatchObject({ offset: 3, provider: "codex" });
+    });
+
+    it("agents changes: the hub's --tools ask with a full session id; a write, a prefix or another shape runs as a process", () => {
+        const id = "1b4001ba-d479-40f2-9e25-b13cb2ef5a13";
+        expect(agentsToolChangesDoor.match(["agents", "changes", id, "--tools", "t1, t2,t1", "--json"])).toEqual({
+            session: id,
+            toolIds: ["t1", "t2"],
+        });
+        expect(
+            agentsToolChangesDoor.match(["agents", "changes", id, "--tools", "t1", "--json", "--store-blobs"])
+        ).toBeNull();
+        expect(agentsToolChangesDoor.match(["agents", "changes", "1b4001ba", "--tools", "t1", "--json"])).toBeNull();
+        expect(agentsToolChangesDoor.match(["agents", "changes", id, "--tool", "t1", "--json"])).toBeNull();
+        expect(agentsToolChangesDoor.match(["agents", "changes", id, "--tools", "t1"])).toBeNull();
+        expect(agentsToolChangesDoor.match(["agents", "changes", id, "--tools", " , ", "--json"])).toBeNull();
     });
 
     it("hub repo: absolute paths and the cache flags; a relative path or an unknown flag runs as a process", () => {

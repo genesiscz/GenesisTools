@@ -15,15 +15,25 @@ public final class BatchedToolChangeSource: ToolChangeSource, @unchecked Sendabl
 
     private let cli: CLIToolChangeSource
     private let batcher: ToolChangeBatcher
+    private let binary: String?
+    private let unstored = UnstoredBlobs()
 
-    public init(toolsBinary: String?, trace: Trace? = nil) {
+    /// `server`: the resident `tools` server, asked first. It keeps the session's transcript folded between asks, so a
+    /// batch costs ~0.2 s instead of a process reading the whole session (~1.5 s CPU on a 223 MB session, 2026-10-08).
+    /// A server answer carries every diff but writes no blobs (a server door never writes): the first "more context"
+    /// on such a file stores its call's blobs with one process run, then reads them.
+    public init(toolsBinary: String?, server: ToolsServerClient? = nil, trace: Trace? = nil) {
         let cli = CLIToolChangeSource(toolsBinary: toolsBinary)
         self.cli = cli
         let binary = cli.binaryPath
+        self.binary = binary
         let trace = trace ?? Self.defaultTrace
+        let unstored = unstored
         batcher = ToolChangeBatcher { sessionId, toolIds in
             guard let binary else { return nil }
-            return await Self.fetch(binary: binary, sessionId: sessionId, toolIds: toolIds, cli: cli, trace: trace)
+            return await Self.fetch(
+                binary: binary, sessionId: sessionId, toolIds: toolIds, cli: cli, server: server, unstored: unstored, trace: trace
+            )
         }
     }
 
@@ -32,7 +42,14 @@ public final class BatchedToolChangeSource: ToolChangeSource, @unchecked Sendabl
     }
 
     public func expandedDiff(for change: ToolFileChange, context: Int) async -> String? {
-        await cli.expandedDiff(for: change, context: context)
+        if let diff = await cli.expandedDiff(for: change, context: context) {
+            return diff
+        }
+
+        guard let binary, let owner = unstored.take(change) else { return nil }
+        let argv = ["agents", "changes", owner.sessionId, "--tool", owner.toolUseId, "--json", "--store-blobs"]
+        guard await CLIToolChangeSource.run(binary, argv, timeout: 30) != nil else { return nil }
+        return await cli.expandedDiff(for: change, context: context)
     }
 
     /// Runs started so far, for tests and benches.
@@ -49,17 +66,33 @@ public final class BatchedToolChangeSource: ToolChangeSource, @unchecked Sendabl
     }
 
     /// One run for several calls; nil when it failed (nothing is cached then, a later row asks again).
-    private static func fetch(binary: String, sessionId: String, toolIds: [String], cli: CLIToolChangeSource, trace: Trace) async -> [String: [ToolFileChange]]? {
+    private static func fetch(
+        binary: String, sessionId: String, toolIds: [String], cli: CLIToolChangeSource, server: ToolsServerClient?,
+        unstored: UnstoredBlobs, trace: Trace
+    ) async -> [String: [ToolFileChange]]? {
         let end = trace(toolIds.count)
-        // `--store-blobs`: `expandedDiff` below reads the blobs from the object store, and `changes`
-        // writes them only when asked.
-        let output = await CLIToolChangeSource.run(binary, ["agents", "changes", sessionId, "--tools", toolIds.joined(separator: ","), "--json", "--store-blobs"], timeout: 30)
+        let ask = ["agents", "changes", sessionId, "--tools", toolIds.joined(separator: ","), "--json"]
+        var output: String?
+        var fromServer = false
+        if let answer = await server?.call(argv: ask, timeoutSeconds: 30), answer.exitCode == 0 {
+            output = answer.stdout
+            fromServer = true
+        } else if !Task.isCancelled {
+            // `--store-blobs`: `expandedDiff` reads the blobs from the object store, and `changes` writes them only
+            // when asked.
+            output = await CLIToolChangeSource.run(binary, ask + ["--store-blobs"], timeout: 30)
+        }
         guard let output else {
             end("failed")
             return nil
         }
 
         var result = decode(output)
+        if fromServer {
+            for (tool, files) in result {
+                unstored.add(files, sessionId: sessionId, toolUseId: tool)
+            }
+        }
         for (tool, files) in result {
             var filled = files
             // The same fill `CLIToolChangeSource` does: a file with blobs but no diff text gets one.
@@ -189,5 +222,37 @@ public actor ToolChangeBatcher {
             }
         }
         draining = false
+    }
+}
+
+/// Blobs of answers the server gave (it stores none), by object id: whose call stores them when a diff needs them.
+final class UnstoredBlobs: @unchecked Sendable {
+    struct Owner: Equatable {
+        let sessionId: String
+        let toolUseId: String
+    }
+
+    private let lock = NSLock()
+    private var owners: [String: Owner] = [:]
+
+    func add(_ files: [ToolFileChange], sessionId: String, toolUseId: String) {
+        let owner = Owner(sessionId: sessionId, toolUseId: toolUseId)
+        lock.withLock {
+            for file in files {
+                for oid in [file.beforeBlob, file.afterBlob].compactMap({ $0 }) {
+                    owners[oid] = owner
+                }
+            }
+        }
+    }
+
+    /// The call whose run stores this file's blobs; nil when they are stored already (or were asked once).
+    func take(_ change: ToolFileChange) -> Owner? {
+        lock.withLock {
+            let owner = [change.afterBlob, change.beforeBlob].compactMap { $0 }.lazy.compactMap { self.owners[$0] }.first
+            guard let owner else { return nil }
+            owners = owners.filter { $0.value != owner }
+            return owner
+        }
     }
 }

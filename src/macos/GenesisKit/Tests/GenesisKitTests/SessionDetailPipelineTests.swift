@@ -86,6 +86,22 @@ final class SessionDetailPipelineTests: XCTestCase {
         XCTAssertEqual(batches.count, 2)
     }
 
+    /// A server answer stores no blobs: the first "more context" on one of its files names the call whose run stores
+    /// them, once; every file of that call is then stored, and a file of another call keeps its own owner.
+    func testUnstoredBlobsNameTheirCallOnce() {
+        let unstored = UnstoredBlobs()
+        let a = ToolFileChange(path: "/r/a.ts", status: "modified", beforeBlob: "b1", afterBlob: "a1")
+        let b = ToolFileChange(path: "/r/b.ts", status: "added", afterBlob: "a2")
+        let c = ToolFileChange(path: "/r/c.ts", status: "modified", beforeBlob: "b3", afterBlob: "a3")
+        unstored.add([a, b], sessionId: "s", toolUseId: "t1")
+        unstored.add([c], sessionId: "s", toolUseId: "t2")
+
+        XCTAssertEqual(unstored.take(b), UnstoredBlobs.Owner(sessionId: "s", toolUseId: "t1"))
+        XCTAssertNil(unstored.take(a), "the run for t1 stored a's blobs too")
+        XCTAssertEqual(unstored.take(c)?.toolUseId, "t2")
+        XCTAssertNil(unstored.take(ToolFileChange(path: "/r/d.ts", status: "modified", afterBlob: "zz")))
+    }
+
     func testTheBatchOutputDecodesPerToolCall() {
         let json = """
         {"session":"s1","tools":[

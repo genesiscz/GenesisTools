@@ -445,7 +445,7 @@ struct HubSessionDetailHost: View {
                 // `GENESIS_HUB_TOOL_CHANGES=per-row` brings back one process per row, for A/B measurements.
                 changeSource = ProcessInfo.processInfo.environment["GENESIS_HUB_TOOL_CHANGES"] == "per-row"
                     ? CLIToolChangeSource(toolsBinary: HubSource.bridge.binaryPath)
-                    : BatchedToolChangeSource(toolsBinary: HubSource.bridge.binaryPath, trace: { calls in
+                    : BatchedToolChangeSource(toolsBinary: HubSource.bridge.binaryPath, server: HubSource.server, trace: { calls in
                         let span = HubPerf.begin("toolChanges.batch", "\(calls) calls", awaits: true)
                         return { note in span.end(note) }
                     })
