@@ -424,7 +424,9 @@ public final class FlowFocusRuntime: ObservableObject {
         case "focus.capture.pause": focus.recorder?.pauseCapture(until: try decode(Date.self))
         case "focus.capture.resume": focus.recorder?.resumeCapture()
         case "focus.dnd.begin": _ = try dnd.beginSession(reason: String(data: command.payload, encoding: .utf8) ?? "genesis-voice")
-        case "focus.dnd.end": _ = try dnd.endSession()
+        case "focus.dnd.end":
+            let reason = String(data: command.payload, encoding: .utf8).flatMap { $0.isEmpty ? nil : $0 }
+            _ = try dnd.endSession(reason: reason)
         default: throw invalidCommand()
         }
         schedulePublication()

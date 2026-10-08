@@ -29,6 +29,12 @@ public final class FocusOrchestrator: ObservableObject {
         public var suppressSystemNotifications: Bool
         /// Shortcut name at begin time — recovery must not use a later-renamed config.
         public var shortcutName: String?
+        public var reasons: [String]?
+
+        var heldReasons: Set<String> {
+            if let reasons, !reasons.isEmpty { return Set(reasons) }
+            return [reason]
+        }
 
         public init(
             previousMode: String,
@@ -36,7 +42,8 @@ public final class FocusOrchestrator: ObservableObject {
             reason: String,
             integration: String = Integration.appLocal.rawValue,
             suppressSystemNotifications: Bool = true,
-            shortcutName: String? = nil
+            shortcutName: String? = nil,
+            reasons: [String]? = nil
         ) {
             self.previousMode = previousMode
             self.setAt = setAt
@@ -44,6 +51,7 @@ public final class FocusOrchestrator: ObservableObject {
             self.integration = integration
             self.suppressSystemNotifications = suppressSystemNotifications
             self.shortcutName = shortcutName
+            self.reasons = reasons
         }
     }
 
@@ -155,7 +163,13 @@ public final class FocusOrchestrator: ObservableObject {
         guard ownsRuntime, remoteCommand == nil else {
             throw FlowFocusMailbox.Failure.unavailable("Use the active Flow and Focus owner to begin a mute session.")
         }
-        if isActive, let existing = try? loadSnapshot() {
+        if isActive {
+            var existing = try loadSnapshot()
+            var reasons = existing.heldReasons
+            guard reasons.insert(reason).inserted else { return existing }
+            existing.reasons = reasons.sorted()
+            try writeSnapshot(existing)
+            applyLiveState(from: existing)
             return existing
         }
         // Defense-in-depth: launch recover should have run, but manual/Workspace
@@ -175,7 +189,8 @@ public final class FocusOrchestrator: ObservableObject {
             reason: reason,
             integration: integration.rawValue,
             suppressSystemNotifications: true,
-            shortcutName: shortcut.isEmpty ? nil : shortcut
+            shortcutName: shortcut.isEmpty ? nil : shortcut,
+            reasons: [reason]
         )
         try writeSnapshot(snap)
         setModeLabel(ModeLabel.genesisListening)
@@ -185,9 +200,10 @@ public final class FocusOrchestrator: ObservableObject {
         return snap
     }
 
-    /// Restore prior mode, clear suppression, delete snapshot.
+    /// Release one feature's hold. A nil reason ends all holds during explicit shutdown/recovery.
+    /// Only the final release restores the previous mode and invokes the end shortcut.
     @discardableResult
-    public func endSession() throws -> Snapshot? {
+    public func endSession(reason: String? = nil) throws -> Snapshot? {
         guard ownsRuntime, remoteCommand == nil else {
             throw FlowFocusMailbox.Failure.unavailable("Use the active Flow and Focus owner to end a mute session.")
         }
@@ -195,9 +211,20 @@ public final class FocusOrchestrator: ObservableObject {
             clearLiveState()
             return nil
         }
-        let snap = try loadSnapshot()
+        var snap = try loadSnapshot()
+        if let reason {
+            var reasons = snap.heldReasons
+            guard reasons.remove(reason) != nil else { return nil }
+            if !reasons.isEmpty {
+                snap.reasons = reasons.sorted()
+                snap.reason = snap.reasons?.first ?? snap.reason
+                try writeSnapshot(snap)
+                applyLiveState(from: snap)
+                return nil
+            }
+        }
+        try fileManager.removeItem(at: stateURL)
         setModeLabel(snap.previousMode)
-        try? fileManager.removeItem(at: stateURL)
         clearLiveState()
         let shortcut = shortcutName(for: snap)
         if snap.integration == Integration.shortcuts.rawValue || !shortcut.isEmpty {
@@ -264,14 +291,12 @@ public final class FocusOrchestrator: ObservableObject {
     }
 
     public func endForVoiceIfNeeded() {
-        if let remoteCommand { remoteCommand("focus.dnd.end", Data()); return }
+        if let remoteCommand { remoteCommand("focus.dnd.end", Data("genesis-voice".utf8)); return }
         guard ownsRuntime, isActive || fileManager.fileExists(atPath: stateURL.path) else { return }
         do {
-            _ = try endSession()
+            _ = try endSession(reason: "genesis-voice")
         } catch {
             FlowFocusLog.focus.warning("focus endForVoice failed: \(error.localizedDescription)")
-            clearLiveState()
-            try? fileManager.removeItem(at: stateURL)
         }
     }
 
@@ -316,7 +341,7 @@ public final class FocusOrchestrator: ObservableObject {
 
     private func applyLiveState(from snap: Snapshot) {
         isActive = true
-        activeReason = snap.reason
+        activeReason = snap.heldReasons.sorted().joined(separator: ", ")
         suppressesSystemNotifications = snap.suppressSystemNotifications
     }
 

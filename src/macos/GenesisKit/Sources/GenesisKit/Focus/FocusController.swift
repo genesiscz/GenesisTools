@@ -73,7 +73,7 @@ public final class FocusController: ObservableObject {
                 catch { FlowFocusLog.focus.warning("focus DND begin failed: \(error.localizedDescription)") }
             }
             engine.endDND = { [weak self] in
-                do { _ = try self?.orchestrator.endSession() }
+                do { _ = try self?.orchestrator.endSession(reason: "genesis-focus-flow") }
                 catch { FlowFocusLog.focus.warning("focus DND end failed: \(error.localizedDescription)") }
             }
 

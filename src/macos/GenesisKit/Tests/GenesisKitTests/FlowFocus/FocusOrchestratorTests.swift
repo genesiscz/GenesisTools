@@ -54,6 +54,48 @@ final class FocusOrchestratorTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: orch.stateURL.path))
     }
 
+    func testVoiceEndingDoesNotReleaseAnActiveTimerMute() throws {
+        _ = try orch.beginSession(reason: "genesis-focus-flow")
+        _ = try orch.beginSession(reason: "genesis-voice")
+        _ = try orch.endSession(reason: "genesis-voice")
+        XCTAssertTrue(orch.isActive)
+        XCTAssertTrue(orch.suppressesSystemNotifications)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: orch.stateURL.path))
+        _ = try orch.endSession(reason: "genesis-focus-flow")
+        XCTAssertFalse(orch.isActive)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orch.stateURL.path))
+    }
+
+    func testTimerEndingDoesNotReleaseVoiceAndShortcutsRunOnlyAtTheOuterBoundaries() throws {
+        orch.focusShortcutName = "FixtureFocus"
+        _ = try orch.beginSession(reason: "genesis-voice")
+        _ = try orch.beginSession(reason: "genesis-focus-flow")
+        XCTAssertEqual(openedURLs.count, 1)
+        _ = try orch.endSession(reason: "genesis-focus-flow")
+        XCTAssertTrue(orch.isActive)
+        XCTAssertEqual(openedURLs.count, 1, "an inner release must not invoke the end shortcut")
+        _ = try orch.endSession(reason: "genesis-voice")
+        XCTAssertFalse(orch.isActive)
+        XCTAssertEqual(openedURLs.count, 2)
+    }
+
+    func testLegacySingleReasonSnapshotCanStillBeReleased() throws {
+        let old = FocusOrchestrator.Snapshot(previousMode: "fixture-mode", setAt: 1, reason: "genesis-voice")
+        try JSONEncoder().encode(old).write(to: orch.stateURL)
+        XCTAssertNil(try orch.loadSnapshot().reasons)
+        XCTAssertNotNil(try orch.endSession(reason: "genesis-voice"))
+        XCTAssertEqual(orch.currentModeLabel(), "fixture-mode")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orch.stateURL.path))
+    }
+
+    func testRepeatingTheSameFeatureHoldRemainsIdempotent() throws {
+        _ = try orch.beginSession(reason: "genesis-voice")
+        _ = try orch.beginSession(reason: "genesis-voice")
+        XCTAssertEqual(try orch.loadSnapshot().heldReasons, ["genesis-voice"])
+        _ = try orch.endSession(reason: "genesis-voice")
+        XCTAssertFalse(orch.isActive)
+    }
+
     // T1 — begin writes file; end removes
     func testBeginWritesAndEndRemovesSnapshotFile() throws {
         orch.setModeLabel("do-not-disturb")

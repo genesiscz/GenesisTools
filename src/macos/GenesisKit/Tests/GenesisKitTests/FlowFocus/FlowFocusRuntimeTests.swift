@@ -71,6 +71,29 @@ final class FlowFocusRuntimeTests: XCTestCase {
         await owner.stop()
     }
 
+    func testClientVoiceReleaseKeepsTheOwnersTimerMuteUntilItsPhaseEnds() async throws {
+        let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.timer", liveServices: false, presentsWindows: false)
+        let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.voice", liveServices: false, presentsWindows: false)
+        await owner.start()
+        await client.start()
+        owner.focus.orchestrator.openURL = { _ in XCTFail("fixture must not invoke a system shortcut") }
+        do {
+            owner.focus.engine?.start(.flow, seconds: 600)
+            XCTAssertTrue(owner.focus.orchestrator.isActive)
+            _ = try await client.send(action: "focus.dnd.begin", payload: Data("genesis-voice".utf8))
+            _ = try await client.send(action: "focus.dnd.end", payload: Data("genesis-voice".utf8))
+            XCTAssertTrue(owner.focus.orchestrator.isActive)
+            owner.focus.engine?.stop()
+            XCTAssertFalse(owner.focus.orchestrator.isActive)
+        } catch {
+            await client.stop()
+            await owner.stop()
+            throw error
+        }
+        await client.stop()
+        await owner.stop()
+    }
+
     func testGracefulTakeoverResumesTheSameSessionAfterTheOldClockStops() async throws {
         let first = FlowFocusRuntime(dataRoot: directory, hostID: "test.first", liveServices: false, presentsWindows: false)
         let next = FlowFocusRuntime(dataRoot: directory, hostID: "test.next", liveServices: false, presentsWindows: false)
