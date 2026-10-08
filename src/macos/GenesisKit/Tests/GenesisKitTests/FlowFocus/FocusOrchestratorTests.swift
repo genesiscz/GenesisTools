@@ -37,6 +37,23 @@ final class FocusOrchestratorTests: XCTestCase {
         try await super.tearDown()
     }
 
+    func testInactiveHostCannotCreateRestoreOrRemoveTheOwnersSnapshot() throws {
+        XCTAssertFalse(FocusOrchestrator().ownsRuntime, "the default production singleton waits for election")
+        _ = try orch.beginSession(reason: "owner fixture")
+        let bytes = try Data(contentsOf: orch.stateURL)
+        orch.ownsRuntime = false
+        XCTAssertThrowsError(try orch.beginSession(reason: "inactive host"))
+        XCTAssertThrowsError(try orch.endSession())
+        XCTAssertNil(orch.recoverIfNeeded())
+        orch.beginForVoiceIfEnabled()
+        orch.endForVoiceIfNeeded()
+        XCTAssertEqual(try Data(contentsOf: orch.stateURL), bytes)
+        XCTAssertTrue(openedURLs.isEmpty)
+        orch.ownsRuntime = true
+        XCTAssertNotNil(try orch.endSession(), "the elected owner still restores and removes its snapshot")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orch.stateURL.path))
+    }
+
     // T1 — begin writes file; end removes
     func testBeginWritesAndEndRemovesSnapshotFile() throws {
         orch.setModeLabel("do-not-disturb")

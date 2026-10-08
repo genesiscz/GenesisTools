@@ -76,6 +76,7 @@ public final class FocusOrchestrator: ObservableObject {
     public var openURL: (URL) -> Void
     private var terminateObserver: NSObjectProtocol?
     var remoteCommand: ((String, Data) -> Void)?
+    var ownsRuntime: Bool
     var configuration = FlowFocusConfiguration.shared
 
     func configure(stateURL: URL) { self.stateURL = stateURL }
@@ -106,6 +107,7 @@ public final class FocusOrchestrator: ObservableObject {
         openURL: ((URL) -> Void)? = nil
     ) {
         self.stateURL = stateURL ?? FocusOrchestrator.defaultStateURL
+        ownsRuntime = stateURL != nil && self.stateURL.standardizedFileURL != Self.defaultStateURL.standardizedFileURL
         self.fileManager = fileManager
         self.openURL = openURL ?? { NSWorkspace.shared.open($0) }
     }
@@ -150,7 +152,7 @@ public final class FocusOrchestrator: ObservableObject {
     /// recover first so `previousMode` cannot chain-corrupt to `genesis-listening`.
     @discardableResult
     public func beginSession(reason: String = "genesis-voice") throws -> Snapshot {
-        guard remoteCommand == nil else {
+        guard ownsRuntime, remoteCommand == nil else {
             throw FlowFocusMailbox.Failure.unavailable("Use the active Flow and Focus owner to begin a mute session.")
         }
         if isActive, let existing = try? loadSnapshot() {
@@ -186,7 +188,7 @@ public final class FocusOrchestrator: ObservableObject {
     /// Restore prior mode, clear suppression, delete snapshot.
     @discardableResult
     public func endSession() throws -> Snapshot? {
-        guard remoteCommand == nil else {
+        guard ownsRuntime, remoteCommand == nil else {
             throw FlowFocusMailbox.Failure.unavailable("Use the active Flow and Focus owner to end a mute session.")
         }
         guard fileManager.fileExists(atPath: stateURL.path) else {
@@ -213,7 +215,7 @@ public final class FocusOrchestrator: ObservableObject {
     ///   do not fire Shortcuts "end" (avoids end→begin race) and skip recovery notice.
     @discardableResult
     public func recoverIfNeeded(skipShortcut: Bool = false) -> Snapshot? {
-        guard remoteCommand == nil else { return nil }
+        guard ownsRuntime, remoteCommand == nil else { return nil }
         guard fileManager.fileExists(atPath: stateURL.path) else {
             clearLiveState()
             return nil
@@ -253,7 +255,7 @@ public final class FocusOrchestrator: ObservableObject {
             if focusWhileListeningEnabled { remoteCommand("focus.dnd.begin", Data("genesis-voice".utf8)) }
             return
         }
-        guard focusWhileListeningEnabled else { return }
+        guard ownsRuntime, focusWhileListeningEnabled else { return }
         do {
             try beginSession(reason: "genesis-voice")
         } catch {
@@ -263,7 +265,7 @@ public final class FocusOrchestrator: ObservableObject {
 
     public func endForVoiceIfNeeded() {
         if let remoteCommand { remoteCommand("focus.dnd.end", Data()); return }
-        guard isActive || fileManager.fileExists(atPath: stateURL.path) else { return }
+        guard ownsRuntime, isActive || fileManager.fileExists(atPath: stateURL.path) else { return }
         do {
             _ = try endSession()
         } catch {
@@ -277,7 +279,7 @@ public final class FocusOrchestrator: ObservableObject {
     /// Ends **synchronously** on the main queue — a nested `Task` may not complete
     /// before process exit (P1 G4.2).
     public func installTerminateHook() {
-        guard remoteCommand == nil else { return }
+        guard ownsRuntime, remoteCommand == nil else { return }
         guard terminateObserver == nil else { return }
         terminateObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,

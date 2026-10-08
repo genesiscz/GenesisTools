@@ -16,6 +16,26 @@ final class FlowFocusRuntimeTests: XCTestCase {
         try FileManager.default.removeItem(at: directory)
     }
 
+    func testExplicitDataRootCannotReuseProductionConfigurationOrModels() async throws {
+        let flowRoot = directory.appendingPathComponent("flow")
+        try FileManager.default.createDirectory(at: flowRoot, withIntermediateDirectories: true)
+        var config = FlowConfig()
+        config.localeIdentifier = "en-GB"
+        try JSONEncoder().encode(config).write(to: flowRoot.appendingPathComponent("config.json"))
+        let runtime = FlowFocusRuntime(dataRoot: directory, hostID: "test.isolated", liveServices: false,
+                                       presentsWindows: false, sharedModels: true)
+        XCTAssertEqual(runtime.configuration.directory, directory)
+        XCTAssertEqual(runtime.flow.config.localeIdentifier, "en-GB")
+        XCTAssertFalse(runtime.flow === FlowSession.shared)
+        XCTAssertFalse(runtime.focus === FocusController.shared)
+        await runtime.start()
+        runtime.configuration.setAppValue(false, forKey: "focusWhileListening")
+        await runtime.stop()
+        let data = try Data(contentsOf: directory.appendingPathComponent("client.json"))
+        let raw = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual((raw["app"] as? [String: Any])?["focusWhileListening"] as? Bool, false)
+    }
+
     func testTwoHostsShareOneClockAndClientCommandsReachItsOwner() async throws {
         let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.owner", liveServices: false, presentsWindows: false)
         let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.client", liveServices: false, presentsWindows: false)

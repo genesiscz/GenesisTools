@@ -7,13 +7,17 @@ import SwiftUI
 /// Timer, Capture, Privacy, Projects. Every row explains its consequence in one line; a toggle
 /// whose effect is invisible is a bug, not a preference.
 public struct FocusSettingsView: View {
-    public init() {}
+    @MainActor
+    public init(controller: FocusController? = nil, configuration: FlowFocusConfiguration? = nil) {
+        self.controller = controller ?? .shared
+        self.configuration = configuration ?? controller?.configuration ?? .shared
+    }
 
-    @ObservedObject private var controller = FocusController.shared
+    @ObservedObject private var controller: FocusController
     @State private var settings = FocusSettings()
     @State private var plan = PomodoroPlan()
     @State private var hudStyle = FocusHUDWindowController.savedStyle
-    @ObservedObject private var configuration = FlowFocusConfiguration.shared
+    @ObservedObject private var configuration: FlowFocusConfiguration
 
     private let accent = Color.neonAmber
 
@@ -146,7 +150,7 @@ public struct FocusSettingsView: View {
                   explanation: "Compact is the small pill: phase, clock and one button. Double-click either shape to open Focus Studio.") {
             let style = FocusHUDStyle(rawValue: $0) ?? .full
             hudStyle = style
-            FocusController.shared.setHUDStyle(style)
+            controller.setHUDStyle(style)
         }
     }
 
@@ -314,7 +318,7 @@ public struct FocusSettingsView: View {
     // MARK: - Persistence
 
     private func load() {
-        let app = FlowFocusConfiguration.shared.app
+        let app = configuration.app
         settings = FocusSettings.from(appConfig: app)
         plan = PomodoroPlan.from(appConfig: app)
         hudStyle = FocusHUDWindowController.savedStyle
@@ -324,8 +328,8 @@ public struct FocusSettingsView: View {
     /// text fields, so each write is one deliberate act. `ConfigStore.mutate` is a locked,
     /// synchronous disk write — never call it from a continuously changing value.
     private func save() {
-        FlowFocusConfiguration.shared.updateFocus(settings: settings, plan: plan)
-        FocusController.shared.apply(appConfig: FlowFocusConfiguration.shared.app)
+        configuration.updateFocus(settings: settings, plan: plan)
+        controller.apply(appConfig: configuration.app)
     }
 }
 

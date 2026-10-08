@@ -61,16 +61,17 @@ public final class FlowFocusRuntime: ObservableObject {
     public init(dataRoot: URL? = nil, hostID: String? = nil, liveServices: Bool = true,
                 presentsWindows: Bool = true, sharedModels: Bool = false) {
         let root = dataRoot ?? Self.defaultDataRoot
+        let usesSharedModels = sharedModels && root.standardizedFileURL == Self.defaultDataRoot.standardizedFileURL
         self.dataRoot = root
         directory = root.appendingPathComponent("feature-runtime", isDirectory: true)
         self.hostID = hostID ?? Bundle.main.bundleIdentifier ?? "dev.genesis.feature-host"
         self.liveServices = liveServices
         self.presentsWindows = presentsWindows
-        configuration = sharedModels ? FlowFocusConfiguration.shared : FlowFocusConfiguration(directory: root)
+        configuration = FlowFocusConfiguration(directory: root)
         flowStore = FlowStore(directory: root.appendingPathComponent("flow", isDirectory: true), writesEnabled: false)
-        flow = sharedModels ? FlowSession.shared : FlowSession(store: flowStore)
-        focus = sharedModels ? FocusController.shared : FocusController()
-        dnd = sharedModels ? FocusOrchestrator.shared : FocusOrchestrator(
+        flow = usesSharedModels ? FlowSession.shared : FlowSession(store: flowStore)
+        focus = usesSharedModels ? FocusController.shared : FocusController()
+        dnd = usesSharedModels ? FocusOrchestrator.shared : FocusOrchestrator(
             stateURL: root.appendingPathComponent("focus-snapshot.json"))
         participant = Participant(version: 1, pid: ProcessInfo.processInfo.processIdentifier,
                                   hostID: self.hostID, nonce: UUID(), launchDate: NSRunningApplication.current.launchDate)
@@ -135,6 +136,7 @@ public final class FlowFocusRuntime: ObservableObject {
             do { _ = try dnd.endSession() }
             catch { reportFailure(error.localizedDescription) }
         }
+        dnd.ownsRuntime = false
         dnd.remoteCommand = nil
         await configuration.flush()
         if Self.activeOwners[directory] === self { Self.activeOwners.removeValue(forKey: directory) }
@@ -189,6 +191,7 @@ public final class FlowFocusRuntime: ObservableObject {
         focus.configuration = configuration
         focus.orchestrator = dnd
         dnd.configuration = configuration
+        dnd.ownsRuntime = owner
         dnd.configure(stateURL: dataRoot.appendingPathComponent("focus-snapshot.json"))
         flow.remoteCommand = nil
         dnd.remoteCommand = nil
