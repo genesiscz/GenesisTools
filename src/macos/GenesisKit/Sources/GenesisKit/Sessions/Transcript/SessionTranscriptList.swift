@@ -693,7 +693,7 @@ public struct SessionTranscriptList: View {
             .onChange(of: scrollTarget) { _, request in
                 guard let request else { return }
                 anchor.listMoves()
-                Self.scroll(proxy, to: request.id, anchor: request.anchor)
+                ScrollViewPositioning.scroll(proxy, to: request.id, anchor: request.anchor)
             }
             .onChange(of: document) {
                 // One plain scroll per change, not the three-pass `scroll`: a streaming reply
@@ -715,13 +715,13 @@ public struct SessionTranscriptList: View {
                 // The passes below are the list's own scroll: the anchor does not undo them.
                 anchor.listMoves(for: 0.6)
                 if let target = preset.scrollTo {
-                    Self.scroll(proxy, to: target, anchor: .top)
+                    ScrollViewPositioning.scroll(proxy, to: target, anchor: .top)
                     return
                 }
                 if let index = preset.jumpToPrompt, promptIds.indices.contains(index) {
                     promptCursor = index
                     let target = Self.jumpTarget(promptId: promptIds[index], in: visible)
-                    Self.scroll(proxy, to: target, anchor: .top)
+                    ScrollViewPositioning.scroll(proxy, to: target, anchor: .top)
                     return
                 }
                 // A conversation opens at its latest turn. Each pass reads the latest end marker again:
@@ -742,7 +742,7 @@ public struct SessionTranscriptList: View {
             atLatest = true
             anchor.listMoves()
             if let last = visible.last {
-                Self.scroll(proxy, to: Self.endMarker(last.id), anchor: .bottom)
+                ScrollViewPositioning.scroll(proxy, to: Self.endMarker(last.id), anchor: .bottom)
             }
         } label: {
             HStack(spacing: 5) {
@@ -784,15 +784,6 @@ public struct SessionTranscriptList: View {
             .listRowInsets(EdgeInsets())
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
-    }
-
-    /// NSTableView places rows it has not measured yet at estimated heights, so the first
-    /// `scrollTo` of a far row lands short. The second pass, after those rows were measured on
-    /// the way, lands exactly.
-    private static func scroll(_ proxy: ScrollViewProxy, to id: String, anchor: UnitPoint) {
-        DispatchQueue.main.async { proxy.scrollTo(id, anchor: anchor) }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { proxy.scrollTo(id, anchor: anchor) }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { proxy.scrollTo(id, anchor: anchor) }
     }
 
     private static func endMarker(_ sectionId: String) -> String { "end-\(sectionId)" }
