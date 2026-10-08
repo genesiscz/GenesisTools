@@ -24,6 +24,18 @@ final class SkeletonTests: XCTestCase {
         }
     }
 
+
+    func testShimmerUpdatesBandForHeightChangesAtFixedWidth() throws {
+        let view = ShimmerSweep.SweepView(frame: CGRect(x: 0, y: 0, width: 300, height: 40))
+        view.layout()
+        let band = try XCTUnwrap(view.layer?.sublayers?.first)
+        XCTAssertEqual(band.bounds.height, 40)
+        view.setFrameSize(CGSize(width: 300, height: 140))
+        view.layout()
+        XCTAssertEqual(band.bounds.height, 140)
+        XCTAssertEqual(band.bounds.width, 135)
+    }
+
     private func render(_ view: AnyView, size: CGSize, name: String) throws -> CGImage {
         let content = view
             .frame(width: size.width, height: size.height, alignment: .topLeading)

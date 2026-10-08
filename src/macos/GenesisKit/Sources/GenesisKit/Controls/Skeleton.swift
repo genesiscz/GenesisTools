@@ -256,7 +256,7 @@ struct SkeletonShimmer: ViewModifier {
 
 /// A soft white band, 45% of the width (at least 120 pt), crossing from half a width before the left edge to the
 /// right edge every 1.4 s, as the SwiftUI sweep did. Reduce Motion removes it (`SkeletonShimmer`).
-private struct ShimmerSweep: NSViewRepresentable {
+struct ShimmerSweep: NSViewRepresentable {
     func makeNSView(context: Context) -> SweepView {
         SweepView()
     }
@@ -265,7 +265,7 @@ private struct ShimmerSweep: NSViewRepresentable {
 
     final class SweepView: NSView {
         private let band = CAGradientLayer()
-        private var sweptWidth: CGFloat = -1
+        private var sweptSize = CGSize(width: -1, height: -1)
         private static let key = "genesis.shimmer"
 
         override init(frame: NSRect) {
@@ -296,8 +296,8 @@ private struct ShimmerSweep: NSViewRepresentable {
 
         private func restart(force: Bool) {
             let width = bounds.width
-            guard force || width != sweptWidth else { return }
-            sweptWidth = width
+            guard force || bounds.size != sweptSize else { return }
+            sweptSize = bounds.size
             band.removeAnimation(forKey: Self.key)
             let bandWidth = max(120, width * 0.45)
             CATransaction.begin()
