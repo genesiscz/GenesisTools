@@ -11,10 +11,11 @@ export const STT_PROVIDER_ALIASES: Record<string, SttProviderId> = {
     mock: "fixture",
 };
 
-export const liveTranscriptKind = ["partial", "final", "speech_start", "speech_end", "error"] as const;
+export const liveTranscriptKind = ["partial", "final", "session_final", "speech_start", "speech_end", "error"] as const;
 export type LiveTranscriptKind = (typeof liveTranscriptKind)[number];
 
 export interface LiveTranscriptEvent {
+    /** session_final replaces the full transcript; it is not another utterance to append or act on. */
     kind: LiveTranscriptKind;
     text: string;
     isFinal: boolean;

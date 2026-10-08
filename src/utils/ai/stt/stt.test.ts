@@ -129,6 +129,21 @@ test("general voice session preserves fixture finals without opening a microphon
     voice.stop();
 });
 
+test("session summary replaces stitched finals without dropping intentionally repeated speech", async () => {
+    const voice = await createVoiceSession({
+        provider: "fixture",
+        input: "none",
+        events: [
+            { kind: "partial", text: "Go", isFinal: false, startedAtMs: 1 },
+            { kind: "final", text: "Go now.", isFinal: true, startedAtMs: 2 },
+            { kind: "final", text: "Go now.", isFinal: true, startedAtMs: 3 },
+            { kind: "session_final", text: "Go now. Go now. Thanks.", isFinal: true, startedAtMs: 4 },
+        ],
+        onEvent() {},
+    });
+    expect(await voice.done).toBe("Go now. Go now. Thanks.");
+});
+
 test("general voice session refuses cancellation before opening a provider", async () => {
     const controller = new AbortController();
     controller.abort();
