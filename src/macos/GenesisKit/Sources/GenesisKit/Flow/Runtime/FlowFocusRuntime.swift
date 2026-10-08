@@ -49,6 +49,7 @@ public final class FlowFocusRuntime: ObservableObject {
     private var reconnecting = false
     private var lastExternalTarget: FlowFocusTarget?
     private var dictationWindow: NSWindowController?
+    private lazy var externalAudio = FlowFocusAudioCoordinator(directory: directory, flow: flow)
 
     private struct Participant: Codable {
         let version: Int
@@ -129,6 +130,7 @@ public final class FlowFocusRuntime: ObservableObject {
         configuration.allowsWrites = false
         configuration.forwardPatch = nil
         flowStore.writesEnabled = false
+        externalAudio.stopObserving()
         flow.stop()
         focus.stop(preservingSession: true)
         dnd.uninstallTerminateHook()
@@ -150,6 +152,23 @@ public final class FlowFocusRuntime: ObservableObject {
     public func send(action: String, payload: Data = Data()) async throws -> Data {
         guard let mailbox else { throw FlowFocusMailbox.Failure.unavailable(lastError ?? "Flow and Focus are not ready.") }
         return try await mailbox.request(action: action, payload: payload)
+    }
+
+    public func acquireExternalAudio() async throws -> FlowFocusAudioLease {
+        guard let holder = FlowAudioProcess.read(pid: ProcessInfo.processInfo.processIdentifier) else {
+            throw FlowFocusMailbox.Failure.unavailable("The recording host could not be identified.")
+        }
+        let token = UUID()
+        let request = FlowAudioAdmission(token: token, holder: holder, recorder: nil,
+                                          attachBefore: Date().addingTimeInterval(30))
+        do {
+            _ = try await send(action: "audio.acquire", payload: JSONEncoder().encode(request))
+            return FlowFocusAudioLease(runtime: self, token: token)
+        } catch {
+            do { _ = try await send(action: "audio.release", payload: JSONEncoder().encode(token)) }
+            catch { FlowFocusLog.flow.warning("Unacknowledged audio admission cleanup: \(error.localizedDescription)") }
+            throw error
+        }
     }
 
     public func beginDictation() {
@@ -219,6 +238,8 @@ public final class FlowFocusRuntime: ObservableObject {
         configureModels(owner: true)
         try flowStore.verifyingWrites { flowStore.recoverPendingHistory() }
         flow.reloadStoredState()
+        externalAudio.onFailure = { [weak self] in self?.reportFailure($0) }
+        try externalAudio.start()
         _ = dnd.recoverIfNeeded()
         dnd.installTerminateHook()
         focus.ownsRuntime = true
@@ -371,6 +392,9 @@ public final class FlowFocusRuntime: ObservableObject {
             throw FlowFocusMailbox.Failure.unavailable(focus.lastError ?? "The Focus ledger is unavailable.")
         }
         switch command.action {
+        case "audio.acquire": try externalAudio.acquire(decode(FlowAudioAdmission.self))
+        case "audio.attach": try externalAudio.attach(decode(FlowAudioAttachment.self))
+        case "audio.release": try externalAudio.release(decode(UUID.self))
         case "flow.begin":
             let target = try decode(FlowFocusTarget?.self)
             if let target, target.processIdentifier == ProcessInfo.processInfo.processIdentifier {

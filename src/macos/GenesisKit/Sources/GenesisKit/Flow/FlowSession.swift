@@ -91,6 +91,13 @@ public final class FlowSession: ObservableObject {
     var preRollEffect: ((Bool) -> Void)?
     var recognitionStartEffect: (() throws -> Void)?
     var hotkeyBindingEffect: (() -> Void)?
+    private(set) var externalAudioHeld = false
+
+    func setExternalAudioHeld(_ held: Bool) {
+        guard externalAudioHeld != held else { return }
+        externalAudioHeld = held
+        applyPreRoll()
+    }
 
     /// Built lazily on first use so an app launch that never dictates pays
     /// nothing for it.
@@ -214,7 +221,7 @@ public final class FlowSession: ObservableObject {
 
     /// Start or stop the rolling capture to match the setting.
     private func applyPreRoll() {
-        guard started, remoteCommand == nil, isOn, config.preRoll,
+        guard started, remoteCommand == nil, isOn, config.preRoll, !externalAudioHeld,
               phase == .idle || phase == .error else {
             setPreRollRunning(false)
             return
@@ -343,6 +350,10 @@ public final class FlowSession: ObservableObject {
         }
         guard started, store.writesEnabled else {
             reportFailure("Flow is waiting for its active owner.")
+            return
+        }
+        guard !externalAudioHeld else {
+            reportFailure("Voice Notes is recording. Finish that recording before dictating.")
             return
         }
         switch Self.turnStart(phase: phase, labEnabled: labEnabled, enabled: config.enabled) {

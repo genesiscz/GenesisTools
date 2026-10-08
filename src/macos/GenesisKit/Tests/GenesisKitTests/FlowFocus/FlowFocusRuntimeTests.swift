@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import XCTest
 @testable import GenesisKit
 
@@ -64,6 +65,129 @@ final class FlowFocusRuntimeTests: XCTestCase {
         XCTAssertEqual(recovered.flow.stats, FlowStats())
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("history-pending.json").path))
         await recovered.stop()
+    }
+
+    func testExternalAudioAdmissionSuspendsPreRollAndSurvivesOwnerHandoffUntilRecorderExit() async throws {
+        let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.audio-owner", liveServices: false, presentsWindows: false)
+        let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.audio-client", liveServices: false, presentsWindows: false)
+        await owner.start()
+        await client.start()
+        var rolling = false
+        var recognitionStarts = 0
+        owner.flow.preRollEffect = { rolling = $0 }
+        owner.flow.hotkeyBindingEffect = {}
+        owner.flow.recognitionStartEffect = { recognitionStarts += 1 }
+        owner.flow.config.showPill = false
+        owner.flow.config.preRoll = true
+        owner.flow.start()
+        XCTAssertTrue(rolling)
+        owner.flow.beginTurn(captureCurrentTarget: false)
+        do {
+            _ = try await client.acquireExternalAudio()
+            XCTFail("active dictation must retain audio")
+        } catch { XCTAssertEqual(owner.flow.phase, .listening) }
+        owner.flow.cancelTurn()
+        XCTAssertTrue(rolling)
+        let input = Pipe()
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/bin/cat")
+        child.environment = ["PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8"]
+        child.standardInput = input
+        child.standardOutput = FileHandle.nullDevice
+        child.standardError = FileHandle.nullDevice
+        let exited = expectation(description: "gated recorder child exited")
+        child.terminationHandler = { _ in exited.fulfill() }
+        do {
+            let audio = try await client.acquireExternalAudio()
+            XCTAssertFalse(rolling)
+            XCTAssertTrue(owner.flow.externalAudioHeld)
+            owner.flow.beginTurn(captureCurrentTarget: false)
+            XCTAssertEqual(recognitionStarts, 1, "native dictation cannot race an admitted recorder")
+            do {
+                _ = try await owner.acquireExternalAudio()
+                XCTFail("a second recorder must be refused")
+            } catch { XCTAssertTrue(owner.flow.externalAudioHeld) }
+            do {
+                try await audio.attachRecorder(pid: ProcessInfo.processInfo.processIdentifier)
+                XCTFail("the admitted host is not its recorder child")
+            } catch { XCTAssertTrue(owner.flow.externalAudioHeld) }
+            try child.run()
+            try await audio.attachRecorder(pid: child.processIdentifier)
+            do {
+                try await audio.release()
+                XCTFail("audio cannot be returned before the recorder exits")
+            } catch { XCTAssertFalse(rolling) }
+            await owner.stop()
+            try await waitUntil { client.role.isOwner }
+            XCTAssertTrue(client.flow.externalAudioHeld, "new owner restores admission before starting services")
+            try input.fileHandleForWriting.close()
+            await fulfillment(of: [exited], timeout: 2)
+            try await waitUntil { !client.flow.externalAudioHeld }
+            try await audio.release()
+            let next = try await client.acquireExternalAudio()
+            try await next.release()
+            XCTAssertFalse(client.flow.externalAudioHeld)
+        } catch {
+            try? input.fileHandleForWriting.close()
+            if child.isRunning { child.terminate() }
+            await client.stop()
+            await owner.stop()
+            throw error
+        }
+        await client.stop()
+        await owner.stop()
+    }
+
+    func testRecorderExitReleasesAdmissionBeforeItsParentReapsTheChild() async throws {
+        let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.unreaped-recorder", liveServices: false, presentsWindows: false)
+        await owner.start()
+        let lease = try await owner.acquireExternalAudio()
+        var pid: pid_t = 0
+        var arguments = [strdup("/bin/sleep"), strdup("0.2"), nil]
+        var environment: [UnsafeMutablePointer<CChar>?] = [nil]
+        defer { for argument in arguments { free(argument) } }
+        let spawned = arguments.withUnsafeMutableBufferPointer { args in
+            environment.withUnsafeMutableBufferPointer { env in
+                posix_spawn(&pid, "/bin/sleep", nil, nil, args.baseAddress!, env.baseAddress!)
+            }
+        }
+        XCTAssertEqual(spawned, 0)
+        var reaped = false
+        defer {
+            if !reaped, pid > 0 {
+                kill(pid, SIGTERM)
+                var status: Int32 = 0
+                _ = waitpid(pid, &status, WNOHANG)
+            }
+        }
+        do {
+            try await lease.attachRecorder(pid: pid)
+            try await waitUntil { !owner.flow.externalAudioHeld }
+            var status: Int32 = 0
+            let waited = waitpid(pid, &status, WNOHANG)
+            reaped = waited == pid
+            XCTAssertEqual(waited, pid, "the exit event released audio while the child was still unreaped")
+            try await lease.release()
+        } catch {
+            await owner.stop()
+            throw error
+        }
+        await owner.stop()
+    }
+
+    func testExpiredUnattachedAdmissionCannotSurviveOwnerStartup() async throws {
+        let runtimeDirectory = directory.appendingPathComponent("feature-runtime")
+        try FileManager.default.createDirectory(at: runtimeDirectory, withIntermediateDirectories: true)
+        let identity = try XCTUnwrap(FlowAudioProcess.read(pid: ProcessInfo.processInfo.processIdentifier))
+        let record = FlowAudioAdmission(token: UUID(), holder: identity, recorder: nil, attachBefore: Date.distantPast)
+        let file = runtimeDirectory.appendingPathComponent("audio-admission.json")
+        try FlowFocusLease.writePrivate(JSONEncoder().encode(record), to: file)
+        let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.expired-admission", liveServices: false, presentsWindows: false)
+        await owner.start()
+        XCTAssertTrue(owner.role.isOwner)
+        XCTAssertFalse(owner.flow.externalAudioHeld)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        await owner.stop()
     }
 
     func testTwoHostsShareOneClockAndClientCommandsReachItsOwner() async throws {
