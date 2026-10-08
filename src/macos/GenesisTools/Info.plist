@@ -36,9 +36,9 @@
 	<key>NSContactsUsageDescription</key>
 	<string>You ran tools macos mail or messages, which resolve sender and attendee names from your contacts. Contacts are only read, never changed.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>You ran tools transcribe or tools macos voice-memos transcribe, which turn an audio file into text with Apple's on-device speech engine. Audio stays on this Mac.</string>
+	<string>Transcribe dictation and audio using Apple Speech, in the on-device or server mode you select.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>You ran tools ask with voice dictation, which records from the microphone while you speak. Nothing records outside that command.</string>
+	<string>Record speech when you start dictation, voice notes, or audio commands. Optional pre-roll keeps a short microphone buffer while dictation is enabled.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>You ran a command that drives another app through AppleScript: tools say, tools macos control, or the Mail and Calendar helpers. GenesisTools only sends the events that command needs.</string>
 	<key>NSDesktopFolderUsageDescription</key>

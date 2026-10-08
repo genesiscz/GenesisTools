@@ -76,9 +76,10 @@ async function nativeSourceDigest(): Promise<string> {
         }
         const file = Bun.file(join(repo, name));
         if (await file.exists()) {
-            hash.update(name)
-                .update("\0")
-                .update(Buffer.from(await file.arrayBuffer()));
+            const fileDigest = createHash("sha256")
+                .update(Buffer.from(await file.arrayBuffer()))
+                .digest("hex");
+            hash.update(name).update("\0").update(fileDigest).update("\0");
         }
     }
     return hash.digest("hex");
@@ -165,7 +166,8 @@ async function buildPreview(): Promise<void> {
         "<key>CFBundleIconFile</key><string>AppIcon</string>" +
         "<key>CFBundleDisplayName</key><string>GenesisTools Preview</string>" +
         "<key>GenesisToolsPreview</key><true/>" +
-        "<key>NSMicrophoneUsageDescription</key><string>Transcribe speech that you explicitly record.</string>" +
+        "<key>NSMicrophoneUsageDescription</key><string>Record speech when you start dictation, voice notes, or audio commands. Optional pre-roll keeps a short microphone buffer while dictation is enabled.</string>" +
+        "<key>NSSpeechRecognitionUsageDescription</key><string>Transcribe dictation using Apple Speech after you grant access, in the on-device or server mode you select.</string>" +
         "<key>GenesisToolsWidgetCLI</key><string>" +
         join(repo, "widget-tools").replaceAll("&", "&amp;").replaceAll("<", "&lt;") +
         "</string>" +
