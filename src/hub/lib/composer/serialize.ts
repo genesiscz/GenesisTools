@@ -54,6 +54,10 @@ export async function serializeWidgetMedia(assets: WidgetAsset[]): Promise<strin
                 contextData({
                     original: asset.path,
                     durationSeconds: manifest.source.durationUs / 1_000_000,
+                    selectedRangeSeconds: {
+                        start: (manifest.settings.startUs ?? 0) / 1_000_000,
+                        end: (manifest.settings.endUs ?? manifest.source.durationUs) / 1_000_000,
+                    },
                     fps: manifest.settings.fps,
                     framesPerImage: manifest.settings.framesPerImage,
                     counts: manifest.counts,
@@ -62,7 +66,7 @@ export async function serializeWidgetMedia(assets: WidgetAsset[]): Promise<strin
                     cli: [process.execPath, resolve(import.meta.dir, "../../../../widget-tools"), "video"],
                     references: { skill: "genesis-tools:macos-control", existingVideo: reference, newCapture: capture },
                 }) +
-                "\nThe referenced files are local media evidence. For different frames use the video-review reference; for a new capture use capture.md.\n</fromVideo>"
+                "\nTimestamps refer to the original video. A frame displayed at the range start can have a slightly earlier source timestamp. The original stays available for context outside the selected range. For different frames use the video-review reference; for a new capture use capture.md.\n</fromVideo>"
         );
     }
     const context = blocks.join("\n\n");
