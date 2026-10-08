@@ -344,10 +344,14 @@ export class ShowOnceService {
             if (this.recording) {
                 const state = this.recording;
                 this.recording = undefined;
+                this.starting = true;
                 state.controller.abort();
                 clearTimeout(state.timer);
-                await state.recorder.stop();
-                await state.browser.close();
+                try {
+                    await this.releaseRecordingResources({ recorder: state.recorder, browser: state.browser });
+                } finally {
+                    this.starting = false;
+                }
             }
             return { cancelled: true };
         }
@@ -411,8 +415,11 @@ export class ShowOnceService {
                 return { recording: true };
             } catch (error) {
                 controller.abort();
-                await recorder?.stop();
-                await browser?.close();
+                try {
+                    await this.releaseRecordingResources({ recorder, browser });
+                } catch (cleanupError) {
+                    logger.warn({ error: cleanupError }, "Show Once recording setup cleanup failed");
+                }
                 throw error;
             } finally {
                 signal?.removeEventListener("abort", cancelSetup);
@@ -520,6 +527,32 @@ export class ShowOnceService {
         }
         throw new Error("Unsupported command.");
     }
+    private async releaseRecordingResources(options: {
+        recorder?: ActionRecording;
+        browser?: BrowserSession;
+    }): Promise<void> {
+        const results = await Promise.allSettled([
+            Promise.resolve().then(() => options.recorder?.stop()),
+            Promise.resolve().then(() => options.browser?.close()),
+        ]);
+        let failure: unknown;
+        let failed = false;
+        for (const result of results) {
+            if (result.status === "rejected") {
+                if (!failed) {
+                    failure = result.reason;
+                    failed = true;
+                } else {
+                    logger.warn({ error: result.reason }, "Additional Show Once recording cleanup failed");
+                }
+            }
+        }
+
+        if (failed) {
+            throw failure;
+        }
+    }
+
     private async expireRecording(state: RecordingState): Promise<void> {
         if (this.recording !== state) {
             return;
@@ -529,8 +562,7 @@ export class ShowOnceService {
         this.starting = true;
         state.controller.abort();
         try {
-            await state.recorder.stop();
-            await state.browser.close();
+            await this.releaseRecordingResources({ recorder: state.recorder, browser: state.browser });
         } finally {
             this.starting = false;
             this.onEvent({

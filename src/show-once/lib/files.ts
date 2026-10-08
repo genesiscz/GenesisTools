@@ -56,6 +56,7 @@ export async function moveVerified(options: {
             throw error;
         }
     }
+    options.signal?.throwIfAborted();
     options.onDispatch();
     await copyFile(options.source, target, constants.COPYFILE_EXCL);
     const after = await fileEvidence(target, options.contains);

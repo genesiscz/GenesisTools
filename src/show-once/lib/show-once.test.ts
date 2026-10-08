@@ -1,11 +1,14 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import * as fsPromises from "node:fs/promises";
 import { mkdir, mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { runInNewContext } from "node:vm";
+import * as recording from "@app/chrome-devtools/lib/action-recording";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
+import * as browserModule from "./browser";
 import { connectSession } from "./browser";
 import { moveVerified } from "./files";
 import { downloadOrigin, expand, parseRecipe, type Recipe, resolvedInputs, safeUrl } from "./recipe";
@@ -391,7 +394,10 @@ test("attachment setup aborts a pending domain call and normal attachment still 
 });
 
 function cdpFixture(
-    options: { evaluate?: (expression: string) => unknown; onCommand?: (method: string) => boolean | undefined } = {}
+    options: {
+        evaluate?: (expression: string) => unknown;
+        onCommand?: (method: string, resume: () => void) => boolean | undefined;
+    } = {}
 ) {
     const routing: string[] = [];
     const identity = crypto.randomUUID();
@@ -424,7 +430,8 @@ function cdpFixture(
                 const request = z
                     .object({ id: z.number(), method: z.string(), params: z.record(z.string(), z.unknown()) })
                     .parse(SafeJSON.parse(String(raw), { strict: true }));
-                if (options.onCommand?.(request.method) === false) {
+                const resume = () => socket.send(SafeJSON.stringify({ id: request.id, result: {} }, { strict: true }));
+                if (options.onCommand?.(request.method, resume) === false) {
                     return;
                 }
                 let result: unknown = {};
@@ -795,5 +802,258 @@ test("replay verifies allowed blob and CDN output, and refuses unapproved downlo
         }
     } finally {
         server.stop(true);
+    }
+});
+
+test("file move rechecks cancellation after the destination existence lookup", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "gt-show-once-test-")));
+    const source = join(root, "source.csv");
+    const target = join(root, "result.csv");
+    await Bun.write(source, "shop report");
+    const controller = new AbortController();
+    let lookups = 0;
+    let dispatched = 0;
+    const original = fsPromises.lstat;
+    const lookup = spyOn(fsPromises, "lstat").mockImplementation(
+        new Proxy(original, {
+            apply(fn, receiver, args: unknown[]) {
+                const result = Reflect.apply(fn, receiver, args);
+                if (args[0] === target) {
+                    lookups++;
+                    controller.abort(new Error("Cancelled during destination check"));
+                }
+                return result;
+            },
+        })
+    );
+    try {
+        await expect(
+            moveVerified({
+                source,
+                destination: root,
+                filename: "result.csv",
+                contains: [],
+                signal: controller.signal,
+                onDispatch: () => {
+                    dispatched++;
+                },
+            })
+        ).rejects.toThrow("Cancelled during destination check");
+        expect(lookups).toBe(1);
+        expect(dispatched).toBe(0);
+        expect(await Bun.file(source).text()).toBe("shop report");
+        expect(await Bun.file(target).exists()).toBe(false);
+    } finally {
+        lookup.mockRestore();
+    }
+});
+
+test("recording cancellation restores browser routing while page cleanup is still pending", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "gt-show-once-test-")));
+    const destination = join(root, "destination");
+    await mkdir(destination);
+    let release: () => void = () => {};
+    let reached: () => void = () => {};
+    let restored: () => void = () => {};
+    const cleanupHeld = new Promise<void>((resolveReady) => {
+        reached = resolveReady;
+    });
+    const routingRestored = new Promise<void>((resolveReady) => {
+        restored = resolveReady;
+    });
+    const { server, routing } = cdpFixture({
+        onCommand: (method, resume) => {
+            if (method === "Page.removeScriptToEvaluateOnNewDocument") {
+                release = resume;
+                reached();
+                return false;
+            }
+            if (method === "Browser.setDownloadBehavior" && routing.length > 0) {
+                restored();
+            }
+        },
+    });
+    const service = new ShowOnceService();
+    let cancelled: Promise<unknown> | undefined;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+        await service.dispatch({
+            op: "record-start",
+            port: server.port!,
+            targetId: "first",
+            downloadDirectory: root,
+            destinationDirectory: destination,
+        });
+        cancelled = service.dispatch({ op: "cancel" });
+        await Promise.race([
+            cleanupHeld,
+            new Promise<never>((_resolve, reject) => {
+                deadline = setTimeout(() => reject(new Error("Recorder cleanup never started")), 1000);
+            }),
+        ]);
+        clearTimeout(deadline);
+        await Promise.race([
+            routingRestored,
+            new Promise<never>((_resolve, reject) => {
+                deadline = setTimeout(() => reject(new Error("Browser routing waits behind recorder cleanup")), 200);
+            }),
+        ]);
+        expect(routing).toEqual(["allow", "default"]);
+        release();
+        await cancelled;
+        expect(await service.dispatch({ op: "status" })).toMatchObject({ recording: false });
+    } finally {
+        clearTimeout(deadline);
+        release();
+        await cancelled;
+        await service.close();
+        server.stop(true);
+    }
+});
+
+test("rejecting cleanup waits for its delayed peer and preserves cancellation or setup errors", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "gt-show-once-test-")));
+    const destination = join(root, "destination");
+    await mkdir(destination);
+    for (const cause of ["cancel", "setup"] as const) {
+        for (const rejecting of ["recorder", "browser"] as const) {
+            const { server } = cdpFixture();
+            const cleanupError = new Error(`${rejecting} cleanup rejected`);
+            const setupError = new Error("Recording setup failed");
+            let release: () => void = () => {};
+            const delayed = new Promise<void>((resolveDelay) => {
+                release = resolveDelay;
+            });
+            let entered: () => void = () => {};
+            const bothEntered = new Promise<void>((resolveEntered) => {
+                entered = resolveEntered;
+            });
+            let stopCalls = 0;
+            let closeCalls = 0;
+            let browserClosed = false;
+            const cleanupWork: Promise<unknown>[] = [];
+            const countStarted = () => {
+                if (stopCalls && closeCalls) {
+                    entered();
+                }
+            };
+            const snapshot: recording.ActionRecordingSnapshot = {
+                initialUrl: "https://example.com/",
+                actions: [],
+                evidence: [],
+            };
+            const recorder = spyOn(recording, "startActionRecording").mockResolvedValue({
+                snapshot: () => snapshot,
+                stop: () => {
+                    const work = (async () => {
+                        stopCalls++;
+                        countStarted();
+                        if (rejecting === "recorder") {
+                            throw cleanupError;
+                        }
+                        await delayed;
+                        return snapshot;
+                    })();
+                    cleanupWork.push(work);
+                    return work;
+                },
+            });
+            const originalConnect = browserModule.connectSession;
+            let actualBrowser: browserModule.BrowserSession | undefined;
+            let originalClose: (() => Promise<void>) | undefined;
+            const connect = spyOn(browserModule, "connectSession").mockImplementation(async (options) => {
+                const browser = await originalConnect(options);
+                actualBrowser = browser;
+                originalClose = browser.close.bind(browser);
+                browser.close = () => {
+                    const work = (async () => {
+                        closeCalls++;
+                        countStarted();
+                        if (rejecting === "browser") {
+                            throw cleanupError;
+                        }
+                        await delayed;
+                        await originalClose?.();
+                        browserClosed = true;
+                    })();
+                    cleanupWork.push(work);
+                    return work;
+                };
+                if (cause === "setup") {
+                    const configure = browser.configureDownloads.bind(browser);
+                    browser.configureDownloads = async (settings) => {
+                        await configure(settings);
+                        throw setupError;
+                    };
+                }
+                return browser;
+            });
+            const service = new ShowOnceService();
+            const command = {
+                op: "record-start",
+                port: server.port!,
+                targetId: "first",
+                downloadDirectory: root,
+                destinationDirectory: destination,
+            };
+            let outcome: Promise<{ error: unknown } | { result: unknown }> | undefined;
+            let deadline: ReturnType<typeof setTimeout> | undefined;
+            try {
+                const started = service.dispatch(command);
+                if (cause === "cancel") {
+                    await started;
+                    outcome = service.dispatch({ op: "cancel" }).then(
+                        (result) => ({ result }),
+                        (error) => ({ error })
+                    );
+                } else {
+                    outcome = started.then(
+                        (result) => ({ result }),
+                        (error) => ({ error })
+                    );
+                }
+                await Promise.race([
+                    bothEntered,
+                    new Promise<never>((_resolve, reject) => {
+                        deadline = setTimeout(() => reject(new Error("Both cleanup operations did not start")), 1000);
+                    }),
+                ]);
+                clearTimeout(deadline);
+                await Promise.race([
+                    outcome.then(() => {
+                        throw new Error("Cleanup returned before its delayed peer settled");
+                    }),
+                    new Promise<void>((resolveObserve) => {
+                        deadline = setTimeout(resolveObserve, 100);
+                    }),
+                ]);
+                clearTimeout(deadline);
+                expect(await service.dispatch({ op: "status" })).toMatchObject({ recording: false, starting: true });
+                await expect(service.dispatch(command)).rejects.toThrow("Stop the active operation");
+                release();
+                const observed = await outcome;
+                expect("error" in observed ? observed.error : undefined).toBe(
+                    cause === "setup" ? setupError : cleanupError
+                );
+                expect(stopCalls).toBe(1);
+                expect(closeCalls).toBe(1);
+                expect(await service.dispatch({ op: "status" })).toMatchObject({ recording: false, starting: false });
+            } finally {
+                clearTimeout(deadline);
+                release();
+                await outcome;
+                await Promise.allSettled(cleanupWork);
+                recorder.mockRestore();
+                connect.mockRestore();
+                if (actualBrowser && originalClose) {
+                    actualBrowser.close = originalClose;
+                    if (!browserClosed) {
+                        await originalClose();
+                    }
+                }
+                await service.close();
+                server.stop(true);
+            }
+        }
     }
 });
