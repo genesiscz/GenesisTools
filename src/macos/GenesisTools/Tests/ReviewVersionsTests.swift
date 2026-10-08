@@ -200,6 +200,19 @@ final class ReviewVersionsTests: XCTestCase {
         XCTAssertTrue(news.headline.contains("1 new commit"))
     }
 
+    func testReloadMovesAPinnedCommitAndPreservesRangeAndCompareScopes() throws {
+        let newest = PRVersion(id: "new", headSha: "abc2222", baseSha: "abc0000", createdAt: nil, pushedBy: nil,
+                               commits: [.init(sha: "abc2222", title: "new commit", author: nil)])
+        XCTAssertEqual(DiffScope.commit(sha: "abc1111", title: "old commit").reloading(to: newest),
+                       .commit(sha: "abc2222", title: "new commit"))
+        XCTAssertEqual(DiffScope.range(base: "oldbase", head: "abc1111", label: "#7", fallbackBase: "origin/main").reloading(to: newest),
+                       .range(base: "abc0000", head: "abc2222", label: "#7", fallbackBase: "origin/main"))
+        let from = CompareEnd(base: "base", head: "shown")
+        XCTAssertEqual(DiffScope.compare(from: from, to: CompareEnd(base: nil, head: "old"), label: "compare", targetRef: "origin/main").reloading(to: newest),
+                       .compare(from: from, to: CompareEnd(base: "abc0000", head: "abc2222"), label: "compare", targetRef: "origin/main"))
+        XCTAssertNil(DiffScope.uncommitted.reloading(to: newest))
+    }
+
     func testTheNoticeNamesThePusherAndOnlyTheNewCommits() throws {
         let json = """
         {"versions":[

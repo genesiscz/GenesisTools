@@ -932,15 +932,8 @@ final class ReviewModel: ObservableObject {
 
     /// The diff moves to the PR's newest push; the base follows the push's own (a rebase moves it).
     func reloadToNewest() {
-        guard let newest = pushNews?.newest else { return }
-        switch scope {
-        case .range(let base, _, let label, let fallback):
-            setScope(.range(base: newest.baseSha ?? base, head: newest.headSha, label: label, fallbackBase: fallback))
-        case .compare(let from, _, let label, let targetRef):
-            setScope(.compare(from: from, to: CompareEnd(base: newest.baseSha, head: newest.headSha), label: label, targetRef: targetRef))
-        default:
-            break
-        }
+        guard let newest = pushNews?.newest, let updated = scope.reloading(to: newest) else { return }
+        setScope(updated)
     }
 
     /// Only what the author changed between the push on screen and the newest one; a rebase between

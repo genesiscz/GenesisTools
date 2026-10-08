@@ -214,3 +214,18 @@ final class CompareTreeCache: @unchecked Sendable {
         values[key] = value
     }
 }
+
+extension DiffScope {
+    func reloading(to newest: PRVersion) -> DiffScope? {
+        switch self {
+        case .range(let base, _, let label, let fallback):
+            return .range(base: newest.baseSha ?? base, head: newest.headSha, label: label, fallbackBase: fallback)
+        case .compare(let from, _, let label, let targetRef):
+            return .compare(from: from, to: CompareEnd(base: newest.baseSha, head: newest.headSha), label: label, targetRef: targetRef)
+        case .commit:
+            return .commit(sha: newest.headSha, title: newest.commits.first?.title ?? "Newest PR commit")
+        default:
+            return nil
+        }
+    }
+}
