@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
-import { spawnWorker, turnArgs } from "./worker";
+import { ClaudeWorkerStore } from "./store";
+import { spawnWorker, steerWorker, turnArgs } from "./worker";
 
 describe("turnArgs", () => {
     test("`-p` is followed by a flag, never by a positional prompt", () => {
@@ -64,29 +65,34 @@ describe.skipIf(process.platform === "win32")("spawnWorker delivers the prompt o
         const bin = join(home, ".bun", "bin");
         mkdirSync(bin, { recursive: true });
 
+        const configPath = join(home, "config-dir.txt");
         const argvPath = join(home, "argv.txt");
         const stdinPath = join(home, "stdin.txt");
         const fake = join(bin, "claude");
         writeFileSync(
             fake,
-            `#!/bin/sh\nprintf '%s\\n' "$@" > ${shellQuote(argvPath)}\ncat > ${shellQuote(stdinPath)}\n`,
+            `#!/bin/sh\nprintf '%s\\n' "$@" > ${shellQuote(argvPath)}\nprintf '%s' "\${CLAUDE_CONFIG_DIR-unset}" > ${shellQuote(configPath)}\ncat > ${shellQuote(stdinPath)}\n`,
             { mode: 0o755 }
         );
         chmodSync(fake, 0o755);
 
         const prompt = "review the patch, the login uses sk-fixture-not-a-real-secret";
 
-        await env.testing.withOverrides({ HOME: home, GENESIS_TOOLS_HOME: home }, async () => {
-            const result = await spawnWorker({
-                name: "reviewer",
-                account: { name: "work", token: "fixture-token" },
-                cwd: home,
-                prompt,
-            });
+        await env.testing.withOverrides(
+            { HOME: home, GENESIS_TOOLS_HOME: home, CLAUDE_CONFIG_DIR: undefined },
+            async () => {
+                const result = await spawnWorker({
+                    name: "reviewer",
+                    account: { name: "work", token: "fixture-token" },
+                    cwd: home,
+                    prompt,
+                });
 
-            expect(result.exitCode).toBe(0);
-        });
+                expect(result.exitCode).toBe(0);
+            }
+        );
 
+        expect(readFileSync(configPath, "utf8")).toBe("unset");
         const argv = readFileSync(argvPath, "utf8");
         expect(argv).not.toContain(prompt);
         expect(argv).not.toContain("sk-fixture-not-a-real-secret");
@@ -105,3 +111,48 @@ describe.skipIf(process.platform === "win32")("spawnWorker delivers the prompt o
         expect(readFileSync(stdinPath, "utf8")).toBe(prompt);
     });
 });
+
+test.skipIf(process.platform === "win32")(
+    "guarded Claude continuation resumes the exact existing session in its pinned home and retains the native terminal ID",
+    async () => {
+        const scratch = mkdtempSync(join(tmpdir(), "claude-delivery-positive-"));
+        const bin = join(scratch, ".bun", "bin");
+        mkdirSync(bin, { recursive: true });
+        const argv = join(scratch, "argv");
+        const source = join(scratch, "source-home");
+        const seenHome = join(scratch, "seen-home");
+        writeFileSync(
+            join(bin, "claude"),
+            `#!/bin/sh\nprintf '%s\\n' "$@" > ${shellQuote(argv)}\nprintf '%s' "$CLAUDE_CONFIG_DIR" > ${shellQuote(seenHome)}\ncat >/dev/null\nprintf '%s\\n' '{"type":"result","subtype":"success","session_id":"fixture-existing-session","result":"received"}'\n`,
+            { mode: 0o755 }
+        );
+        await env.testing.withOverrides(
+            { HOME: scratch, GENESIS_TOOLS_HOME: scratch, CLAUDE_CONFIG_DIR: join(scratch, "wrong-ambient-home") },
+            async () => {
+                const store = new ClaudeWorkerStore();
+                store.createMeta({
+                    name: "fixture",
+                    sessionId: "fixture-existing-session",
+                    sourceHome: source,
+                    account: "work",
+                    cwd: scratch,
+                    turns: 1,
+                    createdAt: new Date(0).toISOString(),
+                });
+                const result = await steerWorker({
+                    name: "fixture",
+                    account: { name: "work", token: "synthetic" },
+                    prompt: "Synthetic reply",
+                    delivery: { sessionId: "fixture-existing-session", sourceHome: source, afterTurn: 1 },
+                });
+                expect(result.completed).toBe(true);
+                expect(result.acknowledgedSessionId).toBe("fixture-existing-session");
+                expect(result.turn).toBe(2);
+            }
+        );
+        const args = readFileSync(argv, "utf8");
+        expect(args).toContain("--resume\nfixture-existing-session");
+        expect(args).not.toContain("--session-id");
+        expect(readFileSync(seenHome, "utf8")).toBe(source);
+    }
+);

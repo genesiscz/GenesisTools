@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
 import { formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
+import { workerDeliveryExpectation } from "@genesiscz/utils/worker/delivery";
 import type { WorkerDriver } from "@genesiscz/utils/worker/driver";
 import { runningTurnPids, signalRunningTurns } from "@genesiscz/utils/worker/ps";
 import type { Command } from "commander";
@@ -136,6 +137,7 @@ export const grokDriver: WorkerDriver<GrokSessionMeta> = {
 
         const result = await steerSession({
             name: meta.name,
+            delivery: workerDeliveryExpectation(input.extras),
             ...promptInput(input.prompt, extras.promptFile),
             ...(readOnly === undefined ? {} : { readOnly }),
             // Only the flags given on this steer; an absent one keeps the session's choice.

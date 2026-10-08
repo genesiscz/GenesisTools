@@ -6,6 +6,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger, out } from "@genesiscz/utils/logger";
 import { truncateDisplay } from "@genesiscz/utils/table";
+import { workerDeliveryExpectation } from "@genesiscz/utils/worker/delivery";
 import type { WorkerDriver } from "@genesiscz/utils/worker/driver";
 import { isToolCall } from "@genesiscz/utils/worker/events";
 import { runningTurnPids, signalRunningTurns } from "@genesiscz/utils/worker/ps";
@@ -13,7 +14,7 @@ import type { WorkerTurnReport } from "@genesiscz/utils/worker/turn-report";
 import pc from "picocolors";
 import { workerTurnErrPath, workerTurnLogPath } from "./paths";
 import type { ClaudeWorkerMeta } from "./store";
-import { ClaudeWorkerStore } from "./store";
+import { ClaudeWorkerStore, claudeWorkerSourceHome } from "./store";
 import { type ClaudeTurnResult, type PinnedAccount, spawnWorker, steerWorker } from "./worker";
 
 const log = logger.child({ component: "claude:worker:driver" });
@@ -62,6 +63,8 @@ function turnReport(result: ClaudeTurnResult): WorkerTurnReport {
     return {
         backend: "claude",
         name: result.meta.name,
+        sessionId: result.acknowledgedSessionId,
+        sourceHome: claudeWorkerSourceHome(result.meta),
         turn: result.turn,
         ended: result.completed,
         exitCode: result.exitCode,
@@ -135,7 +138,12 @@ export const claudeWorkerDriver: WorkerDriver<ClaudeWorkerMeta> = {
         // Re-resolve the PINNED account, never a flag: every turn of a worker bills the
         // identity chosen at spawn.
         const account = await resolvePinnedAccount(meta.account);
-        const result = await steerWorker({ name: meta.name, account, prompt: input.prompt });
+        const result = await steerWorker({
+            name: meta.name,
+            account,
+            prompt: input.prompt,
+            delivery: workerDeliveryExpectation(input.extras),
+        });
 
         return { kind: "turn", report: turnReport(result) };
     },

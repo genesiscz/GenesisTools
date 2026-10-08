@@ -1,8 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { closeSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { workerMetaPath } from "./paths";
 import { type ClaudeWorkerMeta, ClaudeWorkerStore } from "./store";
 import { claimTurnLog, steerWorker } from "./worker";
 
@@ -74,5 +76,57 @@ describe("claimTurnLog", () => {
                 steerWorker({ name: "reviewer", account: { name: "work", token: "fixture" }, prompt: "next" })
             ).rejects.toThrow(/still has turn 1 running/);
         });
+    });
+});
+
+test("guarded Claude delivery refuses changed identity, home, turn and busy owners before spawning", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "claude-delivery-guard-"));
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: scratch }, async () => {
+        const store = new ClaudeWorkerStore();
+        const meta = { ...makeMeta(), turns: 1, sourceHome: scratch };
+        store.createMeta(meta);
+        const delivery = { sessionId: meta.sessionId, sourceHome: scratch, afterTurn: 1 };
+        const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
+            throw new Error("provider spawn must not be reached");
+        });
+        try {
+            for (const changed of [{ sessionId: "foreign" }, { sourceHome: "/wrong/home" }, { afterTurn: 2 }]) {
+                await expect(
+                    steerWorker({
+                        name: meta.name,
+                        account: { name: "work", token: "fixture" },
+                        prompt: "Synthetic",
+                        delivery: { ...delivery, ...changed },
+                    })
+                ).rejects.toThrow(/changed/);
+            }
+            store.updateMeta(meta.name, {
+                activeTurn: { turn: 1, ownerPid: process.pid, startedAt: new Date().toISOString() },
+            });
+            await expect(
+                steerWorker({
+                    name: meta.name,
+                    account: { name: "work", token: "fixture" },
+                    prompt: "Synthetic",
+                    delivery,
+                })
+            ).rejects.toThrow("busy");
+            store.updateMeta(meta.name, { activeTurn: undefined });
+            let pending: Promise<unknown> | undefined;
+            await withFileLock(`${workerMetaPath(meta.name)}.turn.lock`, async () => {
+                pending = steerWorker({
+                    name: meta.name,
+                    account: { name: "work", token: "fixture" },
+                    prompt: "Synthetic",
+                    delivery,
+                });
+                store.updateMeta(meta.name, { sessionId: "changed-during-lock" });
+            });
+            await expect(pending!).rejects.toThrow("session or source home changed");
+            expect(spawn).not.toHaveBeenCalled();
+            expect(store.readMeta(meta.name)?.turns).toBe(1);
+        } finally {
+            spawn.mockRestore();
+        }
     });
 });

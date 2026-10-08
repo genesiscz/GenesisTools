@@ -1,4 +1,6 @@
+import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { WorkerMetaStore } from "@genesiscz/utils/worker/meta-store";
 import { workerMetaPath, workersDir } from "./paths";
@@ -18,6 +20,8 @@ export interface ClaudeWorkerMeta {
     /** The account every turn is pinned to. Required — never auto-picked. */
     account: string;
     cwd: string;
+    sourceHome?: string;
+    usesDefaultConfig?: boolean;
     model?: string;
     /** Turn 1 ran with --safe-mode. Every resume repeats it, or the worker's instruction and tool boundary widens silently. */
     safeMode?: boolean;
@@ -25,6 +29,10 @@ export interface ClaudeWorkerMeta {
     createdAt: string;
     lastTurn?: ClaudeWorkerTurnRecord;
     activeTurn?: { turn: number; ownerPid: number; childPid?: number; startedAt: string };
+}
+
+export function claudeWorkerSourceHome(meta?: Pick<ClaudeWorkerMeta, "sourceHome">): string {
+    return meta?.sourceHome ?? env.paths.getClaudeConfigDir() ?? join(env.paths.getHome(), ".claude");
 }
 
 function isNonEmpty(value: unknown): value is string {

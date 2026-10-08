@@ -10,6 +10,7 @@ import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { accountPinRefusal } from "@genesiscz/utils/worker/capabilities";
 import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
+import { assertWorkerDeliveryTarget, type WorkerDeliveryExpectation } from "@genesiscz/utils/worker/delivery";
 import {
     DEFAULT_SURFACES,
     ensureGrokWorkerConfig,
@@ -83,6 +84,7 @@ export interface RunSessionOptions {
 }
 
 export interface SteerSessionOptions {
+    delivery?: WorkerDeliveryExpectation;
     name: string;
     prompt?: string;
     promptFile?: string;
@@ -503,8 +505,19 @@ export async function steerSession(options: SteerSessionOptions): Promise<TurnRe
         throw new Error(`Grok session not found: ${options.name}. Start one with '${toolCommand("grok run")}'.`);
     }
 
+    const checkDelivery = (current: GrokSessionMeta) =>
+        assertWorkerDeliveryTarget({
+            expected: options.delivery,
+            sessionId: current.sessionId,
+            sourceHome: current.workerHome,
+            turns: current.turns,
+            sessionExists: current.sessionStarted ?? (current.turns > 0 && current.lastTurn?.ended === true),
+            activeTurn: current.activeTurn,
+        });
+    checkDelivery(meta);
     const promptArguments = promptArgs(options);
     return runTurn(store, meta.name, (fresh) => {
+        checkDelivery(fresh);
         const readOnly = options.readOnly ?? fresh.readOnly;
         const previous = fresh.surfaces ?? DEFAULT_SURFACES;
         const surfaces = surfacesFromFlags(options.surfaces ?? {}, previous);
@@ -528,6 +541,8 @@ export function grokTurnReport(result: TurnResult): WorkerTurnReport {
     return {
         backend: "grok",
         name: result.meta.name,
+        sessionId: result.summary.sessionId,
+        sourceHome: result.meta.workerHome,
         turn: result.turn,
         ended: result.summary.ended,
         exitCode: result.exitCode,

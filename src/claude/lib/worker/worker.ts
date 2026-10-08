@@ -1,5 +1,5 @@
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { pinnedLaunchEnv } from "@app/claude/lib/launch-env";
 import { resolveClaudeBinaryForTeammates } from "@app/claude/lib/teammate-wrapper";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -8,9 +8,10 @@ import { logger } from "@genesiscz/utils/logger";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
+import { assertWorkerDeliveryTarget, type WorkerDeliveryExpectation } from "@genesiscz/utils/worker/delivery";
 import { isText, isTurnCompleted, isTurnFailed, type WorkerEvent } from "@genesiscz/utils/worker/events";
 import { workerMetaPath, workerTurnErrPath, workerTurnLogPath } from "./paths";
-import { type ClaudeWorkerMeta, ClaudeWorkerStore } from "./store";
+import { type ClaudeWorkerMeta, ClaudeWorkerStore, claudeWorkerSourceHome } from "./store";
 import { parseTurnEvents } from "./stream";
 
 const log = logger.child({ component: "claude:worker" });
@@ -35,6 +36,7 @@ export interface SteerWorkerOptions {
     name: string;
     account: PinnedAccount;
     prompt: string;
+    delivery?: WorkerDeliveryExpectation;
 }
 
 export interface ClaudeTurnResult {
@@ -44,6 +46,7 @@ export interface ClaudeTurnResult {
     /** The final assistant text of the turn, if any. */
     report: string;
     completed: boolean;
+    acknowledgedSessionId?: string;
     exitCode: number | null;
     stderr: string;
     logPath: string;
@@ -127,16 +130,28 @@ interface RunTurnOptions {
     account: PinnedAccount;
     prompt: string;
     safeMode?: boolean;
+    delivery?: WorkerDeliveryExpectation;
 }
 
 async function runTurn(options: RunTurnOptions): Promise<ClaudeTurnResult> {
     const { store, account, prompt, safeMode } = options;
+    const checkDelivery = (meta: ClaudeWorkerMeta) =>
+        assertWorkerDeliveryTarget({
+            expected: options.delivery,
+            sessionId: meta.sessionId,
+            sourceHome: claudeWorkerSourceHome(meta),
+            turns: meta.turns,
+            sessionExists: meta.turns > 0,
+            activeTurn: meta.activeTurn,
+        });
+    checkDelivery(options.meta);
 
     return withFileLock(`${workerMetaPath(options.meta.name)}.turn.lock`, async () => {
         const meta = store.readMeta(options.meta.name);
         if (!meta) {
             throw new Error(`Claude worker not found: ${options.meta.name}`);
         }
+        checkDelivery(meta);
         if (meta.activeTurn?.childPid && isProcessAlive(meta.activeTurn.childPid)) {
             throw new Error(
                 `Claude worker '${meta.name}' still has turn ${meta.activeTurn.turn} running (pid ${meta.activeTurn.childPid})`
@@ -187,6 +202,14 @@ async function runTurn(options: RunTurnOptions): Promise<ClaudeTurnResult> {
             ...env.getProcessEnv(),
             ...pinnedLaunchEnv({ name: account.name, label: account.label }, account.token),
         };
+        if (meta.sourceHome) {
+            if (meta.usesDefaultConfig) {
+                childEnv.HOME = dirname(meta.sourceHome);
+                delete childEnv.CLAUDE_CONFIG_DIR;
+            } else {
+                childEnv.CLAUDE_CONFIG_DIR = meta.sourceHome;
+            }
+        }
         delete childEnv.CLAUDECODE;
         delete childEnv.CLAUDE_CODE_SESSION_ID;
         delete childEnv.CLAUDE_CODE_ENTRYPOINT;
@@ -222,7 +245,9 @@ async function runTurn(options: RunTurnOptions): Promise<ClaudeTurnResult> {
         });
         log.info({ name: meta.name, turn, exitCode, completed, events: events.length }, "claude worker turn finished");
 
-        return { meta: updated, turn, events, report, completed, exitCode, stderr, logPath };
+        const acknowledgedSessionId =
+            parseTurnEvents(transcript, "").filter(isTurnCompleted).at(-1)?.sessionId || undefined;
+        return { meta: updated, turn, events, report, completed, acknowledgedSessionId, exitCode, stderr, logPath };
     });
 }
 
@@ -233,6 +258,8 @@ export async function spawnWorker(options: SpawnWorkerOptions): Promise<ClaudeTu
         sessionId: crypto.randomUUID(),
         account: options.account.name,
         cwd: resolve(options.cwd),
+        sourceHome: claudeWorkerSourceHome(),
+        usesDefaultConfig: env.paths.getClaudeConfigDir() === undefined,
         model: options.model,
         safeMode: options.safeMode || undefined,
         turns: 0,
@@ -258,5 +285,6 @@ export async function steerWorker(options: SteerWorkerOptions): Promise<ClaudeTu
         account: options.account,
         prompt: options.prompt,
         safeMode: meta.safeMode,
+        delivery: options.delivery,
     });
 }
