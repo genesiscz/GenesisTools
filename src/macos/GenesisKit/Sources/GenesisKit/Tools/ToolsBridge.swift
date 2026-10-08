@@ -218,6 +218,7 @@ public struct ToolsBridge: Sendable {
         subcommand: String,
         args: [String],
         timeoutSeconds: Int = 30,
+        cancellationGraceSeconds: TimeInterval = 0.5,
         turnId: String = "adhoc",
         callId: String = UUID().uuidString,
         extraEnv: [String: String] = [:]
@@ -291,12 +292,13 @@ public struct ToolsBridge: Sendable {
             try await finish(
                 process: process, stdout: stdout, stderr: stderr, exit: exit, started: started,
                 subcommand: subcommand, args: args, argv: argv, timeoutSeconds: timeoutSeconds,
+                cancellationGraceSeconds: cancellationGraceSeconds,
                 turnId: turnId, callId: callId, traceId: traceId
             )
         } onCancel: {
             stdout.stop(CancellationError())
             stderr.stop(CancellationError())
-            ToolsProcessExit.terminate(process)
+            ToolsProcessExit.terminate(process, graceSeconds: cancellationGraceSeconds)
         }
     }
 
@@ -310,6 +312,7 @@ public struct ToolsBridge: Sendable {
         args: [String],
         argv: [String],
         timeoutSeconds: Int,
+        cancellationGraceSeconds: TimeInterval,
         turnId: String,
         callId: String,
         traceId: String
@@ -323,7 +326,7 @@ public struct ToolsBridge: Sendable {
             let error = ToolsBridgeError.timeout(seconds: timeoutSeconds)
             outReader.stop(error)
             errReader.stop(error)
-            ToolsProcessExit.terminate(process)
+            ToolsProcessExit.terminate(process, graceSeconds: cancellationGraceSeconds)
         }
         defer { watchdog.cancel() }
 
@@ -441,10 +444,11 @@ private final class ToolsProcessExit: @unchecked Sendable {
         }
     }
 
-    static func terminate(_ process: Process) {
+    static func terminate(_ process: Process, graceSeconds: TimeInterval) {
         guard process.isRunning else { return }
         process.terminate()
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
+        let grace = graceSeconds.isFinite ? min(10, max(0.5, graceSeconds)) : 0.5
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + grace) {
             if process.isRunning { kill(process.processIdentifier, SIGKILL) }
         }
     }

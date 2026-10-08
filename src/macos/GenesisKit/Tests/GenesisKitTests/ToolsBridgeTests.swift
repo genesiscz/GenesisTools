@@ -266,6 +266,29 @@ final class ToolsBridgeTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 1.5)
     }
 
+    func testExtendedCancellationGraceAwaitsTheChildCleanup() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("bug-to-test-native-cancel-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let ready = folder.appendingPathComponent("ready")
+        let settled = folder.appendingPathComponent("settled")
+        let task = Task {
+            try await ToolsBridge(binaryPath: "/bin/sh").run(subcommand: "-c", args: [
+                "trap '/bin/sleep 0.8; touch \"\(settled.path)\"; exit 0' TERM; touch \"\(ready.path)\"; while :; do /bin/sleep 0.1; done"
+            ], timeoutSeconds: 10, cancellationGraceSeconds: 2)
+        }
+        let deadline = Date().addingTimeInterval(3)
+        while !FileManager.default.fileExists(atPath: ready.path) && Date() < deadline {
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: ready.path))
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("expected cancellation")
+        } catch is CancellationError {}
+        XCTAssertTrue(FileManager.default.fileExists(atPath: settled.path), "CLI cleanup must finish before native cancellation settles")
+    }
+
     func testTimeoutKillsProcess() async {
         let bridge = ToolsBridge(binaryPath: "/bin/sleep")
         do {
