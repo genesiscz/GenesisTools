@@ -3,7 +3,7 @@ import { mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { readDecisions, updateDecision } from "@app/question/lib/decisions/store";
-import { getStoredEntryById, markEntriesRead, openReadModel } from "@app/question/lib/read-model";
+import { getEntryById, markEntriesRead, openReadModel } from "@app/question/lib/read-model";
 import { logger } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -210,7 +210,7 @@ export async function performWidgetAction({
             if (request.kind === "answer") {
                 const db = openReadModel(toolDataDir("question", "qa.db"));
                 try {
-                    const row = getStoredEntryById(db, sourceId);
+                    const row = getEntryById(db, sourceId);
                     const provider = row?.agent === "claude-code" ? "claude" : row?.agent;
                     if (!row || (row.sessionId || row.id) !== target.sessionId || provider !== target.provider) {
                         throw new Error("The answer belongs to a different session.");
