@@ -84,3 +84,22 @@
 For stroke geometry, native animation scheduling, callback-versus-display timing, trace privacy and
 proof that a screenshot came from the new build, see [animation-verification.md](animation-verification.md).
 Keep measured findings separate from hypotheses; faster CPU numbers alone do not prove visual parity.
+
+## Shared data and file events — 2026-10-08 08:40
+
+- FSEvents may report `/private/var/...` or `/private/tmp/...` while Foundation's resolved URL
+  uses `/var/...` or `/tmp/...`. Normalize known aliases consistently before exact-path filters;
+  preserve near-miss prefixes. A real atomic-file-write test exposed dropped events in the
+  Tasks/Shelf watcher even though an unfiltered probe saw them. Use string normalization for
+  those known aliases rather than doing filesystem work for every delivered event.
+- Synthesized memberwise Swift initializers remain internal even when a struct's fields and
+  type are public. A port into GenesisKit must expose explicit initializers used by its host.
+  Build the host as well as the package before claiming the extraction is usable.
+- A Swift6.3.3 compiler crash was reproduced when synthesized Encodable code used private
+  CodingKeys declared in an extension in another file (LLVM reported an external global).
+  Module-internal CodingKeys avoided that crash in this fixture. Treat this as a measured
+  compiler workaround, not a language rule; preserve decoder validation and test old files.
+- Replacing per-session queries with a grouped read can save substantial work, but retain
+  interval semantics. The Studio fixture fell from64 to4 prepared statements for30sessions
+  and90segments by sharing grouped segments and a cumulative input index; boundary tests
+  still require inclusive starts and exclusive ends, plus whole-session picker data.
