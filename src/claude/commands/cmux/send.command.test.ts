@@ -36,7 +36,7 @@ mock.module("@genesiscz/utils/cmux/lib/cli", () => ({
     },
 }));
 
-const { deliverySurfaceId, sendCommand } = await import("./send");
+const { deliverySurfaceId, sendCommand, sendWithin } = await import("./send");
 
 function surface(overrides: Partial<CmuxLiveSurface> & Pick<CmuxLiveSurface, "id">): CmuxLiveSurface {
     return { title: "zsh", type: "terminal", index: 0, selected: false, active: false, ...overrides };
@@ -130,6 +130,16 @@ test("sends text then Enter to the pane whose tab carries the session marker", a
     expect(events.indexOf("send --surface surface:41 -- Just poking")).toBeLessThan(
         events.indexOf("send-key --surface surface:41 enter")
     );
+});
+
+test("--timeout ends a send whose lookup never answers, and rejects a bad value", async () => {
+    const stuck = { ...deps, fetchSnapshot: () => new Promise<CmuxLiveSnapshot>(() => {}) };
+    const started = Date.now();
+
+    expect(await sendWithin("abcd1234", "hi", { first: true, timeout: "0.05" }, stuck)).toBe("timeout");
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(events.filter((event) => event.startsWith("send"))).toEqual([]);
+    await expect(sendWithin("abcd1234", "hi", { timeout: "soon" }, deps)).rejects.toThrow("--timeout must be");
 });
 
 test("--no-enter sends the text only", async () => {

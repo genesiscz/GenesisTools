@@ -3,9 +3,9 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { registerSessionCommand, runSessionNew } from "../commands/session";
+import { agentRunCommand, pickSessionAccount, sessionAgent, withPidNote } from "./session-agents";
 import {
     assertShellExecutable,
-    claudeRunCommand,
     devTmuxSessionName,
     parseFocusFlag,
     resolveSessionRepo,
@@ -16,6 +16,7 @@ import {
     tmuxEnterArgv,
     tmuxLiteralSendArgv,
 } from "./session-new";
+import type { SessionRecordLine, SessionStore } from "./session-store";
 
 const HOME = "/work";
 const PROJECTS = "/work/Tresors/Projects";
@@ -60,6 +61,10 @@ function harness(overrides: Partial<SessionNewIO> = {}): { io: SessionNewIO; cal
         },
         repoFs: repoFs(),
         nonce: () => "ab12cd",
+        ensureTitle: async ({ workspace, window, title }) => {
+            calls.push(["title", workspace, window, title]);
+            return "already-set";
+        },
         ...overrides,
     };
 
@@ -72,14 +77,46 @@ afterEach(() => {
     process.exitCode = 0;
 });
 
-test("claude run line quotes the account and the prompt, and omits -- when there is no prompt", () => {
-    expect(claudeRunCommand({ account: "work", prompt: "fix it" })).toBe(CLAUDE);
-    expect(claudeRunCommand({ account: "work" })).toBe("'tools' 'claude' 'run' 'work'");
-    expect(claudeRunCommand({ account: "work", promptFile: "/tmp/my prompt.md" })).toBe(
+test("the run line quotes the account and the prompt, and omits -- when there is no prompt", () => {
+    expect(agentRunCommand({ agent: "claude", account: "work", prompt: "fix it" })).toBe(CLAUDE);
+    expect(agentRunCommand({ agent: "claude", account: "work" })).toBe("'tools' 'claude' 'run' 'work'");
+    expect(agentRunCommand({ agent: "claude", account: "work", promptFile: "/tmp/my prompt.md" })).toBe(
         `'tools' 'claude' 'run' 'work' '--' "$(cat '/tmp/my prompt.md')"`
     );
-    expect(() => claudeRunCommand({ account: "work", prompt: "go", promptFile: "/tmp/p.md" })).toThrow(
+    expect(() => agentRunCommand({ agent: "claude", account: "work", prompt: "go", promptFile: "/tmp/p.md" })).toThrow(
         "only one of --prompt"
+    );
+    expect(agentRunCommand({ agent: "codex", account: "side", model: "gpt-5", prompt: "go" })).toBe(
+        "'tools' 'codex' 'run' 'side' '-m' 'gpt-5' '--' 'go'"
+    );
+    expect(agentRunCommand({ agent: "grok", account: "side" })).toBe("'tools' 'grok' 'run' 'side'");
+    expect(() => agentRunCommand({ agent: "grok", account: "side", prompt: "x".repeat(9000) })).toThrow(
+        "--prompt-file"
+    );
+    expect(withPidNote("'tools' 'grok' 'run' 'side'", "/tmp/s.pid")).toBe(
+        "printf '%s' $$ > '/tmp/s.pid'; 'tools' 'grok' 'run' 'side'"
+    );
+});
+
+test("the session account is the one asked for, else the app default, else the only one", () => {
+    const account = (id: string, name: string, provider: string, enabled = true) => ({ id, name, provider, enabled });
+    const accounts = [
+        account("acc_work", "work", "anthropic-sub"),
+        account("acc_shop", "shop", "anthropic-sub"),
+        account("acc_side", "side", "grok-sub"),
+        account("acc_off", "off", "grok-sub", false),
+    ];
+    const claude = sessionAgent("claude");
+    const grok = sessionAgent("grok");
+
+    expect(pickSessionAccount({ agent: claude, accounts, requested: "sho" }).name).toBe("shop");
+    expect(pickSessionAccount({ agent: claude, accounts, appDefaultModel: "@account/acc_work:sonnet" }).name).toBe(
+        "work"
+    );
+    expect(pickSessionAccount({ agent: grok, accounts }).name).toBe("side");
+    expect(() => pickSessionAccount({ agent: claude, accounts })).toThrow("pass --account");
+    expect(() => pickSessionAccount({ agent: grok, accounts, requested: "work" })).toThrow(
+        'no grok account matches "work"'
     );
 });
 
@@ -146,11 +183,12 @@ test("tmux attach quotes the session, and a command line is not a shell path", (
 test("the focused window is passed even when the caller is outside cmux, and focus stays off", async () => {
     const { io, calls } = harness();
     const result = await startDevSession(
-        { repo: "demo", account: "work", prompt: "fix it", home: HOME, cwd: "/elsewhere" },
+        { agent: "claude", repo: "demo", account: "work", prompt: "fix it", home: HOME, cwd: "/elsewhere" },
         io
     );
 
     expect(result).toEqual({
+        agent: "claude",
         workspace: "workspace:9",
         surface: "surface:8",
         window: "window:1",
@@ -169,7 +207,7 @@ test("a missing focused window uses an existing one, and creates a window only w
         listWindows: async () => [{ ref: "window:4", id: "already", visible: true }],
     });
     await startDevSession(
-        { repo: "demo", account: "work", prompt: "fix it", home: HOME, cwd: "/elsewhere" },
+        { agent: "claude", repo: "demo", account: "work", prompt: "fix it", home: HOME, cwd: "/elsewhere" },
         existing.io
     );
     expect(existing.calls.some((call) => call.includes("new-window"))).toBe(false);
@@ -183,42 +221,49 @@ test("a missing focused window uses an existing one, and creates a window only w
             return listed === 1 ? [] : [{ ref: "window:5", id: "new", visible: true }];
         },
     });
-    await startDevSession({ repo: "demo", account: "work", home: HOME, cwd: "/elsewhere" }, created.io);
+    await startDevSession(
+        { agent: "claude", repo: "demo", account: "work", home: HOME, cwd: "/elsewhere" },
+        created.io
+    );
     expect(created.calls).toContainEqual(["ok", "new-window"]);
     expect(created.calls.find((call) => call[0] === "workspace")).toContain("window:5");
     expect(created.calls.find((call) => call[0] === "workspace")).toContain("'tools' 'claude' 'run' 'work'");
 });
 
-test("--name is renamed after create, and a failed rename still returns the workspace", async () => {
+test("--name goes to create, then the title is checked once, with no legacy rename", async () => {
     const { io, calls } = harness();
     const result = await startDevSession(
-        { repo: "demo", account: "work", prompt: "fix it", name: "Ship", home: HOME, cwd: "/elsewhere" },
+        {
+            agent: "claude",
+            repo: "demo",
+            account: "work",
+            prompt: "fix it",
+            name: "Ship",
+            home: HOME,
+            cwd: "/elsewhere",
+        },
         io
     );
 
     expect(result.workspace).toBe("workspace:9");
     expect(calls[0]).toContain("--name");
     expect(calls[0]).toContain("Ship");
-    expect(calls[1]).toEqual(["ok", "rename-workspace", "--workspace", "workspace:9", "Ship"]);
-
-    const failed = harness({
-        runOk: async (args) => {
-            if (args[0] === "rename-workspace") {
-                throw new Error("rename rejected");
-            }
-        },
-    });
-    const kept = await startDevSession(
-        { repo: "demo", account: "work", name: "Ship", home: HOME, cwd: "/elsewhere" },
-        failed.io
-    );
-    expect(kept.workspace).toBe("workspace:9");
+    expect(calls[1]).toEqual(["title", "workspace:9", "window:1", "Ship"]);
+    expect(calls.some((call) => call.includes("rename-workspace"))).toBe(false);
 });
 
 test("--via-tmux starts a login shell, send-keys the claude line, and attaches", async () => {
     const { io, calls } = harness();
     const result = await startDevSession(
-        { repo: "demo", account: "work", prompt: "fix it", viaTmux: true, home: HOME, cwd: "/elsewhere" },
+        {
+            agent: "claude",
+            repo: "demo",
+            account: "work",
+            prompt: "fix it",
+            viaTmux: true,
+            home: HOME,
+            cwd: "/elsewhere",
+        },
         io
     );
 
@@ -295,7 +340,15 @@ test("a workspace created without --via-tmux kills nothing when cmux fails", asy
 test("--focus true is forwarded, and a workspace with no surface is an error", async () => {
     const focused = harness();
     await startDevSession(
-        { repo: "/repo/app", account: "work", prompt: "fix it", focus: true, home: HOME, cwd: "/elsewhere" },
+        {
+            agent: "claude",
+            repo: "/repo/app",
+            account: "work",
+            prompt: "fix it",
+            focus: true,
+            home: HOME,
+            cwd: "/elsewhere",
+        },
         focused.io
     );
     expect(focused.calls[0]).toContain("true");
@@ -304,30 +357,80 @@ test("--focus true is forwarded, and a workspace with no surface is an error", a
         runJSON: async <T>(): Promise<T> => ({ workspace_ref: "workspace:9", window_ref: "window:1" }) as T,
     });
     await expect(
-        startDevSession({ repo: "demo", account: "work", home: HOME, cwd: "/elsewhere" }, blind.io)
+        startDevSession({ agent: "claude", repo: "demo", account: "work", home: HOME, cwd: "/elsewhere" }, blind.io)
     ).rejects.toThrow("no workspace or surface");
 });
 
-test("session new prints the result JSON and rejects a bad focus before touching cmux", async () => {
+function memoryStore(): SessionStore & { lines: SessionRecordLine[] } {
+    const lines: SessionRecordLine[] = [];
+    return {
+        lines,
+        read: () => [...lines],
+        append: (line) => {
+            lines.push(line);
+        },
+        pidFile: (name) => `/state/sessions/${name}.pid`,
+    };
+}
+
+const ACCOUNTS = async () => ({
+    accounts: [
+        { id: "acc_work", name: "work", provider: "anthropic-sub", enabled: true },
+        { id: "acc_side", name: "side", provider: "openai-sub", enabled: true },
+    ],
+});
+
+test("session agent new prints the result JSON, records the session, and rejects a bad focus first", async () => {
     const { io, calls } = harness();
+    const store = memoryStore();
+    const deps = { io, store, accounts: ACCOUNTS };
     const stdout = await captureStdout(() =>
-        runSessionNew({ repo: "/repo/app", account: "work", prompt: "fix it", json: true, focus: "false" }, io)
+        runSessionNew(
+            "claude",
+            { repo: "/repo/app", account: "work", prompt: "fix it", json: true, focus: "false" },
+            deps
+        )
     );
     const parsed = SafeJSON.parse(stdout, { strict: true });
 
     expect(parsed).toMatchObject({
+        name: "claude-app-ab12cd",
+        agent: "claude",
+        account: "work",
         workspace: "workspace:9",
         surface: "surface:8",
         window: "window:1",
         tmuxSession: null,
         cwd: "/repo/app",
-        command: CLAUDE,
+        command: withPidNote(CLAUDE, "/state/sessions/claude-app-ab12cd.pid"),
     });
+    expect(store.lines).toEqual([
+        expect.objectContaining({ type: "created", name: "claude-app-ab12cd", workspace: "workspace:9" }),
+    ]);
+
+    await expect(runSessionNew("grok", { repo: "/repo/app" }, deps)).rejects.toThrow(
+        "no default grok account; pass --account <name> (known: none)"
+    );
 
     process.exitCode = 0;
-    await runSessionNew({ repo: "/repo/app", account: "work", focus: "maybe" }, io);
+    await runSessionNew("claude", { repo: "/repo/app", account: "work", focus: "maybe" }, deps);
     expect(process.exitCode).toBe(1);
     expect(calls.filter((call) => call[0] === "workspace")).toHaveLength(1);
+});
+
+test("a codex session runs tools codex run with its only account, and a taken name is refused", async () => {
+    const { io, calls } = harness();
+    const store = memoryStore();
+    const deps = { io, store, accounts: ACCOUNTS };
+
+    await captureStdout(() => runSessionNew("codex", { repo: "/repo/app", name: "Fix It", prompt: "go" }, deps));
+    expect(calls.find((call) => call[0] === "workspace")).toContain(
+        withPidNote("'tools' 'codex' 'run' 'side' '--' 'go'", "/state/sessions/fix-it.pid")
+    );
+
+    await expect(runSessionNew("codex", { repo: "/repo/app", name: "fix it" }, deps)).rejects.toThrow(
+        'a session named "fix-it" is already open'
+    );
 });
 
 test("session new advertises repo, account, prompt, tmux, focus, and json", async () => {

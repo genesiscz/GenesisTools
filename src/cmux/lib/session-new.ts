@@ -2,17 +2,21 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
-import { buildRenameWorkspaceArgs } from "@genesiscz/utils/cmux/lib/controls";
+
 import { windowList } from "@genesiscz/utils/cmux/lib/socket";
 import { focusedPlace } from "@genesiscz/utils/cmux/open-command";
-import { buildWorkspaceCreateArgs } from "@genesiscz/utils/cmux/workspace";
+import {
+    buildWorkspaceCreateArgs,
+    ensureWorkspaceTitle,
+    type WorkspaceTitleOutcome,
+} from "@genesiscz/utils/cmux/workspace";
 import { env } from "@genesiscz/utils/env";
 import { levenshteinDistance } from "@genesiscz/utils/fuzzy-match";
 import { logger } from "@genesiscz/utils/logger";
-import { shellCommandLine, shellQuote } from "@genesiscz/utils/shell/quote";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import { createTmuxSession, killTmuxSession } from "@genesiscz/utils/tmux/sessions";
-import { buildCmuxCommand } from "./launchers/claudeLauncher";
+import { agentRunCommand, type SessionAgentId, withPidNote } from "./session-agents";
 
 const { log } = logger.scoped("cmux-session");
 
@@ -20,6 +24,7 @@ const { log } = logger.scoped("cmux-session");
 const TMUX_ENTER_DELAY_MS = 100;
 
 export interface SessionNewResult {
+    agent: SessionAgentId;
     workspace: string;
     surface: string;
     window: string;
@@ -29,10 +34,16 @@ export interface SessionNewResult {
 }
 
 export interface SessionNewRequest {
+    agent: SessionAgentId;
     repo: string;
     account: string;
+    model?: string;
+    /** The shell that runs the agent writes its pid here, for `close`. */
+    pidFile?: string;
     prompt?: string;
     promptFile?: string;
+    /** Claude: accept cross-session messages without approval (on by default from `agents new`). */
+    crossMessages?: boolean;
     name?: string;
     viaTmux?: boolean;
     focus?: boolean;
@@ -57,6 +68,7 @@ export interface SessionNewIO {
     killTmuxSession(session: string): Promise<void>;
     repoFs: RepoFs;
     nonce(): string;
+    ensureTitle(input: { workspace: string; window: string; title: string }): Promise<WorkspaceTitleOutcome>;
 }
 
 interface WorkspaceCreated {
@@ -183,34 +195,6 @@ export function resolveSessionRepo(repo: string, home: string, cwd: string, fs: 
     return absolute;
 }
 
-/** The shell line `cmux` types into the new workspace: `tools claude run`, not the `cr` alias. */
-export function claudeRunCommand(input: { account: string; prompt?: string; promptFile?: string }): string {
-    const account = input.account.trim();
-
-    if (!account) {
-        throw new Error("account is required");
-    }
-
-    if (input.prompt && input.promptFile) {
-        throw new Error("pass only one of --prompt and --prompt-file");
-    }
-
-    if (input.promptFile) {
-        return buildCmuxCommand({
-            account,
-            prompt: "",
-            enforceCap: false,
-            promptFile: input.promptFile,
-        });
-    }
-
-    if (input.prompt) {
-        return buildCmuxCommand({ account, prompt: input.prompt });
-    }
-
-    return shellCommandLine(["tools", "claude", "run", account]);
-}
-
 export function tmuxAttachCommand(session: string): string {
     return `tmux attach -t ${shellQuote(session)}`;
 }
@@ -284,14 +268,18 @@ export async function resolveSessionWindow(
 
 export async function startDevSession(input: SessionNewRequest, io: SessionNewIO): Promise<SessionNewResult> {
     const cwd = resolveSessionRepo(input.repo, input.home, input.cwd, io.repoFs);
-    const claude = claudeRunCommand({
+    const run = agentRunCommand({
+        agent: input.agent,
         account: input.account,
+        model: input.model,
         prompt: input.prompt,
         promptFile: input.promptFile,
+        crossMessages: input.crossMessages,
     });
+    const agentLine = input.pidFile ? withPidNote(run, input.pidFile) : run;
     const windowRef = await resolveSessionWindow(io);
     let tmuxSession: string | null = null;
-    let command = claude;
+    let command = agentLine;
     const name = input.name?.trim() || undefined;
     let workspace: string;
     let surface: string;
@@ -304,7 +292,7 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
             await io.createTmuxShell(session, cwd, shell);
             // Owned from here on: any later failure must kill it.
             tmuxSession = session;
-            await io.sendTmuxKeys(session, claude);
+            await io.sendTmuxKeys(session, agentLine);
             command = tmuxAttachCommand(session);
         }
 
@@ -325,7 +313,7 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
             throw new Error("cmux created a workspace but returned no workspace or surface ref");
         }
     } catch (error) {
-        // The detached tmux session may already run Claude on the prompt; nobody would ever attach to it.
+        // The detached tmux session may already run the agent on the prompt; nobody would ever attach to it.
         if (tmuxSession) {
             await io.killTmuxSession(tmuxSession).catch((killError: unknown) => {
                 log.warn({ error: killError, tmuxSession }, "could not kill the tmux session after cmux failed");
@@ -336,14 +324,10 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
     }
 
     if (name) {
-        try {
-            await io.runOk(buildRenameWorkspaceArgs(workspace, name));
-        } catch (error) {
-            log.warn({ error, workspace, name }, "rename-workspace failed after create");
-        }
+        await io.ensureTitle({ workspace, window, title: name });
     }
 
-    return { workspace, surface, window, tmuxSession, cwd, command };
+    return { agent: input.agent, workspace, surface, window, tmuxSession, cwd, command };
 }
 
 async function spawnTmux(argv: string[]): Promise<void> {
@@ -425,5 +409,6 @@ export function liveSessionIO(): SessionNewIO {
         killTmuxSession: (session) => killTmuxSession(session),
         repoFs: liveRepoFs(),
         nonce: () => randomBytes(3).toString("hex"),
+        ensureTitle: (input) => ensureWorkspaceTitle(input),
     };
 }

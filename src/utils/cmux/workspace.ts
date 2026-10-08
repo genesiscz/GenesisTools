@@ -1,5 +1,5 @@
 import { findWorkspaceByName } from "@genesiscz/utils/cmux/layout";
-import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { type CmuxRunResult, runCmux, runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
 import {
     type PaneListResponse,
@@ -8,6 +8,7 @@ import {
     type WorkspaceCreateResult,
     workspaceCreate,
 } from "@genesiscz/utils/cmux/lib/socket";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { localeExportPrefix } from "@genesiscz/utils/terminal/locale";
@@ -62,17 +63,72 @@ export async function createWorkspaceWithName(opts: {
     const created = await workspaceCreate(opts);
 
     if (opts.name) {
-        try {
-            await runCmuxOk(["rename-workspace", "--workspace", created.workspace_ref, opts.name]);
-        } catch (error) {
-            logger.warn(
-                { error, workspaceRef: created.workspace_ref, name: opts.name },
-                "rename-workspace failed after create"
-            );
-        }
+        await ensureWorkspaceTitle({ workspace: created.workspace_ref, window: opts.window, title: opts.name });
     }
 
     return created;
+}
+
+export type WorkspaceTitleOutcome = "already-set" | "renamed" | "failed";
+
+function listedTitle(listing: unknown, workspaceRef: string): string | undefined {
+    if (typeof listing !== "object" || listing === null || !("workspaces" in listing)) {
+        return undefined;
+    }
+
+    const { workspaces } = listing;
+
+    if (!Array.isArray(workspaces)) {
+        return undefined;
+    }
+
+    for (const workspace of workspaces) {
+        if (typeof workspace === "object" && workspace !== null && workspace.ref === workspaceRef) {
+            return typeof workspace.title === "string" ? workspace.title : undefined;
+        }
+    }
+
+    return undefined;
+}
+
+/**
+ * Make sure a workspace carries `title`, without noise.
+ *
+ * `workspace create --name` already sets the title, so the usual answer is "already-set" and no rename
+ * runs. The legacy `rename-workspace --workspace <ref>` right after a create failed with "Workspace ref
+ * not found" (a second identical call worked), and `runCmuxOk` logged every such failure at ERROR with
+ * a stack. Probed 2026-10-08: the noun form `workspace rename <ref> --title` succeeds at once. A failure
+ * here is cosmetic, so it is logged at debug and reported, never thrown.
+ */
+export async function ensureWorkspaceTitle(
+    input: { workspace: string; window?: string; title: string },
+    run: (args: string[], opts?: { json?: boolean }) => Promise<CmuxRunResult> = runCmux
+): Promise<WorkspaceTitleOutcome> {
+    const listArgs = ["workspace", "list", ...(input.window ? ["--window", input.window] : [])];
+    const listed = await run(listArgs, { json: true });
+
+    if (listed.code === 0) {
+        try {
+            if (listedTitle(SafeJSON.parse(listed.stdout, { strict: true }), input.workspace) === input.title) {
+                logger.debug({ workspace: input.workspace, title: input.title }, "[cmux] workspace title already set");
+                return "already-set";
+            }
+        } catch (error) {
+            logger.debug({ error, workspace: input.workspace }, "[cmux] workspace list was not JSON; renaming");
+        }
+    }
+
+    const renamed = await run(["workspace", "rename", input.workspace, "--title", input.title]);
+
+    if (renamed.code === 0) {
+        return "renamed";
+    }
+
+    logger.debug(
+        { workspace: input.workspace, title: input.title, code: renamed.code, stderr: renamed.stderr.trim() },
+        "[cmux] workspace rename failed; the title stays as cmux set it"
+    );
+    return "failed";
 }
 
 export async function ensureWorkspaceByName(name: string, cwd?: string): Promise<string> {

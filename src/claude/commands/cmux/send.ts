@@ -16,6 +16,71 @@ export interface SendOptions {
     enterDelay?: string;
     dryRun?: boolean;
     json?: boolean;
+    /** Seconds. The whole send (lookup, text, Enter) must finish within it. */
+    timeout?: string;
+}
+
+/** Exit status of a send that ran past `--timeout`; 124 is what coreutils `timeout` uses. */
+export const SEND_TIMEOUT_EXIT = 124;
+
+/**
+ * `sendCommand` bounded by `--timeout`. Without it, a cmux socket that stops answering, or a lookup that
+ * captures slow panes, holds a bot that drives panes for as long as it likes. On expiry the answer is
+ * "timeout"; the text may already be typed with Enter still owed, so the door says to look at the pane.
+ */
+export async function sendWithin(
+    query: string,
+    text: string,
+    opts: SendOptions,
+    deps: SendCommandDeps = {}
+): Promise<boolean | "timeout"> {
+    if (opts.timeout === undefined) {
+        return sendCommand(query, text, opts, deps);
+    }
+
+    const seconds = Number(opts.timeout);
+
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+        throw new Error(`--timeout must be a positive number of seconds (got ${opts.timeout})`);
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<"timeout">((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), seconds * 1000);
+    });
+
+    try {
+        return await Promise.race([sendCommand(query, text, opts, deps), expired]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/** The `send` door shared by `tools claude cmux send` and `tools <agent> cmux send`. */
+export async function sendDoor(
+    query: string,
+    text: string,
+    opts: SendOptions,
+    deps: SendCommandDeps = {}
+): Promise<void> {
+    const outcome = await sendWithin(query, text, opts, deps);
+
+    if (outcome !== "timeout") {
+        return;
+    }
+
+    if (opts.json) {
+        out.result({ sent: false, reason: "timeout", query, timeoutSeconds: Number(opts.timeout) });
+    }
+
+    out.error(
+        pc.red(
+            `send to "${query}" did not finish within ${opts.timeout} s. The text may be typed without Enter; check the pane.`
+        )
+    );
+    await out.flush();
+    // The send still runs in the background and would keep the process alive past the deadline.
+    process.exit(SEND_TIMEOUT_EXIT);
 }
 
 export type SendCommandDeps = ResolveDeps;

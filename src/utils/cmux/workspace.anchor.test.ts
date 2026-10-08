@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import type { CmuxRunResult } from "@genesiscz/utils/cmux/lib/cli";
 import type { PaneListPane, PaneListResponse } from "@genesiscz/utils/cmux/lib/socket";
-import { anchorFromLayout } from "@genesiscz/utils/cmux/workspace";
+import { anchorFromLayout, ensureWorkspaceTitle } from "@genesiscz/utils/cmux/workspace";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 function pane(overrides: Partial<PaneListPane> = {}): PaneListPane {
     return {
@@ -66,5 +68,50 @@ describe("anchorFromLayout", () => {
 
     test("throws when the workspace has no panes", () => {
         expect(() => anchorFromLayout("workspace:13", layout({ panes: [] }))).toThrow(/no panes/);
+    });
+});
+
+describe("ensureWorkspaceTitle", () => {
+    function runner(
+        title: string,
+        renameCode = 0
+    ): { calls: string[][]; run: (args: string[]) => Promise<CmuxRunResult> } {
+        const calls: string[][] = [];
+        return {
+            calls,
+            run: async (args) => {
+                calls.push(args);
+
+                if (args[1] === "list") {
+                    return {
+                        code: 0,
+                        stdout: SafeJSON.stringify({ workspaces: [{ ref: "workspace:9", title }] }),
+                        stderr: "",
+                    };
+                }
+
+                return { code: renameCode, stdout: "", stderr: renameCode ? "Workspace ref not found" : "" };
+            },
+        };
+    }
+
+    test("a title create already set runs no rename", async () => {
+        const fake = runner("Ship");
+        const outcome = await ensureWorkspaceTitle(
+            { workspace: "workspace:9", window: "window:1", title: "Ship" },
+            fake.run
+        );
+
+        expect(outcome).toBe("already-set");
+        expect(fake.calls).toEqual([["workspace", "list", "--window", "window:1"]]);
+    });
+
+    test("a different title is renamed with the noun form, and a failed rename is reported, not thrown", async () => {
+        const fake = runner("zsh");
+        expect(await ensureWorkspaceTitle({ workspace: "workspace:9", title: "Ship" }, fake.run)).toBe("renamed");
+        expect(fake.calls[1]).toEqual(["workspace", "rename", "workspace:9", "--title", "Ship"]);
+
+        const failing = runner("zsh", 1);
+        expect(await ensureWorkspaceTitle({ workspace: "workspace:9", title: "Ship" }, failing.run)).toBe("failed");
     });
 });

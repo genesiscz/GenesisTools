@@ -249,6 +249,8 @@ export const env = {
         isRoot: () => getRaw("USER") === "root",
         getTermProgram: () => getTrimmed("TERM_PROGRAM"),
         getCmuxBundleId: () => getTrimmed("CMUX_BUNDLE_ID"),
+        /** The cmux workspace this process started in. Frozen at start: a moved surface keeps the old id. */
+        getCmuxWorkspaceId: () => getTrimmed("CMUX_WORKSPACE_ID"),
         /** Bundle id of the .app that launched this process tree (macOS sets it); the TCC client for CLI children. */
         getHostBundleIdentifier: () => getTrimmed("__CFBundleIdentifier"),
         getDarwinKitTimeoutMs: () => parseIntEnv("DARWINKIT_TIMEOUT_MS", 0),
