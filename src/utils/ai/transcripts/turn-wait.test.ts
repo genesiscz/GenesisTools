@@ -8,7 +8,7 @@ import type { TurnSnapshot } from "./turn-state";
 import { codexTurnState, grokTurnState, readTurnState } from "./turn-state";
 import { looksLikeQuestion, questionOf, TRANSCRIPT_GONE_MS, waitForTurn, watchTurn } from "./turn-wait";
 
-function snap(state: ActivityState, lastEventAt: number | null): TurnSnapshot {
+function snap(state: ActivityState, lastEventAt: number | null, turnStartedAt: number | null = null): TurnSnapshot {
     return {
         state,
         lastText: `text@${lastEventAt}`,
@@ -16,6 +16,7 @@ function snap(state: ActivityState, lastEventAt: number | null): TurnSnapshot {
         question: null,
         interrupted: false,
         lastEventAt,
+        turnStartedAt,
         lastActivityAt: 0,
         silenceMs: 0,
     };
@@ -122,6 +123,38 @@ describe("waitForTurn", () => {
 
         expect(result.outcome).toBe("done");
         expect(result.snapshot?.lastEventAt).toBe(180);
+    });
+
+    it("with turnStartedAfter, the end of the turn that was already running is not the answer", async () => {
+        const reader = script(
+            snap("RUNNING", 90, 50),
+            snap("AWAITING-INPUT", 100, 50),
+            snap("RUNNING", 130, 120),
+            snap("AWAITING-INPUT", 180, 120)
+        );
+        const result = await waitForTurn({
+            read: reader.read,
+            next: true,
+            turnStartedAfter: 110,
+            pollMs: 1000,
+            ...clock(),
+        });
+
+        expect(result.outcome).toBe("done");
+        expect(result.snapshot?.lastEventAt).toBe(180);
+    });
+
+    it("with turnStartedAfter, a turn whose start is outside the tail still counts", async () => {
+        const reader = script(snap("RUNNING", 90, null), snap("AWAITING-INPUT", 100, null));
+        const result = await waitForTurn({
+            read: reader.read,
+            next: true,
+            turnStartedAfter: 110,
+            pollMs: 1000,
+            ...clock(),
+        });
+
+        expect(result.outcome).toBe("done");
     });
 
     it("with next, a turn that ends in the baseline's second still counts once it was seen running", async () => {
@@ -253,6 +286,13 @@ describe("questions asked while the turn keeps running", () => {
         expect(
             grokTurnState(input([ask, update("tool_call_update", { toolCallId: "t1", status: "completed" })]))
                 .asksQuestion
+        ).toBe(false);
+        // A progress update is not an answer: the question stays open.
+        expect(
+            grokTurnState(input([ask, update("tool_call_update", { toolCallId: "t1", status: "in_progress" })]))
+        ).toMatchObject({ state: "AWAITING-INPUT", asksQuestion: true, question: "Keep the old API?" });
+        expect(
+            grokTurnState(input([ask, update("tool_call_update", { toolCallId: "t1", status: "failed" })])).asksQuestion
         ).toBe(false);
 
         const wording = update("agent_message_chunk", { content: { type: "text", text: "Shall I do B? ❓" } });

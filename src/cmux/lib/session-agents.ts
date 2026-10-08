@@ -1,5 +1,6 @@
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
+import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { shellCommandLine, shellQuote } from "@genesiscz/utils/shell/quote";
 
 /** The agents `tools cmux agents new` can start. Each one has a `tools <id> run` door with the same shape. */
@@ -59,8 +60,9 @@ export function agentRunCommand(input: {
         throw new Error(`prompt is over ${PROMPT_CAP} bytes; pass it with --prompt-file instead`);
     }
 
+    // This checkout's entrypoint, never a bare `tools`: in a worktree that resolves off $PATH to the main checkout.
     const argv = [
-        "tools",
+        toolsEntrypoint(),
         input.agent,
         "run",
         account,

@@ -6,6 +6,14 @@ import { namedBunExecPath } from "./bun-link";
 import { DETACHED_ENV } from "./detached";
 import type { ExecResult } from "./executor";
 
+/**
+ * This checkout's `tools` entrypoint, by absolute path. A bare `tools` resolves off $PATH to the main checkout,
+ * so a worktree would run the main branch's code; a shell line that starts a tool uses this path instead.
+ */
+export function toolsEntrypoint(): string {
+    return getToolsPath();
+}
+
 function getToolsPath(): string {
     // import.meta.dir is Bun-specific; fall back to import.meta.url for Node/Vite SSR
     const dir = typeof import.meta.dir === "string" ? import.meta.dir : dirname(fileURLToPath(import.meta.url));

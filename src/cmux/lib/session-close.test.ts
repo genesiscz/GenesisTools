@@ -118,6 +118,12 @@ test("no record, the caller's own workspace, a moved ref and a running turn are 
     expect(busyReport.reason).toBe("turn-running");
     expect(busyReport.notes[0]).toContain("tools codex wait s-1");
     expect(busy.calls).toEqual([]);
+
+    const stalled = fake({ turn: { sessionId: "s-1", state: "STALLED" } });
+    const stalledReport = await closeSession("codex-app-ab12cd", { graceMs: 0 }, stalled.io);
+    expect(stalledReport.reason).toBe("turn-running");
+    expect(stalledReport.notes[0]).toContain("stalled");
+    expect(stalled.calls).toEqual([]);
 });
 
 test("an agent that does not quit leaves the workspace open and the record open, unless --force", async () => {

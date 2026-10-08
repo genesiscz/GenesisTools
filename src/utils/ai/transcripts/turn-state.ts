@@ -46,6 +46,12 @@ export interface TurnSnapshot {
     interrupted: boolean;
     /** Epoch ms of the newest turn-level record. Null when the tail holds none. Grows when a turn ends. */
     lastEventAt: number | null;
+    /**
+     * Epoch ms of the record that opened the newest turn: Claude's user prompt, Codex `task_started`, Grok's first
+     * `user_message_chunk`. Null when the tail holds none (the turn began before it). `message --wait` uses it to
+     * tell the turn that answers its message from one that was already running when the message was queued.
+     */
+    turnStartedAt: number | null;
     /** The newer of `lastEventAt` and the file's modification time. */
     lastActivityAt: number;
     /** `now` minus `lastActivityAt`. */
@@ -129,6 +135,7 @@ function snapshotOf({
     question = null,
     endedTurn,
     interrupted = false,
+    turnStartedAt,
 }: {
     input: TurnStateInput;
     events: ActivityEvent[];
@@ -137,6 +144,7 @@ function snapshotOf({
     question?: string | null;
     endedTurn: boolean;
     interrupted?: boolean;
+    turnStartedAt: number | null;
 }): TurnSnapshot {
     const lastEventAt = events.at(-1)?.ts ?? null;
     const lastActivityAt = Math.max(lastEventAt ?? 0, input.lastModified);
@@ -155,6 +163,7 @@ function snapshotOf({
         question,
         interrupted,
         lastEventAt,
+        turnStartedAt,
         lastActivityAt,
         silenceMs: input.now - lastActivityAt,
     };
@@ -267,6 +276,30 @@ function claudeInterrupted(records: ReadonlyArray<JsonRecord>): boolean {
     return texts.some((text) => text.startsWith("[Request interrupted by user"));
 }
 
+/**
+ * When the newest Claude turn began: the newest user record that is a prompt, not a tool result, a meta record or
+ * an interrupt note.
+ */
+function claudeTurnStartedAt(records: ReadonlyArray<JsonRecord>): number | null {
+    for (let index = records.length - 1; index >= 0; index--) {
+        const record = records[index];
+
+        if (record.type !== "user" || record.isMeta === true) {
+            continue;
+        }
+
+        const content = isRecord(record.message) ? record.message.content : undefined;
+        const texts = claudeTextBlocks(record);
+        const prompt = typeof content === "string" || texts.length > 0;
+
+        if (prompt && !texts.some((text) => text.startsWith("[Request interrupted by user"))) {
+            return toEpochMs(record.timestamp) ?? null;
+        }
+    }
+
+    return null;
+}
+
 export function claudeTurnState(input: TurnStateInput): TurnSnapshot {
     const interrupted = claudeInterrupted(input.records);
     const raw = claudeRecordsToEvents(input.records);
@@ -283,6 +316,7 @@ export function claudeTurnState(input: TurnStateInput): TurnSnapshot {
         question: final.question,
         endedTurn: interrupted || last?.kind === "question" || last?.kind === "exit",
         interrupted,
+        turnStartedAt: claudeTurnStartedAt(input.records),
     });
 }
 
@@ -332,6 +366,8 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
     let message = "";
     let ended = false;
     let question: string | null = null;
+    let turnStartedAt: number | null = null;
+    let previousKind: string | null = null;
     // toolCallId → question text, until a `tool_call_update` with a status answers it.
     const open = new Map<string, string>();
 
@@ -341,6 +377,13 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
         if (!parsed || !GROK_WORK.has(parsed.kind) || parsed.ts === undefined) {
             continue;
         }
+
+        // A prompt arrives as several chunks: the first one opens the turn.
+        if (parsed.kind === "user_message_chunk" && previousKind !== "user_message_chunk") {
+            turnStartedAt = parsed.ts;
+        }
+
+        previousKind = parsed.kind;
 
         ended = parsed.kind === "turn_completed";
         events.push({ ts: parsed.ts, kind: ended ? "question" : "output" });
@@ -375,6 +418,7 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
         asksQuestion: waiting,
         question: question || null,
         endedTurn: ended || waiting,
+        turnStartedAt,
     });
 }
 
@@ -409,6 +453,7 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
     const open = new Map<string, string>();
     // The turn's last tool call was `request_user_input_async`: the turn ends on that question.
     let lastCallAsks = false;
+    let turnStartedAt: number | null = null;
 
     for (const record of input.records) {
         const ts = toEpochMs(record.timestamp);
@@ -445,6 +490,7 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
         }
 
         if (record.type === "event_msg" && parsed.type === "task_started") {
+            turnStartedAt = ts;
             message = "";
             question = null;
             lastCallAsks = false;
@@ -483,6 +529,7 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
         question: question || null,
         endedTurn: ended || waiting,
         interrupted: aborted,
+        turnStartedAt,
     });
 }
 

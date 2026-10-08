@@ -78,7 +78,18 @@ export class TurnJudge {
     private sawRunning = false;
 
     constructor(
-        private readonly options: { next: boolean; baselineEnd: number | null; startedAt: number; now: () => number }
+        private readonly options: {
+            next: boolean;
+            baselineEnd: number | null;
+            startedAt: number;
+            now: () => number;
+            /** Only a turn that began at or after this instant counts (see `WaitForTurnOptions.turnStartedAfter`). */
+            turnStartedAfter?: number;
+            /** See `WaitForTurnOptions.turnNewerThan`. */
+            turnNewerThan?: number;
+            /** See `WaitForTurnOptions.prompt`. */
+            prompt?: string;
+        }
     ) {}
 
     /** The outcome this snapshot settles, or null to keep waiting. */
@@ -107,8 +118,13 @@ export class TurnJudge {
 
         const isNew =
             !this.options.next || this.sawRunning || (snapshot.lastEventAt ?? 0) > (this.options.baselineEnd ?? 0);
+        // A turn whose start is outside the tail (null) cannot be told apart, so it counts, as it did before.
+        // This also keeps the running-turn rule above honest for `message --wait`: seeing the turn that was
+        // already running when the message was sent makes its end "new", but it did not begin after the send.
+        const answering =
+            snapshot.turnStartedAt === null || turnAnswers(snapshot.turnStartedAt, this.options, snapshot.turnPrompt);
 
-        if (ended && isNew) {
+        if (ended && isNew && answering) {
             return this.result("done");
         }
 
@@ -131,10 +147,51 @@ export class TurnJudge {
     }
 }
 
+/**
+ * Does a turn that began at `turnStartedAt` answer a sent message? It must begin at or after `turnStartedAfter`, and
+ * after `turnNewerThan` (the start of the turn that was current before the send): that turn, ended or still
+ * running, was not started by the message, even when it began within the timestamp tolerance. A turn that began in
+ * the very same instant (Grok stamps whole seconds) counts only when its prompt is the sent `prompt`.
+ */
+export function turnAnswers(
+    turnStartedAt: number,
+    window: { turnStartedAfter?: number; turnNewerThan?: number; prompt?: string },
+    turnPrompt?: string
+): boolean {
+    if (window.turnStartedAfter !== undefined && turnStartedAt < window.turnStartedAfter) {
+        return false;
+    }
+
+    if (window.turnNewerThan === undefined || turnStartedAt > window.turnNewerThan) {
+        return true;
+    }
+
+    return (
+        turnStartedAt === window.turnNewerThan &&
+        window.prompt !== undefined &&
+        turnPrompt !== undefined &&
+        samePrompt(turnPrompt, window.prompt)
+    );
+}
+
+function samePrompt(left: string, right: string): boolean {
+    const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
+    return normalize(left) !== "" && normalize(left) === normalize(right);
+}
+
 export interface WaitForTurnOptions {
     read: () => TurnSnapshot | null;
     /** Ignore an already finished turn; wait for the next one to finish. */
     next?: boolean;
+    /**
+     * Only a turn that began at or after this instant (epoch ms) ends the wait: `message --wait` on a busy session
+     * must not take the end of the turn that was running when its message was queued as the answer.
+     */
+    turnStartedAfter?: number;
+    /** Only a turn that began strictly after this instant ends the wait (see `turnAnswers`). */
+    turnNewerThan?: number;
+    /** The sent message: a turn that began in the same instant as `turnNewerThan` counts when this is its prompt. */
+    prompt?: string;
     /** Give up after this long. Undefined waits for ever. */
     timeoutMs?: number;
     /** Time between two reads. */
@@ -164,12 +221,22 @@ async function observe(
     }
 }
 
-function judgeFor(options: { read: () => TurnSnapshot | null; next?: boolean; now: () => number }): TurnJudge {
+function judgeFor(options: {
+    read: () => TurnSnapshot | null;
+    next?: boolean;
+    turnStartedAfter?: number;
+    turnNewerThan?: number;
+    prompt?: string;
+    now: () => number;
+}): TurnJudge {
     return new TurnJudge({
         next: options.next === true,
         baselineEnd: options.next ? (options.read()?.lastEventAt ?? 0) : null,
         startedAt: options.now(),
         now: options.now,
+        turnStartedAfter: options.turnStartedAfter,
+        turnNewerThan: options.turnNewerThan,
+        prompt: options.prompt,
     });
 }
 
@@ -177,7 +244,14 @@ function judgeFor(options: { read: () => TurnSnapshot | null; next?: boolean; no
 export async function waitForTurn(options: WaitForTurnOptions): Promise<TurnWaitResult> {
     const now = options.now ?? Date.now;
     const sleep = options.sleep ?? ((ms: number) => Bun.sleep(ms));
-    const judge = judgeFor({ read: options.read, next: options.next, now });
+    const judge = judgeFor({
+        read: options.read,
+        next: options.next,
+        turnStartedAfter: options.turnStartedAfter,
+        turnNewerThan: options.turnNewerThan,
+        prompt: options.prompt,
+        now,
+    });
     const deadline = options.timeoutMs === undefined ? Number.POSITIVE_INFINITY : now() + options.timeoutMs;
 
     while (true) {
@@ -204,6 +278,12 @@ export interface WatchTurnOptions {
     path: string;
     read: () => TurnSnapshot | null;
     next?: boolean;
+    /** See `WaitForTurnOptions.turnStartedAfter`. */
+    turnStartedAfter?: number;
+    /** See `WaitForTurnOptions.turnNewerThan`. */
+    turnNewerThan?: number;
+    /** See `WaitForTurnOptions.prompt`. */
+    prompt?: string;
     timeoutMs?: number;
     /** The safety poll: how soon silence (a stall) and the deadline are noticed. Writes wake at once. */
     pollMs: number;
@@ -214,7 +294,14 @@ export interface WatchTurnOptions {
 
 /** The event-driven form: the shared file watcher wakes it on every write to the transcript. */
 export async function watchTurn(options: WatchTurnOptions): Promise<TurnWaitResult> {
-    const judge = judgeFor({ read: options.read, next: options.next, now: Date.now });
+    const judge = judgeFor({
+        read: options.read,
+        next: options.next,
+        turnStartedAfter: options.turnStartedAfter,
+        turnNewerThan: options.turnNewerThan,
+        prompt: options.prompt,
+        now: Date.now,
+    });
     let settled: TurnWaitResult | null = null;
     // The watcher checks its deadline only on a write or a poll, so a quiet transcript would overrun
     // `--timeout` by up to one poll. A timer aborts it on time instead.

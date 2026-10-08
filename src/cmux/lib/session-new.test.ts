@@ -1,6 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
+import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { Command } from "commander";
 import { registerAgentsCommand, runSessionNew } from "../commands/agents";
 import { accountChoiceMessage, budgetsFromSnapshots } from "./account-budgets";
@@ -72,7 +74,8 @@ function harness(overrides: Partial<SessionNewIO> = {}): { io: SessionNewIO; cal
     return { io, calls };
 }
 
-const CLAUDE = "'tools' 'claude' 'run' 'work' '--' 'fix it'";
+const TOOLS = shellQuote(toolsEntrypoint());
+const CLAUDE = `${TOOLS} 'claude' 'run' 'work' '--' 'fix it'`;
 
 afterEach(() => {
     process.exitCode = 0;
@@ -80,29 +83,31 @@ afterEach(() => {
 
 test("the run line quotes the account and the prompt, and omits -- when there is no prompt", () => {
     expect(agentRunCommand({ agent: "claude", account: "work", prompt: "fix it" })).toBe(CLAUDE);
-    expect(agentRunCommand({ agent: "claude", account: "work" })).toBe("'tools' 'claude' 'run' 'work'");
+    expect(agentRunCommand({ agent: "claude", account: "work" })).toBe(`${TOOLS} 'claude' 'run' 'work'`);
     expect(agentRunCommand({ agent: "claude", account: "work", crossMessages: true })).toBe(
-        "'tools' 'claude' 'run' 'work' '--cross-messages'"
+        `${TOOLS} 'claude' 'run' 'work' '--cross-messages'`
     );
     // Only Claude has the setting; another agent's line is unchanged.
     expect(agentRunCommand({ agent: "codex", account: "work", crossMessages: true })).toBe(
-        "'tools' 'codex' 'run' 'work'"
+        `${TOOLS} 'codex' 'run' 'work'`
     );
     expect(agentRunCommand({ agent: "claude", account: "work", promptFile: "/tmp/my prompt.md" })).toBe(
-        `'tools' 'claude' 'run' 'work' '--' "$(cat '/tmp/my prompt.md')"`
+        `${TOOLS} 'claude' 'run' 'work' '--' "$(cat '/tmp/my prompt.md')"`
     );
     expect(() => agentRunCommand({ agent: "claude", account: "work", prompt: "go", promptFile: "/tmp/p.md" })).toThrow(
         "only one of --prompt"
     );
     expect(agentRunCommand({ agent: "codex", account: "side", model: "gpt-5", prompt: "go" })).toBe(
-        "'tools' 'codex' 'run' 'side' '-m' 'gpt-5' '--' 'go'"
+        `${TOOLS} 'codex' 'run' 'side' '-m' 'gpt-5' '--' 'go'`
     );
-    expect(agentRunCommand({ agent: "grok", account: "side" })).toBe("'tools' 'grok' 'run' 'side'");
+    expect(agentRunCommand({ agent: "grok", account: "side" })).toBe(`${TOOLS} 'grok' 'run' 'side'`);
+    // The checkout's own entrypoint by absolute path, never a bare `tools` off $PATH (the main checkout).
+    expect(toolsEntrypoint()).toMatch(/^\/.+\/tools$/);
     expect(() => agentRunCommand({ agent: "grok", account: "side", prompt: "x".repeat(9000) })).toThrow(
         "--prompt-file"
     );
-    expect(withPidNote("'tools' 'grok' 'run' 'side'", "/tmp/s.pid")).toBe(
-        "printf '%s' $$ > '/tmp/s.pid'; 'tools' 'grok' 'run' 'side'"
+    expect(withPidNote(`${TOOLS} 'grok' 'run' 'side'`, "/tmp/s.pid")).toBe(
+        `printf '%s' $$ > '/tmp/s.pid'; ${TOOLS} 'grok' 'run' 'side'`
     );
 });
 
@@ -231,7 +236,7 @@ test("a missing focused window uses an existing one, and creates a window only w
     );
     expect(created.calls).toContainEqual(["ok", "new-window"]);
     expect(created.calls.find((call) => call[0] === "workspace")).toContain("window:5");
-    expect(created.calls.find((call) => call[0] === "workspace")).toContain("'tools' 'claude' 'run' 'work'");
+    expect(created.calls.find((call) => call[0] === "workspace")).toContain(`${TOOLS} 'claude' 'run' 'work'`);
 });
 
 test("--name goes to create, then the title is checked once, with no legacy rename", async () => {
@@ -445,7 +450,7 @@ test("a codex session runs tools codex run with its only account, and a taken na
         runSessionNew("codex", { repo: "/repo/app", account: "side", name: "Fix It", prompt: "go" }, deps)
     );
     expect(calls.find((call) => call[0] === "workspace")).toContain(
-        withPidNote("'tools' 'codex' 'run' 'side' '--' 'go'", "/state/sessions/fix-it.pid")
+        withPidNote(`${TOOLS} 'codex' 'run' 'side' '--' 'go'`, "/state/sessions/fix-it.pid")
     );
 
     await expect(runSessionNew("codex", { repo: "/repo/app", account: "side", name: "fix it" }, deps)).rejects.toThrow(

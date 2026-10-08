@@ -237,6 +237,55 @@ describe("codexTurnState", () => {
     });
 });
 
+describe("turnStartedAt", () => {
+    it("is the record that opened the newest turn, for every provider", () => {
+        const claude = claudeTurnState(
+            input(
+                [
+                    claudeUser(0, "first"),
+                    claudeAssistant(1, [{ type: "text", text: "ok" }], "end_turn", "m1"),
+                    claudeUser(10, "second"),
+                    claudeAssistant(11, [{ type: "tool_use", id: "t1", name: "Bash", input: {} }], "tool_use", "m2"),
+                    claudeUser(12, [{ type: "tool_result", tool_use_id: "t1", content: "done" }]),
+                    { ...claudeUser(13, "<command>"), isMeta: true },
+                ],
+                20
+            )
+        );
+        expect(claude.turnStartedAt).toBe(T0 + 10_000);
+
+        const codex = codexTurnState(
+            input(
+                [
+                    codexLine(0, "event_msg", { type: "task_started" }),
+                    codexLine(4, "event_msg", { type: "task_complete", last_agent_message: "One." }),
+                    codexLine(9, "event_msg", { type: "task_started" }),
+                    codexLine(12, "event_msg", { type: "task_complete", last_agent_message: "Two." }),
+                ],
+                20
+            )
+        );
+        expect(codex.turnStartedAt).toBe(T0 + 9000);
+
+        const grok = grokTurnState(
+            input(
+                [
+                    grokLine(0, "user_message_chunk", { content: { type: "text", text: "go" } }),
+                    grokLine(1, "turn_completed", { stop_reason: "end_turn" }),
+                    grokLine(5, "user_message_chunk", { content: { type: "text", text: "again " } }),
+                    grokLine(6, "user_message_chunk", { content: { type: "text", text: "please" } }),
+                    grokLine(7, "turn_completed", { stop_reason: "end_turn" }),
+                ],
+                20
+            )
+        );
+        expect(grok.turnStartedAt).toBe(T0 + 5000);
+        expect(
+            codexTurnState(input([codexLine(2, "response_item", { type: "reasoning" })], 5)).turnStartedAt
+        ).toBeNull();
+    });
+});
+
 describe("readTurnState", () => {
     it("reads a real file's tail, and returns null for an empty or missing one", () => {
         const dir = mkdtempSync(join(tmpdir(), "turn-state-"));

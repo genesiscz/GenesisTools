@@ -222,10 +222,14 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
             report.notes.push("no agent session is recorded for this surface; the turn state is unknown");
         }
 
-        if (turn?.state === "RUNNING" && !options.force) {
+        // STALLED is an unfinished turn that wrote nothing for a while: a long tool call looks the same, so it
+        // is refused like RUNNING. Only --force quits an agent mid-turn.
+        if ((turn?.state === "RUNNING" || turn?.state === "STALLED") && !options.force) {
+            const how =
+                turn.state === "STALLED" ? "has not finished (stalled, possibly a long tool call)" : "is still running";
             return refuse(
                 "turn-running",
-                `the ${record.agent} turn is still running; wait first: tools ${record.agent} wait ${turn.sessionId}, or pass --force`
+                `the ${record.agent} turn ${how}; wait first: tools ${record.agent} wait ${turn.sessionId}, or pass --force`
             );
         }
     }
