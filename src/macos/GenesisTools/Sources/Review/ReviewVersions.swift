@@ -59,9 +59,9 @@ struct PRPushNews: Equatable {
         guard let newest = versions.first, !PRThreadRendering.sameCommit(newest.headSha, shownHead) else { return nil }
         let shownIndex = versions.firstIndex { PRThreadRendering.sameCommit($0.headSha, shownHead) }
         let shown = shownIndex.map { versions[$0] }
-        let known = Set(shown?.commits.map(\.title) ?? [])
-        let fresh = shown == nil ? newest.commits : newest.commits.filter { !known.contains($0.title) }
         let rebased = shown.map { old in old.baseSha != nil && newest.baseSha != nil && old.baseSha != newest.baseSha } ?? false
+        let known = Set(shown?.commits.map { rebased ? $0.title : $0.sha } ?? [])
+        let fresh = shown == nil ? newest.commits : newest.commits.filter { !known.contains(rebased ? $0.title : $0.sha) }
         return PRPushNews(newest: newest, shown: shown, pushes: shownIndex ?? 1, newCommits: fresh, rebased: rebased)
     }
 

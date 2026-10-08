@@ -148,6 +148,16 @@ final class ReviewVersionsTests: XCTestCase {
         XCTAssertEqual(try git("diff", "--name-only", replayed.tree, to.head), "a.txt", "u.txt still left out")
     }
 
+    func testANewCommitWithTheSameTitleIsStillNewWithoutARebase() throws {
+        let old = PRVersion(id: "1", headSha: "old", baseSha: "base", createdAt: nil, pushedBy: nil,
+                            commits: [.init(sha: "c1", title: "fix", author: nil)])
+        let new = PRVersion(id: "2", headSha: "new", baseSha: "base", createdAt: nil, pushedBy: nil,
+                            commits: [.init(sha: "c2", title: "fix", author: nil), .init(sha: "c1", title: "fix", author: nil)])
+        let news = try XCTUnwrap(PRPushNews.between(shownHead: "old", versions: [new, old]))
+        XCTAssertEqual(news.newCommits.map(\.sha), ["c2"], "distinct commits can have identical subjects")
+        XCTAssertTrue(news.headline.contains("1 new commit"))
+    }
+
     func testTheNoticeNamesThePusherAndOnlyTheNewCommits() throws {
         let json = """
         {"versions":[
