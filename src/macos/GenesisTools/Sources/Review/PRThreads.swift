@@ -516,12 +516,13 @@ final class PRThreadsStore: ObservableObject {
     private func show(_ next: PRThreadsPayload) {
         let before = Dictionary((payload?.threads ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let moved: Set<String> = before.isEmpty ? [] : Set(next.threads.filter { before[$0.id] != $0 }.map(\.id))
+        let removed = Set(before.keys).subtracting(next.threads.map(\.id)).count
         // `show` runs on the main queue (load's completion), so the busy reading can start here.
         MainActor.assumeIsolated { HubMainBusy.measure("prs.threads.show") }
         // Animate only a few threads changing in a list already on screen. A first load (or a refresh that
         // changes most threads) under a spring made SwiftUI build an animated insertion for every row of
         // the non-lazy list at once: a 1.4 s main-thread stall opening a PR (2026-10-08).
-        if before.isEmpty || moved.count > Self.animatedChangeLimit {
+        if before.isEmpty || moved.count + removed > Self.animatedChangeLimit {
             payload = next
             changed = moved
         } else {
