@@ -1589,26 +1589,12 @@ private struct ActivityRow: View {
     }
 }
 
-/// Three dots that rise in turn. A transform animation (never a shadow), and it stops with the row.
+/// Three dots that rise in turn, as a layer animation that stops with the row: a SwiftUI repeatForever
+/// laid the whole hub window out on every frame while an agent worked.
 private struct WorkingMark: View {
-    @State private var phase = false
-
     var body: some View {
-        HStack(spacing: 3) {
-            ForEach(0..<3, id: \.self) { index in
-                Circle()
-                    .fill(SessionPalette.blue)
-                    .frame(width: 4.5, height: 4.5)
-                    .scaleEffect(phase ? 1 : 0.55)
-                    .opacity(phase ? 1 : 0.4)
-                    .animation(
-                        .easeInOut(duration: 0.55).repeatForever(autoreverses: true).delay(Double(index) * 0.18),
-                        value: phase
-                    )
-            }
-        }
-        .frame(width: 22)
-        .onAppear { phase = true }
+        PulsingDots(color: SessionPalette.blue, count: 3, diameter: 4.5, spacing: 3, period: 0.55, stagger: 0.18)
+            .frame(width: 22, height: 4.5)
     }
 }
 
