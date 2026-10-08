@@ -74,6 +74,13 @@ public struct WidgetSession: Codable, Identifiable, Equatable, Sendable {
     public var parentSessionId: String?
     public var agentId: String?
     public var transcriptPath: String?
+    public var parentKey: String?
+    public var role: String?
+    public var model: String?
+    public var account: String?
+    public var startedAt: Double?
+    public var toolCalls: Int?
+    public var agentStatus: String?
     public var id: String { key }
     public var visualStatus: AgentWidgetStatus {
         switch status {

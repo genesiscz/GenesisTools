@@ -1097,3 +1097,53 @@ final class WidgetInboxNotificationTests: XCTestCase {
         XCTAssertEqual(model.inbox.needsAnswer, 1)
     }
 }
+
+final class WidgetAgentTreeTests: XCTestCase {
+    private func session(_ key: String, parent: String? = nil, pinned: Bool = true) -> WidgetSession {
+        var value = WidgetSession(key: key,
+            target: .init(hostId: "local", provider: "codex", sessionId: key, sourceHome: "/fixture", cwd: "/fixture/project"),
+            title: key, project: "Fixture", activityAt: 1, status: "recent", pinned: pinned, visible: true, hiddenByFilter: false)
+        value.parentKey = parent
+        return value
+    }
+
+    func testChildrenStayNestedAndSearchRetainsTheirAncestors() {
+        var worker = session("named-worker", parent: "lead")
+        worker.model = "gpt-6.1-sol"
+        let nested = session("nested", parent: "named-worker")
+        let groups = WidgetAgentTree.groups([worker, nested, session("lead"), session("unrelated")])
+        XCTAssertEqual(groups.map(\.id), ["lead", "unrelated"])
+        XCTAssertEqual(groups[0].children.map(\.id), ["named-worker", "nested"])
+        XCTAssertEqual(groups[0].children.map(\.depth), [0, 1])
+        let filtered = WidgetAgentTree.groups([worker, nested, session("lead")], query: "6.1-sol")
+        XCTAssertEqual(filtered.map(\.id), ["lead"])
+        XCTAssertEqual(filtered[0].children.map(\.id), ["named-worker"])
+    }
+
+    func testPinnedChildKeepsUnpinnedParentAndOrphansRemainReachable() {
+        let values = [session("parent", pinned: false), session("child", parent: "parent"), session("orphan", parent: "missing")]
+        let groups = WidgetAgentTree.groups(values, onlyPinned: true)
+        XCTAssertEqual(groups.map(\.id), ["parent", "orphan"])
+        XCTAssertEqual(groups[0].children.map(\.id), ["child"])
+    }
+
+    func testCyclesAndDuplicateNativeIDsAcrossHomesNeverHideOrMergeRows() {
+        var one = session("home-one", parent: "home-two")
+        var two = session("home-two", parent: "home-one")
+        one.target.sessionId = "same-native-id"
+        two.target.sessionId = "same-native-id"
+        two.target.sourceHome = "/other-home"
+        let groups = WidgetAgentTree.groups([one, two, session("self", parent: "self")])
+        let keys = groups.flatMap { [$0.id] + $0.children.map(\.id) }
+        XCTAssertEqual(Set(keys), ["home-one", "home-two", "self"])
+        XCTAssertEqual(keys.count, 3)
+    }
+
+    func testHubDurationFormattingIsSharedWithoutChangingBoundaries() {
+        let start = Date(timeIntervalSince1970: 0)
+        XCTAssertEqual(AgentRosterStyle.duration(from: start, to: start.addingTimeInterval(59)), "59s")
+        XCTAssertEqual(AgentRosterStyle.duration(from: start, to: start.addingTimeInterval(60)), "1m 00s")
+        XCTAssertEqual(AgentRosterStyle.duration(from: start, to: start.addingTimeInterval(7500)), "2h 05m")
+        XCTAssertNil(AgentRosterStyle.duration(from: start, to: start.addingTimeInterval(-1)))
+    }
+}
