@@ -67,6 +67,84 @@ final class ClickyTests: XCTestCase {
         calendar.date(from: DateComponents(year: 2026, month: 10, day: 8, hour: hour, minute: minute))!
     }
 
+    func testLegacyStatisticsGainHistoryWithoutInventingOldEvents() throws {
+        let legacy = Data("{\"presses\":250,\"releases\":240,\"sessions\":4,\"startedAt\":700000000}".utf8)
+        var statistics = try JSONDecoder().decode(ClickyStatistics.self, from: legacy)
+        XCTAssertEqual(statistics.presses, 250)
+        XCTAssertNil(statistics.historyStartedAt)
+        XCTAssertTrue(statistics.minutes.isEmpty)
+        statistics.record(keyCode: 12, release: false, at: date(14, 32), calendar: calendar)
+        statistics.record(keyCode: 12, release: true, at: date(14, 32), calendar: calendar)
+        XCTAssertEqual(statistics.presses, 251)
+        XCTAssertEqual(statistics.releases, 241)
+        XCTAssertEqual(statistics.keys, [12: 1])
+        XCTAssertEqual(statistics.minutes.count, 1)
+        XCTAssertEqual(statistics.minutes.values.first?.presses, 1)
+        XCTAssertEqual(statistics.minutes.values.first?.releases, 1)
+        XCTAssertEqual(try JSONDecoder().decode(ClickyStatistics.self, from: JSONEncoder().encode(statistics)), statistics)
+    }
+
+    func testAnalyticsRetentionPreservesLifetimeCountsAndLongerCoarseHistory() {
+        var statistics = ClickyStatistics()
+        let start = date(12)
+        for day in 0...731 {
+            statistics.record(keyCode: 0, release: false,
+                at: calendar.date(byAdding: .day, value: day, to: start)!, calendar: calendar)
+        }
+        XCTAssertEqual(statistics.presses, 732)
+        XCTAssertEqual(statistics.keys[0], 732)
+        XCTAssertLessThanOrEqual(statistics.minutes.count, 32)
+        XCTAssertLessThanOrEqual(statistics.hours.count, 368)
+        XCTAssertLessThanOrEqual(statistics.days.count, 731)
+        XCTAssertGreaterThan(statistics.days.count, statistics.hours.count)
+        XCTAssertGreaterThan(statistics.hours.count, statistics.minutes.count)
+    }
+
+    func testChartBinningBoundsWorkWithoutLosingCounts() {
+        let points = (0..<10000).map { NativeTimePoint(date: Date(timeIntervalSince1970: Double($0) * 60), value: 1) }
+        let bins = NativeChartSampling.bins(points: points, start: Date(timeIntervalSince1970: 0),
+            end: Date(timeIntervalSince1970: 600000), step: 60)
+        XCTAssertLessThanOrEqual(bins.count, 1201)
+        XCTAssertEqual(bins.reduce(0) { $0 + $1.value }, 10000)
+        let narrow = NativeChartSampling.bins(points: points, start: Date(timeIntervalSince1970: 300000),
+            end: Date(timeIntervalSince1970: 300600), step: 60)
+        XCTAssertEqual(narrow.count, 10)
+        XCTAssertEqual(narrow.reduce(0) { $0 + $1.value }, 10)
+    }
+
+    func testCivilTimeHeatmapAndDailyChartHandleRepeatedDSTHour() {
+        let parser = ISO8601DateFormatter()
+        var statistics = ClickyStatistics()
+        statistics.record(keyCode: 0, release: false, at: parser.date(from: "2026-10-25T00:15:00Z")!, calendar: calendar)
+        statistics.record(keyCode: 0, release: false, at: parser.date(from: "2026-10-25T01:15:00Z")!, calendar: calendar)
+        XCTAssertEqual(statistics.hours.count, 2)
+        XCTAssertEqual(statistics.days.count, 1)
+        let heat = statistics.weekdayHeatmap(calendar: calendar)
+        XCTAssertEqual(heat.first { $0.row == 6 && $0.column == 2 }?.value, 2)
+        let start = calendar.startOfDay(for: parser.date(from: "2026-10-25T00:15:00Z")!)
+        let end = calendar.date(byAdding: .day, value: 2, to: start)!
+        let bins = NativeChartSampling.bins(points: statistics.timeline(.day), start: start, end: end,
+            step: 86400, calendar: calendar)
+        XCTAssertEqual(bins.count, 2)
+        XCTAssertEqual(bins[1].date.timeIntervalSince(bins[0].date), 25 * 3600)
+        XCTAssertEqual(bins.reduce(0) { $0 + $1.value }, 2)
+    }
+
+    @MainActor
+    func testAnalyticsPublisherCoalescesInputWithoutCopyingEachEventSnapshot() {
+        let store = ClickyAnalyticsStore()
+        var reads = 0
+        var statistics = ClickyStatistics()
+        for _ in 0..<100 {
+            statistics.record(keyCode: 1, release: false, at: date(13), calendar: calendar)
+            store.stage { reads += 1; return statistics }
+        }
+        XCTAssertEqual(reads, 0, "The input callback must not build a chart snapshot for every key")
+        store.flush(statistics)
+        XCTAssertEqual(store.snapshot.presses, 100)
+        XCTAssertEqual(store.snapshot.keys[1], 100)
+    }
+
     func testQuietHoursCrossMidnightAndEndIsExclusive() {
         var preferences = ClickyPreferences()
         preferences.quietHours = true

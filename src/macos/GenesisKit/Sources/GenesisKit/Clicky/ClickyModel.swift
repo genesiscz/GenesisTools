@@ -18,7 +18,8 @@ public final class ClickyModel: ObservableObject {
     }
     @Published public private(set) var enabled = false
     @Published public private(set) var status = "Clicky is off"
-    @Published public private(set) var statistics: ClickyStatistics
+    public private(set) var statistics: ClickyStatistics
+    public let analytics = ClickyAnalyticsStore()
     @Published public private(set) var sleepingUntil: Date?
     @Published public private(set) var pulse = 0
     @Published public private(set) var lastPan: Float = 0
@@ -88,6 +89,7 @@ public final class ClickyModel: ObservableObject {
         } else {
             statistics = ClickyStatistics()
         }
+        analytics.flush(statistics)
         if defaults.data(forKey: "clicky.preferences.v1") != nil {
             self.appearance.migrateIfNeeded(
                 reduceMotion: preferences.reduceMotion,
@@ -178,6 +180,7 @@ public final class ClickyModel: ObservableObject {
         enabled = true
         if preferences.collectStats {
             statistics.sessions += 1
+            analytics.flush(statistics)
             pendingStats = true
         }
         refreshContext()
@@ -265,6 +268,7 @@ public final class ClickyModel: ObservableObject {
 
     public func resetStatistics() {
         statistics = ClickyStatistics()
+        analytics.flush(statistics)
         pendingStats = true
         flushStatistics()
     }
@@ -349,6 +353,7 @@ public final class ClickyModel: ObservableObject {
     }
 
     private func flushStatistics() {
+        analytics.flush(statistics)
         guard pendingStats else { return }
         if let data = try? JSONEncoder().encode(statistics) { defaults.set(data, forKey: "clicky.statistics.v1") }
         pendingStats = false
@@ -449,7 +454,8 @@ public final class ClickyModel: ObservableObject {
             PerfLog.mark("clicky.transition.\(diagnosticSource).\(type.rawValue).accepted")
         }
         if preferences.collectStats && (transition.countsPress || transition.release) {
-            if transition.release { statistics.releases += 1 } else { statistics.presses += 1 }
+            statistics.record(keyCode: code, release: transition.release)
+            analytics.stage { [weak self] in self?.statistics }
             pendingStats = true
             if persistenceWork == nil {
                 let work = DispatchWorkItem { [weak self] in
