@@ -431,6 +431,7 @@ function viewOptions(): CodeViewOptions<AnnotationMeta, undefined> {
         // scroll the code was drawn over the file's name for a moment (Martin, 2026-10-08).
         unsafeCSS:
             "[data-diffs-header] { cursor: pointer; } [data-diffs-header][data-sticky] { z-index: 10; } [data-diffs-header] [data-title], [data-diffs-header] [data-prev-name] { -webkit-user-select: all; user-select: all; cursor: text; }" +
+            " [data-line-annotation] { -webkit-user-select: none; user-select: none; }" +
             ` [data-code] { padding-bottom: calc(max(0px, calc(var(--diffs-gap-block, var(--diffs-gap-fallback)) - var(--diffs-scrollbar-gutter))) + ${FILE_GAP}px); }`,
         lineDiffType: "word-alt",
         hunkSeparators: "line-info",
@@ -547,6 +548,69 @@ host.addEventListener("click", (event) => {
     post({ type: "log", message: `diff.fold ${folded.has(hit.path) ? "folded" : "unfolded"} ${hit.path}` });
 });
 
+/**
+ * A card's text is not selectable until a press lands in that card. A triple-click selects a paragraph
+ * and the break after it; from a code line that break ends at the next code row, past the card slotted
+ * under the line, so WebKit painted the whole card as selected. A press in a card turns its text back on.
+ */
+let selectableCard: HTMLElement | null = null;
+
+function setCardSelectable(card: HTMLElement, selectable: boolean): void {
+    card.style.setProperty("-webkit-user-select", selectable ? "text" : "none");
+    card.style.setProperty("user-select", selectable ? "text" : "none");
+}
+
+host.addEventListener(
+    "mousedown",
+    (event) => {
+        const slot = event
+            .composedPath()
+            .find((node) => node instanceof HTMLElement && node.hasAttribute("data-annotation-slot"));
+        const card =
+            slot instanceof HTMLElement && slot.firstElementChild instanceof HTMLElement
+                ? slot.firstElementChild
+                : null;
+
+        if (card === selectableCard) {
+            return;
+        }
+
+        if (selectableCard) {
+            setCardSelectable(selectableCard, false);
+        }
+
+        if (card) {
+            setCardSelectable(card, true);
+        }
+
+        selectableCard = card;
+    },
+    { capture: true }
+);
+
+// A triple-click in a card's text selects that paragraph only: the break WebKit adds after it ran on to the
+// next text it could select further down the card, and the gap between them was painted as selected.
+host.addEventListener("click", (event) => {
+    const selection = document.getSelection();
+
+    if (event.detail !== 3 || !selectableCard || !selection || selection.rangeCount === 0) {
+        return;
+    }
+
+    const path = event.composedPath().filter((node) => node instanceof HTMLElement);
+
+    if (!path.includes(selectableCard) || path.some((node) => node.matches("textarea, input"))) {
+        return;
+    }
+
+    const block = path.find((node) => getComputedStyle(node).display !== "inline");
+    const range = selection.getRangeAt(0);
+
+    if (block?.contains(range.startContainer) && !block.contains(range.endContainer)) {
+        selection.setBaseAndExtent(range.startContainer, range.startOffset, block, block.childNodes.length);
+    }
+});
+
 // A right-click on a file's header shows a native menu (Copy path, Reveal in Finder, …): Swift
 // builds it from the file id (Review/ReviewWindow.swift, `showHeaderMenu`).
 host.addEventListener("contextmenu", (event) => {
@@ -638,21 +702,21 @@ function refreshAnnotations(fileIds: string[]): void {
 // MARK: comment cards
 
 const css = {
-    card: "margin:6px 12px 10px 12px;border:1px solid rgba(255,255,255,.10);border-radius:10px;background:#16171a;font:13px/1.45 -apple-system,BlinkMacSystemFont,sans-serif;color:#e6e6e6;overflow:hidden;white-space:normal",
+    card: "margin:6px 12px 10px 12px;border:1px solid rgba(255,255,255,.10);border-radius:10px;background:#16171a;font:13px/1.45 -apple-system,BlinkMacSystemFont,sans-serif;color:#e6e6e6;overflow:hidden;white-space:normal;-webkit-user-select:none;user-select:none",
     row: "display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:10px;align-items:center;padding:10px 12px",
     /** The avatar row's second column; with `underAvatar` only the header stays beside the avatar. */
     main: "display:contents",
-    avatar: "flex:none;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:12px;color:#111",
+    avatar: "flex:none;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:12px;color:#111;-webkit-user-select:none;user-select:none",
     head: "display:flex;align-items:center;gap:6px;flex-wrap:wrap",
     name: "font-weight:600",
     dim: "color:rgba(255,255,255,.45);font-size:12px",
-    badge: "font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.7)",
+    badge: "font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.7);-webkit-user-select:none;user-select:none",
     body: "margin-top:3px;word-wrap:break-word",
     code: "font:12px ui-monospace,SFMono-Regular,Menlo,monospace;background:rgba(255,255,255,.08);padding:1px 5px;border-radius:5px",
     actions: "display:flex;gap:4px;margin-left:auto",
-    button: "font:12px -apple-system,sans-serif;color:rgba(255,255,255,.75);background:transparent;border:1px solid rgba(255,255,255,.12);border-radius:7px;padding:3px 9px;cursor:pointer",
+    button: "font:12px -apple-system,sans-serif;color:rgba(255,255,255,.75);background:transparent;border:1px solid rgba(255,255,255,.12);border-radius:7px;padding:3px 9px;cursor:pointer;-webkit-user-select:none;user-select:none",
     primary:
-        "font:12px -apple-system,sans-serif;font-weight:600;color:#111;background:#ffa11f;border:0;border-radius:7px;padding:4px 11px;cursor:pointer",
+        "font:12px -apple-system,sans-serif;font-weight:600;color:#111;background:#ffa11f;border:0;border-radius:7px;padding:4px 11px;cursor:pointer;-webkit-user-select:none;user-select:none",
     textarea:
         "width:100%;box-sizing:border-box;min-height:70px;resize:vertical;background:#0e0f11;color:#eee;border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:8px;font:13px/1.45 -apple-system,sans-serif;outline:none",
 };
