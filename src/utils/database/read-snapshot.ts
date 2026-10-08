@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { constants, Database } from "bun:sqlite";
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -68,7 +68,7 @@ export function withDatabaseReadSnapshot<T>({
                 const wal = statSync(`${path}-wal`, { throwIfNoEntry: false });
                 // A checkpointed store needs no WAL coordination or sidecar creation.
                 const sourcePath = wal && wal.size > 0 ? path : `${pathToFileURL(path).href}?immutable=1`;
-                const source = new Database(sourcePath, { readonly: true });
+                const source = new Database(sourcePath, constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI);
                 let bytes: Buffer;
                 try {
                     bytes = source.serialize();
