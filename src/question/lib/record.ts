@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { type AgentRuntimeContext, gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { createTranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { logger } from "@genesiscz/utils/logger";
 import { loadConfig, type QuestionConfig } from "./config";
 import { appendEntry } from "./log-store";
@@ -41,9 +42,16 @@ export async function recordAnswer(input: RecordInput, deps: RecordDeps = {}): P
         deps.env ?? env.getProcessEnv()
     );
 
+    const ts = Date.now();
+    const transcriptAnchor = createTranscriptAnchor({
+        context: ctx,
+        receivedAt: ts,
+        sourceMessage: input.sourceMessage,
+    });
     const entry: QaEntry = {
         id: randomUUID(),
-        ts: Date.now(),
+        ts,
+        transcriptAnchor,
         sessionId: ctx.sessionId ?? "unknown",
         sessionTitle: ctx.sessionTitle,
         project: ctx.project,

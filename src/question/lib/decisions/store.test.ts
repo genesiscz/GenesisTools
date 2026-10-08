@@ -877,3 +877,116 @@ test("decision dry-run applies the same selected-kind filter as delivery", async
     expect(sent.text).toBe(preview.text);
     expect(readDecisions(file).map((row) => row.state)).toEqual(["sent", "answered"]);
 });
+
+test("decision revisions preserve the source turn of each posted version", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-provenance-"));
+    const file = join(dir, "decisions.jsonl");
+    const events = join(dir, "events.jsonl");
+    const deps = {
+        env: {},
+        ctx: {
+            agent: "codex" as const,
+            sessionId: "source-session",
+            isWorktree: true,
+            worktreePath: "/fixture/worktree",
+        },
+    };
+    const [first] = await postDecisions(
+        file,
+        events,
+        {
+            sourceMessage: { turnId: "turn-original" },
+            decisions: [{ prompt: "First proposal", options: ["yes"] }],
+        },
+        deps
+    );
+    const [revised] = await postDecisions(
+        file,
+        events,
+        {
+            sourceMessage: { turnId: "turn-revised" },
+            decisions: [{ prompt: "Revised proposal", options: ["yes"], supersedes: first.id }],
+        },
+        deps
+    );
+    expect(revised.transcriptAnchor).toMatchObject({
+        kind: "native",
+        turnId: "turn-revised",
+        sessionId: "source-session",
+    });
+    expect(revised.versions?.[0].transcriptAnchor).toMatchObject({ kind: "native", turnId: "turn-original" });
+    expect(revised.worktreePath).toBe("/fixture/worktree");
+    expect(readDecisions(file)[0].transcriptAnchor).toEqual(revised.transcriptAnchor);
+});
+
+test("a revised decision retains earlier repository facts without leaking them into the new context", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-context-versions-"));
+    const file = join(dir, "decisions.jsonl");
+    const events = join(dir, "events.jsonl");
+    const [first] = await postDecisions(
+        file,
+        events,
+        { decisions: [{ prompt: "First", options: [] }] },
+        {
+            env: {},
+            ctx: {
+                agent: "codex",
+                sessionId: "versioned-session",
+                cwd: "/fixture/old",
+                repoRoot: "/fixture/project",
+                branch: "feat/old",
+                commitSha: "111aaaa",
+                isWorktree: true,
+                worktreePath: "/fixture/old",
+            },
+        }
+    );
+    const [next] = await postDecisions(
+        file,
+        events,
+        {
+            decisions: [{ prompt: "Next", options: [], supersedes: first.id }],
+        },
+        {
+            env: {},
+            ctx: {
+                agent: "codex",
+                sessionId: "versioned-session",
+                cwd: "/fixture/new",
+                repoRoot: "/fixture/project",
+                branch: null,
+                commitSha: null,
+                isWorktree: false,
+                worktreePath: null,
+            },
+        }
+    );
+    expect(next.branch).toBeUndefined();
+    expect(next.commitSha).toBeUndefined();
+    expect(next.cwd).toBe("/fixture/new");
+    expect(next.versions?.[0]).toMatchObject({
+        branch: "feat/old",
+        commitSha: "111aaaa",
+        cwd: "/fixture/old",
+        worktreePath: "/fixture/old",
+        provider: "codex",
+    });
+});
+
+test("a decision provider override cannot inherit another provider's native message IDs", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-retarget-anchor-"));
+    const [row] = await postDecisions(
+        join(dir, "decisions.jsonl"),
+        join(dir, "events.jsonl"),
+        {
+            provider: "codex",
+            decisions: [{ prompt: "Which?", options: [] }],
+        },
+        {
+            env: {},
+            ctx: { agent: "claude-code", sessionId: "source-session", sourceMessage: { messageId: "claude-message" } },
+        }
+    );
+    expect(row.transcriptAnchor?.kind).toBe("receipt-time");
+    expect(row.transcriptAnchor).not.toHaveProperty("messageId");
+});

@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
+import { basename } from "node:path";
 import { type AgentRuntimeContext, gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { createTranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { logger } from "@genesiscz/utils/logger";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import { loadConfig } from "../config";
@@ -100,7 +102,7 @@ function sweep(db: Database, deps: AskDeps): void {
 function callerContext(
     input: CreateAskFormInput,
     deps: AskDeps
-): { projectPath: string; sessionHint: string | undefined } {
+): { projectPath: string; sessionHint: string | undefined; poster?: AgentRuntimeContext } {
     const given = input.projectPath?.trim() ? input.projectPath : undefined;
 
     if (deps.ambient === false) {
@@ -116,7 +118,7 @@ function callerContext(
     const sessionHint =
         !isTestProcess() && harnessSession ? harnessSession : (input.sessionHint ?? harnessSession ?? undefined);
 
-    return { projectPath: given ?? poster.cwd, sessionHint };
+    return { projectPath: given ?? poster.cwd, sessionHint, poster: { ...poster, sessionId: sessionHint ?? null } };
 }
 
 /**
@@ -127,7 +129,14 @@ function callerContext(
  * there is a hang, so it is opt-OUT (`notifyPending`) rather than opt-in.
  */
 export async function postAskForm(input: CreateAskFormInput, deps: AskDeps = {}): Promise<AskForm> {
-    const form = createAskForm({ ...input, ...callerContext(input, deps) });
+    const { poster, ...caller } = callerContext(input, deps);
+    const form = createAskForm({ ...input, ...caller });
+    form.poster = poster;
+    form.transcriptAnchor = createTranscriptAnchor({
+        context: poster ?? { agent: "unknown", sessionId: null },
+        receivedAt: form.createdAt,
+        sourceMessage: input.sourceMessage,
+    });
     withStore(deps, (db) => insertForm(db, form));
     publishEvent("created", form, deps);
     log.info({ id: form.id, items: form.items.length, source: form.source }, "pending ask form created");
@@ -270,10 +279,21 @@ export async function answerAskForm(id: string, answers: AskAnswer[], deps: AskD
                 logBase: deps.logBase,
                 env: deps.env,
                 ctx: {
-                    ...deps.ctx,
-                    cwd: form.cwd,
-                    // An explicit undefined would overwrite the session the runtime detected.
-                    ...(form.sessionHint ? { sessionId: form.sessionHint } : {}),
+                    agent: "unknown",
+                    isInAgent: false,
+                    aiAgent: null,
+                    sessionTitle: null,
+                    project: basename(form.projectPath),
+                    repoRoot: form.cwd,
+                    branch: null,
+                    commitSha: null,
+                    commitMessage: null,
+                    isWorktree: false,
+                    worktreePath: null,
+                    ...form.poster,
+                    sourceMessage: undefined,
+                    cwd: form.poster?.cwd ?? form.projectPath,
+                    sessionId: form.sessionHint ?? null,
                 },
             }
         );

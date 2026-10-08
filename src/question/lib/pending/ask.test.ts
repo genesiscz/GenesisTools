@@ -646,3 +646,78 @@ describe("a claim its owner never finished", () => {
         expect(getAskForm(form.id, deps)?.status).toBe("timeout");
     });
 });
+
+test("a form retains its posting context when another process submits the answer", async () => {
+    const form = await postAskForm(
+        {
+            projectPath: PROJECT,
+            items: [{ promptMarkdown: "Confirm this state?" }],
+            sourceMessage: { messageId: "native-form-message" },
+        },
+        {
+            ...deps,
+            env: {},
+            ctx: {
+                agent: "codex",
+                sessionId: "original-poster",
+                branch: "feat/example",
+                commitSha: "abc1234",
+                cwd: "/fixture/worktree/subdirectory",
+                repoRoot: "/fixture/project",
+                isWorktree: true,
+                worktreePath: "/fixture/worktree",
+            },
+        }
+    );
+    const stored = getAskForm(form.id, deps);
+    expect(stored?.transcriptAnchor).toMatchObject({
+        kind: "native",
+        messageId: "native-form-message",
+        sessionId: "original-poster",
+    });
+    expect(stored?.poster?.worktreePath).toBe("/fixture/worktree");
+    const answer = await answerAskForm(form.id, [{ itemId: "q1", freeText: "Confirmed" }], {
+        ...deps,
+        env: {},
+        ctx: { agent: "grok", sessionId: "ui-process", branch: "main" },
+    });
+    expect(answer.ok).toBe(true);
+    const row = historyLines()[0];
+    expect(row.sessionId).toBe("original-poster");
+    expect(row.agent).toBe("codex");
+    expect(row.branch).toBe("feat/example");
+    expect(row.cwd).toBe("/fixture/worktree/subdirectory");
+    expect(row.repoRoot).toBe("/fixture/project");
+    expect(row.transcriptAnchor).toMatchObject({ kind: "receipt-time", sessionId: "original-poster" });
+});
+
+test("a poster-less form cannot borrow the answering process identity", async () => {
+    const form = await postAskForm(
+        {
+            projectPath: PROJECT,
+            sessionHint: "original-session",
+            items: [{ promptMarkdown: "Legacy question" }],
+        },
+        { ...deps, ambient: false }
+    );
+    await answerAskForm(form.id, [{ itemId: "q1", freeText: "Confirmed" }], {
+        ...deps,
+        env: {},
+        ctx: {
+            agent: "codex",
+            sessionId: "ui-responder",
+            branch: "feat/responder",
+            commitSha: "999abcd",
+            project: "Responder",
+            cwd: "/fixture/responder",
+        },
+    });
+    const row = historyLines()[0];
+    expect(row.sessionId).toBe("original-session");
+    expect(row.agent).toBe("unknown");
+    expect(row.branch).toBeNull();
+    expect(row.commitSha).toBeNull();
+    expect(row.project).not.toBe("Responder");
+    expect(row.cwd).toBe(PROJECT);
+    expect(row.transcriptAnchor?.kind).toBe("unanchored");
+});

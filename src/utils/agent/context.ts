@@ -1,3 +1,5 @@
+import type { SourceMessage } from "./source-anchor";
+
 /**
  * What every agent host resolver produces. A leaf type module on purpose: it
  * imports nothing, so `host.ts` and each file under `hosts/` can all depend on
@@ -12,6 +14,8 @@
 export interface AgentRuntimeContext {
     agent: "claude-code" | "codex" | "grok" | "copilot" | "unknown";
     sessionId: string | null;
+    /** Native IDs provided by the calling harness, never inferred from transcript positions. */
+    sourceMessage?: SourceMessage;
     isInAgent: boolean;
     aiAgent: string | null;
     sessionTitle: string | null;

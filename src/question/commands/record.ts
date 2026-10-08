@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { sourceMessageSchema } from "@genesiscz/utils/agent/source-anchor";
 import { parseImageAttachmentInputs } from "@genesiscz/utils/image/attachments";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -24,6 +25,10 @@ export function registerRecordCommand(program: Command): void {
         .option("--agent <label>", "subagent attribution label")
         .option("--session <id>", "override session id")
         .option("--project <name>", "override project")
+        .option(
+            "--source-message-file <path>",
+            "JSON object containing only known native messageId, turnId or toolCallId"
+        )
         .action(async (o: Record<string, string>) => {
             const answer = o.aFile ? readFileSync(o.aFile, "utf8") : o.a;
             if (!answer) {
@@ -43,6 +48,9 @@ export function registerRecordCommand(program: Command): void {
                 sessionId: o.session,
                 project: o.project,
                 source: "cli",
+                sourceMessage: o.sourceMessageFile
+                    ? sourceMessageSchema.parse(SafeJSON.parse(readFileSync(o.sourceMessageFile, "utf8")))
+                    : undefined,
             });
             if (o.json) {
                 out.result(res);

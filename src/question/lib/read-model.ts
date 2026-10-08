@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { createTranscriptAnchor, transcriptAnchorSchema } from "@genesiscz/utils/agent/source-anchor";
 import { withDatabaseReadSnapshot } from "@genesiscz/utils/database/read-snapshot";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { parseJsonlChunk, readJsonlRows } from "@genesiscz/utils/jsonl";
@@ -9,6 +10,17 @@ import { logDir } from "./log-store";
 import type { QaAgent, QaEntry } from "./types";
 
 const log = logger.child({ component: "question:read-model" });
+
+function entryAnchor(raw: Partial<QaEntry>) {
+    const parsed = transcriptAnchorSchema.safeParse(raw.transcriptAnchor);
+    if (parsed.success) {
+        return parsed.data;
+    }
+    return createTranscriptAnchor({
+        context: { agent: raw.agent ?? "unknown", sessionId: raw.sessionId ?? null },
+        receivedAt: typeof raw.ts === "number" && Number.isFinite(raw.ts) && raw.ts >= 0 ? raw.ts : 0,
+    });
+}
 
 function ensureColumn(db: Database, table: string, column: string, ddl: string): void {
     const cols = db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
@@ -23,6 +35,7 @@ function normalizeEntry(raw: QaEntry): QaEntry {
         ...raw,
         commitMessage: raw.commitMessage ?? null,
         agent: raw.agent ?? "unknown",
+        transcriptAnchor: entryAnchor(raw),
     };
 }
 
@@ -49,6 +62,10 @@ function initializeReadModel(db: Database): void {
     ensureColumn(db, "entries", "commit_message", "ALTER TABLE entries ADD COLUMN commit_message TEXT");
     ensureColumn(db, "entries", "agent", "ALTER TABLE entries ADD COLUMN agent TEXT");
     ensureColumn(db, "entries", "attachments_json", "ALTER TABLE entries ADD COLUMN attachments_json TEXT");
+    ensureColumn(db, "entries", "transcript_anchor_json", "ALTER TABLE entries ADD COLUMN transcript_anchor_json TEXT");
+    db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_entries_missing_anchor ON entries(id) WHERE transcript_anchor_json IS NULL"
+    );
     db.exec("CREATE INDEX IF NOT EXISTS idx_entries_missing_images ON entries(id) WHERE attachments_json IS NULL");
 }
 
@@ -72,8 +89,8 @@ function catchUp(db: Database, logBase?: string): void {
     }
 
     const insert = db.prepare(`INSERT OR REPLACE INTO entries
-        (id,ts,session_id,session_title,project,repo_root,cwd,branch,commit_sha,commit_message,agent,is_worktree,worktree_path,ai_agent,agent_label,tag,question,answer_md,refs_json,source,turn_uuid,superseded_by,read_at,dedupe_key,attachments_json)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?)`);
+        (id,ts,session_id,session_title,project,repo_root,cwd,branch,commit_sha,commit_message,agent,is_worktree,worktree_path,ai_agent,agent_label,tag,question,answer_md,refs_json,source,turn_uuid,superseded_by,read_at,dedupe_key,attachments_json,transcript_anchor_json)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,?)`);
     const getOff = db.prepare("SELECT byte_offset FROM ingest_offsets WHERE file = ?");
     const setOff = db.prepare("INSERT OR REPLACE INTO ingest_offsets (file, byte_offset) VALUES (?, ?)");
     const supersede = db.prepare(
@@ -133,7 +150,8 @@ function catchUp(db: Database, logBase?: string): void {
                     en.source,
                     en.turnUuid,
                     key,
-                    SafeJSON.stringify(en.attachments ?? [])
+                    SafeJSON.stringify(en.attachments ?? []),
+                    SafeJSON.stringify(en.transcriptAnchor)
                 );
                 supersede.run(en.id, key, en.id); // older same-key rows point at the newest
             }
@@ -149,13 +167,17 @@ function catchUp(db: Database, logBase?: string): void {
 
 /** Old resident readers can advance the shared offset without indexing fields added by a newer writer. */
 function backfillAttachments(db: Database, dir: string): void {
-    const missing = db.query("SELECT id FROM entries WHERE attachments_json IS NULL").all() as { id: string }[];
+    const missing = db
+        .query("SELECT id FROM entries WHERE attachments_json IS NULL OR transcript_anchor_json IS NULL")
+        .all() as { id: string }[];
     if (missing.length === 0) {
         return;
     }
 
     const pending = new Set(missing.map((row) => row.id));
-    const update = db.prepare("UPDATE entries SET attachments_json = ? WHERE id = ? AND attachments_json IS NULL");
+    const update = db.prepare(
+        "UPDATE entries SET attachments_json = COALESCE(attachments_json, ?), transcript_anchor_json = COALESCE(transcript_anchor_json, ?) WHERE id = ?"
+    );
 
     for (const name of readdirSync(dir)
         .filter((name) => name.endsWith(".jsonl"))
@@ -172,7 +194,11 @@ function backfillAttachments(db: Database, dir: string): void {
                 if (pending.delete(entry.id)) {
                     const attachments =
                         "attachments" in entry && Array.isArray(entry.attachments) ? entry.attachments : [];
-                    update.run(SafeJSON.stringify(attachments), entry.id);
+                    update.run(
+                        SafeJSON.stringify(attachments),
+                        SafeJSON.stringify(entryAnchor(entry as Partial<QaEntry>)),
+                        entry.id
+                    );
                 }
             }
         });
@@ -189,8 +215,12 @@ function backfillAttachments(db: Database, dir: string): void {
 
     // Entries whose source log was retired have no attachment metadata to recover.
     const finish = db.transaction(() => {
+        const retained = db.prepare("SELECT * FROM entries WHERE id = ?");
         for (const id of pending) {
-            update.run("[]", id);
+            const row = retained.get(id) as Record<string, unknown> | null;
+            if (row) {
+                update.run("[]", SafeJSON.stringify(rowToQaRow(row).transcriptAnchor), id);
+            }
         }
     });
     finish();
@@ -234,6 +264,9 @@ function rowToQaRow(r: Record<string, unknown>): QaRow {
         attachments: r.attachments_json ? SafeJSON.parse(String(r.attachments_json)) : [],
         source: r.source as QaEntry["source"],
         turnUuid: r.turn_uuid as string | null,
+        transcriptAnchor: r.transcript_anchor_json
+            ? transcriptAnchorSchema.parse(SafeJSON.parse(String(r.transcript_anchor_json)))
+            : entryAnchor({ agent: r.agent as QaAgent, sessionId: r.session_id as string, ts: r.ts as number }),
         supersededBy: r.superseded_by as string | null,
         readAt: r.read_at as number | null,
     };

@@ -1,3 +1,4 @@
+import type { SourceMessage, TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import type { ImageAttachment, ImageAttachmentInput } from "@genesiscz/utils/image/attachments";
 
 export type QaTag = "question" | "action" | "directive";
@@ -32,9 +33,11 @@ export interface QaEntry {
     attachments?: ImageAttachment[];
     source: QaSource;
     turnUuid: string | null;
+    transcriptAnchor?: TranscriptAnchor;
 }
 
 export interface RecordInput {
+    sourceMessage?: SourceMessage;
     question: string;
     answer: string;
     tag: QaTag;

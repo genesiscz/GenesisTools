@@ -24,6 +24,7 @@ import type { AskAnswer, AskChoice, AskForm } from "@app/question/lib/pending/ty
 import { DEFAULT_WAIT_BUDGET_MS } from "@app/question/lib/pending/types";
 import { questionTokenRegistry, transcludeItems, transclusionReport } from "@app/question/lib/transclude";
 import { callerCwd } from "@genesiscz/utils/agent/runtime";
+import { SOURCE_MESSAGE_INPUT_SCHEMA, type SourceMessage } from "@genesiscz/utils/agent/source-anchor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
@@ -35,6 +36,7 @@ import {
 } from "@genesiscz/utils/transclude";
 
 export interface QuestionPostArgs {
+    sourceMessage?: SourceMessage;
     projectPath?: string;
     question?: string;
     choices?: Array<string | AskChoice>;
@@ -122,7 +124,7 @@ async function postDecisionHalf(args: QuestionPostArgs, items: QuestionItemInput
         file,
         events,
         items,
-        hint: { sessionId: args.sessionHint, cwd: args.projectPath },
+        hint: { sessionId: args.sessionHint, cwd: args.projectPath, sourceMessage: args.sourceMessage },
         deps: deps.decisionLog?.deps,
         notify: deps.notify,
     });
@@ -158,7 +160,11 @@ async function postQuestionItems(args: QuestionPostArgs, deps: QuestionDeps): Pr
     }
 
     // Both halves are checked before either is written; see `checkDecisionItems`.
-    checkDecisionItems(decisions, { sessionId: args.sessionHint, cwd: args.projectPath });
+    checkDecisionItems(decisions, {
+        sessionId: args.sessionHint,
+        cwd: args.projectPath,
+        sourceMessage: args.sourceMessage,
+    });
     const form = await postAskForm(
         {
             projectPath: args.projectPath,
@@ -166,6 +172,7 @@ async function postQuestionItems(args: QuestionPostArgs, deps: QuestionDeps): Pr
             timeoutMs: args.timeoutMs,
             source: args.source ?? "mcp",
             sessionHint: args.sessionHint,
+            sourceMessage: args.sourceMessage,
         },
         deps
     );
@@ -342,6 +349,7 @@ const ITEM_SCHEMA = {
 export const QUESTION_POST_INPUT_SCHEMA = {
     type: "object",
     properties: {
+        sourceMessage: SOURCE_MESSAGE_INPUT_SCHEMA,
         question: { type: "string", description: "single-question shortcut; use `items` for a multi-question form" },
         choices: ITEM_SCHEMA.properties.choices,
         allowMultiple: { type: "boolean" },

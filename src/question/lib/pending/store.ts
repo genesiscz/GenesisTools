@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { transcriptAnchorSchema } from "@genesiscz/utils/agent/source-anchor";
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
 import { withDatabaseReadSnapshot } from "@genesiscz/utils/database/read-snapshot";
 import { env } from "@genesiscz/utils/env";
@@ -54,6 +55,19 @@ export const PENDING_MIGRATIONS: Migration[] = [
     },
 ];
 
+PENDING_MIGRATIONS.push({
+    id: "003-qa-pending-provenance",
+    description: "posting context and native source identifiers",
+    apply: (db) => {
+        const columns = db.query("PRAGMA table_info(qa_pending)").all() as { name: string }[];
+        for (const name of ["poster_json", "transcript_anchor_json"]) {
+            if (!columns.some((column) => column.name === name)) {
+                db.exec("ALTER TABLE qa_pending ADD COLUMN " + name + " TEXT");
+            }
+        }
+    },
+});
+
 export function defaultPendingDbPath(): string {
     return join(env.tools.getHome(), ".genesis-tools", "question", "qa.db");
 }
@@ -83,6 +97,8 @@ export function listFormsSnapshot({
 }
 
 interface PendingRow {
+    poster_json: string | null;
+    transcript_anchor_json: string | null;
     id: string;
     created_at: number;
     resolved_at: number | null;
@@ -102,6 +118,10 @@ function rowToForm(row: PendingRow): AskForm {
     return {
         id: row.id,
         createdAt: row.created_at,
+        poster: row.poster_json ? (SafeJSON.parse(row.poster_json, { strict: true }) as AskForm["poster"]) : undefined,
+        transcriptAnchor: row.transcript_anchor_json
+            ? transcriptAnchorSchema.parse(SafeJSON.parse(row.transcript_anchor_json, { strict: true }))
+            : undefined,
         resolvedAt: row.resolved_at ?? undefined,
         status: row.status as AskFormStatus,
         source: row.source ?? undefined,
@@ -120,8 +140,8 @@ function rowToForm(row: PendingRow): AskForm {
 export function insertForm(db: Database, form: AskForm): AskForm {
     db.query(
         `INSERT INTO qa_pending
-         (id, created_at, resolved_at, status, source, session_hint, project_path, cwd, items_json, answers_json, timeout_ms, entry_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, created_at, resolved_at, status, source, session_hint, project_path, cwd, items_json, answers_json, timeout_ms, entry_id, poster_json, transcript_anchor_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
         form.id,
         form.createdAt,
@@ -134,7 +154,9 @@ export function insertForm(db: Database, form: AskForm): AskForm {
         SafeJSON.stringify(form.items),
         form.answers ? SafeJSON.stringify(form.answers) : null,
         form.timeoutMs ?? null,
-        form.entryId ?? null
+        form.entryId ?? null,
+        form.poster ? SafeJSON.stringify(form.poster) : null,
+        form.transcriptAnchor ? SafeJSON.stringify(form.transcriptAnchor) : null
     );
 
     return form;

@@ -21,6 +21,7 @@ export type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
  * nothing changes.
  */
 export interface AgentCaller {
+    sourceMessage?: AgentRuntimeContext["sourceMessage"];
     agent: AgentRuntimeContext["agent"];
     sessionId: string | null;
     /** The caller's live cwd. Null leaves the process's own answer in place. */
@@ -123,7 +124,13 @@ export function getAgentRuntimeContext(
     const cwd = overrides.cwd ?? caller?.cwd ?? resolveSessionCwd();
 
     const agentPartial: Partial<AgentRuntimeContext> = caller
-        ? { agent: caller.agent, sessionId: caller.sessionId, isInAgent: caller.agent !== "unknown", aiAgent: null }
+        ? {
+              agent: caller.agent,
+              sessionId: caller.sessionId,
+              sourceMessage: caller.sourceMessage,
+              isInAgent: caller.agent !== "unknown",
+              aiAgent: null,
+          }
         : resolveAgentHost(processEnv);
 
     // Canonical worktree test: in the main repo `--git-dir` and
@@ -157,6 +164,13 @@ export function getAgentRuntimeContext(
     };
 
     const merged = { ...base, ...agentPartial, ...overrides };
+
+    if (
+        !Object.hasOwn(overrides, "sourceMessage") &&
+        (merged.agent !== agentPartial.agent || merged.sessionId !== agentPartial.sessionId)
+    ) {
+        merged.sourceMessage = undefined;
+    }
 
     const historyProvider = PROVIDER_ALIASES[merged.agent === "claude-code" ? "claude" : merged.agent];
 

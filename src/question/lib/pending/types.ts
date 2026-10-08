@@ -1,3 +1,5 @@
+import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
+import type { SourceMessage, TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import type { ItemTransclusion } from "../transclude";
 
 /**
@@ -59,6 +61,8 @@ export interface AskAnswer {
 }
 
 export interface AskForm {
+    poster?: AgentRuntimeContext;
+    transcriptAnchor?: TranscriptAnchor;
     id: string;
     createdAt: number;
     source?: string;
@@ -91,6 +95,7 @@ export interface CreateAskItemInput {
 }
 
 export interface CreateAskFormInput {
+    sourceMessage?: SourceMessage;
     /** Omitted means the harness poster cwd, the same directory a handoff would stamp. */
     projectPath?: string;
     items: CreateAskItemInput[];

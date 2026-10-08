@@ -1,3 +1,4 @@
+import type { SourceMessage } from "@genesiscz/utils/agent/source-anchor";
 import { loadConfig } from "../config";
 import type { AskChoice, CreateAskItemInput } from "../pending/types";
 import { decisionTransclusion, type ItemTransclusion } from "../transclude";
@@ -127,6 +128,7 @@ export function validateQuestionItems(value: unknown, help: string): QuestionIte
 
 /** Where the decisions of one post belong. A live harness overrides every field it knows. */
 export interface DecisionSessionHint {
+    sourceMessage?: SourceMessage;
     sessionId?: string;
     cwd?: string;
 }
@@ -169,6 +171,7 @@ export function splitItems(items: QuestionItemInput[]): {
 export function decisionPayload(items: QuestionItemInput[], hint: DecisionSessionHint): Record<string, unknown> {
     return {
         ...(hint.sessionId ? { sessionId: hint.sessionId } : {}),
+        ...(hint.sourceMessage ? { sourceMessage: hint.sourceMessage } : {}),
         ...(hint.cwd ? { cwd: hint.cwd } : {}),
         decisions: items.map((item) => ({
             type: item.type,

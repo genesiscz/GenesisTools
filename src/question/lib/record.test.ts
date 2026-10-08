@@ -2,9 +2,11 @@ import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { transcriptAnchorSchema } from "@genesiscz/utils/agent/source-anchor";
 import { encodeRgbaToPng } from "@genesiscz/utils/image/raster";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { createCanvas } from "@napi-rs/canvas";
+import { getEntryById, openReadModel } from "./read-model";
 import { recordAnswer } from "./record";
 import type { QaEntry } from "./types";
 
@@ -247,4 +249,102 @@ describe("image import failure boundaries", () => {
             expect(result.attachments?.[0]).toMatchObject({ mimeType: mime, width: 3, height: 2 });
         }
     });
+});
+
+describe("answer source provenance", () => {
+    it("preserves known source identifiers through the log and SQLite projection", async () => {
+        const root = mkdtempSync(join(tmpdir(), "qa-provenance-"));
+        const input = {
+            question: "Which version?",
+            answer: "The current revision.",
+            tag: "action" as const,
+            source: "mcp" as const,
+            sourceMessage: { messageId: "message-native-42", turnId: "turn-native-7", toolCallId: "call-native-3" },
+        };
+        const receipt = await recordAnswer(input, {
+            logBase: root,
+            env: {},
+            ctx: { agent: "codex", sessionId: "source-session" },
+            config: { sinks: { obsidian: false, sound: false, notify: false } },
+        });
+        const db = openReadModel(join(root, "index.db"));
+        try {
+            const row = getEntryById(db, receipt.id, { logBase: root });
+            expect(row?.transcriptAnchor).toMatchObject({
+                kind: "native",
+                provider: "codex",
+                sessionId: "source-session",
+                messageId: "message-native-42",
+                turnId: "turn-native-7",
+                toolCallId: "call-native-3",
+            });
+            expect(row?.transcriptAnchor?.receivedAt).toBe(row?.ts);
+            expect(row?.turnUuid).toBeNull();
+        } finally {
+            db.close();
+        }
+    });
+
+    it("labels absent native IDs as receipt-time, never a fabricated turn", async () => {
+        const root = mkdtempSync(join(tmpdir(), "qa-time-anchor-"));
+        const receipt = await recordAnswer(
+            {
+                question: "What happened?",
+                answer: "The task finished.",
+                tag: "action",
+                source: "cli",
+            },
+            {
+                logBase: root,
+                env: {},
+                ctx: { agent: "codex", sessionId: "source-session" },
+                config: { sinks: { obsidian: false, sound: false, notify: false } },
+            }
+        );
+        const db = openReadModel(join(root, "index.db"));
+        try {
+            const row = getEntryById(db, receipt.id, { logBase: root });
+            expect(row?.transcriptAnchor).toEqual({
+                kind: "receipt-time",
+                provider: "codex",
+                sessionId: "source-session",
+                receivedAt: row!.ts,
+            });
+        } finally {
+            db.close();
+        }
+    });
+});
+
+it("refuses invalid source IDs before writing durable answer bytes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "qa-invalid-anchor-"));
+    await expect(
+        recordAnswer(
+            {
+                question: "q",
+                answer: "a",
+                tag: "action",
+                source: "cli",
+                sourceMessage: { messageId: " " },
+            },
+            {
+                logBase: root,
+                env: {},
+                ctx: { agent: "codex", sessionId: "source-session" },
+                config: { sinks: { obsidian: false, sound: false, notify: false } },
+            }
+        )
+    ).rejects.toThrow();
+    expect(readdirSync(root)).toEqual([]);
+});
+
+it("does not accept an exact-native anchor with no native identifier", () => {
+    expect(
+        transcriptAnchorSchema.safeParse({
+            kind: "native",
+            provider: "codex",
+            sessionId: "s",
+            receivedAt: 123,
+        }).success
+    ).toBe(false);
 });

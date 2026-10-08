@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it, spyOn } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearDatabaseReadSnapshots } from "@genesiscz/utils/database/read-snapshot";
@@ -183,16 +183,24 @@ it("recovers attachments ingested by an old reader without losing read/supersess
         bytes: 100,
         sha256: "fixture-digest",
     };
-    appendEntry(e("old-reader", { attachments: [image] }), logBase);
+    const transcriptAnchor = {
+        kind: "native" as const,
+        provider: "codex" as const,
+        sessionId: "s",
+        receivedAt: 123,
+        turnId: "native-turn",
+    };
+    appendEntry(e("old-reader", { attachments: [image], transcriptAnchor }), logBase);
     const db = openReadModel(join(root, "qa.db"));
     try {
         queryEntries(db, { logBase });
         // An old process stores the row without attachments and advances the shared byte offset.
         db.run(
-            "UPDATE entries SET attachments_json = NULL, read_at = 123, superseded_by = 'newer' WHERE id = 'old-reader'"
+            "UPDATE entries SET attachments_json = NULL, transcript_anchor_json = NULL, read_at = 123, superseded_by = 'newer' WHERE id = 'old-reader'"
         );
         const row = getEntryById(db, "old-reader", { logBase });
         expect(row?.attachments).toEqual([image]);
+        expect(row?.transcriptAnchor).toEqual(transcriptAnchor);
         expect(row?.readAt).toBe(123);
         expect(row?.supersededBy).toBe("newer");
     } finally {
@@ -340,5 +348,30 @@ it("warm snapshot reads reuse the database copy and migrate a legacy schema only
     } finally {
         serialize.mockRestore();
         clearDatabaseReadSnapshots();
+    }
+});
+
+it("recovers receipt-time context when an older reader consumed a now-retired source log", () => {
+    const root = mkdtempSync(join(tmpdir(), "qa-retired-anchor-"));
+    const logBase = join(root, "log");
+    const file = appendEntry(e("retired", { agent: "codex", sessionId: "retired-session", ts: 12345 }), logBase);
+    const db = openReadModel(join(root, "qa.db"));
+    try {
+        queryEntries(db, { logBase });
+        renameSync(file, file + ".retired");
+        db.run(
+            "UPDATE entries SET transcript_anchor_json = NULL, attachments_json = NULL, read_at = 99 WHERE id = 'retired'"
+        );
+        const row = getEntryById(db, "retired", { logBase });
+        expect(row?.transcriptAnchor).toEqual({
+            kind: "receipt-time",
+            provider: "codex",
+            sessionId: "retired-session",
+            receivedAt: 12345,
+        });
+        expect(row?.readAt).toBe(99);
+        expect(getEntryById(db, "retired", { logBase })?.transcriptAnchor).toEqual(row?.transcriptAnchor);
+    } finally {
+        db.close();
     }
 });

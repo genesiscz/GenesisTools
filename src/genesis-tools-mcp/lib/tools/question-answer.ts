@@ -1,8 +1,10 @@
 import { type RecordDeps, recordAnswer } from "@app/question/lib/record";
 import type { QaRef, QaTag } from "@app/question/lib/types";
+import { SOURCE_MESSAGE_INPUT_SCHEMA, type SourceMessage } from "@genesiscz/utils/agent/source-anchor";
 import { IMAGE_ATTACHMENT_INPUT_SCHEMA, type ImageAttachmentInput } from "@genesiscz/utils/image/attachments";
 
 export interface QuestionAnswerArgs {
+    sourceMessage?: SourceMessage;
     question: string;
     answer: string;
     tag: QaTag;
@@ -15,6 +17,7 @@ export async function handleQuestionAnswer(args: QuestionAnswerArgs, deps: Recor
     const res = await recordAnswer(
         {
             question: args.question,
+            sourceMessage: args.sourceMessage,
             answer: args.answer,
             tag: args.tag,
             refs: args.refs,
@@ -35,6 +38,7 @@ export async function handleQuestionAnswer(args: QuestionAnswerArgs, deps: Recor
 export const QUESTION_ANSWER_INPUT_SCHEMA = {
     type: "object",
     properties: {
+        sourceMessage: SOURCE_MESSAGE_INPUT_SCHEMA,
         question: { type: "string", description: "the user's question, verbatim or lightly cleaned" },
         answer: { type: "string", description: "your complete answer in markdown (rationale, links, refs)" },
         tag: { type: "string", enum: ["question", "action", "directive"] },

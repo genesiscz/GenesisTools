@@ -115,14 +115,34 @@ describe("getAgentRuntimeContext — caller scope (resident server)", () => {
     it("keeps two concurrent callers apart", async () => {
         const { main, deep } = makeRepo();
         const [a, b] = await Promise.all([
-            runAsCaller({ agent: "claude-code", sessionId: "caller-a", cwd: main }, async () => {
-                await Bun.sleep(5);
-                return getAgentRuntimeContext({}, {});
-            }),
+            runAsCaller(
+                {
+                    agent: "claude-code",
+                    sessionId: "caller-a",
+                    cwd: main,
+                    sourceMessage: { messageId: "native-message-a" },
+                },
+                async () => {
+                    await Bun.sleep(5);
+                    return getAgentRuntimeContext({}, {});
+                }
+            ),
             runAsCaller({ agent: "codex", sessionId: null, cwd: deep }, async () => getAgentRuntimeContext({}, {})),
         ]);
         expect([a.sessionId, a.cwd, a.agent]).toEqual(["caller-a", main, "claude-code"]);
         expect([b.sessionId, b.cwd, b.agent]).toEqual([null, deep, "codex"]);
+        expect(a.sourceMessage).toEqual({ messageId: "native-message-a" });
+        expect(b.sourceMessage).toBeUndefined();
+        const retargeted = runAsCaller(
+            {
+                agent: "claude-code",
+                sessionId: "caller-a",
+                cwd: main,
+                sourceMessage: { messageId: "native-message-a" },
+            },
+            () => getAgentRuntimeContext({ agent: "codex", sessionId: "caller-b" }, {})
+        );
+        expect(retargeted.sourceMessage).toBeUndefined();
     });
 
     it("leaves the process env in charge outside a scope", () => {

@@ -1,3 +1,4 @@
+import { sourceMessageSchema } from "@genesiscz/utils/agent/source-anchor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { z } from "zod";
 
@@ -72,6 +73,7 @@ export const postedDecisionSchema = z.object({
 });
 
 export const postDecisionsInputSchema = z.object({
+    sourceMessage: sourceMessageSchema.optional(),
     sessionId: z.string().optional().describe("Kept only outside a harness; a live harness owns the session."),
     provider: z.string().optional(),
     cwd: z.string().optional(),

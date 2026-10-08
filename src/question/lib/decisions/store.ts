@@ -13,6 +13,7 @@ import {
 import { dirname, isAbsolute, resolve } from "node:path";
 import { canonicalAgent } from "@app/handoff/targeting";
 import { type AgentRuntimeContext, callerCwd, gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { createTranscriptAnchor, type TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
@@ -61,6 +62,8 @@ export interface DecisionDelivery {
 }
 
 export interface DecisionRecord {
+    transcriptAnchor?: TranscriptAnchor;
+    worktreePath?: string | null;
     id: string;
     sessionId: string;
     /** Absent on rows written before todos existed; those are decisions. */
@@ -129,6 +132,18 @@ export interface DecisionRecord {
  * (id, number, comments) stays with the item.
  */
 const VERSIONED_KEYS = [
+    "transcriptAnchor",
+    "provider",
+    "cwd",
+    "repoRoot",
+    "branch",
+    "project",
+    "commitSha",
+    "aiAgent",
+    "isWorktree",
+    "worktreePath",
+    "sessionTitle",
+    "cmuxSurface",
     "excerpt",
     "title",
     "proposal",
@@ -262,6 +277,7 @@ export async function postDecisions(
         ...(poster.commitSha ? { commitSha: poster.commitSha } : {}),
         ...(poster.aiAgent ? { aiAgent: poster.aiAgent } : {}),
         isWorktree: poster.isWorktree,
+        worktreePath: poster.worktreePath,
         ...(cmuxSurface ? { cmuxSurface } : {}),
         ...(sessionTitle ? { sessionTitle } : {}),
     };
@@ -278,6 +294,24 @@ export async function postDecisions(
         for (const [index, decision] of input.decisions.entries()) {
             const kind = decision.type ?? "decision";
             const ts = now();
+            const transcriptAnchor = createTranscriptAnchor({
+                context: {
+                    ...poster,
+                    sessionId,
+                    sourceMessage:
+                        sessionId === poster.sessionId && provider === providerName(poster.agent)
+                            ? poster.sourceMessage
+                            : undefined,
+                    agent:
+                        provider === "claude"
+                            ? "claude-code"
+                            : provider === "codex" || provider === "grok" || provider === "copilot"
+                              ? provider
+                              : poster.agent,
+                },
+                receivedAt: Date.parse(ts),
+                sourceMessage: input.sourceMessage,
+            });
             const content = contentOf(decision, excerpts[index]);
 
             if (decision.supersedes) {
@@ -292,6 +326,7 @@ export async function postDecisions(
                     ...withoutVersioned(row),
                     ...content,
                     ...context,
+                    transcriptAnchor,
                     state: "open",
                     revision: (row.revision ?? 1) + 1,
                     versions: [...(row.versions ?? []), versionOf(row, ts)],
@@ -313,6 +348,7 @@ export async function postDecisions(
                 number,
                 ...content,
                 ...context,
+                transcriptAnchor,
                 state: "open",
                 createdTs: ts,
                 updatedTs: ts,

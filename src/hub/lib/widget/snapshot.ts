@@ -7,6 +7,7 @@ import { renderFormAnswer } from "@app/question/lib/pending/render";
 import { listFormsSnapshot } from "@app/question/lib/pending/store";
 import type { AskForm, AskItem } from "@app/question/lib/pending/types";
 import { type QaRow, queryEntriesSnapshot } from "@app/question/lib/read-model";
+import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { resolveTranscript, transcriptEnvelope } from "@genesiscz/utils/ai/transcripts";
 import type { ImageAttachment } from "@genesiscz/utils/image/attachments";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
@@ -45,6 +46,20 @@ export interface WidgetSession {
     transcriptPath?: string;
 }
 export interface WidgetCard {
+    transcriptAnchor?: TranscriptAnchor;
+    sourceContext?: {
+        project?: string;
+        cwd?: string;
+        repoRoot?: string;
+        branch?: string | null;
+        commitSha?: string | null;
+        isWorktree?: boolean;
+        worktreePath?: string | null;
+        sessionId: string;
+        agent?: string;
+        agentLabel?: string | null;
+        aiAgent?: string | null;
+    };
     id: string;
     kind: "decision" | "todo" | "form" | "answer" | "result";
     sessionKey: string;
@@ -474,6 +489,20 @@ export async function widgetSnapshot({
         cards.push({
             id: `answer:${row.id}`,
             kind: "answer",
+            transcriptAnchor: row.transcriptAnchor,
+            sourceContext: {
+                sessionId: row.sessionId,
+                agent: row.agent,
+                agentLabel: row.agentLabel,
+                aiAgent: row.aiAgent,
+                project: row.project,
+                cwd: row.cwd,
+                repoRoot: row.repoRoot,
+                branch: row.branch,
+                commitSha: row.commitSha,
+                isWorktree: row.isWorktree,
+                worktreePath: row.worktreePath,
+            },
             sessionKey: session.key,
             sourceId: row.id,
             at: row.ts,
@@ -494,6 +523,19 @@ export async function widgetSnapshot({
         cards.push({
             id: `decision:${row.id}`,
             kind: kindOf(row),
+            transcriptAnchor: row.transcriptAnchor,
+            sourceContext: {
+                sessionId: row.sessionId,
+                agent: row.provider,
+                aiAgent: row.aiAgent,
+                project: row.project,
+                cwd: row.cwd,
+                repoRoot: row.repoRoot,
+                branch: row.branch,
+                commitSha: row.commitSha,
+                isWorktree: row.isWorktree,
+                worktreePath: row.worktreePath,
+            },
             sessionKey: session.key,
             sourceId: row.id,
             at: timeOf(row.updatedTs),
@@ -524,6 +566,13 @@ export async function widgetSnapshot({
         cards.push({
             id: `form:${form.id}`,
             kind: "form",
+            transcriptAnchor: form.transcriptAnchor,
+            sourceContext: form.poster
+                ? {
+                      ...form.poster,
+                      sessionId: form.sessionHint ?? form.poster.sessionId ?? "unknown",
+                  }
+                : undefined,
             sessionKey: session.key,
             sourceId: form.id,
             at: form.resolvedAt ?? form.createdAt,
