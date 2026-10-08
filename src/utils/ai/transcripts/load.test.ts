@@ -194,7 +194,8 @@ describe("readRecordsAppendOnly", () => {
         writeFileSync(other, `${line(10)}\n`);
         renameSync(other, path);
         expect(read(path).map((record) => record.n)).toEqual([10]);
-        expect(read(join(recordCacheRoot, "missing.jsonl"))).toEqual([]);
+        // An unreadable file is an error, as the whole-file read was; `readRecords` returns [] for a missing one.
+        expect(() => read(join(recordCacheRoot, "missing.jsonl"))).toThrow(/ENOENT/);
     });
 });
 

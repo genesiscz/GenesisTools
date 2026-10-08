@@ -140,8 +140,10 @@ export function readRecordsAppendOnly(
 
         return tail.length > 0 ? [...entry.records, ...tail] : entry.records;
     } catch (error) {
+        // Thrown, as the whole-file read it replaced threw: an unreadable transcript is an error, never an empty one.
+        cache.delete(path);
         logger.debug({ error, path }, "[transcripts] transcript records unreadable");
-        return [];
+        throw error;
     } finally {
         if (fd !== null) {
             closeSync(fd);
