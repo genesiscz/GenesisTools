@@ -9,13 +9,67 @@ interface RecordsEntry {
     consumed: number;
     mark: string;
     records: Record<string, unknown>[];
+    /** The file's size when last read, for the memory budget. */
+    bytes: number;
+    lastUsed: number;
 }
 
 /** Smaller files are parsed whole: the saving does not pay for the memory a cache holds. */
 const CACHE_MIN_BYTES = 8 * 1024 * 1024;
-/** Files kept: a live follow reads one or two at a time, and each holds its parsed records in memory. */
-const CACHE_FILES = 3;
+/**
+ * Parsed records take about five times the file's bytes in memory: a 163 MB rollout held 848 MB (2026-10-08). A
+ * file larger than this is parsed whole on every read instead, and all cached files together stay under
+ * `CACHE_TOTAL_BYTES` of source (≈ 500 MB of records at most).
+ */
+const CACHE_MAX_FILE_BYTES = 48 * 1024 * 1024;
+const CACHE_TOTAL_BYTES = 96 * 1024 * 1024;
+/** An entry no read touched for this long is dropped, so a transcript nobody watches holds no memory. */
+const CACHE_IDLE_MS = 60_000;
 const cache = new Map<string, RecordsEntry>();
+let sweep: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleSweep(): void {
+    if (sweep) {
+        return;
+    }
+
+    sweep = setTimeout(() => {
+        sweep = null;
+        const now = Date.now();
+        for (const [path, entry] of cache) {
+            if (now - entry.lastUsed > CACHE_IDLE_MS) {
+                cache.delete(path);
+            }
+        }
+
+        if (cache.size > 0) {
+            scheduleSweep();
+        }
+    }, CACHE_IDLE_MS);
+    // Never what keeps a process alive.
+    sweep.unref?.();
+}
+
+/** Keep `path` within the budget: drop the least recently used entries until the total fits. */
+function keep(path: string, entry: RecordsEntry): void {
+    cache.delete(path);
+    cache.set(path, entry);
+    let total = 0;
+    for (const item of cache.values()) {
+        total += item.bytes;
+    }
+
+    for (const [other, item] of cache) {
+        if (total <= CACHE_TOTAL_BYTES || other === path) {
+            break;
+        }
+
+        cache.delete(other);
+        total -= item.bytes;
+    }
+
+    scheduleSweep();
+}
 
 function parseLines(text: string, into: Record<string, unknown>[]): void {
     for (const line of text.split("\n")) {
@@ -50,7 +104,10 @@ export function readRecordsAppendOnly(
             cached.ino === ino &&
             cached.consumed <= size &&
             markBefore(fd, cached.consumed) === cached.mark;
-        const entry: RecordsEntry = usable && cached ? cached : { ino, consumed: 0, mark: "", records: [] };
+        const entry: RecordsEntry =
+            usable && cached ? cached : { ino, consumed: 0, mark: "", records: [], bytes: size, lastUsed: Date.now() };
+        entry.bytes = size;
+        entry.lastUsed = Date.now();
         const fresh = Buffer.allocUnsafe(size - entry.consumed);
         let read = 0;
         while (read < fresh.length) {
@@ -75,15 +132,8 @@ export function readRecordsAppendOnly(
 
         const tail: Record<string, unknown>[] = [];
         parseLines(unfinished.toString("utf8"), tail);
-        if (size >= minCacheBytes) {
-            cache.delete(path);
-            cache.set(path, entry);
-            if (cache.size > CACHE_FILES) {
-                const oldest = cache.keys().next().value;
-                if (oldest !== undefined) {
-                    cache.delete(oldest);
-                }
-            }
+        if (size >= minCacheBytes && size <= CACHE_MAX_FILE_BYTES) {
+            keep(path, entry);
         } else {
             cache.delete(path);
         }

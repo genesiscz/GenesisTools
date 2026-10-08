@@ -47,6 +47,14 @@
 - **Swift test suites:** `swift test` in GenesisTools (368 tests) and in GenesisKit; run both after a
   GenesisKit change, because the app compiles against it.
 
+## Caches
+
+- **A cache of parsed JSON costs about five times the file's bytes.** Caching the parsed records of a live
+  163 MB rollout saved 147 ms per write and held **848 MB** resident in an always-on server (measured with
+  `Bun.gc(true)` and RSS before/after). Measure the memory of a cache before shipping it; bound it by file
+  size, by total bytes and by idle time (drop entries nobody read for a minute), or cache a smaller derived
+  state instead of the parsed input.
+
 ## Tests
 
 - **A test that spies on one I/O primitive breaks when the code switches primitives.** A snapshot test
