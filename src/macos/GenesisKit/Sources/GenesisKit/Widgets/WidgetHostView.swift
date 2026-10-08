@@ -114,6 +114,7 @@ struct WidgetHostView: View {
                                 .frame(width: 18, height: 22)
                         }.buttonStyle(.genHoverPlain()).accessibilityLabel(
                             session.title + ", " + session.visualStatus.label)
+                            .accessibilityIdentifier("widget.agent." + session.key)
                     }
                 }
             }
@@ -229,6 +230,7 @@ struct WidgetHostView: View {
                         .buttonStyle(.genHoverPlain())
                         .instantTooltip(session.title + " · " + session.visualStatus.label)
                         .accessibilityLabel(session.title + ", " + session.visualStatus.label)
+                        .accessibilityIdentifier("widget.agent." + session.key)
                     }
                 }
             }
