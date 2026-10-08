@@ -95,6 +95,48 @@ For a possibly-idle native Codex child in an explicitly blocking bus workflow:
 
 A standalone stream with nobody consuming its terminal output can advance its cursor without ever reaching the model. A later `--once` will not replay those stdout-emitted events. Keep one receiver under the active agent's control; a wake nudge cannot repair discarded output.
 
+## Joining and leaving: one event at each end
+
+<!-- added 2026-10-08 19:25: a peer could not tell whether anyone still read its mail -->
+
+The bus announces presence by itself, and every other agent receives it (a `--once` receiver wakes on it, and `--kinds message` does not hide it):
+
+- `agent_joined` (`present: [...]`): an agent's first login, or its first after leaving. Later `--once` cycles are not joins.
+- `agent_left` (`reason`, `remaining: [...]`): a stream login ended, a login was killed (a harness monitor expiring kills it), a `--once --timeout` receiver expired with no mail, or a dead login was reaped.
+
+So a lapsed listener is announced without anyone remembering to. When you stop on purpose, say why in the same event:
+
+    tools agents leave --agent-name <me> --session <s> --note "<one-line status>"
+
+Starting the receiver again is a new `agent_joined`; it needs no message.
+
+## The target is not on the bus: message its session directly
+
+<!-- added 2026-10-08 23:45: tools claude|codex|grok message -->
+
+`tools agents message` reaches only agents logged into the same bus session. When the agent you need never joined the bus (a session Martin runs by hand, a session another tool started, a peer whose listener lapsed and that you cannot wait for), send into its running session instead:
+
+    tools claude message <session> "<text>"     # session id, 8+ char prefix, session name or /rename title
+    tools codex message <session> "<text>"
+    tools grok message <session> "<text>" --allow-keystrokes   # no structured channel: pastes into its cmux tab
+
+    # Ask and get the answer in one call (stdout = the reply, stderr = status):
+    tools claude message <session> "<question>" --wait --wait-timeout 600
+    # Watch a session without sending anything:
+    tools claude wait <session> --timeout 600            # returns at once if it is idle; --next waits for the next turn
+    tools claude wait <session> --last 3 --tools         # read its last 3 replies and what the last turn ran
+
+- Claude: written to the session's own cross-session socket. A busy session reads it between tool calls; an idle one starts a turn. It is never typed into the terminal, so it cannot land in a half-typed prompt or a dialog.
+- A Claude session in bypass mode holds the message for approval unless it was started with `tools claude run --cross-messages` (sessions from `tools cmux agents new claude` have it by default).
+- The receiver sees a message from another session: write it as a request with context, not as the user's own words. It cannot reply on the bus; ask it to answer with `tools agents message` if it is on a bus, or read its reply with `--wait` on the send (or `tools <agent> wait <session>` later). Do not poll its screen or transcript by hand.
+- Codex: `codex queue` on the shared app-server; it runs after the current turn, and only for a TUI attached to that server.
+- `<session>` may also be part of the cmux tab or workspace title (`vybava` finds the tab "vybava - grok").
+- `--allow-keystrokes` is the explicit fallback for an agent with no channel (Grok, a Codex TUI without the shared app-server): `cmux paste --submit` into its tab, which refuses while the prompt holds a draft or a dialog is open.
+- `--wait` sends and then blocks until the answering turn ends, printing the reply (`--wait-timeout <s>`, `--stall-timeout <s>`, `--stream`, `--last <n>`, `--tools`, `--quiet`, `--json`). Use it when you need the answer before you continue; exit 124 means it timed out, 3 that the session stalled. The send time is the baseline, so a reply that ended before the wait began still counts.
+- Without `--wait`, the send returns at once. Run it in the background (Bash `run_in_background`) when you want to keep working and be woken by the reply.
+- `tools <agent> wait <session>` works on any native session, messaged or not: `--last <n>` prints its last N replies, `--tools` the tool calls of the turn that ended, `--quiet` only the status. Exit codes: 0 done, 3 stalled, 124 timeout, 1 no match.
+- Several sessions match a name: the error lists each one with its exact command. Use the full session id.
+
 ## Mental model in one sentence
 
 There's a shared **feed.jsonl** per session under `~/.genesis-tools/agents/<session>/`. Anyone with filesystem access can append events through the CLI. Login auto-registers, filters events, and emits JSONL on stdout. A capable harness monitors that stream; other hosts receive through blocking `--once` calls.
@@ -205,28 +247,6 @@ Measured 2026-09-30 23:10 to 2026-10-01 00:05 on Claude Code 2.1.280 with in-pro
 4. The lead's own receiver is a `Monitor` on `tools agents login --agent-main --agent-name lead`. A Codex worker on the same bus publishes every lifecycle event to main, so filter those out: `... | grep --line-buffered -v '\\"event\\":'`.
 
 A plain background agent (`Agent` without `name`) needs none of this: its `SendMessage` arrives between tool calls on its own.
-
-## Listening for a long time, and leaving the channel
-
-<!-- added 2026-10-08 17:49: a remote Grok bot asked a Claude main session to stay on the bus; the 30-minute Monitor expiry woke the session every half hour and the peer never learned when nobody was reading -->
-
-A peer (often a remote bot that reaches this Mac only through one-shot shell calls) may ask you to join the bus and stay reachable. Two rules make that work.
-
-**1. Listen with a receiver that wakes you only when mail arrives.** A Claude Code `Monitor` expires after 30 minutes, and each expiry wakes the session with nothing to do (and, past an hour, a cold prompt cache). For a main session that only needs to answer mail, run the blocking receiver in background Bash instead:
-
-    tools agents login --agent-name <me> --session <s> --once --timeout 14400 --format json    # Bash, run_in_background: true
-
-It exits once mail arrives (you are woken; handle every message line it printed, since one wake can carry several and the cursor is already past all of them, then start it again) or after the timeout (exit 124 with `{"type":"timeout"}`). Mail that arrives while it is not running is queued and delivered by the next start, so restarting loses nothing. Keep `Monitor` for a teammate that must receive mail mid-turn while it works.
-
-**2. Never go silent: say when you leave.** A peer cannot see whether anyone reads its mail; a message to an absent agent just queues. Before you stop listening (the task is done, the session is ending, or you reached the listening time you were given), send one message to the agent that asked you to join:
-
-    tools agents message --from <me> --to <requester> --session <s> --body "leaving the bus: <one-line status>. Mail to <me> now queues until I log in again."
-
-When the receiver times out and you do not start it again, send the same message. Starting again needs no message.
-
-**For the agent that opens the channel:** put the terms in the request, so the listener does not have to guess:
-
-> Join the bus as `<name>` in session `<s>` and stay reachable for up to `<N>` minutes (or until `<condition>`). Before you stop listening, message `<me>` with your status, or with "leaving" when there is nothing to report.
 
 On **Grok**:
 
