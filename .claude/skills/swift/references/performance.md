@@ -123,6 +123,13 @@ are in [genesistools.md](genesistools.md)). Add a new entry at the end of its se
   turns. A walk read 3.4 s in a busy process and costs 107 ms alone. Rank by CPU (`process.cpuUsage()`
   deltas, a `--cpu-prof` run, `sample`), and note the machine's load average next to any number.
 
+### System-wide observers do the least possible per event
+- An observer of `NSWorkspace.didActivateApplicationNotification` runs on every app switch of the whole
+  machine, in every process of your app that installed it. A `CGWindowListCopyWindowInfo` there (a
+  WindowServer round trip building a dictionary per window) showed up in an idle app's samples. Gate the
+  expensive part on whether this process can need the result now (here: only a process a link can
+  reach needs the window stacking), and keep the check itself to a syscall or two.
+
 ### Polling watchers
 - A safety refresh every 5 s that runs a full snapshot (~1 s CPU) is ~15% CPU on its own. Refresh on
   the event; keep the safety interval long and the safety check cheap.
