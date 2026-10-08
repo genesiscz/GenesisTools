@@ -813,7 +813,10 @@ final class EdgePanelControllerTests: XCTestCase {
         value.setCompactSize(CGSize(width: 40, height: 220))
         value.setPresentation(.compact, reduceMotion: false)
         XCTAssertLessThan(value.panel.frame.height, 220, "Configuration must animate, not jump to its final size")
-        try await Task.sleep(for: .milliseconds(400))
+        let deadline = ContinuousClock.now + .seconds(3)
+        while (value.lastTransitionTiming?.outcome != "completed" || value.panel.frame.height != 220), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
         XCTAssertEqual(value.panel.windowNumber, number)
         XCTAssertEqual(value.panel.frame.height, 220, accuracy: 0.5)
         XCTAssertEqual(value.panel.frame.maxX, initial.maxX, accuracy: 0.5)
@@ -844,7 +847,10 @@ final class EdgePanelControllerTests: XCTestCase {
         XCTAssertEqual(value.lastTransitionTiming?.outcome, "interrupted")
         try await Task.sleep(for: .milliseconds(60))
         value.setPresentation(.expanded, reduceMotion: false)
-        try await Task.sleep(for: .milliseconds(500))
+        let deadline = ContinuousClock.now + .seconds(3)
+        while (value.lastTransitionTiming?.outcome != "completed" || value.panel.frame.size != CGSize(width: 340, height: 400)), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
         XCTAssertEqual(value.panel.frame.size, CGSize(width: 340, height: 400))
         XCTAssertEqual(value.panel.frame.maxX, try XCTUnwrap(NSScreen.screens.first).frame.maxX, accuracy: 0.5)
         XCTAssertEqual(value.lastTransitionTiming?.outcome, "completed")
@@ -1314,10 +1320,42 @@ final class WidgetRosterTests: XCTestCase {
         }
     }
 
+    func testTopBarUsesTheAnimatedProposalWithoutLosingItsIntrinsicTarget() throws {
+        _ = NSApplication.shared
+        var intrinsic = CGSize.zero
+        let host = NSHostingView(rootView: Color.clear.overlay(alignment: .top) {
+            WidgetTopBarLayout(cutout: 0, intrinsicSizeChanged: { intrinsic = $0 }) {
+                ScreenVerticalDragArea { _, _ in }.frame(width: 70, height: 20)
+                Color.blue.frame(width: 140, height: 20)
+            }.fixedSize(horizontal: false, vertical: true)
+        })
+        host.sizingOptions = []
+        let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 120, height: 30),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.contentView = host
+        window.orderBack(nil)
+        defer { window.close() }
+        func handles(_ view: NSView) -> [ScreenVerticalDragView] {
+            if let handle = view as? ScreenVerticalDragView { return [handle] }
+            return view.subviews.flatMap(handles)
+        }
+        for width: CGFloat in [120, 160, 226] {
+            window.setContentSize(CGSize(width: width, height: 30))
+            host.layoutSubtreeIfNeeded()
+            let handle = try XCTUnwrap(handles(host).first)
+            let rect = host.convert(handle.bounds, from: handle)
+            XCTAssertEqual(rect.minX, 0, accuracy: 0.5, "Contents must not jump to the final-width centered position")
+            XCTAssertEqual(intrinsic.width, 226, accuracy: 0.5)
+        }
+    }
+
     func testTopBarMeasuresChangingWingsAndReservesCutout() {
         for cutout: CGFloat in [0, 200] {
             for widths: (CGFloat, CGFloat) in [(70, 60), (120, 260)] {
-                let host = NSHostingView(rootView: WidgetTopBarLayout(cutout: cutout) {
+                let host = NSHostingView(rootView: WidgetTopBarLayout(cutout: cutout).callAsFunction {
                     Color.red.frame(width: widths.0, height: 23)
                     Color.blue.frame(width: widths.1, height: 25)
                 }.fixedSize())

@@ -8,6 +8,7 @@ struct WidgetHostView: View {
     let moduleIDs: [String]
     let cutout: CGFloat
     let headerHeight: CGFloat
+    var headerMinimumHeight: CGFloat = 36
     let visibleHeight: CGFloat
     var topSizeChanged: (CGSize) -> Void = { _ in }
     @State private var measuredHeaderHeight: CGFloat = 0
@@ -43,7 +44,7 @@ struct WidgetHostView: View {
             .overlay(alignment: surface.edge == .top ? .top : (surface.edge == .right ? .trailing : .leading)) {
                 if presentation != .compact {
                     content
-                        .padding(.top, surface.edge == .top ? max(headerHeight, measuredHeaderHeight) : 0)
+                        .padding(.top, surface.edge == .top ? max(headerMinimumHeight, measuredHeaderHeight > 0 ? measuredHeaderHeight : headerHeight) : 0)
                         .padding(surface.edge == .right ? .trailing : .leading,
                             surface.edge == .top ? 0 : WidgetSideStripMetrics.width)
                 }
@@ -66,7 +67,13 @@ struct WidgetHostView: View {
     }
 
     private var topStrip: some View {
-        WidgetTopBarLayout(cutout: cutout) {
+        WidgetTopBarLayout(cutout: cutout, intrinsicSizeChanged: { size in
+            let measured = CGSize(width: ceil(size.width + 36), height: max(headerMinimumHeight, ceil(size.height + 24)))
+            DispatchQueue.main.async {
+                measuredHeaderHeight = measured.height
+                topSizeChanged(measured)
+            }
+        }) {
             Button {
                 if selected?.id == "agents", model.inboxCount > 0 { model.openInboxNotification(on: surface) }
                 else { expand() }
@@ -134,13 +141,7 @@ struct WidgetHostView: View {
             }.fixedSize()
         }
         .padding(.horizontal, 18).padding(.vertical, 12)
-        .frame(minHeight: headerHeight).fixedSize()
-        .onGeometryChange(for: CGSize.self) { geometry in
-            CGSize(width: ceil(geometry.size.width), height: ceil(geometry.size.height))
-        } action: { size in
-            measuredHeaderHeight = size.height
-            topSizeChanged(size)
-        }
+        .frame(minHeight: headerMinimumHeight).fixedSize(horizontal: false, vertical: true)
     }
 
     private var dragHandle: some View {
