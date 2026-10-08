@@ -87,6 +87,28 @@ final class FlowTransformRunnerTests: XCTestCase {
         XCTAssertEqual(reads, 3)
     }
 
+    func testLocalGatewayConfigurationReadRejectsUnsafeFilesWithoutMutatingThem() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-proxy-read-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("config.json")
+        let data = Data(#"{"listen":{"port":9099},"proxyApiKey":"invented-gateway-fixture"}"#.utf8)
+        try data.write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        XCTAssertEqual(FlowTransformRunner.readPrivateProxyConfiguration(at: file), data)
+        try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: file.path)
+        XCTAssertEqual(FlowTransformRunner.readPrivateProxyConfiguration(at: file), data)
+        try FileManager.default.setAttributes([.posixPermissions: 0o640], ofItemAtPath: file.path)
+        XCTAssertNil(FlowTransformRunner.readPrivateProxyConfiguration(at: file))
+        XCTAssertEqual((try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber)?.intValue, 0o640)
+        let link = root.appendingPathComponent("linked.json")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        XCTAssertNil(FlowTransformRunner.readPrivateProxyConfiguration(at: link))
+        XCTAssertNil(FlowTransformRunner.readPrivateProxyConfiguration(at: root))
+        XCTAssertEqual(try Data(contentsOf: file), data)
+    }
+
     // MARK: - Error surfacing
 
     /// Users see this string. Raw JSON is not an error message.

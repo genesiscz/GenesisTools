@@ -1,5 +1,6 @@
 // Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Sources/Genesis/Flow/FlowTransformRunner.swift at 2026-10-08T05:04:08+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
 import Foundation
+import Darwin
 
 /// Runs a transform: transcript in, rewritten text out.
 ///
@@ -127,7 +128,25 @@ public enum FlowTransformRunner {
         resolveToken(configured: configured, baseURL: baseURL) {
             let url = FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".genesis-tools/ai-proxy/config.json")
-            return try? Data(contentsOf: url)
+            return readPrivateProxyConfiguration(at: url)
+        }
+    }
+
+    /// The gateway owns this private configuration; reading it must not repair permissions,
+    /// follow a replaced symlink, or invoke a provider credential refresh.
+    static func readPrivateProxyConfiguration(at url: URL) -> Data? {
+        let descriptor = open(url.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+        guard descriptor >= 0 else { return nil }
+        defer { close(descriptor) }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0,
+              info.st_mode & S_IFMT == S_IFREG,
+              info.st_uid == geteuid(), info.st_mode & 0o077 == 0 else { return nil }
+        do {
+            return try FileHandle(fileDescriptor: descriptor, closeOnDealloc: false).readToEnd()
+        } catch {
+            FlowFocusLog.flow.error("Local proxy configuration could not be read: \(error.localizedDescription)")
+            return nil
         }
     }
 
