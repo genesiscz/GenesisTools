@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // Skeletons: what a view shows while it loads from nothing, shaped like the result, instead of a spinner
@@ -234,34 +235,86 @@ public struct PaneSkeleton: View {
 }
 
 /// One highlight that sweeps across the skeleton under it, masked by its bars.
+///
+/// The sweep is a Core Animation layer (`ShimmerSweep`): a SwiftUI `repeatForever` offset re-evaluated the view
+/// graph and laid the window out on every frame for as long as a skeleton was on screen (2026-10-08). The mask
+/// stays SwiftUI's and is static, so the render server moves the highlight alone.
 struct SkeletonShimmer: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var phase: CGFloat = 0
 
     func body(content: Content) -> some View {
         content
             .overlay {
                 if !reduceMotion {
-                    GeometryReader { geo in
-                        LinearGradient(colors: [.clear, Color.white.opacity(0.07), .clear], startPoint: .leading, endPoint: .trailing)
-                            .frame(width: max(120, geo.size.width * 0.45))
-                            .offset(x: -geo.size.width * 0.5 + phase * geo.size.width * 1.5)
-                    }
-                    .mask(content)
-                    .allowsHitTesting(false)
+                    ShimmerSweep()
+                        .mask(content)
+                        .allowsHitTesting(false)
                 }
             }
-            // Follows Reduce Motion while shown: turned on, the sweep stops; turned off, it starts again.
-            .onChange(of: reduceMotion, initial: true) { _, reduced in
-                if reduced {
-                    withAnimation(.linear(duration: 0)) { phase = 0 }
-                } else {
-                    phase = 0
-                    withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
-                        phase = 1
-                    }
-                }
-            }
+    }
+}
+
+/// A soft white band, 45% of the width (at least 120 pt), crossing from half a width before the left edge to the
+/// right edge every 1.4 s, as the SwiftUI sweep did. Reduce Motion removes it (`SkeletonShimmer`).
+private struct ShimmerSweep: NSViewRepresentable {
+    func makeNSView(context: Context) -> SweepView {
+        SweepView()
+    }
+
+    func updateNSView(_ view: SweepView, context: Context) {}
+
+    final class SweepView: NSView {
+        private let band = CAGradientLayer()
+        private var sweptWidth: CGFloat = -1
+        private static let key = "genesis.shimmer"
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+            band.colors = [NSColor.clear.cgColor, NSColor.white.withAlphaComponent(0.07).cgColor, NSColor.clear.cgColor]
+            band.startPoint = CGPoint(x: 0, y: 0.5)
+            band.endPoint = CGPoint(x: 1, y: 0.5)
+            layer?.addSublayer(band)
+            layer?.masksToBounds = true
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) is not used")
+        }
+
+        override func layout() {
+            super.layout()
+            restart(force: false)
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            // A layer drops its animations when its view leaves the window.
+            restart(force: true)
+        }
+
+        private func restart(force: Bool) {
+            let width = bounds.width
+            guard force || width != sweptWidth else { return }
+            sweptWidth = width
+            band.removeAnimation(forKey: Self.key)
+            let bandWidth = max(120, width * 0.45)
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            band.anchorPoint = CGPoint(x: 0, y: 0)
+            band.bounds = CGRect(x: 0, y: 0, width: bandWidth, height: bounds.height)
+            band.position = CGPoint(x: -width * 0.5, y: 0)
+            CATransaction.commit()
+            guard window != nil, width > 0 else { return }
+            let sweep = CABasicAnimation(keyPath: "position.x")
+            sweep.fromValue = -width * 0.5
+            sweep.toValue = width
+            sweep.duration = 1.4
+            sweep.repeatCount = .infinity
+            sweep.isRemovedOnCompletion = false
+            band.add(sweep, forKey: Self.key)
+        }
     }
 }
 

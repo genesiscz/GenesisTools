@@ -29,7 +29,7 @@ GenesisTools checkout.
 
 | Area | Change | Commit |
 | --- | --- | --- |
-| Animation | `SpinningArc`, `PulsingDots` (GenesisKit/Controls) replace SwiftUI `repeatForever` | 0f46e229b (widget worktree), 9f4a93293 |
+| Animation | `SpinningArc`, `PulsingDots` (GenesisKit/Controls) replace SwiftUI `repeatForever`; the skeleton shimmer is a `CAGradientLayer` sweep under a static SwiftUI mask | 0f46e229b (widget worktree), 9f4a93293, skeleton commit after 60ae52883 |
 | PR threads | `PRThreadsStore.show` animates only ≤ 8 changed threads | 3ab270370 |
 | Web view | `PierreWebDiffRenderer.make()` spare; review windows build their own | 89002f2a1 |
 | Layout | `SessionSidebarSplit` places the 301 pt sidebar without measuring | 851ac995a |
@@ -38,6 +38,7 @@ GenesisTools checkout.
 | Server | doors `hub repo`, `ai usage sessions --json`, transcript `--provider` (src/hub/server/doors) | 822bd69c8 |
 | CLI | `readRecordsAppendOnly` for live Codex/Grok transcripts | 6f8c55f48 |
 | CLI | `readLinesSync` (src/utils/fs/read-lines.ts) for transcripts and sub-agents | ad11cfd9c |
+| CLI | `foldJsonlResumable` (src/utils/agent-sessions/jsonl-fold.ts): Codex metadata resumes across processes | 60ae52883 |
 | Monitor | profiling events, `[profile:cli]` lines, pid → process names | 12cc7ce78, 4e6c946fc, 294937ac9 |
 
 ## Open (by measured cost)
@@ -48,5 +49,5 @@ GenesisTools checkout.
 - `hub pr threads` / `readiness` / `list` / `versions`: network-bound, run as processes.
 - `ai-spend session --id … --json` (44 process runs/day, ~500 ms mostly startup): no door yet; goes
   through the generic `runReport`.
-- `Skeleton.swift` shimmer still uses a SwiftUI `repeatForever`.
+
 - The widget watcher (`hub widget watch`, another session's worktree): a full snapshot every 5 s (~15% CPU).
