@@ -1,7 +1,7 @@
 import type { Dirent } from "node:fs";
 import { readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, relative } from "node:path";
+import { relative, sep } from "node:path";
 import { profiler } from "@genesiscz/utils/profile";
 import type { NativeSourceIssue } from "./types";
 
@@ -108,6 +108,20 @@ export async function walkSourceRoots(options: WalkSourceRootsOptions): Promise<
     );
 }
 
+/**
+ * `join(directory, name)` and `relative(root, path)` for the walk's plain entries, without normalizing: the directory
+ * is canonical and a directory entry's name holds no separator. The two calls were a third of a listing's
+ * rediscovery (13,000 entries, 2026-10-08). A path outside `root` (a resolved link) still goes through `relative`.
+ */
+function childPath(directory: string, name: string): string {
+    return directory.endsWith(sep) ? `${directory}${name}` : `${directory}${sep}${name}`;
+}
+
+function relativeToRoot(root: string, path: string): string {
+    const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
+    return path.startsWith(prefix) ? path.slice(prefix.length) : relative(root, path);
+}
+
 async function walkRoots(options: WalkSourceRootsOptions): Promise<WalkSourceRootsResult> {
     const files: DiscoveredSourceFile[] = [];
     const issues: NativeSourceIssue[] = [];
@@ -162,10 +176,10 @@ async function walkRoots(options: WalkSourceRootsOptions): Promise<WalkSourceRoo
             }
             for (const entry of entries) {
                 options.signal?.throwIfAborted();
-                // `join`, not a literal "/": this is the shared cross-platform package, and a
+                // `sep`, not a literal "/": this is the shared cross-platform package, and a
                 // forward slash makes every discovered path stop matching the `${root}${sep}`
                 // prefix the root backfill and prune use on Windows.
-                const unresolved = join(canonicalDirectory, entry.name);
+                const unresolved = childPath(canonicalDirectory, entry.name);
                 let path = unresolved;
                 let directoryEntry = entry.directory;
                 let fileEntry = entry.file;
@@ -185,7 +199,7 @@ async function walkRoots(options: WalkSourceRootsOptions): Promise<WalkSourceRoo
                     }
                 }
 
-                const relativePath = relative(root, path);
+                const relativePath = relativeToRoot(root, path);
                 if (directoryEntry) {
                     const nextDepth = depth + 1;
                     if (options.maxDepth !== undefined && nextDepth > options.maxDepth) {
