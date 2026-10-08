@@ -13,6 +13,11 @@ export function deliveryLabel(delivery: DecisionDelivery | null | undefined): st
 
     const at = formatClock(delivery.at, { date: "short" });
 
+    if (delivery.uncertain) {
+        // The transport lost its receipt: the answer may or may not have reached the agent, and no prompt pulls it.
+        return `delivery unknown ${at}${delivery.error ? `: ${delivery.error.split("\n")[0]}` : ""}`;
+    }
+
     if (delivery.route === "queued") {
         // `error` is the one sentence; `target` on a queued row is a pre-rework "why", never a place.
         const why = delivery.error ?? delivery.target;

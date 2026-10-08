@@ -19,6 +19,18 @@ export function secondsToMicroseconds(value: string): number {
     return Number(micros);
 }
 
+/**
+ * A frame timestamp may be negative: an MP4 with B-frames and no edit list often starts at -0.03 s.
+ * Callers shift every frame by the first one, so only the sign has to survive.
+ */
+export function signedSecondsToMicroseconds(value: string): number {
+    if (value.startsWith("-")) {
+        return -secondsToMicroseconds(value.slice(1));
+    }
+
+    return secondsToMicroseconds(value);
+}
+
 export function planVideoSamples({
     durationUs,
     fps,

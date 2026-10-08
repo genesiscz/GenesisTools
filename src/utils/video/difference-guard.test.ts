@@ -9,7 +9,7 @@ import { FrameDifferenceGuard, frameDifferenceSummary } from "./difference-guard
 import { prepareVideoEvidence } from "./evidence";
 import { LatestPreparation } from "./preparation";
 import { runVideoCommand } from "./process";
-import { locateVideoSamples, planVideoSamples, secondsToMicroseconds } from "./sampling";
+import { locateVideoSamples, planVideoSamples, secondsToMicroseconds, signedSecondsToMicroseconds } from "./sampling";
 
 function pixels(changed: number): DecodedRgba {
     const data = new Uint8ClampedArray(10 * 4);
@@ -137,6 +137,13 @@ describe("video sample planning and preparation ownership", () => {
         }
         expect(() => planVideoSamples({ durationUs: 601_000_000, fps: 1, framesPerImage: 4 })).toThrow();
         expect(() => secondsToMicroseconds("NaN")).toThrow();
+    });
+
+    it("keeps the sign of a negative first-frame timestamp so the shift to zero stays exact", () => {
+        expect(signedSecondsToMicroseconds("-0.033367")).toBe(-33_367);
+        expect(signedSecondsToMicroseconds("0.5")).toBe(500_000);
+        expect(() => secondsToMicroseconds("-0.033367")).toThrow();
+        expect(() => signedSecondsToMicroseconds("--1")).toThrow();
     });
 
     it("waits for cancellation cleanup and publishes only the latest generation", async () => {

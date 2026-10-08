@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
 import { runVideoCommand } from "./process";
-import { secondsToMicroseconds } from "./sampling";
+import { secondsToMicroseconds, signedSecondsToMicroseconds } from "./sampling";
 import type { VideoInfo } from "./types";
 
 const probeSchema = z.object({
@@ -110,7 +110,7 @@ export async function readVideoFrameTimes({
                 .max(180_000),
         })
         .parse(SafeJSON.parse(raw));
-    const absolute = data.frames.map((frame) => secondsToMicroseconds(frame.best_effort_timestamp_time));
+    const absolute = data.frames.map((frame) => signedSecondsToMicroseconds(frame.best_effort_timestamp_time));
     const start = absolute[0];
     return absolute.map((time) => time - start);
 }

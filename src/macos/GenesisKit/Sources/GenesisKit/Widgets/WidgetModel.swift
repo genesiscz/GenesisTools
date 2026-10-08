@@ -588,8 +588,13 @@ public final class WidgetModel: ObservableObject {
         } catch { report(error) }
     }
 
-    public func importFile(_ url: URL) {
-        guard !selectedKey.isEmpty else { return }
+    /// `ownsFile`: the file is a staging copy this model wrote (a pasted image); the import copies it into
+    /// the asset store, so the copy is removed once the import ends, whatever its outcome.
+    public func importFile(_ url: URL, ownsFile: Bool = false) {
+        guard !selectedKey.isEmpty else {
+            if ownsFile { removeStaging(url) }
+            return
+        }
         let key = selectedKey
         let type = UTType(filenameExtension: url.pathExtension)
         let kind =
@@ -599,7 +604,10 @@ public final class WidgetModel: ObservableObject {
         mutationTask = Task { [weak self] in
             await previous?.value
             guard let self else { return }
-            defer { self.importing -= 1 }
+            defer {
+                self.importing -= 1
+                if ownsFile { self.removeStaging(url) }
+            }
             do {
                 _ = try await self.call([
                     "action": "import", "key": .string(key), "input": .string(url.path),
@@ -617,7 +625,7 @@ public final class WidgetModel: ObservableObject {
         panel.begin { [weak self] response in
             guard let self else { return }
             self.dialogOpen = false
-            if response == .OK { panel.urls.forEach(self.importFile) }
+            if response == .OK { panel.urls.forEach { self.importFile($0) } }
         }
     }
 
@@ -626,7 +634,7 @@ public final class WidgetModel: ObservableObject {
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL] {
             let local = urls.filter(\.isFileURL)
             if !local.isEmpty {
-                local.forEach(importFile)
+                local.forEach { importFile($0) }
                 return true
             }
         }
@@ -637,7 +645,7 @@ public final class WidgetModel: ObservableObject {
         do {
             let file = journal.appendingPathComponent("paste-" + UUID().uuidString + ".png")
             try png.write(to: file, options: .atomic)
-            importFile(file)
+            importFile(file, ownsFile: true)
             return true
         } catch {
             report(error)
@@ -882,6 +890,12 @@ public final class WidgetModel: ObservableObject {
         quietTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(delay)) } catch { return }
             self?.collapse()
+        }
+    }
+
+    private func removeStaging(_ file: URL) {
+        do { try FileManager.default.removeItem(at: file) } catch {
+            PerfLog.mark("widget.paste cleanup \(error.localizedDescription)")
         }
     }
 

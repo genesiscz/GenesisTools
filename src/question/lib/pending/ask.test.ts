@@ -111,6 +111,20 @@ describe("answerAskForm", () => {
         expect(outcome.ok && outcome.form.entryId).toBe(outcome.ok ? outcome.entryId : "");
     });
 
+    test("a form without a session hint keeps the session the answering harness detected", async () => {
+        const form = await postAskForm(
+            { projectPath: PROJECT, items: [{ promptMarkdown: "Ship?" }] },
+            { ...deps, ambient: false }
+        );
+        expect(form.sessionHint).toBeUndefined();
+
+        const answerer = { ...deps, env: { CLAUDE_CODE_SESSION_ID: "answerer-sess", CLAUDECODE: "1" } };
+        const outcome = await answerAskForm(form.id, [{ itemId: "q1", freeText: "go" }], answerer);
+
+        expect(outcome.ok).toBe(true);
+        expect(historyLines().map((entry) => entry.sessionId)).toEqual(["answerer-sess"]);
+    });
+
     test("a missing required item is refused with the item ids, and the form stays pending", async () => {
         const form = await postAskForm(
             { projectPath: PROJECT, items: [{ promptMarkdown: "One?" }, { promptMarkdown: "Two?" }] },

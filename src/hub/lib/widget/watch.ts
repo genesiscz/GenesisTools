@@ -79,7 +79,7 @@ export async function watchWidget({
                         });
                     jobs.set(id, { revision: asset.revision, controller, done });
                 }
-                if (!dispatchTask) {
+                if (!dispatchTask && !signal.aborted) {
                     dispatchTask = processWidgetOutbox({ root: directory, dispatcher, signal })
                         .catch((error) => logger.warn({ error }, "Widget outgoing processing stopped"))
                         .finally(() => {
@@ -97,26 +97,30 @@ export async function watchWidget({
                     emit(snapshot);
                 }
             };
-            let refreshing = false;
+            // The running refresh loop. Shutdown awaits it, so a refresh that was mid-flight at abort cannot
+            // start an outbox processor or a video job after the worker lock is released.
+            let refreshing: Promise<void> | undefined;
             let requested = false;
             const requestRefresh = async () => {
                 requested = true;
                 if (refreshing) {
                     return;
                 }
-                refreshing = true;
-                try {
-                    while (requested && !signal.aborted) {
-                        requested = false;
-                        await refresh();
+                refreshing = (async () => {
+                    try {
+                        while (requested && !signal.aborted) {
+                            requested = false;
+                            await refresh();
+                        }
+                    } catch (error) {
+                        if (!signal.aborted) {
+                            logger.warn({ error }, "Widget refresh failed");
+                        }
+                    } finally {
+                        refreshing = undefined;
                     }
-                } catch (error) {
-                    if (!signal.aborted) {
-                        logger.warn({ error }, "Widget refresh failed");
-                    }
-                } finally {
-                    refreshing = false;
-                }
+                })();
+                await refreshing;
             };
             const subscription = watchPath(join(directory, "state.json"), requestRefresh, { debounceMs: 180 });
             const safety = setInterval(() => {
@@ -134,6 +138,7 @@ export async function watchWidget({
             } finally {
                 clearInterval(safety);
                 await subscription.unsubscribe();
+                await refreshing;
                 for (const job of jobs.values()) {
                     job.controller.abort();
                 }

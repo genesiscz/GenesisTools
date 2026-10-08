@@ -23,28 +23,57 @@ async function runWidgetDelivery({ args, signal }: { args: string[]; signal?: Ab
         timeoutMs: 60_000,
         signal,
     });
-    if (result.error || result.status !== 0) {
+    return widgetDeliveryReceipt({ tool: args[0], result });
+}
+
+/**
+ * Turns one transport run into a receipt, or throws DeliveryUnknownError when nobody can tell whether text
+ * reached the agent. `claude cmux send --json` exits 1 with `{"sent":false}` when no pane matched: nothing was
+ * typed, so that is a certain "not sent" (the message waits for a route) rather than an unknown outcome.
+ */
+export function widgetDeliveryReceipt({
+    tool,
+    result,
+}: {
+    tool: string | undefined;
+    result: { error?: Error; status: number | null; stdout: string; stderr: string };
+}): { success: boolean; stdout: string; stderr: string } {
+    const unknown = new DeliveryUnknownError(
+        "The transport was attempted but returned no successful receipt. Check the conversation before retrying."
+    );
+    if (result.error) {
+        throw unknown;
+    }
+
+    if (tool !== "claude") {
+        if (result.status !== 0) {
+            throw unknown;
+        }
+
+        return { success: true, stdout: result.stdout, stderr: result.stderr };
+    }
+
+    let raw: unknown;
+    try {
+        raw = SafeJSON.parse(result.stdout, { strict: true });
+    } catch (error) {
+        logger.warn({ error, status: result.status }, "Widget transport receipt could not be decoded");
         throw new DeliveryUnknownError(
-            "The transport was attempted but returned no successful receipt. Check the conversation before retrying."
+            "The transport returned no readable receipt. Check the conversation before retrying."
         );
     }
-    if (args[0] === "claude") {
-        let raw: unknown;
-        try {
-            raw = SafeJSON.parse(result.stdout, { strict: true });
-        } catch (error) {
-            logger.warn({ error }, "Widget transport receipt could not be decoded");
-            throw new DeliveryUnknownError(
-                "The transport returned no readable receipt. Check the conversation before retrying."
-            );
-        }
-        if (typeof raw !== "object" || raw === null || !("sent" in raw) || typeof raw.sent !== "boolean") {
-            throw new DeliveryUnknownError(
-                "The transport returned an unreadable receipt. Check the conversation before retrying."
-            );
-        }
+
+    if (typeof raw !== "object" || raw === null || !("sent" in raw) || typeof raw.sent !== "boolean") {
+        throw new DeliveryUnknownError(
+            "The transport returned an unreadable receipt. Check the conversation before retrying."
+        );
     }
-    return { success: true, stdout: result.stdout, stderr: result.stderr };
+
+    if (result.status !== 0 && raw.sent) {
+        throw unknown;
+    }
+
+    return { success: result.status === 0, stdout: result.stdout, stderr: result.stderr };
 }
 
 export function widgetDispatcher({

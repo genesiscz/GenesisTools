@@ -243,10 +243,12 @@ public final class ClickyModel: ObservableObject {
         panel.allowedContentTypes = [.applicationBundle]
         panel.begin { [weak self] response in
             MainActor.assumeIsolated {
-                guard response == .OK, let url = panel.url, let bundleID = Bundle(url: url)?.bundleIdentifier else {
+                guard response == .OK, let url = panel.url, let bundleID = Bundle(url: url)?.bundleIdentifier,
+                    let self, !self.preferences.excludedApplications.contains(bundleID)
+                else {
                     return
                 }
-                self?.preferences.excludedApplications.append(bundleID)
+                self.preferences.excludedApplications.append(bundleID)
             }
         }
     }

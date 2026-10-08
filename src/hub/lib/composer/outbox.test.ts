@@ -4,6 +4,7 @@ import * as files from "node:fs/promises";
 import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
 import { postDecisions, readDecisions } from "@app/question/lib/decisions/store";
 import { postAskForm } from "@app/question/lib/pending/ask";
 import { openPendingStore } from "@app/question/lib/pending/store";
@@ -17,7 +18,7 @@ import { readWidgetChanges, readWidgetDecisionEvents, type WidgetSources, widget
 import { mutateWidgetState, readWidgetState } from "../widget/storage";
 import { type WidgetTarget, widgetOutgoingSchema, widgetPreferencesSchema, widgetSessionKey } from "../widget/types";
 import { importWidgetAsset, reviseVideoAsset } from "./assets";
-import { widgetDispatcher } from "./dispatch";
+import { widgetDeliveryReceipt, widgetDispatcher } from "./dispatch";
 import { processWidgetOutbox } from "./engine";
 import { changeOutgoing, enqueueWidgetMessage, messageReadiness, recoverWidgetOutbox } from "./outbox";
 
@@ -882,4 +883,31 @@ test("widget snapshots request a read-only roster and watch discovery may refres
     await widgetSnapshot({ root: directory, sources });
     await widgetSnapshot({ root: directory, sources, refresh: true });
     expect(refreshes).toEqual([false, true]);
+});
+
+describe("widget transport receipts", () => {
+    test("a cmux send that matched no pane is a certain not-sent, not an unknown outcome", () => {
+        const stdout = SafeJSON.stringify({ sent: false, matches: [] });
+        expect(widgetDeliveryReceipt({ tool: "claude", result: { status: 1, stdout, stderr: "" } })).toEqual({
+            success: false,
+            stdout,
+            stderr: "",
+        });
+    });
+
+    test("a typed claude receipt succeeds and a failed or unreadable run stays unknown", () => {
+        const sent = SafeJSON.stringify({ sent: true });
+        expect(widgetDeliveryReceipt({ tool: "claude", result: { status: 0, stdout: sent, stderr: "" } }).success).toBe(
+            true
+        );
+        const cases = [
+            { tool: "claude", result: { status: 1, stdout: sent, stderr: "" } },
+            { tool: "claude", result: { status: 1, stdout: "not json", stderr: "" } },
+            { tool: "claude", result: { error: new Error("timed out"), status: null, stdout: "", stderr: "" } },
+            { tool: "codex", result: { status: 2, stdout: "", stderr: "boom" } },
+        ];
+        for (const run of cases) {
+            expect(() => widgetDeliveryReceipt(run)).toThrow(DeliveryUnknownError);
+        }
+    });
 });

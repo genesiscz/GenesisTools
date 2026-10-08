@@ -13,15 +13,17 @@ export async function readWidgetText({ text, signal }: { text: string; signal: A
             process.execPath,
             resolve(import.meta.dir, "../../../../widget-tools"),
             "say",
-            visible.slice(0, 32_000),
             "--app",
             "widget",
             "--wait",
+            // A text that starts with "-" (a markdown list) would otherwise be parsed as an option.
+            "--",
+            visible.slice(0, 32_000),
         ],
         signal,
         timeoutMs: 600_000,
     });
     if (!signal.aborted && (result.error || result.status !== 0)) {
-        throw new Error(result.error?.message ?? result.stderr);
+        throw new Error(result.error?.message ?? (result.stderr.trim() || `say exited with status ${result.status}`));
     }
 }
