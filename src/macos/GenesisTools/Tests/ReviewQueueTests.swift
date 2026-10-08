@@ -4,7 +4,7 @@ import XCTest
 /// The review window's comments for an agent: queued until a session's pane really got them, one card
 /// per PR thread for my reply to it, the reply still attached after an edit, and the commit menu.
 final class ReviewQueueTests: XCTestCase {
-    private let file = DiffFile(id: "f", path: "col-mobile/jest.config.js", status: .modified, additions: 1, deletions: 1,
+    private let file = DiffFile(id: "f", path: "app-mobile/jest.config.js", status: .modified, additions: 1, deletions: 1,
                                 oldContents: "a\nb\nc\n", newContents: "a\nB\nc\n")
 
     private func store() -> (ReviewCommentStore, URL) {
@@ -193,7 +193,7 @@ final class ReviewQueueTests: XCTestCase {
     // MARK: the send list
 
     private func item(_ id: String, thread: String? = nil) -> AgentSendItem {
-        AgentSendItem(id: id, path: "col-mobile/jest.config.js", startLine: 51, endLine: 53, thread: thread, body: "Text", state: "queued")
+        AgentSendItem(id: id, path: "app-mobile/jest.config.js", startLine: 51, endLine: 53, thread: thread, body: "Text", state: "queued")
     }
 
     func testTheSendTakesTheTickedCommentsInListOrder() {
