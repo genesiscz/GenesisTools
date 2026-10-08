@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runAsCaller } from "@genesiscz/utils/agent/runtime";
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { openReadModel, queryEntries } from "../read-model";
@@ -720,4 +721,20 @@ test("a poster-less form cannot borrow the answering process identity", async ()
     expect(row.project).not.toBe("Responder");
     expect(row.cwd).toBe(PROJECT);
     expect(row.transcriptAnchor?.kind).toBe("unanchored");
+});
+
+test("a multiplexed caller's explicit project path supplies missing source cwd", async () => {
+    const form = await runAsCaller({ agent: "codex", sessionId: null, cwd: "/" }, () =>
+        postAskForm(
+            {
+                projectPath: PROJECT,
+                sessionHint: "known-thread",
+                items: [{ promptMarkdown: "Ready?" }],
+            },
+            { ...deps, env: {} }
+        )
+    );
+    expect(form.poster?.cwd).toBe(PROJECT);
+    expect(form.poster?.sessionId).toBe("known-thread");
+    expect(form.poster?.project).toBe("gt-ask-fixture");
 });

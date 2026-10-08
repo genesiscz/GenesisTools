@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { basename } from "node:path";
-import { type AgentRuntimeContext, gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { type AgentRuntimeContext, currentCaller, gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
 import { createTranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { logger } from "@genesiscz/utils/logger";
 import { isTestProcess } from "@genesiscz/utils/test-process";
@@ -113,7 +113,8 @@ function callerContext(
         return { projectPath: given, sessionHint: input.sessionHint };
     }
 
-    const poster = gatherHarnessPoster(deps.ctx, deps.env ?? (isTestProcess() ? {} : undefined));
+    const fallback = currentCaller()?.sessionId === null && given ? { cwd: given } : {};
+    const poster = gatherHarnessPoster({ ...fallback, ...deps.ctx }, deps.env ?? (isTestProcess() ? {} : undefined));
     const harnessSession = poster.agent !== "unknown" && poster.sessionId ? poster.sessionId : null;
     const sessionHint =
         !isTestProcess() && harnessSession ? harnessSession : (input.sessionHint ?? harnessSession ?? undefined);

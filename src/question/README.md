@@ -364,3 +364,32 @@ You rarely do. The normal writer is the `question_answer` tool on the genesis-to
 - **Banner buttons.** For a form that is exactly one required item with two choices of opposite yes/no polarity ("Yes"/"No", "Accept"/"Reject", …), the banner carries one button per choice that answers the form directly, the same as running `tools question answer <id> --choice <id>`. A "staging"/"production" pair does not qualify: neither label has a polarity. Any other form's banner carries no buttons; the click itself already opens the form.
 - **Retraction.** Answering, cancelling, or timing out a form removes its banner from Notification Center, wherever it is still sitting.
 - **Not implemented: time-sensitive / break-through-DND banners.** The native layer supports `ignoreDnD`, but `GenesisTools.app`'s code-signing identity cannot carry the `timeSensitive` entitlement (`timeSensitiveSetting: notSupported` — see the repo's macOS notifications notes), so passing it would be silently ignored by the OS. A pending-form banner can still be swallowed by a system Focus mode.
+
+## Publishing from an agent into the Widget
+
+Post a pending question or decision when the user needs to choose; collect the actual response with
+question_wait/question_poll or the corresponding CLI. Log a completed answer or milestone with
+question_answer / tools question record. Publish meaningful results and review evidence, not a timer
+of repeated unchanged status messages.
+
+Attach screenshots as local image attachments, including label and optional comparison group/role
+before/after. The importer copies the bytes into durable storage and the receipt returns those paths.
+A text-only file reference does not create an image preview. A pending form must allow image paste;
+its returned mediaContext contains the prepared image/video evidence without replacing typed answers.
+
+Repository and session context is gathered automatically. Read the returned context before claiming
+that a result reached a particular session. A shared Codex app-server can own several transcripts,
+so an HTTP socket cannot safely identify one thread; this is reported as unanchored, never guessed.
+When the harness supplies the exact session ID, pass sessionHint and the absolute projectPath to
+question_answer (or sessionHint/projectPath to question_post). Do not derive an ID from a filename.
+If the connected MCP server predates these optional fields, run tools question record --json from
+the agent's actual worktree; the CLI uses that process's native harness context. Its --session and
+--project-path flags are available for explicitly known context.
+
+sourceMessage is optional and contains only source-native messageId, turnId and/or toolCallId actually
+provided by the harness. Omit it when unavailable. The stored transcriptAnchor distinguishes native
+IDs, receipt-time approximation, and missing identity. A normalized parser ID such as codex-3 is not
+a source-native ID. Earlier Decision revisions retain their own repository facts and transcript anchor.
+
+Logging an answer is not a request for an agent to resume. A Widget follow-up can only use a verified
+delivery route; do not promise delivery from a transcript path or a guessed worker name.

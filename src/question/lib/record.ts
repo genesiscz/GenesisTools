@@ -36,6 +36,7 @@ export async function recordAnswer(input: RecordInput, deps: RecordDeps = {}): P
     const ctx = gatherHarnessPoster(
         {
             ...deps.ctx,
+            ...(input.projectPath ? { cwd: input.projectPath } : {}),
             ...(input.sessionId ? { sessionId: input.sessionId } : {}),
             ...(input.project ? { project: input.project } : {}),
         },
@@ -88,5 +89,21 @@ export async function recordAnswer(input: RecordInput, deps: RecordDeps = {}): P
 
     log.info({ id: entry.id, project: entry.project, tag: entry.tag, source: entry.source }, "qa recorded");
     const sinks = await runFanOut(entry, { ...loadConfig(), ...deps.config });
-    return { id: entry.id, sinks, attachments: entry.attachments };
+    return {
+        id: entry.id,
+        sinks,
+        attachments: entry.attachments,
+        context: {
+            agent: entry.agent,
+            sessionId: entry.sessionId,
+            project: entry.project,
+            repoRoot: entry.repoRoot,
+            cwd: entry.cwd,
+            branch: entry.branch,
+            commitSha: entry.commitSha,
+            isWorktree: entry.isWorktree,
+            worktreePath: entry.worktreePath,
+            transcriptAnchor: entry.transcriptAnchor,
+        },
+    };
 }

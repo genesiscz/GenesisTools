@@ -4,6 +4,8 @@ import { SOURCE_MESSAGE_INPUT_SCHEMA, type SourceMessage } from "@genesiscz/util
 import { IMAGE_ATTACHMENT_INPUT_SCHEMA, type ImageAttachmentInput } from "@genesiscz/utils/image/attachments";
 
 export interface QuestionAnswerArgs {
+    sessionHint?: string;
+    projectPath?: string;
     sourceMessage?: SourceMessage;
     question: string;
     answer: string;
@@ -17,6 +19,8 @@ export async function handleQuestionAnswer(args: QuestionAnswerArgs, deps: Recor
     const res = await recordAnswer(
         {
             question: args.question,
+            sessionId: args.sessionHint,
+            projectPath: args.projectPath,
             sourceMessage: args.sourceMessage,
             answer: args.answer,
             tag: args.tag,
@@ -30,6 +34,13 @@ export async function handleQuestionAnswer(args: QuestionAnswerArgs, deps: Recor
     return {
         id: res.id,
         sinks: res.sinks,
+        context: res.context,
+        warnings:
+            res.context.sessionId === "unknown"
+                ? [
+                      "This gateway could not identify the originating session. Supply its known sessionHint and projectPath, or use tools question record from the agent's worktree. Do not invent an ID.",
+                  ]
+                : [],
         attachments: res.attachments ?? [],
         summary: `Logged Q→A ${res.id} (${args.tag}).`,
     };
@@ -39,6 +50,16 @@ export const QUESTION_ANSWER_INPUT_SCHEMA = {
     type: "object",
     properties: {
         sourceMessage: SOURCE_MESSAGE_INPUT_SCHEMA,
+        sessionHint: {
+            type: "string",
+            description:
+                "Known originating session ID when a multiplexed gateway cannot identify this caller. Omit if unavailable; never infer from a filename.",
+        },
+        projectPath: {
+            type: "string",
+            description:
+                "Absolute source worktree directory when the gateway's process cwd is not the agent's working directory.",
+        },
         question: { type: "string", description: "the user's question, verbatim or lightly cleaned" },
         answer: { type: "string", description: "your complete answer in markdown (rationale, links, refs)" },
         tag: { type: "string", enum: ["question", "action", "directive"] },

@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runAsCaller } from "@genesiscz/utils/agent/runtime";
 import { encodeRgbaToPng } from "@genesiscz/utils/image/raster";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { handleQuestionAnswer, QUESTION_ANSWER_INPUT_SCHEMA } from "./question-answer";
@@ -50,4 +51,48 @@ describe("question_answer images", () => {
         expect(result.attachments[0].path).not.toBe(source);
         expect(result.attachments[0].label).toBe("Result");
     });
+});
+
+it("accepts explicit source context when a multiplexed gateway has no thread identity", async () => {
+    const logBase = mkdtempSync(join(tmpdir(), "qa-gateway-context-"));
+    const receipt = await runAsCaller({ agent: "codex", sessionId: null, cwd: "/" }, () =>
+        handleQuestionAnswer(
+            {
+                question: "Did the feature finish?",
+                answer: "Here is its evidence.",
+                tag: "action",
+                sessionHint: "explicit-session",
+                projectPath: "/fixture/source-worktree",
+            },
+            { logBase, env: {}, config: { sinks: { obsidian: false, sound: false, notify: false } } }
+        )
+    );
+    expect(receipt.context).toMatchObject({
+        agent: "codex",
+        sessionId: "explicit-session",
+        cwd: "/fixture/source-worktree",
+        project: "source-worktree",
+        transcriptAnchor: { kind: "receipt-time", provider: "codex", sessionId: "explicit-session" },
+    });
+    expect(receipt.warnings).toEqual([]);
+});
+
+it("reports unavailable gateway identity in its receipt instead of hiding it", async () => {
+    const receipt = await runAsCaller({ agent: "codex", sessionId: null, cwd: "/" }, () =>
+        handleQuestionAnswer(
+            {
+                question: "Did the feature finish?",
+                answer: "Here is its evidence.",
+                tag: "action",
+            },
+            {
+                logBase: mkdtempSync(join(tmpdir(), "qa-gateway-unknown-")),
+                env: {},
+                config: { sinks: { obsidian: false, sound: false, notify: false } },
+            }
+        )
+    );
+    expect(receipt.context.sessionId).toBe("unknown");
+    expect(receipt.context.transcriptAnchor?.kind).toBe("unanchored");
+    expect(receipt.warnings).toHaveLength(1);
 });

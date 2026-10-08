@@ -25,6 +25,7 @@ export function registerRecordCommand(program: Command): void {
         .option("--agent <label>", "subagent attribution label")
         .option("--session <id>", "override session id")
         .option("--project <name>", "override project")
+        .option("--project-path <path>", "source worktree directory for repository context")
         .option(
             "--source-message-file <path>",
             "JSON object containing only known native messageId, turnId or toolCallId"
@@ -47,6 +48,7 @@ export function registerRecordCommand(program: Command): void {
                 agentLabel: o.agent,
                 sessionId: o.session,
                 project: o.project,
+                projectPath: o.projectPath,
                 source: "cli",
                 sourceMessage: o.sourceMessageFile
                     ? sourceMessageSchema.parse(SafeJSON.parse(readFileSync(o.sourceMessageFile, "utf8")))

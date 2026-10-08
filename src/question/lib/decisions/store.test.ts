@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runAsCaller } from "@genesiscz/utils/agent/runtime";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { z } from "zod";
@@ -989,4 +990,24 @@ test("a decision provider override cannot inherit another provider's native mess
     );
     expect(row.transcriptAnchor?.kind).toBe("receipt-time");
     expect(row.transcriptAnchor).not.toHaveProperty("messageId");
+});
+
+test("a multiplexed decision uses the explicitly provided worktree for repository context", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-gateway-"));
+    const [row] = await runAsCaller({ agent: "codex", sessionId: null, cwd: "/" }, () =>
+        postDecisions(
+            join(dir, "decisions.jsonl"),
+            join(dir, "events.jsonl"),
+            {
+                sessionId: "known-thread",
+                cwd: "/fixture/agent-worktree",
+                decisions: [{ prompt: "Ready?", options: [] }],
+            },
+            { env: {} }
+        )
+    );
+    expect(row.cwd).toBe("/fixture/agent-worktree");
+    expect(row.repoRoot).toBe("/fixture/agent-worktree");
+    expect(row.project).toBe("agent-worktree");
+    expect(row.transcriptAnchor).toMatchObject({ kind: "receipt-time", sessionId: "known-thread", provider: "codex" });
 });

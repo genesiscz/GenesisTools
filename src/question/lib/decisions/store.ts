@@ -12,7 +12,12 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { canonicalAgent } from "@app/handoff/targeting";
-import { type AgentRuntimeContext, callerCwd, gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import {
+    type AgentRuntimeContext,
+    callerCwd,
+    currentCaller,
+    gatherHarnessPoster,
+} from "@genesiscz/utils/agent/runtime";
 import { createTranscriptAnchor, type TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -256,7 +261,8 @@ export async function postDecisions(
     const now = deps.now ?? (() => new Date().toISOString());
     const readFile = deps.readFile ?? ((path: string) => readFileSync(path, "utf8"));
     const processEnv = deps.env ?? (isTestProcess() ? {} : env.getProcessEnv());
-    const poster = gatherHarnessPoster(deps.ctx, processEnv);
+    const fallback = currentCaller()?.sessionId === null && input.cwd ? { cwd: input.cwd } : {};
+    const poster = gatherHarnessPoster({ ...fallback, ...deps.ctx }, processEnv);
     const harnessSession = poster.agent !== "unknown" && poster.sessionId ? poster.sessionId : null;
     // The pane the agent runs in, when it runs in cmux: the hub opens it and `send` types there.
     const cmuxSurface = input.cmuxSurface ?? processEnv.CMUX_SURFACE_ID;

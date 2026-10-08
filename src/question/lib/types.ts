@@ -37,6 +37,7 @@ export interface QaEntry {
 }
 
 export interface RecordInput {
+    projectPath?: string;
     sourceMessage?: SourceMessage;
     question: string;
     answer: string;
@@ -56,6 +57,19 @@ export interface SinkResult {
     remedy?: string;
 }
 export interface RecordResult {
+    context: Pick<
+        QaEntry,
+        | "agent"
+        | "sessionId"
+        | "project"
+        | "repoRoot"
+        | "cwd"
+        | "branch"
+        | "commitSha"
+        | "isWorktree"
+        | "worktreePath"
+        | "transcriptAnchor"
+    >;
     id: string;
     sinks: SinkResult[];
     superseded?: string;
