@@ -1,6 +1,7 @@
 // Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Sources/Genesis/Focus/Activity/ActivityStore.swift at 2026-10-08T05:04:08+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
 import Foundation
 import SQLite3
+import Darwin
 
 /// Local-only activity ledger for Spec 22 (S6): pomodoro sessions plus the desktop focus
 /// segments and input-effort counters they are measured against.
@@ -88,9 +89,12 @@ public final class ActivityStore {
 
     public init(path: String = ActivityStore.defaultPath, readOnly: Bool = false) throws {
         dbPath = path
-        if !readOnly {
+        if !readOnly, path != ":memory:" {
             let dir = (path as NSString).deletingLastPathComponent
-            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true,
+                                                     attributes: [.posixPermissions: 0o700])
+            try Self.secureFile(path, create: true)
+            for suffix in ["-wal", "-shm"] { try Self.secureFile(path + suffix, create: false) }
         }
         var handle: OpaquePointer?
         let flags = (readOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) | SQLITE_OPEN_FULLMUTEX
@@ -100,11 +104,27 @@ public final class ActivityStore {
             throw StoreError.sqlite(message)
         }
         db = handle
-        if !readOnly {
-            try queue.sync { try migrate() }
-            // The ledger knows where you were all day. Nobody else on this machine needs to read it.
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
+        sqlite3_busy_timeout(handle, 1_000)
+        do {
+            if !readOnly {
+                try queue.sync { try migrate() }
+                if path != ":memory:" {
+                    for suffix in ["", "-wal", "-shm"] { try Self.secureFile(path + suffix, create: false) }
+                }
+            }
+        } catch {
+            sqlite3_close(handle)
+            db = nil
+            throw error
         }
+    }
+
+    private static func secureFile(_ path: String, create: Bool) throws {
+        let descriptor = open(path, O_RDWR | O_NOFOLLOW | O_CLOEXEC | (create ? O_CREAT : 0), 0o600)
+        if descriptor < 0, !create, errno == ENOENT { return }
+        guard descriptor >= 0 else { throw StoreError.sqlite("cannot open private ledger file: \(String(cString: strerror(errno)))") }
+        defer { close(descriptor) }
+        guard fchmod(descriptor, 0o600) == 0 else { throw StoreError.sqlite("cannot secure ledger file: \(String(cString: strerror(errno)))") }
     }
 
     deinit { sqlite3_close(db) }
@@ -114,6 +134,14 @@ public final class ActivityStore {
     private func migrate() throws {
         try exec("PRAGMA journal_mode=WAL;")
         try exec("PRAGMA synchronous=NORMAL;")
+        try exec("BEGIN IMMEDIATE;")
+        var committed = false
+        defer {
+            if !committed {
+                do { try exec("ROLLBACK;") }
+                catch { FlowFocusLog.focus.error("ledger migration rollback failed: \(error.localizedDescription)") }
+            }
+        }
         try exec("""
         CREATE TABLE IF NOT EXISTS focus_session(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,7 +180,8 @@ public final class ActivityStore {
             cmux_session TEXT,
             cmux_pane TEXT,
             display_id INTEGER,
-            idle INTEGER NOT NULL DEFAULT 0
+            idle INTEGER NOT NULL DEFAULT 0,
+            is_closed INTEGER NOT NULL DEFAULT 0
         );
         """)
         try exec("""
@@ -194,6 +223,18 @@ public final class ActivityStore {
         try exec("CREATE INDEX IF NOT EXISTS idx_segment_session ON activity_segment(session_id);")
         try exec("CREATE INDEX IF NOT EXISTS idx_segment_app ON activity_segment(app_bundle);")
         try exec("CREATE INDEX IF NOT EXISTS idx_session_started ON focus_session(started_ms);")
+        let columns = try prepare("PRAGMA table_info(activity_segment);")
+        var hasClosed = false
+        while sqlite3_step(columns) == SQLITE_ROW {
+            if text(columns, 1) == "is_closed" { hasClosed = true }
+        }
+        sqlite3_finalize(columns)
+        if !hasClosed {
+            try exec("ALTER TABLE activity_segment ADD COLUMN is_closed INTEGER NOT NULL DEFAULT 0;")
+            try exec("UPDATE activity_segment SET is_closed=1 WHERE ended_ms IS NOT NULL;")
+        }
+        try exec("COMMIT;")
+        committed = true
     }
 
     // MARK: - Segments
@@ -205,8 +246,8 @@ public final class ActivityStore {
             let sql = """
             INSERT INTO activity_segment(
                 started_ms, ended_ms, session_id, app_bundle, app_name, window_title,
-                url_host, url_path, project, cmux_session, cmux_pane, display_id, idle)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?);
+                url_host, url_path, project, cmux_session, cmux_pane, display_id, idle, is_closed)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?);
             """
             let stmt = try prepare(sql)
             defer { sqlite3_finalize(stmt) }
@@ -223,6 +264,7 @@ public final class ActivityStore {
             bindOptionalText(stmt, 11, segment.cmuxPane)
             bindOptionalInt(stmt, 12, segment.displayId)
             sqlite3_bind_int(stmt, 13, segment.idle ? 1 : 0)
+            sqlite3_bind_int(stmt, 14, segment.endedMs == nil ? 0 : 1)
             guard sqlite3_step(stmt) == SQLITE_DONE else { throw StoreError.sqlite(lastMessage()) }
             return sqlite3_last_insert_rowid(db)
         }
@@ -232,7 +274,7 @@ public final class ActivityStore {
     /// focus notification can never shorten a stretch that was already recorded.
     public func closeSegment(id: Int64, at endedMs: Int64) throws {
         try queue.sync {
-            let stmt = try prepare("UPDATE activity_segment SET ended_ms=? WHERE id=? AND ended_ms IS NULL;")
+            let stmt = try prepare("UPDATE activity_segment SET ended_ms=MAX(COALESCE(ended_ms,started_ms),?), is_closed=1 WHERE id=? AND is_closed=0;")
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int64(stmt, 1, endedMs)
             sqlite3_bind_int64(stmt, 2, id)
@@ -245,7 +287,7 @@ public final class ActivityStore {
     /// a crash or a quit be bounded: whatever the last touch says is where the record stops.
     public func touchSegment(id: Int64, at endedMs: Int64) throws {
         try queue.sync {
-            let stmt = try prepare("UPDATE activity_segment SET ended_ms=? WHERE id=?;")
+            let stmt = try prepare("UPDATE activity_segment SET ended_ms=MAX(COALESCE(ended_ms,started_ms),?) WHERE id=? AND is_closed=0;")
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int64(stmt, 1, endedMs)
             sqlite3_bind_int64(stmt, 2, id)
@@ -272,7 +314,7 @@ public final class ActivityStore {
 
     /// Segments left open by an unclean exit, so launch can finish them honestly.
     public func openSegments() throws -> [Segment] {
-        try segmentsWhere("ended_ms IS NULL")
+        try segmentsWhere("is_closed=0")
     }
 
     /// Attaches a segment to a pomodoro session after the fact (a flow can start mid-segment).
@@ -369,10 +411,10 @@ public final class ActivityStore {
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int64(stmt, 1, bucketMs)
             sqlite3_bind_int64(stmt, 2, segmentId)
-            sqlite3_bind_int(stmt, 3, Int32(counts.keys))
-            sqlite3_bind_int(stmt, 4, Int32(counts.clicks))
-            sqlite3_bind_int(stmt, 5, Int32(counts.scrolls))
-            sqlite3_bind_int(stmt, 6, Int32(counts.px))
+            sqlite3_bind_int64(stmt, 3, Int64(counts.keys))
+            sqlite3_bind_int64(stmt, 4, Int64(counts.clicks))
+            sqlite3_bind_int64(stmt, 5, Int64(counts.scrolls))
+            sqlite3_bind_int64(stmt, 6, Int64(counts.px))
             guard sqlite3_step(stmt) == SQLITE_DONE else { throw StoreError.sqlite(lastMessage()) }
         }
     }
@@ -387,10 +429,10 @@ public final class ActivityStore {
             sqlite3_bind_int64(stmt, 1, from)
             sqlite3_bind_int64(stmt, 2, to)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return InputCounts() }
-            return InputCounts(keys: Int(sqlite3_column_int(stmt, 0)),
-                               clicks: Int(sqlite3_column_int(stmt, 1)),
-                               scrolls: Int(sqlite3_column_int(stmt, 2)),
-                               px: Int(sqlite3_column_int(stmt, 3)))
+            return InputCounts(keys: Int(sqlite3_column_int64(stmt, 0)),
+                               clicks: Int(sqlite3_column_int64(stmt, 1)),
+                               scrolls: Int(sqlite3_column_int64(stmt, 2)),
+                               px: Int(sqlite3_column_int64(stmt, 3)))
         }
     }
 
@@ -416,10 +458,10 @@ public final class ActivityStore {
                 rows.append(InputSample(
                     bucketMs: sqlite3_column_int64(stmt, 0),
                     segmentId: sqlite3_column_int64(stmt, 1),
-                    counts: InputCounts(keys: Int(sqlite3_column_int(stmt, 2)),
-                                        clicks: Int(sqlite3_column_int(stmt, 3)),
-                                        scrolls: Int(sqlite3_column_int(stmt, 4)),
-                                        px: Int(sqlite3_column_int(stmt, 5)))))
+                    counts: InputCounts(keys: Int(sqlite3_column_int64(stmt, 2)),
+                                        clicks: Int(sqlite3_column_int64(stmt, 3)),
+                                        scrolls: Int(sqlite3_column_int64(stmt, 4)),
+                                        px: Int(sqlite3_column_int64(stmt, 5)))))
             }
             return rows
         }
@@ -704,55 +746,42 @@ public final class ActivityStore {
     /// Deletes everything recorded in a range, optionally for one app only, and reports what went.
     @discardableResult
     public func forget(from: Int64, to: Int64, appBundle: String? = nil) throws -> (segments: Int, sessions: Int) {
-        try queue.sync {
-            var segmentClause = "started_ms >= ? AND started_ms < ?"
-            if appBundle != nil { segmentClause += " AND app_bundle = ?" }
-
-            let countStmt = try prepare("SELECT COUNT(*) FROM activity_segment WHERE \(segmentClause);")
-            sqlite3_bind_int64(countStmt, 1, from)
-            sqlite3_bind_int64(countStmt, 2, to)
-            if let appBundle { bindText(countStmt, 3, appBundle) }
-            var segmentCount = 0
-            if sqlite3_step(countStmt) == SQLITE_ROW { segmentCount = Int(sqlite3_column_int(countStmt, 0)) }
-            sqlite3_finalize(countStmt)
-
-            let bucketStmt = try prepare("""
-            DELETE FROM input_bucket WHERE segment_id IN
-                (SELECT id FROM activity_segment WHERE \(segmentClause));
-            """)
-            sqlite3_bind_int64(bucketStmt, 1, from)
-            sqlite3_bind_int64(bucketStmt, 2, to)
-            if let appBundle { bindText(bucketStmt, 3, appBundle) }
-            _ = sqlite3_step(bucketStmt)
-            sqlite3_finalize(bucketStmt)
-
-            let segStmt = try prepare("DELETE FROM activity_segment WHERE \(segmentClause);")
-            sqlite3_bind_int64(segStmt, 1, from)
-            sqlite3_bind_int64(segStmt, 2, to)
-            if let appBundle { bindText(segStmt, 3, appBundle) }
-            _ = sqlite3_step(segStmt)
-            sqlite3_finalize(segStmt)
-
-            var sessionCount = 0
-            if appBundle == nil {
-                let sCount = try prepare("SELECT COUNT(*) FROM focus_session WHERE started_ms >= ? AND started_ms < ?;")
-                sqlite3_bind_int64(sCount, 1, from)
-                sqlite3_bind_int64(sCount, 2, to)
-                if sqlite3_step(sCount) == SQLITE_ROW { sessionCount = Int(sqlite3_column_int(sCount, 0)) }
-                sqlite3_finalize(sCount)
-
-                for sql in ["DELETE FROM focus_pause WHERE session_id IN (SELECT id FROM focus_session WHERE started_ms >= ? AND started_ms < ?);",
-                            "DELETE FROM focus_session WHERE started_ms >= ? AND started_ms < ?;"] {
-                    let stmt = try prepare(sql)
-                    sqlite3_bind_int64(stmt, 1, from)
-                    sqlite3_bind_int64(stmt, 2, to)
-                    _ = sqlite3_step(stmt)
-                    sqlite3_finalize(stmt)
+        guard from < to else { return (0, 0) }
+        return try queue.sync {
+            try exec("BEGIN IMMEDIATE;")
+            var committed = false
+            defer {
+                if !committed {
+                    do { try exec("ROLLBACK;") }
+                    catch { FlowFocusLog.focus.error("ledger forget rollback failed: \(error.localizedDescription)") }
                 }
             }
-
-            try execUnsafe("DELETE FROM day_rollup;")
-            return (segmentCount, sessionCount)
+            func run(_ sql: String, _ values: [Int64], app: String? = nil) throws -> Int {
+                let statement = try prepare(sql)
+                defer { sqlite3_finalize(statement) }
+                for (index, value) in values.enumerated() { sqlite3_bind_int64(statement, Int32(index + 1), value) }
+                if let app { bindText(statement, Int32(values.count + 1), app) }
+                guard sqlite3_step(statement) == SQLITE_DONE else { throw StoreError.sqlite(lastMessage()) }
+                return Int(sqlite3_changes(db))
+            }
+            var clause = "started_ms >= ? AND started_ms < ?"
+            if appBundle != nil { clause += " AND app_bundle = ?" }
+            _ = try run("DELETE FROM input_bucket WHERE segment_id IN (SELECT id FROM activity_segment WHERE \(clause));", [from, to], app: appBundle)
+            let segments = try run("DELETE FROM activity_segment WHERE \(clause);", [from, to], app: appBundle)
+            var sessions = 0
+            if appBundle == nil {
+                _ = try run("DELETE FROM focus_pause WHERE session_id IN (SELECT id FROM focus_session WHERE started_ms >= ? AND started_ms < ?);", [from, to])
+                sessions = try run("DELETE FROM focus_session WHERE started_ms >= ? AND started_ms < ?;", [from, to])
+                // Preserve both outside fragments of a gap spanning the forgotten interval.
+                _ = try run("INSERT INTO capture_gap(started_ms,ended_ms,reason) SELECT ?,ended_ms,reason FROM capture_gap WHERE started_ms < ? AND (ended_ms IS NULL OR ended_ms > ?);", [to, from, to])
+                _ = try run("UPDATE capture_gap SET ended_ms=? WHERE started_ms < ? AND (ended_ms IS NULL OR ended_ms > ?);", [from, from, from])
+                _ = try run("DELETE FROM capture_gap WHERE started_ms >= ? AND started_ms < ? AND ended_ms IS NOT NULL AND ended_ms <= ?;", [from, to, to])
+                _ = try run("UPDATE capture_gap SET started_ms=? WHERE started_ms >= ? AND started_ms < ?;", [to, from, to])
+            }
+            try exec("DELETE FROM day_rollup;")
+            try exec("COMMIT;")
+            committed = true
+            return (segments, sessions)
         }
     }
 

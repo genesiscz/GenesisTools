@@ -240,6 +240,124 @@ final class ActivityStoreTests: XCTestCase {
                      "a deletion must invalidate the cached day, or the UI keeps showing it")
     }
 
+    func testTouchThenCloseUsesTheFinalBoundaryAndCannotBeRetouched() throws {
+        let id = try store.openSegment(segment(1_000))
+        try store.touchSegment(id: id, at: 2_000)
+        try store.closeSegment(id: id, at: 2_500)
+        try store.touchSegment(id: id, at: 9_000)
+        try store.closeSegment(id: id, at: 10_000)
+        XCTAssertEqual(try store.segments(from: 0, to: 20_000).first?.endedMs, 2_500)
+    }
+
+    func testInputTotalsAndSeriesKeepSixtyFourBitCounters() throws {
+        let id = try store.openSegment(segment(0))
+        try store.appendInput(bucketMs: 0, segmentId: id, counts: .init(keys: 2_000_000_000, clicks: 0, scrolls: 0, px: 2_000_000_000))
+        try store.appendInput(bucketMs: 0, segmentId: id, counts: .init(keys: 2_000_000_000, clicks: 0, scrolls: 0, px: 2_000_000_000))
+        XCTAssertEqual(try store.inputTotals(from: 0, to: 60_000).px, 4_000_000_000)
+        XCTAssertEqual(try store.inputSeries(from: 0, to: 60_000).first?.counts.keys, 4_000_000_000)
+        try store.appendInput(bucketMs: 0, segmentId: id, counts: .init(keys: 4_000_000_000, clicks: 0, scrolls: 0, px: 0))
+        XCTAssertEqual(try store.inputSeries(from: 0, to: 60_000).first?.counts.keys, 8_000_000_000)
+    }
+
+    func testForgetRollsBackEveryTableWhenOneDeletionFails() throws {
+        let id = try store.openSegment(segment(1_000))
+        try store.appendInput(bucketMs: 1_000, segmentId: id, counts: .init(keys: 7, clicks: 0, scrolls: 0, px: 0))
+        try store.cacheRollup(day: "fixture", json: "{}", computedMs: 1_000)
+        for table in ["input_bucket", "activity_segment"] {
+            try executeFixtureSQL("CREATE TRIGGER deny_fixture_delete BEFORE DELETE ON \(table) BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;")
+            XCTAssertThrowsError(try store.forget(from: 0, to: 2_000))
+            XCTAssertEqual(try store.segments(from: 0, to: 2_000).count, 1)
+            XCTAssertEqual(try store.inputTotals(from: 0, to: 2_000).keys, 7, "a later failure rolls back the earlier bucket delete")
+            XCTAssertNotNil(try store.cachedRollup(day: "fixture"))
+            try executeFixtureSQL("DROP TRIGGER deny_fixture_delete;")
+        }
+        XCTAssertEqual(try store.forget(from: 0, to: 2_000).segments, 1)
+        XCTAssertEqual(try store.inputTotals(from: 0, to: 2_000).keys, 0)
+    }
+
+    func testForgetClipsAndSplitsCaptureGapsWithoutDeletingOutsideTime() throws {
+        _ = try store.recordGap(startedMs: 1_000, endedMs: 5_000, reason: "spanning")
+        _ = try store.recordGap(startedMs: 2_500, endedMs: 3_000, reason: "inside")
+        _ = try store.recordGap(startedMs: 3_500, endedMs: nil, reason: "open")
+        _ = try store.recordGap(startedMs: 6_000, endedMs: 7_000, reason: "outside")
+        _ = try store.forget(from: 2_000, to: 4_000)
+        XCTAssertTrue(try store.gaps(from: 2_000, to: 4_000).isEmpty)
+        let rows = try store.gaps(from: 0, to: 10_000)
+        XCTAssertEqual(rows.filter { $0.reason == "spanning" }.map(\.startedMs), [1_000, 4_000])
+        XCTAssertEqual(rows.filter { $0.reason == "spanning" }.map(\.endedMs), [2_000, 5_000])
+        XCTAssertEqual(rows.first { $0.reason == "open" }?.startedMs, 4_000)
+        XCTAssertEqual(rows.first { $0.reason == "outside" }?.endedMs, 7_000)
+    }
+
+    func testLedgerSidecarsArePrivateWithoutChangingAnExistingSharedParent() throws {
+        let parent = (path as NSString).deletingLastPathComponent
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: parent)
+        for file in [path!, path + "-wal", path + "-shm"] {
+            if FileManager.default.fileExists(atPath: file) {
+                try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file)
+            }
+        }
+        let another = try ActivityStore(path: path)
+        _ = try another.openSegment(segment(100))
+        for file in [path!, path + "-wal", path + "-shm"] {
+            let attributes = try FileManager.default.attributesOfItem(atPath: file)
+            XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600, file)
+        }
+        let parentMode = try FileManager.default.attributesOfItem(atPath: parent)[.posixPermissions] as? NSNumber
+        XCTAssertEqual(parentMode?.intValue, 0o755, "do not chmod a caller's shared existing parent")
+        let nested = parent + "/private-ledger/activity.db"
+        let nestedStore = try ActivityStore(path: nested)
+        _ = nestedStore
+        let nestedMode = try FileManager.default.attributesOfItem(atPath: (nested as NSString).deletingLastPathComponent)[.posixPermissions] as? NSNumber
+        XCTAssertEqual(nestedMode?.intValue, 0o700)
+    }
+
+    func testLegacySegmentsMigrateWithoutReopeningClosedHistory() throws {
+        let closed = try store.openSegment(segment(1_000))
+        try store.closeSegment(id: closed, at: 2_000)
+        let open = try store.openSegment(segment(3_000))
+        store = nil
+        try executeFixtureSQL("ALTER TABLE activity_segment DROP COLUMN is_closed;")
+        store = try ActivityStore(path: path)
+        XCTAssertEqual(try store.openSegments().map(\.id), [open])
+        try store.touchSegment(id: closed, at: 9_000)
+        XCTAssertEqual(try store.segments(from: 0, to: 10_000).first?.endedMs, 2_000)
+        try store.touchSegment(id: open, at: 4_000)
+        try store.closeSegment(id: open, at: 4_500)
+        XCTAssertTrue(try store.openSegments().isEmpty)
+    }
+
+    func testBriefConcurrentWriterContentionWaitsAndThenSucceeds() throws {
+        final class Connection: @unchecked Sendable {
+            let handle: OpaquePointer
+            init(_ handle: OpaquePointer) { self.handle = handle }
+            deinit { sqlite3_close(handle) }
+        }
+        var handle: OpaquePointer?
+        XCTAssertEqual(sqlite3_open_v2(path, &handle, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil), SQLITE_OK)
+        let connection = Connection(try XCTUnwrap(handle))
+        XCTAssertEqual(sqlite3_exec(connection.handle, "BEGIN IMMEDIATE;", nil, nil, nil), SQLITE_OK)
+        let released = expectation(description: "external writer released its lock")
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
+            XCTAssertEqual(sqlite3_exec(connection.handle, "COMMIT;", nil, nil, nil), SQLITE_OK)
+            released.fulfill()
+        }
+        XCTAssertNoThrow(try store.openSegment(segment(1_000)))
+        wait(for: [released], timeout: 2)
+        XCTAssertEqual(try store.segments(from: 0, to: 2_000).count, 1)
+    }
+
+    private func executeFixtureSQL(_ sql: String) throws {
+        var handle: OpaquePointer?
+        guard sqlite3_open_v2(path, &handle, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else {
+            throw ActivityStore.StoreError.sqlite("fixture open failed")
+        }
+        defer { sqlite3_close(handle) }
+        guard sqlite3_exec(handle, sql, nil, nil, nil) == SQLITE_OK else {
+            throw ActivityStore.StoreError.sqlite(String(cString: sqlite3_errmsg(handle)))
+        }
+    }
+
     // MARK: - Helpers
 
     private func columns(of table: String) throws -> [String] {
