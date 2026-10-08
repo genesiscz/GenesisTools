@@ -29,20 +29,11 @@ public struct GenesisWidgetMark: View {
 private struct WidgetWorkingRing: View {
     let color: Color
     let animated: Bool
-    @State private var spinning = false
 
     var body: some View {
-        Circle().trim(from: 0.12, to: 0.78).stroke(
-            color, style: StrokeStyle(lineWidth: 2, lineCap: .round)
-        )
-        .frame(width: 9, height: 9)
-        .rotationEffect(.degrees(spinning ? 360 : 0))
-        .animation(
-            animated ? .linear(duration: 1.65).repeatForever(autoreverses: false) : nil, value: spinning
-        )
-        .onAppear { spinning = animated }
-        .onChange(of: animated) { _, value in spinning = value }
-        .onDisappear { spinning = false }
+        // A layer animation: a SwiftUI repeatForever laid the widget out on every frame (23% CPU).
+        SpinningArc(color: color, lineWidth: 2, trim: 0.12...0.78, period: 1.65, spinning: animated)
+            .frame(width: 9, height: 9)
     }
 }
 
