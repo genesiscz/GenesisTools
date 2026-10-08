@@ -5,7 +5,10 @@ import UniformTypeIdentifiers
 
 @MainActor
 public final class WidgetModel: ObservableObject {
-    @Published public private(set) var snapshot: WidgetSnapshot?
+    @Published public private(set) var snapshot: WidgetSnapshot? {
+        didSet { sessionRoster.update(snapshot?.sessions ?? []) }
+    }
+    private var sessionRoster = WidgetSessionRoster()
     @Published public var selectedKey = ""
     @Published public var selectedCardID: String? { didSet { presentationChanged?() } }
     @Published public var section = "Inbox" { didSet { presentationChanged?() } }
@@ -127,17 +130,12 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
-    public var sessions: [WidgetSession] { snapshot?.sessions.filter(\.visible) ?? [] }
-    public var previewSessions: [WidgetSession] {
-        let rank = ["waiting": 0, "working": 1, "finished": 2, "recent": 3]
-        return Array(
-            sessions.sorted {
-                let lhs = rank[$0.status] ?? 4
-                let rhs = rank[$1.status] ?? 4
-                return lhs == rhs ? $0.activityAt > $1.activityAt : lhs < rhs
-            }.prefix(4))
+    public var sessions: [WidgetSession] { sessionRoster.visible }
+    public var previewSessions: [WidgetSession] { sessionRoster.preview }
+    public var waitingSessionCount: Int { sessionRoster.waiting }
+    public var previewHeight: CGFloat {
+        sessionRoster.preview.isEmpty ? 180 : 100 + CGFloat(sessionRoster.preview.count) * 54
     }
-    public var previewHeight: CGFloat { previewSessions.isEmpty ? 180 : 100 + CGFloat(previewSessions.count) * 54 }
 
     public var selected: WidgetSession? {
         snapshot?.sessions.first { $0.key == selectedKey }
@@ -976,5 +974,28 @@ public final class WidgetModel: ObservableObject {
     private func report(_ error: Error) {
         self.error = error.localizedDescription
         PerfLog.mark("widget.error \(error.localizedDescription)")
+    }
+}
+
+/// Presentation-only projection. Snapshot updates refresh it; body and geometry reads reuse it.
+struct WidgetSessionRoster {
+    private var source: [WidgetSession] = []
+    private(set) var visible: [WidgetSession] = []
+    private(set) var preview: [WidgetSession] = []
+    private(set) var waiting = 0
+
+    @discardableResult
+    mutating func update(_ sessions: [WidgetSession]) -> Bool {
+        guard sessions != source else { return false }
+        source = sessions
+        visible = sessions.filter(\.visible)
+        let rank = ["waiting": 0, "working": 1, "finished": 2, "recent": 3]
+        preview = Array(visible.sorted {
+            let lhs = rank[$0.status] ?? 4
+            let rhs = rank[$1.status] ?? 4
+            return lhs == rhs ? $0.activityAt > $1.activityAt : lhs < rhs
+        }.prefix(4))
+        waiting = visible.reduce(0) { $0 + ($1.status == "waiting" ? 1 : 0) }
+        return true
     }
 }

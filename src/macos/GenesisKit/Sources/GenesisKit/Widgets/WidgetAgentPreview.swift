@@ -18,7 +18,7 @@ struct WidgetActivityIndicator: View {
 struct AgentWidgetPreview: View {
     @ObservedObject var model: WidgetModel
     let surface: WidgetSurfaceID
-    private var waiting: Int { model.sessions.filter { $0.status == "waiting" }.count }
+    private var waiting: Int { model.waitingSessionCount }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {

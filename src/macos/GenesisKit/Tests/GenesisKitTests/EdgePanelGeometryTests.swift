@@ -821,3 +821,152 @@ private struct EdgeSizingFixtureContent: View {
         Color.black.frame(width: state.expanded ? 400 : 40, height: state.expanded ? 300 : 36)
     }
 }
+
+@MainActor
+final class WidgetRosterTests: XCTestCase {
+    private func fixtureSessions() -> [WidgetSession] {
+        let statuses = ["waiting", "working", "finished", "recent", "idle", "unknown"]
+        return (0..<757).map { index in
+            WidgetSession(
+                key: "fixture-\(index)",
+                target: WidgetTarget(hostId: "local", provider: "codex", sessionId: "fixture-\(index)",
+                                     sourceHome: "/fixture/home", cwd: "/fixture/project-\(index % 9)"),
+                title: "Fixture session \(index)", project: "Project \(index % 9)",
+                activityAt: 1_791_417_600_000 + Double(index / 9) * 1000,
+                status: statuses[index % statuses.count], pinned: index % 5 == 0,
+                visible: index % 7 != 0, hiddenByFilter: index % 7 == 0,
+                parentSessionId: nil, agentId: nil, transcriptPath: nil)
+        }
+    }
+
+    private func referencePreview(_ sessions: [WidgetSession]) -> [WidgetSession] {
+        let rank = ["waiting": 0, "working": 1, "finished": 2, "recent": 3]
+        return Array(sessions.filter(\.visible).sorted {
+            let lhs = rank[$0.status] ?? 4
+            let rhs = rank[$1.status] ?? 4
+            return lhs == rhs ? $0.activityAt > $1.activityAt : lhs < rhs
+        }.prefix(4))
+    }
+
+    private func withFixture(_ body: (WidgetModel, URL, WidgetSnapshot) async throws -> Void) async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("widget-roster-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            do { try FileManager.default.removeItem(at: directory) } catch { XCTFail("Fixture cleanup: \(error)") }
+        }
+        let data = Data("""
+        {"version":1,"state":{"version":1,"revision":0,"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":""},"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}
+        """.utf8)
+        var snapshot = try JSONDecoder().decode(WidgetSnapshot.self, from: data)
+        snapshot.sessions = fixtureSessions()
+        let snapshotFile = directory.appendingPathComponent("snapshot.json")
+        try JSONEncoder().encode(snapshot).write(to: snapshotFile, options: .atomic)
+        let binary = directory.appendingPathComponent("tools")
+        try "#!/bin/sh\ncat '\(snapshotFile.path)'\n".write(to: binary, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
+        let domain = "widget-roster-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let model = WidgetModel(
+            binaryPath: binary.path, stateRoot: directory.path, defaults: defaults,
+            appearance: NativeSettingsAppearance(defaults: defaults, notificationNamespace: domain, observeExternalChanges: false))
+        defer { model.stop() }
+        model.startSettings()
+        let deadline = ContinuousClock.now + .seconds(5)
+        while model.snapshot == nil && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertNotNil(model.snapshot)
+        try await body(model, snapshotFile, snapshot)
+    }
+
+    func testVisibleRosterAndRankedPreviewMatchTheOriginalComparator() async throws {
+        try await withFixture { model, _, snapshot in
+            XCTAssertEqual(model.sessions, snapshot.sessions.filter(\.visible))
+            XCTAssertEqual(model.previewSessions, referencePreview(snapshot.sessions))
+            XCTAssertEqual(model.previewHeight, 316)
+            XCTAssertEqual(model.previewSessions.map(\.key), ["fixture-750", "fixture-738", "fixture-744", "fixture-732"])
+        }
+    }
+
+    func testProjectionRefreshesContentVisibilityRankingAndSourceOrderTies() {
+        var sessions = fixtureSessions()
+        var roster = WidgetSessionRoster()
+        XCTAssertTrue(roster.update(sessions))
+        XCTAssertFalse(roster.update(sessions), "Identical session data must reuse the projection")
+        XCTAssertEqual(roster.visible, sessions.filter(\.visible))
+        XCTAssertEqual(roster.preview, referencePreview(sessions))
+        XCTAssertEqual(roster.waiting, 108)
+
+        sessions[750].title = "Updated title with unchanged identity"
+        XCTAssertTrue(roster.update(sessions))
+        XCTAssertEqual(roster.preview.first?.title, sessions[750].title)
+        sessions[750].visible = false
+        sessions[738].status = "working"
+        sessions[12].activityAt = 2_000_000_000_000
+        XCTAssertTrue(roster.update(sessions))
+        XCTAssertEqual(roster.visible, sessions.filter(\.visible))
+        XCTAssertEqual(roster.preview, referencePreview(sessions))
+        XCTAssertEqual(roster.waiting, sessions.filter { $0.visible && $0.status == "waiting" }.count)
+        sessions.reverse()
+        XCTAssertTrue(roster.update(sessions))
+        XCTAssertEqual(roster.preview, referencePreview(sessions), "Equal rank/date rows keep incoming source order")
+        XCTAssertTrue(roster.update([]))
+        XCTAssertTrue(roster.visible.isEmpty)
+        XCTAssertTrue(roster.preview.isEmpty)
+        XCTAssertEqual(roster.waiting, 0)
+    }
+
+    func testRosterReadBenchmark() async throws {
+        guard ProcessInfo.processInfo.environment["WIDGET_ROSTER_BENCH"] == "1" else {
+            throw XCTSkip("Run with WIDGET_ROSTER_BENCH=1 for the bounded 757-session projection benchmark")
+        }
+        try await withFixture { model, _, _ in
+            func cpu() -> Double {
+                var usage = rusage()
+                getrusage(RUSAGE_SELF, &usage)
+                return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec)
+                    + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1_000_000
+            }
+            var checksum = 0
+            for repetition in 0..<3 {
+                let start = cpu()
+                for _ in 0..<200 {
+                    checksum += model.sessions.count + model.previewSessions.count + Int(model.previewHeight)
+                    checksum += model.waitingSessionCount
+                }
+                print("ROSTER_BENCH repetition=\(repetition) reads=200 cpu-ms=\((cpu() - start) * 1000) checksum=\(checksum)")
+            }
+            XCTAssertGreaterThan(checksum, 0)
+            let source = try XCTUnwrap(model.snapshot?.sessions)
+            let equalCopy = try JSONDecoder().decode([WidgetSession].self, from: JSONEncoder().encode(source))
+            var projection = WidgetSessionRoster()
+            let buildStart = cpu()
+            projection.update(source)
+            let buildMs = (cpu() - buildStart) * 1000
+            let equalityStart = cpu()
+            for _ in 0..<200 { XCTAssertFalse(projection.update(equalCopy)) }
+            print("ROSTER_UPDATE build-cpu-ms=\(buildMs) equal-snapshot-200-cpu-ms=\((cpu() - equalityStart) * 1000)")
+
+            if let output = ProcessInfo.processInfo.environment["WIDGET_ROSTER_SNAPSHOT"] {
+                _ = NSApplication.shared
+                let window = NSPanel(contentRect: CGRect(x: 0, y: 0, width: 324, height: 316),
+                                     styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.alphaValue = 0
+                window.level = NSWindow.Level(rawValue: -1000)
+                defer { window.close() }
+                let host = NSHostingView(rootView: AgentWidgetPreview(model: model, surface: WidgetSurfaceID(edge: .right))
+                    .frame(width: 324, height: 316).background(Color(white: 0.07)).preferredColorScheme(.dark))
+                window.contentView = host
+                window.order(.below, relativeTo: 0)
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                try png.write(to: URL(fileURLWithPath: output), options: .atomic)
+                print("ROSTER_SNAPSHOT \(output)")
+            }
+        }
+    }
+}
