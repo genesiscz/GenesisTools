@@ -279,6 +279,7 @@ export class BrowserSession {
         const secret = options.secret === true;
         const operation = `if (nodes.length !== 1 || !visible || disabled || !identity || covered || (result.password && !${secret}) || location.href !== ${expected}) return {refused:true};
             const kind = ${kind}; const value = ${value}; el.scrollIntoView({block:'center'}); el.focus();
+            if ((el.type === 'password' && !${secret}) || location.href !== ${expected}) return {refused:true};
             if (kind === 'click') el.click();
             if (kind === 'fill') {
                 if (!['INPUT','TEXTAREA'].includes(el.tagName)) return {refused:true};
@@ -297,7 +298,7 @@ export class BrowserSession {
             await this.page.evaluate(
                 this.expression(
                     locator,
-                    `if(nodes.length !== 1 || !identity || !visible || disabled || covered || (result.password && !${secret}) || location.href !== ${expected}) throw Error('Target changed'); el.focus(); return true;`
+                    `if(nodes.length !== 1 || !identity || !visible || disabled || covered || (result.password && !${secret}) || location.href !== ${expected}) throw Error('Target changed'); el.focus(); if ((el.type === 'password' && !${secret}) || location.href !== ${expected}) throw Error('Target changed'); return true;`
                 ),
                 { signal }
             );

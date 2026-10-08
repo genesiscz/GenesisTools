@@ -465,7 +465,11 @@ function cdpFixture(
     return { server, routing };
 }
 
-test("password changes between probe and mutation refuse literals and preserve runtime-secret fill", async () => {
+test("password changes between probe or focus and mutation refuse literals and preserve runtime-secret fill", async () => {
+    let changeOnFocus = false;
+    let changePageOnFocus = false;
+    let keyEvents = 0;
+    const location = { href: "https://example.com/" };
     const input = {
         tagName: "INPUT",
         type: "text",
@@ -475,7 +479,14 @@ test("password changes between probe and mutation refuse literals and preserve r
         getBoundingClientRect: () => ({ x: 0, y: 0, width: 100, height: 20 }),
         closest: () => null,
         contains: () => false,
-        focus: () => {},
+        focus: () => {
+            if (changeOnFocus) {
+                input.type = "password";
+            }
+            if (changePageOnFocus) {
+                location.href = "https://example.com/changed";
+            }
+        },
         scrollIntoView: () => {},
         dispatchEvent: () => {},
     };
@@ -488,16 +499,21 @@ test("password changes between probe and mutation refuse literals and preserve r
         },
     });
     const { server } = cdpFixture({
+        onCommand: (method) => {
+            if (method === "Input.dispatchKeyEvent") {
+                keyEvents++;
+            }
+        },
         evaluate: (expression) => {
             const value: unknown = runInNewContext(expression, {
-                location: { href: "https://example.com/" },
+                location,
                 window: {},
                 document: { querySelectorAll: () => [input], elementFromPoint: () => input },
                 getComputedStyle: () => ({ visibility: "visible", display: "block" }),
                 HTMLInputElement: { prototype },
                 Event: class {},
             });
-            if (expression.includes("return result;")) {
+            if (!changeOnFocus && expression.includes("return result;")) {
                 input.type = "password";
             }
             return value;
@@ -521,6 +537,25 @@ test("password changes between probe and mutation refuse literals and preserve r
         );
         expect(writes).toBe(1);
         expect(input.value).toBe("literal");
+        changeOnFocus = true;
+        input.type = "text";
+        await expect(browser.action({ ...base, kind: "fill" })).rejects.toThrow("Target changed");
+        expect(writes).toBe(1);
+        input.type = "text";
+        await expect(browser.action({ ...base, kind: "press", value: "Enter" })).rejects.toThrow("Target changed");
+        expect(keyEvents).toBe(0);
+        input.type = "text";
+        await expect(browser.action({ ...base, kind: "fill", secret: true })).resolves.toBe(
+            "Exact value readback matched."
+        );
+        expect(writes).toBe(2);
+        changePageOnFocus = true;
+        await expect(browser.action({ ...base, kind: "fill", secret: true })).rejects.toThrow("Target changed");
+        expect(writes).toBe(2);
+        location.href = "https://example.com/";
+        input.type = "text";
+        await expect(browser.action({ ...base, kind: "press", value: "Enter" })).rejects.toThrow("Target changed");
+        expect(keyEvents).toBe(0);
     } finally {
         await browser.close();
         server.stop(true);
