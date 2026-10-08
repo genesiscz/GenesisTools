@@ -38,6 +38,39 @@ public struct NativeSettingsDisclosure<Content: View>: View {
     }
 }
 
+public struct NativeSettingsNumberPicker: View {
+    private let title: String
+    private let range: Range<Int>
+    private let identifier: String
+    @Binding private var value: Int
+
+    public init(_ title: String, range: Range<Int>, identifier: String, value: Binding<Int>) {
+        self.title = title
+        self.range = range
+        self.identifier = identifier
+        _value = value
+    }
+
+    public var body: some View {
+        Menu {
+            ForEach(Array(range), id: \.self) { option in
+                Button { value = option } label: {
+                    if option == value {
+                        Label(String(format: "%02d", option), systemImage: "checkmark")
+                    } else { Text(String(format: "%02d", option)) }
+                }
+            }
+        } label: {
+            Text(String(format: "%02d", value))
+                .font(.system(size: 19, weight: .medium, design: .rounded)).monospacedDigit()
+                .frame(width: 42, height: 34)
+                .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .accessibilityLabel(title).accessibilityValue(String(value)).accessibilityIdentifier(identifier)
+    }
+}
+
 public struct NativeSettingsTimePicker: View {
     private let title: String
     private let identifier: String
@@ -62,15 +95,13 @@ public struct NativeSettingsTimePicker: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                 HStack(spacing: 2) {
-                    Picker("\(title) hour", selection: hour) {
-                        ForEach(0..<24) { Text(String(format: "%02d", $0)).tag($0) }
-                    }.accessibilityIdentifier(identifier + ".hour")
+                    NativeSettingsNumberPicker("\(title) hour", range: 0..<24,
+                        identifier: identifier + ".hour", value: hour)
                     Text(":").foregroundStyle(.secondary)
-                    Picker("\(title) minute", selection: minute) {
-                        ForEach(0..<60) { Text(String(format: "%02d", $0)).tag($0) }
-                    }.accessibilityIdentifier(identifier + ".minute")
+                    NativeSettingsNumberPicker("\(title) minute", range: 0..<60,
+                        identifier: identifier + ".minute", value: minute)
                 }
-                .labelsHidden().pickerStyle(.menu).menuStyle(.borderlessButton)
+                .labelsHidden()
                 .font(.system(size: 19, weight: .medium, design: .rounded)).monospacedDigit()
                 .fixedSize()
             }
