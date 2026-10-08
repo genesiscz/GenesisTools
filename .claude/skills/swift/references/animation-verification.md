@@ -131,10 +131,24 @@ For a panel occupying the menu-bar band, choose its final level after setting `i
 
 A compact-to-preview expansion can move child controls away from a stationary pointer and emit child `onHover(false)` followed by another container hover. Keep the last agent hover identity through that reflow; clear it on leaving the whole surface, opening a destination, collapsing, dragging, or stopping. Cover the sequence with different hovered/selected sessions so an accidental selected-session preload cannot pass. Log the cache identity, not only “30 turns”, when correlating the UI with the read.
 
-## Keep edge controls outside the expanding layout (2026-10-08 21:42)
+## Icons stay anchored during expansion
+
+Keep the control rail in its own edge-aligned overlay, with its own measured height. Expanded body
+content may grow beside it; it must not determine the rail's position. Anchor every rounded native
+frame to the same screen edge, and disable automatic hosting-window sizing only at that frame-owned
+root. Measured scroll documents still need their own fitting-size behavior.
 
 A panel can have correct settled geometry while controls leave its bounds during animation. A fixed-width body and rail in one centered HStack overflow the intermediate native window width. Test the actual hosted control frame during interrupted open/close, not just window edges or the final AX tree. The widget regression sampled 38 frames per side: the old stack wandered across 137 pt / 280.5 pt; a rail independently overlaid at the edge stayed within 0.5 pt. Keep one owner of frame animation; an additional implicit SwiftUI layout animation can fight AppKit's window interpolation.
 
+## The top notch resizes to fit its contents
+
 Badges that change the necessary chrome size belong in measured layout, not offset overlays outside fixed allocations. Measure intrinsic, unproposed child sizes, round to whole points, reject unchanged measurements, and defer native-window updates until after the SwiftUI transaction. Reserve symmetric wings around a physical camera cutout. Do not feed the current animated window width back into its desired intrinsic width.
+
+The live badge-arrival check grew the top bar from 283 × 39 pt to 307 × 39 pt while its center
+and top edge stayed fixed. Verify both arrival and removal, empty and crowded content, cutout and
+non-cutout displays. Intrinsic size is the target; the native frame controller animates toward it.
+A first or last icon outside the shape is a layout failure even if the window is correctly centered.
+
+## Drag a moving window using screen coordinates
 
 A gesture's window-local translation is unstable when that gesture moves the window. Capture the mouse-down and subsequent event positions in screen coordinates, preserve the rail's current height while dragging, and clamp only the final normalized position. A native NSView handle can own mouse-down/drag/up without a tracking poll. Give it its own accessibility identity; identifying the decorative image underneath it makes hit tests disagree. Verify real pointer input as well as injected coordinate arithmetic. A screenshot-based drag tool may deliberately reject moving windows, so record that refusal separately from application behavior.
