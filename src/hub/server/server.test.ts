@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { currentTraceId } from "@genesiscz/utils/trace";
 import { parseArgv } from "./argv";
+import { repoDoor, usageSessionsDoor } from "./doors/frequent";
 import { transcriptFetchDoor, transcriptLiveDoor } from "./doors/transcript";
 import type { CallDoor, StreamDoor } from "./doors/types";
 import { LineBuffer } from "./protocol";
@@ -283,6 +284,38 @@ describe("hub server argv", () => {
             offset: 12,
         });
         expect(transcriptLiveDoor.match(["ai", "sessions", "tail", "s1", "--live"])).toBeNull();
+    });
+
+    it("takes the provider the hub's live tail always names, and leaves an unknown one to the CLI", () => {
+        const tail = ["ai", "sessions", "tail", "/p/s1.jsonl", "--json", "--limit", "30", "--provider", "claude"];
+        expect(transcriptFetchDoor.match(tail)).toMatchObject({ query: "/p/s1.jsonl", limit: 30, provider: "claude" });
+        expect(transcriptFetchDoor.match([...tail.slice(0, -1), "nope"])).toBeNull();
+        expect(
+            transcriptLiveDoor.match(["ai", "sessions", "tail", "s1", "--live", "--offset", "3", "--provider", "codex"])
+        ).toMatchObject({ offset: 3, provider: "codex" });
+    });
+
+    it("hub repo: absolute paths and the cache flags; a relative path or an unknown flag runs as a process", () => {
+        expect(repoDoor.match(["hub", "repo", "/w/a", "/w/b", "--pr", "--max-cache-age", "86400"])).toEqual({
+            paths: ["/w/a", "/w/b"],
+            withPr: true,
+            maxCacheAgeSeconds: 86400,
+        });
+        expect(repoDoor.match(["hub", "repo", "/w/a", "--fresh", "--max-cache-age", "60"])?.maxCacheAgeSeconds).toBe(0);
+        expect(repoDoor.match(["hub", "repo", "w/a"])).toBeNull();
+        expect(repoDoor.match(["hub", "repo", "/w/a", "--json"])).toBeNull();
+        expect(repoDoor.match(["hub", "repo", "/w/a", "--max-cache-age", "1.5"])).toBeNull();
+        expect(repoDoor.match(["hub", "repo"])).toBeNull();
+    });
+
+    it("ai usage sessions --json: whole positive numbers only; --provider stays a process", () => {
+        expect(usageSessionsDoor.match(["ai", "usage", "sessions", "--json", "--hours", "24", "--min", "10"])).toEqual({
+            listing: { hours: 24, minRows: 10 },
+            fresh: false,
+        });
+        expect(usageSessionsDoor.match(["ai", "usage", "sessions", "--hours", "24"])).toBeNull();
+        expect(usageSessionsDoor.match(["ai", "usage", "sessions", "--json", "--hours", "0"])).toBeNull();
+        expect(usageSessionsDoor.match(["ai", "usage", "sessions", "--json", "--provider", "claude"])).toBeNull();
     });
 });
 

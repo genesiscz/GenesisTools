@@ -125,3 +125,41 @@ export async function refreshSessionRowsCache(
 
     return { refreshed: true, reason: "refreshed", rows: rows.length };
 }
+
+/**
+ * `ai usage sessions --json`: the daemon's cached answer when it is usable (and the ask stamped, at most
+ * twice a minute, so the daemon keeps it warm), else a fresh list, written back for the next ask. The
+ * CLI command and the hub server's door both answer through this, so their output is the same bytes.
+ */
+export async function sessionRowsJson(
+    listing: AgentSessionRowsOptions,
+    {
+        fresh = false,
+        listRows,
+    }: { fresh?: boolean; listRows: (options: AgentSessionRowsOptions) => Promise<AgentSessionRow[]> }
+): Promise<{ fetchedAt: number; cached: boolean; rows: AgentSessionRow[] }> {
+    if (!fresh) {
+        const key = sessionRowsCacheKey(listing);
+        const cached = await readSessionRowsCache();
+        const now = Date.now();
+
+        if (cacheIsUsable(cached, key, now)) {
+            // The stamp tells the daemon this query is still wanted, and it is read against an hour, so
+            // rewriting the whole file on every 35 s poll would be churn for nothing.
+            if (now - cached.lastRequestedAt > 30_000) {
+                const latest = await readSessionRowsCache();
+
+                if (latest && latest.fetchedAt === cached.fetchedAt) {
+                    await writeSessionRowsCache({ ...latest, lastRequestedAt: now });
+                }
+            }
+
+            return { fetchedAt: cached.fetchedAt, cached: true, rows: cached.rows };
+        }
+    }
+
+    const rows = await listRows(listing);
+    const now = Date.now();
+    await writeSessionRowsCache({ query: listing, fetchedAt: now, lastRequestedAt: now, rows });
+    return { fetchedAt: now, cached: false, rows };
+}

@@ -9,12 +9,7 @@ import {
     type AgentSessionRowsOptions,
     listAgentSessionRows,
 } from "../../lib/sessions/agent-session-rows";
-import {
-    cacheIsUsable,
-    readSessionRowsCache,
-    sessionRowsCacheKey,
-    writeSessionRowsCache,
-} from "../../lib/sessions/rows-cache";
+import { sessionRowsJson } from "../../lib/sessions/rows-cache";
 
 interface SessionsOptions {
     provider?: string[] | boolean;
@@ -133,43 +128,13 @@ export function registerAiUsageSessionsCommand(usage: Command): void {
             // The cache serves `--json` alone. That is the door Genesis.app polls every 35 s,
             // and the one whose consumer can read `fetchedAt` and decide for itself; a human
             // reading the table gets a freshly computed list every time.
-            if (opts.json && !opts.fresh) {
-                const key = sessionRowsCacheKey(listing);
-                const cached = await readSessionRowsCache();
-                const now = Date.now();
-
-                if (cacheIsUsable(cached, key, now)) {
-                    out.result({ fetchedAt: cached.fetchedAt, cached: true, rows: cached.rows });
-
-                    // The stamp tells the daemon this query is still wanted, and it is read
-                    // against an hour, so rewriting the whole file on every 35 s poll would be
-                    // churn for nothing. Bumped at most twice a minute.
-                    if (now - cached.lastRequestedAt > 30_000) {
-                        const latest = await readSessionRowsCache();
-
-                        if (latest && latest.fetchedAt === cached.fetchedAt) {
-                            await writeSessionRowsCache({ ...latest, lastRequestedAt: now });
-                        }
-                    }
-
-                    return;
-                }
-            }
-
-            const rows = await listAgentSessionRows(listing);
-
             if (opts.json) {
-                const now = Date.now();
-                await writeSessionRowsCache({
-                    query: listing,
-                    fetchedAt: now,
-                    lastRequestedAt: now,
-                    rows,
-                });
-                out.result({ fetchedAt: now, cached: false, rows });
+                out.result(
+                    await sessionRowsJson(listing, { fresh: opts.fresh === true, listRows: listAgentSessionRows })
+                );
                 return;
             }
 
-            render(rows);
+            render(await listAgentSessionRows(listing));
         });
 }
