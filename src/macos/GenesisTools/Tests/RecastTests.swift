@@ -870,6 +870,35 @@ extension RecastTests {
         XCTAssertTrue(model.file?.renderings?.contains { $0.id == rendered.receipt.id } == true,
             "The export receipt remains valid even after choosing another collection")
         XCTAssertNil(model.rendering, "Saving a receipt must not restore the previous collection's preview")
+        model.install(reviewed); model.selectedCollection = "table"
+        let started = expectation(description: "Receipt save suspended")
+        let returning = Task {
+            started.fulfill()
+            try await model.rememberRendering(rendered)
+        }
+        await fulfillment(of: [started], timeout: 2)
+        model.selectedCollection = "other"
+        model.selectedCollection = "table"
+        try await returning.value
+        XCTAssertNil(model.rendering, "Returning to a collection must not resurrect its superseded preview")
+
+        for revisionChange in [0, 1] {
+            model.install(reviewed)
+            let editing = expectation(description: "Receipt save pending before edit")
+            let pending = Task {
+                editing.fulfill()
+                try await model.rememberRendering(rendered)
+            }
+            await fulfillment(of: [editing], timeout: 2)
+            var replacement = reviewed
+            replacement.file.revision += revisionChange
+            replacement.file.records[0].cells["name"]?.value = .string("Replacement edit")
+            model.install(replacement)
+            do { try await pending.value; XCTFail("A replaced state must reject the pending save") }
+            catch { XCTAssertTrue(error.localizedDescription.contains("conversion changed")) }
+            XCTAssertEqual(model.file?.records[0].cells["name"]?.value, .string("Replacement edit"))
+            XCTAssertNil(model.rendering)
+        }
     }
 
     @MainActor

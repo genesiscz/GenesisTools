@@ -30,6 +30,7 @@ final class RecastModel: ObservableObject {
             if oldValue != selectedCollection {
                 rendering = nil
                 renderingRequestID = UUID()
+                collectionSelectionID = UUID()
                 exportFormat = collection?.kind == "calendar" ? "ics" : "csv"
                 bulkRecordIDs = []
                 invalidateProposal()
@@ -89,6 +90,8 @@ final class RecastModel: ObservableObject {
     private var audioReadiness: AnyCancellable?
     private var epoch = UUID()
     private var renderingRequestID = UUID()
+    private var collectionSelectionID = UUID()
+    private var stateInstallationID = UUID()
     private var closed = false
     private var inferenceCheckpoint: RecastInferenceCheckpoint?
 
@@ -138,6 +141,7 @@ final class RecastModel: ObservableObject {
     }
 
     func install(_ state: RecastState) {
+        stateInstallationID = UUID()
         inferenceCheckpoint = nil
         rendering = nil
         renderingRequestID = UUID()
@@ -256,11 +260,12 @@ final class RecastModel: ObservableObject {
     func apply(_ operations: [RecastJSON], title: String, addedAssets: [String: Data] = [:]) async throws {
         guard let before = state else { throw recastError("The conversion has not finished opening.") }
         let requestedEpoch = epoch
+        let requestedState = stateInstallationID
         let answer = try await command("apply", file: before.file, operations: operations, arguments: ["--revision", String(before.file.revision)])
         let next = try JSONDecoder().decode(RecastFile.self, from: Data(answer.utf8))
         let inspected = try await inspect(next)
         try Task.checkCancellation()
-        guard !closed, epoch == requestedEpoch, file?.id == before.file.id,
+        guard !closed, epoch == requestedEpoch, stateInstallationID == requestedState, file?.id == before.file.id,
               inspected.document.id == before.file.id, file?.revision == before.file.revision else {
             throw recastError("The conversion changed while this operation was running.")
         }
@@ -497,12 +502,14 @@ final class RecastModel: ObservableObject {
     }
 
     func rememberRendering(_ rendering: RecastRendering) async throws {
+        let requestedSelection = collectionSelectionID
         if (file?.renderings ?? []).contains(where: {
             $0.id == rendering.receipt.id || ($0.contentHash == rendering.contentHash &&
                 $0.collectionId == rendering.receipt.collectionId && $0.format == rendering.format)
         }) { return }
         try await apply([recastOperation("record-rendering", ["receipt": try .encoded(rendering.receipt)])], title: "Remember export")
-        if file?.id == rendering.receipt.documentId, selectedCollection == rendering.receipt.collectionId,
+        if collectionSelectionID == requestedSelection, file?.id == rendering.receipt.documentId,
+           selectedCollection == rendering.receipt.collectionId,
            exportFormat == rendering.format, exportIncludeRecordIDs == rendering.receipt.includeRecordIds {
             self.rendering = rendering
         }
