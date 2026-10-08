@@ -29,6 +29,7 @@ private let notificationClickGraceSeconds = 1.2
 
 final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
     private let showWindowImmediately: Bool
+    private var openedDocument = false
     private var window: NSWindow?
 
     init(showWindowImmediately: Bool) {
@@ -55,7 +56,7 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + notificationClickGraceSeconds) { [weak self] in
             // A click-launched process performs its action and exits on its own, so there is
             // nothing to show.
-            if notificationClickReceived || browserLinkReceived {
+            if notificationClickReceived || browserLinkReceived || self?.openedDocument == true {
                 return
             }
 
@@ -92,6 +93,16 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         AppDock.menu()
+    }
+
+    @MainActor
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        let handled = AppMenuTarget.shared.openRecastFiles(filenames)
+        if handled { openedDocument = true }
+        sender.reply(toOpenOrPrint: handled ? .success : .cancel)
+        if handled, window == nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { sender.terminate(nil) }
+        }
     }
 
     private func showWindow() {

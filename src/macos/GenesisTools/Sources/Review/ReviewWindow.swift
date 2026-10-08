@@ -138,6 +138,11 @@ func runReview(_ args: [String]) -> Never {
 }
 
 private final class ReviewAppDelegate: NSObject, NSApplicationDelegate {
+    @MainActor
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        sender.reply(toOpenOrPrint: AppMenuTarget.shared.openRecastFiles(filenames) ? .success : .cancel)
+    }
+
     var window: NSWindow?
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

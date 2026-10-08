@@ -1,0 +1,230 @@
+{
+    "format": "genesis-recast",
+    "version": 2,
+    "id": "recast_screen_fixture",
+    "title": "Invented screenshot specification",
+    "revision": 0,
+    "sources": [
+        {
+            "id": "source_screen",
+            "name": "Invented account form.png",
+            "kind": "image",
+            "mime": "image/png",
+            "bytes": 412880,
+            "contentHash": "4634af5052bcd42e9bea74ac2688535509dd022562cbfd0db857e7ad2d1b2040",
+            "assetName": "4634af5052bcd42e9bea74ac2688535509dd022562cbfd0db857e7ad2d1b2040.png",
+            "importedAt": "2026-10-05T12:00:00Z",
+            "pageCount": 1,
+            "pages": [
+                {
+                    "index": 0,
+                    "width": 1920,
+                    "height": 1200
+                }
+            ]
+        }
+    ],
+    "anchors": [
+        {
+            "id": "anchor_screen_0",
+            "sourceId": "source_screen",
+            "sourceHash": "4634af5052bcd42e9bea74ac2688535509dd022562cbfd0db857e7ad2d1b2040",
+            "label": "Email rule",
+            "region": {
+                "kind": "rect",
+                "page": 0,
+                "x": 0.04,
+                "y": 0.64,
+                "width": 0.92,
+                "height": 0.09
+            }
+        },
+        {
+            "id": "anchor_screen_1",
+            "sourceId": "source_screen",
+            "sourceHash": "4634af5052bcd42e9bea74ac2688535509dd022562cbfd0db857e7ad2d1b2040",
+            "label": "Continue rule",
+            "region": {
+                "kind": "rect",
+                "page": 0,
+                "x": 0.04,
+                "y": 0.47,
+                "width": 0.92,
+                "height": 0.09
+            }
+        },
+        {
+            "id": "anchor_screen_2",
+            "sourceId": "source_screen",
+            "sourceHash": "4634af5052bcd42e9bea74ac2688535509dd022562cbfd0db857e7ad2d1b2040",
+            "label": "Confirmation rule",
+            "region": {
+                "kind": "rect",
+                "page": 0,
+                "x": 0.04,
+                "y": 0.29,
+                "width": 0.92,
+                "height": 0.09
+            }
+        }
+    ],
+    "readings": [
+        {
+            "id": "reading_screen_0",
+            "anchorId": "anchor_screen_0",
+            "text": "Email — Required; a valid email address",
+            "alternatives": [],
+            "method": "manual",
+            "engine": "Authored fixture reading; no OCR accuracy claim",
+            "createdAt": "2026-10-05T12:00:00Z"
+        },
+        {
+            "id": "reading_screen_1",
+            "anchorId": "anchor_screen_1",
+            "text": "Continue — Disabled while email is invalid",
+            "alternatives": [],
+            "method": "manual",
+            "engine": "Authored fixture reading; no OCR accuracy claim",
+            "createdAt": "2026-10-05T12:00:00Z"
+        },
+        {
+            "id": "reading_screen_2",
+            "anchorId": "anchor_screen_2",
+            "text": "Confirmation — Shown after a successful save",
+            "alternatives": [],
+            "method": "manual",
+            "engine": "Authored fixture reading; no OCR accuracy claim",
+            "createdAt": "2026-10-05T12:00:00Z"
+        }
+    ],
+    "collections": [
+        {
+            "id": "screen_spec",
+            "label": "Screen expectations",
+            "kind": "table",
+            "fields": [
+                {
+                    "id": "name",
+                    "label": "Element",
+                    "type": "text",
+                    "required": true
+                },
+                {
+                    "id": "value",
+                    "label": "Expected state",
+                    "type": "text",
+                    "required": false
+                }
+            ]
+        }
+    ],
+    "records": [
+        {
+            "id": "record_screen_0",
+            "collectionId": "screen_spec",
+            "state": "draft",
+            "createdAt": "2026-10-05T12:00:00Z",
+            "cells": {
+                "name": {
+                    "value": "Email",
+                    "state": "proposed",
+                    "origin": "source",
+                    "anchorIds": [
+                        "anchor_screen_0"
+                    ],
+                    "readingIds": [
+                        "reading_screen_0"
+                    ],
+                    "alternatives": [],
+                    "note": ""
+                },
+                "value": {
+                    "value": "Required; a valid email address",
+                    "state": "proposed",
+                    "origin": "source",
+                    "anchorIds": [
+                        "anchor_screen_0"
+                    ],
+                    "readingIds": [
+                        "reading_screen_0"
+                    ],
+                    "alternatives": [],
+                    "note": ""
+                }
+            }
+        },
+        {
+            "id": "record_screen_1",
+            "collectionId": "screen_spec",
+            "state": "draft",
+            "createdAt": "2026-10-05T12:00:00Z",
+            "cells": {
+                "name": {
+                    "value": "Continue",
+                    "state": "proposed",
+                    "origin": "source",
+                    "anchorIds": [
+                        "anchor_screen_1"
+                    ],
+                    "readingIds": [
+                        "reading_screen_1"
+                    ],
+                    "alternatives": [],
+                    "note": ""
+                },
+                "value": {
+                    "value": "Disabled while email is invalid",
+                    "state": "proposed",
+                    "origin": "source",
+                    "anchorIds": [
+                        "anchor_screen_1"
+                    ],
+                    "readingIds": [
+                        "reading_screen_1"
+                    ],
+                    "alternatives": [],
+                    "note": ""
+                }
+            }
+        },
+        {
+            "id": "record_screen_2",
+            "collectionId": "screen_spec",
+            "state": "draft",
+            "createdAt": "2026-10-05T12:00:00Z",
+            "cells": {
+                "name": {
+                    "value": "Confirmation",
+                    "state": "proposed",
+                    "origin": "source",
+                    "anchorIds": [
+                        "anchor_screen_2"
+                    ],
+                    "readingIds": [
+                        "reading_screen_2"
+                    ],
+                    "alternatives": [],
+                    "note": ""
+                },
+                "value": {
+                    "value": "Shown after a successful save",
+                    "state": "proposed",
+                    "origin": "source",
+                    "anchorIds": [
+                        "anchor_screen_2"
+                    ],
+                    "readingIds": [
+                        "reading_screen_2"
+                    ],
+                    "alternatives": [],
+                    "note": ""
+                }
+            }
+        }
+    ],
+    "corrections": [],
+    "renderings": [],
+    "reconciliations": [],
+    "contradictions": [],
+    "journal": []
+}

@@ -1,0 +1,47 @@
+[
+    {
+        "kind": "set-cell",
+        "recordId": "journey_fixture",
+        "fieldId": "start",
+        "cell": {
+            "value": "2026-10-06T08:40",
+            "state": "proposed",
+            "origin": "user",
+            "anchorIds": [
+                "anchor_date",
+                "anchor_departure"
+            ],
+            "readingIds": [
+                "reading_date",
+                "reading_departure"
+            ],
+            "alternatives": [
+                "2026-10-06T08:10",
+                "2026-10-06T08:40"
+            ],
+            "note": "Human chose the later alternative in this invented fixture."
+        },
+        "reason": "Selected 08:40 after reviewing both alternatives"
+    },
+    {
+        "kind": "set-cell",
+        "recordId": "journey_fixture",
+        "fieldId": "timezone",
+        "cell": {
+            "value": "Europe/Prague",
+            "state": "proposed",
+            "origin": "user",
+            "anchorIds": [],
+            "readingIds": [],
+            "alternatives": [],
+            "note": "Required destination information supplied by the user."
+        },
+        "reason": "Set the fixture destination time zone"
+    },
+    {
+        "kind": "accept-records",
+        "recordIds": [
+            "journey_fixture"
+        ]
+    }
+]

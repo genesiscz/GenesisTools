@@ -53,6 +53,39 @@
 	<string>You passed a path on a network volume to a tools command. GenesisTools reads only the file you named.</string>
 	<key>NSSystemAdministrationUsageDescription</key>
 	<string>Full Disk Access lets tools macos mail, messages and voice-memos read the Mail, Messages and Voice Memos databases. Nothing else in GenesisTools needs it.</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Recast Conversion</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSTypeIsPackage</key>
+			<true/>
+			<key>NSDocumentClass</key>
+			<string>GenesisTools.RecastDocument</string>
+			<key>LSItemContentTypes</key>
+			<array><string>com.genesiscz.genesistools.recast</string></array>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.genesiscz.genesistools.recast</string>
+			<key>UTTypeDescription</key>
+			<string>Recast Conversion</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>com.apple.package</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>recast</string></array>
+			</dict>
+		</dict>
+	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

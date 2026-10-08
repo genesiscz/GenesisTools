@@ -33,18 +33,21 @@ export function toTranscriptionModel({
         modelId,
 
         async doGenerate(options) {
+            options.abortSignal?.throwIfAborted();
             const audio =
                 typeof options.audio === "string" ? Buffer.from(options.audio, "base64") : Buffer.from(options.audio);
 
             const own = options.providerOptions?.[providerId] ?? {};
             const transcribeOptions: TranscribeOptions = {
                 model: modelId,
+                signal: options.abortSignal,
                 ...(typeof own.language === "string" ? { language: own.language } : {}),
                 ...(typeof own.diarize === "boolean" ? { diarize: own.diarize } : {}),
                 ...(typeof own.speakers === "number" ? { speakers: own.speakers } : {}),
             };
 
             const result = await provider.transcribe(audio, transcribeOptions);
+            options.abortSignal?.throwIfAborted();
 
             return {
                 text: result.text,
@@ -96,6 +99,7 @@ export function fromTranscriptionModel(resolved: ResolvedBinding): AITranscripti
         },
 
         async transcribe(audio: Buffer, options?: TranscribeOptions): Promise<TranscriptionResult> {
+            options?.signal?.throwIfAborted();
             const providerOptions = buildTranscriptionProviderOptions(providerId, {
                 language: options?.language,
                 diarize: options?.diarize,
@@ -104,15 +108,18 @@ export function fromTranscriptionModel(resolved: ResolvedBinding): AITranscripti
 
             // lazy: saves 36.1 ms cold import (tools ts imports lazy, 2026-09-26) — the only value import of `ai` under the plugin registry, which every usage poll and history listing loads
             const { transcribe: sdkTranscribe } = await import("ai");
+            options?.signal?.throwIfAborted();
             const raw = await sdkTranscribe({
                 model,
                 audio,
+                abortSignal: options?.signal,
                 ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {}),
             });
 
             // Cleanup stays OFF here: `Transcriber` runs it once over the
             // stitched result, and running it per chunk as well would collapse
             // repeated phrases that only look repeated inside one window.
+            options?.signal?.throwIfAborted();
             const mapped = mapSdkTranscription({
                 result: raw,
                 provider: providerId,

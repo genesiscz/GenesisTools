@@ -35,6 +35,35 @@ function fakeProvider(seen: { options?: TranscribeOptions; bytes?: number }): AI
 }
 
 describe("toTranscriptionModel", () => {
+    test("rejects an already cancelled request before touching the provider", async () => {
+        const seen: { options?: TranscribeOptions; bytes?: number } = {};
+        const model = asV3(
+            toTranscriptionModel({ provider: fakeProvider(seen), providerId: "local-hf", modelId: "whisper" })
+        );
+        const signal = AbortSignal.abort(new Error("cancelled before transcription"));
+        await expect(
+            model.doGenerate({ audio: Buffer.from("x"), mediaType: "audio/wav", abortSignal: signal })
+        ).rejects.toThrow("cancelled before transcription");
+        expect(seen.bytes).toBeUndefined();
+    });
+
+    test("forwards the cancellation signal and rejects late local results", async () => {
+        const seen: { options?: TranscribeOptions } = {};
+        const controller = new AbortController();
+        const provider = fakeProvider(seen);
+        const transcribe = provider.transcribe.bind(provider);
+        provider.transcribe = async (audio, options) => {
+            const result = await transcribe(audio, options);
+            controller.abort(new Error("cancelled during transcription"));
+            return result;
+        };
+        const model = asV3(toTranscriptionModel({ provider, providerId: "local-hf", modelId: "whisper" }));
+        await expect(
+            model.doGenerate({ audio: Buffer.from("x"), mediaType: "audio/wav", abortSignal: controller.signal })
+        ).rejects.toThrow("cancelled during transcription");
+        expect(seen.options?.signal).toBe(controller.signal);
+    });
+
     test("maps our result onto the SDK's segment shape", async () => {
         const seen: { options?: TranscribeOptions; bytes?: number } = {};
         const model = asV3(

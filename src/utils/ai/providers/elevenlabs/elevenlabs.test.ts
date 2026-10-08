@@ -273,6 +273,33 @@ describe("AIElevenLabsTextToSpeechProvider", () => {
 });
 
 describe("AIElevenLabsTranscriptionProvider", () => {
+    test("does not upload already cancelled audio", async () => {
+        stub = stubFetch(() => {
+            throw new Error("unexpected upload");
+        });
+        const provider = new AIElevenLabsTranscriptionProvider({ apiKey: FIXTURE_KEY });
+        await expect(
+            provider.transcribe(Buffer.from("RIFFfake"), {
+                signal: AbortSignal.abort(new Error("stopped before upload")),
+            })
+        ).rejects.toThrow("stopped before upload");
+        expect(stub.calls).toHaveLength(0);
+    });
+
+    test("passes cancellation to fetch and refuses a late response", async () => {
+        const controller = new AbortController();
+        stub = stubFetch((_url, init) => {
+            expect(init?.signal).toBe(controller.signal);
+            controller.abort(new Error("stopped during upload"));
+            return Response.json({ text: "late result" });
+        });
+        const provider = new AIElevenLabsTranscriptionProvider({ apiKey: FIXTURE_KEY });
+        await expect(provider.transcribe(Buffer.from("RIFFfake"), { signal: controller.signal })).rejects.toThrow(
+            "stopped during upload"
+        );
+        expect(stub.calls).toHaveLength(1);
+    });
+
     test("posts a multipart Scribe request carrying the model and the diarize flag", async () => {
         stub = stubFetch(() => Response.json({ text: "hello there", language_code: "eng", words: [] }));
         const provider = new AIElevenLabsTranscriptionProvider({ apiKey: FIXTURE_KEY });
