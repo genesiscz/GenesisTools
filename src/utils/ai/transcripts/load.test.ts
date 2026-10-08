@@ -257,6 +257,52 @@ describe("foldTurnsAppendOnly", () => {
         expect(fold(file)?.[0]?.text).toBe("rewritten and longer than before");
     });
 
+    test("bounds cold reads and parser batches while preserving lines spanning chunks and partial UTF-8 tails", () => {
+        const file = join(fixtureRoot(), "chunked-rollout.jsonl");
+        const largeText = "🙂žluťoučký".repeat(40_000);
+        const complete =
+            Array.from({ length: 1_400 }, (_, i) => row(i % 2 ? "assistant" : "user", `turn ${i}`)).join("") +
+            "\nnot JSON\n" +
+            row("assistant", largeText) +
+            call("chunked-call");
+        const tail = Buffer.from(row("user", "partial 🙂 message"));
+        const split = tail.indexOf(Buffer.from("🙂")) + 2;
+        writeFileSync(file, Buffer.concat([Buffer.from(complete), tail.subarray(0, split)]));
+        const pushSizes: number[] = [];
+        let creations = 0;
+        const create = () => {
+            creations += 1;
+            const parser = createCodexTurnParser();
+            return {
+                push(records: readonly unknown[]) {
+                    pushSizes.push(records.length);
+                    parser.push(records);
+                },
+                snapshot: () => parser.snapshot(),
+            };
+        };
+        const reader = spyOn(fs, "readSync");
+        let parsed: ReturnType<typeof fold>;
+        try {
+            parsed = foldTurnsAppendOnly(file, create, { minBytes: 0 });
+            expect(Math.max(...reader.mock.calls.map((args) => args[1].byteLength))).toBeLessThanOrEqual(256 * 1024);
+            expect(Math.max(...pushSizes)).toBeLessThanOrEqual(256);
+        } finally {
+            reader.mockRestore();
+        }
+
+        expect(parsed).toEqual(full(file));
+        expect(parsed?.some((turn) => turn.text.includes(largeText))).toBe(true);
+        appendFileSync(file, Buffer.concat([tail.subarray(split), Buffer.from(output("chunked-call"))]));
+        expect(foldTurnsAppendOnly(file, create, { minBytes: 0 })).toEqual(full(file));
+        expect(creations).toBe(1);
+        expect(
+            fold(file)
+                ?.flatMap((turn) => turn.tools)
+                .find((tool) => tool.id === "chunked-call")?.result
+        ).toBe("done");
+    });
+
     test("leaves a complete last line without its newline, and an app-server event file, to the full parse", () => {
         const file = join(fixtureRoot(), "rollout.jsonl");
         writeFileSync(file, row("user", "first") + row("assistant", "done").trimEnd());
