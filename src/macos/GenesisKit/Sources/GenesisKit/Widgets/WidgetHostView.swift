@@ -73,7 +73,8 @@ struct WidgetHostView: View {
             } label: {
                 HStack(spacing: 7) {
                     if selected?.id == "agents" {
-                        GenesisWidgetMark()
+                        Image(systemName: "tray.fill")
+                            .font(.system(size: 14, weight: .semibold)).frame(width: 20, height: 20)
                     } else {
                         Image(systemName: selected?.symbol ?? "square.grid.2x2.fill")
                             .foregroundStyle(selected?.tint ?? .blue)

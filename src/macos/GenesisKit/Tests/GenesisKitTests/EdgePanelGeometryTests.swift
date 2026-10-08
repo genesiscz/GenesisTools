@@ -799,6 +799,28 @@ final class EdgePanelControllerTests: XCTestCase {
         }
     }
 
+    func testContentReplacementRetainsWindowAndAnimatesNewCompactSize() async throws {
+        let value = try controller()
+        defer { value.hide(); value.panel.close() }
+        value.setSideCenterY(400)
+        value.setPresentation(.compact, reduceMotion: true)
+        value.show()
+        let number = value.panel.windowNumber
+        let initial = value.panel.frame
+        value.updateContent { Color.orange }
+        XCTAssertEqual(value.panel.windowNumber, number)
+        XCTAssertEqual(value.panel.frame, initial, "Replacing modules must not reset placement")
+        value.setCompactSize(CGSize(width: 40, height: 220))
+        value.setPresentation(.compact, reduceMotion: false)
+        XCTAssertLessThan(value.panel.frame.height, 220, "Configuration must animate, not jump to its final size")
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(value.panel.windowNumber, number)
+        XCTAssertEqual(value.panel.frame.height, 220, accuracy: 0.5)
+        XCTAssertEqual(value.panel.frame.maxX, initial.maxX, accuracy: 0.5)
+        XCTAssertEqual(value.panel.frame.midY, initial.midY, accuracy: 0.5)
+        XCTAssertEqual(value.lastTransitionTiming?.outcome, "completed")
+    }
+
     func testReduceMotionAndHiddenPanelReachTheExactTargetWithoutCallbacks() throws {
         let value = try controller()
         defer { value.hide(); value.panel.close() }
@@ -1173,7 +1195,7 @@ final class WidgetRosterTests: XCTestCase {
                             XCTAssertEqual(measured.height, metrics.minimumHeight, accuracy: 0.5,
                                 "Real SwiftUI layout differs: style=\(style), sessions=\(count), modules=\(ids)")
                             if ids.count == 4 && count >= 4 {
-                                XCTAssertEqual(measured.height, style == "classic" ? 304 : 334, accuracy: 0.5)
+                                XCTAssertEqual(measured.height, style == "classic" ? 316 : 346, accuracy: 0.5)
                             }
                             if ids.isEmpty {
                                 XCTAssertEqual(measured.height, style == "classic" ? 116 : 122, accuracy: 0.5)
@@ -1276,6 +1298,19 @@ final class WidgetRosterTests: XCTestCase {
                 let xs = sampledFrames.map { $0.minX }
                 print("RAIL_FRAME_PROOF edge=\(edge) samples=\(xs.count) x-range=\(xs.max()! - xs.min()!)")
             }
+        }
+    }
+
+    func testInboxBadgesMeasureTheirTextInsteadOfClippingLargeCounts() {
+        for compact in [false, true] {
+            func size(_ count: Int) -> CGSize {
+                NSHostingView(rootView: WidgetInboxCount(count: count, needsAnswer: true,
+                    pulse: 0, reduceMotion: true, compact: compact)).fittingSize
+            }
+            XCTAssertGreaterThan(size(99).width, size(1).width)
+            XCTAssertGreaterThan(size(128).width, size(99).width, "99+ needs room for the plus sign")
+            XCTAssertEqual(size(128).height, size(1).height, accuracy: 0.5)
+            XCTAssertGreaterThanOrEqual(size(1).height, compact ? 14 : 18)
         }
     }
 

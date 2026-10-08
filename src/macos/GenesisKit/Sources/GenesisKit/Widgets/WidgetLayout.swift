@@ -70,8 +70,8 @@ struct WidgetSideStripMetrics {
     static let settingsHeight: CGFloat = 24
     static let addWidth: CGFloat = 34
     static let addHeight: CGFloat = 30
-    static let sessionWidth: CGFloat = 34
-    static let sessionHeight: CGFloat = 17
+    static let sessionWidth: CGFloat = 38
+    static let sessionHeight: CGFloat = 20
     static let sessionSpacing: CGFloat = 6
     static let minimumSpacer: CGFloat = 2
     static let sessionLimit = 4
