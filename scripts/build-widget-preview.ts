@@ -37,6 +37,14 @@ async function command(argv: string[]): Promise<string> {
 }
 
 async function nativeSourceDigest(): Promise<string> {
+    const description: { targets: { name: string; path: string; sources: string[] }[] } = SafeJSON.parse(
+        await command(["swift", "package", "--package-path", "src/macos/GenesisKit", "describe", "--type", "json"])
+    );
+    const kit = description.targets.find((target) => target.name === "GenesisKit");
+    if (!kit?.sources.length) {
+        throw new Error("SwiftPM did not report the GenesisKit sources; build provenance cannot be established.");
+    }
+    const compiledKitSources = new Set(kit.sources.map((name) => `src/macos/GenesisKit/${kit.path}/${name}`));
     const names = await command([
         "git",
         "ls-files",
@@ -51,6 +59,14 @@ async function nativeSourceDigest(): Promise<string> {
     ]);
     const hash = createHash("sha256");
     for (const name of [...new Set(names.split("\0").filter(Boolean))].sort()) {
+        if (
+            name.includes("/Tests/") ||
+            (name.startsWith("src/macos/GenesisKit/Sources/") &&
+                name.endsWith(".swift") &&
+                !compiledKitSources.has(name))
+        ) {
+            continue;
+        }
         const file = Bun.file(join(repo, name));
         if (await file.exists()) {
             hash.update(name)
