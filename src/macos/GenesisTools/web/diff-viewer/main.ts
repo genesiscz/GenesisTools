@@ -422,9 +422,11 @@ function viewOptions(): CodeViewOptions<AnnotationMeta, undefined> {
         stickyHeaders: true,
         // A click on a file's name selects the whole name and nothing else, so ⌘C copies exactly the
         // path (a triple-click took the line break after it too). The rest of the row folds the file,
-        // so it shows the pointing hand.
+        // so it shows the pointing hand. The sticky header sits above the rows that scroll under it: pierre gives
+        // it z-index 1 and the line-number gutter 3 (thread cards 2, decoration bars up to 4), so during a fast
+        // scroll the code was drawn over the file's name for a moment (Martin, 2026-10-08).
         unsafeCSS:
-            "[data-diffs-header] { cursor: pointer; } [data-diffs-header] [data-title], [data-diffs-header] [data-prev-name] { -webkit-user-select: all; user-select: all; cursor: text; }",
+            "[data-diffs-header] { cursor: pointer; } [data-diffs-header][data-sticky] { z-index: 10; } [data-diffs-header] [data-title], [data-diffs-header] [data-prev-name] { -webkit-user-select: all; user-select: all; cursor: text; }",
         lineDiffType: "word-alt",
         hunkSeparators: "line-info",
         lineHoverHighlight: "both",
