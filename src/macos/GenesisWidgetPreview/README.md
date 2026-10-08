@@ -1,7 +1,14 @@
 # GenesisTools widget preview
 
-A separate macOS app for the Top / Side / Both agent widget design.
-The views and panel geometry live in GenesisKit; this executable supplies sample conversations and a small settings window.
+The installer builds the GenesisTools app in preview mode, renames its executable to GenesisWidgetPreview, and uses a separate preferences domain and widget state directory. The views and panel geometry live in GenesisKit. This installed preview uses the repository CLI and can read live sessions and deliver messages through configured routes.
+
+The GenesisWidgetPreview Swift package supplies a separate sample studio. Run that studio without installing the app:
+
+```sh
+swift run --package-path src/macos/GenesisWidgetPreview GenesisWidgetPreview --samples
+```
+
+The sample interactions and implementation scope below describe that studio.
 
 Build and install from the repository root:
 
@@ -14,7 +21,7 @@ Requires macOS 14+, the Swift toolchain, Bun, and a Developer ID Application sig
 Quit the running Preview before rebuilding. The builder preserves replaced Preview bundles under the widget-preview data directory and does not terminate running applications.
 
 The app uses bundle ID `com.genesiscz.genesistools.widget-preview`, executable `GenesisWidgetPreview`, and its own preferences domain.
-It registers no URL schemes or document handlers and does not start a Hub server, take its lock, read live agent sessions, or send messages.
+It registers no URL schemes or document handlers. Its preferences and widget state are isolated from the production app; its live CLI reads and delivery routes are available.
 Do not use the normal app builder for this preview: that builder replaces the production app and reaps its faces.
 
 ## Try it

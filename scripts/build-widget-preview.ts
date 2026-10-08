@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, rename } from "node:fs/promises";
+import { cp, mkdir, rename } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { buildDiffViewer } from "@app/macos/lib/permissions/app";
 import { env } from "@genesiscz/utils/env";
@@ -96,6 +96,10 @@ async function buildPreview(): Promise<void> {
         "<key>NSHighResolutionCapable</key><true/>" +
         "<key>NSPrincipalClass</key><string>NSApplication</string>" +
         "</dict></plist>\n";
+    if (plist.includes("CFBundleURLTypes") || plist.includes("CFBundleDocumentTypes")) {
+        throw new Error("Preview must not register production link or document handlers");
+    }
+
     await Bun.write(join(contents, "Info.plist"), plist);
     await command([
         "/usr/bin/codesign",
@@ -139,11 +143,6 @@ async function buildPreview(): Promise<void> {
         }
 
         throw error;
-    }
-
-    const installed = await readFile(join(destination, "Contents", "Info.plist"), "utf8");
-    if (installed.includes("CFBundleURLTypes") || installed.includes("CFBundleDocumentTypes")) {
-        throw new Error("Preview must not register production link or document handlers");
     }
 
     out.result({ appPath: destination, bundleId, executable: "GenesisWidgetPreview", productionAppTargeted: false });
