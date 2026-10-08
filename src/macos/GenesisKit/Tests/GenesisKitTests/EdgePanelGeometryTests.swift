@@ -1173,14 +1173,51 @@ final class WidgetRosterTests: XCTestCase {
                             XCTAssertEqual(measured.height, metrics.minimumHeight, accuracy: 0.5,
                                 "Real SwiftUI layout differs: style=\(style), sessions=\(count), modules=\(ids)")
                             if ids.count == 4 && count >= 4 {
-                                XCTAssertEqual(measured.height, style == "classic" ? 288 : 318, accuracy: 0.5)
+                                XCTAssertEqual(measured.height, style == "classic" ? 304 : 334, accuracy: 0.5)
                             }
                             if ids.isEmpty {
-                                XCTAssertEqual(measured.height, style == "classic" ? 100 : 106, accuracy: 0.5)
+                                XCTAssertEqual(measured.height, style == "classic" ? 116 : 122, accuracy: 0.5)
                             }
                             print("SIDE_LAYOUT style=\(style) edge=\(edge) sessions=\(count) modules=\(ids.count) measured=\(measured.height) allocated=\(metrics.minimumHeight)")
                         }
                     }
+                }
+            }
+        }
+    }
+
+    func testInboxBadgeAddsSpaceWithoutConsumingRailEndPadding() async throws {
+        _ = NSApplication.shared
+        for style in ["classic", "modular"] {
+            try await withFixture(sessionCount: 4, sideStyle: style) { model, _, _ in
+                let ids = ["agents", "capture", "shelf", "tasks"]
+                let registry = WidgetModuleRegistry()
+                for id in ids {
+                    try registry.register(WidgetModuleDescriptor(
+                        id: id, title: id, symbol: "tray", tint: .blue, summary: { "Fixture" }
+                    ) { _ in EmptyView() })
+                }
+                for edge in [EdgePanelPlacement.left, .right] {
+                    var heights: [CGFloat] = []
+                    for count in [0, 128, 0] {
+                        model.updateInbox(WidgetInboxSummary(
+                            unread: count, needsAnswer: 0, complete: true, truncated: false, sessions: []))
+                        let metrics = WidgetSideStripMetrics(classic: style == "classic", moduleIDs: ids,
+                            visibleSessionCount: model.sessions.count, hasInboxBadge: count > 0)
+                        let root = WidgetHostView(model: model, registry: registry,
+                            surface: WidgetSurfaceID(edge: edge), moduleIDs: ids, cutout: 0,
+                            headerHeight: 36, visibleHeight: 900)
+                        let host = NSHostingView(rootView: root.sideStripContents)
+                        let measured = host.fittingSize
+                        XCTAssertEqual(measured.height, metrics.minimumHeight, accuracy: 0.5,
+                            "Badge contents must increase the allocated window height")
+                        XCTAssertEqual(measured.width, 44, accuracy: 0.5)
+                        heights.append(measured.height)
+                    }
+                    XCTAssertGreaterThanOrEqual(WidgetSideStripMetrics.verticalPadding, 12)
+                    XCTAssertEqual(heights[1] - heights[0], style == "classic" ? 14 : 10, accuracy: 0.5)
+                    XCTAssertEqual(heights[2], heights[0], accuracy: 0.5,
+                        "Removing the badge must release its additional height")
                 }
             }
         }
@@ -1326,7 +1363,7 @@ final class WidgetRosterTests: XCTestCase {
                             XCTAssertTrue(host.bounds.insetBy(dx: -0.5, dy: -0.5).contains(host.convert(scroll.bounds, from: scroll)),
                                 "Viewport escaped host: style=\(style), edge=\(edge), expanded=\(expanded), height=\(height), host=\(host.bounds), scroll=\(host.convert(scroll.bounds, from: scroll))")
                             if height >= 120 {
-                                XCTAssertEqual(scroll.contentView.bounds.height, height - (style == "classic" ? 63 : 67), accuracy: 0.5,
+                                XCTAssertEqual(scroll.contentView.bounds.height, height - (style == "classic" ? 79 : 83), accuracy: 0.5,
                                     "The scrolling viewport must leave room for fixed settings and drag controls")
                             } else {
                                 XCTAssertEqual(scroll.contentView.bounds.height, height, accuracy: 0.5)

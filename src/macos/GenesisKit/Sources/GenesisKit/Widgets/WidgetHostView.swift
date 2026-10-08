@@ -26,7 +26,8 @@ struct WidgetHostView: View {
     }
 
     private var sideMetrics: WidgetSideStripMetrics {
-        WidgetSideStripMetrics(classic: classicSide, moduleIDs: moduleIDs, visibleSessionCount: model.sessions.count)
+        WidgetSideStripMetrics(classic: classicSide, moduleIDs: moduleIDs,
+            visibleSessionCount: model.sessions.count, hasInboxBadge: model.inboxCount > 0)
     }
 
     private var shape: EdgePanelShape {
@@ -131,7 +132,7 @@ struct WidgetHostView: View {
                 }
             }.fixedSize()
         }
-        .padding(.horizontal, 16).padding(.vertical, 8)
+        .padding(.horizontal, 18).padding(.vertical, 12)
         .frame(minHeight: headerHeight).fixedSize()
         .onGeometryChange(for: CGSize.self) { geometry in
             CGSize(width: ceil(geometry.size.width), height: ceil(geometry.size.height))
@@ -302,10 +303,11 @@ struct WidgetHostView: View {
             if id == "agents", model.inboxCount > 0 { model.openInboxNotification(on: surface) }
             else { model.openModule(id, on: surface) }
         } label: {
-            let layout = surface.edge == .top ? AnyLayout(HStackLayout(spacing: 3)) : AnyLayout(VStackLayout(spacing: 0))
+            let layout = surface.edge == .top ? AnyLayout(HStackLayout(spacing: 3)) : AnyLayout(VStackLayout(spacing: 4))
             layout {
                 Image(systemName: classicSide && id == "agents" ? "tray" : registry.module(id)?.symbol ?? "square.dashed")
                     .font(.system(size: 13, weight: .medium))
+                    .frame(height: 16)
                     .foregroundStyle(classicSide ? Color.white : registry.module(id)?.tint ?? .secondary)
                 if id == "agents", model.inboxCount > 0 {
                     WidgetInboxCount(count: model.inboxCount, needsAnswer: model.inbox.needsAnswer > 0,
@@ -313,7 +315,8 @@ struct WidgetHostView: View {
                         complete: model.inbox.complete, compact: true)
                 }
             }
-                .frame(minWidth: size, minHeight: size)
+                .frame(minWidth: size, minHeight: surface.edge != .top && id == "agents" && model.inboxCount > 0
+                    ? WidgetSideStripMetrics.badgedModuleHeight : size)
                 .background(
                     selected?.id == id && presentation != .compact ? Color.white.opacity(0.09) : .clear,
                     in: RoundedRectangle(cornerRadius: 8))
