@@ -4,10 +4,11 @@ import { parseTurnEvents as parseClaudeTurnEvents } from "@genesiscz/utils/claud
 import { toWorkerEvent as codexToWorkerEvent, type StoredCodexEvent } from "@genesiscz/utils/codex/worker-stream";
 import type { WorkerEvent } from "@genesiscz/utils/worker/events";
 import { claudeMessagesToTurns } from "./claude";
-import { codexNativeLinesToTurns } from "./codex";
+import { codexNativeLinesToTurns, createCodexTurnParser } from "./codex";
 import { grokNativeLinesToTurns, grokWorkerTextToTurns } from "./grok";
 import { readRecordsAppendOnly } from "./record-cache";
 import type { ResolvedTranscript } from "./resolve";
+import { foldTurnsAppendOnly } from "./turn-fold-cache";
 import { indexedClaudeEnvelope } from "./turn-index";
 import {
     type SliceOptions,
@@ -56,6 +57,14 @@ async function turnsFromFile(resolved: ResolvedTranscript, path: string, index =
         }
         return grokNativeLinesToTurns(readRecords(path));
     }
+    if (resolved.source !== "worker") {
+        // A large native rollout keeps its parser between reads and parses only appended lines (turn-fold-cache.ts).
+        const folded = foldTurnsAppendOnly(path, createCodexTurnParser);
+        if (folded) {
+            return folded;
+        }
+    }
+
     const records = readRecords(path);
     if (resolved.source === "worker" || looksLikeCodexGt(records)) {
         // The codex CLI's own event mapping, not a second guess at it: the

@@ -284,6 +284,22 @@ function isTypedPrompt(payload: Record<string, unknown>): boolean {
  * finishes after its script returned when it runs long; it goes back under the script that ran it.
  */
 export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): TranscriptTurn[] {
+    const parser = createCodexTurnParser();
+    parser.push(lines);
+    return parser.snapshot();
+}
+
+/**
+ * The native rollout parser with its state kept between calls: `push` takes the next lines, `snapshot` returns the
+ * turns a full parse of every line pushed so far returns, and changes nothing, so more lines can follow. A live
+ * transcript then parses only its new lines (turn-fold-cache.ts) instead of the whole file on every write.
+ */
+export interface CodexTurnParser {
+    push(lines: readonly (string | unknown)[]): void;
+    snapshot(): TranscriptTurn[];
+}
+
+export function createCodexTurnParser(): CodexTurnParser {
     const turns: TranscriptTurn[] = [];
     let assistant: TranscriptTurn | null = null;
     /** Every tool by call id: an output can arrive after the next model call began. */
@@ -328,166 +344,178 @@ export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): T
         return scriptOf(candidates, item) ?? candidates.at(-1);
     };
 
-    for (const line of lines) {
-        const parsed = parseTranscriptLine(line);
-        if (!parsed) {
-            continue;
-        }
-        const type = asString(parsed.type);
-        const payload = isRecord(parsed.payload) ? parsed.payload : {};
-        const at = asString(parsed.timestamp) || null;
-        const payloadType = asString(payload.type);
+    const push = (lines: readonly (string | unknown)[]): void => {
+        for (const line of lines) {
+            const parsed = parseTranscriptLine(line);
+            if (!parsed) {
+                continue;
+            }
+            const type = asString(parsed.type);
+            const payload = isRecord(parsed.payload) ? parsed.payload : {};
+            const at = asString(parsed.timestamp) || null;
+            const payloadType = asString(payload.type);
 
-        if (type === "response_item" && payloadType === "message") {
-            const role = asString(payload.role);
-            const text = contentText(payload.content);
+            if (type === "response_item" && payloadType === "message") {
+                const role = asString(payload.role);
+                const text = contentText(payload.content);
 
-            if (role === "user") {
-                flushAssistant();
-                if (text && isTypedPrompt(payload)) {
-                    turns.push({ id: `codex-user-${turns.length + 1}`, role: "user", at, text, tools: [] });
+                if (role === "user") {
+                    flushAssistant();
+                    if (text && isTypedPrompt(payload)) {
+                        turns.push({ id: `codex-user-${turns.length + 1}`, role: "user", at, text, tools: [] });
+                    }
+                } else if (role === "assistant" && text) {
+                    nextCall();
+                    const turn = open(at);
+                    turn.text += turn.text ? `\n${text}` : text;
                 }
-            } else if (role === "assistant" && text) {
+                // `developer` and `system` messages are instructions, not conversation.
+                continue;
+            }
+            if (type === "response_item" && payloadType === "reasoning") {
                 nextCall();
-                const turn = open(at);
-                turn.text += turn.text ? `\n${text}` : text;
-            }
-            // `developer` and `system` messages are instructions, not conversation.
-            continue;
-        }
-        if (type === "response_item" && payloadType === "reasoning") {
-            nextCall();
-            const summary = reasoningText(payload.summary);
-            if (summary && !reasoningSoFar().includes(summary)) {
-                const turn = open(at);
-                turn.reasoning = turn.reasoning ? `${turn.reasoning}\n${summary}` : summary;
-            }
-            continue;
-        }
-        if (type === "event_msg" && payloadType === "item_completed") {
-            const item = isRecord(payload.item) ? payload.item : {};
-            const action = itemTool(item);
-            if (action) {
-                const owner = ownerOf(item, payload.started_at_ms);
-                if (owner) {
-                    owner.items.push(action);
-                } else {
-                    addTool(action, at);
+                const summary = reasoningText(payload.summary);
+                if (summary && !reasoningSoFar().includes(summary)) {
+                    const turn = open(at);
+                    turn.reasoning = turn.reasoning ? `${turn.reasoning}\n${summary}` : summary;
                 }
                 continue;
             }
+            if (type === "event_msg" && payloadType === "item_completed") {
+                const item = isRecord(payload.item) ? payload.item : {};
+                const action = itemTool(item);
+                if (action) {
+                    const owner = ownerOf(item, payload.started_at_ms);
+                    if (owner) {
+                        owner.items.push(action);
+                    } else {
+                        addTool(action, at);
+                    }
+                    continue;
+                }
 
-            if (asString(item.type) === "Reasoning") {
-                nextCall();
-            }
+                if (asString(item.type) === "Reasoning") {
+                    nextCall();
+                }
 
-            const summary = asString(item.type) === "Reasoning" ? reasoningText(item.summary_text) : "";
-            if (summary && !reasoningSoFar().includes(summary)) {
-                const turn = open(at);
-                turn.reasoning = turn.reasoning ? `${turn.reasoning}\n${summary}` : summary;
+                const summary = asString(item.type) === "Reasoning" ? reasoningText(item.summary_text) : "";
+                if (summary && !reasoningSoFar().includes(summary)) {
+                    const turn = open(at);
+                    turn.reasoning = turn.reasoning ? `${turn.reasoning}\n${summary}` : summary;
+                }
+                continue;
             }
-            continue;
-        }
-        if (type === "token_usage_record") {
-            const usage = isRecord(payload.usage) ? payload.usage : {};
-            const count = (value: unknown): number | undefined => (typeof value === "number" ? value : undefined);
-            const input = count(usage.input_tokens);
-            const cached = count(usage.cached_input_tokens);
-            open(at).usage = {
-                // `cached_input_tokens` is a SUBSET of `input_tokens`. Verified against real
-                // rollouts: `input + output === total` holds for every record with a non-zero
-                // cache, while `input + cached + output` never does. The compact footer prints
-                // `in X (cache Y)` as two disjoint figures, the way claude (already net of cache)
-                // and grok (disjoint fields) feed it, so the cached part is taken out of `in`
-                // rather than counted in both — a 273.1K/267.6K call is 5.5K of fresh input.
-                inputTokens: input === undefined ? undefined : Math.max(0, input - (cached ?? 0)),
-                cacheReadTokens: cached,
-                outputTokens: count(usage.output_tokens),
-                reasoningTokens: count(usage.reasoning_output_tokens),
-            };
-            continue;
-        }
-        if (type === "event_msg" && (payloadType === "user_message" || payloadType === "user_message_delta")) {
-            flushAssistant();
-            const text = asString(payload.message) || asString(payload.text);
-            if (text) {
-                turns.push({ id: `codex-user-${turns.length + 1}`, role: "user", at, text, tools: [] });
+            if (type === "token_usage_record") {
+                const usage = isRecord(payload.usage) ? payload.usage : {};
+                const count = (value: unknown): number | undefined => (typeof value === "number" ? value : undefined);
+                const input = count(usage.input_tokens);
+                const cached = count(usage.cached_input_tokens);
+                open(at).usage = {
+                    // `cached_input_tokens` is a SUBSET of `input_tokens`. Verified against real
+                    // rollouts: `input + output === total` holds for every record with a non-zero
+                    // cache, while `input + cached + output` never does. The compact footer prints
+                    // `in X (cache Y)` as two disjoint figures, the way claude (already net of cache)
+                    // and grok (disjoint fields) feed it, so the cached part is taken out of `in`
+                    // rather than counted in both — a 273.1K/267.6K call is 5.5K of fresh input.
+                    inputTokens: input === undefined ? undefined : Math.max(0, input - (cached ?? 0)),
+                    cacheReadTokens: cached,
+                    outputTokens: count(usage.output_tokens),
+                    reasoningTokens: count(usage.reasoning_output_tokens),
+                };
+                continue;
             }
-            continue;
-        }
-        if (type === "event_msg" && (payloadType === "agent_message" || payloadType === "agent_message_delta")) {
-            open(at).text += asString(payload.message) || asString(payload.text);
-            continue;
-        }
-        if (type === "response_item" && payloadType === "function_call") {
-            addTool(
-                {
+            if (type === "event_msg" && (payloadType === "user_message" || payloadType === "user_message_delta")) {
+                flushAssistant();
+                const text = asString(payload.message) || asString(payload.text);
+                if (text) {
+                    turns.push({ id: `codex-user-${turns.length + 1}`, role: "user", at, text, tools: [] });
+                }
+                continue;
+            }
+            if (type === "event_msg" && (payloadType === "agent_message" || payloadType === "agent_message_delta")) {
+                open(at).text += asString(payload.message) || asString(payload.text);
+                continue;
+            }
+            if (type === "response_item" && payloadType === "function_call") {
+                addTool(
+                    {
+                        id: asString(payload.call_id) || `codex-tool-${byCallId.size}`,
+                        name: asString(payload.name) || "tool",
+                        inputPreview: previewFromArguments(asString(payload.arguments)),
+                        result: null,
+                        isError: false,
+                    },
+                    at
+                );
+                continue;
+            }
+            if (type === "response_item" && payloadType === "custom_tool_call") {
+                const script = asString(payload.input);
+                const tool: TranscriptTool = {
                     id: asString(payload.call_id) || `codex-tool-${byCallId.size}`,
                     name: asString(payload.name) || "tool",
-                    inputPreview: previewFromArguments(asString(payload.arguments)),
+                    inputPreview: script,
                     result: null,
                     isError: false,
-                },
-                at
-            );
-            continue;
-        }
-        if (type === "response_item" && payloadType === "custom_tool_call") {
-            const script = asString(payload.input);
-            const tool: TranscriptTool = {
-                id: asString(payload.call_id) || `codex-tool-${byCallId.size}`,
-                name: asString(payload.name) || "tool",
-                inputPreview: script,
-                result: null,
-                isError: false,
-            };
-            addTool(tool, at);
-            if (tool.name === "exec" && scriptShownByItems(script)) {
-                const entry: ExecScript = { tool, script, items: [], startMs: Date.parse(at ?? ""), endMs: Infinity };
-                scripts.push(entry);
-                scriptByTool.set(tool, entry);
-            }
-            continue;
-        }
-        if (
-            type === "response_item" &&
-            (payloadType === "custom_tool_call_output" || payloadType === "function_call_output")
-        ) {
-            const tool = byCallId.get(asString(payload.call_id));
-            if (tool) {
-                // An empty output is still an answer (`send_message` returns none): null would read
-                // as a call still waiting, and the hub flagged the session stuck.
-                const text = outputText(payload.output) || asString(payload.result);
-                tool.result = text ? clipResult(text) : "";
-                if (text) {
-                    tool.resultChars = text.length;
+                };
+                addTool(tool, at);
+                if (tool.name === "exec" && scriptShownByItems(script)) {
+                    const entry: ExecScript = {
+                        tool,
+                        script,
+                        items: [],
+                        startMs: Date.parse(at ?? ""),
+                        endMs: Infinity,
+                    };
+                    scripts.push(entry);
+                    scriptByTool.set(tool, entry);
                 }
+                continue;
+            }
+            if (
+                type === "response_item" &&
+                (payloadType === "custom_tool_call_output" || payloadType === "function_call_output")
+            ) {
+                const tool = byCallId.get(asString(payload.call_id));
+                if (tool) {
+                    // An empty output is still an answer (`send_message` returns none): null would read
+                    // as a call still waiting, and the hub flagged the session stuck.
+                    const text = outputText(payload.output) || asString(payload.result);
+                    tool.result = text ? clipResult(text) : "";
+                    if (text) {
+                        tool.resultChars = text.length;
+                    }
 
-                const entry = scriptByTool.get(tool);
-                if (entry && at) {
-                    entry.endMs = Date.parse(at);
+                    const entry = scriptByTool.get(tool);
+                    if (entry && at) {
+                        entry.endMs = Date.parse(at);
+                    }
                 }
             }
         }
-    }
-    flushAssistant();
+    };
 
-    // A script whose work arrived as items shows those items in its place. One that has none: still
-    // running, it shows itself; finished (it only polled a running command), it shows nothing.
-    const replaced = new Map(scripts.map((entry) => [entry.tool, entry]));
-    for (const turn of turns) {
-        if (!turn.tools.some((tool) => replaced.has(tool))) {
-            continue;
+    /**
+     * The turns as a full parse of the lines pushed so far returns them. The parser's state stays as it is: turns
+     * and tools are copies, and the open assistant turn is included rather than flushed.
+     */
+    const snapshot = (): TranscriptTurn[] => {
+        const all = [...turns];
+        if (assistant && (assistant.text || assistant.tools.length > 0 || assistant.usage || assistant.reasoning)) {
+            all.push(assistant);
         }
 
-        turn.tools = turn.tools.flatMap((tool) => {
+        // A script whose work arrived as items shows those items in its place. One that has none: still
+        // running, it shows itself; finished (it only polled a running command), it shows nothing.
+        const replaced = new Map(scripts.map((entry) => [entry.tool, entry]));
+        const shown = (tool: TranscriptTool): TranscriptTool[] => {
             const entry = replaced.get(tool);
             if (!entry) {
-                return [tool];
+                return [{ ...tool }];
             }
 
             if (entry.items.length > 0) {
-                return entry.items;
+                return entry.items.map((item) => ({ ...item }));
             }
 
             // No items: a script that completed only polled a running command (its items arrive
@@ -496,13 +524,18 @@ export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): T
             // row, the only one carrying that text. Measured over 2026-10's rollouts: 7351 outputs
             // start "Script completed", 19 "Script failed", 1 "Script running".
             const completed = tool.result === "" || tool.result?.startsWith("Script completed") === true;
-            return completed ? [] : [tool];
-        });
-    }
+            return completed ? [] : [{ ...tool }];
+        };
 
-    return turns.filter(
-        (turn) => turn.role !== "assistant" || turn.text || turn.tools.length > 0 || turn.usage || turn.reasoning
-    );
+        return all
+            .map((turn) => ({ ...turn, tools: turn.tools.flatMap(shown) }))
+            .filter(
+                (turn) =>
+                    turn.role !== "assistant" || turn.text || turn.tools.length > 0 || turn.usage || turn.reasoning
+            );
+    };
+
+    return { push, snapshot };
 }
 
 /** An `exec` script whose work shows as items, and when it ran (`endMs` is Infinity until it returns). */

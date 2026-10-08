@@ -4,9 +4,11 @@ import { appendFileSync, mkdirSync, mkdtempSync, renameSync, writeFileSync } fro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { codexNativeLinesToTurns, createCodexTurnParser } from "./codex";
 import { transcriptEnvelope, transcriptSnapshot } from "./load";
 import { readRecordsAppendOnly } from "./record-cache";
 import type { ResolvedTranscript } from "./resolve";
+import { foldTurnsAppendOnly } from "./turn-fold-cache";
 
 function fixtureRoot(): string {
     return mkdtempSync(join(tmpdir(), "gt-load-"));
@@ -193,5 +195,63 @@ describe("readRecordsAppendOnly", () => {
         renameSync(other, path);
         expect(read(path).map((record) => record.n)).toEqual([10]);
         expect(read(join(recordCacheRoot, "missing.jsonl"))).toEqual([]);
+    });
+});
+
+describe("foldTurnsAppendOnly", () => {
+    const row = (role: "user" | "assistant", text: string) =>
+        `${SafeJSON.stringify({
+            type: "response_item",
+            timestamp: "2026-10-08T05:00:00.000Z",
+            payload: {
+                type: "message",
+                role,
+                content: [{ type: role === "user" ? "input_text" : "output_text", text }],
+            },
+        })}\n`;
+    const call = (id: string) =>
+        `${SafeJSON.stringify({ type: "response_item", payload: { type: "function_call", call_id: id, name: "exec_command", arguments: '{"cmd":"ls"}' } })}\n`;
+    const output = (id: string) =>
+        `${SafeJSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: id, output: "done" } })}\n`;
+    const fold = (file: string) => foldTurnsAppendOnly(file, createCodexTurnParser, { minBytes: 0 });
+    const full = (file: string) => codexNativeLinesToTurns(fs.readFileSync(file, "utf8").split("\n"));
+
+    test("matches a full parse after appends, a result arriving for an earlier call, and a rewrite in place", () => {
+        const file = join(fixtureRoot(), "rollout.jsonl");
+        writeFileSync(file, row("user", "first") + row("assistant", "one") + call("c1"));
+        expect(fold(file)).toEqual(full(file));
+
+        appendFileSync(file, row("assistant", "two") + output("c1") + row("user", "second"));
+        expect(fold(file)).toEqual(full(file));
+        expect(
+            fold(file)
+                ?.flatMap((turn) => turn.tools)
+                .map((tool) => tool.result)
+        ).toEqual(["done"]);
+
+        // Same inode, longer than before, other first bytes: only the byte mark tells, and it is read again.
+        const longer = Array.from({ length: 8 }, (_, i) => row("assistant", `rewritten ${i}`)).join("");
+        writeFileSync(file, row("user", "rewritten and longer than before") + longer);
+        expect(fs.statSync(file).size).toBeGreaterThan(900);
+        expect(fold(file)).toEqual(full(file));
+        expect(fold(file)?.[0]?.text).toBe("rewritten and longer than before");
+    });
+
+    test("leaves a complete last line without its newline, and an app-server event file, to the full parse", () => {
+        const file = join(fixtureRoot(), "rollout.jsonl");
+        writeFileSync(file, row("user", "first") + row("assistant", "done").trimEnd());
+        expect(fold(file)).toBeNull();
+        appendFileSync(file, "\n");
+        expect(fold(file)).toEqual(full(file));
+
+        const events = join(fixtureRoot(), "events.jsonl");
+        writeFileSync(events, `${SafeJSON.stringify({ method: "item/completed", params: {} })}\n`);
+        expect(fold(events)).toBeNull();
+    });
+
+    test("files below the size threshold are left to the full parse", () => {
+        const file = join(fixtureRoot(), "small.jsonl");
+        writeFileSync(file, row("user", "hi"));
+        expect(foldTurnsAppendOnly(file, createCodexTurnParser)).toBeNull();
     });
 });
