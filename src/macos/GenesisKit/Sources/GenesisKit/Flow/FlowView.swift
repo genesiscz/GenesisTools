@@ -9,7 +9,10 @@ import SwiftUI
 /// stats rail right) but on the Genesis dark palette — the reference is a light
 /// theme and this app is dark-only.
 public struct FlowView: View {
-    public init(session: FlowSession) { self.session = session }
+    public init(session: FlowSession, initialSection: FlowSection = .dictation) {
+        self.session = session
+        _section = State(initialValue: initialSection)
+    }
 
     @ObservedObject public var session: FlowSession
     @State private var section: FlowSection = .dictation
