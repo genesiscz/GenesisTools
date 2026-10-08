@@ -557,3 +557,59 @@ test("a resolved form remains in an external session timeline after leaving the 
     });
     expect(snapshot.cards[0].body).toContain("Yes");
 });
+
+test("new external answers and saved drafts remain discoverable while another session is selected", async () => {
+    const directory = await root();
+    await enqueue(directory, "Previously sent to this destination");
+    const draftTarget = { ...target, sessionId: "draft-only" };
+    await mutateWidgetState(directory, (state) => {
+        state.selectedKey = widgetSessionKey({ ...target, sessionId: "elsewhere" });
+        state.preferences.showChanges = false;
+        state.drafts[widgetSessionKey(draftTarget)] = { text: "Retain this unfinished message", assetIds: [] };
+    });
+    const sources: WidgetSources = {
+        sessions: async () => [],
+        decisions: () => [],
+        forms: () => [],
+        agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+        answers: (session) =>
+            session
+                ? []
+                : [
+                      {
+                          id: "incoming-answer",
+                          ts: 3,
+                          sessionId: "external-answer",
+                          sessionTitle: "External screenshot",
+                          project: "Fixture",
+                          repoRoot: "/fixture",
+                          cwd: "/fixture",
+                          branch: null,
+                          commitSha: null,
+                          commitMessage: null,
+                          agent: "unknown",
+                          isWorktree: false,
+                          worktreePath: null,
+                          aiAgent: null,
+                          agentLabel: null,
+                          tag: "question",
+                          question: "See the new screenshot",
+                          answerMd: "Ready for inspection",
+                          refs: [],
+                          source: "mcp",
+                          turnUuid: null,
+                          supersededBy: null,
+                          readAt: null,
+                      },
+                  ],
+    };
+    const snapshot = await widgetSnapshot({ root: directory, sources });
+    expect(snapshot.sessions.map((session) => session.target.sessionId).sort()).toEqual(
+        ["draft-only", "external-answer", target.sessionId].sort()
+    );
+    expect(snapshot.sessions.find((session) => session.target.sessionId === "external-answer")?.title).toBe(
+        "External screenshot"
+    );
+    expect(snapshot.cards).toHaveLength(0);
+    expect(snapshot.errors).toEqual([]);
+});

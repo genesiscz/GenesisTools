@@ -266,11 +266,12 @@ export async function widgetSnapshot({
             return fallback;
         }
     }
-    const [rows, decisions, waitingForms, agents] = await Promise.all([
+    const [rows, decisions, waitingForms, agents, answerRoster] = await Promise.all([
         read("sessions", () => sources.sessions(refresh), []),
         read("decisions", sources.decisions, []),
         read("questions", () => sources.forms(), []),
         read("agents", () => sources.agents(), { generatedAt: "", parents: [], orphans: [] }),
+        read("answer sessions", () => sources.answers(), []),
     ]);
     const sessions = new Map<string, WidgetSession>();
     const addSession = (target: WidgetTarget, title: string, project: string, activityAt: number): WidgetSession => {
@@ -382,11 +383,30 @@ export async function widgetSnapshot({
             );
         current.status = "waiting";
     }
+    for (const row of answerRoster) {
+        if (!findSession(row.sessionId, row.agent === "unknown" ? undefined : row.agent)) {
+            addSession(
+                targetOf({ sessionId: row.sessionId, provider: row.agent, cwd: row.cwd }, row.id),
+                row.sessionTitle ?? row.sessionId,
+                row.project,
+                row.ts
+            );
+        }
+    }
+    for (const message of state.outgoing) {
+        addSession(message.target, message.target.sessionId, message.target.cwd, message.createdAt);
+    }
+    for (const [key, draft] of Object.entries(state.drafts)) {
+        const target = parseWidgetSessionKey(key);
+        if (target && (draft.text || draft.assetIds.length)) {
+            addSession(target, target.sessionId, target.cwd, 0);
+        }
+    }
     const selected = selectedKey ? sessions.get(selectedKey) : undefined;
     const persistedTarget = selectedKey ? parseWidgetSessionKey(selectedKey) : undefined;
     const selectedId = selected?.target.sessionId ?? persistedTarget?.sessionId;
     const [answers, forms] = await Promise.all([
-        read("answers", () => sources.answers(selectedId), []),
+        selectedId ? read("answers", () => sources.answers(selectedId), []) : Promise.resolve(answerRoster),
         selectedId ? read("question timeline", () => sources.forms(selectedId), []) : Promise.resolve(waitingForms),
     ]);
     for (const form of forms) {
