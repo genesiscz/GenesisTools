@@ -86,15 +86,7 @@ public final class ClickyModel: ObservableObject {
             preferences = ClickyPreferences()
         }
         statistics = ClickyStatistics()
-        if let data = defaults.data(forKey: "clicky.statistics.v1") {
-            do {
-                statistics = try JSONDecoder().decode(ClickyStatistics.self, from: data)
-            } catch {
-                statisticsLoadError = "Clicky could not read your saved typing history. The original data is untouched and new statistics are paused. Open Stats and reset only if you want to start a new history; a backup of the original data will be kept."
-                log.error("Saved typing history could not be decoded; collection paused: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-        analytics.flush(statistics)
+        loadStatistics()
         if defaults.data(forKey: "clicky.preferences.v1") != nil {
             self.appearance.migrateIfNeeded(
                 reduceMotion: preferences.reduceMotion,
@@ -273,6 +265,24 @@ public final class ClickyModel: ObservableObject {
     }
 
     public func dismissError() { error = nil }
+
+    public func retryStatisticsLoad() {
+        guard statisticsLoadError != nil else { return }
+        loadStatistics()
+    }
+
+    private func loadStatistics() {
+        do {
+            if let data = defaults.data(forKey: "clicky.statistics.v1") {
+                statistics = try JSONDecoder().decode(ClickyStatistics.self, from: data)
+            }
+            statisticsLoadError = nil
+            analytics.flush(statistics)
+        } catch {
+            statisticsLoadError = "Your saved typing history could not be read. It remains untouched. New statistics are paused until the history is restored or reset."
+            log.error("Saved typing history could not be decoded; collection paused: \(error.localizedDescription, privacy: .public)")
+        }
+    }
 
     public func resetStatistics() {
         if statisticsLoadError != nil, let original = defaults.data(forKey: "clicky.statistics.v1") {

@@ -392,6 +392,32 @@ final class ClickyTests: XCTestCase {
     }
 
     @MainActor
+    func testHistoryRetryReopensRestoredDataWithoutResettingOrWritingIt() throws {
+        let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let original = Data("unreadable".utf8)
+        defaults.set(original, forKey: "clicky.statistics.v1")
+        let model = ClickyModel(defaults: defaults, previewOnly: true, observeSystemEvents: false)
+        defer { model.shutdown() }
+        model.retryStatisticsLoad()
+        XCTAssertNotNil(model.statisticsLoadError)
+        XCTAssertEqual(defaults.data(forKey: "clicky.statistics.v1"), original)
+        var restored = ClickyStatistics()
+        restored.record(keyCode: 0, release: false, at: date(12))
+        let data = try JSONEncoder().encode(restored)
+        defaults.set(data, forKey: "clicky.statistics.v1")
+        model.retryStatisticsLoad()
+        XCTAssertNil(model.statisticsLoadError)
+        XCTAssertEqual(model.statistics, restored)
+        XCTAssertEqual(model.analytics.snapshot, restored)
+        XCTAssertEqual(defaults.data(forKey: "clicky.statistics.v1"), data)
+        XCTAssertTrue(defaults.dictionaryRepresentation().keys.filter {
+            $0.hasPrefix("clicky.statistics.recovery.")
+        }.isEmpty)
+    }
+
+    @MainActor
     func testInteractiveActivationUsesExistingGrantAndDisablesTheMonitor() {
         let monitor = InputMonitorStub()
         monitor.granted = true
