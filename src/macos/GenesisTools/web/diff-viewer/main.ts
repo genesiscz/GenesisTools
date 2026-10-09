@@ -3074,6 +3074,20 @@ function runDeferredLoad(): void {
     load?.();
 }
 
+/**
+ * A batch threw. Only the set's last batch ends the swap: nothing more of that set comes, so a focus must not wait
+ * on it. After an earlier batch Swift still sends the rest, and the old set must stay unfocusable until they swap in.
+ */
+function batchFailed(batch: FilesBatch, error: unknown): void {
+    if (batch.last && batch.generation === loadGeneration) {
+        swapInFlight = false;
+        incomingFiles = [];
+        incomingItems = [];
+    }
+
+    post({ type: "error", message: error instanceof Error ? error.message : String(error) });
+}
+
 function addFiles(batch: FilesBatch): void {
     if (batch.first) {
         // A newer load replaces one that still waits for a scroll to end.
@@ -3129,11 +3143,16 @@ function addFiles(batch: FilesBatch): void {
             incomingFiles.splice(incomingFiles.length - shown.length);
             incomingItems.splice(incomingItems.length - items.length);
             const waiting = batch;
+            // It runs when the scroll ends, outside the bridge's catch, so it handles its own failure.
             deferredLoad = () => {
-                post({ type: "log", message: "diff.refresh swapped in after the scroll ended" });
-                addFiles(waiting);
-                reviewState.afterFiles(true);
-                applyPendingFocus();
+                try {
+                    post({ type: "log", message: "diff.refresh swapped in after the scroll ended" });
+                    addFiles(waiting);
+                    reviewState.afterFiles(true);
+                    applyPendingFocus();
+                } catch (error) {
+                    batchFailed(waiting, error);
+                }
             };
             return;
         }
@@ -3224,7 +3243,7 @@ window.genesisDiff = {
                 applyPendingFocus();
             }
         } catch (error) {
-            post({ type: "error", message: error instanceof Error ? error.message : String(error) });
+            batchFailed(batch, error);
         }
     },
     setComments(next) {
