@@ -3,7 +3,7 @@ import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { readTurnState } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { runCmux, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
-import { loadAllSessionCmuxRefs, resolveRefsProvider } from "@genesiscz/utils/cmux/session-refs";
+import { loadAllSessionCmuxRefs, resolveRefsProvider, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -127,16 +127,13 @@ export async function liveAgentSurfacesNow(): Promise<LiveAgentSurface[]> {
 export async function liveAdoptableSessions(): Promise<AdoptedSession[]> {
     const tree = await liveTree();
     const refs = [...loadAllSessionCmuxRefs().values()];
-    const surfaces = new Set(refs.map((entry) => entry.surfaceRef).filter((ref): ref is string => ref !== null));
+    const providerOf = (entry: SessionCmuxRefs) => resolveRefsProvider(entry, undefined);
     const found: AdoptedSession[] = [];
 
-    for (const surface of surfaces) {
-        const adopted = pickAdoptable({
-            query: surface,
-            refs,
-            tree,
-            providerOf: (entry) => resolveRefsProvider(entry, undefined),
-        });
+    // Only surfaces that are live now: the journal keeps every ref it ever saw, and asking for each dead one would
+    // rebuild the live map once per historical ref.
+    for (const live of liveAgentSurfaces({ refs, tree, providerOf })) {
+        const adopted = pickAdoptable({ query: live.surface.ref, refs, tree, providerOf });
 
         if (adopted) {
             found.push(adopted);

@@ -14,7 +14,7 @@ import { FeedLogCursor, withFeedLock } from "../lib/feed";
 import { isVisibleToAgent } from "../lib/filter";
 import { formatEventPretty } from "../lib/format-pretty";
 import { deriveMainAgentId, isMainId } from "../lib/id-gen";
-import { announceJoinIfNew, announceLeave, loginEndIsLeave } from "../lib/leave";
+import { announceJoinIfNew, announceLeave, leaveReasonOf } from "../lib/leave";
 import { onShutdown } from "../lib/lifecycle";
 import { createListenerFilter } from "../lib/listener-filter";
 import { formatReadyEvent, loginStderrAllowed, writeLoginJsonLine } from "../lib/login-io";
@@ -419,9 +419,10 @@ async function emitLoggedOut({
     });
 
     // Both the shutdown handler and the finally block end a login; one leave per process.
-    if (!leaveAnnounced && loginEndIsLeave(mode, reason)) {
+    const leaveReason = leaveReasonOf(mode, reason);
+    if (!leaveAnnounced && leaveReason) {
         leaveAnnounced = true;
-        await announceLeave(paths, { agent_id: record.agent_id, agent_name: record.agent_name, reason });
+        await announceLeave(paths, { agent_id: record.agent_id, agent_name: record.agent_name, reason: leaveReason });
     }
 }
 
@@ -560,19 +561,20 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
                 // Mail that landed between the watcher's last look and the deadline is delivered, not a timeout.
                 const late = received ? 0 : await drainPending(active);
 
+                // Nobody is listening once this returns, unless the agent starts it again (then that is a join):
+                // `timeout` when --timeout ended the wait, `cap` when the receiver waited the whole cap.
+                if (!received && late === 0 && !leaveAnnounced) {
+                    leaveAnnounced = true;
+                    await announceLeave(paths, {
+                        agent_id: record.agent_id,
+                        agent_name: record.agent_name,
+                        reason: timeoutSeconds !== undefined ? "timeout" : "cap",
+                    });
+                }
+
                 if (!received && late === 0 && timeoutSeconds !== undefined) {
                     timedOut = true;
                     process.exitCode = LOGIN_TIMEOUT_EXIT;
-
-                    // Nobody is listening once this returns, unless the agent starts it again (then that is a join).
-                    if (!leaveAnnounced) {
-                        leaveAnnounced = true;
-                        await announceLeave(paths, {
-                            agent_id: record.agent_id,
-                            agent_name: record.agent_name,
-                            reason: "timeout",
-                        });
-                    }
 
                     await writeLoginJsonLine({
                         type: "timeout",

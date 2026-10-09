@@ -51,12 +51,24 @@ export async function announceJoinIfNew(
     return true;
 }
 
-/** When a login ends, is that the agent leaving? One `--once` cycle (a message, a timeout) is not. */
-export function loginEndIsLeave(
+/**
+ * When a login ends, is that the agent leaving, and why? One `--once` cycle that ends on mail is not; every end of a
+ * stream login is, because nobody listens for that agent afterwards (`ended`: the watch stopped on its own, an error
+ * for instance). A `--once` timeout or cap is announced by the login itself, where it knows which one it was.
+ */
+export function leaveReasonOf(
     mode: "stream" | "once",
     reason: "signal" | "clean_exit" | "cap"
-): reason is "signal" | "cap" {
-    return reason === "signal" || (mode === "stream" && reason === "cap");
+): AgentLeftEvent["reason"] | null {
+    if (reason === "signal") {
+        return "signal";
+    }
+
+    if (mode === "stream") {
+        return reason === "cap" ? "cap" : "ended";
+    }
+
+    return null;
 }
 
 export async function announceLeave(

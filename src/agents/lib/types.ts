@@ -65,9 +65,10 @@ export interface AgentLeftEvent extends FeedEventBase {
     agent_name: string;
     /**
      * `leave`: `tools agents leave`. `signal`/`cap`: its login ended that way. `timeout`: a `--once --timeout`
-     * receiver expired with no mail (a restart is a new join). `dead_pid`: its login was reaped.
+     * receiver expired with no mail (a restart is a new join). `dead_pid`: its login was reaped. `ended`: a stream
+     * login stopped on its own (its watch failed). A `--once` receiver that waited the whole cap leaves with `cap`.
      */
-    reason: "leave" | "signal" | "cap" | "timeout" | "dead_pid";
+    reason: "leave" | "signal" | "cap" | "timeout" | "dead_pid" | "ended";
     /** Names of the agents still on the bus, the leaver excluded. */
     remaining: string[];
     note?: string;

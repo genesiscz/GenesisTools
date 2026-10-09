@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { filterForAgent, isVisibleToAgent } from "../lib/filter";
-import { loginEndIsLeave, presentAgents, remainingAgentNames } from "../lib/leave";
+import { leaveReasonOf, presentAgents, remainingAgentNames } from "../lib/leave";
 import type { AgentRecord, FeedEvent } from "../lib/types";
 
 const agentAlpha: AgentRecord = {
@@ -301,8 +301,10 @@ describe("agent_left", () => {
         // gamma's next login after leaving is a new join.
         expect(presentAgents(events).has("agt_beta")).toBe(true);
         expect(presentAgents(events).has("agt_gamma")).toBe(false);
-        expect(loginEndIsLeave("once", "clean_exit")).toBe(false);
-        expect(loginEndIsLeave("once", "signal")).toBe(true);
-        expect(loginEndIsLeave("stream", "cap")).toBe(true);
+        expect(leaveReasonOf("once", "clean_exit")).toBeNull();
+        expect(leaveReasonOf("once", "signal")).toBe("signal");
+        expect(leaveReasonOf("stream", "cap")).toBe("cap");
+        // A stream login that stopped on its own (its watch failed) leaves nobody listening either.
+        expect(leaveReasonOf("stream", "clean_exit")).toBe("ended");
     });
 });

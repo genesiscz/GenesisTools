@@ -55,6 +55,8 @@ function toImageModel(token: string, modelId: string): ImageModel {
             // src/utils/package-store.ts), so it is imported at call time and
             // its absence is a runtime error naming the install, not an
             // import-time crash for every tool that loads the plugin barrel.
+            const { ensurePackage } = await import("@genesiscz/utils/packages");
+            await ensurePackage("@huggingface/inference", { label: "HuggingFace Inference (image generation)" });
             const { importStorePackage } = await import("@genesiscz/utils/package-store");
             const { InferenceClient } =
                 await importStorePackage<typeof import("@huggingface/inference")>("@huggingface/inference");
