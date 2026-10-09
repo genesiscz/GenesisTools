@@ -4,12 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 
-const toolsBin = join(import.meta.dir, "../../../tools");
+// The agents entry itself, not the `tools` wrapper: a SIGTERM to the wrapper never reached the `agents login`
+// stream behind it, so every run left three logins alive in its bun test worker (worker log, 2026-10-09).
+const agentsEntry = join(import.meta.dir, "../index.ts");
 
 type JsonLine = Record<string, unknown>;
 
 function spawnAgents(home: string, args: string[]): Bun.Subprocess<"ignore", "pipe", "ignore"> {
-    return Bun.spawn(["bun", toolsBin, "agents", ...args], {
+    return Bun.spawn(["bun", agentsEntry, ...args], {
         stdout: "pipe",
         stderr: "ignore",
         env: {
@@ -158,9 +160,22 @@ describe("agents login stream (monitor contract)", () => {
             );
             expect(betaHop.at(-1)).toMatchObject({ type: "message", body: "peer-hop" });
         } finally {
-            for (const proc of procs) {
-                proc.kill("SIGTERM");
-            }
+            // Wait for each login to exit (a killed child that nobody waits for stays a zombie), and
+            // escalate when one ignores the signal.
+            await Promise.all(
+                procs.map(async (proc) => {
+                    proc.kill("SIGTERM");
+                    const stopped = await Promise.race([
+                        proc.exited.then(() => true),
+                        Bun.sleep(3_000).then(() => false),
+                    ]);
+
+                    if (!stopped) {
+                        proc.kill("SIGKILL");
+                        await proc.exited;
+                    }
+                })
+            );
         }
     }, 30_000);
 });
