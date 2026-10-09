@@ -10,6 +10,7 @@ struct WidgetHostView: View {
     let headerHeight: CGFloat
     var headerMinimumHeight: CGFloat = 36
     let visibleHeight: CGFloat
+    var railScreenCenterY: () -> CGFloat? = { nil }
     var topSizeChanged: (CGSize) -> Void = { _ in }
     @State private var measuredHeaderHeight: CGFloat = 0
     @State private var dragOrigin: Double?
@@ -98,6 +99,7 @@ struct WidgetHostView: View {
             }
             .buttonStyle(.genHoverPlain())
             .accessibilityLabel("Open " + (selected?.title ?? "widgets"))
+            .accessibilityIdentifier("widget.primary." + surface.key)
             .instantTooltip("Inbox: \(model.inbox.unread) unread, \(model.inbox.needsAnswer) need an answer")
             HStack(spacing: 8) {
                 if selected?.id == "agents" {
@@ -116,7 +118,7 @@ struct WidgetHostView: View {
                     }
                 }
                 ForEach(Array(moduleIDs.filter { $0 != selected?.id }.prefix(4)), id: \.self) { id in
-                    moduleButton(id, size: 25)
+                    moduleButton(id, size: 25, location: "strip")
                 }
                 if moduleIDs.count > 5 {
                     Button {
@@ -160,8 +162,9 @@ struct WidgetHostView: View {
     private var sideStrip: some View {
         GeometryReader { geometry in
             if geometry.size.height + 0.5 >= sideMetrics.minimumHeight {
-                sideStripContents.frame(height: sideMetrics.minimumHeight)
-                    .frame(maxHeight: .infinity, alignment: .center)
+                ScreenAnchoredWidgetRail(screenCenterY: railScreenCenterY(), height: sideMetrics.minimumHeight) {
+                    sideStripContents.foregroundStyle(.white).environment(\.colorScheme, .dark)
+                }
             } else if geometry.size.height >= sideMetrics.fixedOverflowChromeHeight + sideMetrics.moduleSize {
                 VStack(spacing: sideMetrics.spacing) {
                     if !classicSide { dragHandle }
@@ -204,7 +207,7 @@ struct WidgetHostView: View {
             }.buttonStyle(.genHoverPlain()).accessibilityLabel("Add a widget to this group")
         }
         ForEach(moduleIDs, id: \.self) { id in
-            moduleButton(id, size: sideMetrics.moduleSize)
+            moduleButton(id, size: sideMetrics.moduleSize, location: "rail")
             if id == "agents", sideMetrics.sessionCount > 0 {
                 VStack(spacing: WidgetSideStripMetrics.sessionSpacing) {
                     ForEach(Array(model.railActivitySessions.prefix(sideMetrics.sessionCount))) { session in
@@ -279,7 +282,7 @@ struct WidgetHostView: View {
         }
     }
 
-    private func moduleButton(_ id: String, size: CGFloat) -> some View {
+    private func moduleButton(_ id: String, size: CGFloat, location: String = "content") -> some View {
         Button {
             if id == "agents", model.inboxCount > 0 { model.openInboxNotification(on: surface) }
             else { model.openModule(id, on: surface) }
@@ -305,6 +308,7 @@ struct WidgetHostView: View {
         .buttonStyle(.genHoverPlain())
         .instantTooltip(id == "agents" ? "Inbox: \(model.inbox.unread) unread, \(model.inbox.needsAnswer) need an answer" : registry.module(id)?.title ?? id)
         .accessibilityLabel("Open " + (registry.module(id)?.title ?? id))
+        .accessibilityIdentifier("widget." + location + "." + surface.key + "." + id)
     }
 
     private func sessionActivity(_ session: WidgetSession) -> some View {

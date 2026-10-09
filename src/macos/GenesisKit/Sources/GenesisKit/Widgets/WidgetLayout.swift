@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -61,6 +62,49 @@ public struct WidgetLayoutConfiguration: Codable, Equatable, Sendable {
     public static func unique(_ ids: [String]) -> [String] {
         var seen: Set<String> = []
         return ids.filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+}
+
+struct ScreenAnchoredWidgetRail<Content: View>: NSViewRepresentable {
+    let screenCenterY: CGFloat?
+    let height: CGFloat
+    @ViewBuilder let content: () -> Content
+
+    func makeNSView(context: Context) -> RailView {
+        RailView(content: content())
+    }
+
+    func updateNSView(_ view: RailView, context: Context) {
+        view.host.rootView = content()
+        view.screenCenterY = screenCenterY
+        view.railHeight = height
+        view.needsLayout = true
+    }
+
+    final class RailView: NSView {
+        let host: NSHostingView<Content>
+        var screenCenterY: CGFloat?
+        var railHeight: CGFloat = 0
+
+        init(content: Content) {
+            host = NSHostingView(rootView: content)
+            host.sizingOptions = []
+            super.init(frame: .zero)
+            addSubview(host)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+        override func layout() {
+            super.layout()
+            let center = screenCenterY.map { value -> CGFloat in
+                guard let window else { return bounds.midY }
+                let point = window.convertFromScreen(CGRect(x: window.frame.midX, y: value, width: 0, height: 0)).origin
+                return convert(point, from: nil).y
+            } ?? bounds.midY
+            host.frame = CGRect(x: 0, y: center - railHeight / 2, width: bounds.width, height: railHeight)
+        }
     }
 }
 
