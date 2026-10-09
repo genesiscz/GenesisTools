@@ -1303,18 +1303,22 @@ final class WidgetRosterTests: XCTestCase {
                     id: "shelf", title: "Shelf", symbol: "tray", tint: .blue, summary: { "Fixture" }
                 ) { _ in Color.blue })
                 let surface = WidgetSurfaceID(edge: edge)
+                let compactCenter = screen.visibleFrame.maxY - 100
                 let controller = EdgePanelController(
                     placement: edge, screen: screen, compactSize: CGSize(width: 44, height: 180),
                     expandedSize: CGSize(width: 476, height: 480), title: "Hidden rail animation fixture"
                 ) {
                     WidgetHostView(model: model, registry: registry, surface: surface, moduleIDs: ["shelf"],
-                        cutout: 0, headerHeight: 36, visibleHeight: screen.visibleFrame.height)
+                        cutout: 0, headerHeight: 36, visibleHeight: screen.visibleFrame.height,
+                        railScreenCenterY: { compactCenter })
                 }
                 let panel = controller.panel
                 panel.alphaValue = 0
                 panel.level = NSWindow.Level(rawValue: -1000)
                 defer { controller.hide(); panel.close() }
+                controller.setSideCenterY(compactCenter)
                 controller.show()
+                controller.setPresentation(.compact, reduceMotion: true)
                 func handles(_ view: NSView) -> [ScreenVerticalDragView] {
                     if let handle = view as? ScreenVerticalDragView { return [handle] }
                     return view.subviews.flatMap(handles)
@@ -1328,6 +1332,9 @@ final class WidgetRosterTests: XCTestCase {
                     sampledFrames.append(frame)
                     let expectedX = edge == .right ? screen.frame.maxX - 42 : screen.frame.minX + 2
                     XCTAssertEqual(frame.minX, expectedX, accuracy: 0.5, "A growing content view moved the rail")
+                    if let baseline = sampledFrames.first {
+                        XCTAssertEqual(frame.minY, baseline.minY, accuracy: 0.5, "A growing panel moved the rail vertically")
+                    }
                     XCTAssertTrue(panel.frame.insetBy(dx: -0.5, dy: -0.5).contains(frame), "Handle escaped panel")
                 }
                 try sample()
