@@ -1,5 +1,6 @@
 import CoreGraphics
 import CoreImage
+import CoreMedia
 import Foundation
 
 /// One selected window of an isolated recording. `Frame` is the last complete ScreenCaptureKit
@@ -17,6 +18,19 @@ public struct IsolatedLayer<Frame> {
     public init(id: CGWindowID, pid: pid_t, bounds: CGRect) {
         self.id = id
         self.pid = pid
+        self.bounds = bounds
+    }
+}
+
+/// Where one layer sits in the stacking order. Identity is part of it: two windows with equal
+/// bounds that swap front and back are a change, although their rectangles are not.
+public struct IsolatedLayerPlacement: Equatable {
+    public let id: CGWindowID
+    /// `.null` while the window is hidden.
+    public let bounds: CGRect
+
+    public init(id: CGWindowID, bounds: CGRect) {
+        self.id = id
         self.bounds = bounds
     }
 }
@@ -48,8 +62,10 @@ public struct IsolatedLayers<Frame> {
         self.layers = layers
     }
 
-    /// Bounds of each layer in stacking order; `.null` while hidden. A change forces a frame.
-    public var geometry: [CGRect] { layers.map { $0.visible ? $0.bounds : .null } }
+    /// Each layer's identity and bounds in stacking order. A change forces a frame.
+    public var geometry: [IsolatedLayerPlacement] {
+        layers.map { IsolatedLayerPlacement(id: $0.id, bounds: $0.visible ? $0.bounds : .null) }
+    }
 
     public var readyToRender: Bool {
         started || layers.filter(\.visible).allSatisfy { $0.frame != nil }
@@ -118,6 +134,21 @@ public struct IsolatedLayers<Frame> {
             .map(\.element)
         return before != geometry
     }
+}
+
+/// ScreenCaptureKit stores `SCStreamFrameInfo.contentRect` as a CGRect dictionary
+/// representation, not as a CGRect, so a plain cast is always nil.
+public func frameInfoRect(_ value: Any?) -> CGRect? {
+    guard let dictionary = value as? NSDictionary else { return nil }
+    return CGRect(dictionaryRepresentation: dictionary as CFDictionary)
+}
+
+/// Where the movie ends on the writer's own clock: the moment recording stopped, never before
+/// the last frame. Both are host-clock times, the clock the first frame started the session on;
+/// a duration measured from any other moment would cut the end short.
+public func movieSessionEnd(stop: CMTime, lastFrame: CMTime?) -> CMTime {
+    guard let lastFrame, CMTimeCompare(lastFrame, stop) > 0 else { return stop }
+    return lastFrame
 }
 
 /// One window surface to paint into the fixed output.

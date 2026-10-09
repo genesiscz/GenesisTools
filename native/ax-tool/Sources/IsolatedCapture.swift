@@ -272,7 +272,7 @@ private final class IsolatedWindowSource: NSObject, SCStreamOutput, SCStreamDele
               let status = attachments.first?[SCStreamFrameInfo.status.rawValue] as? Int,
               SCFrameStatus(rawValue: status) == .complete,
               let buffer = CMSampleBufferGetImageBuffer(sample) else { return }
-        contentRect = attachments.first?[SCStreamFrameInfo.contentRect.rawValue] as? CGRect
+        contentRect = frameInfoRect(attachments.first?[SCStreamFrameInfo.contentRect.rawValue])
         if let scale = attachments.first?[SCStreamFrameInfo.scaleFactor.rawValue] as? CGFloat, scale > 0 {
             nativeScale = scale
         }
@@ -308,7 +308,8 @@ private final class IsolatedCompositor {
     private var throttle = RenderThrottle()
     /// Set once the streams have stopped and the last pending content is in the movie.
     private var finished = false
-    private var previousGeometry: [CGRect] = []
+    private var previousCanvas: CGRect?
+    private var previousPlacements: [IsolatedLayerPlacement] = []
     private let epoch = CMClockGetTime(CMClockGetHostTimeClock())
     private var pool: CVPixelBufferPool?
     var queue: DispatchQueue { recorder.frameQueue }
@@ -370,9 +371,10 @@ private final class IsolatedCompositor {
         recorder.consume(buffer, timestamp: timestamp)
         layers.markRendered()
         let movieSeconds = throttle.rendered(at: elapsed)
-        let currentGeometry = [canvas] + layers.geometry
-        if currentGeometry != previousGeometry {
-            previousGeometry = currentGeometry
+        let placements = layers.geometry
+        if canvas != previousCanvas || placements != previousPlacements {
+            previousCanvas = canvas
+            previousPlacements = placements
             geometryHistory.append([
                 // Movie time: the origin kept frames use, so a geometry entry names the frame it describes.
                 "timestampMs": Int((movieSeconds * 1000).rounded()), "canvas": captureRectJSON(canvas), "pixelsPerPoint": geometry.scale,
@@ -501,7 +503,7 @@ func captureIsolatedWindows(_ options: RecordOptions) {
     }
     compositor.queue.sync { compositor.finish() }
     let duration = Date().timeIntervalSince(started)
-    recorder.finishVideo(duration: duration)
+    recorder.finishVideo(stoppedAt: CMClockGetTime(CMClockGetHostTimeClock()))
     if let error = compositor.error { errorExit("isolated recording stopped early: \(error.localizedDescription)") }
     guard !recorder.kept.isEmpty else { errorExit("isolated recording produced no frames") }
     let directory = URL(fileURLWithPath: options.outDir)

@@ -200,6 +200,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     var rateChanged: ((Double) -> Void)?
     private let configuration: SCStreamConfiguration
     private var firstTimestamp: CMTime?
+    private var lastTimestamp: CMTime?
     private(set) var kept: [KeptFrame] = []
     private(set) var captured = 0
     private(set) var warnings: [String] = []
@@ -286,6 +287,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             firstTimestamp = timestamp
             writer?.startSession(atSourceTime: timestamp)
         }
+        lastTimestamp = timestamp
         captured += 1
         if let adaptor, let writerInput, writerInput.isReadyForMoreMediaData {
             // A refused append is how a dimension or format mismatch shows itself. Warn once:
@@ -347,10 +349,12 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
     var videoSucceeded: Bool { options.videoOut == nil || (writer?.status == .completed && !videoAppendFailed) }
 
-    func finishVideo(duration: Double? = nil) {
+    /// `stop` is the host-clock moment recording stopped. Frames carry host-clock timestamps and
+    /// the session started at the first one, so the end needs no duration from another origin.
+    func finishVideo(stoppedAt stop: CMTime) {
         guard let writer, let writerInput else { return }
-        if let duration, let firstTimestamp {
-            writer.endSession(atSourceTime: CMTimeAdd(firstTimestamp, CMTime(seconds: duration, preferredTimescale: 600)))
+        if firstTimestamp != nil {
+            writer.endSession(atSourceTime: movieSessionEnd(stop: stop, lastFrame: lastTimestamp))
         }
         writerInput.markAsFinished()
         let done = DispatchSemaphore(value: 0)
@@ -568,7 +572,7 @@ func cmdCaptureScreen() {
     // Drain the frame queue so the last kept frame is on disk before the sheet is built.
     recorder.frameQueue.sync {}
     let durationMs = Int((Date().timeIntervalSince(started) * 1000).rounded())
-    recorder.finishVideo(duration: Double(durationMs) / 1000)
+    recorder.finishVideo(stoppedAt: CMClockGetTime(CMClockGetHostTimeClock()))
     if let failure = recorder.failure {
         errorExit("recording stopped early: \(failure.localizedDescription)")
     }

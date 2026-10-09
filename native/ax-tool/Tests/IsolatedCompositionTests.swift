@@ -1,4 +1,5 @@
 import CoreImage
+import CoreMedia
 import SnapshotSupport
 import XCTest
 
@@ -76,6 +77,37 @@ final class IsolatedCompositionTests: XCTestCase {
         XCTAssertEqual(state.paintOrder.map(\.id), [2, 1])
         XCTAssertTrue(state.refresh(rows([2, 1])), "a stacking change forces a frame")
         XCTAssertEqual(state.paintOrder.map(\.id), [1, 2])
+    }
+
+    func testEqualBoundsWindowsThatSwapOrderAreAChange() {
+        var state = IsolatedLayers<String>([IsolatedLayer(id: 1, pid: 100, bounds: left),
+                                            IsolatedLayer(id: 2, pid: 200, bounds: left)])
+        state.receive("a", for: 1)
+        state.receive("b", for: 2)
+        let maximized = [IsolatedWindowRow(id: 1, pid: 100, bounds: left), IsolatedWindowRow(id: 2, pid: 200, bounds: left)]
+        XCTAssertFalse(state.refresh(maximized))
+        let before = state.geometry
+        XCTAssertTrue(state.refresh(maximized.reversed()), "same rectangles, new front window: the frame must be redrawn")
+        XCTAssertNotEqual(state.geometry, before, "geometry history records the new order")
+        XCTAssertEqual(state.paintOrder.map(\.id), [1, 2])
+    }
+
+    func testContentRectIsDecodedFromItsDictionaryRepresentation() {
+        let rect = CGRect(x: 0, y: 12, width: 640, height: 360)
+        XCTAssertEqual(frameInfoRect(rect.dictionaryRepresentation), rect, "SCK stores a dictionary, not a CGRect")
+        XCTAssertNil(frameInfoRect(nil))
+        XCTAssertNil(frameInfoRect(NSNumber(value: 3)))
+    }
+
+    func testMovieEndsAtTheStopMomentOnTheFrameClock() {
+        // Frames and the stop are host-clock times. Startup took 2.5 s before the run loop began;
+        // a duration counted from then would end the movie 2.5 s before recording stopped.
+        let stop = CMTime(seconds: 112.5, preferredTimescale: 600)
+        let lastFrame = CMTime(seconds: 112.4, preferredTimescale: 600)
+        XCTAssertEqual(movieSessionEnd(stop: stop, lastFrame: lastFrame), stop)
+        XCTAssertEqual(movieSessionEnd(stop: stop, lastFrame: nil), stop)
+        let late = CMTime(seconds: 112.6, preferredTimescale: 600)
+        XCTAssertEqual(movieSessionEnd(stop: stop, lastFrame: late), late, "the end never cuts off an appended frame")
     }
 
     func testComposedFrameKeepsAlphaAndPaintsTheFrontWindowLast() {
