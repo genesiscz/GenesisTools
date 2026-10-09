@@ -349,7 +349,7 @@ async function guardFableHeadroom(accountName: string, modelId: string | undefin
 
     // An explicit --model fable is the user's decision; say the number and move on.
     if (explicitFamily === "fable") {
-        out.printlnErr(pc.yellow(`! Fable weekly on "${accountName}" is ${left} — launching anyway (--model fable).`));
+        out.printlnErr(pc.yellow(`⚠ Fable weekly on "${accountName}" is ${left} — launching anyway (--model fable).`));
 
         if (alternatives.length > 0) {
             out.printlnErr(pc.dim(`  Accounts with Fable headroom: ${alternatives.join(", ")}`));
@@ -358,7 +358,7 @@ async function guardFableHeadroom(accountName: string, modelId: string | undefin
         return;
     }
 
-    out.printlnErr(pc.yellow(`! Fable weekly on "${accountName}" is ${left}.`));
+    out.printlnErr(pc.yellow(`⚠ Fable weekly on "${accountName}" is ${left}.`));
 
     if (alternatives.length > 0) {
         out.printlnErr(pc.dim(`  Accounts with Fable headroom: ${alternatives.join(", ")}`));
@@ -411,7 +411,7 @@ async function warnKeychainLimits(accountName: string, aiConfig: AIConfig, model
     }
 
     out.printlnErr(
-        pc.yellow(`! The keychain is on "${owner}", which has no ${dead.bucket} left (${resetPhrase(dead.resetsAt)}).`)
+        pc.yellow(`⚠ The keychain is on "${owner}", which has no ${dead.bucket} left (${resetPhrase(dead.resetsAt)}).`)
     );
     out.printlnErr(
         pc.dim(
@@ -459,7 +459,7 @@ async function refuseIfWeeklyDead(accountName: string): Promise<void> {
         return;
     }
 
-    out.error(pc.red(`! "${accountName}" has no weekly quota left (${resetPhrase(weekly.resetsAt)}).`));
+    out.error(pc.red(`⚠ "${accountName}" has no weekly quota left (${resetPhrase(weekly.resetsAt)}).`));
     out.printlnErr(pc.dim("  Every model 429s until it refills, so switching model would not help."));
 
     const withRoom = fableCapableAccounts(cached.accounts).filter((name) => name !== accountName);
@@ -510,7 +510,7 @@ async function resolveSmartAlias(
     }
 
     if (pick.warning) {
-        out.printlnErr(pc.yellow(`! ${pick.warning}`));
+        out.printlnErr(pc.yellow(`⚠ ${pick.warning}`));
     }
 
     out.printlnErr(`${pc.cyan("▸")} ${pc.bold(alias)} → ${pick.line}`);
@@ -687,7 +687,7 @@ function agePhrase(mtimeMs: number): string {
 }
 
 /**
- * One row: `d8deebf0 · 12m ago · ! limit · in .worktrees/fix · "the prompt"`.
+ * One row: `d8deebf0 · 12m ago · ⚠ limit · in .worktrees/fix · "the prompt"`.
  * The prompt goes in the LABEL rather than clack's `hint` (a hint only renders
  * on the focused row, and every row has to be identifiable) and is trimmed to
  * whatever the terminal has left, so no row wraps.
@@ -700,7 +700,7 @@ function sessionLabel(session: SessionSummary): string {
     ];
 
     if (session.limitStop) {
-        cells.push({ plain: "! limit", colored: pc.yellow("! limit") });
+        cells.push({ plain: "⚠ limit", colored: pc.yellow("⚠ limit") });
     }
 
     if (session.subdir) {
@@ -764,7 +764,7 @@ async function offerLimitKilledResume(): Promise<string[]> {
     }
 
     out.printlnErr(
-        pc.yellow(`! The last session here stopped on a limit ${pc.dim(`(${agePhrase(sessions[0].mtimeMs)})`)}`)
+        pc.yellow(`⚠ The last session here stopped on a limit ${pc.dim(`(${agePhrase(sessions[0].mtimeMs)})`)}`)
     );
     out.printlnErr(pc.dim(`  ${sessions[0].limitStop.slice(0, 160)}`));
 
