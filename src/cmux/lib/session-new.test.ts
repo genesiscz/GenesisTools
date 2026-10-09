@@ -319,7 +319,15 @@ test("--via-tmux kills its tmux session when sending the launch command fails, b
 
     await expect(
         startDevSession(
-            { repo: "demo", account: "work", prompt: "fix it", viaTmux: true, home: HOME, cwd: "/elsewhere" },
+            {
+                agent: "claude",
+                repo: "demo",
+                account: "work",
+                prompt: "fix it",
+                viaTmux: true,
+                home: HOME,
+                cwd: "/elsewhere",
+            },
             io
         )
     ).rejects.toThrow("send-keys failed");
@@ -336,7 +344,15 @@ test("--via-tmux kills nothing when the tmux session itself was not created", as
 
     await expect(
         startDevSession(
-            { repo: "demo", account: "work", prompt: "fix it", viaTmux: true, home: HOME, cwd: "/elsewhere" },
+            {
+                agent: "claude",
+                repo: "demo",
+                account: "work",
+                prompt: "fix it",
+                viaTmux: true,
+                home: HOME,
+                cwd: "/elsewhere",
+            },
             io
         )
     ).rejects.toThrow("tmux is not installed");
