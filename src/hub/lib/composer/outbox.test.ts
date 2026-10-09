@@ -3309,6 +3309,88 @@ test("a codex or grok worker row targets its native session and its own home, so
     });
 });
 
+test("a worker row adopts only the indexed copy of its native session that lives in its own home", async () => {
+    const worker: AgentNode = {
+        id: "codex-name",
+        harness: "codex",
+        kind: "worker",
+        name: "codex-name",
+        description: null,
+        agentType: null,
+        model: null,
+        account: null,
+        status: "running",
+        startedAt: null,
+        lastAt: "2026-01-01T10:01:00Z",
+        toolCalls: 0,
+        unreadMail: 0,
+        team: null,
+        backendType: null,
+        filePath: "/fixture/managed/codex-name.jsonl",
+        nativeSessionId: "shared-thread",
+        sourceHome: "/fixture/home-a",
+        spawnPrompt: null,
+        spawnPromptPreview: null,
+        toolUseId: null,
+        spawnDepth: 1,
+        children: [],
+    };
+    const indexedIn = (sourceHome: string) => ({
+        ...target,
+        provider: "codex" as const,
+        sessionId: "shared-thread",
+        sourceHome,
+        title: "Indexed copy",
+        project: "Fixture",
+        cwdShort: "Fixture",
+        mtime: 1,
+        model: null,
+        account: null,
+        filePath: `${sourceHome}/sessions/shared-thread.jsonl`,
+    });
+    const snapshotWith = async (rows: ReturnType<typeof indexedIn>[]) =>
+        widgetSnapshot({
+            root: await root(),
+            sources: {
+                sessions: async () => rows,
+                decisions: () => [],
+                forms: () => [],
+                answers: () => [],
+                agents: async () => ({ generatedAt: "", parents: [], orphans: [worker] }),
+            },
+        });
+
+    // The only indexed copy is in another home: the worker keeps its own target instead of adopting it.
+    const foreign = await snapshotWith([indexedIn("/fixture/home-b")]);
+    expect(foreign.sessions.find((entry) => entry.agentId === "codex-name")?.target).toMatchObject({
+        sessionId: "shared-thread",
+        sourceHome: "/fixture/home-a",
+    });
+    expect(foreign.sessions.filter((entry) => entry.target.sessionId === "shared-thread")).toHaveLength(2);
+    const finished = { ...worker, status: "completed" as const };
+    const agents = async () => ({ generatedAt: "", parents: [], orphans: [finished] });
+    const sessions = async () => [indexedIn("/fixture/home-b")];
+    const foreignRow = foreign.sessions.find((entry) => entry.agentId === undefined)!;
+    expect(foreignRow.target.sourceHome).toBe("/fixture/home-b");
+    expect(
+        await widgetResultNode({ target: foreignRow.target, agentId: "codex-name", sources: { agents, sessions } })
+    ).toBeUndefined();
+    expect(
+        await widgetResultNode({
+            target: { ...foreignRow.target, sourceHome: "/fixture/home-a" },
+            agentId: "codex-name",
+            sources: { agents, sessions },
+        })
+    ).toMatchObject({ id: "codex-name" });
+
+    // The copy in the worker's home (spelled differently) is the worker's own row.
+    const own = await snapshotWith([indexedIn("/fixture/home-a/"), indexedIn("/fixture/home-b")]);
+    const rows = own.sessions.filter((entry) => entry.target.sessionId === "shared-thread");
+    expect(rows).toHaveLength(2);
+    expect(rows.find((entry) => entry.agentId === "codex-name")?.title).toBe("codex-name");
+    expect(rows.find((entry) => entry.agentId === "codex-name")?.target.sourceHome).toBe("/fixture/home-a/");
+});
+
 test("incoming answer, Decision and pending-form writes wake the Widget without its safety poll", async () => {
     const directory = await root();
     await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {

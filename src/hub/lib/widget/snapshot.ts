@@ -15,6 +15,7 @@ import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import { hubAgents } from "../agents";
 import type { AgentNode, AgentsTree } from "../agents/types";
 import { readAssetManifest } from "../composer/serialize";
@@ -385,7 +386,10 @@ export async function widgetResultNode({
             (entry) => entry.id === agentId && widgetProvider(entry.harness) === target.provider && hasResult(entry)
         )
         .sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt))[0];
-    if (!node || node.id === target.sessionId || node.nativeSessionId === target.sessionId) {
+    const ownNative =
+        node?.nativeSessionId === target.sessionId &&
+        (!node.sourceHome || workerSourceHome(node.sourceHome) === workerSourceHome(target.sourceHome));
+    if (!node || node.id === target.sessionId || ownNative) {
         return node;
     }
 
@@ -589,11 +593,14 @@ export async function widgetSnapshot({
     const addWorker = (node: AgentNode, parent?: WidgetSession) => {
         // A codex/grok worker's id is its name; replies reach it only through its native session and home.
         const sessionId = node.nativeSessionId || node.id;
+        // The same session id is indexed once per home; only the copy in the worker's own home is the worker.
+        const home = node.sourceHome ? workerSourceHome(node.sourceHome) : undefined;
         const indexed = [...sessions.values()].filter(
             (entry) =>
                 entry.target.provider === node.harness &&
                 (node.nativeSessionId
-                    ? entry.target.sessionId === node.nativeSessionId
+                    ? entry.target.sessionId === node.nativeSessionId &&
+                      (!home || workerSourceHome(entry.target.sourceHome) === home)
                     : node.filePath
                       ? entry.transcriptPath === node.filePath
                       : entry.target.sessionId === node.id)
