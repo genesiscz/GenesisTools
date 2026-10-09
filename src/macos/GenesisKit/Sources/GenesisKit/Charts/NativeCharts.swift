@@ -14,6 +14,12 @@ public enum NativeChartSampling {
         clampedPosition(origin.addingTimeInterval(-translation / max(1, width) * window), window: window, domain: domain)
     }
 
+    /// A chart value as a reader sees it: estimated words and seconds are fractional, so one decimal survives
+    /// (0.8 words stays 0.8, not 0); a whole count prints without one.
+    public static func valueText(_ value: Double, locale: Locale = .current) -> String {
+        value.formatted(.number.precision(.fractionLength(0...1)).locale(locale))
+    }
+
     /// The leading edge of a `window`-wide view that stays inside `domain`.
     public static func clampedPosition(_ position: Date, window: TimeInterval, domain: ClosedRange<Date>) -> Date {
         max(domain.lowerBound, min(position, domain.upperBound.addingTimeInterval(-window)))
@@ -123,7 +129,7 @@ public struct NativeTimeSeriesChart: View {
             plot.frame(height: 235)
             HStack {
                 if let point = selectedPoint {
-                    Text("\(point.date.formatted(date: .abbreviated, time: .shortened)) · \(Int(point.value).formatted()) \(valueLabel.lowercased())")
+                    Text("\(point.date.formatted(date: .abbreviated, time: .shortened)) · \(NativeChartSampling.valueText(point.value)) \(valueLabel.lowercased())")
                 } else { Text("Drag or scroll to explore. Hover to inspect a value.") }
                 Spacer()
                 Text(position.formatted(date: .abbreviated, time: .shortened)).monospacedDigit()
@@ -224,7 +230,7 @@ public struct NativeMatrixHeatmap: View {
                     Text(rows[row]).font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 32, alignment: .leading)
                     ForEach(columns.indices, id: \.self) { column in
                         let value = values["\(row).\(column)", default: 0]
-                        let label = "\(rows[row]), \(columns[column]):00 · \(Int(value).formatted()) presses"
+                        let label = "\(rows[row]), \(columns[column]):00 · \(NativeChartSampling.valueText(value)) presses"
                         RoundedRectangle(cornerRadius: 3)
                             .fill(.mint.opacity(value == 0 ? 0.06 : 0.15 + 0.85 * pow(value / peak, 0.6)))
                             .frame(maxWidth: .infinity).frame(height: 23)
@@ -250,7 +256,7 @@ public struct NativeCategoryChart: View {
         Chart(values) { point in
             BarMark(x: .value("Presses", point.value), y: .value("Category", point.label), height: .fixed(12))
                 .foregroundStyle(.mint.gradient).cornerRadius(4)
-                .annotation(position: .trailing) { Text(Int(point.value).formatted()).font(.caption2).foregroundStyle(.secondary) }
+                .annotation(position: .trailing) { Text(NativeChartSampling.valueText(point.value)).font(.caption2).foregroundStyle(.secondary) }
         }
         .chartXAxis { AxisMarks(position: .bottom) }
         .frame(height: CGFloat(max(1, values.count)) * 25 + 25)

@@ -170,6 +170,13 @@ final class ClickyTests: XCTestCase {
         XCTAssertFalse(seen.contains("2025"), "read: \(seen)")
     }
 
+    func testChartReadoutKeepsFractionalValues() {
+        let english = Locale(identifier: "en_US")
+        XCTAssertEqual(NativeChartSampling.valueText(0.8, locale: english), "0.8", "four characters are 0.8 words, not 0")
+        XCTAssertEqual(NativeChartSampling.valueText(12.26, locale: english), "12.3")
+        XCTAssertEqual(NativeChartSampling.valueText(1234, locale: english), "1,234", "a whole count has no decimal")
+    }
+
     func testChartBinningBoundsWorkWithoutLosingCounts() {
         let points = (0..<10000).map { NativeTimePoint(date: Date(timeIntervalSince1970: Double($0) * 60), value: 1) }
         let bins = NativeChartSampling.bins(points: points, start: Date(timeIntervalSince1970: 0),
