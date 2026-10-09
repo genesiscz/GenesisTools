@@ -90,6 +90,7 @@ export async function runStaleSweep(paths: SessionPaths): Promise<void> {
                 agent_id: owner,
                 agent_name: record?.agent_name ?? owner,
                 reason: "dead_pid",
+                ...(typeof reaped.payload.login_id === "string" ? { login_id: reaped.payload.login_id } : {}),
             });
         }
     }

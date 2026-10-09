@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { asResult } from "@genesiscz/utils/cli/result";
 import { writeStdout } from "@genesiscz/utils/cli/stdout";
@@ -258,7 +259,17 @@ function registerInLock(opts: {
     };
 }
 
-function claimSlot({ paths, record, mode }: { paths: SessionPaths; record: AgentRecord; mode: "stream" | "once" }): {
+function claimSlot({
+    paths,
+    record,
+    mode,
+    loginId,
+}: {
+    paths: SessionPaths;
+    record: AgentRecord;
+    mode: "stream" | "once";
+    loginId: string;
+}): {
     lockPath: string;
 } {
     const lockPath = slotLockPath(paths, record.agent_id);
@@ -269,6 +280,7 @@ function claimSlot({ paths, record, mode }: { paths: SessionPaths; record: Agent
         owner: record.agent_id,
         kind: "login",
         mode,
+        login_id: loginId,
     };
 
     if (!tryAcquireSlot(lockPath, payload)) {
@@ -383,10 +395,12 @@ async function emitLoggedIn({
     paths,
     record,
     mode,
+    loginId,
 }: {
     paths: SessionPaths;
     record: AgentRecord;
     mode: "stream" | "once";
+    loginId: string;
 }): Promise<void> {
     const { appendFeed, readFeed } = await import("../lib/feed");
     const before = await readFeed(paths);
@@ -395,6 +409,7 @@ async function emitLoggedIn({
         agent_id: record.agent_id,
         agent_name: record.agent_name,
         mode,
+        login_id: loginId,
     });
     await announceJoinIfNew(paths, { agent_id: record.agent_id, agent_name: record.agent_name, before });
 }
@@ -404,11 +419,13 @@ async function emitLoggedOut({
     record,
     reason,
     mode,
+    loginId,
 }: {
     paths: SessionPaths;
     record: AgentRecord;
     reason: "signal" | "clean_exit" | "cap";
     mode: "stream" | "once";
+    loginId: string;
 }): Promise<void> {
     const { appendFeed } = await import("../lib/feed");
     await appendFeed(paths, {
@@ -422,7 +439,14 @@ async function emitLoggedOut({
     const leaveReason = leaveReasonOf(mode, reason);
     if (!leaveAnnounced && leaveReason) {
         leaveAnnounced = true;
-        await announceLeave(paths, { agent_id: record.agent_id, agent_name: record.agent_name, reason: leaveReason });
+        // The slot is already released, so a replacement login may be current by now: the leave names this
+        // login, and announceLeave drops it when a newer one took over.
+        await announceLeave(paths, {
+            agent_id: record.agent_id,
+            agent_name: record.agent_name,
+            reason: leaveReason,
+            login_id: loginId,
+        });
     }
 }
 
@@ -468,7 +492,8 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
 
     const record = await findOrRegisterAgent(paths, opts);
     const mode: "stream" | "once" = opts.once ? "once" : "stream";
-    const { lockPath } = claimSlot({ paths, record, mode });
+    const loginId = randomUUID();
+    const { lockPath } = claimSlot({ paths, record, mode, loginId });
 
     // claimSlot() succeeded — from here until the onShutdown handler below is
     // registered, a thrown error would otherwise skip releaseSlot() entirely
@@ -493,7 +518,7 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
             listenerFilter: createListenerFilter({ kinds: opts.kinds, expression: opts.filter }),
         };
 
-        await emitLoggedIn({ paths, record, mode });
+        await emitLoggedIn({ paths, record, mode, loginId });
         await writeLoginJsonLine(formatReadyEvent(record, paths.session, mode));
     } catch (err) {
         releaseSlot(lockPath);
@@ -521,7 +546,7 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
         }
 
         try {
-            await emitLoggedOut({ paths, record: active.record, reason, mode });
+            await emitLoggedOut({ paths, record: active.record, reason, mode, loginId });
         } catch (err) {
             log.warn({ err }, "logged_out emit failed during shutdown");
         }
@@ -569,6 +594,7 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
                         agent_id: record.agent_id,
                         agent_name: record.agent_name,
                         reason: timeoutSeconds !== undefined ? "timeout" : "cap",
+                        login_id: loginId,
                     });
                 }
 
@@ -603,7 +629,7 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
         }
 
         try {
-            await emitLoggedOut({ paths, record: active.record, reason: exitReason, mode });
+            await emitLoggedOut({ paths, record: active.record, reason: exitReason, mode, loginId });
         } catch (err) {
             log.warn({ err }, "logged_out emit failed on exit");
         }

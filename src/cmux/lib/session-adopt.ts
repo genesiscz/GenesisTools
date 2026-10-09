@@ -287,6 +287,8 @@ function adoptedFrom({ entry, live, tmux }: ResolvedEntry, agent: SessionAgentId
         surfaceId: live.id,
         // A tmux-joined session quits through tmux and runs on the pane's tty, not on the surface's.
         tmuxSession: tmux?.session ?? null,
+        // The exit command targets this pane, never the session's current one: the user may switch panes.
+        tmuxPane: tmux?.pane ?? null,
         pidFile: "",
         command: "",
         createdAt: new Date(entry.at).toISOString(),

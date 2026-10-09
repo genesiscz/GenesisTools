@@ -15,7 +15,7 @@ import { levenshteinDistance } from "@genesiscz/utils/fuzzy-match";
 import { logger } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
-import { createTmuxSession, killTmuxSession } from "@genesiscz/utils/tmux/sessions";
+import { createTmuxSession, killTmuxSession, listTmuxPanes } from "@genesiscz/utils/tmux/sessions";
 import { parseCmuxTree } from "./session-adopt";
 import { agentRunCommand, type SessionAgentId, withPidNote } from "./session-agents";
 
@@ -32,6 +32,8 @@ export interface SessionNewResult {
     workspaceId: string | null;
     surfaceId: string | null;
     tmuxSession: string | null;
+    /** The tmux pane the agent runs in (`%41`), so close types its exit there and nowhere else. */
+    tmuxPane: string | null;
     cwd: string;
     command: string;
 }
@@ -66,7 +68,8 @@ export interface SessionNewIO {
     runJSON<T>(args: string[]): Promise<T>;
     runOk(args: string[]): Promise<void>;
     shell(): string;
-    createTmuxShell(session: string, cwd: string, shell: string): Promise<void>;
+    /** Start the detached tmux shell; returns its pane id, or null when tmux did not list it. */
+    createTmuxShell(session: string, cwd: string, shell: string): Promise<string | null>;
     sendTmuxKeys(session: string, command: string): Promise<void>;
     killTmuxSession(session: string): Promise<void>;
     repoFs: RepoFs;
@@ -333,6 +336,7 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
     const agentLine = input.pidFile ? withPidNote(run, input.pidFile) : run;
     const windowRef = await resolveSessionWindow(io);
     let tmuxSession: string | null = null;
+    let tmuxPane: string | null = null;
     let command = agentLine;
     const name = input.name?.trim() || undefined;
     let workspace: string;
@@ -344,7 +348,7 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
         if (input.viaTmux) {
             const session = devTmuxSessionName(cwd, input.name, io.nonce());
             const shell = assertShellExecutable(io.shell());
-            await io.createTmuxShell(session, cwd, shell);
+            tmuxPane = await io.createTmuxShell(session, cwd, shell);
             // Owned from here on: any later failure must kill it.
             tmuxSession = session;
             await io.sendTmuxKeys(session, agentLine);
@@ -384,7 +388,7 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
         await io.ensureTitle({ workspace, window, title: name });
     }
 
-    return { agent: input.agent, workspace, surface, window, ...ids, tmuxSession, cwd, command };
+    return { agent: input.agent, workspace, surface, window, ...ids, tmuxSession, tmuxPane, cwd, command };
 }
 
 async function spawnTmux(argv: string[]): Promise<void> {
@@ -456,6 +460,15 @@ export function liveSessionIO(): SessionNewIO {
         shell: () => env.paths.getShell(),
         createTmuxShell: async (session, cwd, shell) => {
             await createTmuxSession(session, cwd, assertShellExecutable(shell), { unsetEnv: CMUX_IDENTITY_ENV });
+            // A new session has one pane; it is where the agent line is typed.
+            const panes = await listTmuxPanes(session);
+
+            if (!panes.ok || panes.items.length !== 1) {
+                log.warn({ session, panes }, "could not read the new tmux session's pane; close will use the session");
+                return null;
+            }
+
+            return panes.items[0].pane;
         },
         sendTmuxKeys: async (session, command) => {
             const tmux = resolveTmuxBin();

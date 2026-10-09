@@ -1,5 +1,6 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
+import type { TmuxListing, TmuxPaneInfo } from "@genesiscz/utils/tmux/sessions";
 import { sessionAgent } from "./session-agents";
 import { openSessions, type SessionCreatedRecord, type SessionStore } from "./session-store";
 
@@ -109,6 +110,59 @@ export function recordedSessionIdOf(input: {
     return newest?.sessionId ?? null;
 }
 
+/**
+ * The tmux target the exit command is typed into: the agent's own pane when it is known, else (a record written
+ * before panes were stored) the session's current pane. `=name:` matches the session name exactly.
+ */
+export function tmuxExitTarget(subject: CloseSubject): string | null {
+    if (!subject.tmuxSession) {
+        return null;
+    }
+
+    return subject.tmuxPane ?? `=${subject.tmuxSession}:`;
+}
+
+/** `/dev/ttys012` (tmux) and `ttys012` (cmux) name the same terminal. */
+function sameTty(left: string | null | undefined, right: string | null | undefined): boolean {
+    const name = (tty: string | null | undefined) => tty?.replace(/^\/dev\//, "") ?? "";
+    return name(left) !== "" && name(left) === name(right);
+}
+
+/**
+ * Why the agent's tmux pane is no longer the one the exit command may be typed into, or null when it is. The pane
+ * must still belong to the session; for an adopted session it must also still run on the tty adoption saw. tmux
+ * pane ids are reused after a tmux server restart, and the cmux surface UUID cannot tell (the client surface stays).
+ */
+async function tmuxPaneProblem(
+    record: CloseSubject,
+    io: Pick<SessionCloseIO, "tmuxPanes">
+): Promise<{ reason: CloseReason; note: string } | null> {
+    if (!record.tmuxSession || !record.tmuxPane) {
+        return null;
+    }
+
+    const listing = await io.tmuxPanes(record.tmuxSession);
+
+    if (!listing.ok) {
+        return {
+            reason: "identity-unknown",
+            note: `the tmux pane ${record.tmuxPane} could not be checked (${listing.reason}), so nothing is typed into it`,
+        };
+    }
+
+    const pane = listing.items.find((entry) => entry.pane === record.tmuxPane);
+    const ttyMoved = isAdopted(record) && pane !== undefined && !sameTty(pane.tty, record.tty);
+
+    if (!pane || ttyMoved) {
+        return {
+            reason: "workspace-moved",
+            note: `tmux pane ${record.tmuxPane} is ${pane ? "now another terminal" : "no longer in"} ${record.tmuxSession}, so the exit command has no safe target`,
+        };
+    }
+
+    return null;
+}
+
 /** The open record whose surface UUID is this live surface's, if any. A ref never decides: refs renumber after a restart. */
 export function recordedSessionFor(
     open: readonly SessionCreatedRecord[],
@@ -139,7 +193,10 @@ export interface SessionCloseIO {
     agentRunning(record: CloseSubject): Promise<boolean>;
     /** `force`: the user passed --force, so cmux may kill a process that is still running there. */
     closeWorkspace(workspace: string, window: string | null, force: boolean): Promise<void>;
-    killTmux(session: string): Promise<void>;
+    /** Kill a tmux session; a session that is already gone counts as killed. */
+    killTmux(session: string): Promise<{ ok: true } | { ok: false; reason: string }>;
+    /** The panes of one tmux session (matched exactly), or why tmux did not answer. */
+    tmuxPanes(session: string): Promise<TmuxListing<TmuxPaneInfo>>;
     sleep(ms: number): Promise<void>;
     now(): number;
 }
@@ -223,7 +280,7 @@ async function recordedIdentityProblem(input: {
     record: SessionCreatedRecord;
     stage: IdentityStage;
     window: string | null;
-    io: Pick<SessionCloseIO, "listWorkspaces" | "surfaceId">;
+    io: Pick<SessionCloseIO, "listWorkspaces" | "surfaceId" | "tmuxPanes">;
 }): Promise<{ reason: CloseReason; note: string } | null> {
     const { record, io } = input;
     const listed = (await io.listWorkspaces(input.window)).find((workspace) => workspace.ref === record.workspace);
@@ -259,7 +316,7 @@ async function recordedIdentityProblem(input: {
         };
     }
 
-    return null;
+    return input.stage === "exit" ? tmuxPaneProblem(record, io) : null;
 }
 
 /**
@@ -270,7 +327,8 @@ async function recordedIdentityProblem(input: {
  */
 async function adoptedIdentityProblem(
     record: AdoptedSession,
-    io: Pick<SessionCloseIO, "surfaceId">
+    stage: IdentityStage,
+    io: Pick<SessionCloseIO, "surfaceId" | "tmuxPanes">
 ): Promise<{ reason: CloseReason; note: string } | null> {
     const live = await io.surfaceId(record.surface);
 
@@ -285,7 +343,8 @@ async function adoptedIdentityProblem(
         };
     }
 
-    return null;
+    // The surface only shows the tmux client: the pane the exit command is typed into is checked on its own.
+    return stage === "close" ? null : tmuxPaneProblem(record, io);
 }
 
 /**
@@ -364,7 +423,7 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
         }
 
         if (isAdopted(record)) {
-            const moved = await adoptedIdentityProblem(record, io);
+            const moved = await adoptedIdentityProblem(record, stage, io);
             return moved ? refuse(moved.reason, moved.note) : null;
         }
 
@@ -480,10 +539,19 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
 
     report.steps.workspaceClosed = !stillThere;
 
+    let tmuxLeftBehind = false;
+
     if (record?.tmuxSession) {
         if (options.killTmux) {
-            await io.killTmux(record.tmuxSession);
-            report.steps.tmuxKilled = true;
+            const killed = await io.killTmux(record.tmuxSession);
+            report.steps.tmuxKilled = killed.ok;
+
+            if (!killed.ok) {
+                tmuxLeftBehind = true;
+                report.notes.push(
+                    `tmux session ${record.tmuxSession} may still run (${killed.reason}); end it with tmux kill-session -t ${record.tmuxSession}`
+                );
+            }
         } else {
             // The closed record leaves the open list, so a second `close --kill-tmux` cannot find it: name tmux itself.
             report.notes.push(
@@ -492,7 +560,8 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
         }
     }
 
-    report.outcome = report.steps.workspaceClosed ? "closed" : "partial";
+    // A requested tmux kill that failed is not a full close: the record stays open, so a second close can finish it.
+    report.outcome = report.steps.workspaceClosed && !tmuxLeftBehind ? "closed" : "partial";
 
     // A partial close keeps the record open, so a second `close` can finish the job.
     if (record && !isAdopted(record) && report.outcome === "closed") {

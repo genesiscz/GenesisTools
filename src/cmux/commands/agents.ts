@@ -202,6 +202,7 @@ export async function runSessionNew(
             workspaceId: started.workspaceId,
             surfaceId: started.surfaceId,
             tmuxSession: started.tmuxSession,
+            tmuxPane: started.tmuxPane,
             pidFile,
             command: started.command,
             createdAt: new Date().toISOString(),

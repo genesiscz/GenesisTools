@@ -11,7 +11,7 @@ import { argvWithChildDeadline } from "@genesiscz/utils/process/child-deadline";
 import { capture } from "@genesiscz/utils/process/ps";
 import { classifyPid } from "@genesiscz/utils/process-identity";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
-import { listTmuxClients, listTmuxPanes } from "@genesiscz/utils/tmux/sessions";
+import { killTmuxSessionExact, listTmuxClients, listTmuxPanes } from "@genesiscz/utils/tmux/sessions";
 import {
     type CmuxTreeView,
     joinTmuxPanes,
@@ -30,6 +30,7 @@ import {
     recordedSessionIdOf,
     type SessionCloseIO,
     surfaceTarget,
+    tmuxExitTarget,
 } from "./session-close";
 import type { SessionCreatedRecord, SessionStore } from "./session-store";
 
@@ -272,8 +273,8 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
         async sendExit(record, text) {
             if (record.tmuxSession) {
                 const tmux = resolveTmuxBin();
-                // `=name:` matches the session name exactly; a bare name falls back to a prefix match on another session.
-                const target = `=${record.tmuxSession}:`;
+                // The agent's own pane (checked right before this), never whichever pane the session shows now.
+                const target = tmuxExitTarget(record) ?? `=${record.tmuxSession}:`;
                 for (const keys of [["-l", "--", text], ["Enter"]]) {
                     const sent = await runBounded([tmux, "send-keys", "-t", target, ...keys]);
 
@@ -325,15 +326,8 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
                 ...(force ? ["--force"] : []),
             ]);
         },
-        async killTmux(session) {
-            const result = await runBounded([resolveTmuxBin(), "kill-session", "-t", `=${session}`]);
-
-            if (result.timedOut) {
-                log.warn({ session }, "tmux kill-session timed out; the tmux session may still run");
-            } else if (result.code !== 0) {
-                log.debug({ session, stderr: result.stderr.trim() }, "tmux kill-session failed (already gone?)");
-            }
-        },
+        killTmux: (session) => killTmuxSessionExact(session),
+        tmuxPanes: (session) => listTmuxPanes(session),
         sleep: (ms) => Bun.sleep(ms),
         now: () => Date.now(),
     };

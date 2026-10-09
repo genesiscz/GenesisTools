@@ -157,11 +157,34 @@ export class MessageIdExhaustedError extends Error {
  * Allocates seq + ts under the single feed lock — no separate counters file.
  */
 export async function appendFeed(paths: SessionPaths, event: NonMessageInput): Promise<FeedEvent> {
+    const appended = await appendFeedWhen(paths, () => event);
+
+    if (!appended) {
+        throw new Error("appendFeed: the event was dropped");
+    }
+
+    return appended;
+}
+
+/**
+ * Append the event `build` returns for the feed as it is under the feed lock, or nothing when it returns null.
+ * The decision and the write happen under one lock, so no other writer can change the feed in between.
+ */
+export async function appendFeedWhen(
+    paths: SessionPaths,
+    build: (existing: readonly FeedEvent[]) => NonMessageInput | null
+): Promise<FeedEvent | null> {
     return withFileLock(
         `${paths.feedPath}.lock`,
         async () => {
             ensureFeedFile(paths.feedPath);
             const existing = await readFeed(paths);
+            const event = build(existing);
+
+            if (!event) {
+                return null;
+            }
+
             const seq = nextSeqFromEvents(existing);
             const fullEvent = { ...event, seq, ts: new Date().toISOString() } as unknown as FeedEvent;
             appendLine(paths.feedPath, fullEvent);

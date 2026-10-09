@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
+import { appendFeed, readFeed } from "../lib/feed";
 import { filterForAgent, isVisibleToAgent } from "../lib/filter";
-import { leaveReasonOf, presentAgents, remainingAgentNames } from "../lib/leave";
+import { announceLeave, leaveReasonOf, presentAgents, remainingAgentNames } from "../lib/leave";
+import { ensureSessionDir, sessionPaths } from "../lib/paths";
 import type { AgentRecord, FeedEvent } from "../lib/types";
 
 const agentAlpha: AgentRecord = {
@@ -257,15 +263,16 @@ describe("filter.filterForAgent", () => {
 });
 
 describe("agent_left", () => {
-    const loggedIn = (seq: number, id: string, name: string): FeedEvent => ({
+    const loggedIn = (seq: number, id: string, name: string, loginId?: string): FeedEvent => ({
         seq,
         ts: "2026-01-01T00:00:01Z",
         type: "logged_in",
         agent_id: id,
         agent_name: name,
         mode: "once",
+        ...(loginId ? { login_id: loginId } : {}),
     });
-    const left = (seq: number, id: string, name: string): FeedEvent => ({
+    const left = (seq: number, id: string, name: string, loginId?: string): FeedEvent => ({
         seq,
         ts: "2026-01-01T00:00:02Z",
         type: "agent_left",
@@ -273,6 +280,7 @@ describe("agent_left", () => {
         agent_name: name,
         reason: "leave",
         remaining: [],
+        ...(loginId ? { login_id: loginId } : {}),
     });
 
     test("reaches every agent but the leaver, a --once receiver included", () => {
@@ -306,5 +314,62 @@ describe("agent_left", () => {
         expect(leaveReasonOf("stream", "cap")).toBe("cap");
         // A stream login that stopped on its own (its watch failed) leaves nobody listening either.
         expect(leaveReasonOf("stream", "clean_exit")).toBe("ended");
+    });
+
+    test("a leave that names an older login does not take the agent's newer login off the bus", () => {
+        // The old listener released its slot, the replacement logged in, then the old listener's leave landed.
+        const events: FeedEvent[] = [
+            loggedIn(1, "agt_alpha", "alpha", "login-old"),
+            loggedIn(2, "agt_beta", "beta"),
+            loggedIn(3, "agt_alpha", "alpha", "login-new"),
+            left(4, "agt_alpha", "alpha", "login-old"),
+        ];
+
+        expect(presentAgents(events).has("agt_alpha")).toBe(true);
+        expect(remainingAgentNames(events, "agt_beta")).toEqual(["alpha"]);
+        // The current login's own leave, and a manual leave with no login id, still end it.
+        expect(presentAgents([...events, left(5, "agt_alpha", "alpha", "login-new")]).has("agt_alpha")).toBe(false);
+        expect(presentAgents([...events, left(5, "agt_alpha", "alpha")]).has("agt_alpha")).toBe(false);
+    });
+
+    test("announceLeave writes no agent_left for a login that a newer one replaced, and writes it for the current one", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-leave-generation-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const paths = sessionPaths("leave-generation");
+            ensureSessionDir(paths);
+            await appendFeed(paths, {
+                type: "logged_in",
+                agent_id: "agt_alpha",
+                agent_name: "alpha",
+                mode: "stream",
+                login_id: "login-old",
+            });
+            await appendFeed(paths, {
+                type: "logged_in",
+                agent_id: "agt_alpha",
+                agent_name: "alpha",
+                mode: "stream",
+                login_id: "login-new",
+            });
+
+            const stale = await announceLeave(paths, {
+                agent_id: "agt_alpha",
+                agent_name: "alpha",
+                reason: "signal",
+                login_id: "login-old",
+            });
+            expect(stale).toBeNull();
+            expect((await readFeed(paths)).some((event) => event.type === "agent_left")).toBe(false);
+
+            const current = await announceLeave(paths, {
+                agent_id: "agt_alpha",
+                agent_name: "alpha",
+                reason: "signal",
+                login_id: "login-new",
+            });
+            expect(current).toMatchObject({ type: "agent_left", login_id: "login-new" });
+            expect(presentAgents(await readFeed(paths)).has("agt_alpha")).toBe(false);
+        });
     });
 });

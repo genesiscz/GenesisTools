@@ -33,6 +33,8 @@ export interface LoggedInEvent extends FeedEventBase {
     agent_id: string;
     agent_name: string;
     mode: AgentMode;
+    /** One id per login process. A leave that names an older login of the same agent does not end this one. */
+    login_id?: string;
 }
 
 export interface LoggedOutEvent extends FeedEventBase {
@@ -72,6 +74,8 @@ export interface AgentLeftEvent extends FeedEventBase {
     /** Names of the agents still on the bus, the leaver excluded. */
     remaining: string[];
     note?: string;
+    /** The login that ended; absent for `tools agents leave`, which ends whichever login is current. */
+    login_id?: string;
 }
 
 export interface StaleLockReapedEvent extends FeedEventBase {
@@ -126,6 +130,8 @@ export interface SlotLockPayload {
     owner: string;
     kind: "login";
     mode?: AgentMode;
+    /** The `login_id` of the holding login, so a reaped login's leave names that login only. */
+    login_id?: string;
 }
 
 export interface SessionPaths {

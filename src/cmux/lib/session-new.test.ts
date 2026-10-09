@@ -58,6 +58,7 @@ function harness(overrides: Partial<SessionNewIO> = {}): { io: SessionNewIO; cal
         shell: () => "/bin/zsh",
         createTmuxShell: async (session, cwd, shell) => {
             calls.push(["tmux-shell", session, cwd, shell]);
+            return "%41";
         },
         sendTmuxKeys: async (session, command) => {
             calls.push(["tmux-keys", session, command]);
@@ -208,6 +209,7 @@ test("the focused window is passed even when the caller is outside cmux, and foc
         workspaceId: "uuid-workspace:9",
         surfaceId: "uuid-surface:8",
         tmuxSession: null,
+        tmuxPane: null,
         cwd: DEMO,
         command: CLAUDE,
     });
@@ -321,6 +323,8 @@ test("--via-tmux starts a login shell, send-keys the claude line, and attaches",
     );
 
     expect(result.tmuxSession).toBe("cmux-demo-ab12cd");
+    // The agent's pane is recorded, so close types its exit there and nowhere else.
+    expect(result.tmuxPane).toBe("%41");
     expect(result.command).toBe("tmux attach -t 'cmux-demo-ab12cd'");
     expect(calls[0]).toEqual(["tmux-shell", "cmux-demo-ab12cd", DEMO, "/bin/zsh"]);
     expect(calls[1]).toEqual(["tmux-keys", "cmux-demo-ab12cd", CLAUDE]);

@@ -6,6 +6,7 @@ import {
     importStorePackage,
     isStorePackageInstalled,
     packageStoreDir,
+    packageStoreInstallLock,
     STORE_PACKAGES,
 } from "@genesiscz/utils/package-store";
 import { bunAddCommands, ensurePackages, installStorePackages } from "./packages";
@@ -193,6 +194,59 @@ describe("store installs across processes", () => {
 
         expect(peak).toBe(1);
         expect(adds).toHaveLength(1);
+        expect(isStorePackageInstalled(pkg)).toBe(true);
+    });
+});
+
+describe("a stalled bun add", () => {
+    afterEach(() => {
+        mock.restore();
+        rmSync(join(packageStoreDir(), "node_modules"), { recursive: true, force: true });
+    });
+
+    /** A bun add that never ends by itself; `ignoreTerm` makes it survive SIGTERM too. */
+    function stalledAdd(signals: string[], ignoreTerm: boolean): ReturnType<typeof Bun.spawn> {
+        let exit: (code: number) => void = () => {};
+        const exited = new Promise<number>((resolve) => {
+            exit = resolve;
+        });
+        const kill = (signal?: string | number) => {
+            signals.push(String(signal));
+
+            if (signal === "SIGKILL" || !ignoreTerm) {
+                exit(137);
+            }
+        };
+
+        return { ...fakeAddProc(), exited, kill };
+    }
+
+    test("is killed at its deadline, with SIGKILL after an ignored SIGTERM, and the store lock is released", async () => {
+        const pkg = "@lancedb/lancedb";
+        const signals: string[] = [];
+        let stalled = true;
+        spyOn(Bun, "spawn").mockImplementation((cmd) => {
+            if (!isBunAdd(cmd)) {
+                throw new Error(`unexpected spawn: ${String(cmd)}`);
+            }
+
+            if (stalled) {
+                return stalledAdd(signals, true);
+            }
+
+            writeStorePackage(pkg, { "package.json": `{"version": "${STORE_PACKAGES[pkg]}"}` });
+            return fakeAddProc();
+        });
+
+        await expect(installStorePackages([pkg], { silent: true, timeoutMs: 20, killGraceMs: 10 })).rejects.toThrow(
+            "did not finish"
+        );
+        expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+        expect(existsSync(packageStoreInstallLock())).toBe(false);
+
+        // The next installer gets the lock at once and installs normally.
+        stalled = false;
+        await installStorePackages([pkg], { silent: true, timeoutMs: 1_000 });
         expect(isStorePackageInstalled(pkg)).toBe(true);
     });
 });

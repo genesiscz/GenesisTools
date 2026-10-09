@@ -200,6 +200,7 @@ test("a --via-tmux session is found through the surface whose tmux client shows 
         surface: "surface:6",
         surfaceId: "uuid-surface:6",
         tmuxSession: "cmux-app-ab12cd",
+        tmuxPane: "%41",
         tty: "ttys041",
     });
     // Without the tmux join it stays unfound, as before: no surface is ever guessed.

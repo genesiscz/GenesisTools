@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
+import type { TmuxListing, TmuxPaneInfo } from "@genesiscz/utils/tmux/sessions";
 import {
     type AdoptedSession,
     closeSession,
@@ -9,6 +10,7 @@ import {
     type SessionCloseIO,
     surfaceTarget,
     type TurnLookup,
+    tmuxExitTarget,
 } from "./session-close";
 import { openSessions, type SessionCreatedRecord, type SessionRecordLine } from "./session-store";
 
@@ -56,6 +58,9 @@ function fake(input: {
     uuids?: Record<string, string>;
     /** The exit command and the workspace close THROW: a refusal test fails loudly if it reaches them. */
     forbidIrreversible?: boolean;
+    /** The tmux pane listing per lookup; defaults to the record's own pane on its pane tty. */
+    tmuxPanes?: (session: string, call: number) => TmuxListing<TmuxPaneInfo>;
+    killTmux?: { ok: true } | { ok: false; reason: string };
 }): Fake {
     const calls: string[] = [];
     const lines = [...(input.lines ?? [created()])];
@@ -63,6 +68,7 @@ function fake(input: {
     let surfaces = new Set(["surface:8", "surface:21"]);
     let listings = 0;
     let lookups = 0;
+    let paneLookups = 0;
     const uuidOf = (ref: string) => input.uuids?.[ref] ?? `S${ref.split(":")[1]}`;
     const forbid = (step: string) => {
         if (input.forbidIrreversible) {
@@ -119,6 +125,20 @@ function fake(input: {
         },
         killTmux: async (session) => {
             calls.push(`kill ${session}`);
+            forbid("the tmux kill");
+            return input.killTmux ?? { ok: true };
+        },
+        tmuxPanes: async (session) => {
+            paneLookups += 1;
+
+            if (input.tmuxPanes) {
+                return input.tmuxPanes(session, paneLookups);
+            }
+
+            return {
+                ok: true,
+                items: [{ pane: "%41", session, tty: "/dev/ttys041", sessionCreatedMs: 0, visible: true }],
+            };
         },
         sleep: async (ms) => {
             clock += ms;
@@ -461,4 +481,97 @@ test("a turn state that could not be read refuses like a running turn, and --for
     const forced = fake({ lines: [created({ tmuxSession: "cmux-app-ab12cd" })], turn: unreadable, runningChecks: 1 });
     expect((await closeSession("codex-app-ab12cd", { graceMs: 1_000, force: true }, forced.io)).outcome).toBe("closed");
     expect(forced.calls).toContain("exit /quit");
+});
+
+/** An adopted --via-tmux grok: the surface shows the tmux client, the agent runs in pane %41 on ttys041. */
+function adoptedTmux(): AdoptedSession {
+    return { ...adoptedGrok(), tmuxSession: "work-grok", tmuxPane: "%41", tty: "ttys041" };
+}
+
+test("an adopted tmux session's exit goes to its own pane, never to the pane the session shows now", () => {
+    expect(tmuxExitTarget(adoptedTmux())).toBe("%41");
+    // A record written before panes were stored still names its session exactly.
+    expect(tmuxExitTarget(created({ tmuxSession: "cmux-app-ab12cd" }))).toBe("=cmux-app-ab12cd:");
+    expect(tmuxExitTarget(created())).toBeNull();
+});
+
+test("an adopted tmux pane that left its session, or now runs another terminal, gets no exit and no close", async () => {
+    const cases: { label: string; listing: TmuxListing<TmuxPaneInfo> }[] = [
+        { label: "pane gone", listing: { ok: true, items: [] } },
+        {
+            label: "pane id reused on another tty (tmux server restarted)",
+            listing: {
+                ok: true,
+                items: [{ pane: "%41", session: "work-grok", tty: "/dev/ttys099", sessionCreatedMs: 0, visible: true }],
+            },
+        },
+        { label: "tmux did not answer", listing: { ok: false, reason: "tmux list-panes did not answer within 10 s" } },
+    ];
+
+    for (const { label, listing } of cases) {
+        for (const force of [false, true]) {
+            // Lookup 1 is the first check; the pane changes before the exit (lookup 2).
+            const changed = fake({
+                adoptable: adoptedTmux(),
+                tmuxPanes: (session, call) =>
+                    call === 1
+                        ? {
+                              ok: true,
+                              items: [
+                                  { pane: "%41", session, tty: "/dev/ttys041", sessionCreatedMs: 0, visible: true },
+                              ],
+                          }
+                        : listing,
+                forbidIrreversible: true,
+            });
+            const report = await closeSession("0199ee55", { graceMs: 1_000, force, killTmux: true }, changed.io);
+
+            expect({ label, force, outcome: report.outcome, exitSent: report.steps.exitSent }).toEqual({
+                label,
+                force,
+                outcome: "refused",
+                exitSent: false,
+            });
+            expect(changed.calls).toEqual(["adopt 0199ee55"]);
+        }
+    }
+});
+
+test("an adopted tmux session whose pane holds quits through that pane and closes its surface", async () => {
+    const steady = fake({ adoptable: adoptedTmux(), runningChecks: 1 });
+    const report = await closeSession("0199ee55", { graceMs: 1_000 }, steady.io);
+
+    expect(report).toMatchObject({ outcome: "closed", reason: null, steps: { exitSent: true, workspaceClosed: true } });
+    expect(steady.calls).toEqual(["adopt 0199ee55", "exit /exit", "close-surface S21"]);
+});
+
+test("a recorded tmux session whose pane left its session is refused before the exit; --force still closes", async () => {
+    const lines = [created({ tmuxSession: "cmux-app-ab12cd", tmuxPane: "%41" })];
+    const gone = fake({ lines, tmuxPanes: () => ({ ok: true, items: [] }), forbidIrreversible: true });
+
+    expect((await closeSession("codex-app-ab12cd", { graceMs: 0 }, gone.io)).reason).toBe("workspace-moved");
+    expect(gone.calls).toEqual([]);
+
+    const holds = fake({ lines, runningChecks: 1 });
+    expect((await closeSession("codex-app-ab12cd", { graceMs: 1_000 }, holds.io)).outcome).toBe("closed");
+    expect(holds.calls).toEqual(["exit /quit", "close workspace:9"]);
+});
+
+test("a tmux kill that fails leaves the close partial and the record open; one that works closes it", async () => {
+    const lines = [created({ tmuxSession: "cmux-app-ab12cd" })];
+    const failed = fake({
+        lines,
+        runningChecks: 1,
+        killTmux: { ok: false, reason: "tmux kill-session did not answer" },
+    });
+    const report = await closeSession("codex-app-ab12cd", { graceMs: 1_000, killTmux: true }, failed.io);
+
+    expect(report).toMatchObject({ outcome: "partial", steps: { tmuxKilled: false, workspaceClosed: true } });
+    expect(report.notes.join(" ")).toContain("may still run");
+    expect(openSessions(failed.lines)).toHaveLength(1);
+
+    const killed = fake({ lines, runningChecks: 1 });
+    const ok = await closeSession("codex-app-ab12cd", { graceMs: 1_000, killTmux: true }, killed.io);
+    expect(ok).toMatchObject({ outcome: "closed", steps: { tmuxKilled: true } });
+    expect(openSessions(killed.lines)).toEqual([]);
 });

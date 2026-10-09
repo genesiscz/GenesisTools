@@ -221,16 +221,32 @@ async function runBunAdd(packages: string[], opts: { label: string; silent: bool
     }
 }
 
-/** A cold `bun add` of the ML stack takes minutes; a dead holder's lock is stolen sooner (file-lock.ts). */
-const STORE_INSTALL_LOCK_TIMEOUT_MS = 15 * 60_000;
+/**
+ * How long one `bun add` may run. A cold install of the ML stack takes minutes; past this it is killed, so a
+ * stalled install releases the shared store lock instead of holding it for every other checkout.
+ */
+const BUN_ADD_TIMEOUT_MS = 10 * 60_000;
+/** After SIGTERM, how long `bun add` gets to exit before SIGKILL. */
+const BUN_ADD_KILL_GRACE_MS = 5_000;
+/** Longer than one bounded `bun add`, so a waiter does not give up on a holder that is still within its deadline. */
+const STORE_INSTALL_LOCK_TIMEOUT_MS = BUN_ADD_TIMEOUT_MS + 2 * BUN_ADD_KILL_GRACE_MS + 60_000;
+
+export interface BunAddLimits {
+    timeoutMs?: number;
+    killGraceMs?: number;
+}
 
 /**
  * Installs store packages under a lock file in the store. Every CLI process and worktree shares the store,
  * and the in-process queue above serializes one process only: two cold installers would both rewrite the
  * store's package.json and run `bun add` at once, and one manifest write could drop the other's dependency.
- * After the lock is taken, packages another process installed meanwhile are skipped.
+ * After the lock is taken, packages another process installed meanwhile are skipped. The install inside is
+ * bounded (spawnBunAdd), so the lock is always released.
  */
-export async function installStorePackages(packages: string[], opts: { silent: boolean }): Promise<void> {
+export async function installStorePackages(
+    packages: string[],
+    opts: { silent: boolean } & BunAddLimits
+): Promise<void> {
     mkdirSync(packageStoreDir(), { recursive: true });
     await withFileLock(
         packageStoreInstallLock(),
@@ -252,9 +268,29 @@ export async function installStorePackages(packages: string[], opts: { silent: b
     );
 }
 
-async function spawnBunAdd(command: { cwd: string; cmd: string[] }, opts: { silent: boolean }): Promise<void> {
+/** The exit code, or null when the deadline passed first. */
+async function exitWithin(exited: Promise<number>, ms: number): Promise<number | null> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), ms);
+    });
+
+    try {
+        return await Promise.race([exited, deadline]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/** One `bun add`, killed (SIGTERM, then SIGKILL) when it outlives its deadline; a timeout is a thrown error. */
+export async function spawnBunAdd(
+    command: { cwd: string; cmd: string[] },
+    opts: { silent: boolean } & BunAddLimits
+): Promise<void> {
     const { cwd, cmd } = command;
-    logger.debug({ cwd, cmd }, "ensurePackages: running bun add");
+    const timeoutMs = opts.timeoutMs ?? BUN_ADD_TIMEOUT_MS;
+    const graceMs = opts.killGraceMs ?? BUN_ADD_KILL_GRACE_MS;
+    logger.debug({ cwd, cmd, timeoutMs }, "ensurePackages: running bun add");
     const proc = Bun.spawn(cmd, {
         cwd,
         stdout: opts.silent ? "ignore" : "inherit",
@@ -264,7 +300,21 @@ async function spawnBunAdd(command: { cwd: string; cmd: string[] }, opts: { sile
     // Start draining stderr concurrently — waiting until after proc.exited can deadlock
     // if the child writes enough to fill the OS pipe buffer
     const stderrP = new Response(proc.stderr).text();
-    const exitCode = await proc.exited;
+    const exitCode = await exitWithin(proc.exited, timeoutMs);
+
+    if (exitCode === null) {
+        logger.warn({ cwd, cmd, timeoutMs }, "bun add outlived its deadline; killing it");
+        proc.kill("SIGTERM");
+
+        if ((await exitWithin(proc.exited, graceMs)) === null) {
+            proc.kill("SIGKILL");
+            await exitWithin(proc.exited, graceMs);
+        }
+
+        throw new Error(
+            `${cmd.join(" ")} did not finish within ${Math.round(timeoutMs / 1000)} s in ${cwd}; it was killed`
+        );
+    }
 
     if (exitCode !== 0) {
         const stderr = await stderrP;

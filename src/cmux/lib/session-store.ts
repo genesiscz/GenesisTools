@@ -27,6 +27,8 @@ export interface SessionCreatedRecord {
     workspaceId?: string | null;
     surfaceId?: string | null;
     tmuxSession: string | null;
+    /** The tmux pane (`%41`) the agent runs in; the exit command targets it. Absent on older lines. */
+    tmuxPane?: string | null;
     /** The shell that runs the agent writes its pid here. */
     pidFile: string;
     command: string;

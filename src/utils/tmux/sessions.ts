@@ -790,6 +790,27 @@ export async function ensureTmuxServerPersists(tmuxBin?: string): Promise<void> 
     lastServerPersistAt = Date.now();
 }
 
+/**
+ * Kill one session, matched exactly (a bare name falls back to a prefix match on another session), and say
+ * whether it is gone. A session or server that does not exist counts as gone; a tmux that does not answer
+ * within the shared deadline does not.
+ */
+export async function killTmuxSessionExact(sessionName: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const result = await runTmux([resolveTmuxBin(), "kill-session", "-t", `=${sessionName}`]);
+    const stderr = result.stderr?.trim() ?? "";
+
+    if (result.exitCode === 0 || (result.exitCode !== null && TMUX_ABSENT.test(stderr))) {
+        return { ok: true };
+    }
+
+    const reason =
+        result.exitCode === null
+            ? `tmux kill-session did not answer within ${TMUX_SPAWN_GUARD.timeout / 1000} s`
+            : `tmux kill-session failed (${result.exitCode})${tmuxErrorDetail(stderr)}`;
+    logger.warn({ sessionName, exitCode: result.exitCode, stderr }, "tmux kill-session did not end the session");
+    return { ok: false, reason };
+}
+
 export async function killTmuxSession(sessionName: string): Promise<void> {
     const tmuxBin = resolveTmuxBin();
     await runTmux([tmuxBin, "kill-session", "-t", sessionName]);

@@ -35,7 +35,7 @@ async function runLeaveImpl(opts: LeaveOpts): Promise<void> {
         reason: "leave",
         ...(opts.note ? { note: opts.note } : {}),
     });
-    const remaining = event.type === "agent_left" ? event.remaining : [];
+    const remaining = event?.type === "agent_left" ? event.remaining : [];
     out.result({ left: record.agent_name, session: paths.session, remaining });
     await out.flush();
 }
