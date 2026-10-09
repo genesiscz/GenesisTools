@@ -8,6 +8,7 @@ import { join, resolve } from "node:path";
 import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
 import { postDecisions, readDecisions } from "@app/question/lib/decisions/store";
 import { postAskForm } from "@app/question/lib/pending/ask";
+import { MAX_ANSWER_IMAGE_BYTES } from "@app/question/lib/pending/form";
 import { getForm, listFormsSnapshot, openPendingStore } from "@app/question/lib/pending/store";
 import * as transcripts from "@genesiscz/utils/ai/transcripts";
 import { env } from "@genesiscz/utils/env";
@@ -511,6 +512,59 @@ describe("widget source and delivery contracts", () => {
             const recorded = getForm(db, form.id);
             expect(recorded?.status).toBe("answered");
             expect(recorded?.answers?.shot?.images?.map((entry) => entry.name)).toEqual(["shot.png"]);
+        } finally {
+            db.close();
+        }
+    });
+
+    test("a widget image over the answer limit stays context and never fails a complete answer", async () => {
+        const directory = await root();
+        const db = openPendingStore(join(directory, "questions.db"));
+        const ask = { db, eventBase: directory, logBase: directory, notify: false, env: {}, ambient: false };
+        try {
+            const post = (items: Parameters<typeof postAskForm>[0]["items"]) =>
+                postAskForm({ projectPath: "/fixture/project", sessionHint: target.sessionId, items }, ask);
+            const imagePath = join(directory, "large.png");
+            await writeFile(imagePath, Buffer.alloc(MAX_ANSWER_IMAGE_BYTES + 1));
+            const large: WidgetAsset = {
+                id: randomUUID(),
+                type: "image",
+                name: "large.png",
+                path: imagePath,
+                sha256: "fixture-large",
+                mimeType: "image/png",
+                width: 4000,
+                height: 4000,
+                bytes: MAX_ANSWER_IMAGE_BYTES + 1,
+            };
+            const formMessage = (id: string, answers: unknown[]) =>
+                widgetOutgoingSchema.parse({
+                    id: randomUUID(),
+                    target,
+                    assetIds: [large.id],
+                    sequence: 1,
+                    createdAt: Date.now(),
+                    state: "queued",
+                    payload: { kind: "form", id, answers },
+                });
+            const dispatcher = widgetDispatcher({ ask });
+
+            const choice = await post([
+                { id: "pick", promptMarkdown: "Which?", choices: [{ id: "a", label: "A" }], allowImagePaste: true },
+            ]);
+            const answered = formMessage(choice.id, [{ itemId: "pick", selectedChoices: ["a"] }]);
+            await dispatcher.validate(answered, [large]);
+            expect((await dispatcher.dispatch(answered, "<fromImage>large</fromImage>", [large])).delivered).toBe(true);
+            const recorded = getForm(db, choice.id)?.answers?.pick;
+            expect(recorded?.images ?? []).toEqual([]);
+            expect(recorded?.mediaContext).toContain("large");
+
+            const imageOnly = await post([
+                { id: "shot", promptMarkdown: "Show it", allowFreeText: false, allowImagePaste: true },
+            ]);
+            await expect(dispatcher.validate(formMessage(imageOnly.id, [{ itemId: "shot" }]), [large])).rejects.toThrow(
+                "attach a smaller image or answer in text"
+            );
         } finally {
             db.close();
         }

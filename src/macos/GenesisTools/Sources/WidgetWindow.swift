@@ -87,6 +87,12 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+/// The widget face's single-instance lock. Close-on-exec, so a face it launches (Hub, Clicky) never inherits the
+/// descriptor and keeps the lock held after the widget dies, which would make every later --widget exit at once.
+func openWidgetInstanceLock(in base: URL) -> Int32 {
+    open(base.appendingPathComponent("widget-instance.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+}
+
 func runAgentWidget(_ args: [String]) -> Never {
     MainActor.assumeIsolated {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -97,8 +103,7 @@ func runAgentWidget(_ args: [String]) -> Never {
             NSLog("Widget could not create its instance directory: %@", error.localizedDescription)
             exit(1)
         }
-        let descriptor = open(
-            base.appendingPathComponent("widget-instance.lock").path, O_CREAT | O_RDWR, 0o600)
+        let descriptor = openWidgetInstanceLock(in: base)
         guard descriptor >= 0 else {
             NSLog("Widget instance lock failed")
             exit(1)
