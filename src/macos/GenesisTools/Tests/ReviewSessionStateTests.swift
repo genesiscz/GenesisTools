@@ -181,6 +181,24 @@ final class ReviewSessionStateTests: XCTestCase {
         XCTAssertEqual(HubPlace.resumed(["--session", "old"], place: place), ["--session", "old"], "without --resume the file is ignored")
     }
 
+    func testTheHubPlaceAndTheWindowStateFollowASandboxedHome() {
+        let sandbox = FileManager.default.temporaryDirectory.appendingPathComponent("review-home-\(UUID().uuidString.prefix(8))").path
+        let previous = ProcessInfo.processInfo.environment["GENESIS_TOOLS_HOME"]
+        setenv("GENESIS_TOOLS_HOME", sandbox, 1)
+        defer {
+            if let previous {
+                setenv("GENESIS_TOOLS_HOME", previous, 1)
+            } else {
+                unsetenv("GENESIS_TOOLS_HOME")
+            }
+        }
+
+        XCTAssertEqual(HubPlace.url.path, sandbox + "/.genesis-tools/hub/place.json")
+        XCTAssertEqual(ReviewSessionPersistence.directory.path, sandbox + "/.genesis-tools/review/state")
+        XCTAssertEqual(FaceRecord.directory.deletingLastPathComponent().deletingLastPathComponent().path,
+                       HubPlace.url.deletingLastPathComponent().deletingLastPathComponent().path, "one home holds all three")
+    }
+
     // MARK: Face record
 
     func testOnlyWindowFacesAreRecorded() throws {

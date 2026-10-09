@@ -205,8 +205,8 @@ final class ReviewRootsTests: XCTestCase {
         // A PR head that no checkout holds covers only the PR's own repository: its files go to the
         // host, and the other root's files still open on disk.
         let tools = try XCTUnwrap(model.files.first { $0.path == "tools/README.md" })
-        model.remoteHead = ReviewRemoteHead(branch: "feat/x", sha: "0123456789abcdef", base: nil) { path, line in
-            URL(string: "https://example.com/blob/0123456789abcdef/\(path)#L\(line ?? 0)")
+        model.remoteHead = ReviewRemoteHead(branch: "feat/x", sha: "0123456789abcdef", base: nil) { sha, path, line in
+            URL(string: "https://example.com/blob/\(sha)/\(path)#L\(line ?? 0)")
         }
         XCTAssertNil(model.absolutePath(of: tools))
         XCTAssertEqual(model.hostURL(of: tools.id, line: 2)?.absoluteString, "https://example.com/blob/0123456789abcdef/README.md#L2")

@@ -157,10 +157,12 @@ enum ReviewSessionKey {
 /// Reads, applies and saves one review window's `ReviewSessionState`.
 final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
     static let messageName = "genesisReviewState"
-    static let store = DiskCache(
-        directory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/review/state", isDirectory: true),
-        namespace: "window"
-    )
+    /// Under `genesisHome()`, like the face records: a sandboxed GENESIS_TOOLS_HOME keeps unsent text in the sandbox.
+    static var directory: URL {
+        URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/review/state", isDirectory: true)
+    }
+
+    static let store = DiskCache(directory: directory, namespace: "window")
     static let saveDelay = 1.0
     private static let writer = DispatchQueue(label: "review.state.writer", qos: .utility)
     /// The window's one instance; the user content controller holds only a weak proxy.

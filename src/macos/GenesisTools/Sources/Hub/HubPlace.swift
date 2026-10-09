@@ -14,8 +14,9 @@ struct HubPlace: Codable, Equatable {
     /// The flags that name a place, each with its value; `--resume` replaces them all.
     static let placeFlags: Set<String> = ["--mode", "--session", "--agent", "--pr", "--reveal", "--worktree", "--tab"]
 
+    /// Under `genesisHome()` (GENESIS_TOOLS_HOME), as the face records a rebuild reads beside it.
     static var url: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/hub/place.json")
+        URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/hub/place.json")
     }
 
     init(mode: String, selection: String?, tab: String?) {

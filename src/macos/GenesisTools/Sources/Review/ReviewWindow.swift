@@ -529,10 +529,16 @@ final class ReviewModel: ObservableObject {
         return root.appendingPathComponent(found.file.path).path
     }
 
-    /// The host's copy of this repository's file at `remoteHead`, at a line when given; nil otherwise.
+    /// The host's copy of this repository's file at the commit on screen (`remoteHead` for a scope that
+    /// pins none), at a line when given; nil without a remote head.
     func hostURL(of fileID: String, line: Int? = nil) -> URL? {
         guard let remoteHead, let found = locate(fileID: fileID), found.root.repo?.path == repo.path else { return nil }
-        return remoteHead.hostURL(found.file.path, line)
+        return remoteHead.hostURL(found.file.path, line, at: hostRevision)
+    }
+
+    /// The commit the host links of this repository's files open: the diff's pinned head, else the remote head's.
+    var hostRevision: String? {
+        scope.pinnedHead ?? remoteHead?.sha
     }
 
     /// The repo-relative path of a merged file, for PR threads (which name paths in this repository).
@@ -944,6 +950,8 @@ final class ReviewModel: ObservableObject {
     /// The diff moves to the PR's newest push; the base follows the push's own (a rebase moves it).
     func reloadToNewest() {
         guard let newest = pushNews?.newest, let updated = scope.reloading(to: newest) else { return }
+        // A commit scope does not name the push's base, so the remote head moves here, not in `setScope`.
+        remoteHead = remoteHead?.moved(to: newest.headSha, base: newest.baseSha)
         setScope(updated)
     }
 
@@ -1019,6 +1027,8 @@ final class ReviewModel: ObservableObject {
     func setScope(_ next: DiffScope) {
         guard next != scope else { return }
         scope = next
+        // A PR push on screen (Reload, a version, a compare) moves the commits list and the agent note with it.
+        remoteHead = remoteHead?.following(next)
         restartLoad()
     }
 
@@ -1361,8 +1371,8 @@ final class ReviewModel: ObservableObject {
     /// A file's path actions: the file list's context menu and the diff header's right-click menu.
     func pathActions(of file: DiffFile) -> [ReviewPathAction] {
         var actions: [ReviewPathAction] = []
-        if let url = hostURL(of: file.id), let head = remoteHead {
-            actions.append(ReviewPathAction("Open on the host at \(head.sha.prefix(8))") { ExternalOpener.open(url) })
+        if let url = hostURL(of: file.id), let revision = hostRevision {
+            actions.append(ReviewPathAction("Open on the host at \(revision.prefix(8))") { ExternalOpener.open(url) })
             actions.append(ReviewPathAction("Copy the host URL") { PathOpener.copy(url.absoluteString, what: "URL") })
         }
         if let path = absolutePath(of: file) {

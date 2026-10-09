@@ -74,10 +74,36 @@ final class HubPRFetchTests: XCTestCase {
                        "https://gitlab.example.test/dave/app/-/blob/abc123/a.ts#L1", "a GitLab fork's files live in the fork")
         XCTAssertNil(github.blobURL("", path: "a.ts"))
 
-        let head = ReviewRemoteHead(branch: "feature/widgets", sha: "aaaa1111bbbb", base: "base0", hostURL: { _, _ in nil })
+        let head = ReviewRemoteHead(branch: "feature/widgets", sha: "aaaa1111bbbb", base: "base0", blob: { _, _, _ in nil })
         XCTAssertEqual(head.commitRange, ["base0..aaaa1111bbbb"])
-        XCTAssertEqual(ReviewRemoteHead(branch: "b", sha: "s", base: nil, hostURL: { _, _ in nil }).commitRange, ["s"])
+        XCTAssertEqual(ReviewRemoteHead(branch: "b", sha: "s", base: nil, blob: { _, _, _ in nil }).commitRange, ["s"])
         XCTAssertEqual(head.branchNote, "feature/widgets at aaaa1111bb, not checked out in this folder")
+    }
+
+    func testTheRemoteHeadMovesWithThePushOnScreen() throws {
+        let fork = try decodePR(kind: "gitlab", headSha: nil, cross: true, headRepo: "\"dave/app\"")
+        let head = ReviewRemoteHead(branch: "feature/widgets", sha: "aaaa1111bbbb", base: "base0", forge: fork.commitForge)
+
+        // Reload to a newer push: links, the Committed list and the agent note name the new push.
+        let newer = head.following(.range(base: "base1", head: "cccc2222dddd", label: "!12"))
+        XCTAssertEqual(newer.sha, "cccc2222dddd")
+        XCTAssertEqual(newer.commitRange, ["base1..cccc2222dddd"])
+        XCTAssertEqual(newer.branchNote, "feature/widgets at cccc2222dd, not checked out in this folder")
+        XCTAssertEqual(newer.hostURL("a.ts", 3)?.absoluteString, fork.blobURL("cccc2222dddd", path: "a.ts", line: 3)?.absoluteString)
+
+        // A compare's new end is the push on screen; an end without a recorded base keeps the old one.
+        let compared = head.following(.compare(from: CompareEnd(base: "base0", head: "aaaa1111bbbb"),
+                                               to: CompareEnd(base: nil, head: "eeee3333ffff"), label: "x"))
+        XCTAssertEqual(compared.commitRange, ["base0..eeee3333ffff"])
+
+        // A single commit, a working-tree scope or a range to a moving name leave the PR's head alone,
+        // and a commit's links still open at that commit.
+        XCTAssertEqual(head.following(.commit(sha: "1234567abc", title: "one")).sha, "aaaa1111bbbb")
+        XCTAssertEqual(head.following(.range(base: "base0", head: "HEAD", label: "x")).sha, "aaaa1111bbbb")
+        XCTAssertEqual(head.following(.uncommitted).commitRange, ["base0..aaaa1111bbbb"])
+        XCTAssertEqual(head.hostURL("a.ts", nil, at: "1234567abc")?.absoluteString,
+                       fork.blobURL("1234567abc", path: "a.ts", line: nil)?.absoluteString)
+        XCTAssertEqual(head.moved(to: "aaaa1111bbbb", base: "other").commitRange, ["base0..aaaa1111bbbb"], "the same push keeps its base")
     }
 
     func testAStandaloneReviewWindowRebuildsTheRemoteHeadFromItsArguments() throws {

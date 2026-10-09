@@ -10,8 +10,33 @@ struct ReviewRemoteHead {
     let sha: String
     /// The PR's merge base; nil when the fetch found none.
     let base: String?
-    /// The host's page of a repo-relative file at `sha`, at a line when given.
-    let hostURL: (_ path: String, _ line: Int?) -> URL?
+    /// The host's page of a repo-relative file at a commit, at a line when given.
+    let blob: (_ sha: String, _ path: String, _ line: Int?) -> URL?
+
+    /// The host's page of a repo-relative file at `revision` (default: `sha`), at a line when given.
+    func hostURL(_ path: String, _ line: Int?, at revision: String? = nil) -> URL? {
+        blob(revision ?? sha, path, line)
+    }
+
+    /// The same PR at another push: a Reload to a newer push moves the links, the commits and the note.
+    /// A push without a recorded base keeps this one's.
+    func moved(to head: String, base newBase: String?) -> ReviewRemoteHead {
+        guard head != sha else { return self }
+        return ReviewRemoteHead(branch: branch, sha: head, base: newBase ?? base, blob: blob)
+    }
+
+    /// The head a scope pinned to one of the PR's pushes shows: a range's head and base, a compare's new
+    /// end. A single commit is one of the PR's commits, not a push, so the PR's commit list stays.
+    func following(_ scope: DiffScope) -> ReviewRemoteHead {
+        switch scope {
+        case .range(let rangeBase, let head, _, _) where scope.pinnedHead != nil:
+            return moved(to: head, base: rangeBase)
+        case .compare(_, let to, _, _):
+            return moved(to: to.head, base: to.base)
+        default:
+            return self
+        }
+    }
 
     /// `git log` arguments for the PR's own commits.
     var commitRange: [String] {
@@ -27,7 +52,7 @@ struct ReviewRemoteHead {
 extension ReviewRemoteHead {
     /// A head whose files open on `forge` at `sha`.
     init(branch: String, sha: String, base: String?, forge: ForgeWeb?) {
-        self.init(branch: branch, sha: sha, base: base, hostURL: { path, line in forge?.blob(sha, path: path, line: line) })
+        self.init(branch: branch, sha: sha, base: base, blob: { commit, path, line in forge?.blob(commit, path: path, line: line) })
     }
 
     /// The flags a standalone review window (`runReview`) rebuilds this head from: the PR's checkout is on
