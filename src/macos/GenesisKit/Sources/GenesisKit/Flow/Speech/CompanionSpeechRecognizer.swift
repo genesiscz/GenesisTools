@@ -218,6 +218,9 @@ public final class CompanionSpeechRecognizer: ObservableObject {
     /// waiting on a tail or a final result checks it and gives up the hold
     /// instead of tearing down the next one.
     private var holdId = 0
+    /// finish() waiting for the final result; woken by it, by a cancel, by its deadline or by task cancellation.
+    private var finalWaiter: CheckedContinuation<Void, Never>?
+    var currentHold: Int { holdId }
 
     /// A mic level belongs on the ring only while the hold that measured it is live.
     public func acceptsMicLevel(fromHold hold: Int) -> Bool {
@@ -377,10 +380,7 @@ public final class CompanionSpeechRecognizer: ObservableObject {
         audioSource.stop()
         micLevel = 0
         request?.endAudio()
-        let deadline = Date().addingTimeInterval(timeoutSeconds)
-        while recognizes && !finalized && Date() < deadline && hold == holdId {
-            try? await Task.sleep(nanoseconds: 50_000_000)
-        }
+        await waitForFinal(timeoutSeconds: timeoutSeconds, hold: hold)
         guard hold == holdId else { return "" }
         acc.commit()
         var text = acc.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -412,9 +412,45 @@ public final class CompanionSpeechRecognizer: ObservableObject {
         return text
     }
 
+    /// Suspends until the recognizer reports its final result (or an error), the hold is cancelled, the deadline
+    /// passes, or the calling task is cancelled. Event-driven: one deadline timer, no polling.
+    func waitForFinal(timeoutSeconds: Double, hold: Int) async {
+        guard recognizes, !finalized, hold == holdId else { return }
+        let deadline = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(0, timeoutSeconds) * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.wakeFinalWaiter()
+        }
+        defer { deadline.cancel() }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                guard !finalized, hold == holdId, !Task.isCancelled else {
+                    continuation.resume()
+                    return
+                }
+                wakeFinalWaiter()
+                finalWaiter = continuation
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.wakeFinalWaiter() }
+        }
+    }
+
+    func markFinalized() {
+        finalized = true
+        wakeFinalWaiter()
+    }
+
+    private func wakeFinalWaiter() {
+        let waiter = finalWaiter
+        finalWaiter = nil
+        waiter?.resume()
+    }
+
     /// Abort without a transcript (Esc / tap-cancel).
     public func cancel() {
         holdId += 1
+        wakeFinalWaiter()
         isActive = false
         audioSource.stop()
         teardown()
@@ -459,7 +495,7 @@ public final class CompanionSpeechRecognizer: ObservableObject {
                 if isActive {
                     restartSegment(reason: "utterance final")
                 } else {
-                    finalized = true
+                    markFinalized()
                 }
                 return
             }
@@ -477,7 +513,7 @@ public final class CompanionSpeechRecognizer: ObservableObject {
             if isActive {
                 restartSegment(reason: "error \(error.localizedDescription)")
             } else {
-                finalized = true
+                markFinalized()
             }
         }
     }
@@ -491,7 +527,7 @@ public final class CompanionSpeechRecognizer: ObservableObject {
         request = nil
         box.set(nil)
         guard isActive, restarts < Self.maxRestarts, recognizer != nil else {
-            finalized = true
+            markFinalized()
             if isActive {
                 FlowFocusLog.speech.warning("stt restart budget exhausted (\(self.restarts)) — mic stays open but silent")
             }

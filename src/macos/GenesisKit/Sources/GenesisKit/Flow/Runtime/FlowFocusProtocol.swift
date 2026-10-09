@@ -39,6 +39,8 @@ struct FlowLiveSnapshot: Codable, Equatable {
     let hotkeyStatus: GlobalHotkeyStatus
     let partialText: String
     let micLevel: Double
+    /// Optional so a snapshot from an owner without it still decodes.
+    var accessibilityTrusted: Bool?
 }
 
 struct FocusLiveSnapshot: Codable, Equatable {

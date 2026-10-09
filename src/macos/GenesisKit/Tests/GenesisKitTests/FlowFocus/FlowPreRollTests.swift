@@ -175,6 +175,80 @@ final class FlowPreRollTests: XCTestCase {
         session.stop()
     }
 
+    @MainActor
+    func testAccessibilityIsRequestedByTheOwnerAndClientsShowTheOwnersTrust() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-accessibility-owner-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = FlowStore(directory: root)
+        var config = FlowConfig()
+        config.showPill = false
+        store.saveConfig(config)
+        let owner = FlowSession(store: store)
+        owner.hotkeyBindingEffect = {}
+        owner.preRollEffect = { _ in }
+        var trusted = false
+        var requests = 0
+        owner.accessibilityTrustEffect = { trusted }
+        owner.accessibilityRequestEffect = { requests += 1; trusted = true }
+        owner.start()
+        defer { owner.stop() }
+        XCTAssertFalse(owner.accessibilityTrusted)
+
+        let client = FlowSession(store: FlowStore(directory: root, writesEnabled: false))
+        var forwarded: [String] = []
+        client.remoteCommand = { action, _ in forwarded.append(action) }
+        client.accessibilityRequestEffect = { XCTFail("the client process must not request Accessibility for itself") }
+        client.accessibilityTrustEffect = { true }
+        client.requestAccessibility()
+        XCTAssertEqual(forwarded, ["flow.accessibility"])
+
+        // The runtime runs the forwarded command on the owner, then publishes the owner's snapshot.
+        owner.requestAccessibility()
+        XCTAssertEqual(requests, 1)
+        XCTAssertTrue(owner.accessibilityTrusted)
+        client.applyRemote(owner.liveSnapshot)
+        XCTAssertTrue(client.accessibilityTrusted, "the client shows the trust of the process that pastes")
+        trusted = false
+        owner.refreshAccessibilityTrust()
+        client.applyRemote(owner.liveSnapshot)
+        XCTAssertFalse(client.accessibilityTrusted, "a client's own grant never stands in for the owner's")
+    }
+
+    @MainActor
+    func testFinishWakesOnTheFinalResultACancelOrItsDeadline() async throws {
+        let finalised = CompanionSpeechRecognizer(audioSource: PermissionGuardAudioSource())
+        let clock = ContinuousClock()
+        var started = clock.now
+        let waiting = Task { await finalised.waitForFinal(timeoutSeconds: 30, hold: finalised.currentHold) }
+        for _ in 0..<100 { await Task.yield() }
+        finalised.markFinalized()
+        await waiting.value
+        XCTAssertLessThan(clock.now - started, .seconds(5), "the final result wakes the wait")
+
+        let cancelled = CompanionSpeechRecognizer(audioSource: PermissionGuardAudioSource())
+        started = clock.now
+        let held = Task { await cancelled.waitForFinal(timeoutSeconds: 30, hold: cancelled.currentHold) }
+        for _ in 0..<100 { await Task.yield() }
+        cancelled.cancel()
+        await held.value
+        XCTAssertLessThan(clock.now - started, .seconds(5), "a cancelled hold stops waiting")
+
+        let silent = CompanionSpeechRecognizer(audioSource: PermissionGuardAudioSource())
+        started = clock.now
+        await silent.waitForFinal(timeoutSeconds: 0.2, hold: silent.currentHold)
+        let waited = clock.now - started
+        XCTAssertGreaterThanOrEqual(waited, .milliseconds(150), "with no result the deadline ends the wait")
+        XCTAssertLessThan(waited, .seconds(5))
+
+        let abandoned = CompanionSpeechRecognizer(audioSource: PermissionGuardAudioSource())
+        started = clock.now
+        let caller = Task { await abandoned.waitForFinal(timeoutSeconds: 30, hold: abandoned.currentHold) }
+        for _ in 0..<100 { await Task.yield() }
+        caller.cancel()
+        await caller.value
+        XCTAssertLessThan(clock.now - started, .seconds(5), "a cancelled caller stops waiting")
+    }
+
     func testWholeClipHelperReturnsWithoutStartingUnauthorizedRecognition() async throws {
         guard !CompanionSpeechRecognizer.speechAuthorized() else {
             throw XCTSkip("Negative control needs a runner without Speech authorization")

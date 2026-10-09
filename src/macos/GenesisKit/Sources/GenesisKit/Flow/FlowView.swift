@@ -130,10 +130,9 @@ public struct FlowView: View {
                     .foregroundStyle(Color.settingsTextMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if !FlowInjector.isAccessibilityTrusted {
+            if !session.accessibilityTrusted {
                 Button {
-                    FlowInjector.requestAccessibility()
-                    FlowInjector.openAccessibilitySettings()
+                    session.requestAccessibility()
                 } label: {
                     Text("Grant Accessibility")
                         .font(GenTypography.caption(10, weight: .semibold))
@@ -244,10 +243,9 @@ private struct FlowSettingsPane: View {
                     )
                 }
 
-                if !FlowInjector.isAccessibilityTrusted {
+                if !session.accessibilityTrusted {
                     Button("Grant Accessibility") {
-                        FlowInjector.requestAccessibility()
-                        FlowInjector.openAccessibilitySettings()
+                        session.requestAccessibility()
                     }
                     .buttonStyle(.genHoverPlain())
                     .font(GenTypography.caption(12, weight: .semibold))

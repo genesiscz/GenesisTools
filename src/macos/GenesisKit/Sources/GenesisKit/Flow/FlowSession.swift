@@ -25,6 +25,9 @@ public final class FlowSession: ObservableObject {
     }
     @Published public private(set) var lastError: String?
     @Published public private(set) var isRequestingPermissions = false
+    /// Whether the process that posts the paste keystroke (the dictation owner) is trusted for Accessibility.
+    /// A client window shows the owner's answer, never its own.
+    @Published public private(set) var accessibilityTrusted = false
     /// Set for a few seconds after a turn so the pill can confirm what landed.
     @Published public private(set) var lastInjected: String?
     /// Settings → Labs → Dictation (`app.labs.dictation`, default on). Off =
@@ -89,6 +92,8 @@ public final class FlowSession: ObservableObject {
     private var dismissedTokens: Set<String> = []
     private var wordStats: [String: FlowDictionary.WordStats] = [:]
     private var finishTask: Task<Void, Never>?
+    /// Moves on with every new or cancelled turn, so a completion that resumes after its turn ended changes nothing.
+    private var turnGeneration = 0
     private var pillHideTask: Task<Void, Never>?
     private var permissionTask: Task<Void, Never>?
     private var permissionRequestID: UUID?
@@ -98,6 +103,9 @@ public final class FlowSession: ObservableObject {
     var recognitionStartEffect: (() throws -> Void)?
     var hotkeyBindingEffect: (() -> Void)?
     var injectEffect: ((String) async -> FlowInjectOutcome)?
+    var accessibilityTrustEffect: () -> Bool = { FlowInjector.isAccessibilityTrusted }
+    var accessibilityRequestEffect: (() -> Void)?
+    private var accessibilityObserver: NSObjectProtocol?
     private(set) var externalAudioHeld = false
 
     func setExternalAudioHeld(_ held: Bool) {
@@ -163,6 +171,11 @@ public final class FlowSession: ObservableObject {
         reloadStoredState()
         started = true
         labEnabled = configuration.dictationEnabled
+        // Installed whether or not dictation is on yet: switching it on later never runs activate() again, and
+        // pre-roll would then hold the microphone without ever handing its audio to a turn.
+        recognizer.preRollProvider = { [weak self] in self?.preRoll.drain() ?? [] }
+        refreshAccessibilityTrust()
+        observeAccessibilityTrust()
         activate()
     }
 
@@ -173,7 +186,6 @@ public final class FlowSession: ObservableObject {
         }
         applyHotkeyBinding()
         if config.showPill, pillEffect == nil { pill.prewarm() }
-        recognizer.preRollProvider = { [weak self] in self?.preRoll.drain() ?? [] }
         applyPreRoll()
     }
 
@@ -232,6 +244,41 @@ public final class FlowSession: ObservableObject {
                 self.reportFailure("Allow Microphone and Speech Recognition for the dictation app in System Settings.")
             }
         }
+    }
+
+    /// Accessibility belongs to the owner, which posts the paste: a client forwards the request, so the grant
+    /// lands on the process that needs it rather than on the window that asked.
+    public func requestAccessibility() {
+        if forward("flow.accessibility") { return }
+        guard started, store.writesEnabled else {
+            reportFailure("Accessibility requests are available when the dictation owner is running.")
+            return
+        }
+        if let accessibilityRequestEffect {
+            accessibilityRequestEffect()
+        } else {
+            FlowInjector.requestAccessibility()
+            FlowInjector.openAccessibilitySettings()
+        }
+        refreshAccessibilityTrust()
+    }
+
+    func refreshAccessibilityTrust() {
+        guard remoteCommand == nil else { return }
+        let trusted = accessibilityTrustEffect()
+        if accessibilityTrusted != trusted { accessibilityTrusted = trusted }
+    }
+
+    /// macOS posts this distributed notification when an Accessibility grant changes. The trust database is
+    /// written a moment later, so the check waits briefly.
+    private func observeAccessibilityTrust() {
+        guard accessibilityObserver == nil else { return }
+        accessibilityObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.apple.accessibility.api"), object: nil, queue: .main) { [weak self] _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    MainActor.assumeIsolated { self?.refreshAccessibilityTrust() }
+                }
+            }
     }
 
     /// Both switches: Labs and Flow's own "Enabled".
@@ -340,6 +387,8 @@ public final class FlowSession: ObservableObject {
         permissionRequestID = nil
         isRequestingPermissions = false
         remoteCommand = nil
+        if let accessibilityObserver { DistributedNotificationCenter.default().removeObserver(accessibilityObserver) }
+        accessibilityObserver = nil
         setPreRollRunning(false)
         pillHideTask?.cancel()
         pillHideTask = nil
@@ -446,6 +495,7 @@ public final class FlowSession: ObservableObject {
 
         finishTask?.cancel()
         finishTask = nil
+        turnGeneration &+= 1
 
         target = captureCurrentTarget ? FlowFocusTarget.capture() : capturedTarget
         startedAt = Date()
@@ -507,6 +557,7 @@ public final class FlowSession: ObservableObject {
         if forward("flow.cancel") { return }
         finishTask?.cancel()
         finishTask = nil
+        turnGeneration &+= 1
         recognizer.cancel()
         phase = .idle
         target = nil
@@ -515,7 +566,9 @@ public final class FlowSession: ObservableObject {
     }
 
     func completeTurn(raw: String) async {
-        defer { applyPreRoll() }
+        let generation = turnGeneration
+        var superseded = false
+        defer { if !superseded { applyPreRoll() } }
         let duration = startedAt.map { Date().timeIntervalSince($0) } ?? 0
         startedAt = nil
 
@@ -545,9 +598,17 @@ public final class FlowSession: ObservableObject {
                 restoreClipboard: config.restoreClipboard
             )
         }
+        // The paste wait suspends this turn. If it was cancelled meanwhile (and maybe a new turn began), its
+        // phase, target and history belong to that new state; this completion must not touch them.
+        guard generation == turnGeneration else {
+            superseded = true
+            FlowFocusLog.flow.info("turn completion discarded: the turn was cancelled during the paste")
+            return
+        }
 
         switch outcome {
         case .notPermitted:
+            refreshAccessibilityTrust()
             lastError = "Text copied — grant Accessibility to paste automatically."
         case .targetLost:
             lastError = "The target app closed — text copied to the clipboard."
@@ -576,7 +637,8 @@ public final class FlowSession: ObservableObject {
     var liveSnapshot: FlowLiveSnapshot {
         FlowLiveSnapshot(phase: phase, lastError: lastError, lastInjected: lastInjected,
                          labEnabled: labEnabled, hotkeyStatus: hotkeyStatus,
-                         partialText: recognizer.partialText, micLevel: recognizer.micLevel)
+                         partialText: recognizer.partialText, micLevel: recognizer.micLevel,
+                         accessibilityTrusted: accessibilityTrusted)
     }
 
     func applyRemote(_ snapshot: FlowLiveSnapshot) {
@@ -586,6 +648,9 @@ public final class FlowSession: ObservableObject {
         if lastInjected != snapshot.lastInjected { lastInjected = snapshot.lastInjected }
         if labEnabled != snapshot.labEnabled { labEnabled = snapshot.labEnabled }
         if hotkeyStatus != snapshot.hotkeyStatus { hotkeyStatus = snapshot.hotkeyStatus }
+        // An owner from before this field reports nothing; the button then stays offered rather than hidden.
+        let trusted = snapshot.accessibilityTrusted ?? false
+        if accessibilityTrusted != trusted { accessibilityTrusted = trusted }
         recognizer.applyRemote(partialText: snapshot.partialText, micLevel: snapshot.micLevel)
     }
 

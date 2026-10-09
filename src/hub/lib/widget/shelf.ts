@@ -49,12 +49,25 @@ export async function listWidgetShelf(root?: string): Promise<ShelfState & { sta
     return { ...shelfStateSchema.parse(SafeJSON.parse(await file.text())), statePath };
 }
 
-async function mutateShelf<T>({ root, update }: { root?: string; update: (state: ShelfState) => T }): Promise<T> {
+/**
+ * `signal` is checked again inside the lock, right before `update`: waiting for another shelf writer can take
+ * seconds, and an operation withdrawn meanwhile must not commit.
+ */
+async function mutateShelf<T>({
+    root,
+    update,
+    signal,
+}: {
+    root?: string;
+    update: (state: ShelfState) => T;
+    signal?: AbortSignal;
+}): Promise<T> {
     const directory = shelfDirectory(root);
     await mkdir(directory, { recursive: true });
     return withFileLock(
         join(directory, "state.lock"),
         async () => {
+            signal?.throwIfAborted();
             const state = shelfStateSchema.parse(await listWidgetShelf(root));
             const previous = SafeJSON.stringify(state);
             const result = update(state);
@@ -143,6 +156,7 @@ export async function importShelfFile({
         };
         const result = await mutateShelf({
             root,
+            signal,
             update: (state) => {
                 const duplicate = state.items.find(
                     (entry) => entry.sourcePath === sourcePath && entry.sha256 === digest
@@ -265,6 +279,7 @@ export async function stageShelfImage({
     };
     return mutateShelf({
         root,
+        signal,
         update: (state) => {
             const existing = state.items.find(
                 (entry) => entry.kind === "capture" && entry.sha256 === asset.sha256 && entry.id !== previous?.id

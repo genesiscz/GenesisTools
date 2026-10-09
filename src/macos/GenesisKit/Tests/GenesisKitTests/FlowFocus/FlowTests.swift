@@ -1,4 +1,5 @@
 // Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Tests/GenesisTests/FlowTests.swift at 2026-10-08T05:04:08+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
+import AVFoundation
 import XCTest
 @testable import GenesisKit
 #if canImport(Genesis)
@@ -361,6 +362,66 @@ final class FlowTests: XCTestCase {
         await session.completeTurn(raw: "hello again")
         XCTAssertEqual(session.history.first?.injected, true, "a paste that was sent is still recorded as inserted")
         XCTAssertNil(session.lastError)
+    }
+
+    @MainActor
+    func testACompletionResumingAfterItsTurnWasCancelledChangesNothing() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-stale-completion-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let previousURL = FlowEvents.logURL
+        FlowEvents.logURL = root.appendingPathComponent("events.jsonl")
+        defer { FlowEvents.logURL = previousURL }
+        let store = FlowStore(directory: root)
+        var config = FlowConfig()
+        config.showPill = false
+        store.saveConfig(config)
+        let session = FlowSession(store: store)
+        session.preRollEffect = { _ in }
+        session.hotkeyBindingEffect = {}
+        session.recognitionStartEffect = {}
+        session.start()
+        defer { session.stop() }
+        var release: CheckedContinuation<FlowInjectOutcome, Never>?
+        session.injectEffect = { _ in await withCheckedContinuation { release = $0 } }
+        let completing = Task { await session.completeTurn(raw: "the cancelled turn") }
+        for _ in 0..<1_000 where release == nil { await Task.yield() }
+        let paste = try XCTUnwrap(release, "the completion waits in the paste")
+        session.cancelTurn()
+        session.beginTurn(captureCurrentTarget: false)
+        XCTAssertEqual(session.phase, .listening)
+        paste.resume(returning: .injected)
+        await completing.value
+        XCTAssertEqual(session.phase, .listening, "the new turn keeps listening")
+        XCTAssertTrue(session.history.isEmpty, "the cancelled transcript is not recorded")
+        XCTAssertNil(session.lastInjected)
+    }
+
+    @MainActor
+    func testPreRollReachesATurnWhenDictationWasOffAtLaunch() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-preroll-enabled-later-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = FlowStore(directory: root)
+        var config = FlowConfig()
+        config.showPill = false
+        config.preRoll = true
+        config.enabled = false
+        store.saveConfig(config)
+        let session = FlowSession(store: store)
+        var rolling = false
+        session.preRollEffect = { rolling = $0 }
+        session.hotkeyBindingEffect = {}
+        session.start()
+        defer { session.stop() }
+        XCTAssertFalse(rolling)
+        session.config.enabled = true
+        XCTAssertTrue(rolling)
+        session.preRoll.record(try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!, frameCapacity: 16)))
+        var handed = -1
+        session.recognitionStartEffect = { [weak session] in
+            handed = session?.recognizer.preRollProvider?().count ?? -1
+        }
+        session.beginTurn(captureCurrentTarget: false)
+        XCTAssertEqual(handed, 1, "the audio held before the press reaches the recogniser")
     }
 
     func testTheWidgetShowsWhatWasInsertedOnceTheTurnEnds() {

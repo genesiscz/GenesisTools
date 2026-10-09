@@ -404,6 +404,7 @@ public final class FlowFocusRuntime: ObservableObject {
         case "flow.end": flow.endTurn()
         case "flow.cancel": flow.cancelTurn()
         case "flow.permissions": flow.requestDictationPermissions()
+        case "flow.accessibility": flow.requestAccessibility()
         case "flow.lab": flow.setLabEnabled(try decode(Bool.self))
         case "flow.config":
             let patch = try JSONSerialization.jsonObject(with: command.payload) as? [String: Any] ?? [:]
