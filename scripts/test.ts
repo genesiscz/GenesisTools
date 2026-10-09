@@ -234,6 +234,10 @@ const LOAD_SENSITIVE_FILES = [
     // sixteen; benchmark.test.ts saw a subprocess peak RSS above its 1 GB ceiling.
     "src/utils/shell/quote.test.ts",
     "scripts/history/benchmark.test.ts",
+    // Its sibling: it runs the same generated-corpus benchmark through the compact candidate,
+    // whose search refuses a source that changed mid-read ("Source changed or became unreadable
+    // during search"). Measured 2026-10-09: 1 failure in 12 full local runs, 5/5 alone.
+    "scripts/history/compact-candidate.test.ts",
     // Plants a child that busy-loops and asserts the analyzer sees it above a
     // 50% threshold over a 1 s window. Under the 16x parallel run the planted
     // child cannot get a whole core, so the measured percentage falls under the
