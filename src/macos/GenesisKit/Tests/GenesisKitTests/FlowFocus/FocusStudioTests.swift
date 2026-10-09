@@ -553,6 +553,17 @@ final class FocusStudioModelTests: XCTestCase {
         XCTAssertEqual(gap.endedMs, wake)
     }
 
+    func testResumingAPauseDoesNotCloseTheCaptureOffGap() throws {
+        let recorder = ActivityRecorder(store: store, liveServices: false)
+        recorder.start()
+        recorder.stop()
+        recorder.pauseCapture(until: Date().addingTimeInterval(600))
+        recorder.resumeCapture()
+        let gaps = try store.gaps(from: 0, to: nowMs() + 1)
+        XCTAssertEqual(gaps.map(\.reason), ["capture_off"])
+        XCTAssertNil(gaps.first?.endedMs, "capture is still off, so its gap stays open")
+    }
+
     func testKeysTypedBeforeAMidMinuteSwitchStayWithTheFirstApp() throws {
         let recorder = ActivityRecorder(store: store)
         recorder.applyProbe(.init(title: "Editor fixture", url: nil, displayId: nil),

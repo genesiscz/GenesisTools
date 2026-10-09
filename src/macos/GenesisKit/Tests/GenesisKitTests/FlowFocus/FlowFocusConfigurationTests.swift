@@ -139,6 +139,23 @@ final class FlowFocusConfigurationTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: marker), Data("preserve".utf8))
     }
 
+    @MainActor
+    func testANonJSONSettingIsRefusedInsteadOfCrashing() {
+        let config = FlowFocusConfiguration(directory: directory)
+        config.allowsWrites = true
+        config.setAppValue(Date(), forKey: "fixtureDate")
+        XCTAssertNotNil(config.lastError)
+        XCTAssertNil(config.app["fixtureDate"])
+    }
+
+    func testClientJSONIsOwnerOnlyAndNoTemporaryFileStays() throws {
+        try FlowFocusConfiguration.persist(Data("{\"fixture\":1}".utf8), directory: directory)
+        let mode = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: client.path)[.posixPermissions] as? NSNumber)
+        XCTAssertEqual(mode.intValue & 0o777, 0o600)
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: directory.path).filter { $0.hasSuffix(".tmp") }
+        XCTAssertEqual(leftovers, [])
+    }
+
     func testMissingClientCanBeCreatedAndLegacyKeysSurvive() throws {
         let legacy = Data("{\"serverSecret\":\"excluded\",\"app\":{\"other\":7},\"auth\":{\"sessionToken\":\"fixture-session\",\"privateKey\":\"excluded\"}}".utf8)
         try legacy.write(to: directory.appendingPathComponent("config.json"))

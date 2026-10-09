@@ -602,6 +602,28 @@ final class FlowFocusRuntimeTests: XCTestCase {
         XCTAssertEqual(received, [], "the withdrawn command never runs")
     }
 
+    func testATimedOutRequestIsWithdrawnAndNeverRunsLater() async throws {
+        let lease = try XCTUnwrap(FlowFocusLease.acquire(directory: directory, hostID: "test.owner"))
+        defer { lease.release() }
+        try lease.advertise()
+        var received: [String] = []
+        let owner = try FlowFocusMailbox(directory: directory, owner: lease.owner) { command in
+            received.append(command.action)
+            return Data()
+        }
+        let client = try FlowFocusMailbox(directory: directory, owner: lease.owner)
+        defer { client.stop(); owner.stop() }
+        do {
+            _ = try await client.request(action: "focus.start", timeout: 0.2)
+            XCTFail("an owner that never drains the queue cannot acknowledge a command")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("did not answer"))
+        }
+        owner.start()
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(received, [], "the caller was told it timed out, so the command must not run afterwards")
+    }
+
     func testMissingReplyHasABoundedVisibleFailure() async throws {
         let lease = try XCTUnwrap(FlowFocusLease.acquire(directory: directory, hostID: "test.owner"))
         defer { lease.release() }

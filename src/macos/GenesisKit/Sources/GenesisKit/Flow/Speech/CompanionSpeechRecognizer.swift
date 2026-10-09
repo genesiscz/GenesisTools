@@ -38,15 +38,46 @@ import Speech
 private final class RequestBox: @unchecked Sendable {
     private let lock = NSLock()
     private var request: SFSpeechAudioBufferRecognitionRequest?
+    /// While gated, live buffers wait in `held`: the pre-roll must reach the request first.
+    private var gated = false
+    private var held: [AVAudioPCMBuffer] = []
 
     func set(_ request: SFSpeechAudioBufferRecognitionRequest?) {
         lock.lock()
         self.request = request
+        if request == nil {
+            gated = false
+            held.removeAll()
+        }
         lock.unlock()
+    }
+
+    /// Holds live audio until `open(after:)`.
+    func gate() {
+        lock.lock()
+        gated = true
+        held.removeAll()
+        lock.unlock()
+    }
+
+    /// Feeds `first` (the pre-roll), then the live audio held meanwhile, and lets later audio straight through.
+    /// Done under the lock, so a live buffer arriving now cannot overtake the ones before it.
+    func open(after first: [AVAudioPCMBuffer]) {
+        lock.lock()
+        defer { lock.unlock() }
+        for buffer in first { request?.append(buffer) }
+        for buffer in held { request?.append(buffer) }
+        held.removeAll()
+        gated = false
     }
 
     func append(_ buffer: AVAudioPCMBuffer) {
         lock.lock()
+        if gated {
+            held.append(buffer)
+            lock.unlock()
+            return
+        }
         let request = self.request
         lock.unlock()
         request?.append(buffer)
@@ -276,6 +307,8 @@ public final class CompanionSpeechRecognizer: ObservableObject {
         let sourceStart = ProcessInfo.processInfo.systemUptime
         let hold = holdId
         let format: AVAudioFormat
+        // Live audio waits until the pre-roll below is in the request, so the recognizer hears it in order.
+        box.gate()
         do {
             format = try audioSource.start { [weak self] buffer in
                 box.append(buffer)
@@ -299,17 +332,17 @@ public final class CompanionSpeechRecognizer: ObservableObject {
         // People start speaking as they press, not after, so an engine that
         // only begins at key-down has already missed the onset — this is the
         // "missing first word" every dictation tool in the category has.
-        // Fed after the request exists but before live audio arrives, so the
-        // ordering stays chronological.
+        // The live audio captured since the source started is held by the box
+        // and follows the pre-roll, so the ordering stays chronological.
+        var preRollBuffers: [AVAudioPCMBuffer] = []
         if let preRoll = preRollProvider {
             let buffers = preRoll()
-            for buffer in buffers where buffer.format == format {
-                box.append(buffer)
-            }
+            preRollBuffers = buffers.filter { $0.format == format }
             if !buffers.isEmpty {
                 FlowFocusLog.speech.info("stt pre-roll spliced buffers=\(buffers.count)")
             }
         }
+        box.open(after: preRollBuffers)
 
         FlowFocusLog.speech.info("stt start locale=\(recognizer.locale.identifier) onDevice=\(self.onDevice) device=\(self.audioSource.deviceLabel) inputRate=\(Int(format.sampleRate)) ch=\(format.channelCount) sourceStartMs=\(sourceStartMs)")
     }

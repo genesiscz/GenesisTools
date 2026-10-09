@@ -121,35 +121,40 @@ public final class FlowFocusMailbox {
                 pending[id] = continuation
                 deadlines[id] = Task { @MainActor [weak self] in
                     try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
-                    guard !Task.isCancelled, let self, let pending = self.pending.removeValue(forKey: id) else { return }
-                    self.deadlines.removeValue(forKey: id)
-                    pending.resume(throwing: Failure.unavailable("The Flow and Focus owner did not answer in time."))
+                    guard !Task.isCancelled, let self else { return }
+                    // The deadline withdraws the command too: one the owner has not taken never runs after the
+                    // caller was told it timed out.
+                    self.withdraw(id, timedOut: true)
                 }
                 // Cancelled between writing the request and getting here: withdraw at once.
                 if Task.isCancelled {
-                    withdraw(id)
+                    withdraw(id, timedOut: false)
                     return
                 }
                 wake()
                 receiveReplies()
             }
         } onCancel: {
-            Task { @MainActor [weak self] in self?.withdraw(id) }
+            Task { @MainActor [weak self] in self?.withdraw(id, timedOut: false) }
         }
     }
 
     /// A cancelled caller takes its command back. Removing the request file beats the owner's claim (a rename),
     /// so a command withdrawn here never runs and the caller gets CancellationError. When the owner had already
     /// claimed it, the effect may happen: the caller is told so instead of being told nothing ran.
-    private func withdraw(_ id: UUID) {
+    private func withdraw(_ id: UUID, timedOut: Bool) {
         guard let continuation = pending.removeValue(forKey: id) else { return }
         deadlines.removeValue(forKey: id)?.cancel()
         do {
             try FileManager.default.removeItem(at: requestURL(id))
-            continuation.resume(throwing: CancellationError())
+            continuation.resume(throwing: timedOut
+                ? Failure.unavailable("The Flow and Focus owner did not answer in time.")
+                : CancellationError())
         } catch {
-            FlowFocusLog.focus.info("runtime command \(id) cancelled after its owner took it: \(error.localizedDescription)")
-            continuation.resume(throwing: Failure.unavailable("Cancelled after the owner started it; it may still take effect."))
+            FlowFocusLog.focus.info("runtime command \(id) withdrawn after its owner took it: \(error.localizedDescription)")
+            continuation.resume(throwing: Failure.unavailable(timedOut
+                ? "The Flow and Focus owner did not answer in time; the action may still take effect."
+                : "Cancelled after the owner started it; it may still take effect."))
         }
     }
 

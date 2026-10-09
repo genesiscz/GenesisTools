@@ -834,14 +834,21 @@ public final class ActivityStore {
             guard !rows.isEmpty else { return [] }
 
             let now = Int64(Date().timeIntervalSince1970 * 1000)
+            // Only rows this call actually marked are returned: one whose UPDATE failed (SQLITE_BUSY) stays
+            // unconsumed and comes back on the next drain instead of running now and again then.
+            var claimed: [Intent] = []
             for row in rows {
-                let mark = try prepare("UPDATE focus_intent SET consumed_ms=? WHERE id=?;")
+                let mark = try prepare("UPDATE focus_intent SET consumed_ms=? WHERE id=? AND consumed_ms IS NULL;")
+                defer { sqlite3_finalize(mark) }
                 sqlite3_bind_int64(mark, 1, now)
                 sqlite3_bind_int64(mark, 2, row.id)
-                _ = sqlite3_step(mark)
-                sqlite3_finalize(mark)
+                if sqlite3_step(mark) == SQLITE_DONE, sqlite3_changes(db) == 1 {
+                    claimed.append(row)
+                } else {
+                    FlowFocusLog.focus.error("focus intent \(row.id) not claimed: \(self.lastMessage())")
+                }
             }
-            return rows
+            return claimed
         }
     }
 

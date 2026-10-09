@@ -108,6 +108,12 @@ public final class FlowFocusConfiguration: ObservableObject {
             reportFailure("Flow and Focus are waiting for their runtime owner.")
             return
         }
+        // JSONSerialization raises an Objective-C exception (a crash, not a Swift error) for a value such as a
+        // Date or a URL; setAppValue is public, so check first.
+        guard JSONSerialization.isValidJSONObject(patch) else {
+            reportFailure("The setting value cannot be stored as JSON.")
+            return
+        }
         do {
             let data = try JSONSerialization.data(withJSONObject: patch)
             let id = UUID()
@@ -259,7 +265,21 @@ public final class FlowFocusConfiguration: ObservableObject {
         raw["app"] = merge(raw["app"] as? [String: Any] ?? [:], patch)
         let encoded = try JSONSerialization.data(withJSONObject: raw, options: [.prettyPrinted, .sortedKeys])
         let destination = directory.appendingPathComponent("client.json")
-        try encoded.write(to: destination, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
+        // Owner-only before it becomes visible: a temporary file is chmodded and then renamed over client.json,
+        // so the file never exists under the process umask.
+        let temporary = directory.appendingPathComponent(".client.json.\(UUID().uuidString).tmp")
+        do {
+            try encoded.write(to: temporary)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporary.path)
+            guard rename(temporary.path, destination.path) == 0 else {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+            }
+        } catch {
+            if FileManager.default.fileExists(atPath: temporary.path) {
+                do { try FileManager.default.removeItem(at: temporary) }
+                catch let cleanup { FlowFocusLog.focus.warning("client.json temporary not removed: \(cleanup.localizedDescription)") }
+            }
+            throw error
+        }
     }
 }

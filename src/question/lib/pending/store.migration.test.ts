@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runMigrations } from "@genesiscz/utils/database/migrations";
 import { openReadModel } from "../read-model";
-import { openPendingStore, PENDING_MIGRATIONS } from "./store";
+import { listForms, openPendingStore, PENDING_MIGRATIONS } from "./store";
 
 /**
  * The pending table is added to `~/.genesis-tools/question/qa.db`, which ALREADY holds real
@@ -222,6 +222,33 @@ describe("the qa_pending migration against a populated qa.db", () => {
             poster_json: null,
             transcript_anchor_json: null,
         });
+    });
+
+    test("one row with a corrupt poster does not hide the other forms", () => {
+        const db = openPendingStore(dbPath);
+        const insert = db.prepare(
+            `INSERT INTO qa_pending
+             (id, created_at, status, source, session_hint, project_path, cwd, items_json, timeout_ms, poster_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        );
+        insert.run("ask_good", 1_700_000_000_000, "pending", "cli", "sess-1", "/repo", "/repo", "[]", 60_000, null);
+        insert.run(
+            "ask_bad",
+            1_700_000_000_001,
+            "pending",
+            "cli",
+            "sess-1",
+            "/repo",
+            "/repo",
+            "[]",
+            60_000,
+            "{not json"
+        );
+        const forms = listForms(db);
+        db.close();
+
+        expect(forms.map((form) => form.id).sort()).toEqual(["ask_bad", "ask_good"]);
+        expect(forms.find((form) => form.id === "ask_bad")?.poster).toBeUndefined();
     });
 
     test("history written BEFORE the migration is still readable by the read model after it", () => {

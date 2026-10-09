@@ -91,6 +91,9 @@ public final class ActivityRecorder: ObservableObject {
     private var lastKeyCount = 0
     private var sessionStartedMs: Int64?
     private var openGapId: Int64?
+    /// Why the open gap was opened. A resume closes only a pause gap, and a start only a capture-off gap, so one
+    /// cannot end the other while its own cause still holds.
+    private var openGapReason: String?
     private var terminateObserver: NSObjectProtocol?
 
     public static let historyLength = 24
@@ -140,6 +143,7 @@ public final class ActivityRecorder: ObservableObject {
                 try store.closeGap(id: gap.id, at: launch)
             }
             openGapId = nil
+            openGapReason = nil
             guard var cursor = try store.lastRecordedMs(), launch - cursor >= 60_000 else { return }
             for gap in try store.gaps(from: cursor, to: launch) {
                 if gap.startedMs - cursor >= 60_000 {
@@ -161,7 +165,7 @@ public final class ActivityRecorder: ObservableObject {
         guard settings.captureEnabled else { excludeCurrent(reason: "capture_off"); return }
         isCapturing = true
         invalidateProbes()
-        closeOpenGap()
+        if pausedUntil == nil { closeOpenGap(only: ["capture_off", "app_not_running"]) }
         guard liveServices else { return }
         _ = counter.start()
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -190,10 +194,7 @@ public final class ActivityRecorder: ObservableObject {
                     self.counter.stop()
                     let now = self.nowMs()
                     self.closeCurrentSegment(at: now)
-                    if self.openGapId == nil {
-                        self.openGapId = try? self.store.recordGap(startedMs: now, endedMs: nil,
-                                                                   reason: "app_not_running")
-                    }
+                    self.openGap("app_not_running", at: now)
                 }
             }
     }
@@ -213,9 +214,7 @@ public final class ActivityRecorder: ObservableObject {
         closeCurrentSegment(at: nowMs())
         current = nil // as in pauseCapture: `start()` must open a fresh segment
         isCapturing = false
-        if openGapId == nil {
-            openGapId = persist("capture gap") { try store.recordGap(startedMs: nowMs(), endedMs: nil, reason: "capture_off") }
-        }
+        openGap("capture_off", at: nowMs())
     }
 
     public func apply(settings newValue: FocusSettings) {
@@ -249,15 +248,13 @@ public final class ActivityRecorder: ObservableObject {
         current = nil
         // A pause is recorded, so the range reads as "not measured" rather than "you did
         // nothing" when someone looks at it a week later.
-        if openGapId == nil {
-            openGapId = persist("capture gap") { try store.recordGap(startedMs: nowMs(), endedMs: nil, reason: "capture_paused") }
-        }
+        openGap("capture_paused", at: nowMs())
     }
 
     public func resumeCapture() {
         if let remoteCommand { remoteCommand("focus.capture.resume", Data()); return }
         pausedUntil = nil
-        closeOpenGap()
+        closeOpenGap(only: ["capture_paused"])
         guard isCapturing, liveServices else { return }
         _ = counter.start()
         tick()
@@ -271,15 +268,24 @@ public final class ActivityRecorder: ObservableObject {
         guard let until = pausedUntil else { return true }
         if now < until { return false }
         pausedUntil = nil
-        closeOpenGap()
+        closeOpenGap(only: ["capture_paused"])
         if isCapturing, liveServices { _ = counter.start() }
         return true
     }
 
-    private func closeOpenGap() {
+    private func openGap(_ reason: String, at ms: Int64) {
+        guard openGapId == nil else { return }
+        openGapId = persist("capture gap") { try store.recordGap(startedMs: ms, endedMs: nil, reason: reason) }
+        openGapReason = openGapId == nil ? nil : reason
+    }
+
+    /// `only`: close the open gap only when it was opened for one of these reasons.
+    private func closeOpenGap(only reasons: Set<String>? = nil) {
         guard let id = openGapId else { return }
+        if let reasons, let reason = openGapReason, !reasons.contains(reason) { return }
         persist("gap close") { try store.closeGap(id: id, at: nowMs()) }
         openGapId = nil
+        openGapReason = nil
     }
 
     /// The pomodoro engine calls this on every phase boundary: the current segment is split so
@@ -372,9 +378,7 @@ public final class ActivityRecorder: ObservableObject {
         counter.stop()
         closeCurrentSegment(at: nowMs())
         current = nil
-        if openGapId == nil {
-            openGapId = persist("capture gap") { try store.recordGap(startedMs: nowMs(), endedMs: nil, reason: reason) }
-        }
+        openGap(reason, at: nowMs())
     }
 
     /// Direct probe application also enforces privacy; test sources use the same persistence path.

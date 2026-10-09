@@ -115,9 +115,15 @@ interface PendingRow {
 }
 
 function rowToForm(row: PendingRow): AskForm {
-    const poster = row.poster_json
-        ? (SafeJSON.parse(row.poster_json, { strict: true }) as AskForm["poster"])
-        : undefined;
+    // Decoded like the anchor below: one corrupt row must not make every form listing throw.
+    let poster: AskForm["poster"];
+    if (row.poster_json) {
+        try {
+            poster = SafeJSON.parse(row.poster_json, { strict: true }) as AskForm["poster"];
+        } catch (error) {
+            log.warn({ id: row.id, error }, "could not decode stored form poster");
+        }
+    }
     let transcriptAnchor: AskForm["transcriptAnchor"];
     if (row.transcript_anchor_json) {
         try {
