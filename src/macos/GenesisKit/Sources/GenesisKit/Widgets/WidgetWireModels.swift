@@ -222,6 +222,8 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var projects: [String]
     public var sessions: [String]
     public var showChanges: Bool
+    /// "Show the widget". A state saved before the switch existed has no key, and nil means off.
+    public var showWidget: Bool?
     public var placement: String
     public var side: String
     public var topModules: [String]?

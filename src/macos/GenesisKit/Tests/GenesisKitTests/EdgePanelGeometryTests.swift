@@ -294,3 +294,112 @@ final class WidgetInteractionTests: XCTestCase {
         XCTAssertNil(value.expanded)
     }
 }
+
+/// "Show the widget": the coordinator builds and orders front edge panels only while the switch is on.
+final class WidgetVisibilityTests: XCTestCase {
+    private struct Fixture {
+        let directory: URL
+        let coordinator: WidgetCoordinator
+        let defaults: UserDefaults
+        let domain: String
+    }
+
+    /// A fake `tools` whose `hub widget watch` streams one saved snapshot, written before `showWidget` existed.
+    @MainActor
+    private func fixture() throws -> Fixture {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "widget-visibility-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let saved = """
+            {"version":1,"state":{"version":1,"revision":0,"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":""},"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}
+            """
+        try saved.write(to: directory.appendingPathComponent("saved.json"), atomically: true, encoding: .utf8)
+        let script = directory.appendingPathComponent("tools")
+        try """
+        #!/bin/sh
+        case "$*" in
+          *--input*) printf '{}'; exit 0 ;;
+          *watch*) cat '\(directory.path)/saved.json'; printf '\\n'; cat > /dev/null; exit 0 ;;
+          *) cat '\(directory.path)/saved.json'; exit 0 ;;
+        esac
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        let model = WidgetModel(
+            binaryPath: script.path, stateRoot: directory.path, defaults: defaults,
+            appearance: NativeSettingsAppearance(
+                defaults: defaults, notificationNamespace: domain, observeExternalChanges: false))
+        let coordinator = WidgetCoordinator(
+            binaryPath: script.path, stateRoot: directory.path, openHub: { _ in }, model: model)
+        return Fixture(directory: directory, coordinator: coordinator, defaults: defaults, domain: domain)
+    }
+
+    private func cleanUp(_ fixture: Fixture) {
+        fixture.defaults.removePersistentDomain(forName: fixture.domain)
+        do { try FileManager.default.removeItem(at: fixture.directory) } catch { XCTFail("Fixture cleanup: \(error)") }
+    }
+
+    @MainActor
+    private func waitFor(_ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !condition() && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    @MainActor
+    func testAWidgetThatIsOffShowsNoPanelAndOpensTheSettingsInstead() async throws {
+        let fixture = try fixture()
+        defer { cleanUp(fixture) }
+        let coordinator = fixture.coordinator
+        var pages: [String] = []
+        var ordered = 0
+        coordinator.settingsPresenter = { pages.append($0) }
+        coordinator.orderFront = { _ in
+            ordered += 1
+            XCTFail("A widget that is off ordered an edge panel front")
+        }
+        coordinator.start()
+        defer { coordinator.stop() }
+        try await waitFor { coordinator.model.snapshot != nil && !pages.isEmpty }
+
+        XCTAssertNil(coordinator.model.snapshot?.state.preferences.showWidget, "an old state has no key")
+        XCTAssertFalse(coordinator.panelsEnabled)
+        XCTAssertEqual(pages, ["widgets.general"], "a bare --widget opens the settings when the widget is off")
+        XCTAssertEqual(coordinator.panelCount, 0)
+        XCTAssertFalse(coordinator.panelMonitorsInstalled)
+
+        coordinator.openSession("fixture-session")
+        XCTAssertEqual(pages, ["widgets.general", "widgets.general"])
+        XCTAssertEqual(coordinator.model.selectedKey, "fixture-session")
+        XCTAssertNil(coordinator.model.expanded)
+        XCTAssertEqual(coordinator.panelCount, 0)
+        XCTAssertEqual(ordered, 0)
+    }
+
+    @MainActor
+    func testTurningTheSwitchOnShowsThePanelsAndTurningItOffHidesThem() async throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "Edge panels need a display")
+        let fixture = try fixture()
+        defer { cleanUp(fixture) }
+        let coordinator = fixture.coordinator
+        var ordered = 0
+        coordinator.settingsPresenter = { _ in }
+        coordinator.orderFront = { _ in ordered += 1 }
+        coordinator.start(showSettings: true)
+        defer { coordinator.stop() }
+        try await waitFor { coordinator.model.snapshot != nil }
+        XCTAssertEqual(coordinator.panelCount, 0)
+
+        coordinator.model.updatePreferences(["showWidget": .bool(true)])
+        XCTAssertTrue(coordinator.panelsEnabled)
+        XCTAssertGreaterThan(coordinator.panelCount, 0)
+        XCTAssertGreaterThan(ordered, 0, "the panels order front as soon as the switch turns on")
+        XCTAssertTrue(coordinator.panelMonitorsInstalled)
+
+        coordinator.model.updatePreferences(["showWidget": .bool(false)])
+        XCTAssertEqual(coordinator.panelCount, 0)
+        XCTAssertFalse(coordinator.panelMonitorsInstalled)
+    }
+}

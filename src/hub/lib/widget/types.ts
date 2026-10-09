@@ -34,6 +34,8 @@ export const widgetPreferencesSchema = z.object({
     projects: z.array(z.string()).default([]),
     sessions: z.array(z.string()).default([]),
     showChanges: z.boolean().default(true),
+    /** "Show the widget" in the Widget settings: the top and side panels exist only while it is on. */
+    showWidget: z.boolean().default(false),
     placement: z.enum(["top", "side", "both"]).default("both"),
     side: z.enum(["left", "right"]).default("right"),
     topModules: z

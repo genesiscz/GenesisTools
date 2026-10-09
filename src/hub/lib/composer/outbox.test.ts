@@ -832,6 +832,24 @@ test("a single preference edit preserves unrelated saved choices and rejects mal
     });
 });
 
+test("a saved state without the show-widget switch reads as off, and the preference action turns it on", async () => {
+    const directory = await root();
+    await writeFile(
+        join(directory, "state.json"),
+        SafeJSON.stringify({ version: 1, revision: 3, preferences: { placement: "top", side: "left" } })
+    );
+    const legacy = await readWidgetState(directory);
+    expect(legacy.preferences.showWidget).toBe(false);
+    expect(legacy.preferences.placement).toBe("top");
+    await performWidgetAction({ root: directory, input: { action: "preferences", patch: { showWidget: true } } });
+    const saved = SafeJSON.parse(await readFile(join(directory, "state.json"), "utf8"));
+    expect(saved.preferences.showWidget).toBe(true);
+    expect(saved.preferences.placement).toBe("top");
+    expect(saved.preferences.side).toBe("left");
+    await performWidgetAction({ root: directory, input: { action: "preferences", patch: { showWidget: false } } });
+    expect((await readWidgetState(directory)).preferences.showWidget).toBe(false);
+});
+
 test("legacy preferences gain independent module layouts without accepting off-screen positions", () => {
     const preferences = widgetPreferencesSchema.parse({ placement: "side" });
     expect(preferences.sideStyle).toBe("modular");

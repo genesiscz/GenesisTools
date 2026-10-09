@@ -37,6 +37,8 @@ public struct WidgetModuleChoice: Identifiable {
 
 @MainActor
 public enum WidgetFeatureSettings {
+    public static let hiddenNotice = "The widget is off. Turn it on to see pinned sessions at the top or side."
+
     public static func sections(
         model: WidgetModel, modules: [WidgetModuleChoice],
         openSession: @escaping (WidgetSession) -> Void
@@ -106,6 +108,14 @@ private struct WidgetGeneralSettings: View {
     var body: some View {
         VStack(spacing: 18) {
             NativeSettingsCard("Placement", subtitle: "Top and side share your sessions and drafts.") {
+                NativeSettingsToggle(
+                    "Show the widget", detail: "Panels at the top and side of your screen.",
+                    identifier: "widget.showWidget", isOn: boolean("showWidget", prefs?.showWidget ?? false))
+                if !(prefs?.showWidget ?? false) {
+                    Text(WidgetFeatureSettings.hiddenNotice).font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                Divider()
                 NativeSettingsRow("Visible edges") {
                     Picker("Visible edges", selection: string("placement", prefs?.placement ?? "both")) {
                         Text("Both").tag("both")

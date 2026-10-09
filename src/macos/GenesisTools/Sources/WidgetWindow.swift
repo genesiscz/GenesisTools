@@ -73,11 +73,8 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
         coordinator?.start(showSettings: args.contains("--settings"))
         if let key = value("--session-key") { openSession(key) }
     }
-    private func openSession(_ key: String) {
-        guard let model = coordinator?.model else { return }
-        model.select(key)
-        model.openModule("agents", on: WidgetSurfaceID(edge: model.placement == "top" ? .top : model.side))
-    }
+    /// While "Show the widget" is off, the coordinator opens the settings instead of a panel.
+    private func openSession(_ key: String) { coordinator?.openSession(key) }
 
     @objc private func showWidgetSettings() { coordinator?.showSettings() }
     @objc private func showHub() { WidgetLaunch.start(["--hub", "--mode", "agents"]) }

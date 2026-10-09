@@ -244,6 +244,10 @@ final class ReviewSessionStateTests: XCTestCase {
         XCTAssertFalse(FaceRecord.isWindowFace(["--hub", "--bench", "/tmp/b.json"]))
         XCTAssertFalse(FaceRecord.isWindowFace(["--rpc", "{}"]))
         XCTAssertFalse(FaceRecord.isWindowFace(["https://example.org/"]))
+        XCTAssertTrue(FaceRecord.isRecorded(["--hub"]))
+        XCTAssertTrue(FaceRecord.isRecorded([]))
+        XCTAssertFalse(FaceRecord.isRecorded(["--widget", "--settings"]), "relaunch.ts never reopens the widget")
+        XCTAssertFalse(FaceRecord.isRecorded(["--clicky"]), "relaunch.ts never reopens Clicky")
 
         let data = try XCTUnwrap(FaceRecord.encode(pid: 42, argv: ["--review", "--repo", "/a b"]))
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])

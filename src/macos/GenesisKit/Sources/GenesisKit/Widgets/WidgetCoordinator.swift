@@ -16,7 +16,17 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     private var screenObserver: NSObjectProtocol?
     private var lastSide: EdgePanelPlacement?
     private var lastDisplayID: String?
+    private var lastShown: Bool?
+    /// A launch that waits for the first snapshot, because only the snapshot says whether the widget is on.
+    private var launchPending = false
+    private var pendingSessionKey: String?
     public var settingsPresenter: ((String) -> Void)?
+    /// Orders one edge panel front. Tests replace it to prove a hidden widget never shows a panel.
+    var orderFront: (EdgePanelController<WidgetHostView>) -> Void = { $0.show() }
+    var panelCount: Int { panels.count }
+    var panelMonitorsInstalled: Bool { localMouse != nil || globalMouse != nil || keyboard != nil }
+    /// "Show the widget" in the Widget settings. Off until the first snapshot says otherwise.
+    public var panelsEnabled: Bool { model.snapshot?.state.preferences.showWidget ?? false }
     private var topHeaderHeight: CGFloat = 36
     private var topCompactWidth: CGFloat = 360
     private var availableCardHeight: CGFloat = 660
@@ -27,9 +37,9 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
 
     public init(
         binaryPath: String, stateRoot: String? = nil, openHub: @escaping (WidgetSession?) -> Void,
-        openDestination: ((WidgetSession, String, String?) -> Void)? = nil
+        openDestination: ((WidgetSession, String, String?) -> Void)? = nil, model injected: WidgetModel? = nil
     ) {
-        model = WidgetModel(binaryPath: binaryPath, stateRoot: stateRoot)
+        model = injected ?? WidgetModel(binaryPath: binaryPath, stateRoot: stateRoot)
         super.init()
         do {
             try modules.register(
@@ -62,34 +72,79 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         model.showMedia = { [weak self] selection in self?.showMedia(selection) }
     }
 
+    /// Without `showSettings`, a widget that is off opens the settings once the first snapshot arrives,
+    /// so the user sees why no panel appeared.
     public func start(showSettings: Bool = false) {
         rebuildPanels()
-        localMouse = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) {
-            [weak self] event in
-            self?.collapseIfOutside(event)
-            return event
-        }
-        globalMouse = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) {
-            [weak self] event in
-            self?.collapseIfOutside(event)
-        }
-        keyboard = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self else { return event }
-            return self.handleKey(event)
-        }
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in MainActor.assumeIsolated { self?.rebuildPanels() } }
+        launchPending = !showSettings
         model.start()
         if showSettings { self.showSettings() }
+    }
+
+    /// Opens a session in the agents panel, or the settings while the widget is off.
+    public func openSession(_ key: String) {
+        guard model.snapshot != nil else {
+            pendingSessionKey = key
+            launchPending = true
+            return
+        }
+        model.select(key)
+        guard panelsEnabled else {
+            showSettings()
+            return
+        }
+        model.openModule("agents", on: WidgetSurfaceID(edge: model.placement == "top" ? .top : model.side))
+    }
+
+    private func resolvePendingLaunch() {
+        guard launchPending, model.snapshot != nil else { return }
+        launchPending = false
+        if let key = pendingSessionKey {
+            pendingSessionKey = nil
+            openSession(key)
+        } else if !panelsEnabled {
+            showSettings()
+        }
+    }
+
+    private func installPanelMonitors() {
+        if localMouse == nil {
+            localMouse = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) {
+                [weak self] event in
+                self?.collapseIfOutside(event)
+                return event
+            }
+        }
+        if globalMouse == nil {
+            globalMouse = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) {
+                [weak self] event in
+                self?.collapseIfOutside(event)
+            }
+        }
+        if keyboard == nil {
+            keyboard = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self else { return event }
+                return self.handleKey(event)
+            }
+        }
+    }
+
+    private func removePanelMonitors() {
+        for monitor in [localMouse, globalMouse, keyboard].compactMap({ $0 }) {
+            NSEvent.removeMonitor(monitor)
+        }
+        localMouse = nil
+        globalMouse = nil
+        keyboard = nil
     }
 
     public func stop() {
         model.stop()
         modules.removeAllSurfaces()
-        for monitor in [localMouse, globalMouse, keyboard].compactMap({ $0 }) {
-            NSEvent.removeMonitor(monitor)
-        }
+        removePanelMonitors()
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         panels.values.forEach { $0.hide() }
         settings?.close()
@@ -123,6 +178,16 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         let previous = Set(panels.keys)
         panels.values.forEach { $0.hide() }
         panels = [:]
+        // The one gate for the edge panels: while "Show the widget" is off, none exist and no monitor runs.
+        lastShown = panelsEnabled
+        guard panelsEnabled else {
+            removePanelMonitors()
+            display = nil
+            for surface in previous { modules.update(surface: surface, moduleID: nil) }
+            if model.expanded != nil { model.collapse() }
+            return
+        }
+        installPanelMonitors()
         let requested = NSScreen.screens.first { Self.id($0) == screenID }
         guard let screen = requested ?? NSScreen.main ?? NSScreen.screens.first else { return }
         display = screen
@@ -169,6 +234,15 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func sync() {
+        resolvePendingLaunch()
+        if lastShown != panelsEnabled {
+            rebuildPanels()
+            return
+        }
+        guard panelsEnabled else {
+            if model.expanded != nil { model.collapse() }
+            return
+        }
         if model.expanded != nil, settings?.isVisible == true {
             settings?.orderOut(nil)
             model.dialogOpen = mediaWindow?.isVisible == true
@@ -225,7 +299,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                 controller.setPreviewSize(CGSize(width: 324, height: sideHeights[index]))
                 controller.setExpandedSize(CGSize(width: width + 44, height: sideHeights[index]))
             }
-            controller.show()
+            orderFront(controller)
             controller.setPresentation(presentation, reduceMotion: model.effectiveReduceMotion || model.draggingSide)
             modules.update(surface: surface, moduleID: module?.id, presentation: presentation)
         }
@@ -392,6 +466,15 @@ private struct WidgetSettingsView: View {
                 }
                 Spacer()
                 Button("Open Hub") { model.openHub?(model.selected) }
+            }
+            Toggle(
+                "Show the widget",
+                isOn: Binding(
+                    get: { model.snapshot?.state.preferences.showWidget ?? false },
+                    set: { preferences(["showWidget": .bool($0)]) })
+            ).toggleStyle(.switch)
+            if !(model.snapshot?.state.preferences.showWidget ?? false) {
+                Text(WidgetFeatureSettings.hiddenNotice).font(.caption).foregroundStyle(.secondary)
             }
             HStack {
                 Picker(

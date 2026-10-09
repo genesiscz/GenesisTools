@@ -21,6 +21,13 @@ enum FaceRecord {
         return first.isEmpty || first == "--window" || first.hasPrefix("-psn_") || first == "--hub" || first == "--review" || first == "--widget" || first == "--clicky"
     }
 
+    /// The faces whose argv a rebuild reads back. The widget and Clicky faces keep a link relay in front of
+    /// them (`isWindowFace`), but relaunch.ts never reopens them, so a record of theirs is never read.
+    static func isRecorded(_ argv: [String]) -> Bool {
+        let first = argv.first ?? ""
+        return isWindowFace(argv) && first != "--widget" && first != "--clicky"
+    }
+
     static func encode(pid: Int32, argv: [String]) -> Data? {
         struct Record: Encodable {
             let pid: Int32
@@ -32,7 +39,7 @@ enum FaceRecord {
 
     /// Call once at launch with the arguments after the executable.
     static func write(_ argv: [String]) {
-        guard isWindowFace(argv), let data = encode(pid: getpid(), argv: argv) else { return }
+        guard isRecorded(argv), let data = encode(pid: getpid(), argv: argv) else { return }
         let url = directory.appendingPathComponent("\(getpid()).json")
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
