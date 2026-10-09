@@ -43,14 +43,14 @@ The receipt explicitly says “Preview answer saved”; it is not live delivery.
 swift test --package-path src/macos/GenesisKit --disable-build-manifest-caching --filter 'EdgePanelGeometryTests|AgentWidgetKeyboardTests'
 ```
 
-The six focused tests cover anchored frames, negative-origin displays, small display bounds, motion endpoints, and number-row shortcuts on nonnumeric keyboard layouts.
+The nine focused tests cover anchored frames, negative-origin displays, small display bounds, motion endpoints, and number-row shortcuts on nonnumeric keyboard layouts.
 The build disables SwiftPM build-manifest caching so newly added local GenesisKit sources are included.
 
 Native acceptance was exercised through computer use on 2026-10-08:
 placement selectors, draft retention, click/number choice, typed submission, settings focus, Escape/reopen, and accessibility toggles.
 A rapid open/Escape sequence settled correctly, but a frame-by-frame interruption capture is still pending.
 
-## Scope still to implement
+## Sample studio scope
 
-Live Decisions/MCP/history adapters, Hub navigation, transcript continuation, durable outbox and delivery receipts, image/video attachment review, project/session filters, pinning, voice, display selection/removal handling, automatic quiet reduction, and the full decorative bubble/Liquid Glass treatment.
-The first preview uses the selected main display, a right-side rail, and a matte surface.
+The installed preview carries the live features: session and decision adapters, Hub navigation, transcript handoff, the durable outbox with delivery receipts, image and video attachment review, project and session filters, pinning, voice, display selection, automatic quiet reduction, and top, side, and glass placements.
+The sample studio stays smaller. It shows sample conversations on the main display with top and side panels, keeps answers inside the preview, and has no live adapters, delivery, attachment review, or voice.

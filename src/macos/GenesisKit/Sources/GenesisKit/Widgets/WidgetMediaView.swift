@@ -89,6 +89,8 @@ struct WidgetMediaView: View {
         .onChange(of: settings) { _, value in
             guard loadedSettings, !frozen else { return }
             update?.cancel()
+            // Loading saved settings fires this too; an unchanged value would restart a failed preparation.
+            guard value != asset?.settings else { return }
             update = Task { @MainActor in
                 do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
                 do {

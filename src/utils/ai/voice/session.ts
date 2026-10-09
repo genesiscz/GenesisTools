@@ -1,5 +1,5 @@
 import { openPcmSource, type PcmSource } from "@genesiscz/utils/ai/stt/capture/pcm-source";
-import { openLiveStt } from "@genesiscz/utils/ai/stt/resolve";
+import { openLiveStt, parseSttProvider } from "@genesiscz/utils/ai/stt/resolve";
 import type { LiveSttSession, LiveTranscriptEvent, OpenLiveSttOptions } from "@genesiscz/utils/ai/stt/types";
 import { pcmRms } from "@genesiscz/utils/ai/stt/vad";
 import { logger } from "@genesiscz/utils/logger";
@@ -59,6 +59,10 @@ export async function createVoiceSession(
     let source: PcmSource | undefined;
     try {
         options.signal?.throwIfAborted();
+        if (options.input === "none" && parseSttProvider(options.provider) !== "fixture") {
+            throw new Error("Input none is reserved for fixture replay");
+        }
+
         opened = await openLiveStt({ ...options, signal: transport.signal });
         options.signal?.throwIfAborted();
         if (options.input !== "none") {
@@ -68,8 +72,6 @@ export async function createVoiceSession(
                 realtime: options.realtime,
                 signal: capture.signal,
             });
-        } else if (opened.provider !== "fixture") {
-            throw new Error("Input none is reserved for fixture replay");
         }
         options.signal?.throwIfAborted();
     } catch (error) {

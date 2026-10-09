@@ -16,6 +16,7 @@ final class ClickyTests: XCTestCase {
         var requests = 0
         var starts = 0
         var stops = 0
+        var reenables = 0
         var handler: (@MainActor (CGEventType, CGEvent) -> Void)?
         var hasPermission: Bool {
             permissionChecks += 1
@@ -30,6 +31,9 @@ final class ClickyTests: XCTestCase {
             starts += 1
             self.handler = handler
             return result
+        }
+        func reenable() {
+            reenables += 1
         }
         func stop() {
             stops += 1
@@ -305,7 +309,25 @@ final class ClickyTests: XCTestCase {
     }
 
     @MainActor
-    func testSystemDisablingTheEventTapStopsAndReportsTheFailure() throws {
+    func testUserInputDisablingTheEventTapStopsAndReportsTheFailure() throws {
+        let monitor = InputMonitorStub()
+        monitor.granted = true
+        let (model, defaults, suite) = monitorFixture(monitor)
+        defer {
+            model.shutdown()
+            defaults.removePersistentDomain(forName: suite)
+        }
+        model.activate()
+        let event = try XCTUnwrap(CGEvent(source: nil))
+        monitor.handler?(.tapDisabledByUserInput, event)
+        XCTAssertFalse(model.enabled)
+        XCTAssertEqual(monitor.stops, 1)
+        XCTAssertEqual(monitor.reenables, 0)
+        XCTAssertTrue(model.error?.contains("macOS paused input monitoring") == true)
+    }
+
+    @MainActor
+    func testTimedOutEventTapIsTurnedBackOnAndClickyStaysEnabled() throws {
         let monitor = InputMonitorStub()
         monitor.granted = true
         let (model, defaults, suite) = monitorFixture(monitor)
@@ -316,9 +338,10 @@ final class ClickyTests: XCTestCase {
         model.activate()
         let event = try XCTUnwrap(CGEvent(source: nil))
         monitor.handler?(.tapDisabledByTimeout, event)
-        XCTAssertFalse(model.enabled)
-        XCTAssertEqual(monitor.stops, 1)
-        XCTAssertTrue(model.error?.contains("macOS paused input monitoring") == true)
+        XCTAssertTrue(model.enabled)
+        XCTAssertEqual(monitor.reenables, 1)
+        XCTAssertEqual(monitor.stops, 0)
+        XCTAssertNil(model.error)
     }
 
     @MainActor

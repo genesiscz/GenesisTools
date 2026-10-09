@@ -282,6 +282,18 @@ test("voice setup cancellation reaches pending PCM capture and closes both resou
     }
 });
 
+test("input none is refused for a cloud provider before any provider connection opens", async () => {
+    const provider = spyOn(stt, "openLiveStt").mockRejectedValue(new Error("provider must not open"));
+    try {
+        await expect(createVoiceSession({ provider: "xai", input: "none", onEvent() {} })).rejects.toThrow(
+            "Input none is reserved for fixture replay"
+        );
+        expect(provider).not.toHaveBeenCalled();
+    } finally {
+        provider.mockRestore();
+    }
+});
+
 test("voice cleanup preserves the provider failure and always emits stopped", async () => {
     const seen: string[] = [];
     const fixture: LiveSttSession = {

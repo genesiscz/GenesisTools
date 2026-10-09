@@ -154,12 +154,13 @@ describe("video sample planning and preparation ownership", () => {
             started = resolve;
         });
         const order: string[] = [];
+        let oldAborted: boolean | undefined;
         const old = jobs.request(async (signal) => {
             started?.();
             await new Promise<void>((resolve) => {
                 release = resolve;
             });
-            expect(signal.aborted).toBe(true);
+            oldAborted = signal.aborted;
             order.push("old-cleaned");
             return "obsolete";
         });
@@ -174,6 +175,7 @@ describe("video sample planning and preparation ownership", () => {
         });
         release?.();
         expect(await old).toBeNull();
+        expect(oldAborted).toBe(true);
         expect(await skipped).toBeNull();
         expect((await latest)?.value).toBe("current");
         expect(order).toEqual(["old-cleaned", "latest"]);

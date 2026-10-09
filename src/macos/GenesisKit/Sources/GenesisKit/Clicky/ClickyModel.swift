@@ -328,7 +328,12 @@ public final class ClickyModel: ObservableObject {
         let diagnosticStart = ClickyInputDiagnostics.enabled ? PerfLog.now() : nil
         let diagnosticSource = event.getIntegerValueField(.eventSourceUnixProcessID) == 0 ? "device" : "posted"
         defer { PerfLog.since("clicky.receive.\(diagnosticSource).\(type.rawValue)", diagnosticStart) }
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        if type == .tapDisabledByTimeout {
+            inputState.clear()
+            inputMonitor.reenable()
+            return
+        }
+        if type == .tapDisabledByUserInput {
             deactivate()
             error = "macOS paused input monitoring. Click Enable Clicky to restart it."
             return

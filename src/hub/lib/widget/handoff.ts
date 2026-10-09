@@ -41,21 +41,29 @@ export async function createWidgetHandoff({
     ];
     if (session.transcriptPath && session.target.provider !== "unknown") {
         if (existsSync(session.transcriptPath) && statSync(session.transcriptPath).size <= 8 * 1024 * 1024) {
-            const resolved = await resolveTranscript(session.transcriptPath, {}, session.target.provider);
-            const envelope = await transcriptEnvelope(resolved, { limit: 40 });
-            paragraphs.push(
-                composeHandoff({
-                    turns: envelope.turns,
-                    range: { last: 5 },
-                    meta: {
-                        sessionId: session.target.sessionId,
-                        provider: resolved.provider,
-                        title: session.title,
-                        cwd: session.target.cwd,
-                    },
-                }).markdown
-            );
+            try {
+                const resolved = await resolveTranscript(session.transcriptPath, {}, session.target.provider);
+                const envelope = await transcriptEnvelope(resolved, { limit: 40 });
+                paragraphs.push(
+                    composeHandoff({
+                        turns: envelope.turns,
+                        range: { last: 5 },
+                        meta: {
+                            sessionId: session.target.sessionId,
+                            provider: resolved.provider,
+                            title: session.title,
+                            cwd: session.target.cwd,
+                        },
+                    }).markdown
+                );
+            } catch (error) {
+                logger.warn(
+                    { error, path: session.transcriptPath },
+                    "Handoff transcript summary unavailable; the draft keeps the transcript path"
+                );
+            }
         }
+
         paragraphs.push(`Original transcript: ${session.transcriptPath}`);
     }
     for (const card of snapshot.cards.slice(-12)) {

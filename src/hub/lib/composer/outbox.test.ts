@@ -8,6 +8,7 @@ import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
 import { postDecisions, readDecisions } from "@app/question/lib/decisions/store";
 import { postAskForm } from "@app/question/lib/pending/ask";
 import { openPendingStore } from "@app/question/lib/pending/store";
+import * as transcripts from "@genesiscz/utils/ai/transcripts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as commands from "@genesiscz/utils/process/bounded-command";
 import * as videos from "@genesiscz/utils/video/probe";
@@ -568,6 +569,47 @@ test("a separate handoff saves the unsent draft without dispatching or clearing 
     expect((await readWidgetState(directory)).outgoing).toHaveLength(0);
 });
 
+test("a handoff keeps the draft and the transcript path when the transcript cannot be read", async () => {
+    const directory = await root();
+    const key = widgetSessionKey(target);
+    const transcriptPath = join(directory, "unreadable.jsonl");
+    await writeFile(transcriptPath, "{ not a transcript");
+    await mutateWidgetState(directory, (state) => {
+        state.drafts[key] = { text: "Keep this draft even without a summary", assetIds: [] };
+        state.preferences.showChanges = false;
+    });
+    const sources: WidgetSources = {
+        sessions: async () => [
+            {
+                ...target,
+                provider: "codex",
+                title: "Fixture task",
+                project: "Fixture",
+                cwdShort: "Fixture",
+                mtime: Date.now(),
+                model: null,
+                account: null,
+                filePath: transcriptPath,
+            },
+        ],
+        decisions: () => [],
+        forms: () => [],
+        answers: () => [],
+        agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+    };
+    const resolver = spyOn(transcripts, "resolveTranscript").mockRejectedValue(new Error("unexpected format"));
+    try {
+        const result = await createWidgetHandoff({ root: directory, key, sources });
+        const text = await readFile(result.path, "utf8");
+        expect(resolver).toHaveBeenCalledTimes(1);
+        expect(text).toContain("Keep this draft even without a summary");
+        expect(text).toContain(`Original transcript: ${transcriptPath}`);
+        expect(result.sent).toBe(false);
+    } finally {
+        resolver.mockRestore();
+    }
+});
+
 test("a handoff preserves an unsent video draft while frame preparation is incomplete", async () => {
     const directory = await root();
     const key = widgetSessionKey(target);
@@ -998,6 +1040,13 @@ describe("widget transport receipts", () => {
             stdout,
             stderr: "",
         });
+    });
+
+    test("a clean exit whose receipt says not sent is not a delivery", () => {
+        const stdout = SafeJSON.stringify({ sent: false });
+        expect(widgetDeliveryReceipt({ tool: "claude", result: { status: 0, stdout, stderr: "" } }).success).toBe(
+            false
+        );
     });
 
     test("a typed claude receipt succeeds and a failed or unreadable run stays unknown", () => {

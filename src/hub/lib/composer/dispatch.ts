@@ -73,7 +73,7 @@ export function widgetDeliveryReceipt({
         throw unknown;
     }
 
-    return { success: result.status === 0, stdout: result.stdout, stderr: result.stderr };
+    return { success: result.status === 0 && raw.sent, stdout: result.stdout, stderr: result.stderr };
 }
 
 type DecisionPayload = Extract<WidgetOutgoing["payload"], { kind: "decision" }>;

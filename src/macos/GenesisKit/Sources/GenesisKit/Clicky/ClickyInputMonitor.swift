@@ -10,6 +10,8 @@ public protocol ClickyInputMonitoring: AnyObject {
     var hasPermission: Bool { get }
     func requestPermission() -> Bool
     func start(handler: @escaping @MainActor (CGEventType, CGEvent) -> Void) -> ClickyInputStartResult
+    /// Turns a running tap back on after macOS disabled it for a slow callback.
+    func reenable()
     func stop()
 }
 
@@ -56,6 +58,11 @@ final class SystemClickyInputMonitor: ClickyInputMonitoring {
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: created, enable: true)
         return .started
+    }
+
+    func reenable() {
+        guard let tap else { return }
+        CGEvent.tapEnable(tap: tap, enable: true)
     }
 
     func stop() {

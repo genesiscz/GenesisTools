@@ -46,7 +46,7 @@ export async function probeVideo({ input, signal }: { input: string; signal?: Ab
         signal,
         timeoutMs: 30_000,
     });
-    const data = probeSchema.parse(SafeJSON.parse(raw));
+    const data = probeSchema.parse(SafeJSON.parse(raw, { strict: true }));
     const video = data.streams[0];
     const durationUs = secondsToMicroseconds(video.duration ?? data.format?.duration ?? "");
     if (durationUs <= 0 || durationUs > 600_000_000 || video.width * video.height > 48_000_000) {
@@ -109,7 +109,7 @@ export async function readVideoFrameTimes({
                 .min(1)
                 .max(180_000),
         })
-        .parse(SafeJSON.parse(raw));
+        .parse(SafeJSON.parse(raw, { strict: true }));
     const absolute = data.frames.map((frame) => signedSecondsToMicroseconds(frame.best_effort_timestamp_time));
     const start = absolute[0];
     return absolute.map((time) => time - start);
