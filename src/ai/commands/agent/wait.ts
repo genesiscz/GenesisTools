@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { resolveSessionTranscript } from "@app/ai/lib/sessions/resolve-transcript";
 import { transcriptByteSize, transcriptEnvelope, transcriptSnapshot } from "@genesiscz/utils/ai/transcripts/load";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
@@ -58,8 +59,11 @@ export interface WaitOptions {
      * That turn (ended or still running) never answers the message, however close to the send it began.
      */
     baselineTurnStartedAt?: number;
-    /** Set by `message --wait`: the sent text. A Grok turn that opened in the baseline's second answers when this is its prompt. */
-    sentText?: string;
+    /**
+     * Set by `message --wait`: the transcript's byte size before the send. A Grok turn that opened in the baseline
+     * turn's whole second answers only when its opening record lies at or past it.
+     */
+    baselineTranscriptBytes?: number;
     /** Set by `message --wait --json`: merged into the one JSON document. */
     embed?: Record<string, unknown>;
 }
@@ -155,28 +159,28 @@ export async function readTurnExtras(
  */
 export function answeredBeforeWatch(
     before: TurnSnapshot | null,
-    window: { turnStartedAfter?: number; turnNewerThan?: number; prompt?: string }
+    window: { turnStartedAfter?: number; turnNewerThan?: number; openedFromByte?: number }
 ): boolean {
     return (
         before !== null &&
         window.turnStartedAfter !== undefined &&
         (before.state === "AWAITING-INPUT" || before.state === "FINISHED") &&
         before.turnStartedAt !== null &&
-        turnAnswers(before.turnStartedAt, window, before.turnPrompt)
+        turnAnswers(before.turnStartedAt, window, before.turnStartOffset)
     );
 }
 
 /** Is the turn that answers a sent message already under way (started, not ended) when the watch begins? */
 export function answerAlreadyRunning(
     before: TurnSnapshot | null,
-    window: { turnStartedAfter?: number; turnNewerThan?: number; prompt?: string }
+    window: { turnStartedAfter?: number; turnNewerThan?: number; openedFromByte?: number }
 ): boolean {
     return (
         before !== null &&
         window.turnStartedAfter !== undefined &&
         (before.state === "RUNNING" || before.state === "STALLED") &&
         before.turnStartedAt !== null &&
-        turnAnswers(before.turnStartedAt, window, before.turnPrompt)
+        turnAnswers(before.turnStartedAt, window, before.turnStartOffset)
     );
 }
 
@@ -510,11 +514,13 @@ export async function readTurnBaseline(
     alias: TurnProvider,
     query: string,
     first: boolean
-): Promise<{ sessionId: string; turnStartedAt: number | null } | null> {
+): Promise<{ sessionId: string; turnStartedAt: number | null; transcriptBytes: number } | null> {
     try {
         const resolved = await resolveSessionTranscript(alias, query, first);
+        // The size first: a turn that opens after this read starts at or past it.
+        const transcriptBytes = statSync(resolved.filePath).size;
         const snapshot = readTurnState(alias, resolved.filePath, { stallTimeoutMs: Number.POSITIVE_INFINITY });
-        return { sessionId: resolved.sessionId, turnStartedAt: snapshot?.turnStartedAt ?? null };
+        return { sessionId: resolved.sessionId, turnStartedAt: snapshot?.turnStartedAt ?? null, transcriptBytes };
     } catch (error) {
         log.debug({ error, alias, query }, "no turn baseline before the send; the send time alone decides");
         return null;
@@ -551,7 +557,7 @@ export async function waitCommand(alias: TurnProvider, query: string, options: W
         const window = {
             turnStartedAfter: options.sentAt !== undefined ? options.sentAt - sentAtSlackMs(alias) : undefined,
             turnNewerThan: options.baselineTurnStartedAt,
-            prompt: options.sentText,
+            openedFromByte: options.baselineTranscriptBytes,
         };
         const before = window.turnStartedAfter !== undefined ? read() : null;
         const alreadyAnswered = answeredBeforeWatch(before, window);
@@ -571,7 +577,7 @@ export async function waitCommand(alias: TurnProvider, query: string, options: W
                   next: options.next === true,
                   turnStartedAfter: window.turnStartedAfter,
                   turnNewerThan: window.turnNewerThan,
-                  prompt: window.prompt,
+                  openedFromByte: window.openedFromByte,
                   timeoutMs: timeoutSeconds === undefined ? undefined : timeoutSeconds * 1000,
                   pollMs: POLL_MS,
                   onSnapshot: async () => {

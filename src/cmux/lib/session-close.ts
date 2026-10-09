@@ -158,6 +158,17 @@ async function tmuxPaneProblem(
 
     const pane = listing.items.find((entry) => entry.pane === record.tmuxPane);
     const ttyMoved = isAdopted(record) && pane !== undefined && !sameTty(pane.tty, record.tty);
+    // A tmux server restart can bring back a session with the same name and pane id: its creation time differs.
+    const created = record.tmuxSessionCreatedMs;
+    const replaced =
+        pane !== undefined && created !== undefined && created !== null && pane.sessionCreatedMs !== created;
+
+    if (replaced) {
+        return {
+            reason: "workspace-moved",
+            note: `tmux session ${record.tmuxSession} is a newer session than the recorded one, so nothing is typed into pane ${record.tmuxPane}`,
+        };
+    }
 
     if (!pane || ttyMoved) {
         return {
@@ -531,7 +542,8 @@ async function closeTarget(input: {
 
     // An adopted session closes only its own surface, so sharing the caller's workspace is fine; `adopt`
     // never returns the caller's own surface.
-    if (!adopted && listed && caller && listed.id === caller) {
+    // `CMUX_WORKSPACE_ID` and `cmux workspace list` may print the same UUID in different cases.
+    if (!adopted && listed && caller && sameId(listed.id, caller)) {
         return refuse("own-workspace", `${report.workspace} is the workspace this command runs in; it is never closed`);
     }
 

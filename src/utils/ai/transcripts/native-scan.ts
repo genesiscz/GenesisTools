@@ -215,6 +215,11 @@ export function codexModelOf(text: string): string | null {
 
 /** The last `bytes` of a file as text, starting at a line boundary. Throws when the file cannot be read. */
 export function readTail(path: string, bytes: number): string {
+    return readTailAt(path, bytes).text;
+}
+
+/** `readTail`, plus the byte offset in the file where the returned text begins (a whole line's start). */
+export function readTailAt(path: string, bytes: number): { text: string; start: number } {
     const fd = openSync(path, "r");
 
     try {
@@ -222,14 +227,16 @@ export function readTail(path: string, bytes: number): string {
         const start = Math.max(0, size - bytes);
         const buffer = Buffer.alloc(size - start);
         readSync(fd, buffer, 0, buffer.length, start);
-        const text = buffer.toString("utf8");
 
         if (start === 0) {
-            return text;
+            return { text: buffer.toString("utf8"), start: 0 };
         }
 
-        const firstNewline = text.indexOf("\n");
-        return firstNewline === -1 ? "" : text.slice(firstNewline + 1);
+        // The window almost certainly starts mid-line: drop that fragment, counted in bytes.
+        const firstNewline = buffer.indexOf(0x0a);
+        return firstNewline === -1
+            ? { text: "", start: size }
+            : { text: buffer.subarray(firstNewline + 1).toString("utf8"), start: start + firstNewline + 1 };
     } finally {
         closeSync(fd);
     }
