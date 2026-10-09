@@ -266,11 +266,22 @@ public struct WidgetOutgoing: Codable, Identifiable, Equatable, Sendable {
     public var error: String?
     public var receipt: Receipt?
     public var dispatchedAt: Double?
+    /// The composer text. A form sent without any keeps a "Form answer" label, because its payload stores `text: ""`.
     public var text: String {
-        guard case .object(let fields) = payload, case .string(let value) = fields["text"] else {
+        guard case .object(let fields) = payload, case .string(let value) = fields["text"],
+            fields["kind"] != .string("form") || !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
             return "Form answer"
         }
         return value
+    }
+    public var isSettled: Bool { state == "sent" || state == "cancelled" }
+    public static let shownHistory = 20
+    /// The last 20 messages plus every older unsettled one: an unsettled message blocks its whole conversation, so
+    /// its Retry, Edit and review controls must stay reachable. Mirrors `shownOutgoing` in src/hub/lib/widget/types.ts.
+    public static func shown(_ messages: [WidgetOutgoing]) -> [WidgetOutgoing] {
+        let start = messages.count - shownHistory
+        return messages.enumerated().filter { $0.offset >= start || !$0.element.isSettled }.map(\.element)
     }
 }
 public struct WidgetState: Codable, Equatable, Sendable {

@@ -306,7 +306,7 @@ final class WidgetVisibilityTests: XCTestCase {
 
     /// A fake `tools` whose `hub widget watch` streams one saved snapshot, written before `showWidget` existed.
     @MainActor
-    private func fixture() throws -> Fixture {
+    private func fixture(actionExit: Int = 0) throws -> Fixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             "widget-visibility-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -318,7 +318,7 @@ final class WidgetVisibilityTests: XCTestCase {
         try """
         #!/bin/sh
         case "$*" in
-          *--input*) printf '{}'; exit 0 ;;
+          *--input*) printf '{}'; exit \(actionExit) ;;
           *watch*) cat '\(directory.path)/saved.json'; printf '\\n'; cat > /dev/null; exit 0 ;;
           *) cat '\(directory.path)/saved.json'; exit 0 ;;
         esac
@@ -401,5 +401,82 @@ final class WidgetVisibilityTests: XCTestCase {
         coordinator.model.updatePreferences(["showWidget": .bool(false)])
         XCTAssertEqual(coordinator.panelCount, 0)
         XCTAssertFalse(coordinator.panelMonitorsInstalled)
+    }
+
+    /// The settings face starts the widget face from `preferencesSaved`, so it must fire only once the hub stored
+    /// the switch: a launch before that would read the switch as off.
+    @MainActor
+    func testASavedSwitchIsReportedOnlyAfterTheHubStoresIt() async throws {
+        let fixture = try fixture()
+        defer { cleanUp(fixture) }
+        let model = fixture.coordinator.model
+        defer { model.stop() }
+        model.startSettings()
+        try await waitFor { model.snapshot != nil }
+        var saved: [[String: WidgetJSON]] = []
+        model.preferencesSaved = { saved.append($0) }
+        model.updatePreferences(["showWidget": .bool(true)])
+        XCTAssertTrue(saved.isEmpty, "nothing is stored before the debounced write")
+        try await waitFor { !saved.isEmpty }
+        XCTAssertEqual(saved, [["showWidget": .bool(true)]])
+    }
+
+    @MainActor
+    func testARefusedSwitchIsNeverReportedAsSaved() async throws {
+        let fixture = try fixture(actionExit: 1)
+        defer { cleanUp(fixture) }
+        let model = fixture.coordinator.model
+        defer { model.stop() }
+        model.startSettings()
+        try await waitFor { model.snapshot != nil }
+        var saved: [[String: WidgetJSON]] = []
+        model.preferencesSaved = { saved.append($0) }
+        model.updatePreferences(["showWidget": .bool(true)])
+        try await waitFor { model.error != nil }
+        XCTAssertNotNil(model.error)
+        XCTAssertTrue(saved.isEmpty)
+    }
+
+    @MainActor
+    func testTheSettingsOfferExactlyTheModulesTheHostRegisters() throws {
+        let fixture = try fixture()
+        defer { cleanUp(fixture) }
+        XCTAssertEqual(
+            WidgetModuleChoice.builtins.map(\.id), fixture.coordinator.modules.modules.map(\.id),
+            "a settings toggle for an unregistered module would silently do nothing")
+    }
+}
+
+final class WidgetOutgoingTests: XCTestCase {
+    private func message(_ index: Int, state: String, payload: String? = nil) throws -> WidgetOutgoing {
+        let json = """
+            {"id":"m\(index)","target":{"hostId":"local","provider":"codex","sessionId":"s","sourceHome":"","cwd":"/"},
+            "payload":\(payload ?? #"{"kind":"followup","text":"message \#(index)"}"#),"assetIds":[],
+            "createdAt":\(index),"sequence":\(index),"state":"\(state)"}
+            """
+        return try JSONDecoder().decode(WidgetOutgoing.self, from: Data(json.utf8))
+    }
+
+    func testAnOldBlockerStaysListedBehindMoreThanTwentyFollowUps() throws {
+        let blocker = try message(0, state: "failed")
+        let settled = try message(1, state: "sent")
+        let queued = try (2..<32).map { try message($0, state: "queued") }
+        let shown = WidgetOutgoing.shown([blocker, settled] + queued)
+        XCTAssertEqual(shown.first?.id, "m0", "the failed message keeps its Retry and Edit controls")
+        XCTAssertFalse(shown.contains { $0.id == "m1" }, "settled history is still bounded")
+        XCTAssertEqual(shown.count, 31)
+
+        let history = try (0..<30).map { try message($0, state: "sent") }
+        XCTAssertEqual(WidgetOutgoing.shown(history).map(\.id), (10..<30).map { "m\($0)" })
+    }
+
+    func testAFormWithoutComposerTextKeepsItsLabel() throws {
+        let blank = try message(0, state: "sent", payload: #"{"kind":"form","id":"f","text":"  ","answers":[]}"#)
+        XCTAssertEqual(blank.text, "Form answer")
+        let written = try message(1, state: "sent", payload: #"{"kind":"form","id":"f","text":"Why","answers":[]}"#)
+        XCTAssertEqual(written.text, "Why")
+        let decision = try message(
+            2, state: "sent", payload: #"{"kind":"decision","id":"d","number":1,"expectedRevision":1,"text":""}"#)
+        XCTAssertEqual(decision.text, "", "a decision without text stays empty, it is not a form")
     }
 }

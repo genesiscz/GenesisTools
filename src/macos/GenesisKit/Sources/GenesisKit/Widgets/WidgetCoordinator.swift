@@ -44,7 +44,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         do {
             try modules.register(
                 WidgetModuleDescriptor(
-                    id: "agents", title: "Agent Inbox", symbol: "bubble.left.and.bubble.right.fill", tint: .blue,
+                    id: WidgetModuleChoice.agents.id, title: WidgetModuleChoice.agents.title,
+                    symbol: WidgetModuleChoice.agents.symbol, tint: .blue,
                     summary: { [weak model] in model?.selected?.title ?? "Your local agents" }
                 ) { [model] presentation in AgentWidgetModuleView(model: model, presentation: presentation) })
         } catch { model.error = error.localizedDescription }

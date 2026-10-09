@@ -17,9 +17,18 @@ import { hubAgents } from "../agents";
 import type { AgentNode, AgentsTree } from "../agents/types";
 import { readAssetManifest } from "../composer/serialize";
 import { readWidgetState } from "./storage";
-import { parseWidgetSessionKey, type WidgetTarget, widgetSessionKey } from "./types";
+import { parseWidgetSessionKey, shownOutgoing, type WidgetTarget, widgetSessionKey } from "./types";
 
 const prof = profiler.scope("widget");
+
+/**
+ * Epoch milliseconds of a stored ISO time, or 0 when it is empty or malformed. A NaN here serializes as `null`, which
+ * the native widget cannot decode into its `Double` fields, and it breaks the session and card sort.
+ */
+function timeOf(value: string | null | undefined): number {
+    const at = value ? Date.parse(value) : Number.NaN;
+    return Number.isFinite(at) ? at : 0;
+}
 
 export interface WidgetSession {
     key: string;
@@ -349,7 +358,7 @@ export async function widgetSnapshot({
             target,
             node.name ?? node.description ?? node.id,
             parent?.project ?? "Agent",
-            Date.parse(node.lastAt)
+            timeOf(node.lastAt)
         );
         session.status = node.status === "running" ? "working" : node.status === "completed" ? "finished" : "recent";
         session.agentId = node.id;
@@ -364,7 +373,7 @@ export async function widgetSnapshot({
                 targetOf(parent, parent.sessionId),
                 parent.title ?? parent.sessionId,
                 parent.project ?? parent.cwd,
-                Date.parse(parent.lastAt)
+                timeOf(parent.lastAt)
             );
         session.transcriptPath ??= parent.filePath;
         const nodes = flattenAgents(parent.children);
@@ -385,7 +394,7 @@ export async function widgetSnapshot({
                 targetOf({ ...decision, sessionId: decision.sessionId }, decision.id),
                 decision.sessionTitle ?? decision.sessionId,
                 decision.project ?? decision.cwd ?? "",
-                Date.parse(decision.updatedTs)
+                timeOf(decision.updatedTs)
             );
         if (kindOf(decision) === "decision" && ["open", "drafted"].includes(decision.state)) {
             session.status = "waiting";
@@ -481,7 +490,7 @@ export async function widgetSnapshot({
             kind: kindOf(row),
             sessionKey: session.key,
             sourceId: row.id,
-            at: Date.parse(row.updatedTs),
+            at: timeOf(row.updatedTs),
             title: row.title ?? row.prompt,
             body: cleanVisibleContext(
                 [row.context, row.reasoning, row.proposal, row.answer, row.notes].filter(Boolean).join("\n\n")
@@ -543,7 +552,7 @@ export async function widgetSnapshot({
             kind: "result",
             sessionKey: session.key,
             sourceId: node.id,
-            at: Date.parse(node.lastAt),
+            at: timeOf(node.lastAt),
             title: node.name ?? node.description ?? node.id,
             body:
                 result ||
@@ -555,12 +564,12 @@ export async function widgetSnapshot({
             read: false,
         });
     }
-    // Only the videos the widget can show: those in a draft, and those of the selected session's last 20 outgoing
+    // Only the videos the widget can show: those in a draft, and those of the selected session's shown outgoing
     // messages (the list WidgetModel.outgoing draws). Every ready video ever imported stays in state, and each
     // manifest holds up to 2,400 frames, so reading them all made every five-second refresh grow with history.
     const shown = new Set(Object.values(state.drafts).flatMap((draft) => draft.assetIds));
     const recent = selected
-        ? state.outgoing.filter((message) => widgetSessionKey(message.target) === selected.key).slice(-20)
+        ? shownOutgoing(state.outgoing.filter((message) => widgetSessionKey(message.target) === selected.key))
         : [];
     for (const message of recent) {
         for (const id of message.assetIds) {

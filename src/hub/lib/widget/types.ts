@@ -165,6 +165,20 @@ export const widgetOutgoingSchema = z.object({
     dispatchedAt: z.number().optional(),
 });
 export type WidgetOutgoing = z.infer<typeof widgetOutgoingSchema>;
+export const SHOWN_OUTGOING_HISTORY = 20;
+
+/**
+ * The outgoing messages the widget lists for one conversation: the last 20, plus every older message that is not yet
+ * sent or cancelled. An unsettled message blocks its whole conversation (`nextOutgoingByConversation`), so its Retry,
+ * Edit and review controls must stay reachable however many follow-ups queue behind it. Mirrors
+ * `WidgetOutgoing.shown` in WidgetWireModels.swift.
+ */
+export function shownOutgoing(messages: WidgetOutgoing[]): WidgetOutgoing[] {
+    const start = messages.length - SHOWN_OUTGOING_HISTORY;
+    return messages.filter(
+        (message, index) => index >= start || (message.state !== "sent" && message.state !== "cancelled")
+    );
+}
 export const widgetDraftSchema = z.object({
     text: z.string().max(64_000).default(""),
     assetIds: z.array(z.string()).max(24).default([]),

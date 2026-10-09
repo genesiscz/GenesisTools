@@ -11,12 +11,22 @@ import { type WidgetSources, widgetSnapshot } from "./snapshot";
 import { widgetRoot } from "./storage";
 import { type WidgetAsset, widgetSessionKey } from "./types";
 
+/** A handoff never fails on one video: without readable frame evidence it keeps the original path. */
 async function handoffMedia(asset: WidgetAsset): Promise<string> {
-    if (asset.type === "video" && asset.status !== "ready") {
+    if (asset.type === "image") {
+        return serializeWidgetMedia([asset]);
+    }
+
+    if (asset.status !== "ready") {
         return `Original video (preparation incomplete): ${asset.path}`;
     }
 
-    return serializeWidgetMedia([asset]);
+    try {
+        return await serializeWidgetMedia([asset]);
+    } catch (error) {
+        logger.warn({ error, id: asset.id, path: asset.path }, "Handoff video evidence unavailable; keeping the path");
+        return `Original video (frame evidence unavailable): ${asset.path}`;
+    }
 }
 
 export async function createWidgetHandoff({

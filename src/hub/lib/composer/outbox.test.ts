@@ -17,7 +17,15 @@ import { performWidgetAction } from "../widget/actions";
 import { createWidgetHandoff } from "../widget/handoff";
 import { readWidgetChanges, readWidgetDecisionEvents, type WidgetSources, widgetSnapshot } from "../widget/snapshot";
 import { mutateWidgetState, readWidgetState } from "../widget/storage";
-import { type WidgetTarget, widgetOutgoingSchema, widgetPreferencesSchema, widgetSessionKey } from "../widget/types";
+import {
+    shownOutgoing,
+    type WidgetAsset,
+    type WidgetOutgoing,
+    type WidgetTarget,
+    widgetOutgoingSchema,
+    widgetPreferencesSchema,
+    widgetSessionKey,
+} from "../widget/types";
 import { importWidgetAsset, reviseVideoAsset } from "./assets";
 import { widgetDeliveryReceipt, widgetDispatcher } from "./dispatch";
 import { processWidgetOutbox } from "./engine";
@@ -646,6 +654,106 @@ test("a handoff preserves an unsent video draft while frame preparation is incom
     expect(result.sent).toBe(false);
     expect((await readWidgetState(directory)).drafts[key].assetIds).toEqual([videoId]);
     expect((await readWidgetState(directory)).outgoing).toHaveLength(0);
+});
+
+const emptySources: WidgetSources = {
+    sessions: async () => [],
+    decisions: () => [],
+    forms: () => [],
+    answers: () => [],
+    agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+};
+
+function readyVideo(id: string, manifestPath: string): WidgetAsset {
+    return {
+        id,
+        type: "video",
+        name: "clip.mp4",
+        path: `/fixture/${id}.mp4`,
+        sha256: "fixture-video",
+        durationUs: 1_000_000,
+        width: 128,
+        height: 80,
+        settings: { fps: 2, framesPerImage: 16, minimumDifferencePct: 0 },
+        revision: 1,
+        confirmedRevision: 1,
+        status: "ready",
+        manifestPath,
+    };
+}
+
+test("a handoff keeps a ready video's original path when its frame manifest cannot be read", async () => {
+    const directory = await root();
+    const key = widgetSessionKey(target);
+    const videoId = randomUUID();
+    await mutateWidgetState(directory, (state) => {
+        state.drafts[key] = { text: "Look at the clip", assetIds: [videoId] };
+        state.preferences.showChanges = false;
+        state.assets[videoId] = readyVideo(videoId, join(directory, "missing-manifest.json"));
+    });
+    const result = await createWidgetHandoff({ root: directory, key, sources: emptySources });
+    const text = await readFile(result.path, "utf8");
+    expect(text).toContain("Look at the clip");
+    expect(text).toContain(`Original video (frame evidence unavailable): /fixture/${videoId}.mp4`);
+    expect(result.sent).toBe(false);
+});
+
+test("malformed stored times sort as the oldest activity instead of breaking the snapshot", async () => {
+    const directory = await root();
+    const file = join(directory, "decisions.jsonl");
+    await postDecisions(
+        file,
+        join(directory, "events.jsonl"),
+        { sessionId: "time-session", provider: "codex", decisions: [{ prompt: "Proceed?", options: ["yes"] }] },
+        { env: {} }
+    );
+    const snapshot = await widgetSnapshot({
+        root: directory,
+        sources: {
+            ...emptySources,
+            decisions: () => readDecisions(file).map((row) => ({ ...row, updatedTs: "not a time" })),
+        },
+    });
+    expect(snapshot.sessions[0]?.activityAt).toBe(0);
+    expect(snapshot.cards[0]?.at).toBe(0);
+    const wire = SafeJSON.stringify(snapshot);
+    expect(wire).not.toContain('"activityAt":null');
+    expect(wire).not.toContain('"at":null');
+});
+
+test("an unsettled message older than the last 20 stays shown and keeps its video evidence", async () => {
+    const directory = await root();
+    const key = widgetSessionKey(target);
+    const blockerVideo = randomUUID();
+    const settledVideo = randomUUID();
+    const message = (sequence: number, state: WidgetOutgoing["state"], assetIds: string[] = []) =>
+        widgetOutgoingSchema.parse({
+            id: randomUUID(),
+            target,
+            payload: { kind: "followup", text: `message ${sequence}` },
+            assetIds,
+            createdAt: sequence,
+            sequence,
+            state,
+        });
+    await mutateWidgetState(directory, (state) => {
+        state.selectedKey = key;
+        state.preferences.showChanges = false;
+        state.assets[blockerVideo] = readyVideo(blockerVideo, join(directory, "blocker-manifest.json"));
+        state.assets[settledVideo] = readyVideo(settledVideo, join(directory, "settled-manifest.json"));
+        state.outgoing = [
+            message(1, "sent", [settledVideo]),
+            message(2, "failed", [blockerVideo]),
+            ...Array.from({ length: 25 }, (_, index) => message(index + 3, "queued")),
+        ];
+    });
+    const state = await readWidgetState(directory);
+    const shown = shownOutgoing(state.outgoing);
+    expect(shown.map((entry) => entry.sequence)).toEqual(Array.from({ length: 26 }, (_, index) => index + 2));
+
+    const snapshot = await widgetSnapshot({ root: directory, sources: emptySources });
+    expect(snapshot.errors.some((error) => error.startsWith(`video ${blockerVideo}`))).toBe(true);
+    expect(snapshot.errors.some((error) => error.startsWith(`video ${settledVideo}`))).toBe(false);
 });
 
 test("editing an unsent message restores its draft without reviving its cancelled send", async () => {

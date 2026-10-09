@@ -37,6 +37,11 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
         {
             ClickyHost.shared.registerSettingsSection(section)
         }
+        // This face only edits the settings. Turning "Show the widget" on must also start the widget face that
+        // owns the panels, once the switch is stored, so the face reads it as on.
+        model.preferencesSaved = { patch in
+            if patch["showWidget"] == .bool(true) { WidgetLaunch.ensureRunning() }
+        }
         model.startSettings()
 
         let menu = NSMenu()

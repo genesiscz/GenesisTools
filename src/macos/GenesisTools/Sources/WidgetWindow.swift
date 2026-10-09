@@ -105,6 +105,7 @@ func runAgentWidget(_ args: [String]) -> Never {
         }
         guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
             close(descriptor)
+            if args.contains(WidgetLaunch.ensureRunningFlag) { exit(0) }
             let key = args.firstIndex(of: "--session-key").flatMap { index in
                 args.indices.contains(index + 1) ? args[index + 1] : nil
             }
@@ -125,6 +126,9 @@ func runAgentWidget(_ args: [String]) -> Never {
 
 @MainActor
 enum WidgetLaunch {
+    /// A launch that only makes sure the widget face runs: a running face ignores it instead of opening settings.
+    static let ensureRunningFlag = "--ensure-running"
+    static func ensureRunning() { start(["--widget", ensureRunningFlag]) }
     static func start(_ arguments: [String] = ["--widget", "--settings"]) {
         guard let executable = Bundle.main.executableURL else { return }
         do {

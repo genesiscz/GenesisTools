@@ -54,6 +54,8 @@ public final class WidgetModel: ObservableObject {
     public var showMedia: ((WidgetMediaSelection) -> Void)?
     public var openHub: ((WidgetSession?) -> Void)?
     public var openDestination: ((WidgetSession, String, String?) -> Void)?
+    /// Called with each preference patch once the hub has stored it.
+    public var preferencesSaved: (([String: WidgetJSON]) -> Void)?
     @Published public var notice: String?
     public private(set) var openedAt: TimeInterval = 0
     public let bridge: ToolsBridge
@@ -133,7 +135,7 @@ public final class WidgetModel: ObservableObject {
     }
     public var draft: WidgetDraft { drafts[selectedKey] ?? WidgetDraft() }
     public var outgoing: [WidgetOutgoing] {
-        snapshot?.state.outgoing.filter { $0.target.hasSameIdentity(as: selected?.target) }.suffix(20).map { $0 } ?? []
+        WidgetOutgoing.shown(snapshot?.state.outgoing.filter { $0.target.hasSameIdentity(as: selected?.target) } ?? [])
     }
     public var cardPending: Bool {
         guard let card else { return false }
@@ -471,7 +473,10 @@ public final class WidgetModel: ObservableObject {
                 acknowledge()
                 self?.refreshSettings()
             },
-            completed: { acknowledge() })
+            completed: { [weak self] in
+                acknowledge()
+                self?.preferencesSaved?(patch)
+            })
     }
 
     public func action(

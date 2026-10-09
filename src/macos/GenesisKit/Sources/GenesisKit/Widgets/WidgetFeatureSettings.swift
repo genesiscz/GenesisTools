@@ -13,26 +13,12 @@ public struct WidgetModuleChoice: Identifiable {
         self.detail = detail
     }
 
-    public static let builtins: [Self] = [
-        .init(
-            id: "agents", title: "Agent Inbox", symbol: "bubble.left.and.bubble.right.fill",
-            detail: "Questions, answers, screenshots and live conversations."),
-        .init(
-            id: "capture", title: "Capture", symbol: "camera.viewfinder",
-            detail: "Screenshots and recordings ready for your next message."),
-        .init(
-            id: "shelf", title: "File Shelf", symbol: "tray.full.fill",
-            detail: "Keep the files you are working with within reach."),
-        .init(
-            id: "focus", title: "Flow", symbol: "waveform.circle.fill",
-            detail: "Dictation, focus sessions and your Focus Studio."),
-        .init(
-            id: "voice", title: "Voice Notes", symbol: "mic.fill",
-            detail: "Turn a spoken thought into editable text."),
-        .init(
-            id: "tasks", title: "Tasks", symbol: "checklist",
-            detail: "A small, local list for the work in front of you."),
-    ]
+    public static let agents = Self(
+        id: "agents", title: "Agent Inbox", symbol: "bubble.left.and.bubble.right.fill",
+        detail: "Questions, answers, screenshots and live conversations.")
+    /// Exactly the modules `WidgetCoordinator` registers. Settings offer only these, because the layout drops any
+    /// configured ID the host has not registered, so a toggle for anything else would silently do nothing.
+    public static let builtins: [Self] = [agents]
 }
 
 @MainActor
