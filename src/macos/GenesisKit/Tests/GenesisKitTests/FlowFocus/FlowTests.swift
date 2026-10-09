@@ -338,12 +338,77 @@ final class FlowTests: XCTestCase {
     @MainActor
     func testThePasteIsReportedOnlyWhenTheTargetIsStillFrontmost() async {
         var pasted = 0
-        let moved = await FlowInjector.pasteAfterActivation(target: 42, frontmost: { 7 }, paste: { pasted += 1 })
+        let moved = await FlowInjector.pasteAfterActivation(target: 42, written: 3, changeCount: { 3 }, frontmost: { 7 },
+                                                            paste: { pasted += 1 })
         XCTAssertEqual(moved, .focusMoved)
         XCTAssertEqual(pasted, 0, "no keystroke reaches another app")
-        let landed = await FlowInjector.pasteAfterActivation(target: 42, frontmost: { 42 }, paste: { pasted += 1 })
+        let replaced = await FlowInjector.pasteAfterActivation(target: 42, written: 3, changeCount: { 4 },
+                                                               frontmost: { 42 }, paste: { pasted += 1 })
+        XCTAssertEqual(replaced, .clipboardChanged, "a copy made during the wait is never pasted in the transcript's place")
+        XCTAssertEqual(pasted, 0)
+        let landed = await FlowInjector.pasteAfterActivation(target: 42, written: 3, changeCount: { 3 },
+                                                             frontmost: { 42 }, paste: { pasted += 1 })
         XCTAssertEqual(landed, .injected)
         XCTAssertEqual(pasted, 1)
+    }
+
+    @MainActor
+    func testATurnsTranscriptEventGoesToItsOwnStoreNotTheProcessDefault() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-scoped-events-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let previousURL = FlowEvents.logURL
+        // Another runtime in this process points the default somewhere else.
+        FlowEvents.logURL = root.appendingPathComponent("other/events.jsonl")
+        defer { FlowEvents.logURL = previousURL }
+        let store = FlowStore(directory: root.appendingPathComponent("mine"))
+        let session = FlowSession(store: store)
+        session.injectEffect = { _ in .copiedOnly }
+        await session.completeTurn(raw: "scoped fixture")
+        XCTAssertTrue(try String(contentsOf: store.eventsURL, encoding: .utf8).contains("scoped fixture"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: FlowEvents.logURL.path))
+        session.clearHistory()
+        XCTAssertTrue(try Data(contentsOf: store.eventsURL).isEmpty, "deleting history reaches the events it wrote")
+    }
+
+    @MainActor
+    func testRemovingTheLatestTurnAlsoRemovesItFromTheLiveSnapshot() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-clear-live-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let session = FlowSession(store: FlowStore(directory: root))
+        session.injectEffect = { _ in .copiedOnly }
+        await session.completeTurn(raw: "older fixture")
+        await session.completeTurn(raw: "private fixture")
+        session.recognizer.applyRemote(partialText: "private fixture", micLevel: 0)
+        let older = try XCTUnwrap(session.history.last)
+        session.deleteEntry(older.id)
+        XCTAssertEqual(session.liveSnapshot.lastInjected, "private fixture", "deleting an older turn leaves the latest shown")
+        session.deleteEntry(try XCTUnwrap(session.history.first).id)
+        XCTAssertNil(session.liveSnapshot.lastInjected)
+        XCTAssertEqual(session.liveSnapshot.partialText, "")
+
+        await session.completeTurn(raw: "another private fixture")
+        session.recognizer.applyRemote(partialText: "another private fixture", micLevel: 0)
+        session.clearHistory()
+        XCTAssertNil(session.liveSnapshot.lastInjected, "the published snapshot no longer carries the cleared text")
+        XCTAssertEqual(session.liveSnapshot.partialText, "")
+    }
+
+    @MainActor
+    func testTrailingGraceOutsideItsRangeIsRefusedBeforeItIsStored() throws {
+        func decode(_ grace: String) throws -> FlowConfig {
+            try JSONDecoder().decode(FlowConfig.self, from: Data("{\"trailingGraceMs\": \(grace)}".utf8))
+        }
+        XCTAssertThrowsError(try decode("18446744073710"), "a value that would trap on key release")
+        XCTAssertThrowsError(try decode("5000"))
+        XCTAssertThrowsError(try decode("-1"))
+        XCTAssertEqual(try decode("2000").trailingGraceMs, 2_000)
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-grace-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let session = FlowSession(store: FlowStore(directory: root))
+        session.config.trailingGraceMs = 60_000
+        XCTAssertEqual(session.config.trailingGraceMs, 350, "the owner's setter keeps the previous value")
+        XCTAssertNotNil(session.lastError)
     }
 
     @MainActor

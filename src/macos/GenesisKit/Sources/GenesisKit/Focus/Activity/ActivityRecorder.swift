@@ -436,7 +436,9 @@ public final class ActivityRecorder: ObservableObject {
         let changedSegment = current.map { !$0.sameSegment(as: snapshot) } ?? true
         let changedIdle = idle != isIdle
 
-        if changedSegment || changedIdle {
+        // A segment whose insert failed (a busy ledger) is opened again on the next probe of the same window;
+        // otherwise recording would stay off until the window changed.
+        if changedSegment || changedIdle || segmentId == nil {
             closeCurrentSegment(at: now)
             isIdle = idle
             current = snapshot
@@ -597,21 +599,52 @@ public enum AXFocusProbe {
         if let document = copy(window, kAXDocumentAttribute) as? String, !document.isEmpty {
             return document
         }
-        return chromiumAddress(element: window, depth: 0)
+        var budget = ProbeBudget()
+        return chromiumAddress(in: window, budget: &budget,
+                               children: { copy($0, kAXChildrenAttribute) as? [AXUIElement] },
+                               role: { copy($0, kAXRoleAttribute) as? String },
+                               value: { copy($0, kAXValueAttribute) as? String })
     }
 
-    private static func chromiumAddress(element: AXUIElement, depth: Int) -> String? {
-        guard depth < 4 else { return nil }
-        guard let children = copy(element, kAXChildrenAttribute) as? [AXUIElement] else { return nil }
-        for child in children {
-            let role = copy(child, kAXRoleAttribute) as? String
-            if role == kAXTextFieldRole as String {
-                if let value = copy(child, kAXValueAttribute) as? String, value.contains(".") {
-                    return value.hasPrefix("http") ? value : "https://" + value
+    /// The messaging timeout bounds one request, not a walk: a broad or slow browser tree could otherwise hold
+    /// the serial probe queue for as long as it likes. Every attribute read spends from one budget of reads and
+    /// wall time, and a spent budget means "no address" for this probe.
+    struct ProbeBudget {
+        var remainingReads: Int
+        let deadline: ContinuousClock.Instant
+
+        init(reads: Int = 200, seconds: Double = 0.4) {
+            remainingReads = reads
+            deadline = ContinuousClock.now + .milliseconds(Int(seconds * 1000))
+        }
+
+        mutating func spend() -> Bool {
+            remainingReads -= 1
+            return remainingReads >= 0 && ContinuousClock.now < deadline
+        }
+    }
+
+    static func chromiumAddress<Node>(
+        in element: Node,
+        depth: Int = 0,
+        budget: inout ProbeBudget,
+        children: (Node) -> [Node]?,
+        role: (Node) -> String?,
+        value: (Node) -> String?
+    ) -> String? {
+        guard depth < 4, budget.spend(), let nodes = children(element) else { return nil }
+        for child in nodes {
+            guard budget.spend() else { return nil }
+            let kind = role(child)
+            if kind == kAXTextFieldRole as String {
+                guard budget.spend() else { return nil }
+                if let text = value(child), text.contains(".") {
+                    return text.hasPrefix("http") ? text : "https://" + text
                 }
             }
-            if role == kAXToolbarRole as String || role == kAXGroupRole as String,
-               let found = chromiumAddress(element: child, depth: depth + 1) {
+            if kind == kAXToolbarRole as String || kind == kAXGroupRole as String,
+               let found = chromiumAddress(in: child, depth: depth + 1, budget: &budget,
+                                           children: children, role: role, value: value) {
                 return found
             }
         }

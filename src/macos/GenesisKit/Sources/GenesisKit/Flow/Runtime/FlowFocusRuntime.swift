@@ -79,6 +79,9 @@ public final class FlowFocusRuntime: ObservableObject {
     }
 
     public func start() async {
+        // A start during an asynchronous stop waits for it: the stop's tail releases the lease and unregisters the
+        // participant, which must never belong to the runtime a restart just set up.
+        if let shutdown { await shutdown.value }
         switch role {
         case .starting, .owner, .client: return
         case .stopped, .unavailable: break
@@ -115,6 +118,19 @@ public final class FlowFocusRuntime: ObservableObject {
     /// Hosts must await this from their terminate-later delegate path. The descriptor stays held
     /// until recording has stopped and every already-queued settings write has reached disk.
     public func stop() async {
+        if let shutdown {
+            await shutdown.value
+            return
+        }
+        let task = Task { @MainActor [self] in await self.shutDown() }
+        shutdown = task
+        await task.value
+        shutdown = nil
+    }
+
+    private var shutdown: Task<Void, Never>?
+
+    private func shutDown() async {
         role = .stopped
         publication?.cancel()
         publication = nil
@@ -198,7 +214,6 @@ public final class FlowFocusRuntime: ObservableObject {
     private func configureModels(owner: Bool) {
         FlowFocusConfiguration.shared = configuration
         FlowStore.shared = flowStore
-        FlowEvents.logURL = dataRoot.appendingPathComponent("flow/events.jsonl")
         flowStore.writesEnabled = owner
         flowStore.forwardWrite = nil
         flowStore.didWrite = { [weak self] in

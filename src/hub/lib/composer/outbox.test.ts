@@ -1712,6 +1712,38 @@ test("cancel after producing a capture cleans temporary bytes and allows restart
     expect((await readWidgetState(directory)).assets).toEqual({});
 });
 
+test("a staged capture withdrawn after its asset import or while waiting for the shelf leaves no asset behind", async () => {
+    for (const lock of ["state.lock", join("shelf", "state.lock")]) {
+        const directory = await root();
+        const input = join(directory, "capture.png");
+        await writeFile(
+            input,
+            Buffer.from(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9h8AAAAASUVORK5CYII=",
+                "base64"
+            )
+        );
+        const controller = new AbortController();
+        const realLock = fileLock.withFileLock;
+        const waiting = spyOn(fileLock, "withFileLock").mockImplementation((path, fn, timeout) => {
+            if (path === join(directory, lock)) {
+                controller.abort();
+            }
+
+            return realLock(path, fn, timeout);
+        });
+        try {
+            await expect(stageShelfImage({ root: directory, input, signal: controller.signal })).rejects.toThrow();
+        } finally {
+            waiting.mockRestore();
+        }
+
+        expect((await readWidgetState(directory)).assets).toEqual({});
+        expect(await readdir(join(directory, "assets"))).toEqual([]);
+        expect((await listWidgetShelf(directory)).items).toEqual([]);
+    }
+});
+
 test("orphan forms retain stored providers and their receipt context accepts the snapshot identity", async () => {
     const directory = await root();
     const forms: ReturnType<WidgetSources["forms"]> = [

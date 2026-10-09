@@ -1,4 +1,6 @@
 // Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Tests/GenesisTests/FocusStudioTests.swift at 2026-10-08T05:04:08+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
+import ApplicationServices
+import SQLite3
 import XCTest
 @testable import GenesisKit
 #if canImport(Genesis)
@@ -610,6 +612,56 @@ final class FocusStudioModelTests: XCTestCase {
         let gaps = try store.gaps(from: 0, to: nowMs() + 1)
         XCTAssertEqual(gaps.map(\.reason), ["capture_off"])
         XCTAssertNil(gaps.first?.endedMs, "capture is still off, so its gap stays open")
+    }
+
+    func testASegmentWhoseInsertFailedOpensOnTheNextProbeOfTheSameWindow() throws {
+        let recorder = ActivityRecorder(store: store)
+        let probe = AXFocusProbe.Result(title: "Editor fixture", url: nil, displayId: nil)
+        // Another writer holds the ledger, so the insert fails after the busy timeout.
+        var other: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &other), SQLITE_OK)
+        defer { sqlite3_close(other) }
+        XCTAssertEqual(sqlite3_exec(other, "BEGIN IMMEDIATE;", nil, nil, nil), SQLITE_OK)
+        recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        XCTAssertEqual(sqlite3_exec(other, "ROLLBACK;", nil, nil, nil), SQLITE_OK)
+        XCTAssertTrue(try store.segments(from: 0, to: nowMs() + 1).isEmpty)
+
+        recorder.applyProbe(probe, bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        XCTAssertEqual(try store.segments(from: 0, to: nowMs() + 1).map(\.appBundle), ["test.editor"],
+                       "the same window is recorded once the ledger is writable again")
+    }
+
+    func testTheAddressProbeStopsAtItsBudgetOnABroadOrSlowTree() {
+        // A toolbar with ten thousand groups and no address field.
+        let broadChildren = (0..<10_000).map { $0 + 1 }
+        var reads = 0
+        var budget = AXFocusProbe.ProbeBudget(reads: 200, seconds: 5)
+        let broad = AXFocusProbe.chromiumAddress(
+            in: 0, budget: &budget,
+            children: { reads += 1; return $0 == 0 ? broadChildren : [] },
+            role: { _ in reads += 1; return kAXGroupRole as String },
+            value: { _ in reads += 1; return nil })
+        XCTAssertNil(broad)
+        XCTAssertLessThanOrEqual(reads, 201, "the walk stops at its read budget")
+
+        let clock = ContinuousClock()
+        let started = clock.now
+        var slowBudget = AXFocusProbe.ProbeBudget(reads: 10_000, seconds: 0.2)
+        let slow = AXFocusProbe.chromiumAddress(
+            in: 0, budget: &slowBudget,
+            children: { $0 == 0 ? broadChildren : [] },
+            role: { _ in Thread.sleep(forTimeInterval: 0.02); return kAXGroupRole as String },
+            value: { _ in nil })
+        XCTAssertNil(slow)
+        XCTAssertLessThan(clock.now - started, .seconds(1), "a slow reader ends at the deadline")
+
+        var found = AXFocusProbe.ProbeBudget()
+        XCTAssertEqual(AXFocusProbe.chromiumAddress(
+            in: 0, budget: &found,
+            children: { $0 == 0 ? [1, 2] : [] },
+            role: { $0 == 2 ? kAXTextFieldRole as String : kAXGroupRole as String },
+            value: { $0 == 2 ? "example.org/page" : nil }), "https://example.org/page",
+            "a normal toolbar still yields its address")
     }
 
     func testKeysTypedBeforeAMidMinuteSwitchStayWithTheFirstApp() throws {

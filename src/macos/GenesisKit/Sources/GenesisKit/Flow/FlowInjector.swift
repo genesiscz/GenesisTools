@@ -64,6 +64,9 @@ public enum FlowInjectOutcome: Equatable {
     /// The target was not frontmost when the paste was due (slow activation, or focus moved), so the
     /// keystroke was withheld and the text stays on the clipboard.
     case focusMoved
+    /// Something else was copied during the activation wait, so ⌘V would have pasted that instead of the
+    /// transcript; the keystroke was withheld.
+    case clipboardChanged
 }
 
 // MARK: - Injector
@@ -143,7 +146,7 @@ public enum FlowInjector {
         }
 
         let written = pasteboard.changeCount
-        let outcome = await pasteAfterActivation(target: target.processIdentifier)
+        let outcome = await pasteAfterActivation(target: target.processIdentifier, written: written)
         guard outcome == .injected, let previous else { return outcome }
         // Restore only after the paste has had time to read the pasteboard.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
@@ -161,9 +164,12 @@ public enum FlowInjector {
     /// Activation is asynchronous: ⌘V posted in the same run-loop turn races the app becoming frontmost and the
     /// keystroke lands nowhere, so this waits a short hop first. Frontmost is checked at the last moment before the
     /// keystroke: if activation was slow or focus moved, ⌘V would paste the transcript into another app, so the
-    /// text stays on the clipboard and the outcome says so.
+    /// text stays on the clipboard and the outcome says so. The pasteboard must still be the one this turn wrote
+    /// (`written`, its change count): a copy made during the wait would otherwise be pasted in its place.
     static func pasteAfterActivation(
         target: pid_t,
+        written: Int,
+        changeCount: (() -> Int)? = nil,
         frontmost: (() -> pid_t?)? = nil,
         paste: (() -> Void)? = nil
     ) async -> FlowInjectOutcome {
@@ -173,6 +179,11 @@ public enum FlowInjector {
         guard current == target else {
             FlowFocusLog.flow.info("inject: pid=\(target) is not frontmost at paste time (frontmost \(current ?? -1)); left text on the clipboard")
             return .focusMoved
+        }
+        let count = changeCount.map { $0() } ?? NSPasteboard.general.changeCount
+        guard count == written else {
+            FlowFocusLog.flow.info("inject: the clipboard changed during the activation wait; paste withheld")
+            return .clipboardChanged
         }
         if let paste { paste() } else { postCommandV() }
         return .injected

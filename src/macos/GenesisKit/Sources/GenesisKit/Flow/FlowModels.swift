@@ -208,8 +208,10 @@ public struct FlowConfig: Codable, Equatable {
     public var forceServerRecognition: Bool = false
 
     /// Milliseconds of grace after key release before the recogniser is asked
-    /// to finalise, so the last syllable is not clipped.
+    /// to finalise, so the last syllable is not clipped. Bounded by `trailingGraceRange`: the microphone keeps
+    /// recording for this long after the release.
     public var trailingGraceMs: Int = 350
+    public static let trailingGraceRange = 0...2_000
 
     /// Hold a rolling window of microphone audio so the words spoken just
     /// before the hotkey landed are still captured.

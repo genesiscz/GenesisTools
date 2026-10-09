@@ -19,6 +19,8 @@ public final class FlowStore {
     public static var shared = FlowStore(writesEnabled: false)
 
     public let directory: URL
+    /// This store's transcript event log; deletion and retention read the same file.
+    public var eventsURL: URL { directory.appendingPathComponent("events.jsonl") }
     public var writesEnabled: Bool
     public var forwardWrite: ((String, Data) -> Void)?
     public var didWrite: (() -> Void)?
@@ -75,6 +77,11 @@ public final class FlowStore {
     public func saveConfig(_ value: FlowConfig) { save(value, to: configURL) }
 
     func persistConfig(_ value: FlowConfig) throws {
+        guard FlowConfig.trailingGraceRange.contains(value.trailingGraceMs) else {
+            throw CocoaError(.validationNumberTooLarge, userInfo: [
+                NSLocalizedDescriptionKey: "Trailing grace must be 0 to \(FlowConfig.trailingGraceRange.upperBound) ms.",
+            ])
+        }
         try writeOwned(encoder.encode(value), to: configURL)
     }
 
@@ -190,7 +197,7 @@ public final class FlowStore {
         let previousIDs = Set(pending.previousHistory.map(\.id))
         let retainedIDs = Set(pending.history.map(\.id))
         if pending.history.isEmpty || !previousIDs.isSubset(of: retainedIDs) {
-            try FlowEvents.retain(entryIDs: retainedIDs, at: directory.appendingPathComponent("events.jsonl"))
+            try FlowEvents.retain(entryIDs: retainedIDs, at: eventsURL)
         }
         try writeOwned(encoder.encode(pending.history), to: historyURL)
         try writeOwned(encoder.encode(pending.stats), to: statsURL)

@@ -48,6 +48,27 @@ struct AttentionPulse<Trigger: Equatable>: ViewModifier {
 
     @State private var isOn = false
     @State private var running: Task<Void, Never>?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// One step of a pulse: show or hide the border, animated or not, then wait.
+    struct Step: Equatable {
+        var on: Bool
+        var animation: TimeInterval?
+        var waitNanoseconds: UInt64
+    }
+
+    /// Reduce Motion gets a static indication: the border shows, without fading, for the pulse's duration.
+    static func steps(style: AttentionPulseStyle, reduceMotion: Bool) -> [Step] {
+        if reduceMotion {
+            return [Step(on: true, animation: nil, waitNanoseconds: UInt64(max(style.duration, 0) * 1_000_000_000)),
+                    Step(on: false, animation: nil, waitNanoseconds: 0)]
+        }
+        let half = UInt64(max(style.period, 0.05) / 2 * 1_000_000_000)
+        return (0 ..< style.cycles).flatMap { _ in
+            [Step(on: true, animation: style.fadeIn, waitNanoseconds: half),
+             Step(on: false, animation: style.fadeOut, waitNanoseconds: half)]
+        }
+    }
 
     func body(content: Content) -> some View {
         content
@@ -64,22 +85,25 @@ struct AttentionPulse<Trigger: Equatable>: ViewModifier {
                 .accessibilityHidden(true)
             }
             .onChange(of: trigger) { _, _ in play() }
+            // Turning Reduce Motion on mid-pulse replaces the blinking with the static border at once.
+            .onChange(of: reduceMotion) { _, _ in if running != nil { play() } }
             .onDisappear { running?.cancel() }
     }
 
     private func play() {
         running?.cancel()
-        let style = style
-        let half = UInt64(max(style.period, 0.05) / 2 * 1_000_000_000)
+        let steps = Self.steps(style: style, reduceMotion: reduceMotion)
         running = Task { @MainActor in
-            for _ in 0 ..< style.cycles {
-                withAnimation(.easeInOut(duration: style.fadeIn)) { isOn = true }
-                try? await Task.sleep(nanoseconds: half)
-                if Task.isCancelled { return }
-                withAnimation(.easeInOut(duration: style.fadeOut)) { isOn = false }
-                try? await Task.sleep(nanoseconds: half)
+            for step in steps {
+                if let duration = step.animation {
+                    withAnimation(.easeInOut(duration: duration)) { isOn = step.on }
+                } else {
+                    isOn = step.on
+                }
+                if step.waitNanoseconds > 0 { try? await Task.sleep(nanoseconds: step.waitNanoseconds) }
                 if Task.isCancelled { return }
             }
+            running = nil
         }
     }
 }
