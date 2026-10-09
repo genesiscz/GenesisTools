@@ -247,6 +247,11 @@ const LOAD_SENSITIVE_FILES = [
     // own 30 s budget, which is spawn latency under load, not a hang.
     "src/cmux/commands/capture-install.test.ts",
     "src/ai/lib/accounts/probe-purity.test.ts",
+    // Its hang test gives the WHOLE measure worker 400 ms, and that includes the worker's
+    // own start. Under the local 16x run the start alone used the budget, so even the
+    // healthy leaf.ts had no sample. Measured 2026-10-09: failed in 2 of 2 full local runs
+    // (on two branches), passed in all 8 CI runs at 811-828 ms.
+    "src/ts/lib/measure.test.ts",
     // Same shape again, found on a second full run: the victim set ROTATES with
     // worker scheduling, so each full run surfaces a different few. Both spawn a
     // real child per case and both passed alone immediately after failing in the
