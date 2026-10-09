@@ -34,10 +34,17 @@ public final class FocusStudioWindowController: NSWindowController, NSWindowDele
 
     public required init?(coder: NSCoder) { fatalError("not supported") }
 
+    private var hasPresented = false
+
     public func present() {
         guard let window else { return }
-        if !window.isVisible {
-            window.center()
+        // Centered only the first time, and only when no autosaved frame was restored: a re-show keeps the place
+        // the user moved the window to.
+        if !hasPresented {
+            hasPresented = true
+            if !window.setFrameUsingName("focus-studio-window") {
+                window.center()
+            }
         }
         model.reload()
         window.makeKeyAndOrderFront(nil)

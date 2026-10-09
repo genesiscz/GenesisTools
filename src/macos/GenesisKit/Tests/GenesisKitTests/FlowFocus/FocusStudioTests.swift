@@ -112,9 +112,25 @@ final class FocusFormatTests: XCTestCase {
     }
 }
 
+/// 09:00 local on the day that starts at `dayStartMs`. Adding 9 hours to midnight lands on 10:00 on a spring-forward
+/// day, and the Studio lays its lanes out in local time.
+func localMs(hour: Int, onDayOf dayStartMs: Int64) -> Int64 {
+    let start = Date(timeIntervalSince1970: Double(dayStartMs) / 1000)
+    let date = Calendar.current.date(bySettingHour: hour, minute: 0, second: 0, of: start)!
+    return Int64(date.timeIntervalSince1970 * 1000)
+}
+
 final class FocusRangeTests: XCTestCase {
+    /// UTC has no daylight-saving days, so a day is always 24 hours here; a local day can be 23 or 25.
+    private var utc: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }
+
     func testDayRangeIsExactlyOneDay() {
-        let range = FocusRange.make(.day, containing: Date())
+        let date = utc.date(from: DateComponents(year: 2026, month: 9, day: 23, hour: 12))!
+        let range = FocusRange.make(.day, containing: date, calendar: utc)
         XCTAssertEqual(range.toMs - range.fromMs, 86_400_000)
         XCTAssertEqual(range.granularity, .day)
     }
@@ -130,8 +146,9 @@ final class FocusRangeTests: XCTestCase {
     }
 
     func testSteppingMovesByTheGranularity() {
-        let day = FocusRange.make(.day)
-        let yesterday = day.stepped(by: -1)
+        let date = utc.date(from: DateComponents(year: 2026, month: 9, day: 23, hour: 12))!
+        let day = FocusRange.make(.day, containing: date, calendar: utc)
+        let yesterday = day.stepped(by: -1, calendar: utc)
         XCTAssertEqual(day.fromMs - yesterday.fromMs, 86_400_000)
         XCTAssertEqual(yesterday.granularity, .day)
     }
@@ -161,7 +178,7 @@ final class FocusStudioModelTests: XCTestCase {
     private func nowMs() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
 
     func testFilteredRecordedActivityDoesNotClaimNothingWasRecorded() throws {
-        let from = model.range.fromMs + 9 * 3_600_000
+        let from = localMs(hour: 9, onDayOf: model.range.fromMs)
         _ = try store.openSegment(.init(startedMs: from, endedMs: from + 60_000,
                                         appBundle: "test.editor", appName: "Fixture editor"))
         model.search = "does-not-match-any-fixture"
@@ -171,7 +188,7 @@ final class FocusStudioModelTests: XCTestCase {
     }
 
     func testSelectedSessionClipsTimelineBarsToTheSameWindowAsTotals() throws {
-        let nine = model.range.fromMs + 9 * 3_600_000
+        let nine = localMs(hour: 9, onDayOf: model.range.fromMs)
         let id = try store.startSession(.init(kind: "flow", plannedSec: 900, startedMs: nine + 900_000, state: "running", cycleIndex: 1))
         try store.endSession(id: id, at: nine + 1_800_000, state: .done)
         _ = try store.openSegment(.init(startedMs: nine, endedMs: nine + 3_000_000, sessionId: id,
@@ -262,7 +279,7 @@ final class FocusStudioModelTests: XCTestCase {
         // The app was closed for an hour. That hour is not idle time and not an empty day: it
         // is unmeasured, and the timeline has to be able to draw it.
         let dayStart = FocusRange.make(.day).fromMs
-        let earlier = dayStart + 9 * 3_600_000
+        let earlier = localMs(hour: 9, onDayOf: dayStart)
         let id = try store.openSegment(.init(startedMs: earlier, appBundle: "dev.cursor", appName: "Cursor"))
         try store.closeSegment(id: id, at: earlier + 10 * 60_000)
 
@@ -282,8 +299,8 @@ final class FocusStudioModelTests: XCTestCase {
         // Martin, 2026-09-21: "tag filter doesnt seem to filter anything at all." It filtered
         // the session cards only, so the timeline, breakdown and heatmap ignored it entirely.
         let dayStart = FocusRange.make(.day).fromMs
-        let nine = dayStart + 9 * 3_600_000
-        let eleven = dayStart + 11 * 3_600_000
+        let nine = localMs(hour: 9, onDayOf: dayStart)
+        let eleven = localMs(hour: 11, onDayOf: dayStart)
 
         let tagged = try store.startSession(.init(kind: ActivityStore.SessionKind.flow.rawValue,
                                                   plannedSec: 1500, startedMs: nine,
@@ -322,8 +339,8 @@ final class FocusStudioModelTests: XCTestCase {
         // The footer kept printing the whole day's keystrokes while every other number was
         // scoped, because input buckets are keyed by time rather than by session.
         let dayStart = FocusRange.make(.day).fromMs
-        let nine = dayStart + 9 * 3_600_000
-        let eleven = dayStart + 11 * 3_600_000
+        let nine = localMs(hour: 9, onDayOf: dayStart)
+        let eleven = localMs(hour: 11, onDayOf: dayStart)
 
         let tagged = try store.startSession(.init(kind: ActivityStore.SessionKind.flow.rawValue,
                                                   plannedSec: 1500, startedMs: nine,
@@ -353,7 +370,7 @@ final class FocusStudioModelTests: XCTestCase {
 
     func testUntaggedWorkIsExcludedWhileATagIsChosen() throws {
         let dayStart = FocusRange.make(.day).fromMs
-        let nine = dayStart + 9 * 3_600_000
+        let nine = localMs(hour: 9, onDayOf: dayStart)
         let session = try store.startSession(.init(kind: ActivityStore.SessionKind.flow.rawValue,
                                                    plannedSec: 1500, startedMs: nine,
                                                    state: ActivityStore.SessionState.done.rawValue,
@@ -381,7 +398,7 @@ final class FocusStudioModelTests: XCTestCase {
         // is the whole width." A lane's x axis is the offset inside that lane, never the
         // position of the clock in the day.
         let dayStart = FocusRange.make(.day).fromMs
-        let nineTwenty = dayStart + 9 * 3_600_000 + 20 * 60_000
+        let nineTwenty = localMs(hour: 9, onDayOf: dayStart) + 20 * 60_000
         let id = try store.openSegment(.init(startedMs: nineTwenty, appBundle: "dev.cursor", appName: "Cursor"))
         try store.closeSegment(id: id, at: nineTwenty + 10 * 60_000)
 
@@ -417,7 +434,7 @@ final class FocusStudioModelTests: XCTestCase {
 
     func testASegmentThatCrossesAnHourIsDrawnInBothLanes() throws {
         let dayStart = FocusRange.make(.day).fromMs
-        let nineFifty = dayStart + 9 * 3_600_000 + 50 * 60_000
+        let nineFifty = localMs(hour: 9, onDayOf: dayStart) + 50 * 60_000
         let id = try store.openSegment(.init(startedMs: nineFifty, appBundle: "dev.cursor", appName: "Cursor"))
         try store.closeSegment(id: id, at: nineFifty + 25 * 60_000) // 09:50 → 10:15
 
@@ -434,8 +451,8 @@ final class FocusStudioModelTests: XCTestCase {
         // Observed live on 2026-09-21: every band was drawn in every lane, so a flow that ran at
         // 20:30 painted the 18:00 row too and the day read as one continuous pomodoro.
         let dayStart = FocusRange.make(.day).fromMs
-        let nine = dayStart + 9 * 3_600_000
-        let twenty = dayStart + 20 * 3_600_000
+        let nine = localMs(hour: 9, onDayOf: dayStart)
+        let twenty = localMs(hour: 20, onDayOf: dayStart)
 
         // Work in two different hours, so the timeline has two lanes.
         for start in [nine, twenty] {
@@ -457,7 +474,7 @@ final class FocusStudioModelTests: XCTestCase {
 
     func testABandThatCrossesAnHourIsCutAtTheBoundary() throws {
         let dayStart = FocusRange.make(.day).fromMs
-        let nine = dayStart + 9 * 3_600_000
+        let nine = localMs(hour: 9, onDayOf: dayStart)
         // Work in both hours the flow crosses, so both lanes exist.
         for start in [nine + 50 * 60_000, nine + 70 * 60_000] {
             let id = try store.openSegment(.init(startedMs: start, appBundle: "dev.cursor", appName: "Cursor"))
@@ -479,7 +496,7 @@ final class FocusStudioModelTests: XCTestCase {
 
     func testAShortRestartIsNotDrawnAsAGap() throws {
         let dayStart = FocusRange.make(.day).fromMs
-        let earlier = dayStart + 9 * 3_600_000
+        let earlier = localMs(hour: 9, onDayOf: dayStart)
         let id = try store.openSegment(.init(startedMs: earlier, appBundle: "dev.cursor", appName: "Cursor"))
         try store.closeSegment(id: id, at: earlier + 60_000)
 
@@ -710,7 +727,7 @@ final class FocusStudioModelTests: XCTestCase {
     }
 
     func testAppBucketsCarryTheBundleSoRowsCanDrawAnIcon() throws {
-        let start = FocusRange.make(.day).fromMs + 9 * 3_600_000
+        let start = localMs(hour: 9, onDayOf: FocusRange.make(.day).fromMs)
         let id = try store.openSegment(.init(startedMs: start, appBundle: "com.brave.Browser", appName: "Brave"))
         try store.closeSegment(id: id, at: start + 60_000)
         model.reload()
@@ -719,7 +736,7 @@ final class FocusStudioModelTests: XCTestCase {
     }
 
     func testReloadPopulatesEveryViewFromOneQuery() throws {
-        let start = FocusRange.make(.day).fromMs + 9 * 3_600_000
+        let start = localMs(hour: 9, onDayOf: FocusRange.make(.day).fromMs)
         var segment = ActivityStore.Segment(startedMs: start, appBundle: "dev.cursor", appName: "Cursor")
         segment.project = "genesis"
         let id = try store.openSegment(segment)
@@ -740,7 +757,7 @@ final class FocusStudioModelTests: XCTestCase {
     }
 
     func testDigestMarkdownCarriesTheSameNumbersTheFooterShows() throws {
-        let start = FocusRange.make(.day).fromMs + 9 * 3_600_000
+        let start = localMs(hour: 9, onDayOf: FocusRange.make(.day).fromMs)
         let id = try store.openSegment(.init(startedMs: start, appBundle: "dev.cursor", appName: "Cursor"))
         try store.closeSegment(id: id, at: start + 30 * 60_000)
         model.reload()
@@ -752,7 +769,7 @@ final class FocusStudioModelTests: XCTestCase {
     }
 
     func testProjectFilterExcludesEverythingElse() throws {
-        let start = FocusRange.make(.day).fromMs + 9 * 3_600_000
+        let start = localMs(hour: 9, onDayOf: FocusRange.make(.day).fromMs)
         var genesis = ActivityStore.Segment(startedMs: start, appBundle: "dev.cursor", appName: "Cursor")
         genesis.project = "genesis"
         let a = try store.openSegment(genesis)

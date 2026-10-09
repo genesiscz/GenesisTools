@@ -697,6 +697,24 @@ describe("superseding", () => {
         return { file: join(dir, "decisions.jsonl"), events: join(dir, "events.jsonl") };
     }
 
+    test("a revision posted without a cmux surface keeps the item's delivery pane and session title", async () => {
+        const { file, events } = log();
+        await postDecisions(
+            file,
+            events,
+            { sessionId: "s", title: "Fixture session", decisions: [{ prompt: "v1?", options: ["a"] }] },
+            { env: { CMUX_SURFACE_ID: "surface-7" } }
+        );
+        const [revised] = await postDecisions(
+            file,
+            events,
+            { sessionId: "s", decisions: [{ prompt: "v2?", options: ["a"], supersedes: "d_1_s" }] },
+            { env: {} }
+        );
+
+        expect(revised).toMatchObject({ revision: 2, cmuxSurface: "surface-7", sessionTitle: "Fixture session" });
+    });
+
     test("a drafted item goes back to open; its draft moves into the version with the old text", async () => {
         const { file, events } = log();
         await postDecisions(file, events, { sessionId: "s", decisions: [{ prompt: "v1?", options: ["a", "b"] }] });

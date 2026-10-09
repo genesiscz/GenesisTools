@@ -11,7 +11,7 @@ import { resolveTranscript, type TranscriptRoots } from "@genesiscz/utils/ai/tra
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
-import type { WidgetCard, WidgetSources } from "./snapshot";
+import { type WidgetCard, type WidgetSources, widgetProvider } from "./snapshot";
 import { parseWidgetSessionKey } from "./types";
 
 const prof = profiler.scope("widget");
@@ -102,8 +102,7 @@ export async function readWidgetReceiptContext({
         const row = sources
             ? sources.answers(target.sessionId).find((entry) => entry.id === sourceId)
             : readStoredReceipt((db) => getStoredEntryById(db, sourceId));
-        const provider = row?.agent === "claude-code" ? "claude" : row?.agent;
-        if (row && row.sessionId === target.sessionId && provider === target.provider) {
+        if (row && row.sessionId === target.sessionId && widgetProvider(row.agent) === target.provider) {
             found = true;
             sourceContext = { ...row, agent: row.agent };
             anchor = row.transcriptAnchor;
@@ -113,8 +112,7 @@ export async function readWidgetReceiptContext({
         const row = (sources ? sources.decisions() : readDecisions(decisionFiles().file)).find(
             (entry) => entry.id === sourceId
         );
-        const provider = row?.provider === "claude-code" ? "claude" : (row?.provider ?? "unknown");
-        if (row && row.sessionId === target.sessionId && provider === target.provider) {
+        if (row && row.sessionId === target.sessionId && widgetProvider(row.provider) === target.provider) {
             found = true;
             sourceContext = { ...row, agent: row.provider };
             anchor = row.transcriptAnchor;
@@ -130,8 +128,11 @@ export async function readWidgetReceiptContext({
                 : row?.transcriptAnchor && row.transcriptAnchor.kind !== "unanchored"
                   ? row.transcriptAnchor.provider
                   : undefined;
-        const provider = storedProvider === "claude-code" ? "claude" : storedProvider;
-        if (row && (row.sessionHint ?? row.id) === target.sessionId && (provider ?? "unknown") === target.provider) {
+        if (
+            row &&
+            (row.sessionHint ?? row.id) === target.sessionId &&
+            widgetProvider(storedProvider) === target.provider
+        ) {
             found = true;
             sourceContext = row.poster ? { ...row.poster, sessionId: target.sessionId } : undefined;
             anchor = row.transcriptAnchor;

@@ -38,7 +38,8 @@ async function command(argv: string[]): Promise<string> {
 
 async function nativeSourceDigest(): Promise<string> {
     const description: { targets: { name: string; path: string; sources: string[] }[] } = SafeJSON.parse(
-        await command(["swift", "package", "--package-path", "src/macos/GenesisKit", "describe", "--type", "json"])
+        await command(["swift", "package", "--package-path", "src/macos/GenesisKit", "describe", "--type", "json"]),
+        { strict: true }
     );
     const kit = description.targets.find((target) => target.name === "GenesisKit");
     if (!kit?.sources.length) {

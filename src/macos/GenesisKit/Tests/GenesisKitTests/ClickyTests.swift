@@ -1201,10 +1201,13 @@ extension ClickyPackTests {
         XCTAssertEqual(library.active?.reference, valid)
         XCTAssertEqual(preferences.selectedPack, valid)
         XCTAssertEqual(installationCount, 1)
-        library.select(ClickyPackReference(libraryID: "missing-library", packID: "missing"))
+        // Subscribed before the selection and matched on its own message, so the checksum error still published
+        // from the previous step cannot fulfil it.
         let unavailable = expectation(description: "unavailable reported")
-        let missingSubscription = library.$error.compactMap { $0 }.sink { _ in unavailable.fulfill() }
+        let missingSubscription = library.$error.compactMap { $0 }.filter { $0.contains("unavailable") }
+            .sink { _ in unavailable.fulfill() }
         defer { missingSubscription.cancel() }
+        library.select(ClickyPackReference(libraryID: "missing-library", packID: "missing"))
         await fulfillment(of: [unavailable], timeout: 2)
         XCTAssertEqual(library.active?.reference, valid)
         XCTAssertEqual(preferences.selectedPack, valid)

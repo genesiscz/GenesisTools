@@ -137,7 +137,11 @@ public final class FocusHUDWindowController {
                     defaultPosition(panel, on: pointerScreen)
                     return
                 }
-                panel.setFrame(rect, display: false)
+                // The saved top-left corner, at the current style's size: the shape may have changed in
+                // Settings since the frame was saved, and the content is built for the current one.
+                let size = FocusHUDMetrics.size(for: style)
+                panel.setFrame(CGRect(x: rect.minX, y: rect.maxY - size.height, width: size.width, height: size.height),
+                               display: false)
                 return
             }
         }

@@ -202,7 +202,8 @@ export const realWidgetSources: WidgetSources = {
     events: (ids) => readWidgetDecisionEvents({ ids }),
 };
 
-function provider(value: string | null | undefined): WidgetTarget["provider"] {
+/** The provider name a Widget session key carries: unsupported agents become "unknown". */
+export function widgetProvider(value: string | null | undefined): WidgetTarget["provider"] {
     if (value === "claude" || value === "claude-code") {
         return "claude";
     }
@@ -223,7 +224,7 @@ function targetOf(
 ): WidgetTarget {
     return {
         hostId: "local",
-        provider: provider(row.provider),
+        provider: widgetProvider(row.provider),
         sessionId: row.sessionId || fallback,
         sourceHome: row.sourceHome ?? "",
         cwd: row.cwd ?? "",
@@ -370,7 +371,7 @@ export async function widgetSnapshot({
     }
     const findSession = (id: string, hint?: string | null) => {
         const matches = [...sessions.values()].filter(
-            (entry) => entry.target.sessionId === id && (!hint || entry.target.provider === provider(hint))
+            (entry) => entry.target.sessionId === id && (!hint || entry.target.provider === widgetProvider(hint))
         );
         return matches.length === 1 ? matches[0] : undefined;
     };
@@ -474,7 +475,7 @@ export async function widgetSnapshot({
         if (!findSession(id, sourceProvider)) {
             const identity =
                 persistedTarget?.sessionId === id &&
-                (!sourceProvider || persistedTarget.provider === provider(sourceProvider))
+                (!sourceProvider || persistedTarget.provider === widgetProvider(sourceProvider))
                     ? persistedTarget
                     : targetOf({ sessionId: id, provider: sourceProvider }, form.id);
             const session = addSession(

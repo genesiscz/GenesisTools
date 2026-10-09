@@ -334,8 +334,11 @@ export async function postDecisions(
                     ...withoutVersioned(row),
                     ...content,
                     ...context,
-                    // The provider is half of the item's session identity, which a revision keeps.
+                    // The provider is half of the item's session identity, which a revision keeps. The delivery pane
+                    // and the session title stay too when the revising process does not know them (no CMUX_SURFACE_ID).
                     ...(context.provider || !row.provider ? {} : { provider: row.provider }),
+                    ...(context.cmuxSurface || !row.cmuxSurface ? {} : { cmuxSurface: row.cmuxSurface }),
+                    ...(context.sessionTitle || !row.sessionTitle ? {} : { sessionTitle: row.sessionTitle }),
                     transcriptAnchor,
                     state: "open",
                     revision: (row.revision ?? 1) + 1,
