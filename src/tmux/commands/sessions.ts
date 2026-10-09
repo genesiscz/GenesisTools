@@ -8,6 +8,7 @@ import { listTmuxSessions } from "@genesiscz/utils/tmux/sessions";
 import { captureTmuxSnapshot, type TmuxPaneSnapshot, type TmuxSessionSnapshot } from "@genesiscz/utils/tmux/snapshot";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { addCreateCommand } from "./create";
 import { formatTtydBranch, printSessionHeaderParts, type TtydSessionBinding } from "./sessions-format";
 
 export type { TtydSessionBinding } from "./sessions-format";
@@ -56,7 +57,7 @@ export async function loadTtydBindingsByTmux(): Promise<Map<string, TtydSessionB
 }
 
 export function registerSessionsCommand(program: Command): void {
-    program
+    const sessions = program
         .command("sessions")
         .description("List live tmux sessions on the default socket")
         .option("--json", "Output as JSON")
@@ -66,6 +67,8 @@ export function registerSessionsCommand(program: Command): void {
         .action(async (flags: ListFlags) => {
             await runList(flags);
         });
+
+    addCreateCommand(sessions);
 }
 
 export async function runList(flags: ListFlags): Promise<void> {

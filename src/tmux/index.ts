@@ -8,6 +8,7 @@
  *
  * Usage:
  *   tools tmux sessions [--json] [--no-detailed] [--prefix <str>]
+ *   tools tmux sessions create [--name <n>] [--cwd <p>] [--command <sh>] [--attach]
  *   tools tmux create [--name <n>] [--cwd <p>] [--command <sh>] [--attach]
  *   tools tmux attach <id-or-substring>          (shortcut)
  *   tools tmux session reset <id> | --matching <pattern>

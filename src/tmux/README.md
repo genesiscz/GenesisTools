@@ -13,7 +13,9 @@ tools tmux sessions [--json] [--detailed] [--prefix <str>]
     List live tmux sessions. --detailed adds per-pane cwd / current command.
 
 tools tmux create [--name <n>] [--cwd <p>] [--command <sh>] [--attach]
+tools tmux sessions create [--name <n>] [--cwd <p>] [--command <sh>] [--attach]
     Create a detached session (shows up in the dev-dashboard tmux hub).
+    `sessions create` is the same command as `create`, including every option.
     --attach hands the terminal to it (needs a TTY).
 
 tools tmux session reset <sessionId>
