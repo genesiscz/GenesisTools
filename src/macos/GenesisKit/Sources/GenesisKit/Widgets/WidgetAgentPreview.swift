@@ -15,6 +15,49 @@ struct WidgetActivityIndicator: View {
     }
 }
 
+private struct WidgetActivityRingLayout: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let text = subviews.first?.sizeThatFits(.unspecified) ?? .zero
+        let diameter = max(28, max(text.width, text.height) + 10)
+        return CGSize(width: diameter, height: diameter)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: CGPoint(x: bounds.midX, y: bounds.midY), anchor: .center, proposal: .unspecified)
+    }
+}
+
+struct WidgetSessionActivity: View {
+    let status: AgentWidgetStatus
+    let count: Int
+    let needsAnswer: Bool
+    let animate: Bool
+    var complete = true
+
+    var body: some View {
+        Group {
+            if count > 0, status == .working {
+                WidgetActivityRingLayout {
+                    Text(verbatim: count > 99 ? "99+" : String(count) + (complete ? "" : "+"))
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .monospacedDigit().foregroundStyle(needsAnswer ? Color.orange : status.color)
+                }.overlay {
+                    SpinningArc(color: status.color, lineWidth: 1.7, spinning: animate)
+                        .allowsHitTesting(false)
+                }
+            } else if count > 0 {
+                WidgetInboxCount(count: count, needsAnswer: needsAnswer, pulse: 0, reduceMotion: !animate,
+                    complete: complete)
+            } else if status == .working {
+                SpinningArc(color: status.color, lineWidth: 1.7, spinning: animate)
+                    .frame(width: 14, height: 14).padding(5)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(status.label + ", \(max(0, count)) inbox notifications")
+    }
+}
+
 struct AgentWidgetPreview: View {
     @ObservedObject var model: WidgetModel
     let surface: WidgetSurfaceID

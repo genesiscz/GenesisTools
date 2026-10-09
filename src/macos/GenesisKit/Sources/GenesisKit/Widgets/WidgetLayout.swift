@@ -75,7 +75,7 @@ struct WidgetSideStripMetrics {
     static let addWidth: CGFloat = 34
     static let addHeight: CGFloat = 30
     static let sessionWidth: CGFloat = 38
-    static let sessionHeight: CGFloat = 20
+    static let sessionHeight: CGFloat = 34
     static let sessionSpacing: CGFloat = 6
     static let minimumSpacer: CGFloat = 2
     static let sessionLimit = 4
@@ -112,6 +112,13 @@ struct WidgetSideStripMetrics {
 }
 
 public enum WidgetClusterGeometry {
+    static func detailSize(visible: CGSize) -> CGSize {
+        let width = min(960, max(560, visible.width * 0.34))
+        let height = min(900, max(580, visible.height * 0.62))
+        return CGSize(width: min(max(0, visible.width - 36), width),
+                      height: min(max(0, visible.height - 36), height))
+    }
+
     public static func topWidth(cutout: CGFloat, moduleCount: Int) -> CGFloat {
         let otherButtons = min(4, max(0, moduleCount - 1))
         let titleWidth: CGFloat = cutout > 0 ? 24 : 110
