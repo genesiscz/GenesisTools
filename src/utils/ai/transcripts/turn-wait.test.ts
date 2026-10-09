@@ -123,6 +123,35 @@ describe("waitForTurn", () => {
         expect(result.snapshot?.lastEventAt).toBe(180);
     });
 
+    it("with next, a turn that ends in the baseline's second still counts once it was seen running", async () => {
+        // Grok writes epoch seconds: the idle baseline and the next turn's end share one timestamp.
+        const second = 1_760_000_000_000;
+        const reader = script(
+            snap("AWAITING-INPUT", second),
+            snap("AWAITING-INPUT", second),
+            snap("RUNNING", second),
+            snap("AWAITING-INPUT", second)
+        );
+        const result = await waitForTurn({
+            read: reader.read,
+            next: true,
+            pollMs: 1000,
+            timeoutMs: 10_000,
+            ...clock(),
+        });
+
+        expect(result.outcome).toBe("done");
+        expect(result.waitedMs).toBe(2000);
+    });
+
+    it("with next, an idle session whose time never moves is not a finished turn", async () => {
+        const second = 1_760_000_000_000;
+        const reader = script(snap("AWAITING-INPUT", second));
+        const result = await waitForTurn({ read: reader.read, next: true, pollMs: 1000, timeoutMs: 3000, ...clock() });
+
+        expect(result.outcome).toBe("timeout");
+    });
+
     it("with next on a running turn, returns when that turn ends", async () => {
         const reader = script(snap("RUNNING", 10), snap("RUNNING", 20), snap("AWAITING-INPUT", 30));
         const result = await waitForTurn({ read: reader.read, next: true, pollMs: 1000, ...clock() });

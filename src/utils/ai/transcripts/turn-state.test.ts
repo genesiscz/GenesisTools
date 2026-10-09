@@ -216,6 +216,25 @@ describe("codexTurnState", () => {
         expect(finished.lastText).toBe("Shipped.");
         expect(finished.lastEventAt).toBe(T0 + 4000);
     });
+
+    it("stays finished through settings bookkeeping, and only a record of a new turn reopens it", () => {
+        const done = [
+            codexLine(0, "event_msg", { type: "task_started" }),
+            codexLine(4, "event_msg", { type: "task_complete", last_agent_message: "Shipped." }),
+            codexLine(5, "event_msg", { type: "thread_settings_applied", thread_settings: { service_tier: null } }),
+            codexLine(5, "event_msg", { type: "token_count" }),
+        ];
+        const settled = codexTurnState(input(done, 60));
+        const reopened = codexTurnState(input([...done, codexLine(6, "event_msg", { type: "task_started" })], 8));
+        const prompted = codexTurnState(
+            input([...done, codexLine(6, "response_item", { type: "message", role: "user" })], 8)
+        );
+
+        expect(settled.state).toBe("AWAITING-INPUT");
+        expect(settled.lastEventAt).toBe(T0 + 4000);
+        expect(reopened.state).toBe("RUNNING");
+        expect(prompted.state).toBe("RUNNING");
+    });
 });
 
 describe("readTurnState", () => {

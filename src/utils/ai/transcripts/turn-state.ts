@@ -290,6 +290,20 @@ function codexPayloadOf(record: JsonRecord): { type: string; payload: JsonRecord
     return payload && typeof type === "string" ? { type, payload } : null;
 }
 
+/** `event_msg` payloads of a turn at work: its start, the user's prompt and the agent's output. */
+const CODEX_TURN_EVENTS = new Set([
+    "task_started",
+    "user_message",
+    "agent_message",
+    "agent_reasoning",
+    "item_completed",
+]);
+
+/** A record that starts or advances a turn: a model item (`response_item`) or a turn event. */
+function codexAdvancesTurn(record: JsonRecord, payloadType: string): boolean {
+    return record.type === "response_item" || (record.type === "event_msg" && CODEX_TURN_EVENTS.has(payloadType));
+}
+
 export function codexTurnState(input: TurnStateInput): TurnSnapshot {
     const events: ActivityEvent[] = [];
     let message = "";
@@ -316,8 +330,9 @@ export function codexTurnState(input: TurnStateInput): TurnSnapshot {
             continue;
         }
 
-        // Bookkeeping that follows a finished turn (token counts) must not reopen it.
-        if (ended && (parsed.type === "token_count" || record.type === "token_usage_record")) {
+        // Bookkeeping that follows a finished turn (token counts, thread settings) must not reopen it: only a
+        // record that starts or advances a turn does.
+        if (ended && !codexAdvancesTurn(record, parsed.type)) {
             continue;
         }
 

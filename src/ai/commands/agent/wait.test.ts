@@ -1,10 +1,20 @@
 import { describe, expect, it } from "bun:test";
+import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
+import {
+    DEFAULT_TURN_LIMIT,
+    type SliceOptions,
+    sliceTurns,
+    type TranscriptEnvelope,
+    type TranscriptTurn,
+} from "@genesiscz/utils/ai/transcripts/types";
 import { Command } from "commander";
 import {
     DEFAULT_WAIT_STALL_SECONDS,
     exitCodeOf,
     parseSeconds,
     registerAgentWaitCommand,
+    type TranscriptPager,
+    TurnStreamer,
     WAIT_EXIT_DONE,
     WAIT_EXIT_STALLED,
     WAIT_EXIT_TIMEOUT,
@@ -44,5 +54,71 @@ describe("registerAgentWaitCommand", () => {
         expect(flags).toEqual(["--timeout", "--stall-timeout", "--next", "--stream", "--json", "--first"]);
         expect(command.description()).toContain("grok");
         expect(DEFAULT_WAIT_STALL_SECONDS).toBeGreaterThan(120);
+    });
+});
+
+describe("TurnStreamer", () => {
+    const resolved: ResolvedTranscript = {
+        provider: "grok",
+        source: "native",
+        sessionId: "s-stream",
+        filePath: "/nonexistent/s-stream.jsonl",
+    };
+    const turn = (text: string): TranscriptTurn => ({ id: text, role: "assistant", at: null, text, tools: [] });
+
+    function harness(initial: TranscriptTurn[]) {
+        const transcript = { turns: initial, size: 1, reads: 0 };
+        const lines: string[] = [];
+        const pager = async (): Promise<TranscriptPager> => {
+            transcript.reads += 1;
+            const turns = [...transcript.turns];
+
+            return async (opts: SliceOptions): Promise<TranscriptEnvelope> => {
+                const sliced = sliceTurns(turns, opts);
+
+                return {
+                    provider: "grok",
+                    sessionId: resolved.sessionId,
+                    filePath: resolved.filePath,
+                    byteSize: transcript.size,
+                    truncated: sliced.truncated,
+                    nextOffset: sliced.nextOffset,
+                    turns: sliced.turns,
+                    turnCount: turns.length,
+                };
+            };
+        };
+        const streamer = new TurnStreamer({
+            resolved,
+            write: (line) => lines.push(line),
+            pager,
+            size: () => transcript.size,
+        });
+
+        return { transcript, lines, streamer };
+    }
+
+    it("prints every turn of a burst longer than one page, and the rest of a turn that grew", async () => {
+        const history = Array.from({ length: 5 }, (_, index) => turn(`old ${index}`));
+        const { transcript, lines, streamer } = harness(history);
+        await streamer.prime();
+
+        const burst = Array.from({ length: DEFAULT_TURN_LIMIT + 20 }, (_, index) => turn(`new ${index}`));
+        transcript.turns = [...history.slice(0, 4), turn("old 4 and more"), ...burst];
+        transcript.size = 2;
+        await streamer.print();
+
+        expect(lines[0]).toBe(" and more");
+        expect(lines.slice(1)).toEqual(burst.map((entry) => entry.text));
+    });
+
+    it("reads nothing while the transcript's size is unchanged", async () => {
+        const { transcript, lines, streamer } = harness([turn("old")]);
+        await streamer.prime();
+        await streamer.print();
+        await streamer.print();
+
+        expect(transcript.reads).toBe(1);
+        expect(lines).toEqual([]);
     });
 });

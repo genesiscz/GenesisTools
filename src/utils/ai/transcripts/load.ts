@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { ClaudeSession } from "@genesiscz/utils/claude/session";
 import { parseTurnEvents as parseClaudeTurnEvents } from "@genesiscz/utils/claude/worker-stream";
 import { toWorkerEvent as codexToWorkerEvent, type StoredCodexEvent } from "@genesiscz/utils/codex/worker-stream";
+import { logger } from "@genesiscz/utils/logger";
 import type { WorkerEvent } from "@genesiscz/utils/worker/events";
 import { claudeMessagesToTurns } from "./claude";
 import { codexNativeLinesToTurns, createCodexTurnParser } from "./codex";
@@ -103,6 +104,22 @@ export async function transcriptEnvelope(
     return (await transcriptSnapshot(resolved))(opts);
 }
 
+/** The transcript's bytes on disk, its extra files included; 0 when a file cannot be read. No parse. */
+export function transcriptByteSize(resolved: ResolvedTranscript): number {
+    try {
+        let size = statSync(resolved.filePath).size;
+
+        for (const extra of resolved.extraFiles ?? []) {
+            size += statSync(extra).size;
+        }
+
+        return size;
+    } catch (error) {
+        logger.debug({ error, file: resolved.filePath }, "transcript size: a file could not be read");
+        return 0;
+    }
+}
+
 /** One caller-owned parse for a catch-up drain; discarded before the next file-growth wake. */
 export async function transcriptSnapshot(
     resolved: ResolvedTranscript
@@ -110,15 +127,7 @@ export async function transcriptSnapshot(
     const turns = await allTranscriptTurns(resolved);
     const totals = totalsOf(turns);
     const terminated = terminatedOf(turns);
-    let byteSize = 0;
-    try {
-        byteSize = statSync(resolved.filePath).size;
-        for (const extra of resolved.extraFiles ?? []) {
-            byteSize += statSync(extra).size;
-        }
-    } catch {
-        byteSize = 0;
-    }
+    const byteSize = transcriptByteSize(resolved);
     return (opts = {}) => {
         const sliced = sliceTurns(turns, opts);
         return {

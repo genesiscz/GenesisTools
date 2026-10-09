@@ -7,7 +7,8 @@
  *
  * `next` waits for a turn that ENDS AFTER the call started: a session already idle at the start is not
  * a finished turn. A turn that starts and ends between two reads still counts, because the marker that
- * moves is the time of the newest turn-level record, not the state.
+ * moves is the time of the newest turn-level record, not the state. That time can be whole seconds (Grok), so
+ * a RUNNING state seen after the call started also marks the turn that ends next as new.
  *
  * A question the agent asks in passing (a message that ends in `?` while the turn keeps running, which is
  * how Codex and Grok ask) does not end the wait. It is collected in `questions`, so the caller still sees
@@ -56,6 +57,7 @@ export class TurnJudge {
     readonly questions: string[] = [];
     private snapshot: TurnSnapshot | null = null;
     private missingSince: number | null = null;
+    private sawRunning = false;
 
     constructor(
         private readonly options: { next: boolean; baselineEnd: number | null; startedAt: number; now: () => number }
@@ -78,7 +80,15 @@ export class TurnJudge {
         this.missingSince = null;
 
         const ended = endedTurn(snapshot);
-        const isNew = !this.options.next || (snapshot.lastEventAt ?? 0) > (this.options.baselineEnd ?? 0);
+
+        // Grok stamps records in whole seconds, so a turn that ends in the baseline's second has the same time.
+        // A running turn seen since the call started is a turn that ends after it, whatever its time.
+        if (snapshot.state === "RUNNING") {
+            this.sawRunning = true;
+        }
+
+        const isNew =
+            !this.options.next || this.sawRunning || (snapshot.lastEventAt ?? 0) > (this.options.baselineEnd ?? 0);
 
         if (ended && isNew) {
             return this.result("done");

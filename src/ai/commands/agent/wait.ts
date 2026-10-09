@@ -1,9 +1,14 @@
-import { transcriptEnvelope } from "@genesiscz/utils/ai/transcripts/load";
+import { transcriptByteSize, transcriptEnvelope, transcriptSnapshot } from "@genesiscz/utils/ai/transcripts/load";
 import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { findSessionsByTitle } from "@genesiscz/utils/ai/transcripts/session-title";
 import { readTurnState, type TurnProvider, type TurnSnapshot } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { type TurnWaitOutcome, watchTurn } from "@genesiscz/utils/ai/transcripts/turn-wait";
-import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
+import {
+    DEFAULT_TURN_LIMIT,
+    type SliceOptions,
+    type TranscriptEnvelope,
+    type TranscriptTurn,
+} from "@genesiscz/utils/ai/transcripts/types";
 import { formatDuration } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -117,49 +122,108 @@ export async function resolveWaitTranscript(
     return resolved;
 }
 
+/** One read's pages of a transcript. */
+export type TranscriptPager = (opts: SliceOptions) => Promise<TranscriptEnvelope>;
+
+/** Claude reads only the requested turns (turn-index.ts); the others parse once per read and page from memory. */
+async function transcriptPager(resolved: ResolvedTranscript): Promise<TranscriptPager> {
+    if (resolved.provider === "claude") {
+        return (opts) => transcriptEnvelope(resolved, opts);
+    }
+
+    const snapshot = await transcriptSnapshot(resolved);
+    return async (opts) => snapshot(opts);
+}
+
 /** Prints what the agent wrote since the last call. The turns that exist when it is created are history. */
-class TurnStreamer {
+export class TurnStreamer {
     private readonly seen = new Map<number, { text: number; tools: number }>();
+    /** The last turn read. It can still grow, so the next read starts at it and pages on to the end. */
+    private cursor = 0;
     private lastSize = -1;
 
     constructor(
-        private readonly resolved: ResolvedTranscript,
-        private readonly write: (line: string) => void
+        private readonly options: {
+            resolved: ResolvedTranscript;
+            write: (line: string) => void;
+            /** Tests stand in for the transcript; the defaults read it from disk. */
+            pager?: (resolved: ResolvedTranscript) => Promise<TranscriptPager>;
+            size?: (resolved: ResolvedTranscript) => number;
+        }
     ) {}
 
     async prime(): Promise<void> {
-        await this.each(() => {});
+        await this.each({ priming: true, visit: () => {} });
     }
 
     async print(): Promise<void> {
-        await this.each((turn) => {
-            const previous = this.seen.get(turn.index ?? -1) ?? { text: 0, tools: 0 };
-            const fresh = turn.role === "assistant" ? turn.text.slice(previous.text) : "";
-
-            if (fresh.trim()) {
-                this.write(fresh.trimEnd());
-            }
-
-            for (const tool of turn.tools.slice(previous.tools)) {
-                this.write(pc.dim(`→ ${tool.name}(${tool.inputPreview.slice(0, 120)})`));
-            }
+        await this.each({
+            priming: false,
+            visit: (turn) => this.printTurn(turn),
         });
     }
 
-    private async each(visit: (turn: TranscriptTurn & { index: number }) => void): Promise<void> {
-        const envelope = await transcriptEnvelope(this.resolved);
+    private printTurn(turn: TranscriptTurn & { index: number }): void {
+        const previous = this.seen.get(turn.index) ?? { text: 0, tools: 0 };
+        const fresh = turn.role === "assistant" ? turn.text.slice(previous.text) : "";
 
-        if (envelope.byteSize === this.lastSize) {
+        if (fresh.trim()) {
+            this.options.write(fresh.trimEnd());
+        }
+
+        for (const tool of turn.tools.slice(previous.tools)) {
+            this.options.write(pc.dim(`→ ${tool.name}(${tool.inputPreview.slice(0, 120)})`));
+        }
+    }
+
+    /**
+     * The size is checked before any parse, so a safety poll on a quiet file reads nothing. Priming reads the
+     * tail page only (its turns are history); a print starts at the cursor and drains every page after it, so
+     * a burst of more turns than one page holds still prints whole.
+     */
+    private async each(args: {
+        priming: boolean;
+        visit: (turn: TranscriptTurn & { index: number }) => void;
+    }): Promise<void> {
+        const { resolved } = this.options;
+        const size = (this.options.size ?? transcriptByteSize)(resolved);
+
+        if (size === this.lastSize) {
             return;
         }
 
-        this.lastSize = envelope.byteSize;
-        const start = envelope.nextOffset - envelope.turns.length;
+        this.lastSize = size;
+        const page = await (this.options.pager ?? transcriptPager)(resolved);
+        let opts: SliceOptions = args.priming ? {} : { offset: this.cursor, limit: DEFAULT_TURN_LIMIT };
 
-        for (const [position, turn] of envelope.turns.entries()) {
-            const index = start + position;
-            visit({ ...turn, index });
-            this.seen.set(index, { text: turn.text.length, tools: turn.tools.length });
+        while (true) {
+            const envelope = await page(opts);
+            const start = envelope.nextOffset - envelope.turns.length;
+
+            for (const [position, turn] of envelope.turns.entries()) {
+                const index = start + position;
+                args.visit({ ...turn, index });
+                this.seen.set(index, { text: turn.text.length, tools: turn.tools.length });
+            }
+
+            if (envelope.turns.length > 0) {
+                this.cursor = envelope.nextOffset - 1;
+            }
+
+            const atEnd = envelope.nextOffset >= (envelope.turnCount ?? envelope.nextOffset);
+
+            if (args.priming || envelope.turns.length === 0 || atEnd) {
+                break;
+            }
+
+            opts = { offset: envelope.nextOffset, limit: DEFAULT_TURN_LIMIT };
+        }
+
+        // Only the cursor's turn can still grow; the ones before it are printed whole.
+        for (const index of this.seen.keys()) {
+            if (index < this.cursor) {
+                this.seen.delete(index);
+            }
         }
     }
 }
@@ -237,7 +301,7 @@ export async function waitCommand(alias: TurnProvider, query: string, options: W
         const read = (): TurnSnapshot | null => readTurnState(alias, resolved.filePath, { stallTimeoutMs });
         // With --json, stdout carries one JSON document, so the live text goes to stderr.
         const streamTo = options.json ? (line: string) => out.printlnErr(line) : (line: string) => out.println(line);
-        const streamer = options.stream ? new TurnStreamer(resolved, streamTo) : null;
+        const streamer = options.stream ? new TurnStreamer({ resolved, write: streamTo }) : null;
 
         await streamer?.prime();
         log.debug(
