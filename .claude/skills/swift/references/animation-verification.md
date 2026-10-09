@@ -63,9 +63,9 @@ restricted permissions; distribute a timing-only report.
 
 When an NSPanel owns its animated frame, disable NSHostingView's automatic window sizing with
 `sizingOptions = []`. A fixed-size SwiftUI child otherwise competes with the panel's frame setter:
-in the verified edge-panel fixture that moved the right edge by398points. Disabling automatic
-window sizing kept the edge error at0points in three before/after pairs; native layout CPU fell
-from6.647% to5.713% in that fixture. These are fixture results, not whole-app or display-FPS claims.
+in the verified edge-panel fixture that moved the right edge by 398 points. Disabling automatic
+window sizing kept the edge error at 0 points in three before/after pairs; native layout CPU fell
+from 6.647% to 5.713% in that fixture. These are fixture results, not whole-app or display-FPS claims.
 Anchor each intermediate frame after AppKit rounding, not just the final target, and keep visible
 content and hit regions aligned. A generic comparison/settings window needs ordinary movable
 window geometry; it must not inherit the edge panel's placement loop.

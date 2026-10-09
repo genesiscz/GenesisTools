@@ -25,6 +25,8 @@ public final class ClickyModel: ObservableObject {
     @Published public private(set) var lastPan: Float = 0
     @Published public private(set) var notificationAuthorization: UNAuthorizationStatus = .notDetermined
     @Published public private(set) var notificationBusy = false
+    /// Bumped by each permission request, so a status read that started before it cannot overwrite its answer.
+    private var notificationGeneration = 0
     public var notificationStatus: String {
         switch notificationAuthorization {
         case .authorized, .provisional, .ephemeral: return "Allowed"
@@ -278,7 +280,11 @@ public final class ClickyModel: ObservableObject {
 
     public func refreshNotificationPermission() async {
         guard !previewOnly, !notificationBusy else { return }
-        notificationAuthorization = await notificationClient.status()
+        let generation = notificationGeneration
+        let status = await notificationClient.status()
+        // A request that started and finished while this read was suspended has the newer answer.
+        guard generation == notificationGeneration, !notificationBusy else { return }
+        notificationAuthorization = status
     }
 
     public func setActivationNotifications(_ enabled: Bool) {
@@ -292,6 +298,7 @@ public final class ClickyModel: ObservableObject {
 
     public func performNotificationAction() async {
         guard !previewOnly, !notificationBusy else { return }
+        notificationGeneration &+= 1
         notificationBusy = true
         defer { notificationBusy = false }
         error = nil

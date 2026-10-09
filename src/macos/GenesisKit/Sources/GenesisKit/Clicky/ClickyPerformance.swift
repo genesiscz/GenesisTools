@@ -69,6 +69,11 @@ extension ClickyStatistics {
                     }
                     cursor = boundary
                 }
+                // A press exactly on a minute boundary ends the loop before it visits the new minute, so that
+                // minute is marked as continuing the burst here.
+                if minute > Int(floor(previous.timeIntervalSince1970 / 60)) {
+                    performanceMinutes[minute, default: ClickyPerformanceBucket()].carriedBurst = true
+                }
             } else {
                 performanceMinutes[minute, default: ClickyPerformanceBucket()].bursts += 1
             }
@@ -122,11 +127,14 @@ struct ClickyPerformanceReport: Sendable {
 
     init() {}
 
+    /// `beforeBuild` runs on the worker before the report is built; tests use it to cancel while the worker runs.
     static func prepare(statistics: ClickyStatistics, filter: ClickyPerformanceFilter,
-        grouping: ClickyPerformanceGrouping, calendar: Calendar = .current) async -> Self? {
+        grouping: ClickyPerformanceGrouping, calendar: Calendar = .current,
+        beforeBuild: (@Sendable () -> Void)? = nil) async -> Self? {
         guard !Task.isCancelled else { return nil }
         let worker = Task.detached(priority: .userInitiated) {
-            PerfLog.span("clicky.performance.report", over: PerfLog.frameMs) {
+            beforeBuild?()
+            return PerfLog.span("clicky.performance.report", over: PerfLog.frameMs) {
                 Self(statistics: statistics, filter: filter, grouping: grouping, calendar: calendar)
             }
         }

@@ -695,6 +695,37 @@ final class ClickyTests: XCTestCase {
     }
 
     @MainActor
+    func testStaleNotificationReadCannotOverwriteCompletedPermissionRequest() async {
+        let suite = "dev.genesis.clicky.notifications.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let started = AsyncStream<Void>.makeStream()
+        var pending: CheckedContinuation<UNAuthorizationStatus, Never>?
+        var first = true
+        let client = NativeNotificationClient(status: {
+            if first {
+                first = false
+                return await withCheckedContinuation { continuation in
+                    pending = continuation
+                    started.continuation.yield(())
+                }
+            }
+            return .notDetermined
+        }, request: { true }, openSettings: { false })
+        let model = ClickyModel(defaults: defaults, observeSystemEvents: false, notificationClient: client)
+        defer { model.shutdown() }
+        let oldRead = Task { await model.refreshNotificationPermission() }
+        var iterator = started.stream.makeAsyncIterator()
+        _ = await iterator.next()
+        await model.performNotificationAction()
+        XCTAssertEqual(model.notificationAuthorization, .authorized)
+        pending?.resume(returning: .denied)
+        await oldRead.value
+        XCTAssertEqual(model.notificationAuthorization, .authorized)
+        XCTAssertFalse(model.notificationBusy)
+    }
+
+    @MainActor
     func testNotificationSettingsFailureIsActionable() async {
         let suite = "dev.genesis.clicky.notifications.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -1918,6 +1949,19 @@ extension ClickyTests {
         XCTAssertEqual(report.weekdays[4].activeSeconds, 2)
     }
 
+    func testPerformanceCountsACarriedBurstWhenThePressLandsExactlyOnMidnight() {
+        var stats = ClickyStatistics()
+        let start = date(23, 59).addingTimeInterval(58)
+        stats.record(keyCode: 0, release: false, at: start)
+        let midnight = start.addingTimeInterval(2)
+        stats.record(keyCode: 0, release: false, at: midnight)
+        let day = calendar.startOfDay(for: midnight)
+        let filter = ClickyPerformanceFilter(start: day, end: day.addingTimeInterval(3600))
+        let report = ClickyPerformanceReport(statistics: stats, filter: filter, grouping: .day, calendar: calendar)
+        XCTAssertEqual(report.total.characters, 1)
+        XCTAssertEqual(report.total.bursts, 1, "the press at 00:00:00 continues a burst, so the new day counts it")
+    }
+
     func testPerformanceFiltersWeightedRatesAndGroupingKeepTotals() {
         var stats = ClickyStatistics()
         var fast = ClickyPerformanceBucket()
@@ -1971,6 +2015,32 @@ extension ClickyTests {
         }
         let stale = await cancelled.value
         XCTAssertNil(stale)
+    }
+
+    func testPreparedPerformanceReportIsDroppedWhenCancelledWhileTheWorkerRuns() async {
+        var stats = ClickyStatistics()
+        stats.record(keyCode: 0, release: false, at: date(12))
+        let filter = ClickyPerformanceFilter(start: date(0), end: date(23, 59))
+        let calendar = self.calendar
+        let started = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let request = Task {
+            await ClickyPerformanceReport.prepare(statistics: stats, filter: filter, grouping: .minute, calendar: calendar,
+                                                  beforeBuild: {
+                started.signal()
+                _ = release.wait(timeout: .now() + 5)
+            })
+        }
+        let entered = await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: started.wait(timeout: .now() + 5))
+            }
+        }
+        XCTAssertEqual(entered, .success, "the worker must have started before cancellation")
+        request.cancel()
+        release.signal()
+        let stale = await request.value
+        XCTAssertNil(stale, "a request cancelled after its worker started must not publish the report")
     }
 
     func testPerformanceRetentionDoesNotInventLegacyTiming() throws {
