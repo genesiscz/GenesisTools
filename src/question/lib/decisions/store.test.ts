@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listWidgetTasks, updateWidgetTask, widgetTask } from "@app/hub/lib/widget/tasks";
 import { runAsCaller } from "@genesiscz/utils/agent/runtime";
+import { listSessionMessages } from "@genesiscz/utils/agent-sessions/message-queue";
+import { withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { z } from "zod";
@@ -862,6 +864,204 @@ describe("delivery routes", () => {
 
         expect(result.channel).toBe("queued");
         expect(result.delivered).toBe(false);
+    });
+
+    test("an original Claude receiver takes one literal media message without terminal lookup", async () => {
+        const peer = {
+            pid: 42,
+            sessionId: "original-session",
+            name: "fixture",
+            cwd: "/fixture/project",
+            status: "busy",
+            kind: "interactive",
+            socketPath: "/fixture/receiver.sock",
+            file: "/fixture/home/sessions/42.json",
+        };
+        const received: unknown[] = [];
+        const text = '<fromImage>\n{"path":"/fixture/c96d5e67-image.png"}\n</fromImage>';
+        const result = await deliverToSession(
+            { session: peer.sessionId, provider: "claude", sourceHome: "/fixture/home", text },
+            {
+                nativeWorkers: () => [],
+                claudePeers: (home) => {
+                    expect(home).toBe("/fixture/home");
+                    return [peer];
+                },
+                peerToken: (_session, directory) => {
+                    expect(directory).toBe("/fixture/home/sessions");
+                    return null;
+                },
+                sendClaudePeer: async (input) => {
+                    received.push(input);
+                },
+                findTargets: async () => {
+                    throw new Error("Native delivery must not inspect terminals");
+                },
+                runTool: async () => {
+                    throw new Error("Native delivery must not type a fallback");
+                },
+            }
+        );
+        expect(result).toEqual({ channel: "claude-peer", delivered: true, target: "original Claude session" });
+        expect(received).toEqual([{ session: peer, text, token: null, priority: "next", timeoutMs: 5000 }]);
+    });
+
+    test("real native peer transport preserves a long Unicode reply as one user frame", async () => {
+        const home = mkdtempSync(join(tmpdir(), "p-"));
+        const socketPath = join(home, "p.sock");
+        const frames: unknown[] = [];
+        let accept!: (value: unknown) => void;
+        const received = new Promise<unknown>((resolve) => {
+            accept = resolve;
+        });
+        let buffered = "";
+        const decoder = new TextDecoder();
+        const server = Bun.listen({
+            unix: socketPath,
+            socket: {
+                data(socket, bytes) {
+                    buffered += decoder.decode(bytes, { stream: true });
+                    const newline = buffered.indexOf("\n");
+                    if (newline >= 0) {
+                        const frame: unknown = SafeJSON.parse(buffered.slice(0, newline), { strict: true });
+                        frames.push(frame);
+                        accept(frame);
+                        socket.end();
+                    }
+                },
+            },
+        });
+        const peer = {
+            pid: 42,
+            sessionId: "fixture-original-session",
+            name: null,
+            cwd: null,
+            status: "busy",
+            kind: null,
+            socketPath,
+            file: join(home, "sessions/42.json"),
+        };
+        const text =
+            "<fromVideo>\n" + "Literal line ž 漢字 /fixture/c96d5e67-image.png\n".repeat(1200) + "</fromVideo>";
+        try {
+            const result = await deliverToSession(
+                { session: peer.sessionId, provider: "claude", sourceHome: home, text },
+                {
+                    nativeWorkers: () => [],
+                    claudePeers: () => [peer],
+                    peerToken: () => null,
+                    findTargets: async () => {
+                        throw new Error("A native socket must not use terminal delivery");
+                    },
+                }
+            );
+            expect(result).toMatchObject({ channel: "claude-peer", delivered: true });
+            expect(await withTimeout(received, 5000)).toMatchObject({
+                type: "user",
+                session_id: peer.sessionId,
+                message: { role: "user", content: text },
+                priority: "next",
+            });
+            expect(frames).toHaveLength(1);
+        } finally {
+            server.stop(true);
+        }
+    });
+
+    test("a failed native Claude write never retries through a terminal or a durable queue", async () => {
+        const peer = {
+            pid: 42,
+            sessionId: "original-session",
+            name: null,
+            cwd: null,
+            status: "busy",
+            kind: null,
+            socketPath: "/fixture/receiver.sock",
+            file: "/fixture/home/sessions/42.json",
+        };
+        const queueRoot = mkdtempSync(join(tmpdir(), "peer-unknown-"));
+        await expect(
+            deliverToSession(
+                {
+                    session: peer.sessionId,
+                    provider: "claude",
+                    sourceHome: "/fixture/home",
+                    text: "literal reply",
+                    deliveryKey: "once",
+                },
+                {
+                    queueRoot,
+                    nativeWorkers: () => [],
+                    claudePeers: () => [peer],
+                    peerToken: () => null,
+                    sendClaudePeer: async () => {
+                        throw new Error("Disconnected after writing");
+                    },
+                    findTargets: async () => {
+                        throw new Error("No terminal fallback after an uncertain write");
+                    },
+                }
+            )
+        ).rejects.toBeInstanceOf(DeliveryUnknownError);
+        expect(
+            listSessionMessages({
+                root: queueRoot,
+                target: { provider: "claude", sessionId: peer.sessionId, sourceHome: "/fixture/home" },
+            })
+        ).toEqual([]);
+    });
+
+    test("a native Claude receiver swap is refused at the consuming boundary", async () => {
+        const peer = {
+            pid: 42,
+            sessionId: "original-session",
+            name: null,
+            cwd: null,
+            status: "busy",
+            kind: null,
+            socketPath: "/fixture/receiver.sock",
+            file: "/fixture/home/sessions/42.json",
+        };
+        let reads = 0;
+        const result = await deliverToSession(
+            { session: peer.sessionId, provider: "claude", sourceHome: "/fixture/home", text: "media reply" },
+            {
+                nativeWorkers: () => [],
+                claudePeers: () =>
+                    ++reads === 1 ? [peer] : [{ ...peer, pid: 43, socketPath: "/fixture/replacement.sock" }],
+                sendClaudePeer: async () => {
+                    throw new Error("The replacement must never receive a message");
+                },
+            }
+        );
+        expect(result).toMatchObject({
+            delivered: false,
+            error: "The native Claude receiver changed before delivery; no message was written.",
+        });
+        expect(reads).toBe(2);
+    });
+
+    test("native Claude routing rejects another home or duplicate receivers before any transport", async () => {
+        const peer = {
+            pid: 42,
+            sessionId: "original-session",
+            name: null,
+            cwd: null,
+            status: "busy",
+            kind: null,
+            socketPath: "/fixture/receiver.sock",
+            file: "/fixture/other-home/sessions/42.json",
+        };
+        const request = { session: peer.sessionId, provider: "claude", sourceHome: "/fixture/home" };
+        expect(
+            await resolveDeliveryTarget(request, { nativeWorkers: () => [], claudePeers: () => [peer] })
+        ).toMatchObject({ kind: "none", reason: "The native Claude receiver belongs to another source home." });
+        expect(
+            await resolveDeliveryTarget(request, { nativeWorkers: () => [], claudePeers: () => [peer, peer] })
+        ).toMatchObject({
+            kind: "none",
+            reason: "Several native Claude receivers claim this session; none was picked.",
+        });
     });
 
     test("automatic replies never type into a lone cwd or screen-text match", async () => {

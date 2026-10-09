@@ -1,20 +1,29 @@
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type FocusTarget, isUnambiguous } from "@app/claude/lib/cmux/focus";
 import { findSessionTargets, type SessionTargetsResult, SOFT_SOURCES } from "@app/claude/lib/cmux/resolve";
 import { ClaudeWorkerStore, claudeWorkerSourceHome } from "@app/claude/lib/worker/store";
 import { CodexSessionStore } from "@app/codex/lib/store";
 import { GrokSessionStore } from "@app/grok/lib/store";
 import { enqueueSessionMessage } from "@genesiscz/utils/agent-sessions/message-queue";
+import {
+    type ClaudeLiveSession,
+    claudeSessionsDir,
+    listClaudeLiveSessions,
+    readPeerToken,
+    sendClaudePeerMessage,
+} from "@genesiscz/utils/claude/peer-message";
 import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type CmuxLiveSnapshot, fetchCmuxLiveSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { batchPsInfo } from "@genesiscz/utils/process/ps";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { isTestProcess } from "@genesiscz/utils/test-process";
 import { workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import { deliverySentence } from "./delivery-text";
 
@@ -24,7 +33,7 @@ const { log } = logger.scoped("question-deliver");
  * How the answers reach the agent: typed into its cmux pane, steered into its Codex worker, sent
  * as the first prompt of a resumed session, or left for its next prompt.
  */
-export type DeliveryChannel = "cmux" | "codex" | "resume" | "queued";
+export type DeliveryChannel = "cmux" | "codex" | "claude-peer" | "resume" | "queued";
 
 export interface DeliveryResult {
     channel: DeliveryChannel;
@@ -45,6 +54,16 @@ export interface ToolRun {
     stderr: string;
 }
 
+function liveClaudePeers(session: string, sourceHome?: string): ClaudeLiveSession[] {
+    const directory = sourceHome ? join(workerSourceHome(sourceHome), "sessions") : claudeSessionsDir();
+    const candidates = listClaudeLiveSessions(directory, () => true).filter((peer) => peer.sessionId === session);
+    const processes = batchPsInfo(candidates.map((peer) => peer.pid));
+    return candidates.filter((peer) => {
+        const process = processes.get(peer.pid);
+        return process && /claude/i.test(process.command);
+    });
+}
+
 /** Where a send would go, resolved before anything is typed. */
 export type DeliveryTarget =
     | {
@@ -58,6 +77,7 @@ export type DeliveryTarget =
       }
     | { kind: "codex"; label: string; worker: string }
     | { kind: "worker"; label: string; worker: NativeDeliveryWorker }
+    | { kind: "claude-peer"; label: string; peer: ClaudeLiveSession }
     | { kind: "none"; reason: string };
 
 export interface NativeDeliveryWorker {
@@ -127,6 +147,9 @@ export interface DeliverDeps {
     /** The `tools codex` worker name that runs this Codex thread, or null. */
     codexWorkerFor?: (sessionId: string, sourceHome?: string) => string | null;
     nativeWorkers?: (provider: "claude" | "grok") => NativeDeliveryWorker[];
+    claudePeers?: (sourceHome?: string) => ClaudeLiveSession[];
+    sendClaudePeer?: typeof sendClaudePeerMessage;
+    peerToken?: typeof readPeerToken;
     /** The cmux panes a session runs in; tests pass a fake. */
     findTargets?: (sessionId: string, opts: { skipRecorded?: boolean }) => Promise<SessionTargetsResult>;
     /** The panes that exist right now, to check a recorded ref against. */
@@ -267,6 +290,25 @@ export async function resolveDeliveryTarget(
         }
     }
 
+    if (nativeProvider === "claude") {
+        const peers = deps.claudePeers
+            ? deps.claudePeers(sourceHome)
+            : isTestProcess()
+              ? []
+              : liveClaudePeers(session, sourceHome);
+        const matching = peers.filter((peer) => peer.sessionId === session);
+        if (matching.length > 1) {
+            return { kind: "none", reason: "Several native Claude receivers claim this session; none was picked." };
+        }
+        const peer = matching[0];
+        if (peer) {
+            if (sourceHome && workerSourceHome(dirname(dirname(peer.file))) !== workerSourceHome(sourceHome)) {
+                return { kind: "none", reason: "The native Claude receiver belongs to another source home." };
+            }
+            return { kind: "claude-peer", label: "original Claude session", peer };
+        }
+    }
+
     const find = deps.findTargets ?? ((id, opts) => findSessionTargets(id, opts));
     const snapshotOf = deps.snapshot ?? (() => fetchCmuxLiveSnapshot({ previews: "none", allWindows: true }));
     let result = await find(session, {});
@@ -362,6 +404,39 @@ export async function deliverToSession(
     if (target.kind === "none") {
         log.info({ session, provider, reason: target.reason }, "no live target; the answers stay queued");
         return undelivered(target.reason);
+    }
+
+    if (target.kind === "claude-peer") {
+        const current = deps.claudePeers
+            ? deps.claudePeers(sourceHome).filter((peer) => peer.sessionId === session)
+            : liveClaudePeers(session, sourceHome);
+        if (
+            current.length !== 1 ||
+            current[0].pid !== target.peer.pid ||
+            current[0].socketPath !== target.peer.socketPath ||
+            current[0].file !== target.peer.file
+        ) {
+            return undelivered("The native Claude receiver changed before delivery; no message was written.");
+        }
+        const directory = dirname(target.peer.file);
+        try {
+            await (deps.sendClaudePeer ?? sendClaudePeerMessage)({
+                session: target.peer,
+                text,
+                token: (deps.peerToken ?? readPeerToken)(target.peer, directory),
+                priority: "next",
+                timeoutMs: 5_000,
+            });
+        } catch (error) {
+            log.warn({ session, pid: target.peer.pid, error }, "native Claude peer delivery has an unknown outcome");
+            throw new DeliveryUnknownError(
+                "The native Claude message may have been received. Inspect the conversation before retrying."
+            );
+        }
+        log.info({ session, pid: target.peer.pid }, "native Claude peer message flushed");
+        // This confirms a complete transport write, not an agent-processing acknowledgement.
+        // DECISION remains sent until the receiving agent records acknowledged/implemented.
+        return { channel: "claude-peer", delivered: true, target: target.label };
     }
 
     if (target.kind === "worker") {
