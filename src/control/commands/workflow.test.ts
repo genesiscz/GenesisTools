@@ -1,12 +1,12 @@
-import { expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
 import { evaluationSchema } from "@genesiscz/utils/ai/evaluation/evaluate";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { OperationBudget } from "@genesiscz/utils/operation-budget";
 import type { JsonLineTransport } from "@genesiscz/utils/process/json-line-process";
+import { Command, CommanderError } from "commander";
 import { ComputerUse } from "../lib/computer-use/session";
 import { assistTask } from "../lib/decision/assist";
 import { awaitCondition, semanticFingerprint } from "../lib/decision/await";
@@ -29,23 +29,61 @@ import { type VisualDriver, visualObservationSchema, visualTask } from "../lib/d
 import { VisualCaptureStore } from "../lib/decision/visual-store";
 import { replayWait, waitCases } from "../lib/decision/wait-replay";
 import { applyWorkflowRepairs, attachSemanticPlan, replayWorkflow, type WorkflowPlan } from "../lib/decision/workflow";
+import { registerControlCommands } from ".";
 
-const entry = join(import.meta.dir, "..", "index.ts");
-
-test("snapshot inspection exposes its window selection without touching a live app", () => {
-    const result = spawnSync("bun", [entry, "see", "--help"], {
-        env: process.env,
-        encoding: "utf8",
-        timeout: 30_000,
+/**
+ * Runs `tools control <args>` in this process: the same commander tree the CLI builds, its help and
+ * refusals captured. These tests used to start `bun src/control/index.ts` once per call; on a loaded
+ * CI runner those children stalled until the 20 s test timeout (every other call, in 6 of 25 failed
+ * runs on 2026-10-08/09), and the checks never needed a second process: every refusal below happens
+ * synchronously in the action, before anything native runs.
+ */
+async function control(args: string[]): Promise<{ status: number; stdout: string; stderr: string }> {
+    let stdout = "";
+    const errors: string[] = [];
+    const program = new Command().exitOverride().configureOutput({
+        writeOut: (text) => {
+            stdout += text;
+        },
+        writeErr: (text) => {
+            errors.push(text);
+        },
     });
+    registerControlCommands(program);
+    const spy = spyOn(logger, "error").mockImplementation((...parts: unknown[]) => {
+        errors.push(parts.map(String).join(" "));
+    });
+    const exitCode = process.exitCode;
+    process.exitCode = 0;
+    let status = 0;
+
+    try {
+        await program.parseAsync(args, { from: "user" });
+        status = Number(process.exitCode ?? 0);
+    } catch (error) {
+        if (!(error instanceof CommanderError)) {
+            throw error;
+        }
+
+        status = error.exitCode;
+    } finally {
+        spy.mockRestore();
+        process.exitCode = exitCode;
+    }
+
+    return { status, stdout, stderr: errors.join("\n") };
+}
+
+test("snapshot inspection exposes its window selection without touching a live app", async () => {
+    const result = await control(["see", "--help"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("--window-index");
     expect(result.stdout).toContain("--path");
 });
 
 // Regression test: #447 D3 — the help never said how to get a tree deeper than --depth
-test("see help offers --truncate and --depth auto", () => {
-    const result = spawnSync("bun", [entry, "see", "--help"], { env: process.env, encoding: "utf8", timeout: 30_000 });
+test("see help offers --truncate and --depth auto", async () => {
+    const result = await control(["see", "--help"]);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("--truncate");
@@ -53,24 +91,16 @@ test("see help offers --truncate and --depth auto", () => {
 });
 
 // Regression test: PR #456 review — the menu surface is a different native command, so it silently ignored --truncate
-test("see refuses --truncate with --scope menu instead of ignoring it", () => {
-    const result = spawnSync("bun", [entry, "see", "--app", "Finder", "--scope", "menu", "--truncate"], {
-        env: process.env,
-        encoding: "utf8",
-        timeout: 30_000,
-    });
+test("see refuses --truncate with --scope menu instead of ignoring it", async () => {
+    const result = await control(["see", "--app", "Finder", "--scope", "menu", "--truncate"]);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("--truncate does not apply to --scope menu");
     expect(result.stderr).not.toContain("real machine");
 });
 
-test("action help exposes native drag selection and paste options", () => {
-    const result = spawnSync("bun", [entry, "act", "--help"], {
-        env: process.env,
-        encoding: "utf8",
-        timeout: 30_000,
-    });
+test("action help exposes native drag selection and paste options", async () => {
+    const result = await control(["act", "--help"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("--to");
     expect(result.stdout).toContain("--range");
@@ -79,83 +109,44 @@ test("action help exposes native drag selection and paste options", () => {
     expect(result.stdout).toContain("--button [name]");
 });
 
-test("an invalid drag button is rejected before native resolution", () => {
-    const result = spawnSync(
-        "bun",
-        [
-            entry,
-            "act",
-            "--app",
-            "nonexistent-control-fixture",
-            "--snapshot",
-            "invalid",
-            "--element",
-            "0",
-            "--action",
-            "drag",
-            "--button",
-            "middleish",
-        ],
-        {
-            env: process.env,
-            encoding: "utf8",
-            timeout: 30_000,
-        }
-    );
+const actOn = ["act", "--app", "nonexistent-control-fixture"];
+
+test("an invalid drag button is rejected before native resolution", async () => {
+    const result = await control([
+        ...actOn,
+        "--snapshot",
+        "invalid",
+        "--element",
+        "0",
+        "--action",
+        "drag",
+        "--button",
+        "middleish",
+    ]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("--button");
     expect(result.stderr).not.toContain("app not found");
 });
 
-test("an unknown action is rejected before app resolution", () => {
-    const result = spawnSync(
-        "bun",
-        [
-            entry,
-            "act",
-            "--app",
-            "nonexistent-control-fixture",
-            "--snapshot",
-            "invalid",
-            "--element",
-            "0",
-            "--action",
-            "launch-missiles",
-        ],
-        {
-            env: process.env,
-            encoding: "utf8",
-            timeout: 30_000,
-        }
-    );
+test("an unknown action is rejected before app resolution", async () => {
+    const result = await control([...actOn, "--snapshot", "invalid", "--element", "0", "--action", "launch-missiles"]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("--action");
     expect(result.stderr).not.toContain("app not found");
 });
 
-test("type rejects text over 256 UTF-16 units before native resolution", () => {
-    const result = spawnSync(
-        "bun",
-        [
-            entry,
-            "act",
-            "--app",
-            "nonexistent-control-fixture",
-            "--snapshot",
-            "invalid",
-            "--element",
-            "0",
-            "--action",
-            "type",
-            "--text",
-            "x".repeat(257),
-        ],
-        {
-            env: process.env,
-            encoding: "utf8",
-            timeout: 30_000,
-        }
-    );
+test("type rejects text over 256 UTF-16 units before native resolution", async () => {
+    const result = await control([
+        ...actOn,
+        "--snapshot",
+        "invalid",
+        "--element",
+        "0",
+        "--action",
+        "type",
+        "--text",
+        "x".repeat(257),
+    ]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("256 UTF-16 units");
     expect(result.stderr).toContain("paste");
@@ -163,38 +154,33 @@ test("type rejects text over 256 UTF-16 units before native resolution", () => {
 });
 // The one-process door has exactly two ways to be addressed wrongly, and both are cheaper to
 // catch here than in the native tool: neither selector, or both of them.
-test("act takes a snapshot or an identifier, never both and never neither", () => {
-    const run = (args: string[]) =>
-        spawnSync("bun", [entry, "act", "--app", "nonexistent-control-fixture", "--action", "press", ...args], {
-            env: process.env,
-            encoding: "utf8",
-            timeout: 30_000,
-        });
+test("act takes a snapshot or an identifier, never both and never neither", async () => {
+    const run = (args: string[]) => control([...actOn, "--action", "press", ...args]);
 
-    const neither = run([]);
+    const neither = await run([]);
     expect(neither.status).toBe(1);
     expect(neither.stderr).toContain("--by-identifier <id> to observe and act in one step");
     expect(neither.stderr).not.toContain("app not found");
 
-    const both = run(["--snapshot", "invalid", "--by-identifier", "focus-hud-primary"]);
+    const both = await run(["--snapshot", "invalid", "--by-identifier", "focus-hud-primary"]);
     expect(both.status).toBe(1);
     expect(both.stderr).toContain("cannot also take a --snapshot token");
     expect(both.stderr).not.toContain("app not found");
 
     // A menu press has no key state, so --modifiers is refused before any menu action runs.
     const menuToken = Buffer.from(SafeJSON.stringify({ surface: "menu" }, { strict: true })).toString("base64");
-    const modified = run(["--snapshot", menuToken, "--element", "1", "--modifiers", "alt"]);
+    const modified = await run(["--snapshot", menuToken, "--element", "1", "--modifiers", "alt"]);
     expect(modified.status).toBe(1);
     expect(modified.stderr).toContain("cannot take --modifiers");
     expect(modified.stderr).not.toContain("app not found");
 });
 
-test("see and act help name the diff and refresh options", () => {
-    const see = spawnSync("bun", [entry, "see", "--help"], { env: process.env, encoding: "utf8", timeout: 30_000 });
+test("see and act help name the diff and refresh options", async () => {
+    const see = await control(["see", "--help"]);
     expect(see.status).toBe(0);
     expect(see.stdout).toContain("--since <json>");
 
-    const act = spawnSync("bun", [entry, "act", "--help"], { env: process.env, encoding: "utf8", timeout: 30_000 });
+    const act = await control(["act", "--help"]);
     expect(act.status).toBe(0);
     expect(act.stdout).toContain("--refresh");
     expect(act.stdout).toContain("--by-identifier <id>");
