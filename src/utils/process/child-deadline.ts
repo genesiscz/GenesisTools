@@ -17,3 +17,26 @@ export function argvWithChildDeadline(cmd: string[], deadlineMs: number): string
 
     return [CHILD_DEADLINE_WATCHDOG, "-e", CHILD_DEADLINE_SCRIPT, "--", String(deadlineMs), ...cmd];
 }
+
+/** The watchdog's own exit status when it killed the child at its deadline. */
+export const CHILD_DEADLINE_EXIT = 124;
+
+/**
+ * Why a run through the watchdog ended early, read off its exit status, or null for an ordinary exit.
+ *
+ * The watchdog turns a child killed by signal N into exit status 128 + N, and exits 124 when its own deadline
+ * fired. So a caller of a wrapped command sees an ordinary-looking status, never `signal`, for both. A command
+ * that itself exits 124 or above 128 reads as cut short too; a caller that must not mistake a cut-short run
+ * for a finished one (an irreversible send) accepts that.
+ */
+export function childDeadlineTermination(status: number | null): string | null {
+    if (status === CHILD_DEADLINE_EXIT) {
+        return "the child deadline killed it";
+    }
+
+    if (status !== null && status > 128 && status <= 128 + 64) {
+        return `it was killed by signal ${status - 128}`;
+    }
+
+    return null;
+}
