@@ -31,7 +31,7 @@ function isRunning(pid: number): boolean {
         return false;
     }
 
-    const state = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(pid)])
+    const state = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(pid)], { env: process.env })
         .stdout.toString()
         .trim();
 

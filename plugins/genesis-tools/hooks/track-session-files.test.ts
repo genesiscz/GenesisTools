@@ -295,7 +295,7 @@ test("concurrent hooks recover at once from a holder that was killed mid-edit, a
              setInterval(() => {}, 1000);`,
             join(sessions, "killed-session.json.flock"),
         ],
-        { stdout: "pipe", stderr: "inherit" }
+        { stdout: "pipe", stderr: "inherit", env: process.env }
     );
     const reader = holder.stdout.getReader();
     expect(new TextDecoder().decode((await reader.read()).value)).toBe("held\n");
