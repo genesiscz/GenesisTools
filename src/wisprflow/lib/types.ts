@@ -42,6 +42,14 @@ export interface Meeting extends MeetingSummary {
     transcript: TranscriptEntry[];
     /** True when a speaker rename exists on this Mac but the app has not sent it to the server yet. */
     speakerRenamePending?: boolean;
+    /** Set when the app's refined transcript stops before the recording does; the rest is unrefined live text. */
+    transcriptGap?: TranscriptGap;
+}
+
+export interface TranscriptGap {
+    refinedUntilSec: number;
+    liveUntilSec: number;
+    appendedLines: number;
 }
 
 export interface Sourced<T> {

@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { completeTranscript, type LiveLine, parseLive } from "./live";
 import { fillSpeakerMentions, resolveSpeakers, speakerLabel } from "./speakers";
 import type { CalendarEvent, Folder, Meeting, MeetingSummary, ScratchpadNote, TranscriptEntry } from "./types";
 
@@ -166,6 +167,16 @@ function readRefined(meetingId: string): RefinedLine[] {
     return lines.map((line) => SafeJSON.parse(line, { strict: true }) as RefinedLine).filter((line) => line.text);
 }
 
+function readLive(meetingId: string): LiveLine[] {
+    const path = join(WISPR_DIR, "meetings", meetingId, "live.ndjson");
+
+    if (!existsSync(path)) {
+        return [];
+    }
+
+    return parseLive(readFileSync(path, "utf8"));
+}
+
 /** The user's own edits to transcript lines, by entry id. The newest edit of an entry wins. */
 function corrections(db: Database, meetingId: string): Map<string, string> {
     const rows = db
@@ -187,15 +198,16 @@ export function getLocalMeeting(id: string): Meeting | undefined {
 
         const participants = resolveSpeakers(row.speakerMap);
         const edits = corrections(db, id);
-        const transcript: TranscriptEntry[] = readRefined(id).map((line) => ({
+        const refined: TranscriptEntry[] = readRefined(id).map((line) => ({
             id: line.id,
             startSec: parseTimestamp(line.timestamp),
             speakerId: line.speaker?.id,
             speaker: speakerLabel(participants, line.speaker?.id),
             text: (line.id ? edits.get(line.id) : undefined) ?? line.text!.trim(),
         }));
+        const { transcript, gap } = completeTranscript(refined, readLive(id), participants);
         log.debug(
-            { id, entries: transcript.length, corrections: edits.size, speakers: participants.length },
+            { id, entries: transcript.length, corrections: edits.size, speakers: participants.length, gap },
             "read local meeting"
         );
 
@@ -206,6 +218,7 @@ export function getLocalMeeting(id: string): Meeting | undefined {
             participants,
             transcript,
             speakerRenamePending: row.speakerMapPendingPush === 1,
+            transcriptGap: gap,
         };
     });
 }

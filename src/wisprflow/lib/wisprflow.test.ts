@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { completeTranscript, parseLive } from "./live";
 import { pageText, parseMcpTranscript } from "./mcp";
 import { mergeFrontmatter, writeGuarded } from "./output";
 import { groupTurns, renderSrt } from "./render";
@@ -158,5 +159,61 @@ describe("output guard", () => {
         expect(writeGuarded({ path, content: generated, confirm: false, keepFrontmatter: true }).status).toBe(
             "unchanged"
         );
+    });
+});
+
+describe("completeTranscript", () => {
+    const self = { speakerId: 1, name: "Martin Example", isSelf: true };
+    const live = parseLive(
+        [
+            SafeJSON.stringify({ meta: { v: 3 } }),
+            SafeJSON.stringify({
+                id: "a",
+                text: " early",
+                speaker: { id: 1001, source: "system" },
+                startRecordingMs: 5_000,
+                endRecordingMs: 6_000,
+            }),
+            SafeJSON.stringify({
+                id: "c",
+                timestamp: "147:59",
+                text: " from Filip",
+                speaker: { id: 1001, source: "system", name: "Filip Kalina" },
+                startRecordingMs: 9_000_000,
+                endRecordingMs: 9_004_000,
+            }),
+            SafeJSON.stringify({
+                id: "b",
+                timestamp: "175:24",
+                text: " from the mic",
+                speaker: { id: 1, source: "mic", name: null },
+                startRecordingMs: 8_000_000,
+                endRecordingMs: 8_002_000,
+            }),
+            SafeJSON.stringify({
+                id: "d",
+                text: "   ",
+                speaker: { id: 1, source: "mic" },
+                startRecordingMs: 9_100_000,
+            }),
+        ].join("\n")
+    );
+
+    test("a refined transcript that stops early gets the live lines after its end, ordered by recording time", () => {
+        const refined = [entry("Speaker 1", 6, "refined start"), entry("Speaker 2", 798, "refined end")];
+        const { transcript, gap } = completeTranscript(refined, live, [self]);
+
+        expect(transcript.map((e) => e.text)).toEqual(["refined start", "refined end", "from the mic", "from Filip"]);
+        expect(transcript[2]).toMatchObject({ speaker: "Martin Example", startSec: 8000 });
+        expect(transcript[3]).toMatchObject({ speaker: "Filip Kalina", startSec: 9000 });
+        expect(gap).toEqual({ refinedUntilSec: 798, liveUntilSec: 9004, appendedLines: 2 });
+    });
+
+    test("a refined transcript that reaches the end of the recording is left alone", () => {
+        const refined = [entry("Speaker 1", 6, "start"), entry("Speaker 2", 8990, "end")];
+        const { transcript, gap } = completeTranscript(refined, live, [self]);
+
+        expect(transcript).toBe(refined);
+        expect(gap).toBeUndefined();
     });
 });

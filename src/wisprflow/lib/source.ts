@@ -2,6 +2,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { getLocalMeeting, localAvailable, localMeetingIdForShareSlug } from "./local";
 import { getMcpMeeting, McpUnavailableError, resolveMcpShareLink } from "./mcp";
+import { transcriptGapNote } from "./render";
 import type { Meeting, SourceChoice, Sourced } from "./types";
 
 const { log } = logger.scoped("wisprflow-source");
@@ -82,6 +83,10 @@ export async function loadMeeting(
                 }
             } else if (local.speakerRenamePending) {
                 notes.push("A speaker rename is on this Mac only; the MCP still returns the old names.");
+            }
+
+            if (local.transcriptGap) {
+                notes.push(transcriptGapNote(local.transcriptGap));
             }
 
             log.debug({ id, notes }, "meeting answered by local data");
