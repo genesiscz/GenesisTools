@@ -202,7 +202,8 @@ public final class ActivityStore {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             started_ms INTEGER NOT NULL,
             ended_ms INTEGER,
-            reason TEXT NOT NULL
+            reason TEXT NOT NULL,
+            until_ms INTEGER
         );
         """)
         try exec("""
@@ -235,6 +236,13 @@ public final class ActivityStore {
             try exec("ALTER TABLE activity_segment ADD COLUMN is_closed INTEGER NOT NULL DEFAULT 0;")
             try exec("UPDATE activity_segment SET is_closed=1 WHERE ended_ms IS NOT NULL;")
         }
+        let gapColumns = try prepare("PRAGMA table_info(capture_gap);")
+        var hasUntil = false
+        while sqlite3_step(gapColumns) == SQLITE_ROW {
+            if text(gapColumns, 1) == "until_ms" { hasUntil = true }
+        }
+        sqlite3_finalize(gapColumns)
+        if !hasUntil { try exec("ALTER TABLE capture_gap ADD COLUMN until_ms INTEGER;") }
         try exec("COMMIT;")
         committed = true
     }
@@ -472,15 +480,38 @@ public final class ActivityStore {
     /// A gap is recorded when the event tap dies, so a quiet hour reads as "not measured"
     /// rather than "you did nothing".
     @discardableResult
-    public func recordGap(startedMs: Int64, endedMs: Int64?, reason: String) throws -> Int64 {
+    /// `untilMs`: when a timed pause is due to end. It lives on the ledger, so a pause the user asked for
+    /// survives the process that took it (an owner handoff, a crash).
+    public func recordGap(startedMs: Int64, endedMs: Int64?, reason: String, untilMs: Int64? = nil) throws -> Int64 {
         try queue.sync {
-            let stmt = try prepare("INSERT INTO capture_gap(started_ms, ended_ms, reason) VALUES(?,?,?);")
+            let stmt = try prepare("INSERT INTO capture_gap(started_ms, ended_ms, reason, until_ms) VALUES(?,?,?,?);")
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_int64(stmt, 1, startedMs)
             bindOptionalInt(stmt, 2, endedMs)
             bindText(stmt, 3, reason)
+            bindOptionalInt(stmt, 4, untilMs)
             guard sqlite3_step(stmt) == SQLITE_DONE else { throw StoreError.sqlite(lastMessage()) }
             return sqlite3_last_insert_rowid(db)
+        }
+    }
+
+    public func setGapUntil(id: Int64, untilMs: Int64?) throws {
+        try queue.sync {
+            let stmt = try prepare("UPDATE capture_gap SET until_ms=? WHERE id=?;")
+            defer { sqlite3_finalize(stmt) }
+            bindOptionalInt(stmt, 1, untilMs)
+            sqlite3_bind_int64(stmt, 2, id)
+            guard sqlite3_step(stmt) == SQLITE_DONE else { throw StoreError.sqlite(lastMessage()) }
+        }
+    }
+
+    public func gapUntil(id: Int64) throws -> Int64? {
+        try queue.sync {
+            let stmt = try prepare("SELECT until_ms FROM capture_gap WHERE id=?;")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, id)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            return optionalInt(stmt, 0)
         }
     }
 
@@ -783,9 +814,35 @@ public final class ActivityStore {
             // Input minutes inside the range go even when their segment started before it.
             _ = try run("DELETE FROM input_bucket WHERE bucket_ms >= ? AND bucket_ms < ? AND segment_id IN (SELECT id FROM activity_segment WHERE 1=1\(app));", [from, to], app: appBundle)
             let segments = try run("DELETE FROM activity_segment WHERE \(clause);", [from, to], app: appBundle)
-            // A segment that started before the range and ran into it ends where the range begins, so none of the
-            // forgotten time stays attributed to its window, site or project.
-            _ = try run("UPDATE activity_segment SET ended_ms=? WHERE started_ms < ? AND (ended_ms IS NULL OR ended_ms > ?)\(app);", [from, from, from], app: appBundle)
+            // A segment that started before the range and runs past its end, or is still open, loses only the range:
+            // its part before the range becomes a closed copy, and the row itself keeps its id (so the recorder's
+            // open segment and the input minutes after the range stay with it) and starts again where the range ends.
+            // The recorder's next touch then extends it from there, never back over the forgotten time.
+            var spanning: [Int64] = []
+            do {
+                let select = try prepare("SELECT id FROM activity_segment WHERE started_ms < ? AND (is_closed=0 OR ended_ms IS NULL OR ended_ms > ?)\(app);")
+                defer { sqlite3_finalize(select) }
+                sqlite3_bind_int64(select, 1, from)
+                sqlite3_bind_int64(select, 2, to)
+                if let appBundle { bindText(select, 3, appBundle) }
+                while sqlite3_step(select) == SQLITE_ROW { spanning.append(sqlite3_column_int64(select, 0)) }
+            }
+            for id in spanning {
+                _ = try run("""
+                INSERT INTO activity_segment(
+                    started_ms, ended_ms, session_id, app_bundle, app_name, window_title,
+                    url_host, url_path, project, cmux_session, cmux_pane, display_id, idle, is_closed)
+                SELECT started_ms, ?, session_id, app_bundle, app_name, window_title,
+                    url_host, url_path, project, cmux_session, cmux_pane, display_id, idle, 1
+                FROM activity_segment WHERE id=?;
+                """, [from, id])
+                let head = sqlite3_last_insert_rowid(db)
+                _ = try run("UPDATE input_bucket SET segment_id=? WHERE segment_id=? AND bucket_ms < ?;", [head, id, from])
+                _ = try run("UPDATE activity_segment SET started_ms=?, ended_ms=CASE WHEN ended_ms IS NULL THEN NULL ELSE MAX(ended_ms, ?) END WHERE id=?;", [to, to, id])
+            }
+            // A closed segment that ran into the range and ended inside it ends where the range begins, so none of
+            // the forgotten time stays attributed to its window, site or project.
+            _ = try run("UPDATE activity_segment SET ended_ms=?, is_closed=1 WHERE started_ms < ? AND (ended_ms IS NULL OR ended_ms > ?)\(app);", [from, from, from], app: appBundle)
             var sessions = 0
             if appBundle == nil {
                 _ = try run("DELETE FROM focus_pause WHERE session_id IN (SELECT id FROM focus_session WHERE started_ms >= ? AND started_ms < ?);", [from, to])
@@ -795,7 +852,7 @@ public final class ActivityStore {
                 _ = try run("DELETE FROM focus_pause WHERE started_ms >= ? AND started_ms < ?;", [from, to])
                 _ = try run("UPDATE focus_session SET ended_ms=? WHERE started_ms < ? AND ended_ms IS NOT NULL AND ended_ms > ?;", [from, from, from])
                 // Preserve both outside fragments of a gap spanning the forgotten interval.
-                _ = try run("INSERT INTO capture_gap(started_ms,ended_ms,reason) SELECT ?,ended_ms,reason FROM capture_gap WHERE started_ms < ? AND (ended_ms IS NULL OR ended_ms > ?);", [to, from, to])
+                _ = try run("INSERT INTO capture_gap(started_ms,ended_ms,reason,until_ms) SELECT ?,ended_ms,reason,until_ms FROM capture_gap WHERE started_ms < ? AND (ended_ms IS NULL OR ended_ms > ?);", [to, from, to])
                 _ = try run("UPDATE capture_gap SET ended_ms=? WHERE started_ms < ? AND (ended_ms IS NULL OR ended_ms > ?);", [from, from, from])
                 _ = try run("DELETE FROM capture_gap WHERE started_ms >= ? AND started_ms < ? AND ended_ms IS NOT NULL AND ended_ms <= ?;", [from, to, to])
                 _ = try run("UPDATE capture_gap SET started_ms=? WHERE started_ms >= ? AND started_ms < ?;", [to, from, to])

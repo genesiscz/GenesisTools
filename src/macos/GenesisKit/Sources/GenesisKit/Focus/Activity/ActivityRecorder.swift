@@ -139,11 +139,25 @@ public final class ActivityRecorder: ObservableObject {
             for segment in try store.openSegments() {
                 try store.closeSegment(id: segment.id, at: segment.endedMs ?? segment.startedMs)
             }
-            for gap in try store.gaps(from: 0, to: launch) where gap.endedMs == nil {
+            var keptPause: Int64?
+            // `launch + 1`: a gap opened in the launch millisecond (a handoff right after a pause) is open too.
+            for gap in try store.gaps(from: 0, to: launch + 1) where gap.endedMs == nil {
+                // A timed pause belongs to the user, not to the process that took it: an owner handoff or a crash
+                // must not resume capture early. One still running stays open and paused; one that ran out while
+                // nobody watched ends at its deadline.
+                if gap.reason == "capture_paused", let until = try store.gapUntil(id: gap.id) {
+                    if until > launch {
+                        keptPause = gap.id
+                        pausedUntil = Date(timeIntervalSince1970: Double(until) / 1000)
+                        continue
+                    }
+                    try store.closeGap(id: gap.id, at: max(gap.startedMs, until))
+                    continue
+                }
                 try store.closeGap(id: gap.id, at: launch)
             }
-            openGapId = nil
-            openGapReason = nil
+            openGapId = keptPause
+            openGapReason = keptPause == nil ? nil : "capture_paused"
             guard var cursor = try store.lastRecordedMs(), launch - cursor >= 60_000 else { return }
             for gap in try store.gaps(from: cursor, to: launch) {
                 if gap.startedMs - cursor >= 60_000 {
@@ -167,7 +181,8 @@ public final class ActivityRecorder: ObservableObject {
         invalidateProbes()
         if pausedUntil == nil { closeOpenGap(only: ["capture_off", "app_not_running"]) }
         guard liveServices else { return }
-        _ = counter.start()
+        // A pause restored by closeDowntime keeps input uncounted; resumeIfPauseExpired starts the counter.
+        if pausedUntil == nil { _ = counter.start() }
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(appActivated(_:)),
             name: NSWorkspace.didActivateApplicationNotification, object: nil)
@@ -247,8 +262,14 @@ public final class ActivityRecorder: ObservableObject {
         // user switched windows; a phase change during the pause (`attach`) would reopen it.
         current = nil
         // A pause is recorded, so the range reads as "not measured" rather than "you did
-        // nothing" when someone looks at it a week later.
-        openGap("capture_paused", at: nowMs())
+        // nothing" when someone looks at it a week later. Its deadline is recorded with it, so the
+        // next owner keeps the pause (closeDowntime).
+        let untilMs = Int64(date.timeIntervalSince1970 * 1000)
+        if openGapReason == "capture_paused", let id = openGapId {
+            persist("capture pause deadline") { try store.setGapUntil(id: id, untilMs: untilMs) }
+        } else {
+            openGap("capture_paused", at: nowMs(), untilMs: untilMs)
+        }
     }
 
     public func resumeCapture() {
@@ -273,9 +294,11 @@ public final class ActivityRecorder: ObservableObject {
         return true
     }
 
-    private func openGap(_ reason: String, at ms: Int64) {
+    private func openGap(_ reason: String, at ms: Int64, untilMs: Int64? = nil) {
         guard openGapId == nil else { return }
-        openGapId = persist("capture gap") { try store.recordGap(startedMs: ms, endedMs: nil, reason: reason) }
+        openGapId = persist("capture gap") {
+            try store.recordGap(startedMs: ms, endedMs: nil, reason: reason, untilMs: untilMs)
+        }
         openGapReason = openGapId == nil ? nil : reason
     }
 

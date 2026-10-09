@@ -938,6 +938,8 @@ final class ClickyPackTests: XCTestCase {
 
     func testOptionalAttributionAndPreparedSelectionNeedNoFiles() async throws {
         var fixture = try Fixture()
+        // The test also disposes on purpose before it checks selection; a second dispose is a no-op.
+        defer { fixture.dispose() }
         fixture.manifest["attribution"] = nil
         try fixture.writeManifest()
         let pack = try await ClickyPackLoader().prepare(at: fixture.root, entry: fixture.entry)

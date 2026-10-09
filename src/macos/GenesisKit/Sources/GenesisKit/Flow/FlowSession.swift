@@ -53,6 +53,7 @@ public final class FlowSession: ObservableObject {
                 endTurnIfDisabled(was: oldValue)
                 applyHotkeyBinding()
                 applyPreRoll()
+                if config.showPill != oldValue.showPill { syncPill() }
             } catch {
                 applyingRemoteState = true
                 config = oldValue
@@ -92,10 +93,11 @@ public final class FlowSession: ObservableObject {
     private var permissionTask: Task<Void, Never>?
     private var permissionRequestID: UUID?
     var permissionRequestEffect: (() async -> (microphone: Bool, speech: Bool))?
-    private let preRoll = FlowPreRoll()
+    let preRoll = FlowPreRoll()
     var preRollEffect: ((Bool) -> Void)?
     var recognitionStartEffect: (() throws -> Void)?
     var hotkeyBindingEffect: (() -> Void)?
+    var injectEffect: ((String) async -> FlowInjectOutcome)?
     private(set) var externalAudioHeld = false
 
     func setExternalAudioHeld(_ held: Bool) {
@@ -104,14 +106,26 @@ public final class FlowSession: ObservableObject {
         applyPreRoll()
     }
 
+    private var pillController: FlowPillWindowController?
+    var pillEffect: ((Bool) -> Void)?
+
     /// Built lazily on first use so an app launch that never dictates pays
     /// nothing for it.
-    private lazy var pill: FlowPillWindowController = {
-        FlowPillWindowController { [weak self] in
+    private var pill: FlowPillWindowController {
+        if let pillController { return pillController }
+        let made = FlowPillWindowController { [weak self] in
             guard let self else { return AnyView(EmptyView()) }
             return AnyView(FlowPillView(session: self, recognizer: self.recognizer))
         }
-    }()
+        pillController = made
+        return made
+    }
+
+    /// Hiding never builds the pill just to hide it.
+    private func setPillVisible(_ visible: Bool) {
+        if let pillEffect { pillEffect(visible); return }
+        if visible { pill.show() } else { pillController?.hide() }
+    }
 
     public init(store: FlowStore? = nil) {
         let store = store ?? .shared
@@ -158,7 +172,7 @@ public final class FlowSession: ObservableObject {
             return
         }
         applyHotkeyBinding()
-        if config.showPill { pill.prewarm() }
+        if config.showPill, pillEffect == nil { pill.prewarm() }
         recognizer.preRollProvider = { [weak self] in self?.preRoll.drain() ?? [] }
         applyPreRoll()
     }
@@ -276,10 +290,14 @@ public final class FlowSession: ObservableObject {
         setPreRollRunning(true)
     }
 
-    private func setPreRollRunning(_ running: Bool) {
+    /// `keepRing` is only for beginTurn, which hands the ring to the recogniser. Every other stop (the setting or
+    /// dictation turned off, an external recording, shutdown) discards it, so audio captured before can never
+    /// reach a later turn.
+    private func setPreRollRunning(_ running: Bool, keepRing: Bool = false) {
         if let preRollEffect { preRollEffect(running) }
         else if running { preRoll.start() }
         else { preRoll.stop() }
+        if !running && !keepRing { _ = preRoll.drain() }
     }
 
     /// Show/hide the pill to match the phase.
@@ -287,25 +305,30 @@ public final class FlowSession: ObservableObject {
     /// The pill lingers briefly after a turn so the user sees the confirmation
     /// rather than a panel that vanishes the instant the text lands.
     private func syncPill() {
-        guard started, remoteCommand == nil, config.showPill else { return }
+        guard started, remoteCommand == nil else { return }
         pillHideTask?.cancel()
         pillHideTask = nil
+        // Turning the setting off mid-turn hides the pill already on screen; no later phase change would.
+        guard config.showPill else {
+            setPillVisible(false)
+            return
+        }
 
         switch phase {
         case .listening, .transcribing, .injecting:
-            pill.show()
+            setPillVisible(true)
         case .error:
-            pill.show()
+            setPillVisible(true)
             pillHideTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 2_600_000_000)
                 guard !Task.isCancelled else { return }
-                self?.pill.hide()
+                self?.setPillVisible(false)
             }
         case .idle:
             pillHideTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 700_000_000)
                 guard !Task.isCancelled else { return }
-                self?.pill.hide()
+                self?.setPillVisible(false)
             }
         }
     }
@@ -320,7 +343,7 @@ public final class FlowSession: ObservableObject {
         setPreRollRunning(false)
         pillHideTask?.cancel()
         pillHideTask = nil
-        pill.hide()
+        setPillVisible(false)
         hotKey?.stop()
         hotKey = nil
         hotkeyStatus = .off
@@ -432,7 +455,7 @@ public final class FlowSession: ObservableObject {
         // Release the device before the recogniser claims it. The ring survives
         // `stop()`, so the history is still handed over — two engines fighting
         // over one input node would buy nothing.
-        setPreRollRunning(false)
+        setPreRollRunning(false, keepRing: true)
 
         do {
             let locale = config.localeIdentifier.isEmpty
@@ -511,18 +534,25 @@ public final class FlowSession: ObservableObject {
         text = FlowDictionary.expand(snippets, in: text)
 
         phase = .injecting
-        let outcome = FlowInjector.inject(
-            text,
-            into: target,
-            usePaste: config.injectViaPaste,
-            restoreClipboard: config.restoreClipboard
-        )
+        let outcome: FlowInjectOutcome
+        if let injectEffect {
+            outcome = await injectEffect(text)
+        } else {
+            outcome = await FlowInjector.inject(
+                text,
+                into: target,
+                usePaste: config.injectViaPaste,
+                restoreClipboard: config.restoreClipboard
+            )
+        }
 
         switch outcome {
         case .notPermitted:
             lastError = "Text copied — grant Accessibility to paste automatically."
         case .targetLost:
             lastError = "The target app closed — text copied to the clipboard."
+        case .focusMoved:
+            lastError = "The target app was not in front at paste time — text copied to the clipboard."
         case .copiedOnly:
             lastError = nil
         case .injected, .empty:

@@ -61,6 +61,9 @@ public enum FlowInjectOutcome: Equatable {
     case notPermitted
     /// Text was placed on the clipboard but the paste keystroke was not sent.
     case copiedOnly
+    /// The target was not frontmost when the paste was due (slow activation, or focus moved), so the
+    /// keystroke was withheld and the text stays on the clipboard.
+    case focusMoved
 }
 
 // MARK: - Injector
@@ -99,13 +102,14 @@ public enum FlowInjector {
     ///     whatever was there — commonly a password or a 2FA code — to any app
     ///     that polls the pasteboard on a delay, which is why BridgeVoice
     ///     removed the same behaviour in 2.5.0.
+    /// Returns once the paste was sent or withheld, so the outcome says what actually happened.
     @discardableResult
     public static func inject(
         _ text: String,
         into target: FlowFocusTarget?,
         usePaste: Bool,
         restoreClipboard: Bool
-    ) -> FlowInjectOutcome {
+    ) async -> FlowInjectOutcome {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .empty }
 
@@ -138,35 +142,40 @@ public enum FlowInjector {
             return .notPermitted
         }
 
-        // Activation is asynchronous. Posting ⌘V in the same runloop turn
-        // races the app becoming frontmost and the keystroke lands nowhere.
-        // A short hop is enough in practice and keeps the whole turn snappy.
-        postPasteAfterActivation(target: target.processIdentifier, previousClipboard: previous, written: pasteboard.changeCount)
-        return .injected
+        let written = pasteboard.changeCount
+        let outcome = await pasteAfterActivation(target: target.processIdentifier)
+        guard outcome == .injected, let previous else { return outcome }
+        // Restore only after the paste has had time to read the pasteboard.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            let pasteboard = NSPasteboard.general
+            // Something the user copied after the transcript is newer than both; keep it.
+            guard pasteboard.changeCount == written else { return }
+            pasteboard.clearContents()
+            pasteboard.setString(previous, forType: .string)
+        }
+        return outcome
     }
 
     // MARK: - Keystroke
 
-    private static func postPasteAfterActivation(target: pid_t, previousClipboard: String?, written: Int) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            // Checked at the last moment before the keystroke: if activation was slow or focus moved, ⌘V would
-            // paste the transcript into another app. The text stays on the clipboard instead.
-            let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
-            guard frontmost == target else {
-                FlowFocusLog.flow.info("inject: pid=\(target) is not frontmost at paste time (frontmost \(frontmost ?? -1)); left text on the clipboard")
-                return
-            }
-            postCommandV()
-            guard let previousClipboard else { return }
-            // Restore only after the paste has had time to read the pasteboard.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                let pasteboard = NSPasteboard.general
-                // Something the user copied after the transcript is newer than both; keep it.
-                guard pasteboard.changeCount == written else { return }
-                pasteboard.clearContents()
-                pasteboard.setString(previousClipboard, forType: .string)
-            }
+    /// Activation is asynchronous: ⌘V posted in the same run-loop turn races the app becoming frontmost and the
+    /// keystroke lands nowhere, so this waits a short hop first. Frontmost is checked at the last moment before the
+    /// keystroke: if activation was slow or focus moved, ⌘V would paste the transcript into another app, so the
+    /// text stays on the clipboard and the outcome says so.
+    static func pasteAfterActivation(
+        target: pid_t,
+        frontmost: (() -> pid_t?)? = nil,
+        paste: (() -> Void)? = nil
+    ) async -> FlowInjectOutcome {
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        guard !Task.isCancelled else { return .copiedOnly }
+        let current = frontmost.map { $0() } ?? NSWorkspace.shared.frontmostApplication?.processIdentifier
+        guard current == target else {
+            FlowFocusLog.flow.info("inject: pid=\(target) is not frontmost at paste time (frontmost \(current ?? -1)); left text on the clipboard")
+            return .focusMoved
         }
+        if let paste { paste() } else { postCommandV() }
+        return .injected
     }
 
     /// Synthesise ⌘V on the HID tap.

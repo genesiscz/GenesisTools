@@ -148,6 +148,30 @@ final class FlowFocusConfigurationTests: XCTestCase {
         XCTAssertNil(config.app["fixtureDate"])
     }
 
+    @MainActor
+    func testFocusSettingsWriteNoScreenSharingSwitchThatNothingHonours() throws {
+        let config = FlowFocusConfiguration(directory: directory)
+        var forwarded: [[String: Any]] = []
+        config.forwardPatch = { forwarded.append($0) }
+        config.updateFocus(settings: FocusSettings(), plan: PomodoroPlan())
+        let focus = try XCTUnwrap(forwarded.first?["focus"] as? [String: Any])
+        XCTAssertNotNil(focus["captureEnabled"])
+        XCTAssertNil(focus["pauseWhileScreenShared"], "no recorder pauses for screen sharing, so no setting may promise it")
+    }
+
+    @MainActor
+    func testAClientRefusesANonJSONSettingBeforeForwardingIt() {
+        let config = FlowFocusConfiguration(directory: directory)
+        var forwarded: [[String: Any]] = []
+        // A runtime client's real forwarder serializes the patch, which raises an exception for a Date.
+        config.forwardPatch = { forwarded.append($0) }
+        config.setAppValue(Date(), forKey: "fixtureDate")
+        XCTAssertNotNil(config.lastError)
+        XCTAssertTrue(forwarded.isEmpty, "an invalid value never reaches the forwarder")
+        config.setAppValue(7, forKey: "fixtureNumber")
+        XCTAssertEqual(forwarded.count, 1, "a JSON value is still forwarded")
+    }
+
     func testClientJSONIsOwnerOnlyAndNoTemporaryFileStays() throws {
         try FlowFocusConfiguration.persist(Data("{\"fixture\":1}".utf8), directory: directory)
         let mode = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: client.path)[.posixPermissions] as? NSNumber)

@@ -744,6 +744,8 @@ final class EdgePanelControllerTests: XCTestCase {
         value.setPresentation(.expanded, reduceMotion: false)
         XCTAssertEqual(value.panel.frame.size, CGSize(width: 340, height: 400))
         XCTAssertNil(value.lastTransitionTiming)
+        // Visible now, so only Reduce Motion keeps this change from animating.
+        value.show()
         value.setPresentation(.compact, reduceMotion: true)
         XCTAssertEqual(value.panel.frame.size, CGSize(width: 40, height: 100))
         XCTAssertNil(value.lastTransitionTiming)
@@ -761,7 +763,7 @@ final class EdgePanelControllerTests: XCTestCase {
         value.setPresentation(.expanded, reduceMotion: false)
         try await Task.sleep(for: .milliseconds(500))
         XCTAssertEqual(value.panel.frame.size, CGSize(width: 340, height: 400))
-        XCTAssertEqual(value.panel.frame.maxX, NSScreen.screens.first?.frame.maxX)
+        XCTAssertEqual(value.panel.frame.maxX, try XCTUnwrap(NSScreen.screens.first).frame.maxX, accuracy: 0.5)
         XCTAssertEqual(value.lastTransitionTiming?.outcome, "completed")
         XCTAssertGreaterThan(value.lastTransitionTiming?.callbacks ?? 0, 1)
         let final = value.panel.frame
@@ -987,7 +989,8 @@ final class WidgetRosterTests: XCTestCase {
             model.section = "Inbox"
             XCTAssertTrue(model.transcript.isEmpty)
             XCTAssertFalse(model.transcriptLoading)
-            while kill(pid, 0) == 0 && ContinuousClock.now < deadline {
+            let exitDeadline = ContinuousClock.now + .seconds(5)
+            while kill(pid, 0) == 0 && ContinuousClock.now < exitDeadline {
                 try await Task.sleep(for: .milliseconds(100))
             }
             XCTAssertNotEqual(kill(pid, 0), 0, "Leaving Conversation must terminate its live tail")

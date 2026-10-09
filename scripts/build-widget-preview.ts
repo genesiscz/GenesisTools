@@ -11,6 +11,14 @@ const bundleId = "com.genesiscz.genesistools.widget-preview";
 const appName = "GenesisTools Preview.app";
 const repo = resolve(import.meta.dir, "..");
 const packagePath = join(repo, "src/macos/GenesisTools");
+/** The paths the build provenance describes: the digest hashes them and `workingTree` reports changes in them only. */
+const nativePaths = ["src/macos/GenesisKit", "src/macos/GenesisTools", "scripts/build-widget-preview.ts"];
+
+interface SourceSnapshot {
+    commit: string;
+    nativeSourceDigest: string;
+    workingTree: "clean" | "wip";
+}
 
 async function command(argv: string[]): Promise<string> {
     logger.info({ argv }, "widget preview build command");
@@ -54,9 +62,7 @@ async function nativeSourceDigest(): Promise<string> {
         "--others",
         "--exclude-standard",
         "--",
-        "src/macos/GenesisKit",
-        "src/macos/GenesisTools",
-        "scripts/build-widget-preview.ts",
+        ...nativePaths,
     ]);
     const hash = createHash("sha256");
     for (const name of [...new Set(names.split("\0").filter(Boolean))].sort()) {
@@ -78,11 +84,21 @@ async function nativeSourceDigest(): Promise<string> {
     return hash.digest("hex");
 }
 
-async function buildPreview(): Promise<void> {
+/**
+ * Everything PreviewBuild.json claims about the sources, read together. `wip` means a tracked change or an
+ * untracked file under `nativePaths` (tests excluded, as in the digest); edits elsewhere in the repo do not count.
+ */
+async function sourceSnapshot(): Promise<SourceSnapshot> {
     const commit = await command(["git", "rev-parse", "HEAD"]);
-    const sourceDigest = await nativeSourceDigest();
-    const trackedDirty = await command(["git", "diff", "--name-only", "HEAD"]);
-    const untracked = await command(["git", "ls-files", "--others", "--exclude-standard"]);
+    const digest = await nativeSourceDigest();
+    const trackedDirty = await command(["git", "diff", "--name-only", "-z", "HEAD", "--", ...nativePaths]);
+    const untracked = await command(["git", "ls-files", "-z", "--others", "--exclude-standard", "--", ...nativePaths]);
+    const changed = `${trackedDirty}\0${untracked}`.split("\0").filter((name) => name && !name.includes("/Tests/"));
+    return { commit, nativeSourceDigest: digest, workingTree: changed.length > 0 ? "wip" : "clean" };
+}
+
+async function buildPreview(): Promise<void> {
+    const before = await sourceSnapshot();
     await command([
         "swift",
         "build",
@@ -114,15 +130,21 @@ async function buildPreview(): Promise<void> {
     const contents = join(stage, "Contents");
     await mkdir(join(contents, "MacOS"), { recursive: true });
     await cp(join(binPath, "GenesisTools"), join(contents, "MacOS", "GenesisWidgetPreview"));
-    if ((await nativeSourceDigest()) !== sourceDigest) {
-        throw new Error("Native sources changed during the build; retry with a stable source snapshot.");
+    const after = await sourceSnapshot();
+    if (
+        after.commit !== before.commit ||
+        after.nativeSourceDigest !== before.nativeSourceDigest ||
+        after.workingTree !== before.workingTree
+    ) {
+        throw new Error(
+            "The commit, native sources or working tree changed during the build; retry with a stable source snapshot."
+        );
     }
+
     await Bun.write(
         join(contents, "Resources", "PreviewBuild.json"),
         SafeJSON.stringify({
-            commit,
-            nativeSourceDigest: sourceDigest,
-            workingTree: trackedDirty.length > 0 || untracked.length > 0 ? "wip" : "clean",
+            ...before,
             builtAt: new Date().toISOString(),
             unsignedBinarySHA256: createHash("sha256")
                 .update(Buffer.from(await Bun.file(join(binPath, "GenesisTools")).arrayBuffer()))

@@ -545,6 +545,37 @@ final class FocusStudioModelTests: XCTestCase {
         XCTAssertNil(recorder.pausedUntil)
     }
 
+    func testACapturePauseOutlivesTheRecorderThatTookIt() throws {
+        // The elected owner exits a minute after "Pause capture for 1 hour"; its successor builds a new recorder.
+        let first = ActivityRecorder(store: store, liveServices: false)
+        let until = Date().addingTimeInterval(3_600)
+        first.pauseCapture(until: until)
+        first.pauseCapture(until: until.addingTimeInterval(600))
+        first.stop()
+
+        let replacement = ActivityRecorder(store: store, liveServices: false)
+        replacement.closeDowntime()
+        let restored = try XCTUnwrap(replacement.pausedUntil, "an owner change is not consent to resume")
+        XCTAssertEqual(restored.timeIntervalSince1970, until.addingTimeInterval(600).timeIntervalSince1970, accuracy: 0.001,
+                       "a pause extended in place keeps its latest deadline")
+        let open = try store.gaps(from: 0, to: nowMs() + 1).filter { $0.endedMs == nil }
+        XCTAssertEqual(open.map(\.reason), ["capture_paused"], "one gap, still open")
+        XCTAssertFalse(replacement.resumeIfPauseExpired(now: Date()))
+        XCTAssertTrue(replacement.resumeIfPauseExpired(now: restored.addingTimeInterval(1)))
+        XCTAssertTrue(try store.gaps(from: 0, to: nowMs() + 1).allSatisfy { $0.endedMs != nil },
+                      "the restored pause closes its own gap when it runs out")
+    }
+
+    func testAPersistedPauseThatRanOutWhileNobodyWatchedEndsAtItsDeadline() throws {
+        let launch: Int64 = 1_800_000_000_000
+        _ = try store.recordGap(startedMs: launch - 600_000, endedMs: nil, reason: "capture_paused", untilMs: launch - 300_000)
+        let recorder = ActivityRecorder(store: store, liveServices: false)
+        recorder.closeDowntime(launchedAt: Date(timeIntervalSince1970: Double(launch) / 1000))
+        XCTAssertNil(recorder.pausedUntil)
+        XCTAssertEqual(try store.gaps(from: 0, to: launch + 1).first { $0.reason == "capture_paused" }?.endedMs,
+                       launch - 300_000)
+    }
+
     func testRelaunchClosesPersistedOpenGapsEvenWithoutAnyActivityRows() throws {
         let launch: Int64 = 1_800_000_000_000
         _ = try store.recordGap(startedMs: launch - 120_000, endedMs: nil, reason: "capture_off")

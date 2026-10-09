@@ -25,7 +25,6 @@ public struct FocusSettings: Equatable {
     public var idleThresholdSec = 120
     public var retentionDays = 365
     public var interruptionThresholdSec = 45
-    public var pauseWhileScreenShared = true
     /// `time` shows the countdown, `dot` only the phase dot, `off` removes the item.
     public var menuBarStyle = "time"
     public var excludedBundles: Set<String> = FocusSettings.defaultExcludedBundles
@@ -64,7 +63,6 @@ public struct FocusSettings: Equatable {
         if let value = focus["idleThresholdSec"] as? Int, value > 0 { settings.idleThresholdSec = value }
         if let value = focus["retentionDays"] as? Int, value > 0 { settings.retentionDays = value }
         if let value = focus["interruptionThresholdSec"] as? Int, value > 0 { settings.interruptionThresholdSec = value }
-        if let value = focus["pauseWhileScreenShared"] as? Bool { settings.pauseWhileScreenShared = value }
         if let raw = focus["menuBarStyle"] as? String, ["time", "dot", "off"].contains(raw) { settings.menuBarStyle = raw }
         if let list = focus["excludedBundles"] as? [String] {
             settings.excludedBundles = Set(list).union(defaultExcludedBundles)

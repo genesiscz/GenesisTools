@@ -35,7 +35,7 @@ import Speech
 /// Thread-safe holder for the recognition request. The mic tap runs off-main
 /// and must keep feeding audio across a mid-hold request swap (segment
 /// restart) without racing the MainActor writer.
-private final class RequestBox: @unchecked Sendable {
+final class RequestBox: @unchecked Sendable {
     private let lock = NSLock()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     /// While gated, live buffers wait in `held`: the pre-roll must reach the request first.
@@ -71,10 +71,18 @@ private final class RequestBox: @unchecked Sendable {
         gated = false
     }
 
+    /// The live audio waiting for `open(after:)`.
+    var heldBuffers: [AVAudioPCMBuffer] {
+        lock.lock()
+        defer { lock.unlock() }
+        return held
+    }
+
     func append(_ buffer: AVAudioPCMBuffer) {
         lock.lock()
         if gated {
-            held.append(buffer)
+            // Copy: the tap reuses its buffer, so a held reference would carry the audio of a later callback.
+            if let copy = buffer.deepCopy() { held.append(copy) }
             lock.unlock()
             return
         }

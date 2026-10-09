@@ -112,6 +112,12 @@ public final class FlowPreRoll {
         ring.drain()
     }
 
+    /// Puts a buffer in the ring as the tap would; tests use it, since the tap needs a live microphone.
+    func record(_ buffer: AVAudioPCMBuffer) {
+        if !ring.isConfigured { ring.configure(capacity: 4) }
+        ring.append(buffer)
+    }
+
     /// Number of tap buffers needed to cover the window.
     ///
     /// The tap is requested at 1024 frames, but Core Audio is free to hand back
@@ -141,6 +147,12 @@ public final class FlowPreRoll {
             next = 0
             filled = 0
             lock.unlock()
+        }
+
+        var isConfigured: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return !storage.isEmpty
         }
 
         func append(_ buffer: AVAudioPCMBuffer) {

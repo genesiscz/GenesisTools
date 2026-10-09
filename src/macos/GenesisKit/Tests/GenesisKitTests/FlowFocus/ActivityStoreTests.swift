@@ -197,6 +197,37 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(try store.sessions(from: 0, to: 100_000).first?.endedMs, 5_000)
     }
 
+    func testForgetKeepsTheOpenSegmentFromReclaimingTheRangeAndKeepsTimeAfterIt() throws {
+        let open = try store.openSegment(segment(1_000, title: "open"))
+        try store.touchSegment(id: open, at: 6_000)
+        try store.appendInput(bucketMs: 0, segmentId: open, counts: .init(keys: 3))
+        try store.appendInput(bucketMs: 6_000, segmentId: open, counts: .init(keys: 40))
+        let long = try store.openSegment(segment(1_000, title: "long"))
+        try store.closeSegment(id: long, at: 20_000)
+        try store.appendInput(bucketMs: 12_000, segmentId: long, counts: .init(keys: 7))
+
+        try store.forget(from: 5_000, to: 8_000)
+        // The recorder still holds `open` and touches it on its next tick.
+        try store.touchSegment(id: open, at: 10_000)
+
+        let rows = try store.segments(from: 0, to: 100_000)
+        for row in rows {
+            XCTAssertTrue((row.endedMs ?? row.startedMs) <= 5_000 || row.startedMs >= 8_000,
+                          "\(row.windowTitle ?? "") \(row.startedMs)-\(row.endedMs ?? -1) overlaps the forgotten range")
+        }
+        let opened = rows.filter { $0.windowTitle == "open" }
+        XCTAssertEqual(opened.map(\.startedMs), [1_000, 8_000])
+        XCTAssertEqual(opened.map(\.endedMs), [5_000, 10_000])
+        XCTAssertEqual(try store.openSegments().map(\.id), [open], "the recorder's segment stays open under its id")
+        let longRows = rows.filter { $0.windowTitle == "long" }
+        XCTAssertEqual(longRows.map(\.startedMs), [1_000, 8_000])
+        XCTAssertEqual(longRows.map(\.endedMs), [5_000, 20_000], "time after the range is not forgotten")
+        let series = try store.inputSeries(from: 0, to: 100_000)
+        XCTAssertEqual(series.map(\.bucketMs), [0, 12_000])
+        XCTAssertEqual(series.first?.segmentId, opened.first?.id, "input before the range follows the part before it")
+        XCTAssertEqual(series.last?.segmentId, long, "input after the range stays with the segment's id")
+    }
+
     func testForgetCanScopeToOneApp() throws {
         let brave = try store.openSegment(segment(1_000, app: "com.brave.Browser"))
         try store.closeSegment(id: brave, at: 2_000)

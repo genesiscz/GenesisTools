@@ -334,6 +334,71 @@ final class FlowTests: XCTestCase {
         XCTAssertNil(FlowSession.offReason(labEnabled: true, enabled: true))
     }
 
+    @MainActor
+    func testThePasteIsReportedOnlyWhenTheTargetIsStillFrontmost() async {
+        var pasted = 0
+        let moved = await FlowInjector.pasteAfterActivation(target: 42, frontmost: { 7 }, paste: { pasted += 1 })
+        XCTAssertEqual(moved, .focusMoved)
+        XCTAssertEqual(pasted, 0, "no keystroke reaches another app")
+        let landed = await FlowInjector.pasteAfterActivation(target: 42, frontmost: { 42 }, paste: { pasted += 1 })
+        XCTAssertEqual(landed, .injected)
+        XCTAssertEqual(pasted, 1)
+    }
+
+    @MainActor
+    func testAWithheldPasteIsRecordedAsCopiedNotInserted() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-withheld-paste-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let previousURL = FlowEvents.logURL
+        FlowEvents.logURL = root.appendingPathComponent("events.jsonl")
+        defer { FlowEvents.logURL = previousURL }
+        let session = FlowSession(store: FlowStore(directory: root))
+        session.injectEffect = { _ in .focusMoved }
+        await session.completeTurn(raw: "hello there")
+        XCTAssertEqual(session.history.first?.injected, false)
+        XCTAssertTrue(session.lastError?.contains("copied to the clipboard") == true)
+        session.injectEffect = { _ in .injected }
+        await session.completeTurn(raw: "hello again")
+        XCTAssertEqual(session.history.first?.injected, true, "a paste that was sent is still recorded as inserted")
+        XCTAssertNil(session.lastError)
+    }
+
+    func testTheWidgetShowsWhatWasInsertedOnceTheTurnEnds() {
+        // The recogniser keeps the raw partial text after finish(); the rewritten text is what landed.
+        let shown = FlowWidgetTranscript.shown(phase: .idle, partial: "brb", last: "be right back")
+        XCTAssertEqual(shown?.text, "be right back")
+        XCTAssertEqual(FlowWidgetTranscript.shown(phase: .listening, partial: "brb", last: "earlier")?.text, "brb",
+                       "a running turn shows what is being heard")
+        XCTAssertNil(FlowWidgetTranscript.shown(phase: .transcribing, partial: "", last: "earlier"),
+                     "a new turn never shows the previous turn's text")
+        XCTAssertNil(FlowWidgetTranscript.shown(phase: .error, partial: "stale", last: nil))
+    }
+
+    @MainActor
+    func testTurningThePillOffMidTurnHidesThePillOnScreen() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-pill-setting-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = FlowStore(directory: root)
+        var config = FlowConfig()
+        config.showPill = true
+        store.saveConfig(config)
+        let session = FlowSession(store: store)
+        var shown: [Bool] = []
+        session.pillEffect = { shown.append($0) }
+        session.preRollEffect = { _ in }
+        session.hotkeyBindingEffect = {}
+        session.recognitionStartEffect = {}
+        session.start()
+        defer { session.stop() }
+        session.beginTurn(captureCurrentTarget: false)
+        XCTAssertEqual(session.phase, .listening)
+        XCTAssertEqual(shown, [true])
+        session.config.showPill = false
+        XCTAssertEqual(shown, [true, false], "the pill must not stay on screen until the runtime stops")
+        session.cancelTurn()
+        XCTAssertFalse(shown.dropFirst().contains(true), "with the setting off, later phases never show it again")
+    }
+
     // MARK: - Dictionary replacement
 
     func testAppliesReplacementOnWordBoundary() {

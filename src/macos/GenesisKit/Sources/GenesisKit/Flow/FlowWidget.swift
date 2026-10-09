@@ -89,7 +89,7 @@ public struct FlowWidget: View {
     private var dictationCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             dictationControls
-            FlowWidgetTranscript(recognizer: flow.recognizer, lastText: flow.lastInjected)
+            FlowWidgetTranscript(recognizer: flow.recognizer, phase: flow.phase, lastText: flow.lastInjected)
             Text("Your words, in the app you were using.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
         }
@@ -208,16 +208,26 @@ private struct FlowWidgetClock: View {
     }
 }
 
-private struct FlowWidgetTranscript: View {
+struct FlowWidgetTranscript: View {
     @ObservedObject var recognizer: CompanionSpeechRecognizer
+    let phase: FlowPhase
     let lastText: String?
 
+    /// What was heard while a turn runs; once it ends, what was inserted (after the dictionary and snippets).
+    /// The recogniser keeps its last partial text after a turn, so it never decides on its own.
+    nonisolated static func shown(phase: FlowPhase, partial: String, last: String?) -> (text: String, live: Bool)? {
+        switch phase {
+        case .listening, .transcribing, .injecting:
+            return partial.isEmpty ? nil : (partial, true)
+        case .idle, .error:
+            guard let last, !last.isEmpty else { return nil }
+            return (last, false)
+        }
+    }
+
     var body: some View {
-        if !recognizer.partialText.isEmpty {
-            Text(recognizer.partialText).font(.system(size: 12)).lineLimit(5)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else if let lastText, !lastText.isEmpty {
-            Text(lastText).font(.system(size: 12)).lineLimit(4)
+        if let shown = Self.shown(phase: phase, partial: recognizer.partialText, last: lastText) {
+            Text(shown.text).font(.system(size: 12)).lineLimit(shown.live ? 5 : 4)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

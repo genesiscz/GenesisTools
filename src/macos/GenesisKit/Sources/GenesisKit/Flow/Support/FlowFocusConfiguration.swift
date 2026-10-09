@@ -87,7 +87,6 @@ public final class FlowFocusConfiguration: ObservableObject {
             "interruptionThresholdSec": settings.interruptionThresholdSec,
             "retentionDays": settings.retentionDays,
             "menuBarStyle": settings.menuBarStyle,
-            "pauseWhileScreenShared": settings.pauseWhileScreenShared,
             "timer": [
                 "flowSec": plan.flowSec, "shortBreakSec": plan.shortBreakSec,
                 "longBreakSec": plan.longBreakSec, "cycleLength": plan.cycleLength,
@@ -100,18 +99,18 @@ public final class FlowFocusConfiguration: ObservableObject {
     }
 
     func applyPatch(_ patch: [String: Any]) {
+        // JSONSerialization raises an Objective-C exception (a crash, not a Swift error) for a value such as a
+        // Date or a URL; setAppValue is public, so check first. A client's forwarder serializes the patch too.
+        guard JSONSerialization.isValidJSONObject(patch) else {
+            reportFailure("The setting value cannot be stored as JSON.")
+            return
+        }
         if let forwardPatch {
             forwardPatch(patch)
             return
         }
         guard allowsWrites else {
             reportFailure("Flow and Focus are waiting for their runtime owner.")
-            return
-        }
-        // JSONSerialization raises an Objective-C exception (a crash, not a Swift error) for a value such as a
-        // Date or a URL; setAppValue is public, so check first.
-        guard JSONSerialization.isValidJSONObject(patch) else {
-            reportFailure("The setting value cannot be stored as JSON.")
             return
         }
         do {

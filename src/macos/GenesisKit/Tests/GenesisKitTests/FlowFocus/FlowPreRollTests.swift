@@ -61,6 +61,60 @@ final class FlowPreRollTests: XCTestCase {
     }
 
     @MainActor
+    func testTurningPreRollOffDiscardsTheAudioItHeld() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-preroll-discard-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = FlowStore(directory: root)
+        var config = FlowConfig()
+        config.showPill = false
+        config.preRoll = true
+        store.saveConfig(config)
+        let session = FlowSession(store: store)
+        session.preRollEffect = { _ in }
+        session.hotkeyBindingEffect = {}
+        session.start()
+        defer { session.stop() }
+        session.preRoll.record(try filled(0.5))
+        session.config.preRoll = false
+        XCTAssertEqual(session.recognizer.preRollProvider?().count, 0,
+                       "audio held before the setting went off must not reach a later turn")
+
+        // Negative control: a turn's own handoff still carries what the ring held.
+        session.config.preRoll = true
+        session.preRoll.record(try filled(0.5))
+        var handed = -1
+        session.recognitionStartEffect = { [weak session] in
+            handed = session?.recognizer.preRollProvider?().count ?? -1
+        }
+        session.beginTurn(captureCurrentTarget: false)
+        XCTAssertEqual(handed, 1)
+    }
+
+    func testGatedLiveAudioIsCopiedBeforeItIsHeld() throws {
+        let box = RequestBox()
+        box.gate()
+        let source = try filled(0.5)
+        box.append(source)
+        // The tap's next callback reuses the same buffer.
+        let channel = try XCTUnwrap(source.floatChannelData)
+        for i in 0..<Int(source.frameLength) { channel[0][i] = -1.0 }
+        box.append(source)
+        let held = box.heldBuffers
+        XCTAssertEqual(held.count, 2)
+        XCTAssertEqual(try XCTUnwrap(held.first?.floatChannelData)[0][0], 0.5, accuracy: 0.0001,
+                       "the first held buffer keeps the audio of its own callback")
+        XCTAssertEqual(try XCTUnwrap(held.last?.floatChannelData)[0][0], -1.0, accuracy: 0.0001)
+    }
+
+    private func filled(_ value: Float) throws -> AVAudioPCMBuffer {
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format(48_000), frameCapacity: 256))
+        buffer.frameLength = 256
+        let channel = try XCTUnwrap(buffer.floatChannelData)
+        for i in 0..<256 { channel[0][i] = value }
+        return buffer
+    }
+
+    @MainActor
     func testCapturePrimitivesDoNotOpenInputWithoutAnExistingGrant() throws {
         let source = PermissionGuardAudioSource()
         let recognizer = CompanionSpeechRecognizer(audioSource: source)
