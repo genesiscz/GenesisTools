@@ -144,6 +144,8 @@ func runClicky(_ args: [String] = []) -> Never {
         let app = NSApplication.shared
         let delegate = ClickyAppDelegate(descriptor: descriptor, pageID: pageID)
         app.delegate = delegate
+        // A notification click that runs something hands focus back to the app it was clicked over.
+        BrowserURLForwarder.shared.trackOtherApps()
         installNotificationClicksForWindowFace()
         app.setActivationPolicy(.accessory)
         app.run()

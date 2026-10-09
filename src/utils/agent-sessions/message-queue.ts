@@ -26,6 +26,10 @@ const messageSchema = z.object({
 });
 export type SessionMessage = z.infer<typeof messageSchema>;
 export type SessionMessageState = SessionMessage["state"];
+/** The largest text one queued message may carry; every read parses the whole queue file. */
+export const MAX_SESSION_MESSAGE_BYTES = 64 * 1024;
+/** How long a received or cancelled message stays in its queue before the next write drops it. */
+const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 interface QueueAddress {
     target: SessionMessageTarget;
     root?: string;
@@ -67,6 +71,16 @@ export function listSessionMessages(input: QueueAddress): SessionMessage[] {
     return read(file, target);
 }
 
+function keyedMessageId(idempotencyKey: string): string {
+    return createHash("sha256").update(idempotencyKey).digest("hex");
+}
+
+/** The message an earlier enqueue saved under this delivery key, if any; read-only like `listSessionMessages`. */
+export function findKeyedSessionMessage(input: QueueAddress & { idempotencyKey: string }): SessionMessage | undefined {
+    const id = keyedMessageId(input.idempotencyKey);
+    return listSessionMessages(input).find((message) => message.id === id);
+}
+
 async function mutate(
     input: QueueAddress,
     edit: (messages: SessionMessage[], target: SessionMessageTarget) => SessionMessage
@@ -77,6 +91,14 @@ async function mutate(
         const messages = read(file, target);
         const before = SafeJSON.stringify(messages);
         const result = edit(messages, target);
+        const cutoff = Date.now() - TERMINAL_RETENTION_MS;
+        const kept = messages.filter(
+            (message) =>
+                message === result ||
+                !(message.state === "received" || message.state === "cancelled") ||
+                Date.parse(message.updatedAt) >= cutoff
+        );
+        messages.splice(0, messages.length, ...kept);
         const after = SafeJSON.stringify(messages);
         if (before !== after) {
             atomicWriteFileSync(file, after, { mode: 0o600 });
@@ -95,7 +117,12 @@ export async function enqueueSessionMessage(
     if (!input.text.trim()) {
         throw new Error("A queued message must contain text.");
     }
-    const id = input.idempotencyKey ? createHash("sha256").update(input.idempotencyKey).digest("hex") : randomUUID();
+
+    if (Buffer.byteLength(input.text, "utf8") > MAX_SESSION_MESSAGE_BYTES) {
+        throw new Error(`A queued message is limited to ${MAX_SESSION_MESSAGE_BYTES} bytes of text.`);
+    }
+
+    const id = input.idempotencyKey ? keyedMessageId(input.idempotencyKey) : randomUUID();
     return mutate(input, (messages, target) => {
         const existing = messages.find((message) => message.id === id);
         if (existing) {

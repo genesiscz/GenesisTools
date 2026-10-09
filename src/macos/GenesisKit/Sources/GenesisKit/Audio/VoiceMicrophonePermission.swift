@@ -67,6 +67,7 @@ public enum VoiceCommandFailure: String, Error, LocalizedError, Sendable {
     case captureFailed = "capture_failed"
     case cancelled
     case operationFailed = "operation_failed"
+    case timedOut = "timed_out"
 
     public var errorDescription: String? {
         switch self {
@@ -76,6 +77,7 @@ public enum VoiceCommandFailure: String, Error, LocalizedError, Sendable {
         case .captureFailed: return "Audio capture failed. Check your input device and try again."
         case .cancelled: return "Recording cancelled. Existing notes are kept locally."
         case .operationFailed: return "The voice operation failed. Try again. Details are in the diagnostic log."
+        case .timedOut: return "The voice operation took too long and was stopped. Try again."
         }
     }
 }

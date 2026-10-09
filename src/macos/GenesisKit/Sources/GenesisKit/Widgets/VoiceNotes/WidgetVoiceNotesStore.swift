@@ -187,19 +187,25 @@ public final class WidgetVoiceNotesStore: ObservableObject {
     }
 
     public func record(input: String = "mic") {
-        begin(input == "mic" ? "Checking microphone access" : "Recording") { [self] in
+        begin(input == "mic" ? "Checking microphone access" : "Starting recording") { [self] in
             meter.reset()
+            guard input != "mic" || !micLauncher.isEmpty else {
+                // A host without a launcher (the preview studio) would otherwise fail later as "capture failed".
+                throw ToolsBridgeError.refused("This build has no microphone launcher, so it cannot record from the microphone")
+            }
             if input == "mic" { try await prepareMicrophone() }
             try Task.checkCancellation()
-            phase = "Recording"
+            // "Stop and save" appears only once the recorder reports that capture started.
+            phase = "Starting recording"
             let lease = try await acquireAudio()
             if Task.isCancelled {
                 try await lease.release()
                 throw CancellationError()
             }
             let data = try await execute(["record", "--input", input, "--mic-launcher", micLauncher,
-                                          "--wait-for-start", "--stop-on-stdin", "--json"], lease) { [weak meter] event in
+                                          "--wait-for-start", "--stop-on-stdin", "--json"], lease) { [weak self, weak meter] event in
                 meter?.receive(event)
+                if event.kind == "recording", let self, self.phase == "Starting recording" { self.phase = "Recording" }
             }
             let note = try JSONDecoder().decode(WidgetVoiceNoteResult.self, from: data).note
             put(note)
@@ -267,7 +273,10 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         let edited = drafts[note.id] ?? note.text
         guard edited != note.text else {
             let data = try await request(["show", note.id, "--revision", String(note.revision)])
-            return try JSONDecoder().decode(WidgetVoiceNote.self, from: data)
+            let shown = try JSONDecoder().decode(WidgetVoiceNote.self, from: data)
+            // A draft equal to the saved text must not shadow the transcript that replaces it next.
+            if drafts[note.id] == edited { drafts[note.id] = nil }
+            return shown
         }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("widget-voice-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,

@@ -990,6 +990,12 @@ final class WidgetInboxNotificationTests: XCTestCase {
         return WidgetModel(binaryPath: "/fixture/tools", stateRoot: FileManager.default.temporaryDirectory.path,
                            defaults: defaults, appearance: appearance)
     }
+    /// An `inbox-read` runs on the mutation chain; drain it before asserting that none was sent.
+    private func barrier(_ model: WidgetModel) async {
+        let done = expectation(description: "Mutation queue drained")
+        model.action(["action": "fixture-barrier"], completed: { done.fulfill() })
+        await fulfillment(of: [done], timeout: 2)
+    }
     private func item(_ id: String, at: Double, pending: Bool = false) -> WidgetInboxItem {
         WidgetInboxItem(id: (pending ? "form:" : "answer:") + id, sourceId: id,
                         kind: pending ? "form" : "answer", key: key, at: at, needsAnswer: pending)
@@ -1038,6 +1044,44 @@ final class WidgetInboxNotificationTests: XCTestCase {
         XCTAssertEqual(model.inboxCount, 1)
     }
 
+    func testIncompleteSnapshotDoesNotSwallowTheArrivalItCannotRaise() {
+        let model = model()
+        defer { model.stop() }
+        let now = Date().timeIntervalSince1970 * 1000
+        model.updateInbox(summary(item("old", at: now - 1000)))
+        var partial = summary(item("fresh", at: now + 100_000))
+        partial.complete = false
+        model.updateInbox(partial)
+        XCTAssertEqual(model.inboxPulse, 0)
+        model.updateInbox(summary(item("fresh", at: now + 100_000)))
+        XCTAssertEqual(model.inboxPulse, 1)
+        XCTAssertEqual(model.inboxPulseFor(key), 1)
+    }
+
+    func testColdRosterNeitherChoosesNorPersistsASelection() async throws {
+        let model = model()
+        defer { model.stop() }
+        var selections = 0
+        model.actionRunner = { value in
+            if case .object(let fields) = value, fields["action"] == .string("selection") { selections += 1 }
+            return ["ok": true]
+        }
+        func line(loading: Bool) throws -> String {
+            let base = try snapshot(item("cold", at: 1), cardID: nil, selected: "")
+            var object = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(base.utf8)) as? [String: Any])
+            object["rosterLoading"] = loading
+            return String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+        }
+        model.receive([try line(loading: true)])
+        await barrier(model)
+        XCTAssertEqual(model.selectedKey, "")
+        XCTAssertEqual(selections, 0)
+        model.receive([try line(loading: false)])
+        await barrier(model)
+        XCTAssertFalse(model.selectedKey.isEmpty)
+        XCTAssertEqual(selections, 1)
+    }
+
     func testUnavailableThenFirstCompleteSnapshotDoesNotReplayHistoricalItems() {
         let model = model()
         defer { model.stop() }
@@ -1068,13 +1112,16 @@ final class WidgetInboxNotificationTests: XCTestCase {
         await fulfillment(of: [selected], timeout: 2)
         XCTAssertEqual(model.selectedKey, key)
         XCTAssertEqual(model.selectedCardID, "answer:wanted")
+        await barrier(model)
         XCTAssertTrue(reads.isEmpty)
         model.receive([try snapshot(notification, cardID: "answer:unrelated", selected: key)])
+        await barrier(model)
         XCTAssertTrue(reads.isEmpty)
         model.receive([try snapshot(notification, cardID: "answer:wanted", selected: key)])
         await fulfillment(of: [read], timeout: 2)
         XCTAssertEqual(reads.count, 1)
         model.receive([try snapshot(notification, cardID: "answer:wanted", selected: key)])
+        await barrier(model)
         XCTAssertEqual(reads.count, 1)
     }
 
@@ -1103,7 +1150,7 @@ final class WidgetInboxNotificationTests: XCTestCase {
         model.openInboxNotification(on: .init(edge: .right, group: 0), needsAnswer: true)
         model.collapse()
         model.receive([try snapshot(notification, cardID: notification.id, selected: key)])
-        await Task.yield()
+        await barrier(model)
         XCTAssertEqual(reads, 0)
         XCTAssertEqual(model.inbox.needsAnswer, 1)
     }

@@ -351,6 +351,27 @@ final class WidgetInteractionTests: XCTestCase {
         XCTAssertNil(value.hoveredSurface)
         XCTAssertNil(value.expanded)
     }
+
+    @MainActor
+    func testPointerExitDuringSideDragCollapsesHoverOnRelease() async throws {
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        let side = WidgetSurfaceID(edge: .right)
+        value.hover(side, inside: true)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(value.hoveredSurface, side)
+        value.moveSide(position: 0.4, finished: false)
+        value.hover(side, inside: false)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(value.hoveredSurface, side, "the rail keeps its hover height while it is dragged")
+        value.moveSide(position: 0.4, finished: true)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertNil(value.hoveredSurface)
+        XCTAssertEqual(value.presentation(for: side), .compact)
+    }
 }
 
 /// "Show the widget": the coordinator builds and orders front edge panels only while the switch is on.

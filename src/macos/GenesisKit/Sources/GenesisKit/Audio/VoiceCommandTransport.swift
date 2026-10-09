@@ -30,10 +30,23 @@ public final class VoiceCommandTransport {
     private var failure: Error?
     private var cancelled = false
     private var receivedReady = false
+    /// "Stop and save" can arrive before the `start` gate is written; it is applied right after it.
+    private var startSent = false
+    private var finishRequested = false
+    private var runID = 0
+    private var deadlineTask: Task<Void, Never>?
+    private let deadline: Duration
+    private let killGrace: Duration
 
-    public init(binaryPath: String, stateRoot: String? = nil) {
+    /// `deadline` bounds the whole command, setup included. On expiry the child gets SIGTERM, then
+    /// SIGKILL after `killGrace`, and the caller is answered after a second `killGrace` even when
+    /// the child's exit never arrives.
+    public init(binaryPath: String, stateRoot: String? = nil,
+                deadline: Duration = .seconds(90), killGrace: Duration = .seconds(3)) {
         bridge = ToolsBridge(binaryPath: binaryPath)
         prefix = ["widget"] + (stateRoot.map { ["--state-root", $0] } ?? []) + ["voice-notes"]
+        self.deadline = deadline
+        self.killGrace = killGrace
     }
 
     public func run(args: [String], lease: (any VoiceRecordingLease)? = nil,
@@ -44,6 +57,10 @@ public final class VoiceCommandTransport {
         failure = nil
         cancelled = false
         receivedReady = false
+        startSent = lease == nil
+        finishRequested = false
+        runID += 1
+        let id = runID
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 self.continuation = continuation
@@ -63,6 +80,8 @@ public final class VoiceCommandTransport {
                                             try await lease.attachRecorder(pid: pid)
                                             guard !cancelled else { return }
                                             try stream?.sendInput("start\n")
+                                            startSent = true
+                                            if finishRequested { stream?.finishInput() }
                                         } catch {
                                             failure = error
                                             stream?.stop()
@@ -77,6 +96,13 @@ public final class VoiceCommandTransport {
                             }
                         }, onExit: { [self] report in
                             Task { [self] in
+                                guard id == runID else {
+                                    // `terminate` already answered this run and released its lease.
+                                    PerfLog.mark("voice.command late exit=\(report.status) after termination")
+                                    return
+                                }
+                                deadlineTask?.cancel()
+                                deadlineTask = nil
                                 await gate?.value
                                 gate = nil
                                 do { try await self.lease?.release() }
@@ -95,6 +121,7 @@ public final class VoiceCommandTransport {
                                 else { completion?.resume(throwing: VoiceCommandFailure.operationFailed) }
                             }
                         })
+                    armDeadline(id)
                 } catch {
                     Task { [self] in
                         do { try await self.lease?.release() }
@@ -108,9 +135,49 @@ public final class VoiceCommandTransport {
         } onCancel: { Task { @MainActor [weak self] in self?.cancel() } }
     }
 
-    public func finishRecording() { stream?.finishInput() }
+    public func finishRecording() {
+        finishRequested = true
+        guard startSent else { return }
+        stream?.finishInput()
+    }
+
+    private func armDeadline(_ id: Int) {
+        deadlineTask = Task { [weak self, deadline] in
+            do { try await Task.sleep(for: deadline) } catch { return }
+            guard let self, self.runID == id, self.continuation != nil else { return }
+            PerfLog.mark("voice.command deadline \(deadline) reached, terminating")
+            self.failure = self.failure ?? VoiceCommandFailure.timedOut
+            await self.terminate(id, outcome: VoiceCommandFailure.timedOut)
+        }
+    }
+
+    /// SIGTERM, then SIGKILL after `killGrace`, then answers the caller once if the exit never arrives.
+    private func terminate(_ id: Int, outcome: Error) async {
+        stream?.stop()
+        do { try await Task.sleep(for: killGrace) } catch { return }
+        guard runID == id, continuation != nil else { return }
+        PerfLog.mark("voice.command ignored SIGTERM, killing")
+        stream?.kill()
+        do { try await Task.sleep(for: killGrace) } catch { return }
+        guard runID == id, let completion = continuation else { return }
+        PerfLog.mark("voice.command exit never arrived, answering the caller")
+        continuation = nil
+        runID += 1
+        stream = nil
+        gate = nil
+        deadlineTask = nil
+        let held = lease
+        lease = nil
+        do { try await held?.release() }
+        catch { PerfLog.mark("voice.lease release \(error.localizedDescription)") }
+        completion.resume(throwing: outcome)
+    }
+
     public func cancel() {
         cancelled = true
-        stream?.stop()
+        guard continuation != nil else { return }
+        let id = runID
+        deadlineTask?.cancel()
+        deadlineTask = Task { [weak self] in await self?.terminate(id, outcome: CancellationError()) }
     }
 }

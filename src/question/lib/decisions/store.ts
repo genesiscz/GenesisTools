@@ -515,6 +515,12 @@ function patched(row: DecisionRecord, patch: DecisionPatch, ts: string): Decisio
         throw new Error(`cannot move ${row.id} from ${row.state} to ${patch.state}`);
     }
 
+    // A queued answer is matched by revision on ACK, and these fields do not bump it; the ACK must not confirm new text.
+    const content = [patch.answer, patch.option, patch.draft, patch.draftOption].some((value) => value !== undefined);
+    if (row.delivery?.queueId && content) {
+        throw new Error(`${row.id} is reserved by a queued delivery; cancel that message before changing its answer`);
+    }
+
     const { comment, expectedRevision: _expectedRevision, ...fields } = patch;
     const next: DecisionRecord = {
         ...row,

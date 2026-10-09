@@ -479,6 +479,9 @@ export async function deliverToSession(
                 typeof receipt.turnId === "string" &&
                 receipt.turnId
             ) {
+                // `steerCodexMessage` reports this receipt as `delivered: false`, because there
+                // `delivered` means consumer-acknowledged (run.test.ts). For a Decision answer an
+                // acknowledged provider turn is enough to mark the batch sent, so it maps to true here.
                 return {
                     channel: "codex",
                     delivered: true,
@@ -505,6 +508,12 @@ export async function deliverToSession(
 
     if (sent.success && outcome.sent) {
         return { channel: "cmux", delivered: true, target: outcome.pane ?? target.label };
+    }
+
+    // A readable `sent: false` is a refusal before any input, so the durable session queue may take it.
+    // Unreadable output leaves the outcome unknown, and that stays a plain queued result.
+    if (outcome.readable && !outcome.sent) {
+        return { ...(await undelivered(paneMiss(sent.stdout, sent.stderr))), raw: sent.stderr.trim() };
     }
 
     return { channel: "queued", delivered: false, error: paneMiss(sent.stdout, sent.stderr), raw: sent.stderr.trim() };
@@ -534,7 +543,7 @@ export function paneMiss(stdout: string, stderr = ""): string {
 }
 
 /** `cmux send --json`: whether it typed, and the pane it typed into as `cmux · workspace · pane`. */
-function parseSent(stdout: string): { sent: boolean; pane?: string } {
+function parseSent(stdout: string): { sent: boolean; readable: boolean; pane?: string } {
     try {
         const parsed = SafeJSON.parse(stdout, { strict: true }) as {
             sent?: unknown;
@@ -544,10 +553,11 @@ function parseSent(stdout: string): { sent: boolean; pane?: string } {
         const pane = typeof parsed.target?.paneTitle === "string" ? parsed.target.paneTitle : "";
         return {
             sent: parsed.sent === true,
+            readable: typeof parsed.sent === "boolean",
             ...(workspace || pane ? { pane: cmuxLabel(workspace, pane) } : {}),
         };
     } catch (error) {
         log.debug({ error, stdout: stdout.slice(0, 200) }, "cmux send printed no JSON outcome");
-        return { sent: false };
+        return { sent: false, readable: false };
     }
 }

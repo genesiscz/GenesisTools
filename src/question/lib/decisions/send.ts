@@ -71,9 +71,12 @@ export async function sendAnsweredDecisions({
         return { session, provider, text: due.map(decisionLine).join("\n"), numbers: [], dryRun: true };
     }
 
-    const delivery: { route?: DeliveryResult; text?: string } = {};
-    // The rows a queued send leaves `answered` (the same filter as `sendSessionDecisions`).
-    const due = rows.filter((row) => row.state === "answered" && kindOf(row) === "decision").map((row) => row.id);
+    const delivery: { route?: DeliveryResult; text?: string; numbers?: number[] } = {};
+    // Only the rows this send claimed under the lock; a row already reserved by another queue keeps its stamp.
+    const claimed = () =>
+        rows
+            .filter((row) => kindOf(row) === "decision" && (delivery.numbers ?? []).includes(row.number))
+            .map((row) => row.id);
 
     try {
         const sent = await sendSessionDecisions({
@@ -81,8 +84,9 @@ export async function sendAnsweredDecisions({
             file,
             events,
             session,
-            emit: async (text) => {
+            emit: async (text, numbers) => {
                 delivery.text = text;
+                delivery.numbers = numbers;
                 const route = await deliverToSession(
                     { session, provider: provider ?? undefined, sourceHome, text, deliveryKey },
                     deps
@@ -108,7 +112,7 @@ export async function sendAnsweredDecisions({
         return { session, provider, ...sent, ...delivery.route, dryRun: false };
     } catch (error) {
         if (error instanceof DeliveryUnknownError) {
-            await recordDelivery(file, events, due, { route: "queued", uncertain: true, error: error.message });
+            await recordDelivery(file, events, claimed(), { route: "queued", uncertain: true, error: error.message });
             throw error;
         }
 
@@ -119,7 +123,7 @@ export async function sendAnsweredDecisions({
         // Not a failure: the answers stay `answered`, and the next prompt pulls them. The sentence
         // is stored; the raw output stays in the log and in this result only.
         log.info({ session, error: error.result.error, raw: error.result.raw }, "decision answers queued");
-        await recordDelivery(file, events, due, {
+        await recordDelivery(file, events, claimed(), {
             route: "queued",
             ...(error.result.queueId ? { queueId: error.result.queueId } : {}),
             ...(error.result.error ? { error: error.result.error } : {}),

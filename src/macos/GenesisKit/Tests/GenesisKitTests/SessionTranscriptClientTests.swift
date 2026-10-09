@@ -14,6 +14,21 @@ final class SessionTranscriptClientTests: XCTestCase {
         XCTAssertEqual(envelope.turns[0].tools[0].result, "struct Pane")
     }
 
+    func testLiveFollowStartsAtTheOldestTurnThatCanStillChange() {
+        func envelope(_ turns: [TranscriptTurn]) -> TranscriptEnvelope {
+            TranscriptEnvelope(provider: "claude", sessionId: "fixture", filePath: "/fixture.jsonl",
+                byteSize: 1, truncated: true, nextOffset: 50, turns: turns)
+        }
+        let done = TranscriptTool(id: "t1", name: "Read", inputPreview: "a", result: "ok")
+        let waiting = TranscriptTool(id: "t2", name: "Bash", inputPreview: "b")
+        let closed = (0..<5).map { TranscriptTurn(id: "c\($0)", role: "assistant", text: "", tools: [done]) }
+        XCTAssertEqual(envelope(closed).liveFollowOffset, 49, "the last cached turn may still grow")
+        var open = closed
+        open[2] = TranscriptTurn(id: "open", role: "assistant", text: "", tools: [waiting])
+        XCTAssertEqual(envelope(open).liveFollowOffset, 47, "a tool still waiting holds the follow at its turn")
+        XCTAssertEqual(envelope([]).liveFollowOffset, 50)
+    }
+
     func testArgumentsAskForJson() {
         XCTAssertEqual(
             SessionTranscriptClient.arguments(sessionId: "abc-def", limit: 40),

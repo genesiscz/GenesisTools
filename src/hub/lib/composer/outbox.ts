@@ -155,6 +155,8 @@ export async function changeOutgoing({
 }): Promise<void> {
     const before = await readWidgetState(root);
     const pending = before.outgoing.find((entry) => entry.id === id);
+    // The queue entry this call cancelled; a watcher reconcile may mark the message cancelled before the edit lands.
+    let cancelledEntry: string | undefined;
     if (
         pending?.receipt?.channel === "session-queue" &&
         pending.receipt.entryId &&
@@ -185,6 +187,7 @@ export async function changeOutgoing({
             );
         }
         await cancelSessionMessage({ target: queueTarget, id: queued.id, root: queueRoot });
+        cancelledEntry = queued.id;
         if (pending.payload.kind === "decision") {
             const matched = await reconcileQueuedDecision({
                 ...decisions,
@@ -210,7 +213,8 @@ export async function changeOutgoing({
         if (message.state === "unknown" && !confirmedUnknown) {
             throw new Error("Delivery is unknown. Explicitly confirm after checking the conversation.");
         }
-        if (message.state === "cancelled") {
+        const cancelledHere = cancelledEntry !== undefined && message.receipt?.entryId === cancelledEntry;
+        if (message.state === "cancelled" && !cancelledHere) {
             throw new Error("A cancelled message cannot be retried; submit a new message.");
         }
         if (action === "edit") {

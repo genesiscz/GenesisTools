@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { z } from "zod";
 import { resamplePcm16 } from "./pcm";
 import { openDeepgramStt, parseDeepgramMessage } from "./providers/deepgram";
 import {
@@ -8,7 +9,7 @@ import {
     realtimeTranscriptionSessionUpdate,
 } from "./providers/openai-realtime";
 import { openXaiRealtimeStt, parseXaiSttEvent } from "./providers/xai-realtime";
-import { openSocketSession } from "./socket-session";
+import { openSocketSession, type SocketSpec } from "./socket-session";
 import type { LiveTranscriptEvent } from "./types";
 
 interface Recorded {
@@ -301,4 +302,84 @@ test("language lists map to each provider's own grammar", async () => {
         languages: ["cs", "en"],
     });
     expect(update).toMatchObject({ session: { audio: { input: { transcription: { languages: ["cs", "en"] } } } } });
+});
+
+test("a socket stuck before open is ended by abort and by the connect deadline", async () => {
+    const silent = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    try {
+        const spec: SocketSpec = {
+            provider: "deepgram",
+            url: `ws://127.0.0.1:${silent.port}`,
+            headers: {},
+            frame: (pcm: Uint8Array) => [pcm],
+            parse: parseDeepgramMessage,
+        };
+        const abort = new AbortController();
+        const aborted = openSocketSession({ accountId: "acc_test", spec, signal: abort.signal });
+        abort.abort();
+        await expect(aborted).rejects.toThrow("connect aborted");
+        await expect(openSocketSession({ accountId: "acc_test", spec, connectTimeoutMs: 50 })).rejects.toThrow(
+            "did not open within 50 ms"
+        );
+    } finally {
+        silent.stop(true);
+    }
+});
+
+test("a session_final from the replacement socket still carries what the dropped socket recognized", async () => {
+    let connections = 0;
+    const server = Bun.serve({
+        port: 0,
+        fetch(request, server) {
+            return server.upgrade(request) ? undefined : new Response("expected websocket", { status: 400 });
+        },
+        websocket: {
+            open() {
+                connections += 1;
+            },
+            message(ws) {
+                if (connections === 1) {
+                    ws.send(SafeJSON.stringify({ kind: "final", text: "first part" }));
+                    ws.close(1011, "synthetic drop");
+                    return;
+                }
+
+                ws.send(SafeJSON.stringify({ kind: "session_final", text: "second part" }));
+            },
+        },
+    });
+    servers.push(server);
+    const session = await openSocketSession({
+        accountId: "acc_test",
+        spec: {
+            provider: "deepgram",
+            url: `ws://127.0.0.1:${server.port}`,
+            headers: {},
+            frame: (pcm) => [pcm],
+            parse: (raw, nowMs) => {
+                const frame = z
+                    .object({ kind: z.enum(["final", "session_final"]), text: z.string() })
+                    .parse(SafeJSON.parse(raw, { strict: true }));
+                return { kind: frame.kind, text: frame.text, isFinal: true, startedAtMs: nowMs };
+            },
+        },
+    });
+    session.write(new Uint8Array([1, 2]));
+    const seen: LiveTranscriptEvent[] = [];
+    for await (const event of session.events()) {
+        seen.push(event);
+        if (event.kind === "final") {
+            await Bun.sleep(50);
+            session.write(new Uint8Array([3, 4]));
+        }
+
+        if (event.kind === "session_final") {
+            break;
+        }
+    }
+    await session.close();
+    expect(seen.map((event) => [event.kind, event.text])).toEqual([
+        ["final", "first part"],
+        ["session_final", "first part second part"],
+    ]);
 });

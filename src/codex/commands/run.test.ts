@@ -234,6 +234,37 @@ test("exact-session steer checks source home and rejects ambiguous daemons befor
     expect(nativeCalls).toBe(0);
 });
 
+test("a repeated delivery key that was queued while unowned is not steered once a daemon appears", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gt-codex-repeat-key-"));
+    const target = { provider: "codex" as const, sessionId: "thread-1", sourceHome: "/fixture/codex" };
+    let steered = 0;
+    const steer = async (): Promise<never> => {
+        steered++;
+        throw new Error("A queued delivery must not be steered again");
+    };
+    const first = await steerCodexMessage({
+        target,
+        text: "keyed input",
+        idempotencyKey: "fixture-key",
+        root,
+        deps: { store: { listNames: () => [], readMeta: () => null }, isLive: () => true, steer },
+    });
+    const repeat = await steerCodexMessage({
+        target,
+        text: "keyed input",
+        idempotencyKey: "fixture-key",
+        root,
+        deps: {
+            store: { listNames: () => ["work"], readMeta: () => codexMessageFixture() },
+            isLive: () => true,
+            steer,
+        },
+    });
+    expect(repeat).toMatchObject({ channel: "session-queue", queued: true });
+    expect(repeat.message?.id).toBe(first.message?.id);
+    expect(steered).toBe(0);
+});
+
 test("daemon acceptance and boundary queue are not reported as consumer acknowledgement", async () => {
     for (const result of [{ turnId: "turn-1", queued: false }, { queued: true }]) {
         const receipt = await steerCodexMessage({

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, unlinkSync } from "node:fs";
 import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseSttProvider } from "@genesiscz/utils/ai/stt/resolve";
@@ -35,6 +35,8 @@ export const voiceNoteSchema = z.object({
     provider: z.string().optional(),
     model: z.string().optional(),
     language: z.string().optional(),
+    /** The newest transcription attempt; only that attempt may write its outcome. */
+    operationId: z.string().uuid().optional(),
 });
 export type VoiceNote = z.infer<typeof voiceNoteSchema>;
 const indexSchema = z.object({ revision: z.number().int().nonnegative(), notes: z.array(voiceNoteSchema).max(100) });
@@ -192,17 +194,41 @@ export async function recordVoiceNote({
         recognizedText: "",
         transcription: "none",
     });
-    return mutate({
-        root,
-        signal,
-        change: (index) => {
-            if (index.notes.length >= 100 || index.notes.some((entry) => entry.id === id)) {
-                throw new Error(`Recording retained at ${output}, but note storage changed before it could be saved`);
-            }
-            index.notes.push(note);
-            return note;
-        },
-    });
+    let duplicate = false;
+    try {
+        return await mutate({
+            root,
+            signal,
+            change: (index) => {
+                if (index.notes.some((entry) => entry.id === id)) {
+                    duplicate = true;
+                    throw new Error("This voice note already exists");
+                }
+
+                if (index.notes.length >= 100) {
+                    throw new Error("The local voice notebook is full. Discard a note before recording another.");
+                }
+
+                index.notes.push(note);
+                return note;
+            },
+        });
+    } catch (error) {
+        // A duplicate id owns this clip path, so only a clip no note refers to is removed.
+        if (duplicate) {
+            throw error;
+        }
+
+        await unlink(output).catch((cleanup) =>
+            logger.debug({ error: cleanup, id }, "Unsaved voice recording cleanup")
+        );
+        if (signal?.aborted) {
+            throw error;
+        }
+
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`The recording was discarded because it could not be saved: ${reason}`, { cause: error });
+    }
 }
 export async function editVoiceNote({
     root,
@@ -275,6 +301,17 @@ export async function transcribeVoiceNote({
     if (events && resolvedProvider !== "fixture") {
         throw new Error("Synthetic events require the fixture speech provider");
     }
+
+    const operationId = randomUUID();
+    await mutate({
+        root,
+        signal,
+        change: (index) => {
+            const note = noteAt(index, id);
+            expectRevision(note, expectedRevision);
+            note.operationId = operationId;
+        },
+    });
     try {
         const session = await createSession({
             provider: resolvedProvider,
@@ -304,6 +341,11 @@ export async function transcribeVoiceNote({
             signal,
             change: (index) => {
                 const note = noteAt(index, id);
+                if (note.operationId !== operationId) {
+                    return note;
+                }
+
+                note.operationId = undefined;
                 if (note.revision === expectedRevision) {
                     note.text = text;
                 }
@@ -324,6 +366,11 @@ export async function transcribeVoiceNote({
                 root,
                 change: (index) => {
                     const note = noteAt(index, id);
+                    if (note.operationId !== operationId) {
+                        return;
+                    }
+
+                    note.operationId = undefined;
                     note.transcription = "failed";
                     note.error = error instanceof Error ? error.message : String(error);
                     note.revision++;
@@ -348,7 +395,7 @@ export async function discardVoiceNote({
     expectedRevision: number;
     signal?: AbortSignal;
 }) {
-    const removed = await mutate({
+    await mutate({
         root,
         signal,
         change: (index) => {
@@ -364,19 +411,20 @@ export async function discardVoiceNote({
                 clipPath({ root, note });
             }
 
+            // The clip goes first: a failed unlink keeps the note listed so a retry can still reach it.
+            try {
+                unlinkSync(expected);
+            } catch (error) {
+                if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+                    throw error;
+                }
+
+                logger.debug({ error, id }, "Discarded voice note had no clip file left");
+            }
+
             index.notes = index.notes.filter((entry) => entry.id !== id);
-            return note;
         },
     });
-    try {
-        await unlink(removed.clip.path);
-    } catch (error) {
-        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-            throw error;
-        }
-
-        logger.debug({ error, id }, "Discarded voice note had no clip file left");
-    }
 
     return { discarded: true, id };
 }

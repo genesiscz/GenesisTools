@@ -306,16 +306,25 @@ interface TurnPlan {
  * lock, so a steer that waited behind another turn builds its arguments and its safety mode from
  * what that turn left behind, not from what it read before waiting.
  */
-async function runTurn(
-    store: GrokSessionStore,
-    name: string,
-    plan: (fresh: GrokSessionMeta) => TurnPlan
-): Promise<TurnResult> {
+async function runTurn({
+    store,
+    name,
+    plan,
+    preflight,
+}: {
+    store: GrokSessionStore;
+    name: string;
+    plan: (fresh: GrokSessionMeta) => TurnPlan;
+    /** Runs on the in-lock metadata before the busy check, so a delivery refusal keeps its own error type. */
+    preflight?: (fresh: GrokSessionMeta) => void;
+}): Promise<TurnResult> {
     return withFileLock(`${sessionMetaPath(name)}.turn.lock`, async () => {
         const fresh = store.readMeta(name);
         if (!fresh) {
             throw new Error(`Grok session not found: ${name}`);
         }
+
+        preflight?.(fresh);
         if (fresh.activeTurn?.childPid && isProcessAlive(fresh.activeTurn.childPid)) {
             throw new Error(
                 `Grok session '${name}' still has turn ${fresh.activeTurn.turn} running (pid ${fresh.activeTurn.childPid})`
@@ -491,11 +500,15 @@ export async function runSession(options: RunSessionOptions): Promise<TurnResult
     };
     store.createMeta(meta);
 
-    return runTurn(store, meta.name, (fresh) => ({
-        args: buildRunArgs(fresh, promptArguments),
-        readOnly: fresh.readOnly,
-        surfaces: fresh.surfaces,
-    }));
+    return runTurn({
+        store,
+        name: meta.name,
+        plan: (fresh) => ({
+            args: buildRunArgs(fresh, promptArguments),
+            readOnly: fresh.readOnly,
+            surfaces: fresh.surfaces,
+        }),
+    });
 }
 
 export async function steerSession(options: SteerSessionOptions): Promise<TurnResult> {
@@ -516,23 +529,30 @@ export async function steerSession(options: SteerSessionOptions): Promise<TurnRe
         });
     checkDelivery(meta);
     const promptArguments = promptArgs(options);
-    return runTurn(store, meta.name, (fresh) => {
-        checkDelivery(fresh);
-        const readOnly = options.readOnly ?? fresh.readOnly;
-        const previous = fresh.surfaces ?? DEFAULT_SURFACES;
-        const surfaces = surfacesFromFlags(options.surfaces ?? {}, previous);
-        const surfacesChanged = surfaces.skills !== previous.skills || surfaces.rules !== previous.rules;
-        const reservedMetaPatch =
-            readOnly === fresh.readOnly && !surfacesChanged
-                ? undefined
-                : { ...(readOnly === fresh.readOnly ? {} : { readOnly }), ...(surfacesChanged ? { surfaces } : {}) };
+    return runTurn({
+        store,
+        name: meta.name,
+        preflight: checkDelivery,
+        plan: (fresh) => {
+            const readOnly = options.readOnly ?? fresh.readOnly;
+            const previous = fresh.surfaces ?? DEFAULT_SURFACES;
+            const surfaces = surfacesFromFlags(options.surfaces ?? {}, previous);
+            const surfacesChanged = surfaces.skills !== previous.skills || surfaces.rules !== previous.rules;
+            const reservedMetaPatch =
+                readOnly === fresh.readOnly && !surfacesChanged
+                    ? undefined
+                    : {
+                          ...(readOnly === fresh.readOnly ? {} : { readOnly }),
+                          ...(surfacesChanged ? { surfaces } : {}),
+                      };
 
-        return {
-            args: buildNextTurnArgs(fresh, readOnly, surfaces, promptArguments),
-            readOnly,
-            surfaces,
-            reservedMetaPatch,
-        };
+            return {
+                args: buildNextTurnArgs(fresh, readOnly, surfaces, promptArguments),
+                readOnly,
+                surfaces,
+                reservedMetaPatch,
+            };
+        },
     });
 }
 

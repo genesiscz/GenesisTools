@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { decisionFiles as defaultDecisionFiles } from "@app/question/lib/decisions/read";
 import { reconcileQueuedDecision } from "@app/question/lib/decisions/store";
-import { listSessionMessages } from "@genesiscz/utils/agent-sessions/message-queue";
+import { listSessionMessages, type SessionMessage } from "@genesiscz/utils/agent-sessions/message-queue";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { LockTimeoutError, withFileLock } from "@genesiscz/utils/storage/file-lock";
@@ -55,6 +55,21 @@ async function reconcileSessionQueue({
     decisions: { file: string; events: string };
 }): Promise<void> {
     const state = await readWidgetState(root);
+    // One read per queue per run; an unreadable queue is skipped so the rest of the outbox keeps moving.
+    const queues = new Map<string, SessionMessage[] | undefined>();
+    const queueOf = (candidate: WidgetOutgoing, provider: SessionMessage["target"]["provider"]) => {
+        const key = widgetSessionKey(candidate.target);
+        if (!queues.has(key)) {
+            try {
+                queues.set(key, listSessionMessages({ target: { ...candidate.target, provider }, root: queueRoot }));
+            } catch (error) {
+                logger.warn({ error, id: candidate.id, key }, "Widget could not read a session message queue");
+                queues.set(key, undefined);
+            }
+        }
+
+        return queues.get(key);
+    };
     for (const candidate of state.outgoing) {
         if (
             !["waiting-route", "unknown"].includes(candidate.state) ||
@@ -64,10 +79,9 @@ async function reconcileSessionQueue({
         ) {
             continue;
         }
-        const queued = listSessionMessages({
-            target: { ...candidate.target, provider: candidate.target.provider },
-            root: queueRoot,
-        }).find((entry) => entry.id === candidate.receipt?.entryId);
+        const queued = queueOf(candidate, candidate.target.provider)?.find(
+            (entry) => entry.id === candidate.receipt?.entryId
+        );
         if (!queued || !["received", "cancelled"].includes(queued.state)) {
             continue;
         }

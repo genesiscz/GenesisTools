@@ -840,6 +840,30 @@ describe("delivery routes", () => {
         expect(result.delivered).toBe(false);
     });
 
+    test("a readable cmux refusal reaches the durable session queue, while unreadable output does not", async () => {
+        const queueRoot = mkdtempSync(join(tmpdir(), "cmux-refusal-queue-"));
+        const request = {
+            session: "abc",
+            provider: "claude",
+            text: "DECISION 1: a) yes",
+            sourceHome: "/fixture/claude",
+            deliveryKey: "fixture-key",
+        };
+        const refused = await deliverToSession(request, {
+            runTool: spy({ success: false, stdout: '{"sent":false,"matches":[]}' }).runTool,
+            findTargets: livePaneTargets,
+            queueRoot,
+        });
+        expect(refused).toMatchObject({ channel: "queued", delivered: false });
+        expect(refused.queueId).toBeDefined();
+        const unknown = await deliverToSession(
+            { ...request, deliveryKey: "other-key" },
+            { runTool: spy({ success: false, stdout: "not json" }).runTool, findTargets: livePaneTargets, queueRoot }
+        );
+        expect(unknown).toMatchObject({ channel: "queued", delivered: false });
+        expect(unknown.queueId).toBeUndefined();
+    });
+
     test("Codex daemon queue acceptance and empty exit-zero output are not provider input receipts", async () => {
         for (const stdout of ["{}", '{"queued":true}', '{"queued":false}', ""]) {
             await expect(
@@ -1091,6 +1115,60 @@ test("decision dry-run applies the same selected-kind filter as delivery", async
     });
     expect(sent.text).toBe(preview.text);
     expect(readDecisions(file).map((row) => row.state)).toEqual(["sent", "answered"]);
+});
+
+test("a lost receipt stamps only the decisions this send claimed, never one reserved by another queue", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-claimed-"));
+    const file = join(dir, "decisions.jsonl");
+    const events = join(dir, "events.jsonl");
+    const [reserved, open] = await postDecisions(file, events, {
+        sessionId: "test-session",
+        decisions: [
+            { prompt: "First?", options: ["yes"] },
+            { prompt: "Second?", options: ["no"] },
+        ],
+    });
+    const reservation = { route: "queued" as const, queueId: "queue-a", at: "2026-01-01T00:00:00.000Z" };
+    writeFileSync(
+        file,
+        `${[
+            { ...reserved, state: "answered", option: "a", delivery: reservation },
+            { ...open, state: "answered", option: "a" },
+        ]
+            .map((row) => SafeJSON.stringify(row))
+            .join("\n")}\n`
+    );
+    await expect(
+        sendAnsweredDecisions({
+            session: "test-session",
+            files: { file, events },
+            provider: "codex",
+            deps: {
+                codexWorkerFor: () => "fixture-worker",
+                runTool: async () => ({ success: true, stdout: "not a receipt", stderr: "" }),
+            },
+        })
+    ).rejects.toThrow("acknowledgement");
+    const [first, second] = readDecisions(file);
+    expect(first.delivery).toEqual(reservation);
+    expect(second.delivery?.uncertain).toBe(true);
+});
+
+test("an answer reserved by a queued delivery cannot be changed under its queue message", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-reserved-"));
+    const file = join(dir, "decisions.jsonl");
+    const events = join(dir, "events.jsonl");
+    const [row] = await postDecisions(file, events, {
+        sessionId: "test-session",
+        decisions: [{ prompt: "Reserved?", options: ["yes", "no"] }],
+    });
+    const reservation = { route: "queued" as const, queueId: "queue-a", at: "2026-01-01T00:00:00.000Z" };
+    writeFileSync(file, `${SafeJSON.stringify({ ...row, state: "answered", option: "a", delivery: reservation })}\n`);
+    for (const patch of [{ option: "b" }, { answer: "changed" }, { draft: "changed" }, { draftOption: "b" }]) {
+        await expect(updateDecision(file, events, row.id, patch)).rejects.toThrow("reserved by a queued delivery");
+    }
+    expect(readDecisions(file)[0].option).toBe("a");
+    await updateDecision(file, events, row.id, { comment: "a note is still fine" });
 });
 
 test("decision revisions preserve the source turn of each posted version", async () => {

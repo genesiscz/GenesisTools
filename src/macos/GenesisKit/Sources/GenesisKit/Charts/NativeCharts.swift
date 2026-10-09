@@ -15,6 +15,14 @@ public enum NativeChartSampling {
         return max(domain.lowerBound, min(proposed, domain.upperBound.addingTimeInterval(-window)))
     }
 
+    /// X-axis label format: daily bins show the date; a sub-day bin in a window wider than a day
+    /// shows the date too, or ticks on different days would read the same.
+    public static func axisLabelFormat(interval: TimeInterval, window: TimeInterval) -> Date.FormatStyle {
+        if interval >= 86400 { return .dateTime.day().month(.abbreviated) }
+        if window > 86400 { return .dateTime.month(.abbreviated).day().hour().minute() }
+        return .dateTime.hour().minute()
+    }
+
     public static func bins(points: [NativeTimePoint], start: Date, end: Date, step: TimeInterval,
         calendar: Calendar = .current) -> [NativeTimePoint] {
         guard let first = points.first, end > start, step > 0 else { return [] }
@@ -149,7 +157,14 @@ public struct NativeTimeSeriesChart: View {
         .chartXVisibleDomain(length: window)
         .chartScrollPosition(x: $position)
         .chartXSelection(value: $selected)
-        .onGeometryChange(for: CGFloat.self) { ceil($0.size.width) } action: { plotWidth = $0 }
+        .chartOverlay { proxy in
+            // The pan maps a drag across the plot area, not the whole chart with its Y axis.
+            GeometryReader { geometry in
+                let width = proxy.plotFrame.map { ceil(geometry[$0].size.width) } ?? ceil(geometry.size.width)
+                Color.clear.allowsHitTesting(false)
+                    .onChange(of: width, initial: true) { _, value in plotWidth = value }
+            }
+        }
         .simultaneousGesture(DragGesture(minimumDistance: 4)
             .updating($dragging) { _, state, _ in state = true }
             .onChanged { event in
@@ -164,7 +179,7 @@ public struct NativeTimeSeriesChart: View {
             AxisMarks(values: .automatic(desiredCount: 4)) {
                 AxisGridLine()
                 AxisTick()
-                AxisValueLabel(format: interval >= 86400 ? .dateTime.day().month(.abbreviated) : .dateTime.hour().minute())
+                AxisValueLabel(format: NativeChartSampling.axisLabelFormat(interval: interval, window: window))
             }
         }
         .accessibilityLabel("\(valueLabel) timeline. Scroll horizontally to pan; use the zoom controls to change the visible range.")
