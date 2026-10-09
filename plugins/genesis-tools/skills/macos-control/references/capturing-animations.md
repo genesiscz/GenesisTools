@@ -171,8 +171,8 @@ for selectors and coordinate spaces.
 ## Transparent padding, no labels: the verified clean grid
 
 Verified 2026-10-09 01:10 using the isolated recorder on the live top notch (capture code e79bb4eb1,
-native Widget build89ade8fa3). The result has25frames in a3×9grid,1920×1350RGBA pixels,
-1,405,300fully transparent pixels; corner/padding and both unused cells have alpha0. No timestamp,
+native Widget build 89ade8fa3). The result has 25 frames in a 3×9 grid, 1920×1350 RGBA pixels,
+1,405,300 fully transparent pixels; corner/padding and both unused cells have alpha 0. No timestamp,
 frame number, border or desktop annotation is composited into the grid. The native recording indicator
 remains enabled on screen and is excluded from the recording by the isolated content filters.
 
@@ -187,14 +187,14 @@ ffmpeg -hide_banner -loglevel error -i /absolute/evidence/top-alpha.mov \
   -frames:v 1 /absolute/evidence/top-clean-grid.png
 ```
 
-The known top-notch aspect ratio fits600pixels into a640×150cell. For another window, choose a cell
+The known top-notch aspect ratio fits 600 pixels into a 640×150 cell. For another window, choose a cell
 larger than its scaled height or use `pad=iw+40:ih+48:20:24:color=0x00000000`. Both pad and tile must
 explicitly use transparent color; a black background in an image viewer is not evidence of alpha.
 `format=rgba` preserves the movie's alpha through composition. This is deterministic frame extraction,
 not a generated illustration or an edited screenshot of a different build.
 
-Verify with ffprobe (`pix_fmt=rgba`) and inspect actual decoded alpha samples. In the testedPNG,
-pixel(0,0) and padding pixel(10,60) areRGBA(0,0,0,0); the last cell's alpha min/max are0/0.
+Verify with ffprobe (`pix_fmt=rgba`) and inspect actual decoded alpha samples. In the tested PNG,
+pixel (0,0) and padding pixel (10,60) are RGBA(0,0,0,0); the last cell's alpha min/max are 0/0.
 Inspect the rendered image too. The source movie remains available for closer motion review.
 
 Durable evidence: GenesisTools/GenesisTools.native/Widget/Screenshot/

@@ -81,7 +81,15 @@ export function registerCaptureCommands(program: Command): void {
     addCaptureFlags(capture.command("record").description("Record only selected windows/apps using ScreenCaptureKit"))
         .option("--duration <seconds>", "Recording duration, 0.1–180 seconds", "3")
         .action(async (options: CaptureFlags) => {
-            printRunResult(await runCapturePlan({ capture: captureFromFlags(options), actions: [] }));
+            try {
+                printRunResult(await runCapturePlan({ capture: captureFromFlags(options), actions: [] }));
+            } catch (e) {
+                if (e instanceof CaptureRunError) {
+                    fail(e.message, e.exitCode);
+                }
+
+                fail(e instanceof Error ? e.message : String(e));
+            }
         });
 
     capture
