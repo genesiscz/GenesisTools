@@ -534,6 +534,7 @@
         "@ai-sdk/groq": "^4.0.37",
         "@ai-sdk/openai": "^4.0.60",
         "@ai-sdk/provider": "^4.0.17",
+        "@ai-sdk/typesafe-ai": "3.0.2",
         "@babel/core": "^7.29.7",
         "@clack/prompts": "^1.7.0",
         "@huggingface/transformers": "^4.2.0",
@@ -569,7 +570,6 @@
         "@tanstack/react-query": "^5.102.8",
         "@tanstack/react-start": "^1.168.49",
         "@vitejs/plugin-react": "^6.1.1",
-        "@ai-sdk/typesafe-ai": "3.0.2",
         "ai": "^7.0.105",
         "ast-types": "^0.16.3",
         "chalk": "^6.0.0",
@@ -617,7 +617,6 @@
         "sqlite-vec": "^0.1.9",
         "tailwind-merge": "^3.6.0",
         "turndown": "^7.2.4",
-        "turndown-plugin-gfm": "^1.0.2",
         "vite": "^8.2.2",
         "zod": "^4.5.4",
         "zustand": "^5.0.15"
