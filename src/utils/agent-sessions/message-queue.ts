@@ -30,6 +30,22 @@ export type SessionMessageState = SessionMessage["state"];
 export const MAX_SESSION_MESSAGE_BYTES = 64 * 1024;
 /** How long a received or cancelled message stays in its queue before the next write drops it. */
 const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+/** Dropped messages leave a text-free receipt; this many newest receipts are kept per queue. */
+const MAX_RECEIPTS = 1000;
+const receiptSchema = z.object({
+    id: z.string().min(1),
+    state: z.enum(["received", "cancelled"]),
+    updatedAt: z.string(),
+    consumer: z.string().optional(),
+    textHash: z.string(),
+});
+/**
+ * A message's final state without its text. The prune keeps one for every message it drops, so a producer that
+ * was away longer than the retention can still confirm the delivery instead of reading the absence as "not sent".
+ */
+export type SessionMessageReceipt = z.infer<typeof receiptSchema>;
+/** What a producer needs to reconcile a message: its state, consumer and the hash of the text it carried. */
+export type SessionMessageOutcome = Omit<SessionMessageReceipt, "state"> & { state: SessionMessageState };
 interface QueueAddress {
     target: SessionMessageTarget;
     root?: string;
@@ -71,14 +87,52 @@ export function listSessionMessages(input: QueueAddress): SessionMessage[] {
     return read(file, target);
 }
 
+function receiptsFile(file: string): string {
+    return file.replace(/\.json$/, ".receipts.jsonl");
+}
+
+function readReceipts(file: string): SessionMessageReceipt[] {
+    const path = receiptsFile(file);
+    if (!existsSync(path)) {
+        return [];
+    }
+    return readFileSync(path, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => receiptSchema.parse(SafeJSON.parse(line, { strict: true })));
+}
+
+export function sessionMessageTextHash(text: string): string {
+    return createHash("sha256").update(text).digest("hex");
+}
+
+/** Every message's outcome: the queued ones as they are, then the receipts of messages the prune dropped. */
+export function listSessionMessageOutcomes(input: QueueAddress): SessionMessageOutcome[] {
+    const { file, target } = address(input);
+    const live = read(file, target).map((message) => ({
+        id: message.id,
+        state: message.state,
+        updatedAt: message.updatedAt,
+        ...(message.consumer ? { consumer: message.consumer } : {}),
+        textHash: sessionMessageTextHash(message.text),
+    }));
+    const ids = new Set(live.map((message) => message.id));
+    return [...live, ...readReceipts(file).filter((receipt) => !ids.has(receipt.id))];
+}
+
 function keyedMessageId(idempotencyKey: string): string {
     return createHash("sha256").update(idempotencyKey).digest("hex");
 }
 
-/** The message an earlier enqueue saved under this delivery key, if any; read-only like `listSessionMessages`. */
-export function findKeyedSessionMessage(input: QueueAddress & { idempotencyKey: string }): SessionMessage | undefined {
+/**
+ * The outcome of the message an earlier enqueue saved under this delivery key, if any, including one the prune
+ * dropped; read-only like `listSessionMessages`.
+ */
+export function findKeyedSessionMessage(
+    input: QueueAddress & { idempotencyKey: string }
+): SessionMessageOutcome | undefined {
     const id = keyedMessageId(input.idempotencyKey);
-    return listSessionMessages(input).find((message) => message.id === id);
+    return listSessionMessageOutcomes(input).find((message) => message.id === id);
 }
 
 async function mutate(
@@ -98,6 +152,27 @@ async function mutate(
                 !(message.state === "received" || message.state === "cancelled") ||
                 Date.parse(message.updatedAt) >= cutoff
         );
+        const dropped = messages.filter((message) => !kept.includes(message));
+        if (dropped.length > 0) {
+            // Written before the queue: a crash in between leaves a receipt for a message still queued, never neither.
+            const receipts = [
+                ...readReceipts(file),
+                ...dropped.map((message) =>
+                    receiptSchema.parse({
+                        id: message.id,
+                        state: message.state,
+                        updatedAt: message.updatedAt,
+                        consumer: message.consumer,
+                        textHash: sessionMessageTextHash(message.text),
+                    })
+                ),
+            ].slice(-MAX_RECEIPTS);
+            atomicWriteFileSync(
+                receiptsFile(file),
+                `${receipts.map((receipt) => SafeJSON.stringify(receipt)).join("\n")}\n`,
+                { mode: 0o600 }
+            );
+        }
         messages.splice(0, messages.length, ...kept);
         const after = SafeJSON.stringify(messages);
         if (before !== after) {
@@ -125,6 +200,13 @@ export async function enqueueSessionMessage(
     const id = input.idempotencyKey ? keyedMessageId(input.idempotencyKey) : randomUUID();
     return mutate(input, (messages, target) => {
         const existing = messages.find((message) => message.id === id);
+        if (
+            !existing &&
+            input.idempotencyKey &&
+            readReceipts(address(input).file).some((receipt) => receipt.id === id)
+        ) {
+            throw new Error("This delivery key was already received or cancelled; no message was queued again.");
+        }
         if (existing) {
             if (existing.text !== input.text) {
                 throw new Error("This delivery key already belongs to different text; no message was replaced.");

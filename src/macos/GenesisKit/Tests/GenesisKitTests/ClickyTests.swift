@@ -177,6 +177,20 @@ final class ClickyTests: XCTestCase {
         XCTAssertEqual(NativeChartSampling.valueText(1234, locale: english), "1,234", "a whole count has no decimal")
     }
 
+    func testCoarsenedBinsStayOnTheIntervalGridWhateverTheFirstPoint() {
+        // 100000 s of one-minute samples coarsen to two-minute bins; the first sample sits at 00:01, off that grid.
+        let points = [60.0, 120, 180].map { NativeTimePoint(date: Date(timeIntervalSince1970: $0), value: 1) }
+        let whole = NativeChartSampling.bins(points: points, start: Date(timeIntervalSince1970: 0),
+            end: Date(timeIntervalSince1970: 100_000), step: 60)
+        XCTAssertEqual(whole.prefix(2).map(\.date.timeIntervalSince1970), [0, 120])
+        XCTAssertEqual(whole.prefix(2).map(\.value), [1, 2], "00:02 belongs to the 00:02 bin, not to 00:01's")
+        // Panned past the first sample: the same bin keeps the same time and count.
+        let panned = NativeChartSampling.bins(points: points, start: Date(timeIntervalSince1970: 130),
+            end: Date(timeIntervalSince1970: 100_130), step: 60)
+        XCTAssertEqual(panned.first?.date.timeIntervalSince1970, 120)
+        XCTAssertEqual(panned.first?.value, 2)
+    }
+
     func testChartBinningBoundsWorkWithoutLosingCounts() {
         let points = (0..<10000).map { NativeTimePoint(date: Date(timeIntervalSince1970: Double($0) * 60), value: 1) }
         let bins = NativeChartSampling.bins(points: points, start: Date(timeIntervalSince1970: 0),

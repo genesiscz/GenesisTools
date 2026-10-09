@@ -10,8 +10,11 @@ import {
     acknowledgeSessionMessage,
     cancelSessionMessage,
     enqueueSessionMessage,
+    findKeyedSessionMessage,
+    listSessionMessageOutcomes,
     listSessionMessages,
     offerSessionMessage,
+    sessionMessageTextHash,
 } from "./message-queue";
 import { resolveHistoryProvider } from "./provider";
 
@@ -148,4 +151,41 @@ test("session queue text is size-capped and a write drops terminal entries older
     writeFileSync(file, SafeJSON.stringify(aged));
     const fresh = await enqueueSessionMessage({ root, target, text: "Fresh message" });
     expect(listSessionMessages({ root, target }).map((message) => message.id)).toEqual([waiting.id, fresh.id]);
+    // The dropped message leaves a text-free receipt: its outcome stays readable, and its key is never queued again.
+    expect(listSessionMessageOutcomes({ root, target }).find((message) => message.id === old.id)).toEqual({
+        id: old.id,
+        state: "cancelled",
+        updatedAt: longAgo,
+        textHash: sessionMessageTextHash("Old cancelled message"),
+    });
+    expect(readFileSync(join(root, name.replace(/\.json$/, ".receipts.jsonl")), "utf8")).not.toContain("Old cancelled");
+});
+
+test("a delivery key whose message the retention dropped is not queued a second time", async () => {
+    const root = mkdtempSync(join(tmpdir(), "session-queue-receipt-"));
+    const target = { provider: "codex" as const, sessionId: "fixture-receipt", sourceHome: "/fixture/home" };
+    const keyed = await enqueueSessionMessage({ root, target, text: "Delivered once", idempotencyKey: "fixture-key" });
+    await offerSessionMessage({ root, target, id: keyed.id, consumer: "fixture-agent" });
+    await acknowledgeSessionMessage({ root, target, id: keyed.id, consumer: "fixture-agent" });
+    const [name] = readdirSync(root).filter((entry) => entry.endsWith(".json"));
+    const file = join(root, name);
+    const longAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+    const aged = z
+        .array(z.object({ updatedAt: z.string() }).passthrough())
+        .parse(SafeJSON.parse(readFileSync(file, "utf8"), { strict: true }))
+        .map((message) => ({ ...message, updatedAt: longAgo }));
+    writeFileSync(file, SafeJSON.stringify(aged));
+    await enqueueSessionMessage({ root, target, text: "Unrelated message" });
+    expect(listSessionMessages({ root, target }).some((message) => message.id === keyed.id)).toBe(false);
+
+    expect(findKeyedSessionMessage({ root, target, idempotencyKey: "fixture-key" })).toMatchObject({
+        state: "received",
+    });
+    await expect(
+        enqueueSessionMessage({ root, target, text: "Delivered once", idempotencyKey: "fixture-key" })
+    ).rejects.toThrow("already received or cancelled");
+    // Control: a key never used before still queues.
+    expect(
+        (await enqueueSessionMessage({ root, target, text: "New delivery", idempotencyKey: "fixture-other" })).state
+    ).toBe("queued");
 });

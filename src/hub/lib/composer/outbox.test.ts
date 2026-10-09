@@ -17,6 +17,7 @@ import { openReadModel } from "@app/question/lib/read-model";
 import * as queueModule from "@genesiscz/utils/agent-sessions/message-queue";
 import {
     acknowledgeSessionMessage,
+    enqueueSessionMessage,
     listSessionMessages,
     offerSessionMessage,
 } from "@genesiscz/utils/agent-sessions/message-queue";
@@ -29,6 +30,7 @@ import * as fileLock from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import * as videos from "@genesiscz/utils/video/probe";
 import { createCanvas } from "@napi-rs/canvas";
+import { z } from "zod";
 import type { AgentNode } from "../agents/types";
 import { performWidgetAction } from "../widget/actions";
 import { readWidgetReceiptContext } from "../widget/context";
@@ -2984,6 +2986,42 @@ describe("portable session queue delivery", () => {
             "cancelled",
         ]);
         expect(transportCalls).toBe(0);
+    });
+
+    test("an acknowledgement the queue pruned while the widget was away still confirms the reply", async () => {
+        const directory = await root();
+        const queueRoot = join(directory, "session-queue");
+        const dispatcher = widgetDispatcher({ deliver: { queueRoot, codexWorkerFor: () => null } });
+        await enqueue(directory, "Payload acknowledged long ago");
+        await processWidgetOutbox({ root: directory, dispatcher, queueRoot });
+        const queueTarget = { ...target, provider: "codex" as const };
+        const [queued] = listSessionMessages({ target: queueTarget, root: queueRoot });
+        await offerSessionMessage({ target: queueTarget, root: queueRoot, id: queued.id, consumer: "fixture-agent" });
+        await acknowledgeSessionMessage({
+            target: queueTarget,
+            root: queueRoot,
+            id: queued.id,
+            consumer: "fixture-agent",
+        });
+        // The widget is away for eight days; another producer's write then prunes the old acknowledgement.
+        const [name] = (await readdir(queueRoot)).filter((entry) => entry.endsWith(".json"));
+        const file = join(queueRoot, name);
+        const longAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+        const aged = z
+            .array(z.object({ updatedAt: z.string() }).passthrough())
+            .parse(SafeJSON.parse(await readFile(file, "utf8"), { strict: true }))
+            .map((message) => ({ ...message, updatedAt: longAgo }));
+        await writeFile(file, SafeJSON.stringify(aged));
+        await enqueueSessionMessage({ target: queueTarget, root: queueRoot, text: "Another producer's message" });
+        expect(listSessionMessages({ target: queueTarget, root: queueRoot }).map((entry) => entry.id)).not.toContain(
+            queued.id
+        );
+
+        await processWidgetOutbox({ root: directory, dispatcher, queueRoot });
+        expect((await readWidgetState(directory)).outgoing[0]).toMatchObject({
+            state: "sent",
+            receipt: { delivered: true, entryId: queued.id, detail: "Received by fixture-agent" },
+        });
     });
 
     test("one unreadable session queue does not stop another session's acknowledgement", async () => {

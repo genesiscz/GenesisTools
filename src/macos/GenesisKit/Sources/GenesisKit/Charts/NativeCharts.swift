@@ -50,7 +50,8 @@ public enum NativeChartSampling {
             return result
         }
         let interval = max(step, ceil(end.timeIntervalSince(start) / (step * 1200)) * step)
-        let lower = max(first.date.timeIntervalSince1970, floor(start.timeIntervalSince1970 / interval) * interval)
+        // Both bounds on the same interval grid, so a bin's time and count do not depend on where the view starts.
+        let lower = max(floor(first.date.timeIntervalSince1970 / interval), floor(start.timeIntervalSince1970 / interval)) * interval
         let upper = end.timeIntervalSince1970
         guard lower < upper else { return [] }
         let count = min(1201, Int(ceil((upper - lower) / interval)))

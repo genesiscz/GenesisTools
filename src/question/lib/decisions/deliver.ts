@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,7 +11,7 @@ import {
 import { ClaudeWorkerStore, claudeWorkerSourceHome } from "@app/claude/lib/worker/store";
 import { CodexSessionStore, codexWorkerHome } from "@app/codex/lib/store";
 import { GrokSessionStore } from "@app/grok/lib/store";
-import { enqueueSessionMessage } from "@genesiscz/utils/agent-sessions/message-queue";
+import { enqueueSessionMessage, sessionMessageTextHash } from "@genesiscz/utils/agent-sessions/message-queue";
 import {
     type ClaudeLiveSession,
     claudeSessionsDir,
@@ -400,7 +399,7 @@ export async function deliverToSession(
                 channel: "queued",
                 delivered: false,
                 queueId: queued.id,
-                queueTextHash: createHash("sha256").update(queued.text).digest("hex"),
+                queueTextHash: sessionMessageTextHash(queued.text),
                 error: `${reason} Saved for this exact session; awaiting a consumer acknowledgement.`,
             };
         }
