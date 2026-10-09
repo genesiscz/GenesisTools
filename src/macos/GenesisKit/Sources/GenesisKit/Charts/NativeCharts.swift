@@ -11,8 +11,12 @@ public struct NativeTimePoint: Identifiable, Equatable, Sendable {
 public enum NativeChartSampling {
     public static func pannedPosition(origin: Date, translation: Double, width: Double,
         window: TimeInterval, domain: ClosedRange<Date>) -> Date {
-        let proposed = origin.addingTimeInterval(-translation / max(1, width) * window)
-        return max(domain.lowerBound, min(proposed, domain.upperBound.addingTimeInterval(-window)))
+        clampedPosition(origin.addingTimeInterval(-translation / max(1, width) * window), window: window, domain: domain)
+    }
+
+    /// The leading edge of a `window`-wide view that stays inside `domain`.
+    public static func clampedPosition(_ position: Date, window: TimeInterval, domain: ClosedRange<Date>) -> Date {
+        max(domain.lowerBound, min(position, domain.upperBound.addingTimeInterval(-window)))
     }
 
     /// X-axis label format: daily bins show the date; a sub-day bin in a window wider than a day
@@ -125,7 +129,10 @@ public struct NativeTimeSeriesChart: View {
                 Text(position.formatted(date: .abbreviated, time: .shortened)).monospacedDigit()
             }.font(.caption).foregroundStyle(.secondary)
         }
-        .onChange(of: zoom) { _, _ in position = max(domain.lowerBound, min(position, end.addingTimeInterval(-window))) }
+        // A new period (custom dates, a refreshed report) or zoom keeps the view on data: a position left over from
+        // the previous period would query bins outside the new one and draw an empty chart.
+        .onChange(of: zoom) { _, _ in position = NativeChartSampling.clampedPosition(position, window: window, domain: domain) }
+        .onChange(of: domain) { _, value in position = NativeChartSampling.clampedPosition(position, window: window, domain: value) }
     }
     private var plot: some View {
         Chart {

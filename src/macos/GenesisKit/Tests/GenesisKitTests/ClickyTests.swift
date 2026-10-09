@@ -3,6 +3,7 @@ import Combine
 import Foundation
 import SwiftUI
 import UserNotifications
+import Vision
 import XCTest
 
 @testable import GenesisKit
@@ -119,6 +120,54 @@ final class ClickyTests: XCTestCase {
             window: 600, domain: domain).timeIntervalSince1970, 3000)
         XCTAssertEqual(NativeChartSampling.pannedPosition(origin: origin, translation: 10000, width: 300,
             window: 600, domain: domain).timeIntervalSince1970, 0)
+    }
+
+    @MainActor
+    private final class ChartInput: ObservableObject {
+        @Published var points: [NativeTimePoint]
+        @Published var end: Date
+        init(points: [NativeTimePoint], end: Date) {
+            self.points = points
+            self.end = end
+        }
+    }
+
+    private struct ChartHost: View {
+        @ObservedObject var input: ChartInput
+        var body: some View {
+            NativeTimeSeriesChart(points: input.points, interval: 3600, initialWindow: 86400, end: input.end)
+                .frame(width: 640, height: 320).environment(\.colorScheme, .dark)
+        }
+    }
+
+    @MainActor
+    func testChartMovesIntoAnEarlierPeriodWhenItsDatesChange() throws {
+        func period(_ start: Date) -> [NativeTimePoint] {
+            (0..<72).map { NativeTimePoint(date: start.addingTimeInterval(Double($0) * 3600), value: Double($0 % 7 + 1)) }
+        }
+        let later = try XCTUnwrap(ISO8601DateFormatter().date(from: "2025-03-10T00:00:00Z"))
+        let earlier = try XCTUnwrap(ISO8601DateFormatter().date(from: "2023-06-10T00:00:00Z"))
+        let input = ChartInput(points: period(later), end: later.addingTimeInterval(72 * 3600))
+        let host = NSHostingView(rootView: ChartHost(input: input))
+        host.frame = NSRect(x: 0, y: 0, width: 640, height: 320)
+        host.layoutSubtreeIfNeeded()
+        func footer() throws -> String {
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: try XCTUnwrap(bitmap.cgImage)).perform([request])
+            return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+        }
+        XCTAssertTrue(try footer().contains("2025"), "the chart opens on its own period")
+        // Custom dates moved to an earlier period: the scroll position from 2025 must not survive.
+        input.points = period(earlier)
+        input.end = earlier.addingTimeInterval(72 * 3600)
+        let seen = try footer()
+        XCTAssertTrue(seen.contains("2023"), "read: \(seen)")
+        XCTAssertFalse(seen.contains("2025"), "read: \(seen)")
     }
 
     func testChartBinningBoundsWorkWithoutLosingCounts() {

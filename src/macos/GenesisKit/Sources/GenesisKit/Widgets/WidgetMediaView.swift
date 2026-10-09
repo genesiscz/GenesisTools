@@ -36,11 +36,13 @@ public enum WidgetMediaSelection: Identifiable {
 @MainActor
 final class WidgetVideoSettingsCommitter {
     private var current: WidgetVideoSettings
-    private var submitted: WidgetVideoSettings
+    /// The last value sent and not refused. `nil` after a refusal, so the next flush (Done, close) sends again.
+    private var submitted: WidgetVideoSettings?
     private var pending: Task<Void, Never>?
-    private let commit: (WidgetVideoSettings) -> Void
+    /// The second argument reports that the backend refused the value.
+    private let commit: (WidgetVideoSettings, @escaping () -> Void) -> Void
 
-    init(initial: WidgetVideoSettings, commit: @escaping (WidgetVideoSettings) -> Void) {
+    init(initial: WidgetVideoSettings, commit: @escaping (WidgetVideoSettings, @escaping () -> Void) -> Void) {
         current = initial
         submitted = initial
         self.commit = commit
@@ -57,8 +59,12 @@ final class WidgetVideoSettingsCommitter {
         pending?.cancel()
         pending = nil
         guard force || current != submitted else { return }
-        submitted = current
-        commit(current)
+        let value = current
+        submitted = value
+        commit(value) { [weak self] in
+            // A refusal of an older value must not undo a newer one that is still in flight.
+            if self?.submitted == value { self?.submitted = nil }
+        }
     }
     func finish(latest: WidgetVideoSettings? = nil) {
         if let latest { current = latest }
@@ -120,10 +126,14 @@ struct WidgetMediaView: View {
                 player = AVPlayer(url: URL(fileURLWithPath: asset.path))
                 updatePlaybackRange(previous: nil)
             }
-            updates = WidgetVideoSettingsCommitter(initial: settings) { value in
+            updates = WidgetVideoSettingsCommitter(initial: settings) { value, refused in
                 do {
-                    model.action(["action": "video-settings", "id": .string(selection.id), "settings": try .value(value)])
-                } catch { model.error = error.localizedDescription }
+                    model.action(["action": "video-settings", "id": .string(selection.id), "settings": try .value(value)],
+                        failed: refused)
+                } catch {
+                    model.error = error.localizedDescription
+                    refused()
+                }
             }
             loadedSettings = true
         }

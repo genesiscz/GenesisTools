@@ -28,7 +28,7 @@ final class WidgetVideoInteractionTests: XCTestCase {
 
     func testDoneImmediatelyAfterChangePersistsLatestExactlyOnce() {
         var committed: [WidgetVideoSettings] = []
-        let editor = WidgetVideoSettingsCommitter(initial: initial) { committed.append($0) }
+        let editor = WidgetVideoSettingsCommitter(initial: initial) { value, _ in committed.append(value) }
         let latest = WidgetVideoSettings(fps: 4, framesPerImage: 8, minimumDifferencePct: 25, startUs: 2_100_000, endUs: 3_200_000)
         editor.update(WidgetVideoSettings(fps: 1, framesPerImage: 4, minimumDifferencePct: 10))
         editor.update(latest)
@@ -36,10 +36,32 @@ final class WidgetVideoInteractionTests: XCTestCase {
         editor.finish()
         XCTAssertEqual(committed, [latest])
     }
+    func testDoneResendsSettingsTheBackendRefused() {
+        var committed: [WidgetVideoSettings] = []
+        var refusals: [() -> Void] = []
+        let editor = WidgetVideoSettingsCommitter(initial: initial) { value, refused in
+            committed.append(value)
+            refusals.append(refused)
+        }
+        let first = WidgetVideoSettings(fps: 1, framesPerImage: 4, minimumDifferencePct: 10)
+        let latest = WidgetVideoSettings(fps: 4, framesPerImage: 8, minimumDifferencePct: 25)
+        editor.update(first)
+        editor.flush()
+        editor.update(latest)
+        editor.flush()
+        refusals[0]()
+        editor.finish()
+        XCTAssertEqual(committed, [first, latest], "a refusal of an older value leaves the newer one standing")
+        refusals[1]()
+        editor.finish()
+        XCTAssertEqual(committed, [first, latest, latest], "Done resends the value the backend refused")
+        editor.finish()
+        XCTAssertEqual(committed.count, 3, "an accepted resend is not sent again")
+    }
     func testOrdinaryDebounceStillCommitsAndUnchangedCloseDoesNothing() async {
         let saved = expectation(description: "debounced settings")
         var count = 0
-        let editor = WidgetVideoSettingsCommitter(initial: initial) { _ in count += 1; saved.fulfill() }
+        let editor = WidgetVideoSettingsCommitter(initial: initial) { _, _ in count += 1; saved.fulfill() }
         editor.finish()
         XCTAssertEqual(count, 0)
         editor.update(WidgetVideoSettings(fps: 1, framesPerImage: 4, minimumDifferencePct: 0))
