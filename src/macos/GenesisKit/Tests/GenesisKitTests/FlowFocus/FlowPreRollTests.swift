@@ -287,6 +287,32 @@ final class FlowPreRollTests: XCTestCase {
     }
 
     @MainActor
+    func testAnOlderFinishReturningDoesNotExposeTheNewerHoldsWords() async throws {
+        let recognizer = CompanionSpeechRecognizer(audioSource: FixtureAudioSource(live: try filled(0.5)))
+        recognizer.recognizes = false
+        recognizer.retryOnEmpty = false
+        do {
+            try recognizer.start(locale: Locale(identifier: "en-US"), forceServer: true)
+        } catch CompanionSpeechError.recognizerUnavailable {
+            throw XCTSkip("No speech recognizer on this runner")
+        }
+        // The first hold is released with a tail, and cancelled while the tail runs.
+        let older = Task { await recognizer.finish(timeoutSeconds: 0.1, tailMs: 200) }
+        for _ in 0..<20 { await Task.yield() }
+        recognizer.cancel()
+        // The next hold starts and finishes while the older finish is still in its tail.
+        try recognizer.start(locale: Locale(identifier: "en-US"), forceServer: true)
+        recognizer.recordRecognizedForTesting("the newer hold's words")
+        recognizer.recognizes = true
+        let newer = Task { await recognizer.finish(timeoutSeconds: 0.8) }
+        _ = await older.value
+        // History is cleared after the older finish returned, while the newer one still waits.
+        recognizer.clearTranscript()
+        let text = await newer.value
+        XCTAssertEqual(text, "the newer hold's words")
+    }
+
+    @MainActor
     func testPreRollLeadsTheRetryClipAndACancelledHoldKeepsNoAudio() throws {
         let live = try filled(0.9)
         let preRoll = try filled(0.1)

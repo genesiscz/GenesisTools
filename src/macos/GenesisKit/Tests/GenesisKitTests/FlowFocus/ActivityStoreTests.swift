@@ -266,6 +266,32 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(try store.segments(from: 0, to: now + 1).map(\.windowTitle), ["recent"])
     }
 
+    @MainActor
+    func testARetentionPruneTheLedgerRefusedIsRetriedWithinMinutes() throws {
+        let now = Date()
+        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+        let controller = FocusController()
+        controller.ownsRuntime = true
+        controller.configuration = FlowFocusConfiguration(directory: URL(fileURLWithPath: (path as NSString).deletingLastPathComponent))
+        controller.start(appConfig: ["focus": ["retentionDays": 30]], databasePath: path,
+                         liveServices: false, presentsWindows: false)
+        defer { controller.stop() }
+        let old = try store.openSegment(segment(nowMs - 40 * 86_400_000, title: "old"))
+        try store.closeSegment(id: old, at: nowMs - 40 * 86_400_000 + 60_000)
+        // Another writer holds the ledger, so this prune fails after the busy timeout.
+        var other: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &other), SQLITE_OK)
+        defer { sqlite3_close(other) }
+        XCTAssertEqual(sqlite3_exec(other, "BEGIN IMMEDIATE;", nil, nil, nil), SQLITE_OK)
+        controller.pruneExpiredActivity(now: now)
+        XCTAssertEqual(sqlite3_exec(other, "ROLLBACK;", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(try store.segments(from: 0, to: nowMs + 1).count, 1)
+
+        controller.pruneIfDue(now: now.addingTimeInterval(FocusController.pruneRetryInterval + 1))
+        XCTAssertTrue(try store.segments(from: 0, to: nowMs + 1).isEmpty,
+                      "expired activity goes minutes later, not a day later")
+    }
+
     func testForgetCanScopeToOneApp() throws {
         let brave = try store.openSegment(segment(1_000, app: "com.brave.Browser"))
         try store.closeSegment(id: brave, at: 2_000)

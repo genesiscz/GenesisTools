@@ -599,17 +599,20 @@ export function readTurnState(
         const tail = readTailAt(filePath, TURN_TAIL_BYTES);
         const records: JsonRecord[] = [];
         const offsets: number[] = [];
-        let offset = tail.start;
+        // Lines are cut from the raw bytes, so an offset stays exact past a line that holds invalid UTF-8.
+        let from = 0;
 
-        for (const line of tail.text.split("\n")) {
-            const record = parseTranscriptLine(line);
+        while (from <= tail.raw.length) {
+            const newline = tail.raw.indexOf(0x0a, from);
+            const end = newline === -1 ? tail.raw.length : newline;
+            const record = parseTranscriptLine(tail.raw.subarray(from, end).toString("utf8"));
 
             if (record !== null) {
                 records.push(record);
-                offsets.push(offset);
+                offsets.push(tail.start + from);
             }
 
-            offset += Buffer.byteLength(line) + 1;
+            from = end + 1;
         }
 
         return turnStateOf(provider, {

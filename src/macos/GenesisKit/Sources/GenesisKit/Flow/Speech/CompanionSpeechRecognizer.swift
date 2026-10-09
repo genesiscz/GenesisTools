@@ -196,7 +196,7 @@ public final class CompanionSpeechRecognizer: ObservableObject {
     /// Drops the finished hold's text; a hold in progress keeps its own. That includes a hold whose capture has
     /// stopped but whose finish() still waits for the final result: it reads the accumulator after that wait.
     func clearTranscript() {
-        guard !isActive, !finishing else { return }
+        guard !isActive, finishing == 0 else { return }
         acc.reset()
         if !partialText.isEmpty { partialText = "" }
     }
@@ -229,7 +229,9 @@ public final class CompanionSpeechRecognizer: ObservableObject {
     /// finish() waiting for the final result; woken by it, by a cancel, by its deadline or by task cancellation.
     private var finalWaiter: CheckedContinuation<Void, Never>?
     /// True from the start of finish() until it returns; capture (`isActive`) ends earlier, before the final wait.
-    private var finishing = false
+    /// finish() calls still running. A count, not a flag: a cancelled hold's finish can still be returning while
+    /// the next hold's finish waits, and the older one must not end the newer one's protection.
+    private var finishing = 0
     /// Which waitForFinal call `finalWaiter` belongs to: its deadline and cancellation wake only that one.
     private var finalWaiterToken = 0
     private var finalWaitCount = 0
@@ -382,8 +384,8 @@ public final class CompanionSpeechRecognizer: ObservableObject {
     /// the release drops it.
     public func finish(timeoutSeconds: Double = 3.0, tailMs: Int = 0) async -> String {
         guard isActive || request != nil else { return "" } // never started
-        finishing = true
-        defer { finishing = false }
+        finishing += 1
+        defer { finishing -= 1 }
         let hold = holdId
         let heldMs = Int(Date().timeIntervalSince(startedAt) * 1000)
         if tailMs > 0, isActive {

@@ -629,7 +629,9 @@ public final class FlowSession: ObservableObject {
             injected: outcome == .injected
         )
 
-        lastInjected = text
+        // A withheld paste after the clipboard changed delivered nothing and left nothing on the clipboard, so the
+        // widget must not show it as the last inserted text; history still has the transcript.
+        lastInjected = outcome == .clipboardChanged ? nil : text
         target = nil
         phase = .idle
 

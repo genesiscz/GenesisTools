@@ -81,7 +81,9 @@ public final class FlowFocusRuntime: ObservableObject {
     public func start() async {
         // A start during an asynchronous stop waits for it: the stop's tail releases the lease and unregisters the
         // participant, which must never belong to the runtime a restart just set up.
-        if let shutdown { await shutdown.value }
+        while let shutdown { await shutdown.value }
+        // A start cancelled while it waited never begins: it would register a participant and stay `.starting`.
+        guard !Task.isCancelled else { return }
         switch role {
         case .starting, .owner, .client: return
         case .stopped, .unavailable: break
@@ -93,7 +95,12 @@ public final class FlowFocusRuntime: ObservableObject {
             installDiscovery()
             try rejectLegacyOwner()
             for _ in 0 ..< 20 {
-                guard !Task.isCancelled, role == .starting else { return }
+                guard role == .starting else { return }
+                if Task.isCancelled {
+                    // Undo the registration, so a later start is not refused by a role stuck at `.starting`.
+                    await stop()
+                    return
+                }
                 if let acquired = try FlowFocusLease.acquire(directory: directory, hostID: hostID) {
                     lease = acquired
                     try becomeOwner(acquired)
@@ -122,13 +129,19 @@ public final class FlowFocusRuntime: ObservableObject {
             await shutdown.value
             return
         }
-        let task = Task { @MainActor [self] in await self.shutDown() }
+        // The task clears itself as its last step: a start resuming between the shutdown's end and this caller's
+        // resumption must never leave a finished task behind for a later stop() to mistake for one in progress.
+        let task = Task { @MainActor [self] in
+            await self.shutDown()
+            self.shutdown = nil
+        }
         shutdown = task
         await task.value
-        shutdown = nil
     }
 
     private var shutdown: Task<Void, Never>?
+    /// Awaited inside a shutdown right before the settings flush; tests hold a shutdown open with it.
+    var beforeShutdownFlush: (() async -> Void)?
 
     private func shutDown() async {
         role = .stopped
@@ -156,6 +169,7 @@ public final class FlowFocusRuntime: ObservableObject {
         }
         dnd.ownsRuntime = false
         dnd.remoteCommand = nil
+        if let beforeShutdownFlush { await beforeShutdownFlush() }
         await configuration.flush()
         if Self.activeOwners[directory] === self { Self.activeOwners.removeValue(forKey: directory) }
         lease?.release()
@@ -423,6 +437,11 @@ public final class FlowFocusRuntime: ObservableObject {
         case "flow.lab": flow.setLabEnabled(try decode(Bool.self))
         case "flow.config":
             let patch = try JSONSerialization.jsonObject(with: command.payload) as? [String: Any] ?? [:]
+            // Decoding clamps a stored value; a new one outside the range is refused, not quietly changed.
+            if let grace = patch["trailingGraceMs"], !((grace as? Int).map(FlowConfig.trailingGraceRange.contains) ?? false) {
+                throw FlowFocusMailbox.Failure.unavailable(
+                    "Trailing grace must be 0 to \(FlowConfig.trailingGraceRange.upperBound) ms.")
+            }
             let raw = try JSONSerialization.jsonObject(with: JSONEncoder().encode(flow.config)) as? [String: Any] ?? [:]
             let value = try JSONDecoder().decode(FlowConfig.self, from:
                 JSONSerialization.data(withJSONObject: FlowFocusConfiguration.merge(raw, patch)))

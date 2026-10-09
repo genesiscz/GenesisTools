@@ -219,7 +219,8 @@ export function readTail(path: string, bytes: number): string {
 }
 
 /** `readTail`, plus the byte offset in the file where the returned text begins (a whole line's start). */
-export function readTailAt(path: string, bytes: number): { text: string; start: number } {
+/** `raw` is the tail's bytes, for callers that count byte offsets: re-encoding `text` changes the length of a line that holds invalid UTF-8. */
+export function readTailAt(path: string, bytes: number): { text: string; start: number; raw: Buffer } {
     const fd = openSync(path, "r");
 
     try {
@@ -229,14 +230,17 @@ export function readTailAt(path: string, bytes: number): { text: string; start: 
         readSync(fd, buffer, 0, buffer.length, start);
 
         if (start === 0) {
-            return { text: buffer.toString("utf8"), start: 0 };
+            return { text: buffer.toString("utf8"), start: 0, raw: buffer };
         }
 
         // The window almost certainly starts mid-line: drop that fragment, counted in bytes.
         const firstNewline = buffer.indexOf(0x0a);
-        return firstNewline === -1
-            ? { text: "", start: size }
-            : { text: buffer.subarray(firstNewline + 1).toString("utf8"), start: start + firstNewline + 1 };
+        if (firstNewline === -1) {
+            return { text: "", start: size, raw: Buffer.alloc(0) };
+        }
+
+        const raw = buffer.subarray(firstNewline + 1);
+        return { text: raw.toString("utf8"), start: start + firstNewline + 1, raw };
     } finally {
         closeSync(fd);
     }

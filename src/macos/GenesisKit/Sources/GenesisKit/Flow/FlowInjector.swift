@@ -113,10 +113,29 @@ public enum FlowInjector {
         usePaste: Bool,
         restoreClipboard: Bool
     ) async -> FlowInjectOutcome {
+        await inject(text, into: target, usePaste: usePaste, restoreClipboard: restoreClipboard, seams: Seams())
+    }
+
+    /// What `inject` touches outside this process; tests replace it so no real app, clipboard or keystroke is used.
+    struct Seams {
+        var pasteboard: NSPasteboard = .general
+        var reactivate: ((FlowFocusTarget) -> Bool)?
+        var trusted: (() -> Bool)?
+        var frontmost: (() -> pid_t?)?
+        var paste: (() -> Void)?
+    }
+
+    static func inject(
+        _ text: String,
+        into target: FlowFocusTarget?,
+        usePaste: Bool,
+        restoreClipboard: Bool,
+        seams: Seams
+    ) async -> FlowInjectOutcome {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .empty }
 
-        let pasteboard = NSPasteboard.general
+        let pasteboard = seams.pasteboard
         let previous = restoreClipboard ? pasteboard.string(forType: .string) : nil
 
         pasteboard.clearContents()
@@ -127,6 +146,9 @@ public enum FlowInjector {
         // this on macOS and openly does NOT on Windows; there is no reason to
         // ship the weaker behaviour.
         pasteboard.setString("", forType: .init("org.nspasteboard.ConcealedType"))
+        // The transcript's own change count, taken before anything else runs: a copy made while the target
+        // activates must not be mistaken for it.
+        let written = pasteboard.changeCount
 
         guard usePaste else { return .copiedOnly }
 
@@ -135,22 +157,22 @@ public enum FlowInjector {
             return .copiedOnly
         }
 
-        guard target.reactivate() else {
+        guard seams.reactivate.map({ $0(target) }) ?? target.reactivate() else {
             FlowFocusLog.flow.info("inject: target pid=\(target.processIdentifier) is gone, left text on the clipboard")
             return .targetLost
         }
 
-        guard isAccessibilityTrusted else {
+        guard seams.trusted.map({ $0() }) ?? isAccessibilityTrusted else {
             FlowFocusLog.flow.error("inject: Accessibility not granted — copied only")
             return .notPermitted
         }
 
-        let written = pasteboard.changeCount
-        let outcome = await pasteAfterActivation(target: target.processIdentifier, written: written)
+        let outcome = await pasteAfterActivation(target: target.processIdentifier, written: written,
+                                                 changeCount: { pasteboard.changeCount },
+                                                 frontmost: seams.frontmost, paste: seams.paste)
         guard outcome == .injected, let previous else { return outcome }
         // Restore only after the paste has had time to read the pasteboard.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            let pasteboard = NSPasteboard.general
             // Something the user copied after the transcript is newer than both; keep it.
             guard pasteboard.changeCount == written else { return }
             pasteboard.clearContents()
