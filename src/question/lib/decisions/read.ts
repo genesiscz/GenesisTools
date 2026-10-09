@@ -196,18 +196,19 @@ export function optionLetters(option: string | undefined | null): string[] {
     return [...new Set((option ?? "").toLowerCase().replace(/[^a-z]/g, ""))].sort();
 }
 
-/**
- * `DECISION 4: b) keep the cache`. Built from stored fields only: the option letters, then the
- * answer text, or the options' own labels when the answer was a bare pick. Two letters read
- * `DECISION 4: a) c) note`.
- */
+/** Preserves the card title and ledger identity before the user's literal answer or option labels. */
 export function decisionLine(row: DecisionRecord): string {
     const letters = optionLetters(row.option);
     const labels = letters.map((letter) => row.options[letter.charCodeAt(0) - 97]).filter(Boolean);
     const text = row.answer?.trim() || labels.join(" / ");
     const picks = letters.map((letter) => `${letter}) `).join("");
 
-    return `DECISION ${row.number}: ${picks}${text}`.trimEnd();
+    const answer = `${picks}${text}`.trimEnd();
+    if (row.title?.trim()) {
+        return [`Reply to: ${row.title.trim()}`, `Ledger decision ${row.number} (${row.id})`, answer].join("\n");
+    }
+
+    return `DECISION ${row.number}: ${answer}`.trimEnd();
 }
 
 function decisionLines(rows: DecisionRecord[]): string {
