@@ -19,6 +19,10 @@ const dedupeSpy = mock(({ replace }: DedupeFileArgs): DedupeResult => {
     return { status: "skipped-same-file", bytesReclaimed: 0 };
 });
 mock.module("@genesiscz/utils/fs/disk-usage", () => ({ ...realDiskUsage, dedupeFile: dedupeSpy }));
+// The guard is platform-independent, but the run refuses before it on a volume without APFS clones (every Linux CI
+// runner): say the volume supports them, since the spy above stands in for the only call that would clone.
+const realApfs = await import("@genesiscz/utils/macos/apfs");
+mock.module("@genesiscz/utils/macos/apfs", () => ({ ...realApfs, isApfsCloneSupported: () => true }));
 
 const { applyReclaimPlan } = await import("@app/macos/lib/clones/plan-runner");
 const { reclaimRunPath } = await import("@app/macos/lib/clones/reclaim-run");
