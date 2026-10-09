@@ -158,22 +158,47 @@ async function tmuxPaneProblem(
 
     const pane = listing.items.find((entry) => entry.pane === record.tmuxPane);
     const ttyMoved = isAdopted(record) && pane !== undefined && !sameTty(pane.tty, record.tty);
-    // A tmux server restart can bring back a session with the same name and pane id: its creation time differs.
-    const created = record.tmuxSessionCreatedMs;
-    const replaced =
-        pane !== undefined && created !== undefined && created !== null && pane.sessionCreatedMs !== created;
-
-    if (replaced) {
-        return {
-            reason: "workspace-moved",
-            note: `tmux session ${record.tmuxSession} is a newer session than the recorded one, so nothing is typed into pane ${record.tmuxPane}`,
-        };
-    }
 
     if (!pane || ttyMoved) {
         return {
             reason: "workspace-moved",
             note: `tmux pane ${record.tmuxPane} is ${pane ? "now another terminal" : "no longer in"} ${record.tmuxSession}, so the exit command has no safe target`,
+        };
+    }
+
+    return null;
+}
+
+/**
+ * Why the tmux session that has the recorded name is not the recorded one, or null when it is (or nothing was
+ * recorded to compare). A tmux server restart can bring back a session with the same name and pane id; its
+ * creation time differs. That is proof of another session, never a judgement call, so `--force` never skips it.
+ */
+async function tmuxGenerationProblem(
+    record: CloseSubject,
+    io: Pick<SessionCloseIO, "tmuxPanes">
+): Promise<{ reason: CloseReason; note: string } | null> {
+    const created = record.tmuxSessionCreatedMs;
+
+    if (!record.tmuxSession || created === undefined || created === null) {
+        return null;
+    }
+
+    const listing = await io.tmuxPanes(record.tmuxSession);
+
+    if (!listing.ok) {
+        return {
+            reason: "identity-unknown",
+            note: `tmux session ${record.tmuxSession} could not be checked (${listing.reason}), so nothing is typed into it`,
+        };
+    }
+
+    const live = listing.items[0];
+
+    if (live && live.sessionCreatedMs !== created) {
+        return {
+            reason: "workspace-moved",
+            note: `tmux session ${record.tmuxSession} is a newer session than the recorded one, so nothing is typed into it`,
         };
     }
 
@@ -553,6 +578,15 @@ async function closeTarget(input: {
     const identityRefused = async (stage: IdentityStage): Promise<CloseReport | null> => {
         if (!record) {
             return null;
+        }
+
+        // Before anything is typed: a replacement tmux session is refused for every session, --force or not.
+        if (stage !== "close") {
+            const replaced = await tmuxGenerationProblem(record, io);
+
+            if (replaced) {
+                return refuse(replaced.reason, replaced.note);
+            }
         }
 
         if (isAdopted(record)) {
