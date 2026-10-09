@@ -341,6 +341,23 @@ test("refuses to type into an ambiguous working-directory match", async () => {
     expect(events.some((event) => event.startsWith("send "))).toBe(false);
 });
 
+test("an automated exact-session reply refuses even one working-directory match", async () => {
+    setSnapshot([
+        pane({
+            id: "pane:7",
+            cwd: "/repo",
+            selectedSurfaceRef: "surface:1",
+            surfaces: [surface({ id: "surface:1", selected: true })],
+        }),
+    ]);
+    const cwdDeps = { ...deps, lookupSession: async () => ({ aliases: [], sessionId: SESSION_A, cwd: "/repo" }) };
+    await sendCommand(SESSION_A, "media reply", { exactSession: true, paste: true, json: true }, cwdDeps);
+    const result = SafeJSON.parse(await capturedResult());
+    expect(result.sent).toBe(false);
+    expect(result.source).toBe("cwd");
+    expect(events.some((event) => event.startsWith("paste ") || event.startsWith("send "))).toBe(false);
+});
+
 test("a single working-directory match still delivers", async () => {
     setSnapshot([
         pane({

@@ -14,6 +14,7 @@ export interface SendOptions {
     includeSelf?: boolean;
     enter?: boolean;
     paste?: boolean;
+    exactSession?: boolean;
     enterDelay?: string;
     dryRun?: boolean;
     json?: boolean;
@@ -141,7 +142,7 @@ export function refuseAmbiguous(
     queryTrim: string,
     opts: SendOptions
 ): boolean {
-    if (SOFT_SOURCES.has(result.source) && result.targets.length > 1) {
+    if (SOFT_SOURCES.has(result.source) && (opts.exactSession || result.targets.length > 1)) {
         process.exitCode = 1;
 
         if (opts.json) {
@@ -156,7 +157,9 @@ export function refuseAmbiguous(
         }
 
         out.error(
-            pc.red(`"${queryTrim}" only matched weakly (${result.source}), and ${result.targets.length} panes qualify.`)
+            pc.red(
+                `"${queryTrim}" only matched weakly (${result.source}); this does not identify the recipient session.`
+            )
         );
         out.printlnErr(pc.dim("  Send a prompt in that session once so the hook can record its pane, then retry."));
         return true;
@@ -314,7 +317,7 @@ function report({ opts, query, target, surfaceId, enter, source }: SendReport): 
     }
 
     out.printlnErr(
-        `${pc.green("✔")} sent to ${pc.bold(target.workspaceName)} ${pc.dim(target.paneId)} ` +
+        `${pc.green("√")} sent to ${pc.bold(target.workspaceName)} ${pc.dim(target.paneId)} ` +
             pc.dim(`${surfaceId} (matched on ${describeMatch(target)})`)
     );
 }

@@ -295,7 +295,11 @@ export async function resolveDeliveryTarget(
         };
     }
 
-    if ((SOFT_SOURCES.has(result.source) && result.targets.length > 1) || !isUnambiguous(result.targets)) {
+    if (SOFT_SOURCES.has(result.source)) {
+        return { kind: "none", reason: "the cmux match does not identify the exact recipient session" };
+    }
+
+    if (!isUnambiguous(result.targets)) {
         return { kind: "none", reason: `${result.targets.length} cmux panes match this session; none was picked` };
     }
 
@@ -496,7 +500,7 @@ export async function deliverToSession(
         );
     }
 
-    const sent = await run(["claude", "cmux", "send", session, paneText(text), "--json", "--paste"]);
+    const sent = await run(["claude", "cmux", "send", session, paneText(text), "--json", "--paste", "--exact-session"]);
     const outcome = parseSent(sent.stdout);
     log.info(
         { session, provider, ok: sent.success, sent: outcome, stderr: sent.stderr.slice(0, 400) },

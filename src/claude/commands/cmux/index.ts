@@ -72,6 +72,7 @@ export function registerCmuxCommand(program: Command): void {
         .option("--include-self", "Also consider the pane this command runs in (excluded by default)")
         .option("--no-enter", "Send the text only, leave it unsubmitted at the prompt")
         .option("--paste", "Paste one literal multiline message; submit through the agent's paste path")
+        .option("--exact-session", "Refuse working-directory or screen-text fallback for automated replies")
         .option("--enter-delay <ms>", "Wait this long between the text and Enter", "500")
         .option("--dry-run", "Print what would receive the text and stop")
         .option("--json", "Emit the outcome as JSON instead of a status line")

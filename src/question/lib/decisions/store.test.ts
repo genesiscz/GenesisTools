@@ -828,7 +828,16 @@ describe("delivery routes", () => {
 
         expect(result).toMatchObject({ channel: "cmux", delivered: true, target: "cmux · work · agent" });
         expect(calls).toEqual([
-            ["claude", "cmux", "send", "abc", "DECISION 1: a) yes\nDECISION 2: b) no", "--json", "--paste"],
+            [
+                "claude",
+                "cmux",
+                "send",
+                "abc",
+                "DECISION 1: a) yes\nDECISION 2: b) no",
+                "--json",
+                "--paste",
+                "--exact-session",
+            ],
         ]);
     });
 
@@ -853,6 +862,27 @@ describe("delivery routes", () => {
 
         expect(result.channel).toBe("queued");
         expect(result.delivered).toBe(false);
+    });
+
+    test("automatic replies never type into a lone cwd or screen-text match", async () => {
+        for (const source of ["cwd", "screen"] as const) {
+            let sends = 0;
+            const result = await deliverToSession(
+                { session: "original-session", provider: "claude", text: "media reply" },
+                {
+                    findTargets: async (session) => ({ ...(await livePaneTargets(session)), source }),
+                    runTool: async () => {
+                        sends++;
+                        return { success: true, stdout: '{"sent":true}', stderr: "" };
+                    },
+                }
+            );
+            expect(result).toMatchObject({
+                delivered: false,
+                error: "the cmux match does not identify the exact recipient session",
+            });
+            expect(sends).toBe(0);
+        }
     });
 
     test("a readable cmux refusal reaches the durable session queue, while unreadable output does not", async () => {
