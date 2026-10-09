@@ -31,6 +31,8 @@ export const PATCHES: PatchEntry[] = [
     { pkg: "node_modules/@clack/prompts", patch: "patches/@clack%2Fprompts@1.7.0.patch" },
     // Upstream fix for server.close() hanging on a mid-optimize dep; drop at vite >= 8.3.1.
     { pkg: "node_modules/vite", patch: "patches/vite@8.2.2.patch", fixedIn: "8.3.1" },
+    // The deps optimizer kept writing into cacheDir after server.close(); applies on top of the patch above.
+    { pkg: "node_modules/vite", patch: "patches/vite@8.2.2-optimizer-close.patch" },
 ];
 
 /** True when the installed version already ships the fix the patch carries. */

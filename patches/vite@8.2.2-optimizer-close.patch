@@ -1,0 +1,95 @@
+Applied on top of vite@8.2.2.patch. vite main still has this race, so it carries no fixedIn.
+
+The deps optimizer could keep bundling into cacheDir after server.close() resolved:
+- onCrawlEnd() detaches optimizationResult before awaiting it, so close() neither cancels nor waits for that run;
+- a scan that finishes after close() still starts a fresh run;
+- a run's cancel() deleted deps_temp_* while bundle.write() was still writing into it;
+- runOptimizer(preRunResult) returns early once closed without cancelling the run it was handed,
+  so a finished deps_temp_* folder stayed in the cache.
+A caller that removes cacheDir after close() then gets "Failed to write file in .../deps_temp_*" as an
+unhandled rejection from onCrawlEnd(). close() now cancels and waits for every run that is neither
+committed nor cleaned up, cancel() lets the write finish before it removes the folder, and a scan never
+starts a run once the optimizer is closed.
+
+diff --git a/dist/node/chunks/node.js b/dist/node/chunks/node.js
+index 81caedc..0a7b8c0 100644
+--- a/dist/node/chunks/node.js
++++ b/dist/node/chunks/node.js
+@@ -32272,7 +32272,10 @@ function runOptimizeDeps(environment, depsInfo) {
+ 	};
+ 	if (!qualifiedIds.length) return {
+ 		cancel: async () => cleanUp(),
+-		result: Promise.resolve(successfulResult)
++		result: Promise.resolve(successfulResult),
++		get finished() {
++			return cleaned || committed;
++		}
+ 	};
+ 	const cancelledResult = {
+ 		metadata,
+@@ -32337,9 +32340,13 @@ function runOptimizeDeps(environment, depsInfo) {
+ 			optimizerContext.cancelled = true;
+ 			const { context } = await preparedRun;
+ 			context?.cancel();
++			await runResult.catch(() => {});
+ 			cleanUp();
+ 		},
+-		result: runResult
++		result: runResult,
++		get finished() {
++			return cleaned || committed;
++		}
+ 	};
+ }
+ async function prepareRolldownOptimizerRun(environment, depsInfo, processingCacheDir, optimizerContext) {
+@@ -34387,7 +34394,7 @@ function createDepsOptimizer(environment) {
+ 		isOptimizedDepFile: createIsOptimizedDepFile(environment),
+ 		isOptimizedDepUrl: createIsOptimizedDepUrl(environment),
+ 		getOptimizedDepId: (depInfo) => `${depInfo.file}?v=${depInfo.browserHash}`,
+-		close,
++		close: closeWithOpenRuns,
+ 		options
+ 	};
+ 	let newDepsDiscovered = false;
+@@ -34412,6 +34419,17 @@ function createDepsOptimizer(environment) {
+ 		for (const processing of depOptimizationProcessingQueue) processing.resolve();
+ 		depOptimizationProcessingQueue = [];
+ 	};
++	const openRuns = /* @__PURE__ */ new Set();
++	function startOptimizeRun(knownDeps) {
++		for (const run of openRuns) if (run.finished) openRuns.delete(run);
++		const run = runOptimizeDeps(environment, knownDeps);
++		openRuns.add(run);
++		return run;
++	}
++	async function closeWithOpenRuns() {
++		await close();
++		await Promise.allSettled([...openRuns].map((run) => run.cancel()));
++	}
+ 	let enqueuedRerun;
+ 	let currentlyProcessing = false;
+ 	let firstRunCalled = false;
+@@ -34471,12 +34489,13 @@ function createDepsOptimizer(environment) {
+ 						} finally {
+ 							clearTimeout(scanTimer);
+ 						}
++						if (closed) return;
+ 						const manuallyIncluded = Object.keys(manuallyIncludedDepsInfo);
+ 						discoveredDepsWhileScanning.push(...Object.keys(metadata.discovered).filter((dep) => !deps[dep] && !manuallyIncluded.includes(dep)));
+ 						for (const id of Object.keys(deps)) if (!metadata.discovered[id]) addMissingDep(id, deps[id]);
+ 						const knownDeps = prepareKnownDeps();
+ 						startNextDiscoveredBatch();
+-						optimizationResult = runOptimizeDeps(environment, knownDeps);
++						optimizationResult = startOptimizeRun(knownDeps);
+ 						if (!holdUntilCrawlEnd) optimizationResult.result.then((result) => {
+ 							if (!waitingForCrawlEnd) return;
+ 							optimizationResult = void 0;
+@@ -34524,7 +34543,7 @@ function createDepsOptimizer(environment) {
+ 			else {
+ 				const knownDeps = prepareKnownDeps();
+ 				startNextDiscoveredBatch();
+-				optimizationResult = runOptimizeDeps(environment, knownDeps);
++				optimizationResult = startOptimizeRun(knownDeps);
+ 				processingResult = await optimizationResult.result;
+ 				optimizationResult = void 0;
+ 			}

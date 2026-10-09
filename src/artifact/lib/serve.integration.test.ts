@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ViteDevServer } from "vite";
@@ -203,5 +203,44 @@ describe("serveArtifacts middleware", () => {
 
         expect(denied.status).not.toBe(200);
         expect(denied.body).not.toContain("devDependencies");
+    });
+});
+
+describe("serveArtifacts shutdown", () => {
+    /**
+     * Vite's onCrawlEnd() takes the post-scan bundling run out of the optimizer's
+     * hands before awaiting it, so close() used to resolve while that run was still
+     * writing deps_temp_*. A teardown that then removed the cache crashed the write
+     * with an unhandled "Failed to write file in .../deps_temp_*" rejection.
+     * patches/vite@8.2.2-optimizer-close.patch makes close() wait for every run.
+     */
+    test("close() waits for the deps optimizer, so no half-written deps_temp folder outlives it", async () => {
+        const coldDir = realpathSync(mkdtempSync(join(tmpdir(), "artifact-serve-close-")));
+        const coldCache = realpathSync(mkdtempSync(join(tmpdir(), "artifact-serve-close-cache-")));
+
+        try {
+            const cold = await serveArtifacts({
+                dir: coldDir,
+                port: 0,
+                host: "127.0.0.1",
+                templateDir: resolveTemplateDir(undefined),
+                cacheDir: coldCache,
+            });
+
+            try {
+                const client = cold.environments.client;
+                // onCrawlEnd() waits on this same promise and was registered first, so it
+                // runs before this test does; after the scan it holds the bundling run.
+                await client.waitForRequestsIdle();
+                await client.depsOptimizer?.scanProcessing;
+            } finally {
+                await cold.close();
+            }
+
+            expect(readdirSync(coldCache).filter((name) => name.startsWith("deps_temp"))).toEqual([]);
+        } finally {
+            rmSync(coldDir, { recursive: true, force: true });
+            rmSync(coldCache, { recursive: true, force: true });
+        }
     });
 });
