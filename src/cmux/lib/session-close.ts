@@ -2,7 +2,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import type { TmuxListing, TmuxPaneInfo } from "@genesiscz/utils/tmux/sessions";
 import { sessionAgent } from "./session-agents";
-import { openSessions, type SessionCreatedRecord, type SessionStore } from "./session-store";
+import { openSessions, type SessionCreatedRecord, SessionNameBusyError, type SessionStore } from "./session-store";
 
 export type CloseReason =
     | "not-found"
@@ -12,7 +12,8 @@ export type CloseReason =
     | "identity-unknown"
     | "own-workspace"
     | "turn-running"
-    | "agent-still-running";
+    | "agent-still-running"
+    | "in-use";
 
 export interface CloseSteps {
     exitSent: boolean;
@@ -184,8 +185,9 @@ export interface SessionCloseIO {
     callerWorkspaceId(): string | undefined;
     /**
      * The agent session in the record's surface and its turn state, or null when no hook recorded one.
-     * `UNREADABLE` (no session id, a `detail`) means the lookup itself failed, for example tmux did not answer:
-     * close then refuses like a running turn, because a busy agent cannot be ruled out.
+     * `unreadable` means the lookup failed for a session that may exist (tmux did not answer, or a known session's
+     * transcript could not be resolved or read): close then refuses like a running turn, because a busy agent
+     * cannot be ruled out.
      */
     turnState(record: CloseSubject): Promise<TurnLookup | null>;
     sendExit(record: CloseSubject, text: string): Promise<void>;
@@ -202,8 +204,45 @@ export interface SessionCloseIO {
 }
 
 export type TurnLookup =
-    | { sessionId: string; state: string }
-    | { sessionId: null; state: "UNREADABLE"; detail: string };
+    | { kind: "read"; sessionId: string; state: string }
+    | { kind: "unreadable"; sessionId: string | null; detail: string };
+
+/**
+ * The turn state of a known agent session. A transcript that cannot be resolved or read, or that gives no state,
+ * is `unreadable`, never "unknown": close only types the exit into an agent whose turn it has seen end.
+ */
+export async function readTurnLookup<Agent extends string>(input: {
+    sessionId: string;
+    agent: Agent;
+    transcriptOf: (sessionId: string, agent: Agent) => Promise<{ filePath: string }>;
+    stateOf: (agent: Agent, filePath: string) => { state: string } | null;
+}): Promise<TurnLookup> {
+    const { sessionId, agent } = input;
+    let filePath: string;
+
+    try {
+        filePath = (await input.transcriptOf(sessionId, agent)).filePath;
+    } catch (error) {
+        return { kind: "unreadable", sessionId, detail: `no transcript for ${sessionId}: ${errorText(error)}` };
+    }
+
+    try {
+        const snapshot = input.stateOf(agent, filePath);
+        return snapshot
+            ? { kind: "read", sessionId, state: snapshot.state }
+            : { kind: "unreadable", sessionId, detail: `the transcript ${filePath} gives no turn state` };
+    } catch (error) {
+        return {
+            kind: "unreadable",
+            sessionId,
+            detail: `the transcript ${filePath} could not be read: ${errorText(error)}`,
+        };
+    }
+}
+
+function errorText(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
 
 export interface CloseOptions {
     force?: boolean;
@@ -219,7 +258,7 @@ const CLOSE_SETTLE_MS = 3_000;
 type Target =
     | { kind: "record"; record: CloseSubject }
     | { kind: "bare"; workspace: string }
-    | { kind: "none"; reason: "not-found" | "ambiguous"; note: string };
+    | { kind: "none"; reason: "not-found" | "ambiguous" | "in-use"; note: string };
 
 /** A record name, a unique name prefix, or the record's workspace ref. A bare `workspace:N` is a candidate for --force. */
 export function resolveCloseTarget(query: string, records: readonly SessionCreatedRecord[]): Target {
@@ -370,6 +409,33 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
         }
     }
 
+    // A recorded session closes under the same per-name reservation `agents new` starts it under: two closes, or a
+    // close and a new start with the same name, never interleave.
+    if (target.kind === "record" && !isAdopted(target.record)) {
+        const name = target.record.name;
+        const reserved = target;
+
+        try {
+            return await io.store.reserve(name, () => closeTarget({ query, target: reserved, options, io }));
+        } catch (error) {
+            if (!(error instanceof SessionNameBusyError)) {
+                throw error;
+            }
+
+            return closeTarget({ query, target: { kind: "none", reason: "in-use", note: error.message }, options, io });
+        }
+    }
+
+    return closeTarget({ query, target, options, io });
+}
+
+async function closeTarget(input: {
+    query: string;
+    target: Target;
+    options: CloseOptions;
+    io: SessionCloseIO;
+}): Promise<CloseReport> {
+    const { query, target, options, io } = input;
     const record = target.kind === "record" ? target.record : null;
     const adopted = record !== null && isAdopted(record);
     const report: CloseReport = {
@@ -403,6 +469,17 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
             "not-recorded",
             `${target.workspace} has no session record and no agent session to adopt; pass --force to close the workspace anyway`
         );
+    }
+
+    // Read again under the reservation: another close may have finished this session while this one waited.
+    if (
+        record &&
+        !isAdopted(record) &&
+        !openSessions(io.store.read()).some(
+            (entry) => entry.name === record.name && entry.createdAt === record.createdAt
+        )
+    ) {
+        return refuse("not-found", `${record.name} was closed by another close meanwhile`);
     }
 
     const listed = (await io.listWorkspaces(report.window)).find((workspace) => workspace.ref === report.workspace);
@@ -443,13 +520,13 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
     if (record) {
         const turn = await io.turnState(record);
         report.sessionId = turn?.sessionId ?? report.sessionId;
-        report.turnState = turn?.state ?? null;
+        report.turnState = turn ? (turn.kind === "read" ? turn.state : "UNREADABLE") : null;
 
         if (!turn) {
             report.notes.push("no agent session is recorded for this surface; the turn state is unknown");
         }
 
-        if (turn?.sessionId === null && !options.force) {
+        if (turn?.kind === "unreadable" && !options.force) {
             return refuse(
                 "turn-running",
                 `the ${record.agent} turn state could not be read (${turn.detail}), so a running turn cannot be ruled out; retry, or pass --force`
@@ -458,7 +535,7 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
 
         // STALLED is an unfinished turn that wrote nothing for a while: a long tool call looks the same, so it
         // is refused like RUNNING. Only --force quits an agent mid-turn.
-        if (turn?.sessionId && (turn.state === "RUNNING" || turn.state === "STALLED") && !options.force) {
+        if (turn?.kind === "read" && (turn.state === "RUNNING" || turn.state === "STALLED") && !options.force) {
             const how =
                 turn.state === "STALLED" ? "has not finished (stalled, possibly a long tool call)" : "is still running";
             return refuse(
@@ -568,6 +645,7 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
         io.store.append({
             type: "closed",
             name: record.name,
+            createdAt: record.createdAt,
             closedAt: new Date(io.now()).toISOString(),
             outcome: report.outcome,
             steps: { ...report.steps },

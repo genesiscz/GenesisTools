@@ -308,6 +308,43 @@ export interface LiveAgentSurface {
     agent: SessionAgentId;
     surface: LiveSurface;
     cwd: string | null;
+    /** Set for a --via-tmux session: the surface only shows its pane while the tmux client displays it. */
+    tmux?: TmuxPaneSurface | null;
+}
+
+/**
+ * Does the surface still display the agent's tmux pane? Its tmux client must still show the pane's session, and
+ * the pane must still be the session's visible pane on the same tty. The user may switch tmux windows or panes
+ * at any time, and keystrokes into the surface go to whatever pane it shows then.
+ */
+export function tmuxPaneStillShown(input: {
+    joined: TmuxPaneSurface;
+    surfaceTty: string | null;
+    panes: readonly TmuxPaneInfo[];
+    clients: readonly TmuxClientInfo[];
+}): { ok: true } | { ok: false; reason: string } {
+    const { joined } = input;
+    const surfaceTty = ttyName(input.surfaceTty);
+    const client = input.clients.find((entry) => surfaceTty !== null && ttyName(entry.tty) === surfaceTty);
+
+    if (!client || client.session !== joined.session) {
+        return { ok: false, reason: `the surface no longer shows the tmux session ${joined.session}` };
+    }
+
+    const pane = input.panes.find((entry) => entry.pane === joined.pane);
+
+    if (!pane || pane.session !== joined.session || ttyName(pane.tty) !== joined.paneTty) {
+        return { ok: false, reason: `tmux pane ${joined.pane} is no longer the agent's pane in ${joined.session}` };
+    }
+
+    if (!pane.visible) {
+        return {
+            ok: false,
+            reason: `tmux shows another pane of ${joined.session} now, not the agent's ${joined.pane}`,
+        };
+    }
+
+    return { ok: true };
 }
 
 /** The newest agent session of each live surface (caller excluded), with the agent named. */
@@ -319,11 +356,11 @@ export function liveAgentSurfaces(input: {
 }): LiveAgentSurface[] {
     const found: LiveAgentSurface[] = [];
 
-    for (const { entry, live } of newestPerLiveSurface(input).values()) {
+    for (const { entry, live, tmux } of newestPerLiveSurface(input).values()) {
         const agent = input.providerOf(entry);
 
         if (agent && isSessionAgentId(agent)) {
-            found.push({ sessionId: entry.sessionId, agent, surface: live, cwd: entry.cwd });
+            found.push({ sessionId: entry.sessionId, agent, surface: live, cwd: entry.cwd, tmux });
         }
     }
 

@@ -3,17 +3,17 @@ import { importStorePackage } from "@genesiscz/utils/package-store";
 import { ensurePackage } from "@genesiscz/utils/packages";
 import { bruteForceVectorSearch, type VectorSearchHit, type VectorStore } from "./vector-store";
 
-interface ArrowVector {
+export interface ArrowVector {
     toArray(): Float32Array;
 }
 
-interface LanceDBRow {
+export interface LanceDBRow {
     id: string;
     vector: ArrowVector;
     _distance?: number;
 }
 
-interface LanceDBTable {
+export interface LanceDBTable {
     add(data: Array<{ id: string; vector: number[] }>): Promise<void>;
     delete(predicate: string): Promise<void>;
     mergeInsert(on: string): {
@@ -36,7 +36,7 @@ interface LanceDBTable {
     countRows(): Promise<number>;
 }
 
-interface LanceDBConnection {
+export interface LanceDBConnection {
     createTable(name: string, data: Array<{ id: string; vector: number[] }>): Promise<LanceDBTable>;
     openTable(name: string): Promise<LanceDBTable>;
     tableNames(): Promise<string[]>;
@@ -49,6 +49,15 @@ export interface LanceDBVectorStoreConfig {
     tableName: string;
     /** Vector dimensions (used for initial seed vector if table does not exist) */
     dimensions: number;
+    /** Opens the database. Defaults to LanceDB from the shared package store; tests pass an in-memory one. */
+    connect?: (dbPath: string) => Promise<LanceDBConnection>;
+}
+
+/** LanceDB itself, loaded from the shared package store (installed on first use). */
+async function connectLanceDB(dbPath: string): Promise<LanceDBConnection> {
+    await ensurePackage("@lancedb/lancedb", { label: "LanceDB vector store" });
+    const lancedb = await importStorePackage<typeof import("@lancedb/lancedb")>("@lancedb/lancedb");
+    return (await lancedb.connect(dbPath)) as unknown as LanceDBConnection;
 }
 
 /**
@@ -160,9 +169,7 @@ export class LanceDBVectorStore implements VectorStore {
     }
 
     private async initialize(): Promise<void> {
-        await ensurePackage("@lancedb/lancedb", { label: "LanceDB vector store" });
-        const lancedb = await importStorePackage<typeof import("@lancedb/lancedb")>("@lancedb/lancedb");
-        this.db = (await lancedb.connect(this.config.dbPath)) as unknown as LanceDBConnection;
+        this.db = await (this.config.connect ?? connectLanceDB)(this.config.dbPath);
 
         const tableNames = await this.db.tableNames();
 

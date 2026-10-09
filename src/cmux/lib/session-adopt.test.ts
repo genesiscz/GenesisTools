@@ -7,6 +7,7 @@ import {
     matchLiveAgentSurfaces,
     parseCmuxTree,
     pickAdoptable,
+    tmuxPaneStillShown,
     ttyRunsAgent,
 } from "./session-adopt";
 
@@ -233,4 +234,26 @@ test("a tmux pane joins no surface when no client, several surfaces, a hidden pa
     expect(find(joinTmuxPanes({ panes: [PANE], clients: [{ tty: "ttys001", session: PANE.session }], tree }))).toEqual(
         []
     );
+});
+
+test("a tmux-joined surface counts as showing the agent only while its client shows the agent's visible pane", () => {
+    const joined = {
+        pane: "%41",
+        session: PANE.session,
+        surface: "surface:6",
+        paneTty: "ttys041",
+        sessionCreatedMs: 10_000,
+    };
+    const shown = (panes: (typeof PANE)[], clients: { tty: string; session: string }[]) =>
+        tmuxPaneStillShown({ joined, surfaceTty: "ttys006", panes, clients }).ok;
+    const client = { tty: "/dev/ttys006", session: PANE.session };
+
+    expect(shown([PANE], [client])).toBe(true);
+    // The user switched to another pane or window of the session.
+    expect(shown([{ ...PANE, visible: false }], [client])).toBe(false);
+    // The client now shows another tmux session.
+    expect(shown([PANE], [{ ...client, session: "other" }])).toBe(false);
+    // The pane id now runs on another tty (tmux server restarted).
+    expect(shown([{ ...PANE, tty: "/dev/ttys099" }], [client])).toBe(false);
+    expect(shown([], [client])).toBe(false);
 });

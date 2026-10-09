@@ -5,6 +5,7 @@ import {
     type AdoptedSession,
     closeSession,
     type ListedWorkspace,
+    readTurnLookup,
     recordedSessionFor,
     recordedSessionIdOf,
     type SessionCloseIO,
@@ -12,7 +13,7 @@ import {
     type TurnLookup,
     tmuxExitTarget,
 } from "./session-close";
-import { openSessions, type SessionCreatedRecord, type SessionRecordLine } from "./session-store";
+import { openSessions, type SessionCreatedRecord, SessionNameBusyError, type SessionRecordLine } from "./session-store";
 
 function created(overrides: Partial<SessionCreatedRecord> = {}): SessionCreatedRecord {
     return {
@@ -109,7 +110,8 @@ function fake(input: {
             surfaces = new Set([...surfaces].filter((entry) => entry !== surface && uuidOf(entry) !== surface));
         },
         callerWorkspaceId: () => input.caller,
-        turnState: async () => (input.turn === undefined ? { sessionId: "s-1", state: "AWAITING-INPUT" } : input.turn),
+        turnState: async () =>
+            input.turn === undefined ? { kind: "read", sessionId: "s-1", state: "AWAITING-INPUT" } : input.turn,
         sendExit: async (_record, text) => {
             calls.push(`exit ${text}`);
             forbid("the exit command");
@@ -180,13 +182,13 @@ test("no record, the caller's own workspace, a moved ref and a running turn are 
     expect((await closeSession("codex-app-ab12cd", { graceMs: 0 }, moved.io)).reason).toBe("workspace-moved");
     expect(moved.calls).toEqual([]);
 
-    const busy = fake({ turn: { sessionId: "s-1", state: "RUNNING" } });
+    const busy = fake({ turn: { kind: "read", sessionId: "s-1", state: "RUNNING" } });
     const busyReport = await closeSession("codex-app-ab12cd", { graceMs: 0 }, busy.io);
     expect(busyReport.reason).toBe("turn-running");
     expect(busyReport.notes[0]).toContain("tools codex wait s-1");
     expect(busy.calls).toEqual([]);
 
-    const stalled = fake({ turn: { sessionId: "s-1", state: "STALLED" } });
+    const stalled = fake({ turn: { kind: "read", sessionId: "s-1", state: "STALLED" } });
     const stalledReport = await closeSession("codex-app-ab12cd", { graceMs: 0 }, stalled.io);
     expect(stalledReport.reason).toBe("turn-running");
     expect(stalledReport.notes[0]).toContain("stalled");
@@ -463,8 +465,8 @@ test("a surface session is found by its surface UUID, and an entry from before i
 
 test("a turn state that could not be read refuses like a running turn, and --force still closes", async () => {
     const unreadable = {
+        kind: "unreadable" as const,
         sessionId: null,
-        state: "UNREADABLE" as const,
         detail: "tmux list-panes did not answer within 10 s",
     };
     const refused = fake({
@@ -574,4 +576,100 @@ test("a tmux kill that fails leaves the close partial and the record open; one t
     const ok = await closeSession("codex-app-ab12cd", { graceMs: 1_000, killTmux: true }, killed.io);
     expect(ok).toMatchObject({ outcome: "closed", steps: { tmuxKilled: true } });
     expect(openSessions(killed.lines)).toEqual([]);
+});
+
+test("a known session whose transcript cannot be resolved, read, or gives no state is unreadable, not unknown", async () => {
+    const lookup = (input: {
+        transcriptOf?: (id: string) => Promise<{ filePath: string }>;
+        stateOf?: () => { state: string } | null;
+    }) =>
+        readTurnLookup({
+            sessionId: "s-1",
+            agent: "codex",
+            transcriptOf: input.transcriptOf ?? (async () => ({ filePath: "/t/s-1.jsonl" })),
+            stateOf: input.stateOf ?? (() => ({ state: "AWAITING-INPUT" })),
+        });
+
+    expect(
+        await lookup({
+            transcriptOf: async () => {
+                throw new Error("no rollout for s-1");
+            },
+        })
+    ).toMatchObject({ kind: "unreadable", sessionId: "s-1" });
+    expect(await lookup({ stateOf: () => null })).toMatchObject({ kind: "unreadable", sessionId: "s-1" });
+    expect(
+        await lookup({
+            stateOf: () => {
+                throw new Error("EACCES");
+            },
+        })
+    ).toMatchObject({ kind: "unreadable" });
+    // The control: a readable transcript gives its state.
+    expect(await lookup({})).toEqual({ kind: "read", sessionId: "s-1", state: "AWAITING-INPUT" });
+});
+
+test("an unreadable known session gets no exit and no close without --force", async () => {
+    const turn = { kind: "unreadable" as const, sessionId: "s-1", detail: "no transcript for s-1" };
+    const refused = fake({ turn, forbidIrreversible: true });
+    const report = await closeSession("codex-app-ab12cd", { graceMs: 0 }, refused.io);
+
+    expect(report).toMatchObject({ outcome: "refused", reason: "turn-running", sessionId: "s-1" });
+    expect(refused.calls).toEqual([]);
+
+    // The control: a session whose turn ended still closes.
+    const ended = fake({ runningChecks: 1 });
+    expect((await closeSession("codex-app-ab12cd", { graceMs: 1_000 }, ended.io)).outcome).toBe("closed");
+});
+
+test("a close that waited for the name finds the session already closed, and never closes a newer one", async () => {
+    const first = created();
+    const reopened = created({ createdAt: "2026-10-08T18:00:00.000Z", workspace: "workspace:12" });
+    // The old session was closed and a new one opened under the same name while this close waited.
+    const lines: SessionRecordLine[] = [
+        first,
+        { type: "closed", name: first.name, createdAt: first.createdAt, closedAt: "x", outcome: "closed", steps: {} },
+        reopened,
+    ];
+    const late = fake({ lines, forbidIrreversible: true });
+    let reserved = "";
+    late.io.store.reserve = async (name, fn) => {
+        reserved = name;
+        return fn();
+    };
+    // The slow close resolved the first session before it got the reservation (read 1); under the reservation
+    // (read 2 on) the feed already holds the close and the newer session.
+    let reads = 0;
+    const realRead = late.io.store.read;
+    late.io.store.read = () => {
+        reads += 1;
+        return reads === 1 ? [first] : realRead();
+    };
+    const stale = await closeSession("codex-app-ab12cd", { graceMs: 0 }, late.io);
+
+    expect(reserved).toBe("codex-app-ab12cd");
+    expect(stale.outcome).toBe("refused");
+    expect(late.calls).toEqual([]);
+
+    // A late closed line of the first session does not close the newer one.
+    const afterLateClose: SessionRecordLine[] = [
+        ...lines,
+        { type: "closed", name: first.name, createdAt: first.createdAt, closedAt: "y", outcome: "closed", steps: {} },
+    ];
+    expect(openSessions(afterLateClose)).toEqual([reopened]);
+    // A closed line written before generations were stored still closes what is open.
+    expect(
+        openSessions([...lines, { type: "closed", name: first.name, closedAt: "z", outcome: "closed", steps: {} }])
+    ).toEqual([]);
+});
+
+test("a close of a name another agents command holds is refused as in use, and touches nothing", async () => {
+    const busy = fake({ forbidIrreversible: true });
+    busy.io.store.reserve = async (name) => {
+        throw new SessionNameBusyError(name);
+    };
+    const report = await closeSession("codex-app-ab12cd", { graceMs: 0 }, busy.io);
+
+    expect(report).toMatchObject({ outcome: "refused", reason: "in-use" });
+    expect(busy.calls).toEqual([]);
 });

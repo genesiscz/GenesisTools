@@ -20,6 +20,7 @@ import {
     parseCmuxTree,
     pickAdoptable,
     type TmuxPaneSurface,
+    tmuxPaneStillShown,
     ttyRunsAgent,
 } from "./session-adopt";
 import {
@@ -27,6 +28,7 @@ import {
     type CloseSubject,
     isAdopted,
     type ListedWorkspace,
+    readTurnLookup,
     recordedSessionIdOf,
     type SessionCloseIO,
     surfaceTarget,
@@ -175,6 +177,31 @@ async function runBounded(argv: string[]): Promise<Ran> {
     return { code: result.status, stdout: result.stdout, stderr: result.stderr, timedOut };
 }
 
+/**
+ * Right before keystrokes go into a --via-tmux session's surface: does it still display the agent's pane? A
+ * session that is not tmux-joined needs no check. tmux not answering is a refusal, never a yes.
+ */
+export async function tmuxPaneStillShownNow(
+    target: LiveAgentSurface
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+    if (!target.tmux) {
+        return { ok: true };
+    }
+
+    const [panes, clients] = await Promise.all([listTmuxPanes(target.tmux.session), listTmuxClients()]);
+
+    if (!panes.ok || !clients.ok) {
+        return { ok: false, reason: panes.ok ? (clients.ok ? "" : clients.reason) : panes.reason };
+    }
+
+    return tmuxPaneStillShown({
+        joined: target.tmux,
+        surfaceTty: target.surface.tty,
+        panes: panes.items,
+        clients: clients.items,
+    });
+}
+
 /** Every live agent session in cmux with its tab and workspace titles (newest per surface, caller excluded). */
 export async function liveAgentSurfacesNow(): Promise<LiveAgentSurface[]> {
     const tree = await liveTree();
@@ -247,7 +274,7 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
                 const panes = await listTmuxPanes(record.tmuxSession);
 
                 if (!panes.ok) {
-                    return { sessionId: null, state: "UNREADABLE", detail: panes.reason };
+                    return { kind: "unreadable", sessionId: null, detail: panes.reason };
                 }
 
                 tmuxPanes = panes.items.map((pane) => pane.pane);
@@ -261,14 +288,21 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
                 return null;
             }
 
-            try {
-                const transcript = await resolveTranscript(sessionId, {}, record.agent);
-                const snapshot = readTurnState(record.agent, transcript.filePath, { stallTimeoutMs: CLOSE_STALL_MS });
-                return { sessionId, state: snapshot?.state ?? "UNKNOWN" };
-            } catch (error) {
-                log.debug({ error, sessionId }, "no transcript for the session in this surface");
-                return { sessionId, state: "UNKNOWN" };
+            const lookup = await readTurnLookup({
+                sessionId,
+                agent: record.agent,
+                transcriptOf: (id, agent) => resolveTranscript(id, {}, agent),
+                stateOf: (agent, filePath) => readTurnState(agent, filePath, { stallTimeoutMs: CLOSE_STALL_MS }),
+            });
+
+            if (lookup.kind === "unreadable") {
+                log.debug(
+                    { sessionId, detail: lookup.detail },
+                    "the turn state of the session in this surface is unreadable"
+                );
             }
+
+            return lookup;
         },
         async sendExit(record, text) {
             if (record.tmuxSession) {

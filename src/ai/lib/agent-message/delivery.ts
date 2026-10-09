@@ -1,6 +1,6 @@
 import { resolveSessionTranscript } from "@app/ai/lib/sessions/resolve-transcript";
 import { type LiveAgentSurface, matchLiveAgentSurfaces } from "@app/cmux/lib/session-adopt";
-import { liveAgentSurfacesNow } from "@app/cmux/lib/session-close-live";
+import { liveAgentSurfacesNow, tmuxPaneStillShownNow } from "@app/cmux/lib/session-close-live";
 import type { TurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
 import {
     type ClaudeLiveSession,
@@ -331,6 +331,8 @@ export async function pasteIntoSurface(input: {
     text: string;
     live?: () => Promise<LiveAgentSurface[]>;
     run?: (args: string[]) => Promise<CmuxRunResult>;
+    /** Right before the paste: does a --via-tmux session's surface still show the agent's pane? */
+    stillShown?: (target: LiveAgentSurface) => Promise<{ ok: true } | { ok: false; reason: string }>;
 }): Promise<MessageDelivery> {
     const surfaces = await (input.live ?? liveAgentSurfacesNow)();
     const target = surfaces.find((entry) => entry.sessionId === input.sessionId && entry.agent === input.alias);
@@ -343,6 +345,14 @@ export async function pasteIntoSurface(input: {
     // ref can name another terminal, and the message would be submitted there.
     if (!target.surface.id) {
         throw new MessageError(`${target.surface.ref} has no surface UUID, so the paste has no safe target`);
+    }
+
+    // A --via-tmux surface types into whichever tmux pane it shows now; the user may have switched since the
+    // inventory was read. Checked last, right before the paste.
+    const shown = await (input.stillShown ?? tmuxPaneStillShownNow)(target);
+
+    if (!shown.ok) {
+        throw new MessageError(`nothing was pasted into ${target.surface.ref}: ${shown.reason}`);
     }
 
     const run = input.run ?? ((args: string[]) => runCmux(args));

@@ -40,6 +40,11 @@ export interface SessionCreatedRecord {
 export interface SessionClosedRecord {
     type: "closed";
     name: string;
+    /**
+     * The `createdAt` of the created line this closes. A late close of an earlier session with the same name then
+     * cannot close a newer one. Lines written before it was stored close whatever is open under the name.
+     */
+    createdAt?: string;
     closedAt: string;
     outcome: "closed" | "partial";
     steps: Record<string, boolean>;
@@ -62,7 +67,7 @@ export interface SessionStore {
 export class SessionNameBusyError extends Error {
     constructor(name: string) {
         super(
-            `a session named "${name}" is being started by another ${toolCommand("cmux agents new")}; pass another --name`
+            `a session named "${name}" is being started or closed by another ${toolCommand("cmux agents")} command; wait for it, or pass another --name`
         );
         this.name = "SessionNameBusyError";
     }
@@ -139,7 +144,7 @@ export function openSessions(lines: readonly SessionRecordLine[]): SessionCreate
     for (const line of lines) {
         if (line.type === "created") {
             open.set(line.name, line);
-        } else {
+        } else if (!line.createdAt || open.get(line.name)?.createdAt === line.createdAt) {
             open.delete(line.name);
         }
     }

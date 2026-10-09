@@ -264,6 +264,37 @@ test("the keystroke fallback pastes through the bounded cmux runner and reports 
         },
     });
     await expect(noUuid).rejects.toThrow("no surface UUID");
+
+    // A --via-tmux session: the surface shows tmux pane %41 only while the tmux client displays it.
+    const tmuxTarget = {
+        ...target,
+        tmux: { pane: "%41", session: "work-grok", surface: "surface:7", paneTty: "ttys041", sessionCreatedMs: 0 },
+    };
+    const switched = pasteIntoSurface({
+        alias: "grok",
+        sessionId: target.sessionId,
+        text: "hello",
+        live: async () => [tmuxTarget],
+        stillShown: async () => ({ ok: false, reason: "tmux shows another pane of work-grok now" }),
+        run: async () => {
+            throw new Error("cmux paste must not run after the user switched tmux panes");
+        },
+    });
+    await expect(switched).rejects.toThrow("nothing was pasted");
+
+    const shownCalls: string[][] = [];
+    await pasteIntoSurface({
+        alias: "grok",
+        sessionId: target.sessionId,
+        text: "hello",
+        live: async () => [tmuxTarget],
+        stillShown: async () => ({ ok: true }),
+        run: async (args) => {
+            shownCalls.push(args);
+            return { code: 0, stdout: "", stderr: "" };
+        },
+    });
+    expect(shownCalls).toHaveLength(1);
 });
 
 test("the live-session listing checks every registry pid in ONE batch, not one probe per entry", () => {
