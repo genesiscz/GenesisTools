@@ -35,6 +35,38 @@ public struct IsolatedLayerPlacement: Equatable {
     }
 }
 
+/// One window's surface as a composite frame painted it.
+public struct IsolatedSourceGeometry: Equatable {
+    public let id: CGWindowID
+    /// Pixel size of the surface actually painted, not the size last requested from the stream.
+    public let pixels: CGSize
+    /// Surface pixels with a top-left origin that hold the window's content.
+    public let contentRect: CGRect
+    public let nativeScale: CGFloat
+
+    public init(id: CGWindowID, pixels: CGSize, contentRect: CGRect?, nativeScale: CGFloat) {
+        self.id = id
+        self.pixels = pixels
+        self.contentRect = contentRect ?? CGRect(origin: .zero, size: pixels)
+        self.nativeScale = nativeScale
+    }
+}
+
+/// Everything one geometry-history entry reports. An entry is due when any of it changes: a
+/// resized surface or a new display scale arrives after the bounds already moved, and the
+/// earlier entry still names the old source resolution.
+public struct IsolatedFrameGeometry: Equatable {
+    public let canvas: CGRect
+    public let placements: [IsolatedLayerPlacement]
+    public let sources: [IsolatedSourceGeometry]
+
+    public init(canvas: CGRect, placements: [IsolatedLayerPlacement], sources: [IsolatedSourceGeometry]) {
+        self.canvas = canvas
+        self.placements = placements
+        self.sources = sources
+    }
+}
+
 /// One on-screen CG window, as the front-to-back window list reports it.
 public struct IsolatedWindowRow: Equatable {
     public let id: CGWindowID

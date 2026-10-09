@@ -210,6 +210,8 @@ private struct SourceFrame {
     let buffer: CVPixelBuffer
     /// Surface pixels with a top-left origin, as ScreenCaptureKit reports it.
     let contentRect: CGRect?
+    /// Backing scale of the display the window was on when this surface was captured.
+    let scale: CGFloat
 }
 
 @available(macOS 14.0, *)
@@ -276,7 +278,7 @@ private final class IsolatedWindowSource: NSObject, SCStreamOutput, SCStreamDele
         if let scale = attachments.first?[SCStreamFrameInfo.scaleFactor.rawValue] as? CGFloat, scale > 0 {
             nativeScale = scale
         }
-        compositor?.receive(SourceFrame(buffer: buffer, contentRect: contentRect), from: target.id)
+        compositor?.receive(SourceFrame(buffer: buffer, contentRect: contentRect, scale: nativeScale), from: target.id)
     }
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         compositor?.queue.async { [weak self] in
@@ -308,8 +310,7 @@ private final class IsolatedCompositor {
     private var throttle = RenderThrottle()
     /// Set once the streams have stopped and the last pending content is in the movie.
     private var finished = false
-    private var previousCanvas: CGRect?
-    private var previousPlacements: [IsolatedLayerPlacement] = []
+    private var previousGeometry: IsolatedFrameGeometry?
     private let epoch = CMClockGetTime(CMClockGetHostTimeClock())
     private var pool: CVPixelBufferPool?
     var queue: DispatchQueue { recorder.frameQueue }
@@ -371,21 +372,22 @@ private final class IsolatedCompositor {
         recorder.consume(buffer, timestamp: timestamp)
         layers.markRendered()
         let movieSeconds = throttle.rendered(at: elapsed)
-        let placements = layers.geometry
-        if canvas != previousCanvas || placements != previousPlacements {
-            previousCanvas = canvas
-            previousPlacements = placements
+        let sources = visible.map { layer -> IsolatedSourceGeometry in
+            let pixels = layer.frame.map { CGSize(width: CVPixelBufferGetWidth($0.buffer), height: CVPixelBufferGetHeight($0.buffer)) }
+            return IsolatedSourceGeometry(id: layer.id, pixels: pixels ?? .zero, contentRect: layer.frame?.contentRect,
+                                          nativeScale: layer.frame?.scale ?? source(layer.id)?.nativeScale ?? 1)
+        }
+        let frameGeometry = IsolatedFrameGeometry(canvas: canvas, placements: layers.geometry, sources: sources)
+        if frameGeometry != previousGeometry {
+            previousGeometry = frameGeometry
             geometryHistory.append([
                 // Movie time: the origin kept frames use, so a geometry entry names the frame it describes.
                 "timestampMs": Int((movieSeconds * 1000).rounded()), "canvas": captureRectJSON(canvas), "pixelsPerPoint": geometry.scale,
-                "windows": visible.map { layer -> [String: Any] in
-                    let source = self.source(layer.id)
-                    let nativeScale = source?.nativeScale ?? 1
-                    let pixelSize = source?.pixelSize ?? .zero
-                    return ["id": layer.id, "bounds": captureRectJSON(layer.bounds),
-                            "nativeScale": nativeScale, "interpolatedUpscale": geometry.scale > nativeScale,
-                            "sourcePixels": ["width": pixelSize.width, "height": pixelSize.height],
-                            "sourceContentRect": captureRectJSON(layer.frame?.contentRect ?? CGRect(origin: .zero, size: pixelSize))]
+                "windows": zip(visible, sources).map { layer, source -> [String: Any] in
+                    ["id": layer.id, "bounds": captureRectJSON(layer.bounds),
+                     "nativeScale": source.nativeScale, "interpolatedUpscale": geometry.scale > source.nativeScale,
+                     "sourcePixels": ["width": source.pixels.width, "height": source.pixels.height],
+                     "sourceContentRect": captureRectJSON(source.contentRect)]
                 },
             ])
         }

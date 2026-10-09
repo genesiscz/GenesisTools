@@ -110,6 +110,49 @@ final class IsolatedCompositionTests: XCTestCase {
         XCTAssertEqual(movieSessionEnd(stop: stop, lastFrame: late), late, "the end never cuts off an appended frame")
     }
 
+    func testSourceResolutionChangeIsAGeometryChange() {
+        let placements = [IsolatedLayerPlacement(id: 1, bounds: left)]
+        let resizing = IsolatedFrameGeometry(canvas: left, placements: placements, sources: [
+            IsolatedSourceGeometry(id: 1, pixels: CGSize(width: 20, height: 20), contentRect: nil, nativeScale: 2),
+        ])
+        let resized = IsolatedFrameGeometry(canvas: left, placements: placements, sources: [
+            IsolatedSourceGeometry(id: 1, pixels: CGSize(width: 40, height: 40), contentRect: nil, nativeScale: 2),
+        ])
+        let otherDisplay = IsolatedFrameGeometry(canvas: left, placements: placements, sources: [
+            IsolatedSourceGeometry(id: 1, pixels: CGSize(width: 20, height: 20), contentRect: nil, nativeScale: 1),
+        ])
+        XCTAssertNotEqual(resizing, resized, "the resized surface arriving after the bounds moved needs its own entry")
+        XCTAssertNotEqual(resizing, otherDisplay, "a new display scale needs its own entry")
+        XCTAssertEqual(resized.sources[0].contentRect, CGRect(x: 0, y: 0, width: 40, height: 40))
+    }
+
+    func testOffCentreContentRectFillsTheWindowUprightWithoutItsPadding() {
+        // A 20x30 surface: green padding everywhere, content at top-left (2, 4, 12, 20). Its upper
+        // half is red and its lower half blue, so a wrong vertical flip shows up as colour or green.
+        let green = CIImage(color: CIColor(red: 0, green: 1, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: 20, height: 30))
+        let red = CIImage(color: CIColor(red: 1, green: 0, blue: 0)).cropped(to: CGRect(x: 2, y: 16, width: 12, height: 10))
+        let blue = CIImage(color: CIColor(red: 0, green: 0, blue: 1)).cropped(to: CGRect(x: 2, y: 6, width: 12, height: 10))
+        let surface = red.composited(over: blue.composited(over: green))
+        let window = CGRect(x: 0, y: 0, width: 6, height: 10)
+        let image = composeIsolatedFrame([IsolatedPaint(image: surface, contentRect: CGRect(x: 2, y: 4, width: 12, height: 20), bounds: window)],
+                                         geometry: CaptureCanvasGeometry(canvas: window, output: CGSize(width: 12, height: 20)),
+                                         transparent: true)
+        let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+        // One pixel per render, addressed in Core Image's bottom-left space, so row order cannot matter.
+        func pixel(_ x: Int, _ y: Int) -> [UInt8] {
+            var value = [UInt8](repeating: 9, count: 4)
+            context.render(image, toBitmap: &value, rowBytes: 4, bounds: CGRect(x: x, y: y, width: 1, height: 1),
+                           format: .RGBA8, colorSpace: nil)
+            return value
+        }
+
+        XCTAssertEqual(pixel(6, 15), [255, 0, 0, 255], "the content's top half is at the top of the window")
+        XCTAssertEqual(pixel(6, 4), [0, 0, 255, 255], "the content's bottom half is at the bottom")
+        for (x, y) in [(0, 0), (11, 0), (0, 19), (11, 19), (6, 10), (6, 9)] {
+            XCTAssertEqual(pixel(x, y)[1], 0, "no padding reaches the window at (\(x), \(y))")
+        }
+    }
+
     func testComposedFrameKeepsAlphaAndPaintsTheFrontWindowLast() {
         let geometry = CaptureCanvasGeometry(canvas: left.union(right), output: CGSize(width: 25, height: 10))
         // 2x surfaces into 10x10 point windows; window 2 is in front, so it is painted last.
