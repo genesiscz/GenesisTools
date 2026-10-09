@@ -51,11 +51,13 @@ function toImageModel(token: string, modelId: string): ImageModel {
         maxImagesPerCall: 1,
 
         async doGenerate({ prompt, n }: { prompt: string; n?: number }) {
-            // `@huggingface/inference` is an on-demand package (declared in
-            // src/types/on-demand-packages.d.ts), so it is imported at call time
-            // and its absence is a runtime error naming the install, not an
+            // `@huggingface/inference` lives in the shared package store (see
+            // src/utils/package-store.ts), so it is imported at call time and
+            // its absence is a runtime error naming the install, not an
             // import-time crash for every tool that loads the plugin barrel.
-            const { InferenceClient } = await import("@huggingface/inference");
+            const { importStorePackage } = await import("@genesiscz/utils/package-store");
+            const { InferenceClient } =
+                await importStorePackage<typeof import("@huggingface/inference")>("@huggingface/inference");
             const client = new InferenceClient(token);
             const count = n ?? 1;
             const images: Uint8Array[] = [];

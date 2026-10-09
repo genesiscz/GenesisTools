@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { importStorePackage } from "@genesiscz/utils/package-store";
 
 /**
  * Supported ONNX Runtime execution providers, ordered by preference per platform.
@@ -52,7 +53,10 @@ export async function resolveDevice(): Promise<DeviceResult> {
 
     // Verify the execution provider is actually available at runtime
     try {
-        const onnx = await import("onnxruntime-node");
+        // The copy inside transformers.js, so the probe sees the binary the pipelines really run.
+        const onnx = await importStorePackage<typeof import("onnxruntime-node")>("onnxruntime-node", {
+            from: "@huggingface/transformers",
+        });
         const backends = onnx.default?.listSupportedBackends?.() as Array<{ name: string }> | undefined;
 
         if (backends) {

@@ -1,5 +1,6 @@
 import { toFloat32Audio } from "@genesiscz/utils/audio/converter";
 import { logger } from "@genesiscz/utils/logger";
+import { importStorePackage } from "@genesiscz/utils/package-store";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { createLanguageDetector, type LanguageDetector } from "../LanguageDetector";
 import { type PipelineInstance, TransformersJsRuntime } from "../local/runtimes/transformers-js";
@@ -117,7 +118,8 @@ export class AILocalProvider
         // WhisperTextStreamer (v3) fires on_chunk_start/on_chunk_end per timestamp
         // token pair (every few seconds of audio), NOT per audio chunk.
         // Use the timestamp time to calculate real progress against total duration.
-        const { WhisperTextStreamer } = await import("@huggingface/transformers");
+        const { WhisperTextStreamer } =
+            await importStorePackage<typeof import("@huggingface/transformers")>("@huggingface/transformers");
         let currentChunkText = "";
         let lastProgressUpdate = performance.now();
         let segmentStart = 0;

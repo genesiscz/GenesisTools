@@ -1,4 +1,5 @@
 import { toFloat32Audio } from "@genesiscz/utils/audio/converter";
+import { importStorePackage } from "@genesiscz/utils/package-store";
 import { ensureHuggingFaceTransformers } from "./ensure-hf";
 
 // ============================================
@@ -223,7 +224,8 @@ export class WhisperLanguageDriver implements LanguageDetectionDriver {
             throw new Error("HuggingFace Transformers not available — install was declined or failed");
         }
 
-        const { AutoProcessor, WhisperForConditionalGeneration } = await import("@huggingface/transformers");
+        const { AutoProcessor, WhisperForConditionalGeneration } =
+            await importStorePackage<typeof import("@huggingface/transformers")>("@huggingface/transformers");
         this.processor = (await AutoProcessor.from_pretrained(this.model)) as unknown as typeof this.processor;
         this.whisperModel = (await WhisperForConditionalGeneration.from_pretrained(this.model, {
             dtype: "q4",
@@ -296,7 +298,8 @@ export class MmsLidDriver implements LanguageDetectionDriver {
             throw new Error("HuggingFace Transformers not available — install was declined or failed");
         }
 
-        const { pipeline } = await import("@huggingface/transformers");
+        const { pipeline } =
+            await importStorePackage<typeof import("@huggingface/transformers")>("@huggingface/transformers");
         this.pipeline = (await pipeline("audio-classification", this.model, {
             dtype: "fp32",
         })) as unknown as typeof this.pipeline;

@@ -1,9 +1,11 @@
 /**
  * Fallback type stubs for on-demand packages.
  *
- * These packages are NOT installed by default — they're installed at runtime
- * via ensurePackage() when first needed. The stubs let TypeScript accept
- * dynamic import() expressions without the packages in node_modules.
+ * These packages are NOT installed in the repo. ensurePackage() installs them
+ * into the shared package store (src/utils/package-store.ts) when first
+ * needed. The stubs let TypeScript accept importStorePackage() calls without
+ * the packages in node_modules. package-store.ts references this file, so every
+ * project that compiles a store import (the dashboards too) sees the stubs.
  *
  * ⚠️ WARNING: These bare ambient declarations permanently override real package
  * types. Even if the package is installed and ships its own .d.ts files, this
@@ -16,3 +18,4 @@ declare module "@huggingface/transformers";
 declare module "@huggingface/inference";
 declare module "@lancedb/lancedb";
 declare module "@qdrant/js-client-rest";
+declare module "onnxruntime-node";

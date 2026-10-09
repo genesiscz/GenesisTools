@@ -2,6 +2,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
+import { importStorePackage } from "@genesiscz/utils/package-store";
 import { ensureHuggingFaceTransformers } from "../../../ensure-hf";
 import { suppressConsoleWarnings } from "../../../suppress-warnings";
 import type { HfDownloadProgress, OnProgress } from "../../../types";
@@ -47,7 +48,8 @@ export async function resolvePipelineDevice(): Promise<string> {
 }
 
 async function defaultLoader(task: string, model: string, options: Record<string, unknown>): Promise<PipelineInstance> {
-    const { pipeline } = await import("@huggingface/transformers");
+    const { pipeline } =
+        await importStorePackage<typeof import("@huggingface/transformers")>("@huggingface/transformers");
 
     return (await pipeline(task as Parameters<typeof pipeline>[0], model, options)) as unknown as PipelineInstance;
 }
@@ -211,7 +213,8 @@ export class TransformersJsRuntime {
 }
 
 async function clearCorruptedCache(model: string): Promise<void> {
-    const { env: hfEnv } = await import("@huggingface/transformers");
+    const { env: hfEnv } =
+        await importStorePackage<typeof import("@huggingface/transformers")>("@huggingface/transformers");
     const cacheDir = hfEnv.cacheDir;
 
     if (!cacheDir) {

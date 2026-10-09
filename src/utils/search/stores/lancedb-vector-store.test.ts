@@ -2,9 +2,13 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isStorePackageInstalled } from "@genesiscz/utils/package-store";
 import { LanceDBVectorStore } from "./lancedb-vector-store";
 
-describe("LanceDBVectorStore", () => {
+// LanceDB lives in the shared package store, and tests run against a sandboxed home with an
+// empty store, so this suite skips by default. Run it against the real store with
+// `GENESIS_TOOLS_HOME=$HOME bun run test src/utils/search/stores/lancedb-vector-store.test.ts`.
+describe.skipIf(!isStorePackageInstalled("@lancedb/lancedb"))("LanceDBVectorStore", () => {
     let tmpDir: string;
     let store: LanceDBVectorStore;
 

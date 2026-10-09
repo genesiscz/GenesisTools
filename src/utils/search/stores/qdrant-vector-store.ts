@@ -1,4 +1,5 @@
 import { AsyncOpQueue } from "@genesiscz/utils/async";
+import { importStorePackage } from "@genesiscz/utils/package-store";
 import { ensurePackage } from "@genesiscz/utils/packages";
 import { bruteForceVectorSearch, type VectorSearchHit, type VectorStore } from "./vector-store";
 
@@ -101,7 +102,8 @@ export class QdrantVectorStore implements VectorStore {
                 url = url ?? getQdrantUrl();
             }
 
-            const { QdrantClient } = await import("@qdrant/js-client-rest");
+            const { QdrantClient } =
+                await importStorePackage<typeof import("@qdrant/js-client-rest")>("@qdrant/js-client-rest");
             this.client = new QdrantClient({
                 url,
                 apiKey: this.config.apiKey,

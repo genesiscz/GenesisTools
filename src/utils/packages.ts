@@ -4,6 +4,13 @@ import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import {
+    isStorePackage,
+    isStorePackageInstalled,
+    packageStoreDir,
+    preparePackageStore,
+    STORE_PACKAGES,
+} from "@genesiscz/utils/package-store";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
 const PROJECT_ROOT = resolve(import.meta.dirname, "../..");
@@ -42,7 +49,36 @@ export async function clearRejectedPackages(): Promise<void> {
 }
 
 export function isPackageInstalled(pkg: string): boolean {
+    if (isStorePackage(pkg)) {
+        return isStorePackageInstalled(pkg);
+    }
+
     return existsSync(resolve(PROJECT_ROOT, "node_modules", pkg, "package.json"));
+}
+
+/**
+ * Store packages go to the shared package store at their pinned version; every other package
+ * goes into the repo. A store package must never reach the repo's `bun add`, because that
+ * writes it into package.json (the 2026-04-09 regression, see package-store.ts).
+ */
+export function bunAddCommands(packages: string[]): Array<{ cwd: string; cmd: string[]; store: boolean }> {
+    const store = packages.filter(isStorePackage);
+    const repo = packages.filter((pkg) => !isStorePackage(pkg));
+    const commands: Array<{ cwd: string; cmd: string[]; store: boolean }> = [];
+
+    if (store.length > 0) {
+        commands.push({
+            cwd: packageStoreDir(),
+            cmd: ["bun", "add", "--exact", ...store.map((pkg) => `${pkg}@${STORE_PACKAGES[pkg]}`)],
+            store: true,
+        });
+    }
+
+    if (repo.length > 0) {
+        commands.push({ cwd: PROJECT_ROOT, cmd: ["bun", "add", ...repo], store: false });
+    }
+
+    return commands;
 }
 
 export interface EnsurePackagesOptions {
@@ -172,19 +208,26 @@ async function runBunAdd(packages: string[], opts: { label: string; silent: bool
         logger.info(`Installing ${opts.label}...`);
     }
 
-    const proc = Bun.spawn(["bun", "add", ...packages], {
-        cwd: PROJECT_ROOT,
-        stdout: opts.silent ? "ignore" : "inherit",
-        stderr: "pipe",
-    });
+    for (const { cwd, cmd, store } of bunAddCommands(packages)) {
+        if (store) {
+            preparePackageStore();
+        }
 
-    // Start draining stderr concurrently — waiting until after proc.exited can deadlock
-    // if the child writes enough to fill the OS pipe buffer
-    const stderrP = new Response(proc.stderr).text();
-    const exitCode = await proc.exited;
+        logger.debug({ cwd, cmd }, "ensurePackages: running bun add");
+        const proc = Bun.spawn(cmd, {
+            cwd,
+            stdout: opts.silent ? "ignore" : "inherit",
+            stderr: "pipe",
+        });
 
-    if (exitCode !== 0) {
-        const stderr = await stderrP;
-        throw new Error(`bun add ${packages.join(" ")} failed (exit ${exitCode}):\n${stderr.trim()}`);
+        // Start draining stderr concurrently — waiting until after proc.exited can deadlock
+        // if the child writes enough to fill the OS pipe buffer
+        const stderrP = new Response(proc.stderr).text();
+        const exitCode = await proc.exited;
+
+        if (exitCode !== 0) {
+            const stderr = await stderrP;
+            throw new Error(`${cmd.join(" ")} failed in ${cwd} (exit ${exitCode}):\n${stderr.trim()}`);
+        }
     }
 }

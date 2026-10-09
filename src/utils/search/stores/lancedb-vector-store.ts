@@ -1,4 +1,5 @@
 import { AsyncOpQueue } from "@genesiscz/utils/async";
+import { importStorePackage } from "@genesiscz/utils/package-store";
 import { ensurePackage } from "@genesiscz/utils/packages";
 import { bruteForceVectorSearch, type VectorSearchHit, type VectorStore } from "./vector-store";
 
@@ -160,7 +161,7 @@ export class LanceDBVectorStore implements VectorStore {
 
     private async initialize(): Promise<void> {
         await ensurePackage("@lancedb/lancedb", { label: "LanceDB vector store" });
-        const lancedb = await import("@lancedb/lancedb");
+        const lancedb = await importStorePackage<typeof import("@lancedb/lancedb")>("@lancedb/lancedb");
         this.db = (await lancedb.connect(this.config.dbPath)) as unknown as LanceDBConnection;
 
         const tableNames = await this.db.tableNames();

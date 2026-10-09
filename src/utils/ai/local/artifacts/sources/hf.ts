@@ -2,6 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { importStorePackage } from "@genesiscz/utils/package-store";
 import { ensurePackage } from "@genesiscz/utils/packages";
 import type { CachedArtifact } from "../types";
 
@@ -71,7 +72,8 @@ export class HfSource {
         }
 
         try {
-            const { env } = await import("@huggingface/transformers");
+            const { env } =
+                await importStorePackage<typeof import("@huggingface/transformers")>("@huggingface/transformers");
             this.transformersCacheDir = env.cacheDir ?? null;
         } catch (err) {
             logger.debug({ err }, "[artifacts:hf] transformers.js not installed — hub cache only");
@@ -212,7 +214,8 @@ export class HfSource {
         await ensurePackage("@huggingface/transformers", {
             label: "HuggingFace Transformers (ML models)",
         });
-        const { pipeline } = await import("@huggingface/transformers");
+        const { pipeline } =
+            await importStorePackage<typeof import("@huggingface/transformers")>("@huggingface/transformers");
         const pipe = await pipeline("feature-extraction", modelId, {
             dtype: options?.dtype ?? "fp32",
         });

@@ -214,7 +214,9 @@ async function cmdImage(prompt: string, opts: ImageFlags): Promise<void> {
         await ensurePackage("@huggingface/inference", {
             label: "HuggingFace Inference (image generation)",
         });
-        const { InferenceClient } = await import("@huggingface/inference");
+        const { importStorePackage } = await import("@genesiscz/utils/package-store");
+        const { InferenceClient } =
+            await importStorePackage<typeof import("@huggingface/inference")>("@huggingface/inference");
         const client = new InferenceClient(token);
 
         const result = await client.textToImage({
