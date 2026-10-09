@@ -50,6 +50,7 @@ public final class FlowSession: ObservableObject {
             }
             do {
                 try store.persistConfig(config)
+                endTurnIfDisabled(was: oldValue)
                 applyHotkeyBinding()
                 applyPreRoll()
             } catch {
@@ -472,6 +473,13 @@ public final class FlowSession: ObservableObject {
     }
 
     /// Abandon the turn without injecting anything.
+    /// Switching dictation off ends a turn in progress before the hotkey goes away: a push-to-talk hold would
+    /// otherwise lose the key-up that ends it and leave the microphone capturing.
+    private func endTurnIfDisabled(was previous: FlowConfig) {
+        guard previous.enabled, !config.enabled, phase != .idle || finishTask != nil else { return }
+        cancelTurn()
+    }
+
     public func cancelTurn() {
         if forward("flow.cancel") { return }
         finishTask?.cancel()
@@ -553,12 +561,19 @@ public final class FlowSession: ObservableObject {
 
     func persistConfiguration(_ value: FlowConfig) throws {
         try store.persistConfig(value)
+        let previous = config
         applyingRemoteState = true
         config = value
         applyingRemoteState = false
+        endTurnIfDisabled(was: previous)
         applyHotkeyBinding()
         applyPreRoll()
     }
+
+    /// The scratchpad of this session's store (FlowView's Scratchpad pane).
+    public func loadScratchpad() -> String { store.loadScratchpad() }
+
+    public func saveScratchpad(_ text: String) { store.saveScratchpad(text) }
 
     func configure(store: FlowStore) {
         self.store = store

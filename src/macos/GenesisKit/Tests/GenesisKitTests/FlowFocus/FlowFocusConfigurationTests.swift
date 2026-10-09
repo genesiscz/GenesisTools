@@ -202,6 +202,20 @@ final class FlowFocusConfigurationTests: XCTestCase {
         XCTAssertEqual(json["model"] as? String, "work/provider/existing-selection")
     }
 
+    func testALockLeftByADeadWriterOfThisCodeIsReclaimedAndALiveOneIsNot() throws {
+        let lock = directory.appendingPathComponent("client.json.lock")
+        // A pid that cannot be running: past the macOS pid ceiling.
+        try Data("\(FlowFocusConfiguration.lockMarkerPrefix)99999999\n".utf8).write(to: lock)
+        try FlowFocusConfiguration.persist(Data("{\"fixture\":true}".utf8), directory: directory, lockTimeout: 0.5)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: lock.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: client.path))
+
+        try Data("\(FlowFocusConfiguration.lockMarkerPrefix)\(getppid())\n".utf8).write(to: lock)
+        XCTAssertThrowsError(try FlowFocusConfiguration.persist(Data("{}".utf8), directory: directory, lockTimeout: 0.1),
+                             "a live owner keeps its lock")
+        try FileManager.default.removeItem(at: lock)
+    }
+
     func testAnOldLockIsNotRemovedBasedOnlyOnItsModificationTime() throws {
         let lock = directory.appendingPathComponent("client.json.lock")
         let contents = Data("another writer".utf8)

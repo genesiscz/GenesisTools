@@ -553,6 +553,23 @@ final class FocusStudioModelTests: XCTestCase {
         XCTAssertEqual(gap.endedMs, wake)
     }
 
+    func testKeysTypedBeforeAMidMinuteSwitchStayWithTheFirstApp() throws {
+        let recorder = ActivityRecorder(store: store)
+        recorder.applyProbe(.init(title: "Editor fixture", url: nil, displayId: nil),
+                            bundle: "test.editor", appName: "Editor", settings: FocusSettings(), idle: false)
+        for _ in 0..<3 { recorder.recordKeyForTesting() }
+        recorder.applyProbe(.init(title: "Browser fixture", url: nil, displayId: nil),
+                            bundle: "test.browser", appName: "Browser", settings: FocusSettings(), idle: false)
+        recorder.recordKeyForTesting()
+        recorder.attach(sessionId: nil)
+        let rows = try store.segments(from: 0, to: nowMs() + 1)
+        let editor = try XCTUnwrap(rows.first { $0.appBundle == "test.editor" })
+        let browser = try XCTUnwrap(rows.first { $0.appBundle == "test.browser" })
+        let series = try store.inputSeries(from: 0, to: nowMs() + 60_000)
+        XCTAssertEqual(series.filter { $0.segmentId == editor.id }.map(\.counts.keys).reduce(0, +), 3)
+        XCTAssertEqual(series.filter { $0.segmentId == browser.id }.map(\.counts.keys).reduce(0, +), 1)
+    }
+
     func testTitlePrivacyAlsoCoversCmuxSessionAndPane() throws {
         for mode in [FocusSettings.TitleMode.full, .hashed, .appOnly] {
             var settings = FocusSettings()

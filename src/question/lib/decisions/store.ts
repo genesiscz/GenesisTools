@@ -313,7 +313,9 @@ export async function postDecisions(
                             ? "claude-code"
                             : provider === "codex" || provider === "grok" || provider === "copilot"
                               ? provider
-                              : poster.agent,
+                              : // Never the poster's harness for a provider override it does not match: the anchor
+                                // would name a transcript that is not this row's.
+                                "unknown",
                 },
                 receivedAt: Date.parse(ts),
                 sourceMessage: input.sourceMessage,

@@ -1018,6 +1018,18 @@ test("a decision provider override cannot inherit another provider's native mess
     expect(row.transcriptAnchor).not.toHaveProperty("messageId");
 });
 
+test("an unrecognized provider override never anchors to the poster's own transcript", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-custom-provider-"));
+    const [row] = await postDecisions(
+        join(dir, "decisions.jsonl"),
+        join(dir, "events.jsonl"),
+        { provider: "custom", decisions: [{ prompt: "Which?", options: [] }] },
+        { env: {}, ctx: { agent: "codex", sessionId: "source-session" } }
+    );
+    expect(row.provider).toBe("custom");
+    expect(row.transcriptAnchor).toEqual({ kind: "unanchored", receivedAt: expect.any(Number) });
+});
+
 test("a multiplexed decision uses the explicitly provided worktree for repository context", async () => {
     const dir = mkdtempSync(join(tmpdir(), "decision-gateway-"));
     const [row] = await runAsCaller({ agent: "codex", sessionId: null, cwd: "/" }, () =>

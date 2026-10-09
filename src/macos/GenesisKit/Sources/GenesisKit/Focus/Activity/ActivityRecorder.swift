@@ -77,6 +77,9 @@ public final class ActivityRecorder: ObservableObject {
     private let counter = InputCounter()
     private var settings: FocusSettings
     private var segmentId: Int64?
+    /// Segments whose close failed (SQLite busy, a write error), with the end they should get. Retried on every
+    /// tick and before the next close, so a row is never left open while a newer one claims the capture.
+    private var pendingCloses: [Int64: Int64] = [:]
     private var segmentStartedMs: Int64 = 0
     private var pollTimer: Timer?
     private var sessionId: Int64?
@@ -113,7 +116,9 @@ public final class ActivityRecorder: ObservableObject {
             }
         }
         counter.onGap = { [weak self] started, ended, reason in
-            Task { @MainActor in try? self?.store.recordGap(startedMs: started, endedMs: ended, reason: reason) }
+            Task { @MainActor in
+                self?.persist("input gap") { try self?.store.recordGap(startedMs: started, endedMs: ended, reason: reason) }
+            }
         }
     }
 
@@ -209,7 +214,7 @@ public final class ActivityRecorder: ObservableObject {
         current = nil // as in pauseCapture: `start()` must open a fresh segment
         isCapturing = false
         if openGapId == nil {
-            openGapId = try? store.recordGap(startedMs: nowMs(), endedMs: nil, reason: "capture_off")
+            openGapId = persist("capture gap") { try store.recordGap(startedMs: nowMs(), endedMs: nil, reason: "capture_off") }
         }
     }
 
@@ -245,7 +250,7 @@ public final class ActivityRecorder: ObservableObject {
         // A pause is recorded, so the range reads as "not measured" rather than "you did
         // nothing" when someone looks at it a week later.
         if openGapId == nil {
-            openGapId = try? store.recordGap(startedMs: nowMs(), endedMs: nil, reason: "capture_paused")
+            openGapId = persist("capture gap") { try store.recordGap(startedMs: nowMs(), endedMs: nil, reason: "capture_paused") }
         }
     }
 
@@ -273,7 +278,7 @@ public final class ActivityRecorder: ObservableObject {
 
     private func closeOpenGap() {
         guard let id = openGapId else { return }
-        try? store.closeGap(id: id, at: nowMs())
+        persist("gap close") { try store.closeGap(id: id, at: nowMs()) }
         openGapId = nil
     }
 
@@ -303,6 +308,7 @@ public final class ActivityRecorder: ObservableObject {
             lastTickMs = nil
             return
         }
+        retryPendingCloses()
         counter.flush(now: Date().timeIntervalSince1970 * 1000)
         recordInputSample()
         recomputeMix()
@@ -335,7 +341,7 @@ public final class ActivityRecorder: ObservableObject {
         lastTickMs = now
         // Provisional end, moved forward every tick. If the app dies here, the record stops
         // within one tick of the truth instead of running to "now" forever.
-        if let id = segmentId { try? store.touchSegment(id: id, at: now) }
+        if let id = segmentId { persist("segment touch") { try store.touchSegment(id: id, at: now) } }
     }
 
     private func invalidateProbes() {
@@ -367,7 +373,7 @@ public final class ActivityRecorder: ObservableObject {
         closeCurrentSegment(at: nowMs())
         current = nil
         if openGapId == nil {
-            openGapId = try? store.recordGap(startedMs: nowMs(), endedMs: nil, reason: reason)
+            openGapId = persist("capture gap") { try store.recordGap(startedMs: nowMs(), endedMs: nil, reason: reason) }
         }
     }
 
@@ -450,19 +456,55 @@ public final class ActivityRecorder: ObservableObject {
         segment.displayId = snapshot.displayId
         segment.idle = idle
         segment.project = snapshot.project
-        segmentId = try? store.openSegment(segment)
+        segmentId = persist("segment open") { try store.openSegment(segment) }
         segmentStartedMs = ms
     }
 
     private func closeCurrentSegment(at ms: Int64) {
+        retryPendingCloses()
         guard let id = segmentId else { return }
-        try? store.closeSegment(id: id, at: ms)
+        // The minute's input so far belongs to this segment: flush it before the next one opens, or it would be
+        // filed under whatever segment is current when the minute ends.
+        counter.flush(now: Double(ms), force: true)
         segmentId = nil
+        do {
+            try store.closeSegment(id: id, at: ms)
+        } catch {
+            pendingCloses[id] = ms
+            FlowFocusLog.focus.error("segment \(id) close failed, retried on the next tick: \(error.localizedDescription)")
+        }
     }
 
     private func persistInput(bucketMs: Int64, counts: ActivityStore.InputCounts) {
         guard let id = segmentId else { return }
-        try? store.appendInput(bucketMs: bucketMs, segmentId: id, counts: counts)
+        persist("input bucket") { try store.appendInput(bucketMs: bucketMs, segmentId: id, counts: counts) }
+    }
+
+    /// One key press into the live counter, for tests that drive `applyProbe` without an event tap.
+    func recordKeyForTesting() {
+        counter.recordForTesting(type: .keyDown)
+    }
+
+    private func retryPendingCloses() {
+        for (id, ms) in pendingCloses {
+            do {
+                try store.closeSegment(id: id, at: ms)
+                pendingCloses[id] = nil
+            } catch {
+                FlowFocusLog.focus.error("segment \(id) close retry failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// A ledger write whose failure is logged with what it was, never swallowed; nil when it failed.
+    @discardableResult
+    private func persist<T>(_ what: String, _ write: () throws -> T) -> T? {
+        do {
+            return try write()
+        } catch {
+            FlowFocusLog.focus.error("focus ledger \(what) failed: \(error.localizedDescription)")
+            return nil
+        }
     }
 
     /// The HUD's live mix: which apps this stretch of time actually went to.

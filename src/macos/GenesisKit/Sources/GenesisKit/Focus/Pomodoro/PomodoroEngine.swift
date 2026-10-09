@@ -275,7 +275,15 @@ public final class PomodoroEngine: ObservableObject {
         if forward("focus.tag", value) { return }
         tag = value
         guard let sessionId else { return }
-        try? store.updateSession(id: sessionId, tag: value, note: nil, interruptions: nil)
+        do {
+            if let value {
+                try store.updateSession(id: sessionId, tag: value, note: nil, interruptions: nil)
+            } else {
+                try store.clearSessionTag(id: sessionId)
+            }
+        } catch {
+            FlowFocusLog.focus.error("focus tag not saved: \(error.localizedDescription)")
+        }
     }
 
     public func setNote(_ value: String) {

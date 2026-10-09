@@ -250,11 +250,13 @@ public final class CompanionSpeechRecognizer: ObservableObject {
         guard recognizer.isAvailable else {
             throw CompanionSpeechError.recognizerUnavailable
         }
+        // Server recognition only when the user turned it on: Settings promises that "Off keeps transcription on
+        // this machine", so a language with no on-device model is refused instead of sent to Apple's server.
+        guard forceServer || recognizer.supportsOnDeviceRecognition else {
+            throw CompanionSpeechError.onDeviceUnavailable(recognizer.locale.identifier)
+        }
         self.recognizer = recognizer
-        // On-device when supported (privacy + offline); Apple's server path
-        // otherwise — still no xAI dependency either way. forceServer opts out
-        // when on-device produced nothing on a prior hold.
-        onDevice = recognizer.supportsOnDeviceRecognition && !forceServer
+        onDevice = !forceServer
 
         partialText = ""
         acc.reset()
@@ -508,6 +510,8 @@ public final class CompanionSpeechRecognizer: ObservableObject {
         guard let recognizer = SFSpeechRecognizer(locale: normalizedLocale(locale)) ?? SFSpeechRecognizer(),
               recognizer.isAvailable
         else { return "" }
+        // The same promise as `start`: no server recognition unless it was asked for.
+        guard forceServer || recognizer.supportsOnDeviceRecognition else { return "" }
         let file: AVAudioFile
         do { file = try AVAudioFile(forReading: url) } catch { return "" }
         let frameCount = AVAudioFrameCount(file.length)
@@ -517,7 +521,7 @@ public final class CompanionSpeechRecognizer: ObservableObject {
         do { try file.read(into: buffer) } catch { return "" }
         return await transcribe(
             buffer: buffer, recognizer: recognizer,
-            onDevice: recognizer.supportsOnDeviceRecognition && !forceServer,
+            onDevice: !forceServer,
             timeoutSeconds: 20)
     }
 
@@ -537,6 +541,7 @@ public enum CompanionSpeechError: LocalizedError {
     case recognizerUnavailable
     case speechNotAuthorized
     case microphoneNotAuthorized
+    case onDeviceUnavailable(String)
 
     public var errorDescription: String? {
         switch self {
@@ -546,6 +551,8 @@ public enum CompanionSpeechError: LocalizedError {
             return "Allow Speech Recognition in Dictation settings before dictating."
         case .microphoneNotAuthorized:
             return "Allow Microphone access in Dictation settings before recording."
+        case .onDeviceUnavailable(let locale):
+            return "\(locale) has no on-device recognition on this Mac. Turn on server recognition in Dictation settings to send its audio to Apple."
         }
     }
 }

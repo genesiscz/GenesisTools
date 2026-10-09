@@ -155,6 +155,9 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(row.tag, "keep", "a nil field must not erase the stored value")
         XCTAssertEqual(row.note, "went well")
         XCTAssertEqual(row.interruptions, 2)
+        try store.clearSessionTag(id: id)
+        XCTAssertNil(try store.sessions(from: 0, to: 1_000)[0].tag, "clearing is its own write")
+        XCTAssertEqual(try store.sessions(from: 0, to: 1_000)[0].note, "went well")
     }
 
     // MARK: - Deletion
@@ -175,6 +178,23 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(try store.inputTotals(from: 0, to: 100_000).keys, 0,
                        "input buckets of a deleted segment must go with it")
         XCTAssertTrue(try store.sessions(from: 0, to: 100_000).isEmpty)
+    }
+
+    func testForgetCutsASegmentAndSessionThatStartedBeforeTheRange() throws {
+        let straddling = try store.openSegment(segment(1_000))
+        try store.closeSegment(id: straddling, at: 9_000)
+        try store.appendInput(bucketMs: 0, segmentId: straddling, counts: .init(keys: 3))
+        try store.appendInput(bucketMs: 6_000, segmentId: straddling, counts: .init(keys: 40))
+        let session = try store.startSession(.init(kind: "flow", plannedSec: 60, startedMs: 500,
+                                                   state: "done", cycleIndex: 0))
+        try store.endSession(id: session, at: 9_500, state: .done)
+
+        try store.forget(from: 5_000, to: 20_000)
+        let kept = try store.segments(from: 0, to: 100_000)
+        XCTAssertEqual(kept.map(\.id), [straddling])
+        XCTAssertEqual(kept.first?.endedMs, 5_000, "the part inside the range is no longer attributed to the window")
+        XCTAssertEqual(try store.inputTotals(from: 0, to: 100_000).keys, 3, "input inside the range goes")
+        XCTAssertEqual(try store.sessions(from: 0, to: 100_000).first?.endedMs, 5_000)
     }
 
     func testForgetCanScopeToOneApp() throws {

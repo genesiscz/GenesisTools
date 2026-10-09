@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { copyFile, mkdir, rename, stat, unlink } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-import { sha256File } from "@genesiscz/utils/fs/hash";
+import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
@@ -103,11 +103,15 @@ export async function importShelfFile({
         throw new Error("Choose a regular file; folders cannot be placed on the shelf");
     }
 
-    const digest = sha256File(sourcePath, { signal });
+    const digest = await sha256FileAsync(sourcePath, { signal });
     const existing = (await listWidgetShelf(root)).items.find(
         (item) => item.sourcePath === sourcePath && item.sha256 === digest
     );
-    if (existing && (await Bun.file(existing.path).exists()) && sha256File(existing.path, { signal }) === digest) {
+    if (
+        existing &&
+        (await Bun.file(existing.path).exists()) &&
+        (await sha256FileAsync(existing.path, { signal })) === digest
+    ) {
         return { item: existing, duplicate: true };
     }
 
@@ -119,7 +123,11 @@ export async function importShelfFile({
         await copyFile(sourcePath, path, constants.COPYFILE_EXCL);
         signal?.throwIfAborted();
         const after = await stat(sourcePath);
-        if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || sha256File(path, { signal }) !== digest) {
+        if (
+            before.size !== after.size ||
+            before.mtimeMs !== after.mtimeMs ||
+            (await sha256FileAsync(path, { signal })) !== digest
+        ) {
             throw new Error("The file changed while importing; choose it again");
         }
 
@@ -224,11 +232,15 @@ export async function stageShelfImage({
     signal?: AbortSignal;
 }): Promise<ShelfItem> {
     signal?.throwIfAborted();
-    const digest = sha256File(resolve(input), { signal });
+    const digest = await sha256FileAsync(resolve(input), { signal });
     const previous = (await listWidgetShelf(root)).items.find(
         (entry) => entry.kind === "capture" && entry.sha256 === digest
     );
-    if (previous && (await Bun.file(previous.path).exists()) && sha256File(previous.path, { signal }) === digest) {
+    if (
+        previous &&
+        (await Bun.file(previous.path).exists()) &&
+        (await sha256FileAsync(previous.path, { signal })) === digest
+    ) {
         const assets = (await readWidgetState(root)).assets;
         if (previous.assetId && assets[previous.assetId]?.path === previous.path) {
             return previous;

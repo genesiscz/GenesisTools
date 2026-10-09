@@ -146,8 +146,10 @@ public final class WidgetShelfStore: ObservableObject {
     func visibilityChanged(module: String, presentation: WidgetModulePresentation?) {
         guard !stopped else { return }
         if presentation != nil {
+            // A running watcher already refreshes on every state change; only a shelf nobody watched needs a read.
+            let watching = watcher != nil
             visibleModules.insert(module)
-            refresh()
+            if !watching { refresh() }
         } else {
             visibleModules.remove(module)
         }

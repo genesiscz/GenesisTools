@@ -258,6 +258,32 @@ final class FlowFocusRuntimeTests: XCTestCase {
         await owner.stop()
     }
 
+    func testAClientSavesTheTransformModelThroughItsOwner() async throws {
+        let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.transform-owner", liveServices: false, presentsWindows: false)
+        let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.transform-client", liveServices: false, presentsWindows: false)
+        await owner.start()
+        await client.start()
+        do {
+            FlowTransformTools(bridge: ToolsBridge(binaryPath: "/usr/bin/false"), configuration: client.configuration).save(accountID: "work", model: "fixture-model")
+            try await waitUntil {
+                (owner.configuration.app["flowTransforms"] as? [String: Any])?["modelRef"] as? String == "@account/work:fixture-model"
+            }
+            let bad = try JSONSerialization.data(withJSONObject: ["flowTransforms": ["modelRef": "fixture", "extra": true]])
+            do {
+                _ = try await client.send(action: "configuration.patch", payload: bad)
+                XCTFail("a malformed transform setting must be refused")
+            } catch {
+                XCTAssertFalse(error.localizedDescription.isEmpty)
+            }
+        } catch {
+            await client.stop()
+            await owner.stop()
+            throw error
+        }
+        await client.stop()
+        await owner.stop()
+    }
+
     func testClientVoiceReleaseKeepsTheOwnersTimerMuteUntilItsPhaseEnds() async throws {
         let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.timer", liveServices: false, presentsWindows: false)
         let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.voice", liveServices: false, presentsWindows: false)
@@ -548,6 +574,32 @@ final class FlowFocusRuntimeTests: XCTestCase {
         } catch {
             XCTAssertTrue(error.localizedDescription.contains("owner changed"))
         }
+    }
+
+    func testACancelledQueuedRequestNeverReachesTheOwner() async throws {
+        let lease = try XCTUnwrap(FlowFocusLease.acquire(directory: directory, hostID: "test.owner"))
+        defer { lease.release() }
+        try lease.advertise()
+        var received: [String] = []
+        let owner = try FlowFocusMailbox(directory: directory, owner: lease.owner) { command in
+            received.append(command.action)
+            return Data()
+        }
+        let client = try FlowFocusMailbox(directory: directory, owner: lease.owner)
+        defer { client.stop(); owner.stop() }
+        // The owner is not started, so the command waits in the queue until the caller is cancelled.
+        let request = Task { try await client.request(action: "focus.start", timeout: 5) }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        request.cancel()
+        do {
+            _ = try await request.value
+            XCTFail("a cancelled request must not report success")
+        } catch {
+            XCTAssertTrue(error is CancellationError, "withdrawn before the owner took it: \(error)")
+        }
+        owner.start()
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(received, [], "the withdrawn command never runs")
     }
 
     func testMissingReplyHasABoundedVisibleFailure() async throws {

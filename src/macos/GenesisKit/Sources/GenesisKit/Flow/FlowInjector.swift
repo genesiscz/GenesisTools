@@ -141,14 +141,21 @@ public enum FlowInjector {
         // Activation is asynchronous. Posting ⌘V in the same runloop turn
         // races the app becoming frontmost and the keystroke lands nowhere.
         // A short hop is enough in practice and keeps the whole turn snappy.
-        postPasteAfterActivation(previousClipboard: previous, written: pasteboard.changeCount)
+        postPasteAfterActivation(target: target.processIdentifier, previousClipboard: previous, written: pasteboard.changeCount)
         return .injected
     }
 
     // MARK: - Keystroke
 
-    private static func postPasteAfterActivation(previousClipboard: String?, written: Int) {
+    private static func postPasteAfterActivation(target: pid_t, previousClipboard: String?, written: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            // Checked at the last moment before the keystroke: if activation was slow or focus moved, ⌘V would
+            // paste the transcript into another app. The text stays on the clipboard instead.
+            let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            guard frontmost == target else {
+                FlowFocusLog.flow.info("inject: pid=\(target) is not frontmost at paste time (frontmost \(frontmost ?? -1)); left text on the clipboard")
+                return
+            }
             postCommandV()
             guard let previousClipboard else { return }
             // Restore only after the paste has had time to read the pasteboard.

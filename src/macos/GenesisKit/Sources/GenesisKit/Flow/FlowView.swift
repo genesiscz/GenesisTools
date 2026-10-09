@@ -156,7 +156,7 @@ public struct FlowView: View {
         case .dictionary: FlowDictionaryPane(session: session)
         case .snippets: FlowSnippetsPane(session: session)
         case .transforms: FlowTransformsPane(session: session)
-        case .scratchpad: FlowScratchpadPane()
+        case .scratchpad: FlowScratchpadPane(session: session)
         case .settings: FlowSettingsPane(session: session)
         }
     }
@@ -297,10 +297,12 @@ private struct FlowSettingsPane: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: GenSpacing.lg)
-            Toggle("", isOn: value)
+            // The title is the switch's accessible name; the visible label is the Text above, so it stays hidden.
+            Toggle(title, isOn: value)
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .tint(Color.jarvisTeal)
+                .accessibilityHint(subtitle)
         }
         .padding(GenSpacing.md)
         .background(Color.settingsCard)
@@ -314,7 +316,7 @@ private struct FlowSettingsPane: View {
                 .font(GenTypography.body(13))
                 .foregroundStyle(Color.genTextPrimary)
             Spacer()
-            Picker("", selection: selection) {
+            Picker(title, selection: selection) {
                 ForEach(FlowActivation.allCases, id: \.self) { mode in
                     Text(mode.label).tag(mode)
                 }
@@ -552,12 +554,17 @@ private struct FlowEntryRow: View {
             .foregroundStyle(Color.settingsTextSecondary)
             .opacity(hovered ? 1 : 0)
             .allowsHitTesting(hovered)
-            .accessibilityHidden(!hovered)
+            // The pointer-only buttons stay out of the tree; the row carries the same two actions for VoiceOver
+            // and keyboard users, who never hover.
+            .accessibilityHidden(true)
         }
         .padding(.horizontal, GenSpacing.md)
         .padding(.vertical, GenSpacing.sm)
         .background(hovered ? Color.settingsCardHover : Color.settingsCard)
         .onHover { hovered = $0 }
+        .accessibilityElement(children: .contain)
+        .accessibilityAction(named: "Copy") { session.copyEntry(entry) }
+        .accessibilityAction(named: "Delete") { session.deleteEntry(entry.id) }
     }
 }
 
@@ -999,6 +1006,8 @@ private struct FlowTransformsPane: View {
 // MARK: - Scratchpad
 
 private struct FlowScratchpadPane: View {
+    /// The note lives in this session's store, never `FlowStore.shared`: another runtime replaces that global.
+    @ObservedObject var session: FlowSession
     @State private var text = ""
     @State private var loaded = false
 
@@ -1022,13 +1031,13 @@ private struct FlowScratchpadPane: View {
         .padding(GenSpacing.xl)
         .task {
             guard !loaded else { return }
-            text = FlowStore.shared.loadScratchpad()
+            text = session.loadScratchpad()
             loaded = true
         }
         // Persist on disappear, never per keystroke: every save is a disk
         // write, and a TextField-driven write is the documented way to make
         // typing janky in this app.
-        .onDisappear { FlowStore.shared.saveScratchpad(text) }
+        .onDisappear { session.saveScratchpad(text) }
     }
 }
 

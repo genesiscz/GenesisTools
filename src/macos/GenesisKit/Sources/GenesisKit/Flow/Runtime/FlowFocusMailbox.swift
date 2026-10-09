@@ -114,17 +114,42 @@ public final class FlowFocusMailbox {
             throw Failure.unavailable("The Flow and Focus owner changed. Try the action again.")
         }
         if let reply = readReply(id), reply.ownerNonce == owner.nonce { return try unwrap(reply) }
+        try Task.checkCancellation()
         try FlowFocusLease.writePrivate(try JSONEncoder().encode(command), to: requestURL(id))
-        return try await withCheckedThrowingContinuation { continuation in
-            pending[id] = continuation
-            deadlines[id] = Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
-                guard !Task.isCancelled, let self, let pending = self.pending.removeValue(forKey: id) else { return }
-                self.deadlines.removeValue(forKey: id)
-                pending.resume(throwing: Failure.unavailable("The Flow and Focus owner did not answer in time."))
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                pending[id] = continuation
+                deadlines[id] = Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                    guard !Task.isCancelled, let self, let pending = self.pending.removeValue(forKey: id) else { return }
+                    self.deadlines.removeValue(forKey: id)
+                    pending.resume(throwing: Failure.unavailable("The Flow and Focus owner did not answer in time."))
+                }
+                // Cancelled between writing the request and getting here: withdraw at once.
+                if Task.isCancelled {
+                    withdraw(id)
+                    return
+                }
+                wake()
+                receiveReplies()
             }
-            wake()
-            receiveReplies()
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.withdraw(id) }
+        }
+    }
+
+    /// A cancelled caller takes its command back. Removing the request file beats the owner's claim (a rename),
+    /// so a command withdrawn here never runs and the caller gets CancellationError. When the owner had already
+    /// claimed it, the effect may happen: the caller is told so instead of being told nothing ran.
+    private func withdraw(_ id: UUID) {
+        guard let continuation = pending.removeValue(forKey: id) else { return }
+        deadlines.removeValue(forKey: id)?.cancel()
+        do {
+            try FileManager.default.removeItem(at: requestURL(id))
+            continuation.resume(throwing: CancellationError())
+        } catch {
+            FlowFocusLog.focus.info("runtime command \(id) cancelled after its owner took it: \(error.localizedDescription)")
+            continuation.resume(throwing: Failure.unavailable("Cancelled after the owner started it; it may still take effect."))
         }
     }
 
@@ -170,8 +195,15 @@ public final class FlowFocusMailbox {
                 return $0.1.sequence < $1.1.sequence
             }
             for (file, command) in commands {
+                // Claimed by a rename, so a caller that withdrew its command (removed the file) first is never run.
+                let claimed = file.appendingPathExtension("claimed")
+                do { try FileManager.default.moveItem(at: file, to: claimed) }
+                catch {
+                    FlowFocusLog.focus.info("runtime command \(command.id) withdrawn before it ran")
+                    continue
+                }
                 _ = execute(command)
-                do { try FileManager.default.removeItem(at: file) }
+                do { try FileManager.default.removeItem(at: claimed) }
                 catch { FlowFocusLog.focus.error("runtime queue cleanup failed: \(error.localizedDescription)") }
             }
             if files.count > 128 { Task { @MainActor [weak self] in self?.drain() } }

@@ -200,6 +200,30 @@ public final class FlowFocusConfiguration: ObservableObject {
         return result
     }
 
+    nonisolated static let lockMarkerPrefix = "genesis-kit pid="
+
+    /// A lock this code wrote whose pid no longer runs is removed: the process died between creating it and its
+    /// `defer`. A lock in any other format (ConfigStore, the CLI) or of a live pid is never touched, and age alone
+    /// never counts. A reused pid only keeps the lock in place, never removes a live one. The content is read again
+    /// just before the removal, so a lock another writer reclaimed and re-created in between is left alone.
+    nonisolated static func reclaimIfOwnerDied(_ lock: URL) -> Bool {
+        guard let first = try? Data(contentsOf: lock), let text = String(data: first, encoding: .utf8),
+              text.hasPrefix(lockMarkerPrefix),
+              let pid = pid_t(text.dropFirst(lockMarkerPrefix.count).trimmingCharacters(in: .whitespacesAndNewlines)),
+              pid > 0, pid != getpid()
+        else { return false }
+        guard kill(pid, 0) == -1, errno == ESRCH else { return false }
+        guard (try? Data(contentsOf: lock)) == first else { return false }
+        do {
+            try FileManager.default.removeItem(at: lock)
+            FlowFocusLog.focus.warning("configuration lock of dead pid \(pid) removed")
+            return true
+        } catch {
+            FlowFocusLog.focus.error("configuration lock of dead pid \(pid) not removed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
     /// Matches ConfigStore and the CLI's O_EXCL protocol. Runs off the main thread and never
     /// falls back to an unlocked write when another writer has not released its lock.
     nonisolated static func persist(_ data: Data, directory: URL, lockTimeout: TimeInterval = 5) throws {
@@ -208,15 +232,19 @@ public final class FlowFocusConfiguration: ObservableObject {
                                                 attributes: [.posixPermissions: 0o700])
         let lock = directory.appendingPathComponent("client.json.lock")
         let deadline = Date().addingTimeInterval(max(0.1, lockTimeout))
+        let marker = Data("\(lockMarkerPrefix)\(getpid())\n".utf8)
         while true {
             let descriptor = open(lock.path, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0o600)
             if descriptor >= 0 {
+                // The owner's pid, so a later writer can prove this lock is stale if this process dies holding it.
+                _ = marker.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
                 close(descriptor)
                 break
             }
             guard errno == EEXIST else {
                 throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
             }
+            if reclaimIfOwnerDied(lock) { continue }
             guard Date() < deadline else {
                 throw NSError(domain: "FlowFocusConfiguration", code: 1,
                               userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for client.json.lock"])

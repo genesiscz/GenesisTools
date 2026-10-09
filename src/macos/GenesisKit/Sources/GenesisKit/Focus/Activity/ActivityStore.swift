@@ -576,6 +576,16 @@ public final class ActivityStore {
         }
     }
 
+    /// Removes a session's tag. `updateSession` reads nil as "leave it", so clearing needs its own write.
+    public func clearSessionTag(id: Int64) throws {
+        try queue.sync {
+            let stmt = try prepare("UPDATE focus_session SET tag = NULL WHERE id=?;")
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, id)
+            guard sqlite3_step(stmt) == SQLITE_DONE else { throw StoreError.sqlite(lastMessage()) }
+        }
+    }
+
     /// The session the app was in when it died, if any. Crash resume reads this first.
     public func openSession() throws -> FocusSession? {
         try sessionsWhere("state IN ('running','paused') ORDER BY started_ms DESC LIMIT 1").first
@@ -768,12 +778,22 @@ public final class ActivityStore {
             }
             var clause = "started_ms >= ? AND started_ms < ?"
             if appBundle != nil { clause += " AND app_bundle = ?" }
+            let app = appBundle == nil ? "" : " AND app_bundle = ?"
             _ = try run("DELETE FROM input_bucket WHERE segment_id IN (SELECT id FROM activity_segment WHERE \(clause));", [from, to], app: appBundle)
+            // Input minutes inside the range go even when their segment started before it.
+            _ = try run("DELETE FROM input_bucket WHERE bucket_ms >= ? AND bucket_ms < ? AND segment_id IN (SELECT id FROM activity_segment WHERE 1=1\(app));", [from, to], app: appBundle)
             let segments = try run("DELETE FROM activity_segment WHERE \(clause);", [from, to], app: appBundle)
+            // A segment that started before the range and ran into it ends where the range begins, so none of the
+            // forgotten time stays attributed to its window, site or project.
+            _ = try run("UPDATE activity_segment SET ended_ms=? WHERE started_ms < ? AND (ended_ms IS NULL OR ended_ms > ?)\(app);", [from, from, from], app: appBundle)
             var sessions = 0
             if appBundle == nil {
                 _ = try run("DELETE FROM focus_pause WHERE session_id IN (SELECT id FROM focus_session WHERE started_ms >= ? AND started_ms < ?);", [from, to])
                 sessions = try run("DELETE FROM focus_session WHERE started_ms >= ? AND started_ms < ?;", [from, to])
+                // A finished session that started earlier keeps only its time before the range; a running one is left
+                // to its timer, and its pauses inside the range go.
+                _ = try run("DELETE FROM focus_pause WHERE started_ms >= ? AND started_ms < ?;", [from, to])
+                _ = try run("UPDATE focus_session SET ended_ms=? WHERE started_ms < ? AND ended_ms IS NOT NULL AND ended_ms > ?;", [from, from, from])
                 // Preserve both outside fragments of a gap spanning the forgotten interval.
                 _ = try run("INSERT INTO capture_gap(started_ms,ended_ms,reason) SELECT ?,ended_ms,reason FROM capture_gap WHERE started_ms < ? AND (ended_ms IS NULL OR ended_ms > ?);", [to, from, to])
                 _ = try run("UPDATE capture_gap SET ended_ms=? WHERE started_ms < ? AND (ended_ms IS NULL OR ended_ms > ?);", [from, from, from])

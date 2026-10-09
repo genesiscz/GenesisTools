@@ -432,8 +432,13 @@ public final class FlowFocusRuntime: ObservableObject {
             try flowStore.writeFromClient(name: write.name, data: write.data)
         case "configuration.patch":
             let patch = try JSONSerialization.jsonObject(with: command.payload) as? [String: Any] ?? [:]
-            let allowed: Set<String> = ["focus", "labs", "focusWhileListening", "focusShortcutName"]
+            // `flowTransforms` is FlowTransformTools.save: a client host forwards it here like any setting.
+            let allowed: Set<String> = ["focus", "labs", "focusWhileListening", "focusShortcutName", "flowTransforms"]
             guard Set(patch.keys).isSubset(of: allowed) else { throw invalidCommand() }
+            if let transforms = patch["flowTransforms"] {
+                guard let fields = transforms as? [String: Any], Set(fields.keys) == ["modelRef"],
+                      let ref = fields["modelRef"] as? String, ref.hasPrefix("@account/") else { throw invalidCommand() }
+            }
             configuration.applyPatch(patch)
         case "focus.start":
             let value = try decode(FocusStartCommand.self)

@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { sha256File, sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { sha256FilesParallel } from "@genesiscz/utils/fs/parallel-sha256";
 
 function canonicalSha256(content: Buffer): string {
@@ -35,6 +36,22 @@ function pseudoRandom(seed: number, length: number): Buffer {
     }
     return buf;
 }
+
+describe("sha256FileAsync", () => {
+    it("matches sha256File across chunk boundaries and stops on an aborted signal", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-sha-async-"));
+        try {
+            const p = join(dir, "f");
+            const content = pseudoRandom(7, 300 * 1024 + 11);
+            writeFileSync(p, content);
+            expect(await sha256FileAsync(p)).toBe(canonicalSha256(content));
+            expect(await sha256FileAsync(p)).toBe(sha256File(p));
+            await expect(sha256FileAsync(p, { signal: AbortSignal.abort() })).rejects.toThrow();
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
 
 describe("sha256FilesParallel — evil paths", () => {
     it("empty input returns empty result", async () => {

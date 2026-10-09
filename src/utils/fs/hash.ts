@@ -20,6 +20,7 @@
 
 import { createHash } from "node:crypto";
 import { closeSync, openSync, readSync } from "node:fs";
+import { open } from "node:fs/promises";
 
 const STREAM_CHUNK_BYTES = 128 * 1024;
 
@@ -46,6 +47,32 @@ export function sha256File(path: string, opts: { signal?: AbortSignal } = {}): s
         }
     } finally {
         closeSync(fd);
+    }
+
+    return h.digest("hex");
+}
+
+/**
+ * `sha256File` without blocking the event loop: each 128 KB chunk is an awaited read, so an abort, a timer or
+ * other work runs between chunks. For files of unbounded size on a caller that must stay responsive (a shelf
+ * import of any file, possibly on a slow mounted volume).
+ */
+export async function sha256FileAsync(path: string, opts: { signal?: AbortSignal } = {}): Promise<string> {
+    const h = createHash("sha256");
+    const handle = await open(path, "r");
+    const buffer = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
+    try {
+        for (;;) {
+            opts.signal?.throwIfAborted();
+            const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+            if (bytesRead <= 0) {
+                break;
+            }
+
+            h.update(buffer.subarray(0, bytesRead));
+        }
+    } finally {
+        await handle.close();
     }
 
     return h.digest("hex");
