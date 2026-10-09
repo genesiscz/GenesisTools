@@ -1,11 +1,15 @@
 #!/usr/bin/env bun
+import { dlopen, FFIType } from "bun:ffi";
 import {
+    closeSync,
     existsSync,
-    linkSync,
+    fstatSync,
     mkdirSync,
+    openSync,
     readdirSync,
     readFileSync,
     renameSync,
+    rmdirSync,
     statSync,
     unlinkSync,
     writeFileSync,
@@ -13,7 +17,6 @@ import {
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { harnessOf } from "./harness";
-import { isProcessAlive } from "./process-alive";
 
 const SafeJSON = JSON;
 
@@ -261,9 +264,12 @@ const HOME = process.env.GENESIS_TOOLS_HOME || homedir();
 const STORAGE_DIR = join(HOME, ".genesis-tools", "claude-code", "sessions");
 const CLEANUP_DAYS = 30;
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const LOCK_STALE_MS = 30_000;
 const LOCK_RETRY_MS = 100;
-const LOCK_TIMEOUT_PREFIX = "Timed out waiting for session tracker lock:";
+const LOCK_EX = 2;
+const LOCK_NB = 4;
+
+/** The edit cannot take the session lock (deadline, or no kernel lock here), so it is spooled. */
+class LockNotTaken extends Error {}
 
 /**
  * How long an edit waits for the session lock before it is spooled instead. It was 1 s, and twelve
@@ -283,123 +289,161 @@ function ensureDir() {
     }
 }
 
-function lockState(lockPath: string): "missing" | "stale" | "held" {
-    let mtimeMs: number;
-    try {
-        mtimeMs = statSync(lockPath).mtimeMs;
-    } catch {
-        return "missing";
-    }
-
-    if (Date.now() - mtimeMs > LOCK_STALE_MS) {
-        return "stale";
-    }
-
-    try {
-        const holder: unknown = SafeJSON.parse(readFileSync(lockPath, "utf8"));
-        const pid =
-            holder && typeof holder === "object" && "pid" in holder && typeof holder.pid === "number" ? holder.pid : 0;
-        return pid > 0 && !isProcessAlive(pid) ? "stale" : "held";
-    } catch {
-        // Half-written or vanished: treat as held and let the age rule recover it.
-        return "held";
-    }
+function errorCode(error: unknown): unknown {
+    return error && typeof error === "object" && "code" in error ? error.code : undefined;
 }
 
+type Flock = (fd: number, operation: number) => number;
+let loadedFlock: Flock | null | undefined;
+
 /**
- * Creates `path` holding this process's pid, or returns false when it already exists. The content
- * is written to a private file and hard-linked into place, so no other process ever sees the path
- * empty: an empty lock read as "held" until the 30 s age rule if its writer died mid-write.
+ * The session lock is a kernel `flock`. The kernel drops it the moment its holder exits, however it
+ * exits, so there is no stale lock to detect and nothing to break. The pid-in-a-file lock it replaces
+ * needed a recovery step, and each recovery step was itself a check-then-unlink that a paused or
+ * killed recoverer could race into removing a live lock (PR #480 review, threads t10 and t11).
+ * Elsewhere (no libc to load) the edit is spooled, which loses nothing.
  */
-function createOwned(path: string): boolean {
-    const draft = `${path}.${process.pid}.draft`;
-    writeFileSync(draft, SafeJSON.stringify({ pid: process.pid, at: Date.now() }), { mode: 0o600 });
+function loadFlock(): Flock | null {
+    if (loadedFlock !== undefined) {
+        return loadedFlock;
+    }
+
+    loadedFlock = null;
+    const library =
+        process.platform === "darwin" ? "libSystem.B.dylib" : process.platform === "linux" ? "libc.so.6" : null;
+    if (!library) {
+        return null;
+    }
+
     try {
-        linkSync(draft, path);
-        return true;
+        const { symbols } = dlopen(library, { flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 } });
+        loadedFlock = (fd, operation) => symbols.flock(fd, operation);
     } catch (error) {
-        const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
-        if (code !== "EEXIST") {
-            throw error;
-        }
-
-        return false;
-    } finally {
-        unlinkSync(draft);
+        console.warn(`[track-session-files] flock is unavailable from ${library}; edits will be spooled`, error);
     }
+
+    return loadedFlock;
 }
 
-function releaseOwned(path: string): void {
+/** Cleanup may unlink an idle lock file between our open and our flock; a lock on that orphan guards nothing. */
+function isCurrentFile(fd: number, path: string): boolean {
     try {
-        const holder: unknown = SafeJSON.parse(readFileSync(path, "utf8"));
-        if (holder && typeof holder === "object" && "pid" in holder && holder.pid === process.pid) {
-            unlinkSync(path);
-        }
+        const held = fstatSync(fd);
+        const named = statSync(path);
+
+        return held.ino === named.ino && held.dev === named.dev;
     } catch {
-        // Already gone, or replaced by a recovery; never remove another owner's file.
-    }
-}
-
-/**
- * Removes a stale lock under a takeover marker, re-checking staleness while holding it. Two waiters
- * that both saw the same dead holder can no longer both unlink: the second one finds either the
- * marker or a fresh, live lock, and a new lock can only appear after the stale one is gone.
- *
- * The marker follows the lock's own staleness rule (dead pid, or older than 30 s). It used to be
- * broken after 2 s regardless of its holder, so a recovering hook paused for 2 s between its
- * re-check and its unlink had its marker taken, and could then unlink the fresh lock the second
- * recoverer's successor created. Two holders then both rewrote the session file and one edit was lost.
- */
-function breakStaleLock(lockPath: string): boolean {
-    const takeover = `${lockPath}.takeover`;
-    if (!createOwned(takeover)) {
-        if (lockState(takeover) === "stale") {
-            try {
-                unlinkSync(takeover);
-            } catch {
-                // Another waiter cleared the dead marker first; the next round tries again.
-            }
-        }
-
         return false;
-    }
-
-    try {
-        if (lockState(lockPath) === "stale") {
-            unlinkSync(lockPath);
-        }
-
-        return true;
-    } finally {
-        releaseOwned(takeover);
     }
 }
 
 async function withBoundedLock<T>(lockPath: string, fn: () => T | Promise<T>, waitMs: number): Promise<T> {
-    const deadline = Date.now() + waitMs;
-
-    while (!createOwned(lockPath)) {
-        const state = lockState(lockPath);
-        if (state === "missing" || (state === "stale" && breakStaleLock(lockPath))) {
-            continue;
-        }
-
-        if (Date.now() >= deadline) {
-            throw new Error(`${LOCK_TIMEOUT_PREFIX} ${lockPath}`);
-        }
-
-        await Bun.sleep(Math.min(LOCK_RETRY_MS, Math.max(0, deadline - Date.now())));
+    const flock = loadFlock();
+    if (!flock) {
+        throw new LockNotTaken(`No kernel file lock on ${process.platform}: ${lockPath}`);
     }
 
+    const deadline = Date.now() + waitMs;
+    let fd = openSync(lockPath, "a", 0o600);
     try {
+        while (true) {
+            if (flock(fd, LOCK_EX | LOCK_NB) === 0) {
+                if (isCurrentFile(fd, lockPath)) {
+                    break;
+                }
+
+                closeSync(fd);
+                fd = -1;
+                fd = openSync(lockPath, "a", 0o600);
+                continue;
+            }
+
+            if (Date.now() >= deadline) {
+                throw new LockNotTaken(`Timed out waiting for session tracker lock: ${lockPath}`);
+            }
+
+            await Bun.sleep(Math.min(LOCK_RETRY_MS, Math.max(0, deadline - Date.now())));
+        }
+
         return await fn();
     } finally {
-        releaseOwned(lockPath);
+        if (fd >= 0) {
+            // Closing the descriptor is what releases the flock.
+            closeSync(fd);
+        }
     }
 }
 
-function isLockTimeout(error: unknown): boolean {
-    return error instanceof Error && error.message.startsWith(LOCK_TIMEOUT_PREFIX);
+/** Removes a file or empty directory that a concurrent hook or cleanup may already have removed. */
+function removeIfPresent(path: string, kind: "file" | "emptyDir" = "file"): void {
+    try {
+        if (kind === "file") {
+            unlinkSync(path);
+        } else {
+            rmdirSync(path);
+        }
+    } catch (error) {
+        const code = errorCode(error);
+        // ENOTEMPTY / EEXIST: a spool writer just added an entry, so the directory is in use again.
+        if (code !== "ENOENT" && code !== "ENOTEMPTY" && code !== "EEXIST") {
+            throw error;
+        }
+    }
+}
+
+/** Drops spooled edits past the retention window, then the directory if nothing is left in it. */
+function pruneSpool(dir: string, cutoff: number): void {
+    for (const name of readdirSync(dir)) {
+        const entry = join(dir, name);
+        try {
+            if (statSync(entry).mtimeMs < cutoff) {
+                removeIfPresent(entry);
+            }
+        } catch (error) {
+            console.warn(`[track-session-files] Failed to inspect spooled edit: ${entry}`, error);
+        }
+    }
+
+    removeIfPresent(dir, "emptyDir");
+}
+
+/** Removes an expired lock file only while holding it, so no live holder ever loses its lock. */
+function pruneLockFile(lockPath: string, cutoff: number): void {
+    const flock = loadFlock();
+    if (!flock || statSync(lockPath).mtimeMs >= cutoff) {
+        return;
+    }
+
+    const fd = openSync(lockPath, "a", 0o600);
+    try {
+        if (flock(fd, LOCK_EX | LOCK_NB) === 0 && isCurrentFile(fd, lockPath)) {
+            unlinkSync(lockPath);
+        }
+    } finally {
+        closeSync(fd);
+    }
+}
+
+/** Leftovers of the pid-in-a-file lock this hook used before the flock; nothing reads them now. */
+const LEGACY_LOCK_SUFFIXES = [".json.lock", ".json.lock.takeover"];
+
+function cleanupEntry(entry: string, cutoff: number): void {
+    if (entry.endsWith(".json.pending")) {
+        pruneSpool(entry, cutoff);
+        return;
+    }
+
+    if (entry.endsWith(".json.flock")) {
+        pruneLockFile(entry, cutoff);
+        return;
+    }
+
+    if (
+        (entry.endsWith(".json") || LEGACY_LOCK_SUFFIXES.some((suffix) => entry.endsWith(suffix))) &&
+        statSync(entry).mtimeMs < cutoff
+    ) {
+        removeIfPresent(entry);
+    }
 }
 
 async function cleanupOldSessions() {
@@ -414,27 +458,19 @@ async function cleanupOldSessions() {
 
     try {
         await withBoundedLock(
-            `${stamp}.lock`,
+            `${stamp}.flock`,
             () => {
                 if (existsSync(stamp) && Date.now() - statSync(stamp).mtimeMs < CLEANUP_INTERVAL_MS) {
                     return;
                 }
 
                 const cutoff = Date.now() - CLEANUP_DAYS * 24 * 60 * 60 * 1000;
-                const files = readdirSync(STORAGE_DIR);
-
-                for (const file of files) {
-                    if (!file.endsWith(".json")) {
-                        continue;
-                    }
-                    const filePath = join(STORAGE_DIR, file);
+                for (const name of readdirSync(STORAGE_DIR)) {
+                    const entry = join(STORAGE_DIR, name);
                     try {
-                        const stats = statSync(filePath);
-                        if (stats.mtimeMs < cutoff) {
-                            unlinkSync(filePath);
-                        }
+                        cleanupEntry(entry, cutoff);
                     } catch (error) {
-                        console.warn(`[track-session-files] Failed to inspect cleanup candidate: ${filePath}`, error);
+                        console.warn(`[track-session-files] Failed to inspect cleanup candidate: ${entry}`, error);
                     }
                 }
 
@@ -443,7 +479,7 @@ async function cleanupOldSessions() {
             0
         );
     } catch (error) {
-        if (!isLockTimeout(error)) {
+        if (!(error instanceof LockNotTaken)) {
             console.warn("[track-session-files] Session cleanup failed", error);
         }
     }
@@ -464,10 +500,23 @@ function createFreshSessionData(sessionId: string): SessionData {
  */
 function spoolEdits(sessionFile: string, filePaths: string[]): void {
     const dir = `${sessionFile}.pending`;
-    mkdirSync(dir, { recursive: true });
     const name = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const draft = join(dir, `.${name}.draft`);
-    writeFileSync(draft, SafeJSON.stringify(filePaths));
+
+    // A merge or cleanup removes the directory once it is empty, possibly between our mkdir and our
+    // write. After the write it holds our draft, so it cannot be removed before the rename.
+    for (let attempt = 1; ; attempt++) {
+        mkdirSync(dir, { recursive: true });
+        try {
+            writeFileSync(draft, SafeJSON.stringify(filePaths));
+            break;
+        } catch (error) {
+            if (errorCode(error) !== "ENOENT" || attempt >= 3) {
+                throw error;
+            }
+        }
+    }
+
     renameSync(draft, join(dir, `${name}.json`));
 }
 
@@ -508,17 +557,17 @@ async function trackFiles(sessionId: string, filePaths: string[]) {
     const sessionFile = join(STORAGE_DIR, `${sessionId}.json`);
     try {
         await withBoundedLock(
-            `${sessionFile}.lock`,
+            `${sessionFile}.flock`,
             () => recordFiles(sessionId, sessionFile, filePaths),
             lockWaitMs()
         );
     } catch (error) {
-        if (!isLockTimeout(error)) {
+        if (!(error instanceof LockNotTaken)) {
             throw error;
         }
 
         spoolEdits(sessionFile, filePaths);
-        console.warn(`[track-session-files] Session lock busy; edit spooled for the next holder: ${sessionFile}`);
+        console.warn(`[track-session-files] ${error.message}; edit spooled for the next holder`);
     }
 }
 
@@ -556,7 +605,11 @@ function recordFiles(sessionId: string, sessionFile: string, filePaths: string[]
 
     // Only after the session file holds them; a crash before this merges them again, harmlessly.
     for (const spoolFile of spool.spoolFiles) {
-        unlinkSync(spoolFile);
+        removeIfPresent(spoolFile);
+    }
+
+    if (spool.spoolFiles.length > 0) {
+        removeIfPresent(`${sessionFile}.pending`, "emptyDir");
     }
 }
 

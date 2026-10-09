@@ -1,4 +1,6 @@
+import { dlopen, FFIType } from "bun:ffi";
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { closeSync, openSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -251,29 +253,6 @@ test("concurrent hook processes preserve the union of edited paths", async () =>
     expect((await readJson<{ files: string[] }>("sessions", "shared-session.json")).files.sort()).toEqual(paths.sort());
 });
 
-test("concurrent hooks recover from a preseeded stale lock without losing an edit", async () => {
-    const paths = Array.from({ length: 12 }, (_, index) => `/repo/stale-${index}.ts`);
-    const sessions = join(home, ".genesis-tools", "claude-code", "sessions");
-    await mkdir(sessions, { recursive: true });
-    // A holder pid that cannot be alive: every waiter sees the same dead owner at once.
-    await writeFile(join(sessions, "stale-session.json.lock"), JSON.stringify({ pid: 2 ** 31 - 2, at: 0 }));
-
-    const exits = await Promise.all(
-        paths.map((filePath) =>
-            runHook({
-                session_id: "stale-session",
-                hook_event_name: "PostToolUse",
-                tool_name: "Edit",
-                tool_input: { file_path: filePath },
-                transcript_path: CLAUDE_TRANSCRIPT,
-            })
-        )
-    );
-
-    expect(exits).toEqual(paths.map(() => 0));
-    expect((await readJson<{ files: string[] }>("sessions", "stale-session.json")).files.sort()).toEqual(paths.sort());
-});
-
 function editPayload(sessionId: string, filePath: string) {
     return {
         session_id: sessionId,
@@ -284,55 +263,109 @@ function editPayload(sessionId: string, filePath: string) {
     };
 }
 
-// Regression test: CI 2026-10-08/09, a hook that waited out the 1 s lock deadline exited 1 and its edit was never written.
-test("an edit that waits out the lock deadline is spooled, and the next lock holder records it", async () => {
+const LOCK_EX_NB = 2 | 4;
+const libc = dlopen(process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6", {
+    flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+});
+
+/** Takes the session's kernel lock in this process, as a hook mid-edit would; the returned function releases it. */
+function holdLock(lockPath: string): () => void {
+    const fd = openSync(lockPath, "a", 0o600);
+    expect(libc.symbols.flock(fd, LOCK_EX_NB)).toBe(0);
+
+    return () => closeSync(fd);
+}
+
+const LONG_AGO = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
+
+test("concurrent hooks recover at once from a holder that was killed mid-edit, and none loses an edit", async () => {
+    const paths = Array.from({ length: 12 }, (_, index) => `/repo/killed-${index}.ts`);
     const sessions = join(home, ".genesis-tools", "claude-code", "sessions");
-    const lock = join(sessions, "busy-session.json.lock");
     await mkdir(sessions, { recursive: true });
-    // This test process is alive and the lock is fresh, so nothing may break it: the hook must time out.
-    await writeFile(lock, JSON.stringify({ pid: process.pid, at: Date.now() }));
+    // A real holder that dies without releasing: the kernel must free its lock, with no recovery step to race.
+    const holder = Bun.spawn(
+        [
+            "bun",
+            "-e",
+            `const { dlopen, FFIType } = require("bun:ffi");
+             const { openSync } = require("node:fs");
+             const libc = dlopen(${JSON.stringify(process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6")}, { flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 } });
+             if (libc.symbols.flock(openSync(process.argv[1], "a"), 6) !== 0) process.exit(3);
+             process.stdout.write("held\\n");
+             setInterval(() => {}, 1000);`,
+            join(sessions, "killed-session.json.flock"),
+        ],
+        { stdout: "pipe", stderr: "inherit" }
+    );
+    const reader = holder.stdout.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe("held\n");
+    holder.kill("SIGKILL");
+    await holder.exited;
 
-    expect(
-        await runHook(editPayload("busy-session", "/repo/waited.ts"), { GENESIS_TOOLS_SESSION_LOCK_WAIT_MS: "150" })
-    ).toBe(0);
-    await expect(readJson("sessions", "busy-session.json")).rejects.toThrow();
+    const exits = await Promise.all(paths.map((filePath) => runHook(editPayload("killed-session", filePath))));
 
-    await rm(lock);
+    expect(exits).toEqual(paths.map(() => 0));
+    expect((await readJson<{ files: string[] }>("sessions", "killed-session.json")).files.sort()).toEqual(paths.sort());
+});
+
+// Regression test: CI 2026-10-08/09, a hook that waited out the 1 s lock deadline exited 1 and its edit was never written.
+// PR #480 review t10: a live holder's lock is never taken from it by age, however old the lock file is.
+test("a live holder keeps the lock however old it is; the waiting edit is spooled and merged by the next holder", async () => {
+    const sessions = join(home, ".genesis-tools", "claude-code", "sessions");
+    const lock = join(sessions, "busy-session.json.flock");
+    await mkdir(sessions, { recursive: true });
+    const release = holdLock(lock);
+    await utimes(lock, LONG_AGO, LONG_AGO);
+
+    try {
+        expect(
+            await runHook(editPayload("busy-session", "/repo/waited.ts"), { GENESIS_TOOLS_SESSION_LOCK_WAIT_MS: "300" })
+        ).toBe(0);
+        await expect(readJson("sessions", "busy-session.json")).rejects.toThrow();
+        expect(await readdir(join(sessions, "busy-session.json.pending"))).toHaveLength(1);
+    } finally {
+        release();
+    }
+
     expect(await runHook(editPayload("busy-session", "/repo/next.ts"))).toBe(0);
-
     expect((await readJson<{ files: string[] }>("sessions", "busy-session.json")).files.sort()).toEqual([
         "/repo/next.ts",
         "/repo/waited.ts",
     ]);
-    expect(await readdir(join(sessions, "busy-session.json.pending"))).toEqual([]);
+    // PR #480 review t12: a merged spool leaves no directory behind.
+    await expect(readdir(join(sessions, "busy-session.json.pending"))).rejects.toThrow();
 });
 
-// Regression test: a takeover marker was broken after 2 s even with its owner alive, so a paused recoverer could unlink a fresh lock.
-test("a live hook's takeover marker is never broken, however old it is", async () => {
+// PR #480 review t12: spool directories and lock files used to escape the 30-day retention.
+test("retention cleanup drops expired spool entries and idle lock files, and keeps recent or held ones", async () => {
     const sessions = join(home, ".genesis-tools", "claude-code", "sessions");
-    const lock = join(sessions, "takeover-session.json.lock");
-    const takeover = `${lock}.takeover`;
-    await mkdir(sessions, { recursive: true });
-    await writeFile(lock, JSON.stringify({ pid: 2 ** 31 - 2, at: 0 }));
-    // A recoverer that is alive but paused mid-takeover: its marker is old, its pid is this process.
-    await writeFile(takeover, JSON.stringify({ pid: process.pid, at: 0 }));
-    const fiveSecondsAgo = new Date(Date.now() - 5_000);
-    await utimes(takeover, fiveSecondsAgo, fiveSecondsAgo);
+    const spool = join(sessions, "old-session.json.pending");
+    const emptySpool = join(sessions, "empty-session.json.pending");
+    await mkdir(spool, { recursive: true });
+    await mkdir(emptySpool, { recursive: true });
+    await writeFile(join(spool, "expired.json"), JSON.stringify(["/repo/expired.ts"]));
+    await utimes(join(spool, "expired.json"), LONG_AGO, LONG_AGO);
+    await writeFile(join(spool, "recent.json"), JSON.stringify(["/repo/recent.ts"]));
+    for (const name of ["idle-session.json.flock", "held-session.json.flock", "legacy-session.json.lock"]) {
+        await writeFile(join(sessions, name), "");
+        await utimes(join(sessions, name), LONG_AGO, LONG_AGO);
+    }
+    const release = holdLock(join(sessions, "held-session.json.flock"));
 
-    expect(
-        await runHook(editPayload("takeover-session", "/repo/paused.ts"), { GENESIS_TOOLS_SESSION_LOCK_WAIT_MS: "300" })
-    ).toBe(0);
+    try {
+        expect(
+            await runHook({ session_id: "start", hook_event_name: "SessionStart", transcript_path: CLAUDE_TRANSCRIPT })
+        ).toBe(0);
+    } finally {
+        release();
+    }
 
-    // The paused recoverer still owns the takeover, so the stale lock it is handling was left alone.
-    expect(JSON.parse(await readFile(lock, "utf8"))).toEqual({ pid: 2 ** 31 - 2, at: 0 });
-    expect(JSON.parse(await readFile(takeover, "utf8"))).toEqual({ pid: process.pid, at: 0 });
-
-    await rm(takeover);
-    expect(await runHook(editPayload("takeover-session", "/repo/after.ts"))).toBe(0);
-    expect((await readJson<{ files: string[] }>("sessions", "takeover-session.json")).files.sort()).toEqual([
-        "/repo/after.ts",
-        "/repo/paused.ts",
-    ]);
+    const left = await readdir(sessions);
+    expect(left).not.toContain("empty-session.json.pending");
+    expect(left).not.toContain("idle-session.json.flock");
+    expect(left).not.toContain("legacy-session.json.lock");
+    expect(left).toContain("held-session.json.flock");
+    expect(await readdir(spool)).toEqual(["recent.json"]);
 });
 
 test("repeated SessionStart runs cleanup at most once per cadence", async () => {
