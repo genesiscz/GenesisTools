@@ -13,6 +13,7 @@ export interface SendOptions {
     first?: boolean;
     includeSelf?: boolean;
     enter?: boolean;
+    paste?: boolean;
     enterDelay?: string;
     dryRun?: boolean;
     json?: boolean;
@@ -109,10 +110,16 @@ interface Delivery {
     text: string;
     enter: boolean;
     enterDelayMs: number;
+    paste: boolean;
 }
 
-async function deliver({ target, surfaceId, text, enter, enterDelayMs }: Delivery) {
+async function deliver({ target, surfaceId, text, enter, enterDelayMs, paste }: Delivery) {
     const where = surfaceTargetArgs(surfaceId, target.workspaceId);
+    if (paste) {
+        await runCmuxOk(["paste", ...where, ...(enter ? ["--submit"] : []), "--", text]);
+        return;
+    }
+
     await runCmuxOk(["send", ...where, "--", text]);
 
     if (enter) {
@@ -244,11 +251,11 @@ export async function sendCommand(
 
     if (surfaceId) {
         try {
-            await deliver({ target, surfaceId, text, enter, enterDelayMs });
+            await deliver({ target, surfaceId, text, enter, enterDelayMs, paste: opts.paste === true });
             report({ opts, query: queryTrim, target, surfaceId, enter, source: result.source });
             return true;
         } catch (err) {
-            if (result.source !== "recorded") {
+            if (result.source !== "recorded" || opts.paste) {
                 throw err;
             }
             // Recorded refs outlived their pane (cmux restart). Fall back to the matcher.
@@ -286,7 +293,7 @@ export async function sendCommand(
 
     target = fallback;
     surfaceId = fallbackSurface;
-    await deliver({ target, surfaceId, text, enter, enterDelayMs });
+    await deliver({ target, surfaceId, text, enter, enterDelayMs, paste: opts.paste === true });
     report({ opts, query: queryTrim, target, surfaceId, enter, source: result.source });
     return true;
 }
