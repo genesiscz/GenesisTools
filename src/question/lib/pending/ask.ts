@@ -294,7 +294,8 @@ export async function answerAskForm(id: string, answers: AskAnswer[], deps: AskD
                     ...form.poster,
                     sourceMessage: undefined,
                     cwd: form.poster?.cwd ?? form.projectPath,
-                    sessionId: form.sessionHint ?? null,
+                    // An explicit session would overwrite the one the answering harness detected.
+                    ...(form.sessionHint ? { sessionId: form.sessionHint } : {}),
                 },
             }
         );
