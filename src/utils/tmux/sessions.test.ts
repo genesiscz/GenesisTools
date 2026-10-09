@@ -9,6 +9,8 @@ import {
     createTmuxSessionRunning,
     ensureTmuxServerPersists,
     getTmuxScrollState,
+    listTmuxClients,
+    listTmuxPanes,
     listTmuxSessionActivePanes,
     listTmuxSessionCommands,
     listTmuxSessions,
@@ -38,6 +40,52 @@ describe("tmux sessions", () => {
         setTmuxSpawnSyncForTests(null);
         setTmuxBinForTests(null);
         resetTmuxBinCache();
+    });
+
+    test("pane and client listings parse, an absent server is empty, and an unanswered tmux is a failure", async () => {
+        setTmuxBinForTests("/mock/tmux");
+        const calls: string[][] = [];
+        let answer: { exitCode: number | null; stdout: string; stderr?: string } = {
+            exitCode: 0,
+            stdout: rec("%41|cmux-app|/dev/ttys041|1760000000|1|1") + rec("%42|cmux-app|/dev/ttys042|1760000000|1|0"),
+        };
+        setTmuxSpawnSyncForTests((cmd) => {
+            calls.push(cmd);
+            return answer;
+        });
+
+        expect(await listTmuxPanes("cmux-app")).toEqual({
+            ok: true,
+            items: [
+                {
+                    pane: "%41",
+                    session: "cmux-app",
+                    tty: "/dev/ttys041",
+                    sessionCreatedMs: 1_760_000_000_000,
+                    visible: true,
+                },
+                {
+                    pane: "%42",
+                    session: "cmux-app",
+                    tty: "/dev/ttys042",
+                    sessionCreatedMs: 1_760_000_000_000,
+                    visible: false,
+                },
+            ],
+        });
+        // One session is matched exactly: a bare name would fall back to a prefix match on another session.
+        expect(calls[0]).toContain("=cmux-app");
+
+        answer = { exitCode: 0, stdout: rec("/dev/ttys006|cmux-app") };
+        expect(await listTmuxClients()).toEqual({ ok: true, items: [{ tty: "/dev/ttys006", session: "cmux-app" }] });
+
+        answer = { exitCode: 1, stdout: "", stderr: "no server running on /private/tmp/tmux-501/default" };
+        expect(await listTmuxPanes()).toEqual({ ok: true, items: [] });
+
+        answer = { exitCode: null, stdout: "" };
+        const unanswered = await listTmuxPanes("cmux-app");
+        expect(unanswered.ok).toBe(false);
+        expect(unanswered.ok ? "" : unanswered.reason).toContain("did not answer");
     });
 
     test("argvWithChildDeadline prefixes a bounded watchdog, not an unbounded wait", () => {

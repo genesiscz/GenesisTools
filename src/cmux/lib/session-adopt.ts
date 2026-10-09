@@ -1,5 +1,6 @@
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
+import type { TmuxClientInfo, TmuxPaneInfo } from "@genesiscz/utils/tmux/sessions";
 import { isSessionAgentId, type SessionAgentId } from "./session-agents";
 import type { AdoptedSession } from "./session-close";
 
@@ -85,15 +86,102 @@ export function parseCmuxTree(stdout: string): CmuxTreeView {
 }
 
 /**
+ * A tmux pane a cmux surface shows right now: the surface's tty is the tty of the only tmux client attached to
+ * the pane's session, and the pane is the one that client displays (active pane of the active window).
+ */
+export interface TmuxPaneSurface {
+    pane: string;
+    session: string;
+    /** The surface ref showing the pane. */
+    surface: string;
+    /** The pane's own tty, where the agent process runs (the surface's tty runs `tmux attach`). */
+    paneTty: string | null;
+    sessionCreatedMs: number;
+}
+
+/** `/dev/ttys012` (tmux) and `ttys012` (cmux) name the same terminal. */
+function ttyName(tty: string | null): string | null {
+    return tty ? tty.replace(/^\/dev\//, "") : null;
+}
+
+/**
+ * Which cmux surface shows each visible tmux pane, joined live through the attached client's tty. A session
+ * with no client in cmux, or with clients in several surfaces, joins nothing: there is no single surface to
+ * type into.
+ */
+export function joinTmuxPanes(input: {
+    panes: readonly TmuxPaneInfo[];
+    clients: readonly TmuxClientInfo[];
+    tree: CmuxTreeView;
+}): Map<string, TmuxPaneSurface> {
+    const surfaceByTty = new Map<string, string>();
+
+    for (const surface of input.tree.surfaces.values()) {
+        const tty = ttyName(surface.tty);
+
+        if (tty) {
+            surfaceByTty.set(tty, surface.ref);
+        }
+    }
+
+    const surfacesBySession = new Map<string, Set<string>>();
+
+    for (const client of input.clients) {
+        const surface = surfaceByTty.get(ttyName(client.tty) ?? "");
+
+        if (surface) {
+            surfacesBySession.set(client.session, (surfacesBySession.get(client.session) ?? new Set()).add(surface));
+        }
+    }
+
+    const joined = new Map<string, TmuxPaneSurface>();
+
+    for (const pane of input.panes) {
+        const surfaces = surfacesBySession.get(pane.session);
+
+        if (pane.visible && surfaces?.size === 1) {
+            joined.set(pane.pane, {
+                pane: pane.pane,
+                session: pane.session,
+                surface: [...surfaces][0],
+                paneTty: ttyName(pane.tty),
+                sessionCreatedMs: pane.sessionCreatedMs,
+            });
+        }
+    }
+
+    return joined;
+}
+
+/** tmux stamps `session_created` in whole seconds; the journal in milliseconds. */
+const TMUX_CREATED_SLACK_MS = 1_000;
+
+interface ResolvedEntry {
+    entry: SessionCmuxRefs;
+    live: LiveSurface & { id: string };
+    /** Set when the entry was joined through its tmux pane (a --via-tmux session records no surface). */
+    tmux: TmuxPaneSurface | null;
+}
+
+/**
  * The live surface a journal entry still runs in, or null.
  *
  * A ref is only meaningful inside one cmux instance: after a restart `surface:5` can name an unrelated
  * terminal, and closing it would `/exit` and close someone else's work. So the ref only finds the
  * candidate, and the journal's surface UUID must equal the live surface's UUID. An entry or a tree
  * without a UUID is never trusted. The caller's own surface is never returned.
+ *
+ * An entry with no surface but a tmux pane (a --via-tmux session started without the caller's cmux identity)
+ * resolves through `tmux`: the surface that shows that pane now. tmux pane ids renumber when the tmux server
+ * restarts, so an entry older than the pane's session is not trusted.
  */
-function liveSurfaceOf(entry: SessionCmuxRefs, tree: CmuxTreeView): LiveSurface | null {
-    const ref = entry.surfaceRef;
+function resolveEntry(
+    entry: SessionCmuxRefs,
+    tree: CmuxTreeView,
+    tmux: ReadonlyMap<string, TmuxPaneSurface>
+): ResolvedEntry | null {
+    const joined = !entry.surfaceRef && entry.tmuxPane ? (tmux.get(entry.tmuxPane) ?? null) : null;
+    const ref = entry.surfaceRef ?? joined?.surface;
 
     if (!ref || ref === tree.caller) {
         return null;
@@ -101,28 +189,42 @@ function liveSurfaceOf(entry: SessionCmuxRefs, tree: CmuxTreeView): LiveSurface 
 
     const live = tree.surfaces.get(ref);
 
-    if (!live?.id || !entry.surfaceId || live.id.toLowerCase() !== entry.surfaceId.toLowerCase()) {
+    if (!live?.id) {
         return null;
     }
 
-    return live;
+    if (joined) {
+        return entry.at >= joined.sessionCreatedMs - TMUX_CREATED_SLACK_MS
+            ? { entry, live: { ...live, id: live.id }, tmux: joined }
+            : null;
+    }
+
+    if (!entry.surfaceId || live.id.toLowerCase() !== entry.surfaceId.toLowerCase()) {
+        return null;
+    }
+
+    return { entry, live: { ...live, id: live.id }, tmux: null };
 }
 
-/** The newest journal entry per live surface, keyed by ref, keeping only entries whose surface UUID still matches. */
-function newestPerLiveSurface(refs: Iterable<SessionCmuxRefs>, tree: CmuxTreeView): Map<string, SessionCmuxRefs> {
-    const newest = new Map<string, SessionCmuxRefs>();
+/** The newest journal entry per live surface, keyed by ref, keeping only entries that still resolve to it. */
+function newestPerLiveSurface(input: {
+    refs: Iterable<SessionCmuxRefs>;
+    tree: CmuxTreeView;
+    tmux?: ReadonlyMap<string, TmuxPaneSurface>;
+}): Map<string, ResolvedEntry> {
+    const newest = new Map<string, ResolvedEntry>();
 
-    for (const entry of refs) {
-        const live = liveSurfaceOf(entry, tree);
+    for (const entry of input.refs) {
+        const resolved = resolveEntry(entry, input.tree, input.tmux ?? new Map());
 
-        if (!live) {
+        if (!resolved) {
             continue;
         }
 
-        const seen = newest.get(live.ref);
+        const seen = newest.get(resolved.live.ref);
 
-        if (!seen || entry.at > seen.at) {
-            newest.set(live.ref, entry);
+        if (!seen || entry.at > seen.entry.at) {
+            newest.set(resolved.live.ref, resolved);
         }
     }
 
@@ -142,18 +244,17 @@ export function pickAdoptable(input: {
     query: string;
     refs: Iterable<SessionCmuxRefs>;
     tree: CmuxTreeView;
+    tmux?: ReadonlyMap<string, TmuxPaneSurface>;
     providerOf: (entry: SessionCmuxRefs) => string | undefined;
 }): AdoptedSession | null {
-    const newestBySurface = newestPerLiveSurface(input.refs, input.tree);
     const needle = input.query.trim().toLowerCase();
-    const hits = [...newestBySurface.values()].filter((entry) => {
-        const live = input.tree.surfaces.get(entry.surfaceRef ?? "");
+    const hits = [...newestPerLiveSurface(input).values()].filter(({ entry, live }) => {
         const id = entry.sessionId.toLowerCase();
         return (
             id === needle ||
             (needle.length >= 8 && id.startsWith(needle)) ||
-            entry.surfaceRef === input.query ||
-            live?.workspace === input.query
+            live.ref === input.query ||
+            live.workspace === input.query
         );
     });
 
@@ -161,22 +262,16 @@ export function pickAdoptable(input: {
         return null;
     }
 
-    const entry = hits[0];
-    const agent = input.providerOf(entry);
-    const live = input.tree.surfaces.get(entry.surfaceRef ?? "");
+    const agent = input.providerOf(hits[0].entry);
 
-    if (!agent || !isSessionAgentId(agent) || !live?.id) {
+    if (!agent || !isSessionAgentId(agent)) {
         return null;
     }
 
-    return adoptedFrom(entry, { ...live, id: live.id }, agent);
+    return adoptedFrom(hits[0], agent);
 }
 
-function adoptedFrom(
-    entry: SessionCmuxRefs,
-    live: LiveSurface & { id: string },
-    agent: SessionAgentId
-): AdoptedSession {
+function adoptedFrom({ entry, live, tmux }: ResolvedEntry, agent: SessionAgentId): AdoptedSession {
     return {
         type: "created",
         name: entry.sessionId,
@@ -190,12 +285,13 @@ function adoptedFrom(
         surface: live.ref,
         workspaceId: live.workspaceId,
         surfaceId: live.id,
-        tmuxSession: null,
+        // A tmux-joined session quits through tmux and runs on the pane's tty, not on the surface's.
+        tmuxSession: tmux?.session ?? null,
         pidFile: "",
         command: "",
         createdAt: new Date(entry.at).toISOString(),
         createdBy: "adopted",
-        tty: live.tty,
+        tty: tmux ? tmux.paneTty : live.tty,
     };
 }
 
@@ -216,17 +312,16 @@ export interface LiveAgentSurface {
 export function liveAgentSurfaces(input: {
     refs: Iterable<SessionCmuxRefs>;
     tree: CmuxTreeView;
+    tmux?: ReadonlyMap<string, TmuxPaneSurface>;
     providerOf: (entry: SessionCmuxRefs) => string | undefined;
 }): LiveAgentSurface[] {
-    const newest = newestPerLiveSurface(input.refs, input.tree);
     const found: LiveAgentSurface[] = [];
 
-    for (const [ref, entry] of newest) {
+    for (const { entry, live } of newestPerLiveSurface(input).values()) {
         const agent = input.providerOf(entry);
-        const surface = input.tree.surfaces.get(ref);
 
-        if (agent && isSessionAgentId(agent) && surface) {
-            found.push({ sessionId: entry.sessionId, agent, surface, cwd: entry.cwd });
+        if (agent && isSessionAgentId(agent)) {
+            found.push({ sessionId: entry.sessionId, agent, surface: live, cwd: entry.cwd });
         }
     }
 

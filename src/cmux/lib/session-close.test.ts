@@ -8,6 +8,7 @@ import {
     recordedSessionIdOf,
     type SessionCloseIO,
     surfaceTarget,
+    type TurnLookup,
 } from "./session-close";
 import { openSessions, type SessionCreatedRecord, type SessionRecordLine } from "./session-store";
 
@@ -43,7 +44,7 @@ function fake(input: {
     lines?: SessionRecordLine[];
     workspaces?: ListedWorkspace[];
     caller?: string;
-    turn?: { sessionId: string; state: string } | null;
+    turn?: TurnLookup | null;
     /** How many `agentRunning` checks answer true before the agent is gone. */
     runningChecks?: number;
     adoptable?: AdoptedSession | null;
@@ -438,4 +439,26 @@ test("a surface session is found by its surface UUID, and an entry from before i
 
     expect(recordedSessionIdOf({ record: created(), refs, tmuxPanes: [] })).toBe("agent");
     expect(recordedSessionIdOf({ record: created({ surfaceId: undefined }), refs, tmuxPanes: [] })).toBe("renumbered");
+});
+
+test("a turn state that could not be read refuses like a running turn, and --force still closes", async () => {
+    const unreadable = {
+        sessionId: null,
+        state: "UNREADABLE" as const,
+        detail: "tmux list-panes did not answer within 10 s",
+    };
+    const refused = fake({
+        lines: [created({ tmuxSession: "cmux-app-ab12cd" })],
+        turn: unreadable,
+        forbidIrreversible: true,
+    });
+    const report = await closeSession("codex-app-ab12cd", { graceMs: 0 }, refused.io);
+
+    expect(report).toMatchObject({ outcome: "refused", reason: "turn-running", turnState: "UNREADABLE" });
+    expect(report.notes[0]).toContain("did not answer");
+    expect(refused.calls).toEqual([]);
+
+    const forced = fake({ lines: [created({ tmuxSession: "cmux-app-ab12cd" })], turn: unreadable, runningChecks: 1 });
+    expect((await closeSession("codex-app-ab12cd", { graceMs: 1_000, force: true }, forced.io)).outcome).toBe("closed");
+    expect(forced.calls).toContain("exit /quit");
 });

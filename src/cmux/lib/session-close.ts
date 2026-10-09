@@ -128,8 +128,12 @@ export interface SessionCloseIO {
     closeSurface(surface: string, window: string | null): Promise<void>;
     /** The workspace this command runs in (`CMUX_WORKSPACE_ID`), never closed. */
     callerWorkspaceId(): string | undefined;
-    /** The agent session in the record's surface and its turn state, or null when no hook recorded one. */
-    turnState(record: CloseSubject): Promise<{ sessionId: string; state: string } | null>;
+    /**
+     * The agent session in the record's surface and its turn state, or null when no hook recorded one.
+     * `UNREADABLE` (no session id, a `detail`) means the lookup itself failed, for example tmux did not answer:
+     * close then refuses like a running turn, because a busy agent cannot be ruled out.
+     */
+    turnState(record: CloseSubject): Promise<TurnLookup | null>;
     sendExit(record: CloseSubject, text: string): Promise<void>;
     /** True while the agent still runs: a child of the recorded shell, or the agent's process on an adopted surface's tty. */
     agentRunning(record: CloseSubject): Promise<boolean>;
@@ -139,6 +143,10 @@ export interface SessionCloseIO {
     sleep(ms: number): Promise<void>;
     now(): number;
 }
+
+export type TurnLookup =
+    | { sessionId: string; state: string }
+    | { sessionId: null; state: "UNREADABLE"; detail: string };
 
 export interface CloseOptions {
     force?: boolean;
@@ -382,9 +390,16 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
             report.notes.push("no agent session is recorded for this surface; the turn state is unknown");
         }
 
+        if (turn?.sessionId === null && !options.force) {
+            return refuse(
+                "turn-running",
+                `the ${record.agent} turn state could not be read (${turn.detail}), so a running turn cannot be ruled out; retry, or pass --force`
+            );
+        }
+
         // STALLED is an unfinished turn that wrote nothing for a while: a long tool call looks the same, so it
         // is refused like RUNNING. Only --force quits an agent mid-turn.
-        if ((turn?.state === "RUNNING" || turn?.state === "STALLED") && !options.force) {
+        if (turn?.sessionId && (turn.state === "RUNNING" || turn.state === "STALLED") && !options.force) {
             const how =
                 turn.state === "STALLED" ? "has not finished (stalled, possibly a long tool call)" : "is still running";
             return refuse(

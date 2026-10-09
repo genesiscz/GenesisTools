@@ -1,7 +1,14 @@
 import { expect, test } from "bun:test";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { liveAgentSurfaces, matchLiveAgentSurfaces, parseCmuxTree, pickAdoptable, ttyRunsAgent } from "./session-adopt";
+import {
+    joinTmuxPanes,
+    liveAgentSurfaces,
+    matchLiveAgentSurfaces,
+    parseCmuxTree,
+    pickAdoptable,
+    ttyRunsAgent,
+} from "./session-adopt";
 
 /** An invented surface UUID per ref, so a journal entry and the tree agree unless a test says otherwise. */
 function uuidOf(ref: string): string {
@@ -167,4 +174,62 @@ test("the tty listing matches the agent binary or its tools launcher, not a word
     expect(ttyRunsAgent("-zsh\nbun /repo/tools grok run work", "grok")).toBe(true);
     expect(ttyRunsAgent("-zsh\nvim /notes/claude-ideas.md", "claude")).toBe(false);
     expect(ttyRunsAgent("-zsh", "claude")).toBe(false);
+});
+
+/** A --via-tmux agent's journal entry: no cmux surface (its identity was unset), only its tmux pane. */
+function tmuxEntry(sessionId: string, tmuxPane: string, at: number): SessionCmuxRefs {
+    return { ...refs(sessionId, "unused", at, "grok", null), surfaceRef: null, tmuxPane };
+}
+
+const PANE = { pane: "%41", session: "cmux-app-ab12cd", tty: "/dev/ttys041", sessionCreatedMs: 10_000, visible: true };
+
+test("a --via-tmux session is found through the surface whose tmux client shows its pane", () => {
+    const tmux = joinTmuxPanes({
+        panes: [PANE, { ...PANE, pane: "%42", visible: false }],
+        clients: [{ tty: "/dev/ttys006", session: "cmux-app-ab12cd" }],
+        tree,
+    });
+    const journal = [tmuxEntry("0199cc33-0000-7000-8000-000000000003", "%41", 12_000)];
+    const live = liveAgentSurfaces({ refs: journal, tree, tmux, providerOf });
+
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({ agent: "grok", surface: { ref: "surface:6", id: "uuid-surface:6" } });
+    // Messaging by exact session id finds it, and adoption quits it through tmux on the pane's own tty.
+    expect(matchLiveAgentSurfaces("0199cc33-0000-7000-8000-000000000003", "grok", live)).toHaveLength(1);
+    expect(pickAdoptable({ query: "0199cc33", refs: journal, tree, tmux, providerOf })).toMatchObject({
+        surface: "surface:6",
+        surfaceId: "uuid-surface:6",
+        tmuxSession: "cmux-app-ab12cd",
+        tty: "ttys041",
+    });
+    // Without the tmux join it stays unfound, as before: no surface is ever guessed.
+    expect(liveAgentSurfaces({ refs: journal, tree, providerOf })).toEqual([]);
+});
+
+test("a tmux pane joins no surface when no client, several surfaces, a hidden pane or an older entry says otherwise", () => {
+    const journal = [tmuxEntry("0199cc33-0000-7000-8000-000000000003", "%41", 12_000)];
+    const find = (tmux: ReturnType<typeof joinTmuxPanes>) =>
+        liveAgentSurfaces({ refs: journal, tree, tmux, providerOf });
+
+    expect(find(joinTmuxPanes({ panes: [PANE], clients: [], tree }))).toEqual([]);
+    expect(
+        find(
+            joinTmuxPanes({
+                panes: [PANE],
+                clients: [
+                    { tty: "/dev/ttys005", session: PANE.session },
+                    { tty: "/dev/ttys006", session: PANE.session },
+                ],
+                tree,
+            })
+        )
+    ).toEqual([]);
+    const shown = [{ tty: "/dev/ttys006", session: PANE.session }];
+    expect(find(joinTmuxPanes({ panes: [{ ...PANE, visible: false }], clients: shown, tree }))).toEqual([]);
+    // The tmux server restarted after the entry was written: pane %41 is someone else's now.
+    expect(find(joinTmuxPanes({ panes: [{ ...PANE, sessionCreatedMs: 60_000 }], clients: shown, tree }))).toEqual([]);
+    // The caller's own surface never joins.
+    expect(find(joinTmuxPanes({ panes: [PANE], clients: [{ tty: "ttys001", session: PANE.session }], tree }))).toEqual(
+        []
+    );
 });

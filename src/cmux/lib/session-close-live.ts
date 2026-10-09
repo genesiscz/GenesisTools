@@ -7,9 +7,21 @@ import { loadAllSessionCmuxRefs, resolveRefsProvider, type SessionCmuxRefs } fro
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { argvWithChildDeadline } from "@genesiscz/utils/process/child-deadline";
+import { capture } from "@genesiscz/utils/process/ps";
 import { classifyPid } from "@genesiscz/utils/process-identity";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
-import { type LiveAgentSurface, liveAgentSurfaces, parseCmuxTree, pickAdoptable, ttyRunsAgent } from "./session-adopt";
+import { listTmuxClients, listTmuxPanes } from "@genesiscz/utils/tmux/sessions";
+import {
+    type CmuxTreeView,
+    joinTmuxPanes,
+    type LiveAgentSurface,
+    liveAgentSurfaces,
+    parseCmuxTree,
+    pickAdoptable,
+    type TmuxPaneSurface,
+    ttyRunsAgent,
+} from "./session-adopt";
 import {
     type AdoptedSession,
     type CloseSubject,
@@ -68,7 +80,13 @@ async function adoptedAgentRunning(record: CloseSubject & { tty: string | null }
         return true;
     }
 
-    const ps = await spawnOk(["ps", "-t", record.tty, "-o", "args="]);
+    const ps = await runBounded(["ps", "-t", record.tty, "-o", "args="]);
+
+    // An unanswered ps cannot show the agent quit: count it as running, like a missing tty.
+    if (ps.timedOut) {
+        return true;
+    }
+
     return ps.code === 0 && ttyRunsAgent(ps.stdout, record.agent);
 }
 
@@ -95,19 +113,22 @@ function isAlive(pid: number): boolean {
     return true;
 }
 
-/** The pane ids (`%12`) of a tmux session; empty when it is gone. */
-async function tmuxPanesOf(session: string): Promise<string[]> {
-    const result = await spawnOk([resolveTmuxBin(), "list-panes", "-s", "-t", `=${session}`, "-F", "#{pane_id}"]);
+/**
+ * Which cmux surface shows each tmux pane, for discovery (messaging, list, adoption). The listings are bounded;
+ * when tmux does not answer, no tmux-only session is found, which is the safe side for a read-only lookup.
+ */
+async function liveTmuxJoin(tree: CmuxTreeView): Promise<Map<string, TmuxPaneSurface>> {
+    const [panes, clients] = await Promise.all([listTmuxPanes(), listTmuxClients()]);
 
-    if (result.code !== 0) {
-        log.debug({ session, stderr: result.stderr.trim() }, "tmux list-panes failed (session gone?)");
-        return [];
+    if (!panes.ok || !clients.ok) {
+        log.debug(
+            { panes: panes.ok ? null : panes.reason, clients: clients.ok ? null : clients.reason },
+            "tmux did not answer; --via-tmux sessions are not discoverable this time"
+        );
+        return new Map();
     }
 
-    return result.stdout
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean);
+    return joinTmuxPanes({ panes: panes.items, clients: clients.items, tree });
 }
 
 async function liveTree() {
@@ -121,21 +142,45 @@ async function liveTree() {
     return parseCmuxTree(result.stdout);
 }
 
-async function spawnOk(argv: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-    const proc = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, code] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-    ]);
-    return { code, stdout, stderr };
+/** The child dies at this deadline even if this process is killed first (child-deadline.ts). */
+const CHILD_DEADLINE_MS = 8_000;
+/** The parent stops waiting a little later, in case the watchdog itself is stuck. */
+const CHILD_WAIT_MS = 10_000;
+
+interface Ran {
+    code: number | null;
+    stdout: string;
+    stderr: string;
+    /** Killed at the deadline: the answer is unknown, never "no". */
+    timedOut: boolean;
+}
+
+/** One bounded child (ps, pgrep, tmux): a wedged tmux server must not hang `agents close`. */
+async function runBounded(argv: string[]): Promise<Ran> {
+    const [command, ...args] = argvWithChildDeadline(argv, CHILD_DEADLINE_MS);
+
+    if (!command) {
+        return { code: 127, stdout: "", stderr: "empty argv", timedOut: false };
+    }
+
+    const result = await capture(command, args, { timeoutMs: CHILD_WAIT_MS });
+    // 124 is the watchdog's exit on its deadline; null is the parent's timeout.
+    const timedOut = result.status === null || result.status === 124;
+
+    if (timedOut) {
+        log.warn({ argv }, "a child of agents close timed out; its answer is unknown");
+    }
+
+    return { code: result.status, stdout: result.stdout, stderr: result.stderr, timedOut };
 }
 
 /** Every live agent session in cmux with its tab and workspace titles (newest per surface, caller excluded). */
 export async function liveAgentSurfacesNow(): Promise<LiveAgentSurface[]> {
+    const tree = await liveTree();
     return liveAgentSurfaces({
         refs: loadAllSessionCmuxRefs().values(),
-        tree: await liveTree(),
+        tree,
+        tmux: await liveTmuxJoin(tree),
         providerOf: (entry) => resolveRefsProvider(entry, undefined),
     });
 }
@@ -143,14 +188,15 @@ export async function liveAgentSurfacesNow(): Promise<LiveAgentSurface[]> {
 /** Every live agent session in cmux that `close` could adopt (newest session per surface, caller excluded). */
 export async function liveAdoptableSessions(): Promise<AdoptedSession[]> {
     const tree = await liveTree();
+    const tmux = await liveTmuxJoin(tree);
     const refs = [...loadAllSessionCmuxRefs().values()];
     const providerOf = (entry: SessionCmuxRefs) => resolveRefsProvider(entry, undefined);
     const found: AdoptedSession[] = [];
 
     // Only surfaces that are live now: the journal keeps every ref it ever saw, and asking for each dead one would
     // rebuild the live map once per historical ref.
-    for (const live of liveAgentSurfaces({ refs, tree, providerOf })) {
-        const adopted = pickAdoptable({ query: live.surface.ref, refs, tree, providerOf });
+    for (const live of liveAgentSurfaces({ refs, tree, tmux, providerOf })) {
+        const adopted = pickAdoptable({ query: live.surface.ref, refs, tree, tmux, providerOf });
 
         if (adopted) {
             found.push(adopted);
@@ -175,10 +221,12 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
             return parseWorkspaces(result.stdout);
         },
         async adopt(query) {
+            const tree = await liveTree();
             const adopted = pickAdoptable({
                 query,
                 refs: loadAllSessionCmuxRefs().values(),
-                tree: await liveTree(),
+                tree,
+                tmux: await liveTmuxJoin(tree),
                 providerOf: (entry) => resolveRefsProvider(entry, undefined),
             });
             log.debug({ query, adopted: adopted?.sessionId ?? null, surface: adopted?.surface ?? null }, "adopt");
@@ -192,13 +240,21 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
         },
         callerWorkspaceId: () => env.device.getCmuxWorkspaceId(),
         async turnState(record) {
+            let tmuxPanes: string[] = [];
+
+            if (!isAdopted(record) && record.tmuxSession) {
+                const panes = await listTmuxPanes(record.tmuxSession);
+
+                if (!panes.ok) {
+                    return { sessionId: null, state: "UNREADABLE", detail: panes.reason };
+                }
+
+                tmuxPanes = panes.items.map((pane) => pane.pane);
+            }
+
             const sessionId = isAdopted(record)
                 ? record.sessionId
-                : recordedSessionIdOf({
-                      record,
-                      refs: loadAllSessionCmuxRefs().values(),
-                      tmuxPanes: record.tmuxSession ? await tmuxPanesOf(record.tmuxSession) : [],
-                  });
+                : recordedSessionIdOf({ record, refs: loadAllSessionCmuxRefs().values(), tmuxPanes });
 
             if (!sessionId) {
                 return null;
@@ -216,9 +272,21 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
         async sendExit(record, text) {
             if (record.tmuxSession) {
                 const tmux = resolveTmuxBin();
-                await spawnOk([tmux, "send-keys", "-t", record.tmuxSession, "-l", "--", text]);
-                await Bun.sleep(300);
-                await spawnOk([tmux, "send-keys", "-t", record.tmuxSession, "Enter"]);
+                // `=name:` matches the session name exactly; a bare name falls back to a prefix match on another session.
+                const target = `=${record.tmuxSession}:`;
+                for (const keys of [["-l", "--", text], ["Enter"]]) {
+                    const sent = await runBounded([tmux, "send-keys", "-t", target, ...keys]);
+
+                    if (sent.code !== 0) {
+                        throw new Error(
+                            `tmux send-keys to ${record.tmuxSession} ${sent.timedOut ? "timed out" : `failed (${sent.code}): ${sent.stderr.trim()}`}`
+                        );
+                    }
+
+                    if (keys[0] === "-l") {
+                        await Bun.sleep(300);
+                    }
+                }
                 return;
             }
 
@@ -239,7 +307,13 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
             }
 
             // pgrep exits 1 when the shell has no child: the agent has quit and the shell is at its prompt.
-            const children = await spawnOk(["pgrep", "-P", String(pid)]);
+            const children = await runBounded(["pgrep", "-P", String(pid)]);
+
+            // An unanswered pgrep cannot show the agent quit.
+            if (children.timedOut) {
+                return true;
+            }
+
             return children.code === 0 && children.stdout.trim() !== "";
         },
         async closeWorkspace(workspace, window, force) {
@@ -252,9 +326,11 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
             ]);
         },
         async killTmux(session) {
-            const result = await spawnOk([resolveTmuxBin(), "kill-session", "-t", session]);
+            const result = await runBounded([resolveTmuxBin(), "kill-session", "-t", `=${session}`]);
 
-            if (result.code !== 0) {
+            if (result.timedOut) {
+                log.warn({ session }, "tmux kill-session timed out; the tmux session may still run");
+            } else if (result.code !== 0) {
                 log.debug({ session, stderr: result.stderr.trim() }, "tmux kill-session failed (already gone?)");
             }
         },
