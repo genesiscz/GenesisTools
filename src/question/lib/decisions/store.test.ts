@@ -814,7 +814,9 @@ describe("delivery routes", () => {
         );
 
         expect(result).toMatchObject({ channel: "cmux", delivered: true, target: "cmux · work · agent" });
-        expect(calls).toEqual([["claude", "cmux", "send", "abc", "DECISION 1: a) yes ; DECISION 2: b) no", "--json"]]);
+        expect(calls).toEqual([
+            ["claude", "cmux", "send", "abc", "DECISION 1: a) yes\nDECISION 2: b) no", "--json", "--paste"],
+        ]);
     });
 
     test("a closed pane is found BEFORE anything is typed: nothing runs, the reason is one sentence", async () => {

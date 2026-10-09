@@ -132,6 +132,26 @@ test("sends text then Enter to the pane whose tab carries the session marker", a
     );
 });
 
+test("paste submits one literal multiline message without chunking paths or issuing extra Enter keys", async () => {
+    setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
+    const text =
+        '<fromImage>\n{"path":"/fixture/' + "long-directory-".repeat(1200) + 'image-漢字.png"}\n</fromImage>\n';
+    expect(await sendCommand(SESSION_A, text, { paste: true, enter: true }, deps)).toBe(true);
+    expect(events.filter((event) => event.startsWith("paste"))).toEqual([
+        "paste --surface surface:41 --submit -- " + text,
+    ]);
+    expect(events.some((event) => event.startsWith("send"))).toBe(false);
+});
+
+test("paste can leave the complete message unsubmitted and never retries an uncertain paste", async () => {
+    setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
+    expect(await sendCommand(SESSION_A, "a\nb\\n", { paste: true, enter: false }, deps)).toBe(true);
+    expect(events).toContain("paste --surface surface:41 -- a\nb\\n");
+    const dead = { ...deps, lookupRefs: () => recordedRefs({ surfaceId: DEAD_SURFACE_UUID }) };
+    await expect(sendCommand(SESSION_A, "a\nb", { paste: true }, dead)).rejects.toThrow("Surface is not a terminal");
+    expect(events.filter((event) => event.includes(DEAD_SURFACE_UUID))).toHaveLength(1);
+});
+
 test("--timeout ends a send whose lookup never answers, and rejects a bad value", async () => {
     const stuck = { ...deps, fetchSnapshot: () => new Promise<CmuxLiveSnapshot>(() => {}) };
     const started = Date.now();

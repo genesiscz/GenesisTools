@@ -308,12 +308,9 @@ export async function resolveDeliveryTarget(
     return named(target, snapshot);
 }
 
-/**
- * A pane receives ONE line: a newline typed into a TUI prompt may submit the first answer on its
- * own. The lines are joined with " ; ", which reads the same to the agent.
- */
+/** Agent replies use one bracketed paste, preserving JSON, paths and paragraph boundaries. */
 export function paneText(text: string): string {
-    return text.split("\n").join(" ; ");
+    return text;
 }
 
 /**
@@ -499,7 +496,7 @@ export async function deliverToSession(
         );
     }
 
-    const sent = await run(["claude", "cmux", "send", session, paneText(text), "--json"]);
+    const sent = await run(["claude", "cmux", "send", session, paneText(text), "--json", "--paste"]);
     const outcome = parseSent(sent.stdout);
     log.info(
         { session, provider, ok: sent.success, sent: outcome, stderr: sent.stderr.slice(0, 400) },
