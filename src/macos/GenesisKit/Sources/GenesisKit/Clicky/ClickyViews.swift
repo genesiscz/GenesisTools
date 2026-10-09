@@ -137,8 +137,14 @@ private struct ClickySettingsPageContent: View {
             case .sleep: sleep
             case .visualizer: visualizer
             case .notifications: notifications
-            case .stats: stats
-            case .performance: ClickyPerformanceView(store: model.analytics, defaults: model.settingsDefaults)
+            case .stats:
+                if model.statisticsLoadError == nil { stats } else { historyRecovery }
+            case .performance:
+                if model.statisticsLoadError == nil {
+                    ClickyPerformanceView(store: model.analytics, defaults: model.settingsDefaults)
+                } else {
+                    historyRecovery
+                }
             case .about: NativeSettingsAboutPage()
             }
         }
@@ -149,6 +155,22 @@ private struct ClickySettingsPageContent: View {
             Text(model.statisticsLoadError == nil
                 ? "This removes your saved aggregate counts from this Mac."
                 : "This starts a new typing history and keeps a backup of the unreadable original data.")
+        }
+    }
+
+    private var historyRecovery: some View {
+        NativeSettingsCard("Typing history is unavailable") {
+            Text("Counts and charts stay hidden while the saved history cannot be read. Sound feedback can still be enabled.")
+                .font(.callout).foregroundStyle(.secondary)
+            Text("If you restore the saved data, try loading it again. Reset starts a new history and keeps a backup of the unreadable original.")
+                .font(.callout).foregroundStyle(.secondary)
+            HStack {
+                Button("Try loading again", action: model.retryStatisticsLoad)
+                    .accessibilityIdentifier("clicky.statistics.retry")
+                Spacer()
+                Button("Reset statistics…") { confirmReset = true }
+                    .accessibilityIdentifier("clicky.statistics.reset")
+            }.buttonStyle(.bordered)
         }
     }
 
