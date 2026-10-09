@@ -188,6 +188,10 @@ jobs:
           # no `[test] suite complete` marker, which is the only thing that reddens
           # this workflow. The tree runs locally and under its own runners.
           GENESIS_TOOLS_TEST_SKIP_DEVDASHBOARD: "1"
+          # Off unless the repository variable TEST_WORKER_LOG is set (Settings > Variables, value 1):
+          # then every test file logs its worker and the child processes it left alive, and the
+          # "Test worker leftovers" step below names the files that leak (scripts/test-worker-log.ts).
+          GENESIS_TOOLS_TEST_WORKER_LOG: ${{ vars.TEST_WORKER_LOG }}
         run: |
           set -o pipefail
           # `--parallel` with no number, i.e. one worker per core, and that is measured rather
@@ -249,6 +253,17 @@ jobs:
             echo '```'
             echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Test worker leftovers
+        if: always() && hashFiles('test-worker-log.jsonl') != ''
+        run: |
+          {
+            echo '<details><summary>Test files that left child processes behind (TEST_WORKER_LOG)</summary>'
+            echo
+            echo '```'
+            bun scripts/test-worker-log.ts test-worker-log.jsonl
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -257,6 +272,7 @@ jobs:
           path: |
             install-${{ runner.os }}.log
             test-${{ runner.os }}.log
+            test-worker-log.jsonl
           if-no-files-found: warn
 
       # A hang and a test failure arrive as the SAME signal above: the `tests`

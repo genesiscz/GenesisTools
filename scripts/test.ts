@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { dirname, join } from "node:path";
 import { maxRunMs, profileArgs, withSerialIsolation } from "./test-args";
@@ -189,6 +190,16 @@ function reportGates(): void {
 }
 
 reportGates();
+
+// GENESIS_TOOLS_TEST_WORKER_LOG: the preload appends to one file, so a run starts it empty and two runs
+// never mix. `bun scripts/test-worker-log.ts` reads it afterwards.
+const workerLog = process.env.GENESIS_TOOLS_TEST_WORKER_LOG?.trim();
+
+if (workerLog) {
+    const path = workerLog === "1" ? join(process.cwd(), "test-worker-log.jsonl") : workerLog;
+    writeFileSync(path, "");
+    process.stderr.write(`\x1b[90m[test] worker log: ${path} (read it with bun scripts/test-worker-log.ts)\x1b[0m\n`);
+}
 
 /**
  * Files whose tests are correct but LOAD-SENSITIVE: under the 16x parallel run

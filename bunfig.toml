@@ -29,6 +29,10 @@ preload = [
     # every sqlite-vec suite fail with "no such module: vec0" whenever another
     # test file in the same worker had opened a Database first.
     "./src/utils/search/stores/sqlite-vec-preload.ts",
+    # Off unless GENESIS_TOOLS_TEST_WORKER_LOG is set: logs which worker ran which file and the child
+    # processes it left alive (bun scripts/test-worker-log.ts reads it). Before the tmpdir preload, so
+    # its path is resolved against the real cwd and temp folder.
+    "./src/utils/bun/preload-test-worker-log.ts",
     # One temp root per test process, removed on a green exit, so fixtures that never clean
     # up cannot fill the temp folder.
     #

@@ -298,6 +298,14 @@ export const env = {
         shouldRunLiveSmoke: () => isFlag("SHOPS_LIVE_SMOKE") || isFlag("RUN_LIVE_SMOKE"),
         shouldRunShopsLiveItesco: () => isFlag("SHOPS_LIVE_ITESCO"),
         getTestAudioFile: () => getTrimmed("TEST_AUDIO_FILE"),
+        /**
+         * `GENESIS_TOOLS_TEST_WORKER_LOG`: where preload-test-worker-log.ts appends one JSON line per test
+         * file start and end (worker, pid, the worker's live child processes). Unset: off. `1`: the
+         * default path in the checkout. Read it with `bun scripts/test-worker-log.ts`.
+         */
+        getWorkerLog: () => getTrimmed("GENESIS_TOOLS_TEST_WORKER_LOG"),
+        /** `BUN_TEST_WORKER_ID`: which `bun test --parallel` worker runs this file; unset in a serial run. */
+        getWorkerId: () => getTrimmed("BUN_TEST_WORKER_ID"),
         isOllamaTest: () => isNonEmpty("TEST_OLLAMA"),
         isTvNetTests: () => isNonEmpty("TV_NET_TESTS"),
         /**

@@ -253,3 +253,6 @@ scripts/benchmarks/clones/baselines/
 
 # Go oracle bridge binary for the agent-harness twins (built on demand by go-coordinator.ts)
 src/utils/agent-harness/oracle/bridge/bin/
+
+# Opt-in test-worker log (GENESIS_TOOLS_TEST_WORKER_LOG=1, read by scripts/test-worker-log.ts)
+test-worker-log.jsonl
