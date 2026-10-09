@@ -216,7 +216,6 @@ public final class WidgetModel: ObservableObject {
     public func start() {
         guard watcher == nil else { return }
         stopping = false
-        connectionLost = false
         do {
             try FileManager.default.createDirectory(at: journal, withIntermediateDirectories: true)
             watcher = try ToolsLineStream(
@@ -228,8 +227,13 @@ public final class WidgetModel: ObservableObject {
                     self.connectionLost = true
                     self.error = "Widget connection stopped. " + exit.stderr.suffix(600)
                 })
+            // Cleared only once a watcher runs: a reconnect that cannot launch keeps Reconnect on screen.
+            connectionLost = false
             drainJournal()
-        } catch { report(error) }
+        } catch {
+            connectionLost = true
+            report(error)
+        }
     }
 
     public func stop() {
