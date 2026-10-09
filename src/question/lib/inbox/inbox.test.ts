@@ -391,10 +391,9 @@ describe("answerInboxDecision", () => {
             }
         );
 
-        expect(delivered).toEqual([
-            ["claude", "cmux", "send", "s-alpha", "DECISION 3: b) drop it", "--json", "--paste"],
-        ]);
-        expect(result).toMatchObject({ channel: "cmux", delivered: true, text: "DECISION 3: b) drop it" });
+        const reply = "Reply to: Keep the cache?\nLedger decision 3 (d_3_s-alpha)\nb) drop it";
+        expect(delivered).toEqual([["claude", "cmux", "send", "s-alpha", reply, "--json", "--paste"]]);
+        expect(result).toMatchObject({ channel: "cmux", delivered: true, text: reply });
         expect(readDecisions(file)).toMatchObject([{ id: "d_3_s-alpha", state: "sent", option: "b", harvested: true }]);
     });
 

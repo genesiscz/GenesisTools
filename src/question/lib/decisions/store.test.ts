@@ -522,6 +522,19 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
         expect(decisionLine({ ...row, option: undefined })).toBe("DECISION 4: keep, and log it");
     });
 
+    test("a titled card retains its chat label separately from its allocated ledger number", () => {
+        const row = {
+            ...foreignRow("original-session", 2),
+            title: "Chat DECISION 4: next token kinds",
+            answer: '<fromImage>\n{\n  "path": "/fixture/c96d5e67-image.png"\n}\n</fromImage>',
+        };
+        expect(decisionLine(row)).toBe(
+            'Reply to: Chat DECISION 4: next token kinds\nLedger decision 2 (d_2_original-session)\n<fromImage>\n{\n  "path": "/fixture/c96d5e67-image.png"\n}\n</fromImage>'
+        );
+        expect(row.sessionId).toBe("original-session");
+        expect(row.number).toBe(2);
+    });
+
     test("the markdown numbers todos apart and marks the recommended option", async () => {
         const { file, events } = scratch();
         const rows = await postDecisions(file, events, {
