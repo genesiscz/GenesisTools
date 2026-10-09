@@ -155,8 +155,10 @@ export async function answerInboxDecisions(
     }
 
     if (input.dryRun) {
-        const lines = checked.map((item) =>
-            decisionLine({
+        const lines = checked.map((item) => {
+            // The title switches decisionLine to the "Reply to:" payload the real send delivers.
+            const title = item.row?.title ?? item.block?.title;
+            return decisionLine({
                 id: item.row?.id ?? `d_${item.number}_${input.session}`,
                 sessionId: input.session,
                 number: item.number,
@@ -164,10 +166,11 @@ export async function answerInboxDecisions(
                 options: item.row?.options ?? item.block?.options ?? [],
                 state: "answered",
                 updatedTs: new Date().toISOString(),
+                ...(title ? { title } : {}),
                 ...(item.option ? { option: item.option } : {}),
                 ...(item.text ? { answer: item.text } : {}),
-            })
-        );
+            });
+        });
         return { session: input.session, text: lines.join("\n"), channel: "dry-run", delivered: false };
     }
 

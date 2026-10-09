@@ -1085,6 +1085,45 @@ describe("delivery routes", () => {
         }
     });
 
+    test("automatic replies judge the evidence, not the stage: a printed id or a topic title is refused", async () => {
+        for (const matchedOn of ["session-id", "id-prefix", "session-name", "pane-title"] as const) {
+            let sends = 0;
+            const result = await deliverToSession(
+                { session: "original-session", provider: "claude", text: "media reply" },
+                {
+                    findTargets: async (session) => {
+                        const live = await livePaneTargets(session);
+                        return { ...live, targets: live.targets.map((target) => ({ ...target, matchedOn })) };
+                    },
+                    runTool: async () => {
+                        sends++;
+                        return { success: true, stdout: '{"sent":true}', stderr: "" };
+                    },
+                }
+            );
+            expect(result).toMatchObject({
+                delivered: false,
+                error: "the cmux match does not identify the exact recipient session",
+            });
+            expect(sends).toBe(0);
+        }
+
+        // Control: the same lone pane proven by the id `restore` stamps into its tab title still receives the reply.
+        let sends = 0;
+        const proven = await deliverToSession(
+            { session: "original-session", provider: "claude", text: "media reply" },
+            {
+                findTargets: livePaneTargets,
+                runTool: async () => {
+                    sends++;
+                    return { success: true, stdout: '{"sent":true}', stderr: "" };
+                },
+            }
+        );
+        expect(proven).toMatchObject({ channel: "cmux", delivered: true });
+        expect(sends).toBe(1);
+    });
+
     test("a readable cmux refusal reaches the durable session queue, while unreadable output does not", async () => {
         const queueRoot = mkdtempSync(join(tmpdir(), "cmux-refusal-queue-"));
         const request = {

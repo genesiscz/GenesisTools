@@ -3,7 +3,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type FocusTarget, isUnambiguous } from "@app/claude/lib/cmux/focus";
-import { findSessionTargets, type SessionTargetsResult, SOFT_SOURCES } from "@app/claude/lib/cmux/resolve";
+import {
+    findSessionTargets,
+    identifiesExactSession,
+    type SessionTargetsResult,
+    SOFT_SOURCES,
+} from "@app/claude/lib/cmux/resolve";
 import { ClaudeWorkerStore, claudeWorkerSourceHome } from "@app/claude/lib/worker/store";
 import { CodexSessionStore } from "@app/codex/lib/store";
 import { GrokSessionStore } from "@app/grok/lib/store";
@@ -337,12 +342,16 @@ export async function resolveDeliveryTarget(
         };
     }
 
-    if (SOFT_SOURCES.has(result.source)) {
-        return { kind: "none", reason: "the cmux match does not identify the exact recipient session" };
-    }
-
-    if (!isUnambiguous(result.targets)) {
-        return { kind: "none", reason: `${result.targets.length} cmux panes match this session; none was picked` };
+    // Judge the evidence each pane matched on, not only the stage: a screen-printed id or a shared
+    // topic title also comes back from the title and capture stages (resolve.ts identifiesExactSession).
+    if (!identifiesExactSession(result) || !isUnambiguous(result.targets)) {
+        const several = !SOFT_SOURCES.has(result.source) && !isUnambiguous(result.targets);
+        return {
+            kind: "none",
+            reason: several
+                ? `${result.targets.length} cmux panes match this session; none was picked`
+                : "the cmux match does not identify the exact recipient session",
+        };
     }
 
     const target = result.targets[0];

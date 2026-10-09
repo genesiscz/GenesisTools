@@ -16,7 +16,7 @@ export function livePaneTargets(session: string): Promise<SessionTargetsResult> 
                 paneTitle: "agent",
                 surfaceId: "surface:1",
                 sessionIds: [session],
-                matchedOn: "session-id",
+                matchedOn: "title-id",
                 score: 90,
                 active: true,
             },

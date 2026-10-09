@@ -450,7 +450,12 @@ describe("answerInboxDecision", () => {
         };
 
         const preview = await answerInboxDecision({ session: "s-alpha", number: 3, option: "a", dryRun: true }, deps);
-        expect(preview).toMatchObject({ channel: "dry-run", delivered: false, text: "DECISION 3: a) keep it" });
+        // A titled card previews the exact payload a real send delivers (see the transcript-only test above).
+        expect(preview).toMatchObject({
+            channel: "dry-run",
+            delivered: false,
+            text: "Reply to: Keep the cache?\nLedger decision 3 (d_3_s-alpha)\na) keep it",
+        });
         expect(existsSync(file)).toBe(false);
 
         await expect(answerInboxDecision({ session: "s-alpha", number: 3, option: "c" }, deps)).rejects.toThrow(
@@ -461,7 +466,7 @@ describe("answerInboxDecision", () => {
         );
         await expect(answerInboxDecision({ session: "s-alpha", number: 3 }, deps)).rejects.toThrow("option letter");
 
-        await answerInboxDecision(
+        const sent = await answerInboxDecision(
             { session: "s-alpha", number: 3, option: "a" },
             {
                 ...deps,
@@ -471,6 +476,7 @@ describe("answerInboxDecision", () => {
                 },
             }
         );
+        expect(sent.text).toBe(preview.text);
         await expect(answerInboxDecision({ session: "s-alpha", number: 3, option: "b" }, deps)).rejects.toThrow(
             "already sent"
         );

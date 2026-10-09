@@ -117,7 +117,7 @@ describe("sendDrafts", () => {
             paneTitle: "agent",
             surfaceId: "surface:1",
             sessionIds: ["s"],
-            matchedOn: "session-id",
+            matchedOn: "title-id",
             score: 90,
             active: true,
         };
@@ -159,7 +159,7 @@ describe("sendDrafts", () => {
             paneTitle: "probe",
             surfaceId: "surface:9",
             sessionIds: ["s"],
-            matchedOn: "session-id",
+            matchedOn: "title-id",
             score: 90,
             active: true,
         };
