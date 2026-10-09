@@ -469,7 +469,8 @@ enum CommitMenu {
     /// Blocking git: only from the detached task.
     nonisolated private static func lookup(_ sha: String, repo: String) -> Lookup {
         if git(repo, ["cat-file", "-e", "\(sha)^{commit}"]) == nil {
-            _ = git(repo, ["fetch", "--no-tags", "--quiet", "--end-of-options", "origin", sha])
+            // --no-write-fetch-head: a `git pull` running in this checkout reads FETCH_HEAD for what to merge.
+            _ = git(repo, ["fetch", "--no-tags", "--quiet", "--no-write-fetch-head", "--end-of-options", "origin", sha])
             guard git(repo, ["cat-file", "-e", "\(sha)^{commit}"]) != nil else {
                 return Lookup(full: nil, missing: "\(sha.prefix(10)) is not in \(URL(fileURLWithPath: repo).lastPathComponent), and origin did not give it.")
             }

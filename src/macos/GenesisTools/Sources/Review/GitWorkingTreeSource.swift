@@ -174,6 +174,8 @@ struct GitWorkingTreeSource {
         case .staged:
             return ("HEAD", "", ["--cached", "HEAD"], false, nil)
         case .commit(let sha, _):
+            // Reload moves a commit scope to the newest pushed head, which no ref may have brought yet.
+            if Self.isFullObjectID(sha) { try ensureCommit(sha) }
             let parent = (try? git(["rev-parse", "--verify", "--quiet", "\(sha)^"]).trimmed).flatMap { $0.isEmpty ? nil : $0 } ?? Self.emptyTree
             return (parent, sha, [parent, sha], false, nil)
         case .range(let preferred, let head, _, let fallback):

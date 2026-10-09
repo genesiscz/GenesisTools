@@ -30,10 +30,15 @@ private let notificationClickGraceSeconds = 1.2
 final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
     private let showWindowImmediately: Bool
     private var window: NSWindow?
+    /// A local file this face handed to the browser. A bare launch that Launch Services made only to
+    /// deliver it has nothing left to show, like a link or notification click.
+    private var documentHandedOff = false
 
     /// A local `.html` file Launch Services handed to this face, or launched it for (LocalFileHandoff).
     func application(_ application: NSApplication, open urls: [URL]) {
-        LocalFileHandoff.deliver(urls)
+        if LocalFileHandoff.deliver(urls) > 0 {
+            documentHandedOff = true
+        }
     }
 
     init(showWindowImmediately: Bool) {
@@ -61,6 +66,14 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
             // A click-launched process performs its action and exits on its own, so there is
             // nothing to show.
             if notificationClickReceived || browserLinkReceived {
+                return
+            }
+
+            // Launched only to hand a file to the browser: no hub, no settings window. A face that already
+            // shows its window never gets here (showWindowImmediately returns above), so it stays open.
+            if self?.documentHandedOff == true, self?.window == nil {
+                logClick("a local file was handed to the browser and nothing else arrived, quitting")
+                NSApp.terminate(nil)
                 return
             }
 

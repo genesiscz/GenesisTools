@@ -355,11 +355,13 @@ enum LocalFileHandoff {
     /// links arrive here too: they go on to the forwarder exactly as before, files to the browser. Dropping
     /// the non-file URLs sent every https click to a running window face into nothing (2026-10-07 21:40
     /// to 22:0x: a genesis.tools/md link only brought the review window forward).
-    static func deliver(_ urls: [URL]) {
+    /// Returns how many local files went to the browser.
+    @discardableResult
+    static func deliver(_ urls: [URL]) -> Int {
         for url in urls where !url.isFileURL {
             BrowserURLForwarder.shared.forward(url.absoluteString)
         }
-        open(urls)
+        return open(urls)
     }
 
     /// The file URLs among `urls` go to the browser; returns how many.

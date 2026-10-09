@@ -105,6 +105,21 @@ final class ReviewVersionsTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: fetchHead, encoding: .utf8), pulled)
     }
 
+    func testACommitScopeFetchesANewlyPushedHeadById() throws {
+        try write("a.txt", "1\n")
+        _ = try commit("base")
+        try git("checkout", "-q", "-b", "pr")
+        try write("a.txt", "1\n2\n")
+        let head = try commit("pr: line 2")
+        try git("checkout", "-q", "main")
+        let clone = repo.deletingLastPathComponent().appendingPathComponent("\(repo.lastPathComponent)-commit-clone")
+        defer { try? FileManager.default.removeItem(at: clone) }
+        try git("clone", "-q", "--single-branch", "-b", "main", "file://\(repo.path)", clone.path)
+
+        let snapshot = try GitWorkingTreeSource(repo: clone).load(scope: .commit(sha: head, title: "pr: line 2"))
+        XCTAssertEqual(snapshot.files.map(\.path), ["a.txt"], "the reloaded head was fetched by id before its diff")
+    }
+
     func testTheBranchScopeComparesAgainstThePRTargetWhenItExists() throws {
         try write("a.txt", "1\n")
         _ = try commit("base")
