@@ -4,6 +4,7 @@ import { basename, resolve } from "node:path";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
