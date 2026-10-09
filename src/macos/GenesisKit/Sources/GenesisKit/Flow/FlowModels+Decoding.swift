@@ -31,6 +31,10 @@ extension FlowConfig {
         guard historyLimit > 0 else {
             throw DecodingError.dataCorruptedError(forKey: .historyLimit, in: values, debugDescription: "History limit must be positive")
         }
+        guard Self.trailingGraceRange.contains(trailingGraceMs) else {
+            throw DecodingError.dataCorruptedError(forKey: .trailingGraceMs, in: values,
+                                                   debugDescription: "Trailing grace must be 0 to \(Self.trailingGraceRange.upperBound) ms")
+        }
     }
 }
 

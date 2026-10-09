@@ -54,8 +54,9 @@ public enum FlowEvents {
     static var logURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".genesis/flow/events.jsonl")
 
-    /// Announce a completed turn.
-    public static func publish(_ entry: FlowEntry) {
+    /// Announce a completed turn. `url` is the owning store's log (`FlowStore.eventsURL`), so retention and
+    /// deletion in that store always reach the events it wrote; `logURL` is only the default.
+    public static func publish(_ entry: FlowEntry, to url: URL? = nil) {
         let payload = Payload(
             id: entry.id,
             text: entry.text,
@@ -74,11 +75,11 @@ public enum FlowEvents {
             userInfo: [payloadKey: payload]
         )
 
-        append(payload)
+        append(payload, to: url ?? logURL)
     }
 
     /// A best-effort notification log must never make a completed dictation fail.
-    private static func append(_ payload: Payload) {
+    private static func append(_ payload: Payload, to logURL: URL) {
         do {
             var data = try encoder.encode(payload)
             data.append(0x0A)

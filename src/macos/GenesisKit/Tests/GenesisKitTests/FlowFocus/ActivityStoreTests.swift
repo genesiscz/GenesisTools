@@ -228,6 +228,27 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(series.last?.segmentId, long, "input after the range stays with the segment's id")
     }
 
+    @MainActor
+    func testTheOwnerDeletesActivityOlderThanTheRetentionPeriod() throws {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let day: Int64 = 86_400_000
+        let old = try store.openSegment(segment(now - 40 * day, title: "old"))
+        try store.closeSegment(id: old, at: now - 40 * day + 60_000)
+        let recent = try store.openSegment(segment(now - day, title: "recent"))
+        try store.closeSegment(id: recent, at: now - day + 60_000)
+        let controller = FocusController()
+        controller.ownsRuntime = true
+        controller.configuration = FlowFocusConfiguration(directory: URL(fileURLWithPath: (path as NSString).deletingLastPathComponent))
+        controller.start(appConfig: ["focus": ["retentionDays": 30]], databasePath: path,
+                         liveServices: false, presentsWindows: false)
+        defer { controller.stop() }
+        XCTAssertEqual(try store.segments(from: 0, to: now + 1).map(\.windowTitle), ["recent"],
+                       "activity older than 30 days is deleted; the last day stays")
+
+        controller.apply(appConfig: ["focus": ["retentionDays": 1]])
+        XCTAssertTrue(try store.segments(from: 0, to: now + 1).isEmpty, "shortening retention prunes at once")
+    }
+
     func testForgetCanScopeToOneApp() throws {
         let brave = try store.openSegment(segment(1_000, app: "com.brave.Browser"))
         try store.closeSegment(id: brave, at: 2_000)

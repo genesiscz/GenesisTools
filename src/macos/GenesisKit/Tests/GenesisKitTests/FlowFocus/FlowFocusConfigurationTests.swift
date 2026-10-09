@@ -160,6 +160,23 @@ final class FlowFocusConfigurationTests: XCTestCase {
     }
 
     @MainActor
+    func testAPlanEditWritesTheCurrentFocusSettingsNotAStaleCopy() throws {
+        let config = FlowFocusConfiguration(directory: directory)
+        var forwarded: [[String: Any]] = []
+        config.forwardPatch = { forwarded.append($0) }
+        var current: [String: Any] = ["focus": ["captureEnabled": true]]
+        config.readApp = { current }
+        let controller = FocusController()
+        controller.configuration = config
+        controller.apply(appConfig: config.app)
+        // The owner turns capture off; this client's configuration now reads it.
+        current = ["focus": ["captureEnabled": false]]
+        controller.updatePlan(PomodoroPlan())
+        let focus = try XCTUnwrap(forwarded.last?["focus"] as? [String: Any])
+        XCTAssertEqual(focus["captureEnabled"] as? Bool, false, "a timer edit must not turn capture back on")
+    }
+
+    @MainActor
     func testAClientRefusesANonJSONSettingBeforeForwardingIt() {
         let config = FlowFocusConfiguration(directory: directory)
         var forwarded: [[String: Any]] = []

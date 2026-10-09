@@ -10,6 +10,7 @@ import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { z } from "zod";
 import { importWidgetAsset } from "../composer/assets";
 import { mutateWidgetState, readWidgetState, widgetRoot } from "./storage";
+import type { WidgetAsset } from "./types";
 
 export const shelfItemSchema = z.object({
     id: z.string().uuid(),
@@ -262,38 +263,72 @@ export async function stageShelfImage({
     }
 
     const asset = await importWidgetAsset({ root, input, type: "image" });
-    signal?.throwIfAborted();
-    if (asset.type !== "image") {
-        throw new Error("Capture did not produce an image");
+    try {
+        signal?.throwIfAborted();
+        if (asset.type !== "image") {
+            throw new Error("Capture did not produce an image");
+        }
+
+        const item: ShelfItem = {
+            id: randomUUID(),
+            kind: "capture",
+            name: name ?? basename(input),
+            path: asset.path,
+            sha256: asset.sha256,
+            bytes: asset.bytes,
+            assetId: asset.id,
+            createdAt: Date.now(),
+        };
+        const staged = await mutateShelf({
+            root,
+            signal,
+            update: (state) => {
+                const existing = state.items.find(
+                    (entry) => entry.kind === "capture" && entry.sha256 === asset.sha256 && entry.id !== previous?.id
+                );
+                if (existing) {
+                    return existing;
+                }
+
+                state.items = state.items.filter((entry) => entry.id !== previous?.id);
+                state.items.unshift(item);
+                logger.debug({ id: item.id }, "Image staged without a recipient");
+                return item;
+            },
+        });
+        if (staged.assetId !== asset.id) {
+            await discardStagedAsset(root, asset);
+        }
+
+        return staged;
+    } catch (error) {
+        await discardStagedAsset(root, asset);
+        throw error;
+    }
+}
+
+/**
+ * Staging imports the image as a widget asset before the shelf item exists. When the item is never committed
+ * (cancelled, a competing capture of the same bytes won), the asset and its private copy go too, unless
+ * something already references it.
+ */
+async function discardStagedAsset(root: string | undefined, asset: WidgetAsset): Promise<void> {
+    const removed = await mutateWidgetState(root, (state) => {
+        const referenced =
+            Object.values(state.drafts).some((draft) => draft.assetIds.includes(asset.id)) ||
+            state.outgoing.some((message) => message.assetIds.includes(asset.id));
+        if (referenced || state.assets[asset.id]?.path !== asset.path) {
+            return false;
+        }
+
+        delete state.assets[asset.id];
+        return true;
+    });
+    if (removed) {
+        await cleanupOwnedFile(asset.path);
     }
 
-    const item: ShelfItem = {
-        id: randomUUID(),
-        kind: "capture",
-        name: name ?? basename(input),
-        path: asset.path,
-        sha256: asset.sha256,
-        bytes: asset.bytes,
-        assetId: asset.id,
-        createdAt: Date.now(),
-    };
-    return mutateShelf({
-        root,
-        signal,
-        update: (state) => {
-            const existing = state.items.find(
-                (entry) => entry.kind === "capture" && entry.sha256 === asset.sha256 && entry.id !== previous?.id
-            );
-            if (existing) {
-                return existing;
-            }
-
-            state.items = state.items.filter((entry) => entry.id !== previous?.id);
-            state.items.unshift(item);
-            logger.debug({ id: item.id }, "Image staged without a recipient");
-            return item;
-        },
-    });
+    logger.debug({ assetId: asset.id, removed }, "Unstaged shelf capture asset");
 }
 
 /** Removal is an inventory operation. Source files and durable paths already in drafts survive it. */

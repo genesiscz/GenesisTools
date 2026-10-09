@@ -37,6 +37,25 @@ final class FlowFocusRuntimeTests: XCTestCase {
         XCTAssertEqual((raw["app"] as? [String: Any])?["focusWhileListening"] as? Bool, false)
     }
 
+    func testARestartDuringAStopWaitsSoTheStopCannotReleaseTheNewOwnership() async throws {
+        let runtime = FlowFocusRuntime(dataRoot: directory, hostID: "test.restart", liveServices: false, presentsWindows: false)
+        await runtime.start()
+        XCTAssertTrue(runtime.role.isOwner)
+        // The host quits and relaunches the runtime while the stop is still flushing settings.
+        let stopping = Task { await runtime.stop() }
+        // Restart as soon as the stop has begun, while it waits for the settings flush.
+        for _ in 0..<1_000 where runtime.role != .stopped { await Task.yield() }
+        XCTAssertEqual(runtime.role, .stopped)
+        await runtime.start()
+        await stopping.value
+        XCTAssertTrue(runtime.role.isOwner)
+        let rival = FlowFocusRuntime(dataRoot: directory, hostID: "test.rival", liveServices: false, presentsWindows: false)
+        await rival.start()
+        XCTAssertFalse(rival.role.isOwner, "the restarted runtime still holds the owner lease")
+        await rival.stop()
+        await runtime.stop()
+    }
+
     func testOwnerReplaysPendingHistoryBeforeStartingAnyServices() async throws {
         let root = directory.appendingPathComponent("flow")
         let store = FlowStore(directory: root)

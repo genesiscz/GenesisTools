@@ -184,6 +184,16 @@ public final class CompanionHoldCapture: @unchecked Sendable {
         return level
     }
 
+    /// Puts audio captured before the hold (the pre-roll) ahead of the live buffers, so the retry clip starts
+    /// where the streaming request did. The buffers are already private copies.
+    public func prepend(_ buffers: [AVAudioPCMBuffer]) {
+        guard !buffers.isEmpty else { return }
+        lock.lock()
+        retained.insert(contentsOf: buffers, at: 0)
+        retainedFrames += buffers.reduce(0) { $0 + Int($1.frameLength) }
+        lock.unlock()
+    }
+
     public func snapshot() -> Stats {
         lock.lock()
         defer { lock.unlock() }
