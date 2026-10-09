@@ -59,9 +59,13 @@ function isBareExecutable(command: string): boolean {
  * parsing after `--`, so passing the line as one argv word made `env` look for a program named
  * `echo hi; sleep 300` and the pane died at once. `-i` loads `.zshrc`, where aliases live.
  */
-export function tmuxPaneArgv(command: string): { argv: string[]; commandLine: boolean } {
+export function tmuxPaneArgv(
+    command: string,
+    opts: { unsetEnv?: readonly string[] } = {}
+): { argv: string[]; commandLine: boolean } {
     const env = buildTerminalSpawnEnv();
-    const argv: string[] = ["/usr/bin/env"];
+    // `env -u` drops a variable the tmux server's global environment would hand the pane (a caller's identity).
+    const argv: string[] = ["/usr/bin/env", ...(opts.unsetEnv ?? []).flatMap((key) => ["-u", key])];
 
     for (const key of TMUX_SESSION_ENV_KEYS) {
         const value = env[key];
@@ -428,10 +432,10 @@ export async function createTmuxSession(
     sessionName: string,
     cwd: string,
     command: string,
-    opts: { settleMs?: number } = {}
+    opts: { settleMs?: number; unsetEnv?: readonly string[] } = {}
 ): Promise<void> {
     const tmuxBin = resolveTmuxBin();
-    const pane = tmuxPaneArgv(command);
+    const pane = tmuxPaneArgv(command, { unsetEnv: opts.unsetEnv });
     const newSession = [tmuxBin, "new-session", "-d", "-s", sessionName, "-c", cwd, "--", ...pane.argv];
     // Chained into the same client call, so the option is set before tmux can reap a command
     // that fails in its first millisecond.
@@ -504,7 +508,7 @@ async function failIfCommandDied(tmuxBin: string, sessionName: string, settleMs:
                 .join("\n");
             logger.warn({ sessionName, failure, output }, "tmux session command exited at once");
             throw new Error(
-                `tmux session ${sessionName}: the command ${failure}` + (output.length > 0 ? `:\n${output}` : "")
+                `tmux session ${sessionName}: the command ${failure}${output.length > 0 ? `:\n${output}` : ""}`
             );
         }
 

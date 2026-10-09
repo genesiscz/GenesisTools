@@ -312,6 +312,14 @@ export async function resolveSessionWindow(
     return chosen.ref;
 }
 
+/**
+ * The cmux identity a process inherits. A --via-tmux agent starts before its workspace exists, and the tmux
+ * server may carry the CALLER's surface in its global environment; with it, the session hook would record the
+ * agent in the caller's surface, and close or adoption could act on the caller's terminal. Without it, the hook
+ * records the tmux pane, which is how close finds the agent's turn (session-close.ts `recordedSessionIdOf`).
+ */
+export const CMUX_IDENTITY_ENV = ["CMUX_SURFACE_ID", "CMUX_WORKSPACE_ID", "CMUX_PANEL_ID", "CMUX_TAB_ID"] as const;
+
 export async function startDevSession(input: SessionNewRequest, io: SessionNewIO): Promise<SessionNewResult> {
     const cwd = resolveSessionRepo(input.repo, input.home, input.cwd, io.repoFs);
     const run = agentRunCommand({
@@ -447,7 +455,7 @@ export function liveSessionIO(): SessionNewIO {
         },
         shell: () => env.paths.getShell(),
         createTmuxShell: async (session, cwd, shell) => {
-            await createTmuxSession(session, cwd, assertShellExecutable(shell));
+            await createTmuxSession(session, cwd, assertShellExecutable(shell), { unsetEnv: CMUX_IDENTITY_ENV });
         },
         sendTmuxKeys: async (session, command) => {
             const tmux = resolveTmuxBin();

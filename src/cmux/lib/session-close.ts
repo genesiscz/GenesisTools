@@ -1,4 +1,5 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { sessionAgent } from "./session-agents";
 import { openSessions, type SessionCreatedRecord, type SessionStore } from "./session-store";
 
@@ -70,6 +71,42 @@ export function isAdopted(subject: CloseSubject): subject is AdoptedSession {
  */
 export function surfaceTarget(subject: CloseSubject): string {
     return isAdopted(subject) ? subject.surfaceId : subject.surface;
+}
+
+/** Journal entries older than this before a record's start belong to an earlier occupant of its surface. */
+const JOURNAL_START_SLACK_MS = 60_000;
+
+/**
+ * The newest agent session the cmux-refs journal places in a recorded session since it started, or null.
+ *
+ * A --via-tmux agent starts in a detached tmux shell before its workspace exists, with the cmux identity
+ * unset (session-new.ts `CMUX_IDENTITY_ENV`), so the hook records its tmux pane, never the new surface: such a
+ * record matches by the panes of its tmux session. Any other record matches by surface UUID, or by ref when
+ * it was written before UUIDs were stored.
+ */
+export function recordedSessionIdOf(input: {
+    record: SessionCreatedRecord;
+    refs: Iterable<SessionCmuxRefs>;
+    tmuxPanes: readonly string[];
+}): string | null {
+    const { record } = input;
+    const since = Date.parse(record.createdAt) - JOURNAL_START_SLACK_MS;
+    const inSession = (entry: SessionCmuxRefs): boolean => {
+        if (record.tmuxSession) {
+            return entry.tmuxPane !== null && input.tmuxPanes.includes(entry.tmuxPane);
+        }
+
+        return record.surfaceId ? sameId(entry.surfaceId, record.surfaceId) : entry.surfaceRef === record.surface;
+    };
+    let newest: SessionCmuxRefs | null = null;
+
+    for (const entry of input.refs) {
+        if (entry.at >= since && inSession(entry) && (!newest || entry.at > newest.at)) {
+            newest = entry;
+        }
+    }
+
+    return newest?.sessionId ?? null;
 }
 
 /** The open record whose surface UUID is this live surface's, if any. A ref never decides: refs renumber after a restart. */

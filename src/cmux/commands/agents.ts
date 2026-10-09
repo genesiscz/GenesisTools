@@ -6,6 +6,7 @@ import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
+import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import { type AccountBudget, accountChoiceMessage, liveAccountBudgets } from "../lib/account-budgets";
 import {
@@ -16,7 +17,7 @@ import {
     type SessionAgentId,
     sessionAgent,
 } from "../lib/session-agents";
-import { closeSession, recordedSessionFor } from "../lib/session-close";
+import { type AdoptedSession, closeSession, recordedSessionFor } from "../lib/session-close";
 import { liveAdoptableSessions, liveSessionCloseIO } from "../lib/session-close-live";
 import {
     liveSessionIO,
@@ -26,7 +27,7 @@ import {
     type SessionNewResult,
     startDevSession,
 } from "../lib/session-new";
-import { fileSessionStore, openSessions, type SessionStore } from "../lib/session-store";
+import { fileSessionStore, openSessions, type SessionCreatedRecord, type SessionStore } from "../lib/session-store";
 
 const { log } = logger.scoped("cmux-session");
 
@@ -160,50 +161,56 @@ export async function runSessionNew(
     const cwd = resolveSessionRepo(repo, homedir(), process.cwd(), io.repoFs);
     const title = blank(options.name);
     const name = title ? sessionSlug(title) : `${agent}-${sessionSlug(basename(cwd))}-${io.nonce()}`;
-
-    if (openSessions(store.read()).some((record) => record.name === name)) {
-        throw new Error(`a session named "${name}" is already open; close it or pass another --name`);
-    }
-
     const model = blank(options.model);
     const pidFile = store.pidFile(name);
-    const result = await startDevSession(
-        {
-            agent,
-            repo: cwd,
-            account: account.name,
-            ...(model ? { model } : {}),
-            pidFile,
-            prompt,
-            promptFile: absolutePrompt,
-            crossMessages: options.crossMessages !== false,
-            name: title,
-            viaTmux: options.viaTmux === true,
-            focus: focus.focus,
-            home: homedir(),
-            cwd: process.cwd(),
-        },
-        io
-    );
+    // The name check, the workspace and the record happen under one name lock: a second start with the same
+    // --name in another process waits a moment, then fails instead of sharing this pid file.
+    const result = await store.reserve(name, async () => {
+        if (openSessions(store.read()).some((record) => record.name === name)) {
+            throw new Error(`a session named "${name}" is already open; close it or pass another --name`);
+        }
 
-    store.append({
-        type: "created",
-        name,
-        agent,
-        account: account.name,
-        model: model ?? null,
-        cwd: result.cwd,
-        window: result.window,
-        workspace: result.workspace,
-        surface: result.surface,
-        workspaceId: result.workspaceId,
-        surfaceId: result.surfaceId,
-        tmuxSession: result.tmuxSession,
-        pidFile,
-        command: result.command,
-        createdAt: new Date().toISOString(),
-        createdBy: "agents-new",
+        const started = await startDevSession(
+            {
+                agent,
+                repo: cwd,
+                account: account.name,
+                ...(model ? { model } : {}),
+                pidFile,
+                prompt,
+                promptFile: absolutePrompt,
+                crossMessages: options.crossMessages !== false,
+                name: title,
+                viaTmux: options.viaTmux === true,
+                focus: focus.focus,
+                home: homedir(),
+                cwd: process.cwd(),
+            },
+            io
+        );
+
+        store.append({
+            type: "created",
+            name,
+            agent,
+            account: account.name,
+            model: model ?? null,
+            cwd: started.cwd,
+            window: started.window,
+            workspace: started.workspace,
+            surface: started.surface,
+            workspaceId: started.workspaceId,
+            surfaceId: started.surfaceId,
+            tmuxSession: started.tmuxSession,
+            pidFile,
+            command: started.command,
+            createdAt: new Date().toISOString(),
+            createdBy: "agents-new",
+        });
+
+        return started;
     });
+
     log.debug({ name, agent, workspace: result.workspace }, "session recorded");
 
     if (options.json) {
@@ -281,17 +288,58 @@ async function runSessionList(options: { agent?: string; all?: boolean; json?: b
         return;
     }
 
-    for (const record of open) {
-        out.println(
-            `${record.name}  ${record.agent}  ${record.account}  ${record.workspace}  ${record.tmuxSession ?? "-"}  ${record.cwd}`
+    out.println(formatSessionList({ open, adoptable }));
+}
+
+/** Paths and session ids are long; the shared default of 50 would cut the cwd a reader needs. */
+const LIST_COLUMN_WIDTH = 120;
+
+/** The `agents list` inventory: one table of recorded sessions, one of adoptable ones, each only when it has rows. */
+export function formatSessionList(input: {
+    open: readonly SessionCreatedRecord[];
+    adoptable: readonly AdoptedSession[];
+}): string {
+    const blocks: string[] = [];
+
+    if (input.open.length > 0) {
+        blocks.push(
+            formatTable(
+                input.open.map((record) => [
+                    record.name,
+                    record.agent,
+                    record.account,
+                    record.workspace,
+                    record.tmuxSession ?? "-",
+                    record.cwd,
+                ]),
+                ["Name", "Agent", "Account", "Workspace", "Tmux", "Folder"],
+                { maxColWidth: LIST_COLUMN_WIDTH }
+            )
         );
     }
 
-    for (const session of adoptable) {
-        out.println(
-            `${session.sessionId}  ${session.agent}  adoptable  ${session.workspace}  ${session.surface}  ${session.cwd}`
+    if (input.adoptable.length > 0) {
+        blocks.push(
+            formatTable(
+                input.adoptable.map((session) => [
+                    session.sessionId,
+                    session.agent,
+                    session.workspace,
+                    session.surface,
+                    session.cwd,
+                ]),
+                ["Adoptable session", "Agent", "Workspace", "Surface", "Folder"],
+                { maxColWidth: LIST_COLUMN_WIDTH }
+            )
         );
     }
+
+    // formatTable pads the last column too; a list line ends at its text.
+    return blocks
+        .join("\n\n")
+        .split("\n")
+        .map((line) => line.trimEnd())
+        .join("\n");
 }
 
 function addNewOptions(command: Command): Command {

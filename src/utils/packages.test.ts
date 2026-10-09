@@ -8,7 +8,7 @@ import {
     packageStoreDir,
     STORE_PACKAGES,
 } from "@genesiscz/utils/package-store";
-import { bunAddCommands, ensurePackages } from "./packages";
+import { bunAddCommands, ensurePackages, installStorePackages } from "./packages";
 
 const REPO_ROOT = resolve(import.meta.dir, "../..");
 
@@ -155,5 +155,44 @@ describe("package store", () => {
 
     test("a package missing from the store fails with an error that names the store", async () => {
         await expect(importStorePackage("gt-fake-absent")).rejects.toThrow(packageStoreDir());
+    });
+});
+
+describe("store installs across processes", () => {
+    afterEach(() => {
+        mock.restore();
+        rmSync(join(packageStoreDir(), "node_modules"), { recursive: true, force: true });
+    });
+
+    test("two installers of the same store package never run bun add at once, and the second one skips it", async () => {
+        const pkg = "@lancedb/lancedb";
+        let active = 0;
+        let peak = 0;
+        const adds: string[][] = [];
+        // Each call stands for one CLI process: installStorePackages bypasses the in-process queue.
+        spyOn(Bun, "spawn").mockImplementation((cmd) => {
+            if (!isBunAdd(cmd) || !Array.isArray(cmd)) {
+                throw new Error(`unexpected spawn: ${String(cmd)}`);
+            }
+
+            adds.push(cmd.map(String));
+            active += 1;
+            peak = Math.max(peak, active);
+            const exited = Bun.sleep(30).then(() => {
+                writeStorePackage(pkg, { "package.json": `{"version": "${STORE_PACKAGES[pkg]}"}` });
+                active -= 1;
+                return 0;
+            });
+            return { ...fakeAddProc(), exited };
+        });
+
+        await Promise.all([
+            installStorePackages([pkg], { silent: true }),
+            installStorePackages([pkg], { silent: true }),
+        ]);
+
+        expect(peak).toBe(1);
+        expect(adds).toHaveLength(1);
+        expect(isStorePackageInstalled(pkg)).toBe(true);
     });
 });

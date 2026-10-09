@@ -342,6 +342,14 @@ describe("tmux sessions", () => {
         expect(tmuxPaneArgv("/bin/zsh").argv).not.toContain("-lic");
     });
 
+    test("named variables are unset in the pane, and nothing is unset unless asked", () => {
+        const pane = tmuxPaneArgv("/bin/zsh", { unsetEnv: ["CMUX_SURFACE_ID", "CMUX_WORKSPACE_ID"] });
+
+        expect(pane.argv.slice(0, 5)).toEqual(["/usr/bin/env", "-u", "CMUX_SURFACE_ID", "-u", "CMUX_WORKSPACE_ID"]);
+        expect(pane.argv.at(-1)).toBe("/bin/zsh");
+        expect(tmuxPaneArgv("/bin/zsh").argv).not.toContain("-u");
+    });
+
     test("a command-line session keeps its pane and is not reported when its command died", async () => {
         setTmuxBinForTests("/mock/tmux");
         const calls: string[][] = [];

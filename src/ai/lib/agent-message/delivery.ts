@@ -339,8 +339,14 @@ export async function pasteIntoSurface(input: {
         throw new MessageError(`session ${input.sessionId} has no live cmux surface to paste into`);
     }
 
+    // The paste names the surface UUID the inventory verified against the journal: after a cmux restart the
+    // ref can name another terminal, and the message would be submitted there.
+    if (!target.surface.id) {
+        throw new MessageError(`${target.surface.ref} has no surface UUID, so the paste has no safe target`);
+    }
+
     const run = input.run ?? ((args: string[]) => runCmux(args));
-    const result = await run(["paste", "--surface", target.surface.ref, "--submit", "--", input.text]);
+    const result = await run(["paste", "--surface", target.surface.id, "--submit", "--", input.text]);
 
     if (result.timedOut) {
         throw new MessageError(`cmux paste into ${target.surface.ref} timed out: ${result.stderr.trim()}`);

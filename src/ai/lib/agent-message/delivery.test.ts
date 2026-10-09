@@ -240,7 +240,8 @@ test("the keystroke fallback pastes through the bounded cmux runner and reports 
         },
     });
 
-    expect(calls).toEqual([["paste", "--surface", "surface:7", "--submit", "--", "hello"]]);
+    // The verified UUID, never the ref: a ref can name another terminal after a cmux restart.
+    expect(calls).toEqual([["paste", "--surface", "uuid-surface:7", "--submit", "--", "hello"]]);
     expect(delivered).toMatchObject({ via: "cmux-paste", name: "side - grok" });
 
     const wedged = pasteIntoSurface({
@@ -252,6 +253,17 @@ test("the keystroke fallback pastes through the bounded cmux runner and reports 
     });
     await expect(wedged).rejects.toThrow(MessageError);
     await expect(wedged).rejects.toThrow("timed out");
+
+    const noUuid = pasteIntoSurface({
+        alias: "grok",
+        sessionId: target.sessionId,
+        text: "hello",
+        live: async () => [{ ...target, surface: { ...target.surface, id: null } }],
+        run: async () => {
+            throw new Error("cmux paste must not run without a surface UUID");
+        },
+    });
+    await expect(noUuid).rejects.toThrow("no surface UUID");
 });
 
 test("the live-session listing checks every registry pid in ONE batch, not one probe per entry", () => {

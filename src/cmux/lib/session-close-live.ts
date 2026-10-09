@@ -15,6 +15,7 @@ import {
     type CloseSubject,
     isAdopted,
     type ListedWorkspace,
+    recordedSessionIdOf,
     type SessionCloseIO,
     surfaceTarget,
 } from "./session-close";
@@ -92,6 +93,21 @@ function isAlive(pid: number): boolean {
     }
 
     return true;
+}
+
+/** The pane ids (`%12`) of a tmux session; empty when it is gone. */
+async function tmuxPanesOf(session: string): Promise<string[]> {
+    const result = await spawnOk([resolveTmuxBin(), "list-panes", "-s", "-t", `=${session}`, "-F", "#{pane_id}"]);
+
+    if (result.code !== 0) {
+        log.debug({ session, stderr: result.stderr.trim() }, "tmux list-panes failed (session gone?)");
+        return [];
+    }
+
+    return result.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
 }
 
 async function liveTree() {
@@ -176,30 +192,25 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
         },
         callerWorkspaceId: () => env.device.getCmuxWorkspaceId(),
         async turnState(record) {
-            const createdAt = Date.parse(record.createdAt);
-            let newest: { sessionId: string; at: number } | null = isAdopted(record)
-                ? { sessionId: record.sessionId, at: createdAt }
-                : null;
+            const sessionId = isAdopted(record)
+                ? record.sessionId
+                : recordedSessionIdOf({
+                      record,
+                      refs: loadAllSessionCmuxRefs().values(),
+                      tmuxPanes: record.tmuxSession ? await tmuxPanesOf(record.tmuxSession) : [],
+                  });
 
-            for (const refs of isAdopted(record) ? [] : loadAllSessionCmuxRefs().values()) {
-                if (refs.surfaceRef === record.surface && refs.at >= createdAt - 60_000) {
-                    if (!newest || refs.at > newest.at) {
-                        newest = { sessionId: refs.sessionId, at: refs.at };
-                    }
-                }
-            }
-
-            if (!newest) {
+            if (!sessionId) {
                 return null;
             }
 
             try {
-                const transcript = await resolveTranscript(newest.sessionId, {}, record.agent);
+                const transcript = await resolveTranscript(sessionId, {}, record.agent);
                 const snapshot = readTurnState(record.agent, transcript.filePath, { stallTimeoutMs: CLOSE_STALL_MS });
-                return { sessionId: newest.sessionId, state: snapshot?.state ?? "UNKNOWN" };
+                return { sessionId, state: snapshot?.state ?? "UNKNOWN" };
             } catch (error) {
-                log.debug({ error, sessionId: newest.sessionId }, "no transcript for the session in this surface");
-                return { sessionId: newest.sessionId, state: "UNKNOWN" };
+                log.debug({ error, sessionId }, "no transcript for the session in this surface");
+                return { sessionId, state: "UNKNOWN" };
             }
         },
         async sendExit(record, text) {

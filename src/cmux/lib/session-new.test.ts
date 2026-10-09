@@ -1,10 +1,13 @@
 import { afterEach, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { Command } from "commander";
-import { registerAgentsCommand, runSessionNew } from "../commands/agents";
+import { formatSessionList, registerAgentsCommand, runSessionNew } from "../commands/agents";
 import { accountChoiceMessage, budgetsFromCache, budgetsFromSnapshots } from "./account-budgets";
 import { agentRunCommand, pickSessionAccount, sessionAgent, withPidNote } from "./session-agents";
 import {
@@ -19,7 +22,7 @@ import {
     tmuxEnterArgv,
     tmuxLiteralSendArgv,
 } from "./session-new";
-import type { SessionRecordLine, SessionStore } from "./session-store";
+import { fileSessionStore, openSessions, type SessionRecordLine, type SessionStore } from "./session-store";
 
 const HOME = "/work";
 const PROJECTS = "/work/Tresors/Projects";
@@ -447,6 +450,7 @@ function memoryStore(): SessionStore & { lines: SessionRecordLine[] } {
             lines.push(line);
         },
         pidFile: (name) => `/state/sessions/${name}.pid`,
+        reserve: (_name, fn) => fn(),
     };
 }
 
@@ -524,6 +528,76 @@ test("a codex session runs tools codex run with its only account, and a taken na
     await expect(runSessionNew("codex", { repo: "/repo/app", account: "side", name: "fix it" }, deps)).rejects.toThrow(
         'a session named "fix-it" is already open'
     );
+});
+
+test("two starts with the same --name in parallel open one workspace and one record; the other is refused", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-cmux-sessions-"));
+
+    try {
+        const store = fileSessionStore(join(dir, "sessions.jsonl"));
+        const { io, calls } = harness({
+            runJSON: async <T>(args: string[]): Promise<T> => {
+                calls.push(args);
+                // Workspace creation takes a while: without the name lock both starts pass the check meanwhile.
+                await Bun.sleep(40);
+                return { workspace_ref: "workspace:9", surface_ref: "surface:8", window_ref: "window:1" } as T;
+            },
+        });
+        const deps = { io, store, accounts: ACCOUNTS };
+        const start = () => runSessionNew("codex", { repo: "/repo/app", account: "side", name: "Twin" }, deps);
+        let results: PromiseSettledResult<void>[] = [];
+        await captureStdout(async () => {
+            results = await Promise.allSettled([start(), start()]);
+        });
+
+        expect(results.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"]);
+        expect(calls.filter((call) => call[0] === "workspace")).toHaveLength(1);
+        expect(openSessions(store.read()).map((record) => record.name)).toEqual(["twin"]);
+
+        // The lock is gone afterwards: a later start with a fresh name still works.
+        await captureStdout(() => runSessionNew("codex", { repo: "/repo/app", account: "side", name: "Solo" }, deps));
+        expect(openSessions(store.read()).map((record) => record.name)).toEqual(["twin", "solo"]);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("agents list renders recorded and adoptable sessions as aligned tables with headers", () => {
+    const record = {
+        type: "created" as const,
+        name: "codex-app-ab12cd",
+        agent: "codex" as const,
+        account: "side",
+        model: null,
+        cwd: "/repo/app",
+        window: "window:1",
+        workspace: "workspace:9",
+        surface: "surface:8",
+        tmuxSession: null,
+        pidFile: "/state/sessions/codex-app-ab12cd.pid",
+        command: "tools codex run side",
+        createdAt: "2026-10-08T17:00:00.000Z",
+        createdBy: "agents-new" as const,
+    };
+    const adopted = {
+        ...record,
+        name: "0199aa11-2222-7333-8444-555566667777",
+        agent: "grok" as const,
+        workspace: "workspace:10",
+        surface: "surface:21",
+        cwd: "/repo/a-much-longer-folder",
+        createdBy: "adopted" as const,
+        surfaceId: "S21",
+        sessionId: "0199aa11-2222-7333-8444-555566667777",
+        tty: null,
+    };
+    const lines = formatSessionList({ open: [record], adoptable: [adopted] }).split("\n");
+
+    expect(lines[0]).toMatch(/^Name\s+Agent\s+Account\s+Workspace\s+Tmux\s+Folder$/);
+    expect(lines[2]).toMatch(/^codex-app-ab12cd\s+codex\s+side\s+workspace:9\s+-\s+\/repo\/app$/);
+    expect(lines[4]).toMatch(/^Adoptable session\s+Agent\s+Workspace\s+Surface\s+Folder$/);
+    expect(lines[6].indexOf("surface:21")).toBe(lines[4].indexOf("Surface"));
+    expect(formatSessionList({ open: [], adoptable: [adopted] }).split("\n")[0]).toMatch(/^Adoptable session/);
 });
 
 test("agents new advertises repo, account, prompt, tmux, focus, and json", async () => {
@@ -634,8 +708,12 @@ test("without --account the error lists every account's 5h and weekly budget and
         retry: "tools cmux agents new claude --account <name>",
         now,
     });
-    expect(message).toContain("work  5h 87% left (resets in 2h 0m)   weekly 0% left");
-    expect(message).toContain("shop  5h ?   weekly ?   [no usage reading]");
+    // One aligned table with a header, from the shared formatTable.
+    expect(message).toMatch(/^ {2}Account\s+5h\s+Weekly\s+Note$/m);
+    expect(message).toMatch(/^ {2}work\s+87% left \(resets in 2h 0m\)\s+0% left$/m);
+    expect(message).toMatch(/^ {2}shop\s+\?\s+\?\s+no usage reading$/m);
+    const lines = message.split("\n").filter((line) => /^ {2}(work|shop) /.test(line));
+    expect(lines[0].indexOf("0% left", 30)).toBe(lines[1].lastIndexOf("?"));
     expect(message).toContain("AGENT INSTRUCTION: do not choose silently");
     expect(message).toContain("tell the user in your reply which one you picked and why");
 });

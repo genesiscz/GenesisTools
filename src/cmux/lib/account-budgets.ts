@@ -3,6 +3,7 @@ import { readSnapshotsCache, type SnapshotsCache } from "@genesiscz/utils/ai/usa
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
+import { formatTable } from "@genesiscz/utils/table";
 import { type AccountChoice, type SessionAgentId, sessionAgent } from "./session-agents";
 
 const { log } = logger.scoped("cmux-session");
@@ -62,14 +63,14 @@ export function budgetsFromSnapshots(
     });
 }
 
-function window(label: string, percentLeft: number | null, resetsAt: string | null, now: number): string {
+function windowLeft(percentLeft: number | null, resetsAt: string | null, now: number): string {
     if (percentLeft === null) {
-        return `${label} ?`;
+        return "?";
     }
 
     const resetMs = resetsAt ? Date.parse(resetsAt) - now : Number.NaN;
     const reset = Number.isFinite(resetMs) && resetMs > 0 ? ` (resets in ${until(resetMs)})` : "";
-    return `${label} ${percentLeft}% left${reset}`;
+    return `${percentLeft}% left${reset}`;
 }
 
 /** The error text when no --account was given: every account with its budget, then what an agent must do. */
@@ -80,11 +81,18 @@ export function accountChoiceMessage(input: {
     now?: number;
 }): string {
     const now = input.now ?? Date.now();
-    const width = Math.max(4, ...input.budgets.map((budget) => budget.name.length));
-    const rows = input.budgets.map((budget) => {
-        const usage = `${window("5h", budget.fiveHourLeft, budget.fiveHourResetsAt, now)}   ${window("weekly", budget.weeklyLeft, budget.weeklyResetsAt, now)}`;
-        return `  ${budget.name.padEnd(width)}  ${usage}${budget.note ? `   [${budget.note}]` : ""}`;
-    });
+    const table = formatTable(
+        input.budgets.map((budget) => [
+            budget.name,
+            windowLeft(budget.fiveHourLeft, budget.fiveHourResetsAt, now),
+            windowLeft(budget.weeklyLeft, budget.weeklyResetsAt, now),
+            budget.note ?? "",
+        ]),
+        ["Account", "5h", "Weekly", "Note"],
+        // A stale reading's note carries a timestamp and a reason; the shared default of 50 would cut it.
+        { maxColWidth: 120 }
+    );
+    const rows = input.budgets.length > 0 ? table.split("\n").map((line) => `  ${line.trimEnd()}`) : [];
 
     return [
         `--account is required: ${toolCommand("cmux agents new")} never picks a ${input.agent} account by itself.`,

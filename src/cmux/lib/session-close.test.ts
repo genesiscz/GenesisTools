@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
+import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import {
     type AdoptedSession,
     closeSession,
     type ListedWorkspace,
     recordedSessionFor,
+    recordedSessionIdOf,
     type SessionCloseIO,
     surfaceTarget,
 } from "./session-close";
@@ -75,6 +77,7 @@ function fake(input: {
                 lines.push(line);
             },
             pidFile: (name) => `/state/sessions/${name}.pid`,
+            reserve: (_name, fn) => fn(),
         },
         listWorkspaces: async () => {
             listings += 1;
@@ -395,4 +398,44 @@ test("an adopted session on a stale record's surface ref but another surface UUI
     expect(report).toMatchObject({ adopted: true, outcome: "closed" });
     expect(calls).toContain("close-surface S-NEW");
     expect(calls).not.toContain("close workspace:9");
+});
+
+function journal(overrides: Partial<SessionCmuxRefs> & { sessionId: string; at: number }): SessionCmuxRefs {
+    return {
+        workspaceId: null,
+        surfaceId: null,
+        workspaceRef: null,
+        paneRef: null,
+        surfaceRef: null,
+        windowRef: null,
+        tmuxPane: null,
+        cwd: "/repo/app",
+        ...overrides,
+    };
+}
+
+test("a --via-tmux session's agent is found by its tmux pane, never by the surface the caller ran in", () => {
+    const start = Date.parse("2026-10-08T17:00:00.000Z");
+    const record = created({ tmuxSession: "cmux-app-ab12cd" });
+    const refs = [
+        // The caller's own agent, in the caller's surface: never the tmux agent.
+        journal({ sessionId: "caller", at: start + 5_000, surfaceId: "S-CALLER", surfaceRef: "surface:2" }),
+        journal({ sessionId: "tmux-agent", at: start + 1_000, tmuxPane: "%41" }),
+        journal({ sessionId: "other-tmux", at: start + 9_000, tmuxPane: "%77" }),
+    ];
+
+    expect(recordedSessionIdOf({ record, refs, tmuxPanes: ["%41"] })).toBe("tmux-agent");
+    expect(recordedSessionIdOf({ record, refs, tmuxPanes: [] })).toBeNull();
+});
+
+test("a surface session is found by its surface UUID, and an entry from before it started does not count", () => {
+    const start = Date.parse("2026-10-08T17:00:00.000Z");
+    const refs = [
+        journal({ sessionId: "earlier", at: start - 120_000, surfaceId: "S8", surfaceRef: "surface:8" }),
+        journal({ sessionId: "agent", at: start + 2_000, surfaceId: "s8", surfaceRef: "surface:8" }),
+        journal({ sessionId: "renumbered", at: start + 4_000, surfaceId: "S-OTHER", surfaceRef: "surface:8" }),
+    ];
+
+    expect(recordedSessionIdOf({ record: created(), refs, tmuxPanes: [] })).toBe("agent");
+    expect(recordedSessionIdOf({ record: created({ surfaceId: undefined }), refs, tmuxPanes: [] })).toBe("renumbered");
 });

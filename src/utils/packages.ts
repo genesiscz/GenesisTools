@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
@@ -8,9 +8,11 @@ import {
     isStorePackage,
     isStorePackageInstalled,
     packageStoreDir,
+    packageStoreInstallLock,
     preparePackageStore,
     STORE_PACKAGES,
 } from "@genesiscz/utils/package-store";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
 const PROJECT_ROOT = resolve(import.meta.dirname, "../..");
@@ -208,26 +210,64 @@ async function runBunAdd(packages: string[], opts: { label: string; silent: bool
         logger.info(`Installing ${opts.label}...`);
     }
 
-    for (const { cwd, cmd, store } of bunAddCommands(packages)) {
-        if (store) {
+    const store = packages.filter(isStorePackage);
+
+    if (store.length > 0) {
+        await installStorePackages(store, opts);
+    }
+
+    for (const command of bunAddCommands(packages.filter((pkg) => !isStorePackage(pkg)))) {
+        await spawnBunAdd(command, opts);
+    }
+}
+
+/** A cold `bun add` of the ML stack takes minutes; a dead holder's lock is stolen sooner (file-lock.ts). */
+const STORE_INSTALL_LOCK_TIMEOUT_MS = 15 * 60_000;
+
+/**
+ * Installs store packages under a lock file in the store. Every CLI process and worktree shares the store,
+ * and the in-process queue above serializes one process only: two cold installers would both rewrite the
+ * store's package.json and run `bun add` at once, and one manifest write could drop the other's dependency.
+ * After the lock is taken, packages another process installed meanwhile are skipped.
+ */
+export async function installStorePackages(packages: string[], opts: { silent: boolean }): Promise<void> {
+    mkdirSync(packageStoreDir(), { recursive: true });
+    await withFileLock(
+        packageStoreInstallLock(),
+        async () => {
+            const missing = packages.filter((pkg) => !isStorePackageInstalled(pkg));
+
+            if (missing.length === 0) {
+                logger.debug({ packages }, "ensurePackages: another process installed the store packages meanwhile");
+                return;
+            }
+
             preparePackageStore();
-        }
 
-        logger.debug({ cwd, cmd }, "ensurePackages: running bun add");
-        const proc = Bun.spawn(cmd, {
-            cwd,
-            stdout: opts.silent ? "ignore" : "inherit",
-            stderr: "pipe",
-        });
+            for (const command of bunAddCommands(missing)) {
+                await spawnBunAdd(command, opts);
+            }
+        },
+        STORE_INSTALL_LOCK_TIMEOUT_MS
+    );
+}
 
-        // Start draining stderr concurrently — waiting until after proc.exited can deadlock
-        // if the child writes enough to fill the OS pipe buffer
-        const stderrP = new Response(proc.stderr).text();
-        const exitCode = await proc.exited;
+async function spawnBunAdd(command: { cwd: string; cmd: string[] }, opts: { silent: boolean }): Promise<void> {
+    const { cwd, cmd } = command;
+    logger.debug({ cwd, cmd }, "ensurePackages: running bun add");
+    const proc = Bun.spawn(cmd, {
+        cwd,
+        stdout: opts.silent ? "ignore" : "inherit",
+        stderr: "pipe",
+    });
 
-        if (exitCode !== 0) {
-            const stderr = await stderrP;
-            throw new Error(`${cmd.join(" ")} failed in ${cwd} (exit ${exitCode}):\n${stderr.trim()}`);
-        }
+    // Start draining stderr concurrently — waiting until after proc.exited can deadlock
+    // if the child writes enough to fill the OS pipe buffer
+    const stderrP = new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
+        const stderr = await stderrP;
+        throw new Error(`${cmd.join(" ")} failed in ${cwd} (exit ${exitCode}):\n${stderr.trim()}`);
     }
 }

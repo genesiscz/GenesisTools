@@ -39,6 +39,11 @@ export function packageStoreDir(): string {
     return toolDataDir("packages", "store");
 }
 
+/** Held across preparing the store and the whole `bun add` (packages.ts `installStorePackages`). */
+export function packageStoreInstallLock(): string {
+    return join(packageStoreDir(), ".install.lock");
+}
+
 export function isStorePackage(pkg: string): boolean {
     return Object.hasOwn(STORE_PACKAGES, pkg);
 }

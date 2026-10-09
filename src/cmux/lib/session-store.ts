@@ -1,7 +1,9 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { LockTimeoutError, withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import type { SessionAgentId } from "./session-agents";
 
@@ -47,7 +49,25 @@ export interface SessionStore {
     read(): SessionRecordLine[];
     append(line: SessionRecordLine): void;
     pidFile(name: string): string;
+    /**
+     * Run `fn` while this process alone holds the session name, across processes. `agents new` checks the name,
+     * opens the workspace and appends the record inside it, so two starts with one --name cannot both pass the
+     * check and share a pid file. Throws SessionNameBusyError when another live process holds the name.
+     */
+    reserve<T>(name: string, fn: () => Promise<T>): Promise<T>;
 }
+
+export class SessionNameBusyError extends Error {
+    constructor(name: string) {
+        super(
+            `a session named "${name}" is being started by another ${toolCommand("cmux agents new")}; pass another --name`
+        );
+        this.name = "SessionNameBusyError";
+    }
+}
+
+/** The holder starts a workspace (and maybe tmux) before it lets go, so a second start fails fast instead of queueing. */
+const NAME_LOCK_WAIT_MS = 1_000;
 
 export function fileSessionStore(path: string = toolDataDir("cmux", "sessions.jsonl")): SessionStore {
     return {
@@ -84,6 +104,20 @@ export function fileSessionStore(path: string = toolDataDir("cmux", "sessions.js
             const dir = join(dirname(path), "sessions");
             mkdirSync(dir, { recursive: true });
             return join(dir, `${name}.pid`);
+        },
+        async reserve(name, fn) {
+            const dir = join(dirname(path), "sessions");
+            mkdirSync(dir, { recursive: true });
+
+            try {
+                return await withFileLock(join(dir, `${name}.lock`), fn, NAME_LOCK_WAIT_MS);
+            } catch (error) {
+                if (error instanceof LockTimeoutError) {
+                    throw new SessionNameBusyError(name);
+                }
+
+                throw error;
+            }
         },
     };
 }
