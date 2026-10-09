@@ -59,7 +59,7 @@ export interface DecisionDelivery {
     uncertain?: boolean;
     queueId?: string;
     /** `resume`: the answers went as the first prompt of the session resumed in a new pane. */
-    route: "cmux" | "codex" | "prompt" | "queued" | "resume";
+    route: "cmux" | "codex" | "claude-peer" | "prompt" | "queued" | "resume";
     /** A short human place: `cmux · agents-window · pane 1`, `codex worker w1`. Never an error text. */
     target?: string;
     /** One sentence saying why a queued send delivered nothing. The raw output is in the log only. */
