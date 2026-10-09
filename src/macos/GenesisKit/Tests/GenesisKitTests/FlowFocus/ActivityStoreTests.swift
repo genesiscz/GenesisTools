@@ -294,6 +294,35 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(try store.segments(from: 0, to: 1_000_000).first { $0.id == open }?.endedMs, 160_000)
     }
 
+    func testRetentionTrimsFinishedSessionsAndPausesButLeavesTheRunningTimer() throws {
+        let cutoff: Int64 = 100_000
+        func session(_ start: Int64) throws -> Int64 {
+            try store.startSession(.init(kind: "flow", plannedSec: 60, startedMs: start, state: "running", cycleIndex: 0))
+        }
+        let old = try session(10_000)
+        _ = try store.recordPause(sessionId: old, startedMs: 15_000, endedMs: 16_000, reason: .manual)
+        try store.endSession(id: old, at: 20_000, state: .done)
+        let crossing = try session(80_000)
+        _ = try store.recordPause(sessionId: crossing, startedMs: 82_000, endedMs: 85_000, reason: .manual)
+        _ = try store.recordPause(sessionId: crossing, startedMs: 90_000, endedMs: 120_000, reason: .idle)
+        try store.endSession(id: crossing, at: 130_000, state: .done)
+        let running = try session(50_000)
+        _ = try store.recordPause(sessionId: running, startedMs: 60_000, endedMs: 70_000, reason: .manual)
+        _ = try store.recordPause(sessionId: running, startedMs: 80_000, endedMs: 120_000, reason: .idle)
+
+        try store.prune(before: cutoff)
+        XCTAssertNil(try store.session(id: old))
+        let trimmed = try XCTUnwrap(store.session(id: crossing))
+        XCTAssertEqual(trimmed.startedMs, cutoff, "a finished session keeps only its part after the cutoff")
+        XCTAssertEqual(trimmed.endedMs, 130_000)
+        XCTAssertEqual(try store.pauses(sessionId: crossing).map(\.startedMs), [cutoff],
+                       "its pause before the cutoff goes and the crossing one starts at the cutoff")
+        XCTAssertEqual(try store.pauses(sessionId: crossing).map(\.endedMs), [120_000])
+        // Negative control: the running timer's bookkeeping is untouched, so its elapsed time does not jump.
+        XCTAssertEqual(try store.session(id: running)?.startedMs, 50_000)
+        XCTAssertEqual(try store.pauses(sessionId: running).map(\.startedMs), [60_000, 80_000])
+    }
+
     @MainActor
     func testARetentionPruneTheLedgerRefusedIsRetriedWithinMinutes() throws {
         let now = Date()

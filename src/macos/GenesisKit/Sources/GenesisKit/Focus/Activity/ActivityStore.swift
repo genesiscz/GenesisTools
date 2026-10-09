@@ -813,7 +813,13 @@ public final class ActivityStore {
             _ = try run("UPDATE activity_segment SET started_ms=?, ended_ms=CASE WHEN ended_ms IS NULL THEN NULL ELSE MAX(ended_ms, ?) END WHERE started_ms < ?;", [cutoff, cutoff, cutoff])
             _ = try run("DELETE FROM focus_pause WHERE session_id IN (SELECT id FROM focus_session WHERE ended_ms IS NOT NULL AND ended_ms <= ?);", [cutoff])
             let sessions = try run("DELETE FROM focus_session WHERE ended_ms IS NOT NULL AND ended_ms <= ?;", [cutoff])
-            _ = try run("DELETE FROM focus_pause WHERE ended_ms IS NOT NULL AND ended_ms <= ?;", [cutoff])
+            // A finished session and its pauses that cross the cutoff keep only their part after it, as segments do.
+            // A running session is the live timer's bookkeeping (its start and its pauses give the elapsed time), so
+            // it and its pauses are left exactly as they are until it ends.
+            let finished = "session_id IN (SELECT id FROM focus_session WHERE ended_ms IS NOT NULL)"
+            _ = try run("DELETE FROM focus_pause WHERE ended_ms IS NOT NULL AND ended_ms <= ? AND \(finished);", [cutoff])
+            _ = try run("UPDATE focus_pause SET started_ms=? WHERE started_ms < ? AND ended_ms IS NOT NULL AND \(finished);", [cutoff, cutoff])
+            _ = try run("UPDATE focus_session SET started_ms=? WHERE started_ms < ? AND ended_ms IS NOT NULL;", [cutoff, cutoff])
             _ = try run("DELETE FROM capture_gap WHERE ended_ms IS NOT NULL AND ended_ms <= ?;", [cutoff])
             _ = try run("UPDATE capture_gap SET started_ms=? WHERE started_ms < ?;", [cutoff, cutoff])
             try exec("DELETE FROM day_rollup;")
