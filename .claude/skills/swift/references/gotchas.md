@@ -126,8 +126,8 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   Module-internal CodingKeys avoided that crash in this fixture. Treat this as a measured
   compiler workaround, not a language rule; preserve decoder validation and test old files.
 - Replacing per-session queries with a grouped read can save substantial work, but retain
-  interval semantics. The Studio fixture fell from64 to4 prepared statements for30sessions
-  and90segments by sharing grouped segments and a cumulative input index; boundary tests
+  interval semantics. The Studio fixture fell from 64 to 4 prepared statements for 30 sessions
+  and 90 segments by sharing grouped segments and a cumulative input index; boundary tests
   still require inclusive starts and exclusive ends, plus whole-session picker data.
 
 ## Permission and settings controls
