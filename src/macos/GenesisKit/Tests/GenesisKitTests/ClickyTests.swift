@@ -336,6 +336,62 @@ final class ClickyTests: XCTestCase {
     }
 
     @MainActor
+    func testUnreadablePreferencesDoNotEraseValidTypingHistory() throws {
+        let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var saved = ClickyStatistics()
+        saved.record(keyCode: 0, release: false, at: date(12))
+        defaults.set(Data("{invalid preferences".utf8), forKey: "clicky.preferences.v1")
+        defaults.set(try JSONEncoder().encode(saved), forKey: "clicky.statistics.v1")
+        let monitor = InputMonitorStub()
+        monitor.granted = true
+        let model = ClickyModel(defaults: defaults, inputMonitor: monitor, observeSystemEvents: false)
+        defer { model.shutdown() }
+        XCTAssertEqual(model.statistics, saved)
+        model.activate()
+        model.deactivate()
+        let restored = try JSONDecoder().decode(ClickyStatistics.self,
+            from: XCTUnwrap(defaults.data(forKey: "clicky.statistics.v1")))
+        XCTAssertEqual(restored.presses, saved.presses)
+        XCTAssertEqual(restored.minutes, saved.minutes)
+        XCTAssertEqual(restored.keys, saved.keys)
+        XCTAssertEqual(restored.sessions, 1)
+    }
+
+    @MainActor
+    func testUnreadableHistoryIsNeverOverwrittenByActivationOrShutdown() throws {
+        let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let original = Data("{\"presses\":12000,\"minutes\":\"unreadable\"}".utf8)
+        defaults.set(original, forKey: "clicky.statistics.v1")
+        let monitor = InputMonitorStub()
+        monitor.granted = true
+        let model = ClickyModel(defaults: defaults, inputMonitor: monitor, observeSystemEvents: false)
+        XCTAssertNotNil(model.statisticsLoadError)
+        model.activate()
+        XCTAssertTrue(model.enabled, "Sound feedback remains available while statistics are protected")
+        XCTAssertEqual(model.statistics.sessions, 0)
+        model.deactivate()
+        model.shutdown()
+        XCTAssertEqual(defaults.data(forKey: "clicky.statistics.v1"), original)
+        model.dismissError()
+        XCTAssertNotNil(model.statisticsLoadError, "The recovery warning survives transient-error dismissal")
+        model.resetStatistics()
+        XCTAssertNil(model.statisticsLoadError)
+        let backups = defaults.dictionaryRepresentation().filter { $0.key.hasPrefix("clicky.statistics.recovery.") }
+        XCTAssertEqual(backups.count, 1)
+        XCTAssertEqual(backups.values.first as? Data, original)
+        model.activate()
+        model.deactivate()
+        let fresh = try JSONDecoder().decode(ClickyStatistics.self,
+            from: XCTUnwrap(defaults.data(forKey: "clicky.statistics.v1")))
+        XCTAssertEqual(fresh.sessions, 1, "Explicit reset restores normal collection")
+        XCTAssertEqual(fresh.presses, 0)
+    }
+
+    @MainActor
     func testInteractiveActivationUsesExistingGrantAndDisablesTheMonitor() {
         let monitor = InputMonitorStub()
         monitor.granted = true

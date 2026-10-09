@@ -19,6 +19,7 @@ public final class ClickyModel: ObservableObject {
     @Published public private(set) var enabled = false
     @Published public private(set) var status = "Clicky is off"
     public private(set) var statistics: ClickyStatistics
+    @Published public private(set) var statisticsLoadError: String?
     public let analytics = ClickyAnalyticsStore()
     @Published public private(set) var sleepingUntil: Date?
     @Published public private(set) var pulse = 0
@@ -84,12 +85,14 @@ public final class ClickyModel: ObservableObject {
         } else {
             preferences = ClickyPreferences()
         }
-        if let data = defaults.data(forKey: "clicky.statistics.v1"),
-            let saved = try? JSONDecoder().decode(ClickyStatistics.self, from: data)
-        {
-            statistics = saved
-        } else {
-            statistics = ClickyStatistics()
+        statistics = ClickyStatistics()
+        if let data = defaults.data(forKey: "clicky.statistics.v1") {
+            do {
+                statistics = try JSONDecoder().decode(ClickyStatistics.self, from: data)
+            } catch {
+                statisticsLoadError = "Clicky could not read your saved typing history. The original data is untouched and new statistics are paused. Open Stats and reset only if you want to start a new history; a backup of the original data will be kept."
+                log.error("Saved typing history could not be decoded; collection paused: \(error.localizedDescription, privacy: .public)")
+            }
         }
         analytics.flush(statistics)
         if defaults.data(forKey: "clicky.preferences.v1") != nil {
@@ -180,7 +183,7 @@ public final class ClickyModel: ObservableObject {
         }
         if audio == nil { audio = ClickyAudio() }
         enabled = true
-        if preferences.collectStats {
+        if preferences.collectStats && statisticsLoadError == nil {
             statistics.sessions += 1
             analytics.flush(statistics)
             pendingStats = true
@@ -272,6 +275,10 @@ public final class ClickyModel: ObservableObject {
     public func dismissError() { error = nil }
 
     public func resetStatistics() {
+        if statisticsLoadError != nil, let original = defaults.data(forKey: "clicky.statistics.v1") {
+            defaults.set(original, forKey: "clicky.statistics.recovery.\(UUID().uuidString)")
+        }
+        statisticsLoadError = nil
         statistics = ClickyStatistics()
         analytics.flush(statistics)
         pendingStats = true
@@ -365,7 +372,7 @@ public final class ClickyModel: ObservableObject {
 
     private func flushStatistics() {
         analytics.flush(statistics)
-        guard pendingStats else { return }
+        guard statisticsLoadError == nil, pendingStats else { return }
         if let data = try? JSONEncoder().encode(statistics) { defaults.set(data, forKey: "clicky.statistics.v1") }
         pendingStats = false
     }
@@ -468,7 +475,7 @@ public final class ClickyModel: ObservableObject {
         if ClickyInputDiagnostics.enabled {
             PerfLog.mark("clicky.transition.\(diagnosticSource).\(type.rawValue).accepted")
         }
-        if preferences.collectStats && (transition.countsPress || transition.release) {
+        if preferences.collectStats && statisticsLoadError == nil && (transition.countsPress || transition.release) {
             statistics.record(keyCode: code, release: transition.release,
                 at: ClickyInputTime.date(timestampNanoseconds: event.timestamp),
                 shortcut: event.flags.contains(.maskCommand) || event.flags.contains(.maskControl))
