@@ -786,6 +786,43 @@ public final class ActivityStore {
 
     // MARK: - Deletion (the privacy path)
 
+    /// Retention: drops what lies wholly before `cutoff` and trims what crosses it, so nothing older than the
+    /// cutoff stays while the part after it does. Unlike `forget`, a segment that started before the cutoff and
+    /// is still open or ends after it keeps its row and id (the recorder may still be touching it) and its later
+    /// input minutes; only its start moves to the cutoff.
+    @discardableResult
+    public func prune(before cutoff: Int64) throws -> (segments: Int, sessions: Int) {
+        try queue.sync {
+            try exec("BEGIN IMMEDIATE;")
+            var committed = false
+            defer {
+                if !committed {
+                    do { try exec("ROLLBACK;") }
+                    catch { FlowFocusLog.focus.error("ledger prune rollback failed: \(error.localizedDescription)") }
+                }
+            }
+            func run(_ sql: String, _ values: [Int64]) throws -> Int {
+                let statement = try prepare(sql)
+                defer { sqlite3_finalize(statement) }
+                for (index, value) in values.enumerated() { sqlite3_bind_int64(statement, Int32(index + 1), value) }
+                guard sqlite3_step(statement) == SQLITE_DONE else { throw StoreError.sqlite(lastMessage()) }
+                return Int(sqlite3_changes(db))
+            }
+            _ = try run("DELETE FROM input_bucket WHERE bucket_ms < ?;", [cutoff])
+            let segments = try run("DELETE FROM activity_segment WHERE started_ms < ? AND is_closed=1 AND (ended_ms IS NULL OR ended_ms <= ?);", [cutoff, cutoff])
+            _ = try run("UPDATE activity_segment SET started_ms=?, ended_ms=CASE WHEN ended_ms IS NULL THEN NULL ELSE MAX(ended_ms, ?) END WHERE started_ms < ?;", [cutoff, cutoff, cutoff])
+            _ = try run("DELETE FROM focus_pause WHERE session_id IN (SELECT id FROM focus_session WHERE ended_ms IS NOT NULL AND ended_ms <= ?);", [cutoff])
+            let sessions = try run("DELETE FROM focus_session WHERE ended_ms IS NOT NULL AND ended_ms <= ?;", [cutoff])
+            _ = try run("DELETE FROM focus_pause WHERE ended_ms IS NOT NULL AND ended_ms <= ?;", [cutoff])
+            _ = try run("DELETE FROM capture_gap WHERE ended_ms IS NOT NULL AND ended_ms <= ?;", [cutoff])
+            _ = try run("UPDATE capture_gap SET started_ms=? WHERE started_ms < ?;", [cutoff, cutoff])
+            try exec("DELETE FROM day_rollup;")
+            try exec("COMMIT;")
+            committed = true
+            return (segments, sessions)
+        }
+    }
+
     /// Deletes everything recorded in a range, optionally for one app only, and reports what went.
     @discardableResult
     public func forget(from: Int64, to: Int64, appBundle: String? = nil) throws -> (segments: Int, sessions: Int) {

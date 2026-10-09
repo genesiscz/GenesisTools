@@ -88,6 +88,8 @@ public final class FlowFocusRuntime: ObservableObject {
         case .starting, .owner, .client: return
         case .stopped, .unavailable: break
         }
+        startGeneration &+= 1
+        let generation = startGeneration
         role = .starting
         lastError = nil
         do {
@@ -116,6 +118,9 @@ public final class FlowFocusRuntime: ObservableObject {
         } catch {
             let message = error.localizedDescription
             await stop()
+            // A restart may have run while this failed start was being stopped; its role is not this start's to
+            // overwrite (an owner marked unavailable would refuse every command).
+            guard generation == startGeneration else { return }
             role = .unavailable(message)
             reportFailure(message)
             installDiscovery()
@@ -140,6 +145,8 @@ public final class FlowFocusRuntime: ObservableObject {
     }
 
     private var shutdown: Task<Void, Never>?
+    /// Moves on with every start that begins, so a failed start records its failure only if no later start ran.
+    private var startGeneration = 0
     /// Awaited inside a shutdown right before the settings flush; tests hold a shutdown open with it.
     var beforeShutdownFlush: (() async -> Void)?
 

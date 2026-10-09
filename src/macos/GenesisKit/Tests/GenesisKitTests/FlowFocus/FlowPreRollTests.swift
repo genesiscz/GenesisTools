@@ -298,7 +298,9 @@ final class FlowPreRollTests: XCTestCase {
         }
         // The first hold is released with a tail, and cancelled while the tail runs.
         let older = Task { await recognizer.finish(timeoutSeconds: 0.1, tailMs: 200) }
-        for _ in 0..<20 { await Task.yield() }
+        // Cancel only once the older finish is inside its tail; cancelled earlier, it would return at its first guard.
+        for _ in 0..<1_000 where recognizer.finishCallsRunning == 0 { await Task.yield() }
+        XCTAssertEqual(recognizer.finishCallsRunning, 1, "the older finish is in its tail")
         recognizer.cancel()
         // The next hold starts and finishes while the older finish is still in its tail.
         try recognizer.start(locale: Locale(identifier: "en-US"), forceServer: true)

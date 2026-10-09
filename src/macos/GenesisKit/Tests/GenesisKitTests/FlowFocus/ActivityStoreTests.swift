@@ -246,7 +246,10 @@ final class ActivityStoreTests: XCTestCase {
                        "activity older than 30 days is deleted; the last day stays")
 
         controller.apply(appConfig: ["focus": ["retentionDays": 1]])
-        XCTAssertTrue(try store.segments(from: 0, to: now + 1).isEmpty, "shortening retention prunes at once")
+        // The recent segment crosses the new one-day cutoff: its part before the cutoff goes at once.
+        let trimmed = try store.segments(from: 0, to: now + 1)
+        XCTAssertEqual(trimmed.map(\.windowTitle), ["recent"])
+        XCTAssertGreaterThan(trimmed.first?.startedMs ?? 0, now - day, "shortening retention prunes at once")
     }
 
     @MainActor
@@ -264,6 +267,31 @@ final class ActivityStoreTests: XCTestCase {
                          liveServices: false, presentsWindows: false)
         defer { controller.stop() }
         XCTAssertEqual(try store.segments(from: 0, to: now + 1).map(\.windowTitle), ["recent"])
+    }
+
+    func testRetentionKeepsTheRecentPartOfASegmentOpenAcrossTheCutoff() throws {
+        let cutoff: Int64 = 100_000
+        let old = try store.openSegment(segment(10_000, title: "old"))
+        try store.closeSegment(id: old, at: 20_000)
+        try store.appendInput(bucketMs: 10_000, segmentId: old, counts: .init(keys: 1))
+        // The recorder still holds this window's segment; it started before the cutoff.
+        let open = try store.openSegment(segment(60_000, title: "open"))
+        try store.touchSegment(id: open, at: 150_000)
+        try store.appendInput(bucketMs: 60_000, segmentId: open, counts: .init(keys: 2))
+        try store.appendInput(bucketMs: 120_000, segmentId: open, counts: .init(keys: 5))
+        let crossing = try store.openSegment(segment(80_000, title: "crossing"))
+        try store.closeSegment(id: crossing, at: 130_000)
+
+        try store.prune(before: cutoff)
+        let rows = try store.segments(from: 0, to: 1_000_000)
+        XCTAssertEqual(Set(rows.compactMap(\.windowTitle)), ["open", "crossing"], "only what lies wholly before the cutoff goes")
+        XCTAssertTrue(rows.allSatisfy { $0.startedMs >= cutoff }, "nothing older than the cutoff stays")
+        XCTAssertEqual(rows.first { $0.id == open }?.endedMs, 150_000)
+        XCTAssertEqual(try store.openSegments().map(\.id), [open], "the recorder's segment keeps its id and stays open")
+        XCTAssertEqual(try store.inputSeries(from: 0, to: 1_000_000).map(\.bucketMs), [120_000],
+                       "input after the cutoff stays with it; input before goes")
+        try store.touchSegment(id: open, at: 160_000)
+        XCTAssertEqual(try store.segments(from: 0, to: 1_000_000).first { $0.id == open }?.endedMs, 160_000)
     }
 
     @MainActor

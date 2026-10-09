@@ -84,6 +84,37 @@ final class FlowFocusRuntimeTests: XCTestCase {
         await runtime.stop()
     }
 
+    func testARestartDuringAFailedStartsCleanupKeepsItsOwnRole() async throws {
+        let root = directory.appendingPathComponent("flow")
+        let store = FlowStore(directory: root)
+        store.saveHistory([FlowEntry(text: "Fixture", rawText: "Fixture", targetBundleId: nil, targetAppName: nil,
+                                     durationSeconds: 1, injected: false, wordCount: 1)])
+        let statsURL = root.appendingPathComponent("stats.json")
+        store.beforeOwnedWrite = { name in
+            guard name == "stats.json" else { return }
+            try FileManager.default.removeItem(at: statsURL)
+            try FileManager.default.createDirectory(at: statsURL, withIntermediateDirectories: false)
+        }
+        XCTAssertFalse(store.saveHistoryAndStats(history: [], stats: FlowStats()))
+        let runtime = FlowFocusRuntime(dataRoot: directory, hostID: "test.failed-then-restarted", liveServices: false,
+                                       presentsWindows: false)
+        // The first start fails (pending history cannot be replayed) and is held in its cleanup.
+        let gate = ShutdownGate()
+        runtime.beforeShutdownFlush = { await gate.hold() }
+        let failing = Task { await runtime.start() }
+        for _ in 0..<1_000 where !gate.isHolding { await Task.yield() }
+        XCTAssertTrue(gate.isHolding)
+        try FileManager.default.removeItem(at: statsURL)
+        let restarting = Task { await runtime.start() }
+        for _ in 0..<100 { await Task.yield() }
+        runtime.beforeShutdownFlush = nil
+        gate.release()
+        await failing.value
+        await restarting.value
+        XCTAssertTrue(runtime.role.isOwner, "the failed start's cleanup must not mark the restarted owner unavailable")
+        await runtime.stop()
+    }
+
     func testOwnerReplaysPendingHistoryBeforeStartingAnyServices() async throws {
         let root = directory.appendingPathComponent("flow")
         let store = FlowStore(directory: root)

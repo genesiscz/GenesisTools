@@ -232,6 +232,7 @@ public final class CompanionSpeechRecognizer: ObservableObject {
     /// finish() calls still running. A count, not a flag: a cancelled hold's finish can still be returning while
     /// the next hold's finish waits, and the older one must not end the newer one's protection.
     private var finishing = 0
+    var finishCallsRunning: Int { finishing }
     /// Which waitForFinal call `finalWaiter` belongs to: its deadline and cancellation wake only that one.
     private var finalWaiterToken = 0
     private var finalWaitCount = 0

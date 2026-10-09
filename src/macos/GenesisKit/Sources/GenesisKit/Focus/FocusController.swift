@@ -312,7 +312,7 @@ public final class FocusController: ObservableObject {
             return
         }
         do {
-            let removed = try store.forget(from: 0, to: cutoff)
+            let removed = try store.prune(before: cutoff)
             nextPrune = now.addingTimeInterval(Self.pruneInterval)
             FlowFocusLog.focus.info("retention \(self.settings.retentionDays)d removed segments=\(removed.segments) sessions=\(removed.sessions)")
         } catch {
