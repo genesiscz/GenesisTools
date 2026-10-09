@@ -4,6 +4,9 @@ import { logger } from "@genesiscz/utils/logger";
 import { argvWithChildDeadline } from "./child-deadline";
 import { killProcessGroup } from "./killWithEscalation";
 
+/** Our deadline plus the TERM to KILL escalation, with room for a busy event loop. */
+const WATCHDOG_MARGIN_MS = 1000;
+
 export interface BoundedCommandResult {
     status: number | null;
     signal: NodeJS.Signals | null;
@@ -53,7 +56,10 @@ export async function boundedCommand(options: {
     return new Promise((resolve) => {
         let child: ReturnType<typeof spawn>;
         try {
-            const command = argvWithChildDeadline(options.command, timeoutMs);
+            // The watchdog is the backstop for a parent that died. Firing with our own deadline, it won
+            // whenever this event loop ran late: it SIGKILLs only its direct child and exits 124, so the
+            // caller saw a plain exit instead of ETIMEDOUT and the rest of the group was never signalled.
+            const command = argvWithChildDeadline(options.command, timeoutMs + WATCHDOG_MARGIN_MS);
             child = spawnWithEnvironment({
                 command: command[0],
                 args: command.slice(1),
@@ -164,7 +170,21 @@ export async function boundedCommand(options: {
         child.stdout?.once("error", stop);
         child.stderr?.once("error", stop);
         child.once("error", stop);
-        child.once("close", finish);
+        child.once("close", () => {
+            if (failure && !settled && child.pid) {
+                // A member that ignored SIGTERM and let go of our pipes is still running: "close" only
+                // says the pipe holders are gone, and it cleared the escalation that would have killed it.
+                // A group id is not reused while any member, a zombie included, still exists.
+                try {
+                    // pid-verified: our detached group, signalled in the same tick its last pipe closed.
+                    process.kill(-child.pid, "SIGKILL");
+                } catch (error) {
+                    logger.debug({ error, pid: child.pid }, "Owned command group already ended");
+                }
+            }
+
+            finish();
+        });
         options.signal?.addEventListener("abort", cancel, { once: true });
         if (options.signal?.aborted) {
             cancel();
