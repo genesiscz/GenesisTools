@@ -10,7 +10,7 @@ import {
     SOFT_SOURCES,
 } from "@app/claude/lib/cmux/resolve";
 import { ClaudeWorkerStore, claudeWorkerSourceHome } from "@app/claude/lib/worker/store";
-import { CodexSessionStore } from "@app/codex/lib/store";
+import { CodexSessionStore, codexWorkerHome } from "@app/codex/lib/store";
 import { GrokSessionStore } from "@app/grok/lib/store";
 import { enqueueSessionMessage } from "@genesiscz/utils/agent-sessions/message-queue";
 import {
@@ -23,7 +23,6 @@ import {
 import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type CmuxLiveSnapshot, fetchCmuxLiveSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { batchPsInfo } from "@genesiscz/utils/process/ps";
@@ -189,10 +188,7 @@ function codexWorkerFor(sessionId: string, sourceHome?: string): string | null {
             continue;
         }
 
-        const sameHome =
-            !sourceHome ||
-            workerSourceHome(sourceHome) ===
-                workerSourceHome(meta.home ?? env.codex.getHomeOverride() ?? join(env.paths.getHome(), ".codex"));
+        const sameHome = !sourceHome || workerSourceHome(sourceHome) === workerSourceHome(codexWorkerHome(meta));
         if (meta.threadId === sessionId && sameHome) {
             return name;
         }

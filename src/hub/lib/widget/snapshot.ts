@@ -367,7 +367,7 @@ function hasResult(node: AgentNode): boolean {
 
 /**
  * The finished agent an inbox read names, when it still belongs to that Widget session: either the
- * session is the agent's own (`sessionId === agent id`), or it is the indexed session whose
+ * session is the agent's own (`sessionId` is the agent id or its native session id), or it is the indexed session whose
  * transcript is the agent's file, which is how the snapshot maps a worker onto an indexed row.
  */
 export async function widgetResultNode({
@@ -385,7 +385,7 @@ export async function widgetResultNode({
             (entry) => entry.id === agentId && widgetProvider(entry.harness) === target.provider && hasResult(entry)
         )
         .sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt))[0];
-    if (!node || node.id === target.sessionId) {
+    if (!node || node.id === target.sessionId || node.nativeSessionId === target.sessionId) {
         return node;
     }
 
@@ -587,19 +587,27 @@ export async function widgetSnapshot({
             (entry) => entry.agentId === node.id && entry.target.provider === widgetProvider(node.harness)
         ) ?? findSession(node.id, node.harness);
     const addWorker = (node: AgentNode, parent?: WidgetSession) => {
+        // A codex/grok worker's id is its name; replies reach it only through its native session and home.
+        const sessionId = node.nativeSessionId || node.id;
         const indexed = [...sessions.values()].filter(
             (entry) =>
                 entry.target.provider === node.harness &&
-                (node.filePath ? entry.transcriptPath === node.filePath : entry.target.sessionId === node.id)
+                (node.nativeSessionId
+                    ? entry.target.sessionId === node.nativeSessionId
+                    : node.filePath
+                      ? entry.transcriptPath === node.filePath
+                      : entry.target.sessionId === node.id)
         );
         const target = targetOf(
             {
                 provider: node.harness,
-                sessionId: node.id,
+                sessionId,
                 cwd: parent?.target.cwd,
-                sourceHome: parent?.target.provider === node.harness ? parent.target.sourceHome : undefined,
+                sourceHome:
+                    node.sourceHome ||
+                    (parent?.target.provider === node.harness ? parent.target.sourceHome : undefined),
             },
-            node.id
+            sessionId
         );
         const session =
             indexed.length === 1

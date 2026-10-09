@@ -50,6 +50,7 @@ import {
     realWidgetSources,
     type WidgetSources,
     widgetForms,
+    widgetResultNode,
     widgetSnapshot,
 } from "../widget/snapshot";
 import { MAX_WIDGET_STATE_BYTES, mutateWidgetState, readWidgetState } from "../widget/storage";
@@ -3241,6 +3242,71 @@ test("widget agent tree reuses native identity, metadata and nested parent keys"
     expect(nested.parentKey).toBe(worker.key);
     expect(nested.parentSessionId).toBe("native-child-id");
     expect(snapshot.sessions.find((entry) => entry.agentId === "cross-provider")?.target.sourceHome).toBe("");
+});
+
+test("a codex or grok worker row targets its native session and its own home, so a reply can reach it", async () => {
+    const worker = (id: string, harness: "codex" | "grok", native: string, home: string): AgentNode => ({
+        id,
+        harness,
+        kind: "worker",
+        name: id,
+        description: null,
+        agentType: null,
+        model: null,
+        account: null,
+        status: "completed",
+        startedAt: null,
+        lastAt: "2026-01-01T10:01:00Z",
+        toolCalls: 0,
+        unreadMail: 0,
+        team: null,
+        backendType: null,
+        filePath: `/fixture/managed/${id}.jsonl`,
+        nativeSessionId: native,
+        sourceHome: home,
+        spawnPrompt: null,
+        spawnPromptPreview: null,
+        toolUseId: null,
+        spawnDepth: 1,
+        children: [],
+    });
+    const codex = worker("codex-name", "codex", "codex-thread-1", "/fixture/codex-home");
+    const grok = worker("grok-name", "grok", "grok-session-1", "/fixture/grok-worker-home");
+    const sources: WidgetSources = {
+        sessions: async () => [],
+        decisions: () => [],
+        forms: () => [],
+        answers: () => [],
+        agents: async () => ({
+            generatedAt: "",
+            orphans: [grok],
+            parents: [
+                {
+                    sessionId: "lead-session",
+                    provider: "codex",
+                    title: "Lead",
+                    project: "Fixture",
+                    cwd: "/fixture",
+                    filePath: "/fixture/lead.jsonl",
+                    model: null,
+                    account: null,
+                    startedAt: null,
+                    lastAt: "2026-01-01T10:00:00Z",
+                    live: true,
+                    children: [codex],
+                },
+            ],
+        }),
+    };
+    const snapshot = await widgetSnapshot({ root: await root(), sources });
+    const codexRow = snapshot.sessions.find((entry) => entry.agentId === "codex-name")!;
+    const grokRow = snapshot.sessions.find((entry) => entry.agentId === "grok-name")!;
+    // Delivery looks a worker up by this pair (deliver.ts codexWorkerFor, nativeWorkers), never by its name.
+    expect(codexRow.target).toMatchObject({ sessionId: "codex-thread-1", sourceHome: "/fixture/codex-home" });
+    expect(grokRow.target).toMatchObject({ sessionId: "grok-session-1", sourceHome: "/fixture/grok-worker-home" });
+    expect(await widgetResultNode({ target: codexRow.target, agentId: "codex-name", sources })).toMatchObject({
+        id: "codex-name",
+    });
 });
 
 test("incoming answer, Decision and pending-form writes wake the Widget without its safety poll", async () => {

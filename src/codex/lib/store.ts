@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { env } from "@genesiscz/utils/env";
 import { parseJsonl } from "@genesiscz/utils/jsonl";
 import { JsonlWriter } from "@genesiscz/utils/log-session/jsonl-writer";
 import { logger } from "@genesiscz/utils/logger";
@@ -78,6 +80,11 @@ export interface CodexEventRecord {
     source: "app-server" | "control" | "agents" | "daemon";
     method: string;
     params?: unknown;
+}
+
+/** The CODEX_HOME a worker's native thread lives in: its own, else the one a plain `codex` would use. */
+export function codexWorkerHome(meta: Pick<CodexSessionMeta, "home">): string {
+    return meta.home ?? env.codex.getHomeOverride() ?? join(env.paths.getHome(), ".codex");
 }
 
 export function deriveSessionStatus(meta: CodexSessionMeta, now = Date.now(), stallMs = 120_000): CodexStatus {
