@@ -60,6 +60,9 @@ bower_components
 
 build/Release
 
+# SwiftPM and native app build artifacts, at any depth
+.build/
+
 # Dependency directories
 
 node_modules/
