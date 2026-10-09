@@ -1,9 +1,8 @@
 #!/usr/bin/env bun
 import {
-    closeSync,
     existsSync,
+    linkSync,
     mkdirSync,
-    openSync,
     readdirSync,
     readFileSync,
     renameSync,
@@ -157,7 +156,7 @@ function recordUnknownTool(harness: string, toolName: string): void {
         }
 
         seen[key] = (seen[key] ?? 0) + 1;
-        // Temp-then-rename, the way `trackFile` below already writes: a hook killed mid-write
+        // Temp-then-rename, the way `recordFiles` below already writes: a hook killed mid-write
         // (they have timeouts) leaves the rename never reached rather than a truncated file this
         // could not recover from. It does NOT serialize concurrent hooks' read-modify-write —
         // two PostToolUse calls that overlap can still both read the same count and one
@@ -264,9 +263,19 @@ const CLEANUP_DAYS = 30;
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const LOCK_STALE_MS = 30_000;
 const LOCK_RETRY_MS = 100;
-// A takeover marker older than this belongs to a hook that died mid-recovery.
-const TAKEOVER_STALE_MS = 2_000;
-const LOCK_WAIT_MS = 1000;
+const LOCK_TIMEOUT_PREFIX = "Timed out waiting for session tracker lock:";
+
+/**
+ * How long an edit waits for the session lock before it is spooled instead. It was 1 s, and twelve
+ * hooks racing on a loaded 4-core CI runner outlasted that: the loser threw, exited 1 and its edit
+ * was never written. A command hook may run for 60 s, so 10 s costs nothing in the normal case.
+ * `GENESIS_TOOLS_SESSION_LOCK_WAIT_MS` lets a test reach the deadline without waiting for it.
+ */
+function lockWaitMs(): number {
+    const override = Number(process.env.GENESIS_TOOLS_SESSION_LOCK_WAIT_MS);
+
+    return Number.isFinite(override) && override >= 0 ? override : 10_000;
+}
 
 function ensureDir() {
     if (!existsSync(STORAGE_DIR)) {
@@ -298,22 +307,60 @@ function lockState(lockPath: string): "missing" | "stale" | "held" {
 }
 
 /**
+ * Creates `path` holding this process's pid, or returns false when it already exists. The content
+ * is written to a private file and hard-linked into place, so no other process ever sees the path
+ * empty: an empty lock read as "held" until the 30 s age rule if its writer died mid-write.
+ */
+function createOwned(path: string): boolean {
+    const draft = `${path}.${process.pid}.draft`;
+    writeFileSync(draft, SafeJSON.stringify({ pid: process.pid, at: Date.now() }), { mode: 0o600 });
+    try {
+        linkSync(draft, path);
+        return true;
+    } catch (error) {
+        const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+        if (code !== "EEXIST") {
+            throw error;
+        }
+
+        return false;
+    } finally {
+        unlinkSync(draft);
+    }
+}
+
+function releaseOwned(path: string): void {
+    try {
+        const holder: unknown = SafeJSON.parse(readFileSync(path, "utf8"));
+        if (holder && typeof holder === "object" && "pid" in holder && holder.pid === process.pid) {
+            unlinkSync(path);
+        }
+    } catch {
+        // Already gone, or replaced by a recovery; never remove another owner's file.
+    }
+}
+
+/**
  * Removes a stale lock under a takeover marker, re-checking staleness while holding it. Two waiters
  * that both saw the same dead holder can no longer both unlink: the second one finds either the
  * marker or a fresh, live lock, and a new lock can only appear after the stale one is gone.
+ *
+ * The marker follows the lock's own staleness rule (dead pid, or older than 30 s). It used to be
+ * broken after 2 s regardless of its holder, so a recovering hook paused for 2 s between its
+ * re-check and its unlink had its marker taken, and could then unlink the fresh lock the second
+ * recoverer's successor created. Two holders then both rewrote the session file and one edit was lost.
  */
 function breakStaleLock(lockPath: string): boolean {
     const takeover = `${lockPath}.takeover`;
-    try {
-        closeSync(openSync(takeover, "wx", 0o600));
-    } catch {
-        try {
-            if (Date.now() - statSync(takeover).mtimeMs > TAKEOVER_STALE_MS) {
+    if (!createOwned(takeover)) {
+        if (lockState(takeover) === "stale") {
+            try {
                 unlinkSync(takeover);
+            } catch {
+                // Another waiter cleared the dead marker first; the next round tries again.
             }
-        } catch {
-            // The marker went away between the two calls; the next round tries again.
         }
+
         return false;
     }
 
@@ -321,56 +368,38 @@ function breakStaleLock(lockPath: string): boolean {
         if (lockState(lockPath) === "stale") {
             unlinkSync(lockPath);
         }
+
         return true;
     } finally {
-        try {
-            unlinkSync(takeover);
-        } catch {
-            // Only possible when this hook outlived TAKEOVER_STALE_MS and another one cleared it.
-        }
+        releaseOwned(takeover);
     }
 }
 
-async function withBoundedLock<T>(lockPath: string, fn: () => T | Promise<T>, waitMs = LOCK_WAIT_MS): Promise<T> {
+async function withBoundedLock<T>(lockPath: string, fn: () => T | Promise<T>, waitMs: number): Promise<T> {
     const deadline = Date.now() + waitMs;
 
-    while (true) {
-        try {
-            const fd = openSync(lockPath, "wx", 0o600);
-            writeFileSync(fd, SafeJSON.stringify({ pid: process.pid, at: Date.now() }));
-            closeSync(fd);
-            break;
-        } catch (error) {
-            const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
-            if (code !== "EEXIST") {
-                throw error;
-            }
-
-            const state = lockState(lockPath);
-            if (state === "missing" || (state === "stale" && breakStaleLock(lockPath))) {
-                continue;
-            }
-
-            if (Date.now() >= deadline) {
-                throw new Error(`Timed out waiting for session tracker lock: ${lockPath}`);
-            }
-
-            await Bun.sleep(Math.min(LOCK_RETRY_MS, Math.max(0, deadline - Date.now())));
+    while (!createOwned(lockPath)) {
+        const state = lockState(lockPath);
+        if (state === "missing" || (state === "stale" && breakStaleLock(lockPath))) {
+            continue;
         }
+
+        if (Date.now() >= deadline) {
+            throw new Error(`${LOCK_TIMEOUT_PREFIX} ${lockPath}`);
+        }
+
+        await Bun.sleep(Math.min(LOCK_RETRY_MS, Math.max(0, deadline - Date.now())));
     }
 
     try {
         return await fn();
     } finally {
-        try {
-            const holder: unknown = SafeJSON.parse(readFileSync(lockPath, "utf8"));
-            if (holder && typeof holder === "object" && "pid" in holder && holder.pid === process.pid) {
-                unlinkSync(lockPath);
-            }
-        } catch {
-            // A stale-lock recovery may already have replaced it; never remove another owner's lock.
-        }
+        releaseOwned(lockPath);
     }
+}
+
+function isLockTimeout(error: unknown): boolean {
+    return error instanceof Error && error.message.startsWith(LOCK_TIMEOUT_PREFIX);
 }
 
 async function cleanupOldSessions() {
@@ -414,7 +443,7 @@ async function cleanupOldSessions() {
             0
         );
     } catch (error) {
-        if (!(error instanceof Error) || !error.message.startsWith("Timed out waiting for session tracker lock:")) {
+        if (!isLockTimeout(error)) {
             console.warn("[track-session-files] Session cleanup failed", error);
         }
     }
@@ -429,40 +458,106 @@ function createFreshSessionData(sessionId: string): SessionData {
     };
 }
 
-async function trackFile(sessionId: string, filePath: string) {
+/**
+ * Edits that could not get the lock before the deadline. Each spool file has a unique name and is
+ * renamed into place whole, so writing one needs no lock; the next lock holder merges them.
+ */
+function spoolEdits(sessionFile: string, filePaths: string[]): void {
+    const dir = `${sessionFile}.pending`;
+    mkdirSync(dir, { recursive: true });
+    const name = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const draft = join(dir, `.${name}.draft`);
+    writeFileSync(draft, SafeJSON.stringify(filePaths));
+    renameSync(draft, join(dir, `${name}.json`));
+}
+
+function readSpool(sessionFile: string): { filePaths: string[]; spoolFiles: string[] } {
+    const dir = `${sessionFile}.pending`;
+    const filePaths: string[] = [];
+    const spoolFiles: string[] = [];
+    let names: string[];
+    try {
+        names = readdirSync(dir);
+    } catch {
+        return { filePaths, spoolFiles };
+    }
+
+    for (const name of names) {
+        if (!name.endsWith(".json")) {
+            continue;
+        }
+
+        const spoolFile = join(dir, name);
+        try {
+            const parsed: unknown = SafeJSON.parse(readFileSync(spoolFile, "utf8"));
+            if (Array.isArray(parsed)) {
+                filePaths.push(...parsed.filter((path): path is string => typeof path === "string"));
+                spoolFiles.push(spoolFile);
+            }
+        } catch (error) {
+            console.warn(`[track-session-files] Unreadable spooled edit, left in place: ${spoolFile}`, error);
+        }
+    }
+
+    return { filePaths, spoolFiles };
+}
+
+async function trackFiles(sessionId: string, filePaths: string[]) {
     ensureDir();
 
     const sessionFile = join(STORAGE_DIR, `${sessionId}.json`);
-    await withBoundedLock(`${sessionFile}.lock`, () => {
-        let sessionData: SessionData;
-        if (existsSync(sessionFile)) {
-            try {
-                sessionData = SafeJSON.parse(readFileSync(sessionFile, "utf-8")) as SessionData;
-            } catch (_err) {
-                // Corrupted JSON - backup and recreate
-                console.warn(`[track-session-files] Corrupted session file, recreating: ${sessionFile}`);
-                try {
-                    renameSync(sessionFile, `${sessionFile}.bak`);
-                } catch {
-                    // Ignore backup failure
-                }
-                sessionData = createFreshSessionData(sessionId);
-            }
-        } else {
-            sessionData = createFreshSessionData(sessionId);
+    try {
+        await withBoundedLock(
+            `${sessionFile}.lock`,
+            () => recordFiles(sessionId, sessionFile, filePaths),
+            lockWaitMs()
+        );
+    } catch (error) {
+        if (!isLockTimeout(error)) {
+            throw error;
         }
 
-        // Add file if not already tracked
+        spoolEdits(sessionFile, filePaths);
+        console.warn(`[track-session-files] Session lock busy; edit spooled for the next holder: ${sessionFile}`);
+    }
+}
+
+function recordFiles(sessionId: string, sessionFile: string, filePaths: string[]) {
+    let sessionData: SessionData;
+    if (existsSync(sessionFile)) {
+        try {
+            sessionData = SafeJSON.parse(readFileSync(sessionFile, "utf-8")) as SessionData;
+        } catch (_err) {
+            // Corrupted JSON - backup and recreate
+            console.warn(`[track-session-files] Corrupted session file, recreating: ${sessionFile}`);
+            try {
+                renameSync(sessionFile, `${sessionFile}.bak`);
+            } catch {
+                // Ignore backup failure
+            }
+            sessionData = createFreshSessionData(sessionId);
+        }
+    } else {
+        sessionData = createFreshSessionData(sessionId);
+    }
+
+    const spool = readSpool(sessionFile);
+    for (const filePath of [...spool.filePaths, ...filePaths]) {
         if (!sessionData.files.includes(filePath)) {
             sessionData.files.push(filePath);
         }
-        sessionData.last_updated = new Date().toISOString();
+    }
+    sessionData.last_updated = new Date().toISOString();
 
-        // Atomic write: write to temp file then rename (avoids torn JSON).
-        const tempFile = `${sessionFile}.tmp.${process.pid}`;
-        writeFileSync(tempFile, SafeJSON.stringify(sessionData, null, 2));
-        renameSync(tempFile, sessionFile);
-    });
+    // Atomic write: write to temp file then rename (avoids torn JSON).
+    const tempFile = `${sessionFile}.tmp.${process.pid}`;
+    writeFileSync(tempFile, SafeJSON.stringify(sessionData, null, 2));
+    renameSync(tempFile, sessionFile);
+
+    // Only after the session file holds them; a crash before this merges them again, harmlessly.
+    for (const spoolFile of spool.spoolFiles) {
+        unlinkSync(spoolFile);
+    }
 }
 
 async function main() {
@@ -506,9 +601,7 @@ async function main() {
             process.exit(0);
         }
 
-        for (const filePath of filePaths) {
-            await trackFile(session_id, filePath);
-        }
+        await trackFiles(session_id, filePaths);
     }
 
     process.exit(0);

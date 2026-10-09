@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -13,12 +13,12 @@ import { join, resolve } from "node:path";
 const HOOK = join(import.meta.dir, "track-session-files.ts");
 let home: string;
 
-async function runHook(payload: unknown): Promise<number> {
+async function runHook(payload: unknown, env: Record<string, string> = {}): Promise<number> {
     const proc = Bun.spawn(["bun", HOOK], {
         stdin: new TextEncoder().encode(JSON.stringify(payload)),
         stdout: "pipe",
         stderr: "pipe",
-        env: { ...process.env, GENESIS_TOOLS_HOME: home },
+        env: { ...process.env, GENESIS_TOOLS_HOME: home, ...env },
     });
 
     return await proc.exited;
@@ -272,6 +272,67 @@ test("concurrent hooks recover from a preseeded stale lock without losing an edi
 
     expect(exits).toEqual(paths.map(() => 0));
     expect((await readJson<{ files: string[] }>("sessions", "stale-session.json")).files.sort()).toEqual(paths.sort());
+});
+
+function editPayload(sessionId: string, filePath: string) {
+    return {
+        session_id: sessionId,
+        hook_event_name: "PostToolUse",
+        tool_name: "Edit",
+        tool_input: { file_path: filePath },
+        transcript_path: CLAUDE_TRANSCRIPT,
+    };
+}
+
+// Regression test: CI 2026-10-08/09, a hook that waited out the 1 s lock deadline exited 1 and its edit was never written.
+test("an edit that waits out the lock deadline is spooled, and the next lock holder records it", async () => {
+    const sessions = join(home, ".genesis-tools", "claude-code", "sessions");
+    const lock = join(sessions, "busy-session.json.lock");
+    await mkdir(sessions, { recursive: true });
+    // This test process is alive and the lock is fresh, so nothing may break it: the hook must time out.
+    await writeFile(lock, JSON.stringify({ pid: process.pid, at: Date.now() }));
+
+    expect(
+        await runHook(editPayload("busy-session", "/repo/waited.ts"), { GENESIS_TOOLS_SESSION_LOCK_WAIT_MS: "150" })
+    ).toBe(0);
+    await expect(readJson("sessions", "busy-session.json")).rejects.toThrow();
+
+    await rm(lock);
+    expect(await runHook(editPayload("busy-session", "/repo/next.ts"))).toBe(0);
+
+    expect((await readJson<{ files: string[] }>("sessions", "busy-session.json")).files.sort()).toEqual([
+        "/repo/next.ts",
+        "/repo/waited.ts",
+    ]);
+    expect(await readdir(join(sessions, "busy-session.json.pending"))).toEqual([]);
+});
+
+// Regression test: a takeover marker was broken after 2 s even with its owner alive, so a paused recoverer could unlink a fresh lock.
+test("a live hook's takeover marker is never broken, however old it is", async () => {
+    const sessions = join(home, ".genesis-tools", "claude-code", "sessions");
+    const lock = join(sessions, "takeover-session.json.lock");
+    const takeover = `${lock}.takeover`;
+    await mkdir(sessions, { recursive: true });
+    await writeFile(lock, JSON.stringify({ pid: 2 ** 31 - 2, at: 0 }));
+    // A recoverer that is alive but paused mid-takeover: its marker is old, its pid is this process.
+    await writeFile(takeover, JSON.stringify({ pid: process.pid, at: 0 }));
+    const fiveSecondsAgo = new Date(Date.now() - 5_000);
+    await utimes(takeover, fiveSecondsAgo, fiveSecondsAgo);
+
+    expect(
+        await runHook(editPayload("takeover-session", "/repo/paused.ts"), { GENESIS_TOOLS_SESSION_LOCK_WAIT_MS: "300" })
+    ).toBe(0);
+
+    // The paused recoverer still owns the takeover, so the stale lock it is handling was left alone.
+    expect(JSON.parse(await readFile(lock, "utf8"))).toEqual({ pid: 2 ** 31 - 2, at: 0 });
+    expect(JSON.parse(await readFile(takeover, "utf8"))).toEqual({ pid: process.pid, at: 0 });
+
+    await rm(takeover);
+    expect(await runHook(editPayload("takeover-session", "/repo/after.ts"))).toBe(0);
+    expect((await readJson<{ files: string[] }>("sessions", "takeover-session.json")).files.sort()).toEqual([
+        "/repo/after.ts",
+        "/repo/paused.ts",
+    ]);
 });
 
 test("repeated SessionStart runs cleanup at most once per cadence", async () => {
