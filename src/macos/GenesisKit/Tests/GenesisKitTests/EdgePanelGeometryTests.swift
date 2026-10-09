@@ -14,6 +14,27 @@ final class EdgePanelGeometryTests: XCTestCase {
         XCTAssertEqual(WidgetClusterGeometry.topWidth(cutout: 200, moduleCount: 12), 524)
     }
 
+    func testSessionDetailSizingScalesWithDisplayAndFitsConstrainedScreens() {
+        let laptop = WidgetClusterGeometry.detailSize(visible: CGSize(width: 1440, height: 900))
+        let desktop = WidgetClusterGeometry.detailSize(visible: CGSize(width: 2560, height: 1440))
+        XCTAssertEqual(laptop, CGSize(width: 560, height: 580))
+        XCTAssertEqual(desktop.width, 870.4, accuracy: 0.01)
+        XCTAssertEqual(desktop.height, 892.8, accuracy: 0.01)
+        XCTAssertGreaterThan(desktop.width, laptop.width)
+        for visible in [CGSize(width: 320, height: 240), CGSize(width: 800, height: 600),
+                        CGSize(width: 5120, height: 2880)] {
+            let size = WidgetClusterGeometry.detailSize(visible: visible)
+            XCTAssertLessThanOrEqual(size.width + 36, visible.width)
+            XCTAssertLessThanOrEqual(size.height + 36, visible.height)
+            for edge in [EdgePanelPlacement.top, .left, .right] {
+                let frame = EdgePanelGeometry.frame(placement: edge, size: size,
+                    screen: CGRect(origin: .zero, size: visible), visible: CGRect(origin: .zero, size: visible),
+                    sideCenterY: visible.height / 2)
+                XCTAssertTrue(CGRect(origin: .zero, size: visible).contains(frame))
+            }
+        }
+    }
+
     func testShortDisplayReservesCompactRailsBeforeExpandingOneGroup() {
         let allocation = WidgetClusterGeometry.allocate(
             heights: [(189, 600), (100, 100), (108, 108)], visibleHeight: 500)
@@ -1116,7 +1137,7 @@ final class WidgetRosterTests: XCTestCase {
             window.contentView = host
             window.orderBack(nil)
             host.layoutSubtreeIfNeeded()
-            func scrollViews(_ view: NSView) -> [NSScrollView] {
+            @MainActor func scrollViews(_ view: NSView) -> [NSScrollView] {
                 if let scroll = view as? NSScrollView { return [scroll] }
                 return view.subviews.flatMap(scrollViews)
             }
@@ -1176,7 +1197,7 @@ final class WidgetRosterTests: XCTestCase {
             window.contentView = host
             window.orderBack(nil)
             host.layoutSubtreeIfNeeded()
-            func scrollViews(_ view: NSView) -> [NSScrollView] {
+            @MainActor func scrollViews(_ view: NSView) -> [NSScrollView] {
                 if let scroll = view as? NSScrollView { return [scroll] }
                 return view.subviews.flatMap(scrollViews)
             }
@@ -1212,7 +1233,7 @@ final class WidgetRosterTests: XCTestCase {
                     for edge in [EdgePanelPlacement.left, .right] {
                         for ids in groups {
                             let metrics = WidgetSideStripMetrics(
-                                classic: style == "classic", moduleIDs: ids, visibleSessionCount: model.sessions.count)
+                                classic: style == "classic", moduleIDs: ids, visibleSessionCount: model.railActivitySessions.count)
                             let root = WidgetHostView(
                                 model: model, registry: registry, surface: WidgetSurfaceID(edge: edge),
                                 moduleIDs: ids, cutout: 0, headerHeight: 36, visibleHeight: 900)
@@ -1222,7 +1243,7 @@ final class WidgetRosterTests: XCTestCase {
                             XCTAssertEqual(measured.height, metrics.minimumHeight, accuracy: 0.5,
                                 "Real SwiftUI layout differs: style=\(style), sessions=\(count), modules=\(ids)")
                             if ids.count == 4 && count >= 4 {
-                                XCTAssertEqual(measured.height, style == "classic" ? 316 : 346, accuracy: 0.5)
+                                XCTAssertEqual(measured.height, style == "classic" ? 252 : 282, accuracy: 0.5)
                             }
                             if ids.isEmpty {
                                 XCTAssertEqual(measured.height, style == "classic" ? 116 : 122, accuracy: 0.5)
@@ -1252,7 +1273,7 @@ final class WidgetRosterTests: XCTestCase {
                         model.updateInbox(WidgetInboxSummary(
                             unread: count, needsAnswer: 0, complete: true, truncated: false, sessions: []))
                         let metrics = WidgetSideStripMetrics(classic: style == "classic", moduleIDs: ids,
-                            visibleSessionCount: model.sessions.count, hasInboxBadge: count > 0)
+                            visibleSessionCount: model.railActivitySessions.count, hasInboxBadge: count > 0)
                         let root = WidgetHostView(model: model, registry: registry,
                             surface: WidgetSurfaceID(edge: edge), moduleIDs: ids, cutout: 0,
                             headerHeight: 36, visibleHeight: 900)
@@ -1325,6 +1346,44 @@ final class WidgetRosterTests: XCTestCase {
                 let xs = sampledFrames.map { $0.minX }
                 print("RAIL_FRAME_PROOF edge=\(edge) samples=\(xs.count) x-range=\(xs.max()! - xs.min()!)")
             }
+        }
+    }
+
+    func testSessionActivityRingContainsCountsWithoutShiftingTheirCenters() {
+        for count in [0, 1, 28, 128] {
+            let host = NSHostingView(rootView: WidgetSessionActivity(status: .working,
+                count: count, needsAnswer: false, animate: false))
+            let size = host.fittingSize
+            XCTAssertLessThanOrEqual(size.width, WidgetSideStripMetrics.sessionWidth)
+            XCTAssertLessThanOrEqual(size.height, WidgetSideStripMetrics.sessionHeight)
+            if count > 0 {
+                XCTAssertEqual(size.width, size.height, accuracy: 0.5)
+                XCTAssertGreaterThanOrEqual(size.width, 28)
+            }
+        }
+    }
+
+    func testInboxDetailUsesTheAvailableWidthInsteadOfAnEmbeddedFixedFrame() async throws {
+        try await withFixture(sessionCount: 1) { model, _, _ in
+            let host = NSHostingView(rootView: LiveWidgetView(model: model, edge: .right, embedded: true))
+            host.sizingOptions = []
+            let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 800, height: 700),
+                styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.alphaValue = 0
+            window.contentView = host
+            window.orderBack(nil)
+            defer { window.close() }
+            host.layoutSubtreeIfNeeded()
+            @MainActor func scrollViews(_ view: NSView) -> [NSScrollView] {
+                if let scroll = view as? NSScrollView { return [scroll] }
+                return view.subviews.flatMap(scrollViews)
+            }
+            let scroll = try XCTUnwrap(scrollViews(host).first)
+            XCTAssertGreaterThan(scroll.bounds.width, 750, "The detail must grow with its actual native host")
+            window.setContentSize(CGSize(width: 560, height: 700))
+            host.layoutSubtreeIfNeeded()
+            XCTAssertEqual(scroll.bounds.width, 524, accuracy: 2)
         }
     }
 

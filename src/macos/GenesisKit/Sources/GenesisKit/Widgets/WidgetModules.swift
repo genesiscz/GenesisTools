@@ -25,6 +25,7 @@ public struct WidgetModuleDescriptor: Identifiable {
     public let symbol: String
     public let tint: Color
     public let expandedSize: CGSize
+    public let previewSize: CGSize
     public let summary: () -> String
     public let content: (WidgetModulePresentation) -> AnyView
     public let visibilityChanged: (WidgetModulePresentation?) -> Void
@@ -32,6 +33,7 @@ public struct WidgetModuleDescriptor: Identifiable {
     public init<Content: View>(
         id: String, title: String, symbol: String, tint: Color,
         expandedSize: CGSize = CGSize(width: 432, height: 540),
+        previewSize: CGSize = CGSize(width: 324, height: 310),
         summary: @escaping () -> String,
         visibilityChanged: @escaping (WidgetModulePresentation?) -> Void = { _ in },
         @ViewBuilder content: @escaping (WidgetModulePresentation) -> Content
@@ -41,6 +43,7 @@ public struct WidgetModuleDescriptor: Identifiable {
         self.symbol = symbol
         self.tint = tint
         self.expandedSize = expandedSize
+        self.previewSize = previewSize
         self.summary = summary
         self.visibilityChanged = visibilityChanged
         self.content = { AnyView(content($0)) }

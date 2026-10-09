@@ -28,7 +28,7 @@ struct WidgetHostView: View {
 
     private var sideMetrics: WidgetSideStripMetrics {
         WidgetSideStripMetrics(classic: classicSide, moduleIDs: moduleIDs,
-            visibleSessionCount: model.sessions.count, hasInboxBadge: model.inboxCount > 0)
+            visibleSessionCount: model.railActivitySessions.count, hasInboxBadge: model.inboxCount > 0)
     }
 
     private var shape: EdgePanelShape {
@@ -102,20 +102,12 @@ struct WidgetHostView: View {
             HStack(spacing: 8) {
                 if selected?.id == "agents" {
                     HStack(spacing: 5) {
-                        ForEach(Array(model.railSessions.prefix(3))) { session in
+                        ForEach(Array(model.railActivitySessions.prefix(3))) { session in
                             Button {
                                 model.openInboxNotification(on: surface, key: session.key)
                             } label: {
-                                HStack(spacing: 3) {
-                                    WidgetActivityIndicator(status: session.visualStatus, animate: !model.effectiveReduceMotion)
-                                        .frame(width: 10)
-                                        if let inbox = model.inboxFor(session.key), inbox.unread + inbox.needsAnswer > 0 {
-                                            WidgetInboxCount(count: inbox.unread + inbox.needsAnswer,
-                                                needsAnswer: inbox.needsAnswer > 0, pulse: model.inboxPulseFor(session.key),
-                                                reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
-                                                .allowsHitTesting(false)
-                                        }
-                                }.frame(minWidth: 18, minHeight: 22).fixedSize()
+                                sessionActivity(session)
+                                    .frame(minWidth: 24, minHeight: 30).fixedSize()
                             }.buttonStyle(.genHoverPlain()).accessibilityLabel(
                                 session.title + ", " + session.visualStatus.label)
                                 .accessibilityIdentifier("widget.agent." + session.key)
@@ -132,11 +124,6 @@ struct WidgetHostView: View {
                     } label: {
                         Text("+\(moduleIDs.count - 5)").font(.caption2)
                     }.buttonStyle(.genHoverPlain()).accessibilityLabel("Choose widgets")
-                }
-                if selected?.id == "agents" {
-                    Text(String(model.waitingSessionCount))
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.orange).accessibilityLabel("Agents needing an answer")
                 }
             }.fixedSize()
         }
@@ -220,22 +207,11 @@ struct WidgetHostView: View {
             moduleButton(id, size: sideMetrics.moduleSize)
             if id == "agents", sideMetrics.sessionCount > 0 {
                 VStack(spacing: WidgetSideStripMetrics.sessionSpacing) {
-                    ForEach(Array(model.railSessions.prefix(sideMetrics.sessionCount))) { session in
+                    ForEach(Array(model.railActivitySessions.prefix(sideMetrics.sessionCount))) { session in
                         Button {
                             model.openInboxNotification(on: surface, key: session.key)
                         } label: {
-                            HStack(spacing: 3) {
-                                WidgetActivityIndicator(
-                                    status: session.visualStatus, animate: !model.effectiveReduceMotion
-                                ).frame(width: 10)
-                                if let inbox = model.inboxFor(session.key), inbox.unread + inbox.needsAnswer > 0 {
-                                    WidgetInboxCount(count: inbox.unread + inbox.needsAnswer,
-                                        needsAnswer: inbox.needsAnswer > 0, pulse: model.inboxPulseFor(session.key),
-                                        reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete, compact: true)
-                                } else {
-                                    Color.clear.frame(width: 20, height: 13)
-                                }
-                            }
+                            sessionActivity(session)
                             .frame(width: WidgetSideStripMetrics.sessionWidth, height: WidgetSideStripMetrics.sessionHeight)
                         }
                         .buttonStyle(.genHoverPlain())
@@ -266,16 +242,20 @@ struct WidgetHostView: View {
                     if selected.id == "agents" {
                         AgentWidgetPreview(model: model, surface: surface)
                     } else {
-                        HStack {
-                            Label(selected.title, systemImage: selected.symbol)
-                                .font(.system(size: 12, weight: .semibold))
-                            Spacer()
-                            Image(systemName: "arrow.up.left.and.arrow.down.right").font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }.padding(.horizontal, 16).padding(.top, 15)
-                        selected.content(.preview).padding(16)
+                        Button(action: expand) {
+                            HStack {
+                                Spacer()
+                                Label("Expand", systemImage: "arrow.up.left.and.arrow.down.right")
+                                    .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                            }.padding(.horizontal, 18).padding(.vertical, 14)
+                                .contentShape(Rectangle())
+                        }.buttonStyle(.genHoverPlain())
+                            .accessibilityLabel("Expand " + selected.title)
+                            .accessibilityIdentifier("widget.expand." + selected.id)
+                        ScrollView { selected.content(.preview).frame(maxWidth: .infinity, alignment: .leading) }
+                            .scrollIndicators(.hidden)
                         Button("Open " + selected.title) { expand() }
-                            .buttonStyle(.genHover()).padding(.bottom, 14)
+                            .buttonStyle(.genHover()).padding(.vertical, 14)
                     }
                 } else {
                     if moduleIDs.count > 1 {
@@ -283,13 +263,12 @@ struct WidgetHostView: View {
                             ForEach(moduleIDs, id: \.self) { id in moduleButton(id, size: 27) }
                             Spacer()
                             Text(selected.title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                        }.padding(.horizontal, 18).padding(.top, 12)
+                        }.padding(.horizontal, 18).padding(.vertical, 12)
                     }
                     selected.content(.expanded)
                 }
             }
-            .frame(width: presentation == .preview ? 324 : selected.expandedSize.width)
-            .frame(maxHeight: .infinity)
+            .frame(maxWidth: presentation == .preview ? selected.previewSize.width : .infinity, maxHeight: .infinity)
             .transition(.opacity)
         } else {
             VStack(spacing: 12) {
@@ -326,6 +305,15 @@ struct WidgetHostView: View {
         .buttonStyle(.genHoverPlain())
         .instantTooltip(id == "agents" ? "Inbox: \(model.inbox.unread) unread, \(model.inbox.needsAnswer) need an answer" : registry.module(id)?.title ?? id)
         .accessibilityLabel("Open " + (registry.module(id)?.title ?? id))
+    }
+
+    private func sessionActivity(_ session: WidgetSession) -> some View {
+        let inbox = model.inboxFor(session.key)
+        return WidgetSessionActivity(status: session.visualStatus,
+            count: (inbox?.unread ?? 0) + (inbox?.needsAnswer ?? 0),
+            needsAnswer: (inbox?.needsAnswer ?? 0) > 0,
+            animate: !model.effectiveReduceMotion, complete: model.inbox.complete)
+            .allowsHitTesting(false)
     }
 
     private func sessionSummary(_ session: WidgetSession) -> String {
