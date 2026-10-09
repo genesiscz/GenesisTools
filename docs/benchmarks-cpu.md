@@ -273,7 +273,7 @@ fast-cache contract.
 Measured on Bun 1.3.13 in the resident `agentsToolChangesDoor.match/run` handler, with a valid 234,720,477-byte
 transcript and six interleaved processes (three per arm; nine samples per phase; cold warmup excluded):
 
-| Phase | Before full-prefix verification | With verification | Median process CPU |
+| Phase | Median process CPU before verification | Median process CPU with verification | Samples per arm |
 | --- | ---: | ---: | --- |
 | Unchanged | 24.588 ms | 25.238 ms | Nine samples per arm |
 | Append | 23.173 ms | 113.522 ms | Nine samples per arm |

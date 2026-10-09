@@ -127,6 +127,8 @@ tools claude wait <id|title> [--timeout S] [--next] [--stream] [--json]   # bloc
 ```
 
 `tree` (`--json` for machines) enumerates every cmux window and annotates each surface with
+the Claude Code session it hosts, from the refs journal plus the `· 8hex` tab-title marker.
+
 `wait` reads the session's transcript, never the pane, and exits when the current turn ends. The shared
 file watcher (`watchFileFeed`) wakes it on every write; a 5 s poll only notices silence and the deadline. A
 question the agent asks while it keeps working is listed in `questions` (and on stderr) and does not end
@@ -139,7 +141,6 @@ next turn instead. `--json` prints `{outcome, state, sessionId, lastText, asksQu
 `tools grok wait` and `tools codex wait`. `<session>` is an id (8+ characters), a transcript path or a
 `/rename` title (Grok: the session summary; Codex: the thread name).
 
-the Claude Code session it hosts, from the refs journal plus the `· 8hex` tab-title marker.
 `open-session` resumes one session at a chosen level: `--window` makes a new workspace,
 `--workspace` a new pane, `--workspace --pane` a new tab, `--workspace --surface` types the
 resume command into that surface (`--no-enter` queues it). The command comes from the same

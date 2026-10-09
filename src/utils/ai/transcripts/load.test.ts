@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { codexNativeLinesToTurns, createCodexTurnParser } from "./codex";
+import * as fileScan from "./file-scan";
 import { readPrefixMark } from "./file-scan";
 import { transcriptEnvelope, transcriptSnapshot } from "./load";
 import { readRecordsAppendOnly } from "./record-cache";
@@ -197,6 +198,23 @@ describe("readRecordsAppendOnly", () => {
         expect(read(path).map((record) => record.n)).toEqual([10]);
         // An unreadable file is an error, as the whole-file read was; `readRecords` returns [] for a missing one.
         expect(() => read(join(recordCacheRoot, "missing.jsonl"))).toThrow(/ENOENT/);
+    });
+
+    test("a file outside the cacheable size window is parsed whole with no prefix hashing", () => {
+        const path = join(recordCacheRoot, "small.jsonl");
+        writeFileSync(path, `${line(1)}\n${line(2)}`);
+        const marker = spyOn(fileScan, "readPrefixMark");
+        try {
+            // The default window starts at 8 MB: this file is never cached, so its prefix is never hashed.
+            expect(readRecordsAppendOnly(path).map((record) => record.n)).toEqual([1, 2]);
+            expect(readRecordsAppendOnly(path).map((record) => record.n)).toEqual([1, 2]);
+            expect(marker).not.toHaveBeenCalled();
+            // Positive control: the same file inside the window does hash its prefix.
+            readRecordsAppendOnly(path, { minCacheBytes: 0 });
+            expect(marker).toHaveBeenCalled();
+        } finally {
+            marker.mockRestore();
+        }
     });
 });
 

@@ -345,11 +345,13 @@ final class ReviewModel: ObservableObject {
     var showingCache: Bool { !cachedFolders.isEmpty }
     private var rendered = false
     /// A file asked for by `reveal(path:)` before the diff had it.
-    private var pendingRevealPath: String?
+    private(set) var pendingRevealPath: String?
     /// A PR thread's card asked for by `reveal(path:thread:)` before the page showed it.
     private var pendingThreadCard: String?
     /// The agent's draft cards on this diff, in diff order: the drafts list, the banner's Next draft.
     private(set) var draftCards: [RenderedComment] = []
+    /// An undecided draft has a card on this diff: the banner's Next draft has somewhere to go.
+    @Published private(set) var hasOpenDraftOnDiff = false
     /// The proposal whose first open draft was already brought into view, so a reload never jumps again.
     private var revealedProposal: String?
     /// True when the window restored a saved scroll place: the page returns there, so no first-draft jump.
@@ -871,8 +873,12 @@ final class ReviewModel: ObservableObject {
             select(file.id)
         } else {
             pendingRevealPath = path
-            notice = files.isEmpty ? nil : "\((path as NSString).lastPathComponent) has no change in this scope."
+            notice = files.isEmpty ? nil : Self.noChangeNotice(path)
         }
+    }
+
+    private static func noChangeNotice(_ path: String) -> String {
+        "\((path as NSString).lastPathComponent) has no change in this scope."
     }
 
     /// The file, then the PR thread's card on its line once the diff and the PR's threads are on the
@@ -898,6 +904,11 @@ final class ReviewModel: ObservableObject {
     /// Opens the draft's file and marks its card: the drafts list, the banner, a fresh proposal.
     func revealDraft(_ id: String) {
         guard let draft = proposal?.drafts.first(where: { $0.id == id }) else { return }
+        // An off-diff draft only says so: a pending reveal would open its file on some later load unasked.
+        if !files.isEmpty, file(atPath: draft.path) == nil {
+            notice = Self.noChangeNotice(draft.path)
+            return
+        }
         reveal(path: draft.path)
         // A draft whose file has no change in this scope never gets a card; a pending mark for it would
         // wait for ever and block the first-draft jump.
@@ -1157,6 +1168,10 @@ final class ReviewModel: ObservableObject {
         renderer.showComments(all)
         threadCards = ReviewKeyNav.threadCards(all, files: files)
         draftCards = ReviewKeyNav.draftCards(all, files: files)
+        let openOnDiff = draftCards.contains { $0.state == "proposed" }
+        if hasOpenDraftOnDiff != openOnDiff {
+            hasOpenDraftOnDiff = openOnDiff
+        }
         if let focusedCard, !(threadCards + draftCards).contains(where: { $0.id == focusedCard }) {
             self.focusedCard = nil
             // The page keeps its own mark: without this, a card that comes back (a scope switch and
@@ -2560,7 +2575,7 @@ private struct ProposalBanner: View {
                             .foregroundColor(ReviewPalette.dim)
                             .fixedSize()
                     }
-                    if proposal.drafts.contains(where: { $0.status == "proposed" }) {
+                    if model.hasOpenDraftOnDiff {
                         Button {
                             model.revealNextOpenDraft()
                         } label: {

@@ -94,6 +94,21 @@ function parseLines(text: string, into: Record<string, unknown>[]): void {
  * The records are shared between calls: callers read them and build their own objects (the turn builders
  * copy what they keep), and must not change them.
  */
+/** Up to `length` bytes from `offset`; fewer when the file ends sooner. */
+function readBytes(fd: number, offset: number, length: number): Buffer {
+    const buffer = Buffer.allocUnsafe(length);
+    let read = 0;
+    while (read < length) {
+        const got = readSync(fd, buffer, read, length - read, offset + read);
+        if (got === 0) {
+            break;
+        }
+        read += got;
+    }
+
+    return buffer.subarray(0, read);
+}
+
 export function readRecordsAppendOnly(
     path: string,
     { minCacheBytes = CACHE_MIN_BYTES }: { minCacheBytes?: number } = {}
@@ -102,6 +117,15 @@ export function readRecordsAppendOnly(
     try {
         fd = openSync(path, "r");
         const { size, ino } = fstatSync(fd);
+
+        if (size < minCacheBytes || size > CACHE_MAX_FILE_BYTES) {
+            // Never kept at this size: no prefix hashing and no mark, just one parse of the whole file.
+            cache.delete(path);
+            const records: Record<string, unknown>[] = [];
+            parseLines(readBytes(fd, 0, size).toString("utf8"), records);
+            return records;
+        }
+
         const cached = cache.get(path);
         let prefix = readPrefixMark(fd, cached?.ino === ino && cached.consumed <= size ? cached.consumed : 0);
         const usable =
@@ -114,17 +138,7 @@ export function readRecordsAppendOnly(
 
         entry.bytes = size;
         entry.lastUsed = Date.now();
-        const fresh = Buffer.allocUnsafe(size - entry.consumed);
-        let read = 0;
-        while (read < fresh.length) {
-            const got = readSync(fd, fresh, read, fresh.length - read, entry.consumed + read);
-            if (got === 0) {
-                break;
-            }
-            read += got;
-        }
-
-        const bytes = fresh.subarray(0, read);
+        const bytes = readBytes(fd, entry.consumed, size - entry.consumed);
         const lastNewline = bytes.lastIndexOf(10);
         const complete = lastNewline === -1 ? bytes.subarray(0, 0) : bytes.subarray(0, lastNewline + 1);
         const unfinished = lastNewline === -1 ? bytes : bytes.subarray(lastNewline + 1);

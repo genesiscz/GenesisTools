@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { findSessionsByTitle, lastClaudeTitle, rankByTitle } from "./session-title";
 
 const titled = (title: string, mtime: number) => ({ sessionId: title, title, mtime, locator: title });
@@ -88,5 +89,27 @@ describe("findSessionsByTitle", () => {
 
         expect(findSessionsByTitle("old name", { provider: "codex", codexIndexPath: index })).toEqual([]);
         expect(findSessionsByTitle("new name", { provider: "codex", codexIndexPath: index })).toHaveLength(1);
+    });
+
+    it("reads the session index of every home CODEX_HOME names", async () => {
+        const work = mkdtempSync(join(tmpdir(), "titles-codex-work-"));
+        const side = mkdtempSync(join(tmpdir(), "titles-codex-side-"));
+        writeFileSync(
+            join(work, "session_index.jsonl"),
+            '{"id":"019c0000-0000-7000-8000-000000000011","thread_name":"work thread","updated_at":"2026-03-07T22:43:36Z"}\n'
+        );
+        writeFileSync(
+            join(side, "session_index.jsonl"),
+            '{"id":"019c0000-0000-7000-8000-000000000012","thread_name":"side thread","updated_at":"2026-03-07T22:43:36Z"}\n'
+        );
+
+        await env.testing.withOverrides({ CODEX_HOME: `${work}, ${side}` }, () => {
+            expect(findSessionsByTitle("work thread", { provider: "codex" })[0]?.sessionId).toBe(
+                "019c0000-0000-7000-8000-000000000011"
+            );
+            expect(findSessionsByTitle("side thread", { provider: "codex" })[0]?.sessionId).toBe(
+                "019c0000-0000-7000-8000-000000000012"
+            );
+        });
     });
 });

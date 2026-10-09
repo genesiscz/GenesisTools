@@ -489,6 +489,9 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
     }
 
     let exitReason: "signal" | "clean_exit" | "cap" = "clean_exit";
+    // Set once a timeout is reported: mail that lands after it stays queued for the next login, so exit
+    // 124 always means "nothing was delivered".
+    let timedOut = false;
 
     onShutdown(async (reason) => {
         exitReason = reason;
@@ -543,8 +546,11 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
                 const deadline =
                     startedAt + Math.min(LISTEN_CAP_MS, (timeoutSeconds ?? Number.POSITIVE_INFINITY) * 1000);
                 const received = await watchUntilDeadline(active, deadline, true);
+                // Mail that landed between the watcher's last look and the deadline is delivered, not a timeout.
+                const late = received ? 0 : await drainPending(active);
 
-                if (!received && timeoutSeconds !== undefined) {
+                if (!received && late === 0 && timeoutSeconds !== undefined) {
+                    timedOut = true;
                     process.exitCode = LOGIN_TIMEOUT_EXIT;
                     await writeLoginJsonLine({
                         type: "timeout",
@@ -562,10 +568,14 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
     } finally {
         releaseSlot(lockPath);
 
-        try {
-            await drainPending(active);
-        } catch (err) {
-            log.warn({ err }, "final drain failed");
+        if (timedOut) {
+            log.debug({ agentName: record.agent_name }, "timed out: late mail stays queued for the next login");
+        } else {
+            try {
+                await drainPending(active);
+            } catch (err) {
+                log.warn({ err }, "final drain failed");
+            }
         }
 
         try {

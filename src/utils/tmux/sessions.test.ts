@@ -12,6 +12,7 @@ import {
     listTmuxSessionActivePanes,
     listTmuxSessionCommands,
     listTmuxSessions,
+    parsePaneDeath,
     parseTmuxEnvironment,
     renameTmuxSession,
     scrollTmuxToFraction,
@@ -347,7 +348,7 @@ describe("tmux sessions", () => {
         setTmuxSpawnSyncForTests((cmd) => {
             calls.push(cmd);
             if (cmd.includes("display-message")) {
-                return { exitCode: 0, stdout: "1 127\n" };
+                return { exitCode: 0, stdout: "1|127|\n" };
             }
 
             if (cmd.includes("capture-pane")) {
@@ -366,9 +367,27 @@ describe("tmux sessions", () => {
         expect(calls.some((cmd) => cmd.includes("kill-session") && cmd.includes("dead"))).toBe(true);
     });
 
+    test("a pane killed by a signal is a failed command, not a created session", async () => {
+        setTmuxBinForTests("/mock/tmux");
+        const calls: string[][] = [];
+        setTmuxSpawnSyncForTests((cmd) => {
+            calls.push(cmd);
+            // tmux leaves pane_dead_status empty and sets pane_dead_signal for a signal death.
+            return { exitCode: 0, stdout: cmd.includes("display-message") ? "1||11\n" : "" };
+        });
+
+        await expect(createTmuxSession("crashed", "/tmp", "segv --now", { settleMs: 0 })).rejects.toThrow(
+            /was killed by signal 11/
+        );
+        expect(calls.some((cmd) => cmd.includes("kill-session") && cmd.includes("crashed"))).toBe(true);
+        expect(parsePaneDeath("1||9")).toEqual({ dead: true, failure: "was killed by signal 9" });
+        expect(parsePaneDeath("1|0|")).toEqual({ dead: true, failure: null });
+        expect(parsePaneDeath("0||")).toEqual({ dead: false, failure: null });
+    });
+
     test("a command line that finished cleanly, or is still running, is a created session", async () => {
         setTmuxBinForTests("/mock/tmux");
-        for (const paneState of ["1 0\n", "0 \n"]) {
+        for (const paneState of ["1|0|\n", "0||\n"]) {
             const calls: string[][] = [];
             setTmuxSpawnSyncForTests((cmd) => {
                 calls.push(cmd);

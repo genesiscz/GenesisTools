@@ -152,6 +152,35 @@ final class HubLogicTests: XCTestCase {
         ]
     }
 
+    /// A review model over one repository whose diff shows `src/a.ts`, with a proposal whose drafts sit on `paths`.
+    private func draftModel(drafts paths: [String]) throws -> ReviewModel {
+        var object = sample()
+        object["drafts"] = paths.enumerated().map { index, path in
+            ["id": "0\(index + 1)", "path": path, "line": 2, "side": "additions", "severity": "nit",
+             "body": "Rename it.", "status": "proposed"] as [String: Any]
+        }
+        let model = ReviewModel(repo: URL(fileURLWithPath: "/work/shop"), options: DiffViewOptions(), renderer: NullRenderer())
+        model.proposal = try ProposalDocument(url: try proposalFile(object))
+        // Another folder than the model's default root, so setRoots takes these files instead of keeping that root's.
+        var root = ReviewRoot(folder: "/work/shop-review", repo: URL(fileURLWithPath: "/work/shop"))
+        root.files = [DiffFile(id: "src/a.ts", path: "src/a.ts", oldPath: nil, status: .modified, additions: 1, deletions: 0,
+                               oldContents: "a\n", newContents: "a\nb\n", skipped: nil)]
+        model.setRoots([root])
+        return model
+    }
+
+    func testAnOffDiffDraftSaysSoAndQueuesNoLaterReveal() throws {
+        let model = try draftModel(drafts: ["src/elsewhere.ts"])
+        model.revealDraft("01")
+        XCTAssertEqual(model.notice, "elsewhere.ts has no change in this scope.")
+        XCTAssertNil(model.pendingRevealPath, "a later load must not open the draft's file unasked")
+    }
+
+    func testNextDraftShowsOnlyWhenAnUndecidedDraftHasACardOnThisDiff() throws {
+        XCTAssertFalse(try draftModel(drafts: ["src/elsewhere.ts"]).hasOpenDraftOnDiff)
+        XCTAssertTrue(try draftModel(drafts: ["src/a.ts"]).hasOpenDraftOnDiff)
+    }
+
     func testThreadsLandOnTheirLinesWithTheAgentsReadAndSuggestedReply() throws {
         let document = try ProposalDocument(url: try proposalFile(sample()))
         let rendered = document.rendered(for: files)

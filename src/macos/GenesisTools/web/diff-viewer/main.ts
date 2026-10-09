@@ -3017,6 +3017,15 @@ let pendingReveal: string | null = null;
  */
 let pendingFocus: { id: string; reply?: boolean } | null = null;
 
+/**
+ * The card's file is on the page and no replacement set is on its way. While a new set buffers (or waits for a
+ * scroll to end), the old item with the same id is still there; a focus run against it would be used up on
+ * content the swap is about to replace.
+ */
+function cardFileReady(fileId: string): boolean {
+    return !swapInFlight && Boolean(viewer.getItem(fileId));
+}
+
 function applyPendingFocus(): void {
     if (pendingFocus === null) {
         return;
@@ -3025,7 +3034,7 @@ function applyPendingFocus(): void {
     const target = pendingFocus;
     const card = comments.find((comment) => comment.id === target.id);
 
-    if (card && viewer.getItem(card.fileId)) {
+    if (card && cardFileReady(card.fileId)) {
         pendingFocus = null;
         window.genesisDiff.focusThread(target);
     }
@@ -3050,6 +3059,8 @@ let loadBatches = 0;
 let loadFirstPaint = 0;
 let incomingFiles: ShownFile[] = [];
 let incomingItems: CodeViewItem<AnnotationMeta>[] = [];
+/** A set that swaps in whole at its last batch has started and not swapped in yet. */
+let swapInFlight = false;
 /**
  * A refresh of the same diff that arrived while the reader scrolled: it swaps in when the scroll ends. During a
  * scroll the page's scroll position lags what is on screen (measured 2026-10-08: the page still read c.ts while
@@ -3074,6 +3085,7 @@ function addFiles(batch: FilesBatch): void {
         // Only an empty page fills batch by batch. A new set over a shown one swaps in whole at the end:
         // the hub's PR scope changes twice on open, and refilling the same 291 files blanked the pane.
         loadProgressive = files.length === 0;
+        swapInFlight = !loadProgressive;
         loadFresh = batch.fresh;
         loadStarted = performance.now();
         loadParseMs = 0;
@@ -3133,6 +3145,7 @@ function addFiles(batch: FilesBatch): void {
 
             files = incomingFiles;
             viewer.setItems(incomingItems);
+            swapInFlight = false;
             // Now, not at the next frame: setItems takes the old rows off at once, so a frame that
             // comes late (a window nobody sees gets none at all) would show an empty pane.
             viewer.render(true);
@@ -3295,7 +3308,7 @@ window.genesisDiff = {
         focusedCard = id;
         const card = comments.find((comment) => comment.id === id);
 
-        if (id !== null && (!card || !viewer.getItem(card.fileId))) {
+        if (id !== null && (!card || !cardFileReady(card.fileId))) {
             pendingFocus = { id, reply };
             // The card that had the mark loses it now; the deferred focus starts from `previous === id`
             // and would never redraw it, so two cards would show the bar.

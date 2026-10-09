@@ -447,11 +447,12 @@ async function applyPlan(plan: ReclaimPlan, opts: ReclaimOpts, verb: string[]): 
     if (fmt === "table") {
         // The three numbers side by side: what the plan promised, what the
         // kernel said each copy held privately, and what statfs saw.
+        const statfs = freeBytesLine(applied.report);
         await printLn(
             `projected free ${formatBytes(plan.totalFreeable)}` +
                 (plan.totalFreeableUpTo > plan.totalFreeable ? ` (up to ${formatBytes(plan.totalFreeableUpTo)})` : "") +
                 ` · measured ${formatBytes(applied.report.totals.bytesReclaimed)}` +
-                (freeBytesLine(applied.report) !== null ? ` · ${freeBytesLine(applied.report)}` : "")
+                (statfs !== null ? ` · ${statfs}` : "")
         );
     }
 

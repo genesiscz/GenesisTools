@@ -248,6 +248,39 @@ test("--via-tmux kills its tmux session when the cmux workspace is not created",
     expect(calls.at(-1)).toEqual(["tmux-kill", "cmux-demo-ab12cd"]);
 });
 
+test("--via-tmux kills its tmux session when sending the launch command fails, before any workspace", async () => {
+    const { io, calls } = harness({
+        sendTmuxKeys: async () => {
+            throw new Error("send-keys failed");
+        },
+    });
+
+    await expect(
+        startDevSession(
+            { repo: "demo", account: "work", prompt: "fix it", viaTmux: true, home: HOME, cwd: "/elsewhere" },
+            io
+        )
+    ).rejects.toThrow("send-keys failed");
+    expect(calls.at(-1)).toEqual(["tmux-kill", "cmux-demo-ab12cd"]);
+    expect(calls.some((call) => call[0] === "workspace" && call[1] === "create")).toBe(false);
+});
+
+test("--via-tmux kills nothing when the tmux session itself was not created", async () => {
+    const { io, calls } = harness({
+        createTmuxShell: async () => {
+            throw new Error("tmux is not installed");
+        },
+    });
+
+    await expect(
+        startDevSession(
+            { repo: "demo", account: "work", prompt: "fix it", viaTmux: true, home: HOME, cwd: "/elsewhere" },
+            io
+        )
+    ).rejects.toThrow("tmux is not installed");
+    expect(calls.some((call) => call[0] === "tmux-kill")).toBe(false);
+});
+
 test("a workspace created without --via-tmux kills nothing when cmux fails", async () => {
     const { io, calls } = harness({
         runJSON: async <T>(): Promise<T> => ({ window_ref: "window:1" }) as T,

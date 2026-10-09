@@ -8,14 +8,14 @@
  *
  * - Claude: the last `custom-title` record (`/rename`) of each transcript modified within `maxAgeDays`.
  * - Grok:   `summary.json` -> `session_summary` of each session directory.
- * - Codex:  `session_index.jsonl` -> `thread_name`.
+ * - Codex:  `session_index.jsonl` -> `thread_name`, in every home `CODEX_HOME` names (else `~/.codex`).
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
+import { codexHomeOverrides, nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
 import { scanFileMatches } from "./file-scan";
 import type { TurnProvider } from "./turn-state";
 
@@ -32,6 +32,7 @@ export interface FindByTitleOptions {
     provider: TurnProvider;
     /** Test seams: where the agents keep their files. Default: the real homes. */
     roots?: string[];
+    /** Read only this Codex index. Default: `session_index.jsonl` in every configured Codex home. */
     codexIndexPath?: string;
     /** Claude transcripts older than this are not read. Default 14 days. */
     maxAgeDays?: number;
@@ -195,14 +196,27 @@ function grokSessions(roots: string[]): TitledSession[] {
     return found;
 }
 
-function codexSessions(indexPath: string): TitledSession[] {
-    if (!existsSync(indexPath)) {
-        return [];
-    }
+/** The index of each home `CODEX_HOME` names (the same homes transcript resolution reads), else `~/.codex`. */
+export function codexIndexPaths(): string[] {
+    const homes = codexHomeOverrides();
 
+    return (homes.length > 0 ? homes : [join(homedir(), ".codex")]).map((home) => join(home, "session_index.jsonl"));
+}
+
+function codexSessions(indexPaths: readonly string[]): TitledSession[] {
     // Codex appends a line per rename, in write order: the last line of an id is its current title.
     const found = new Map<string, TitledSession>();
 
+    for (const indexPath of indexPaths) {
+        if (existsSync(indexPath)) {
+            readCodexIndex(indexPath, found);
+        }
+    }
+
+    return [...found.values()];
+}
+
+function readCodexIndex(indexPath: string, found: Map<string, TitledSession>): void {
     for (const line of readFileSync(indexPath, "utf8").split("\n")) {
         try {
             const record: unknown = line.trim() ? SafeJSON.parse(line, { strict: true }) : null;
@@ -217,11 +231,9 @@ function codexSessions(indexPath: string): TitledSession[] {
                 });
             }
         } catch (err) {
-            logger.debug({ err }, "[session-title] skipped an unreadable Codex index line");
+            logger.debug({ err, indexPath }, "[session-title] skipped an unreadable Codex index line");
         }
     }
-
-    return [...found.values()];
 }
 
 /**
@@ -256,7 +268,7 @@ export function findSessionsByTitle(query: string, options: FindByTitleOptions):
     } else if (options.provider === "grok") {
         sessions = grokSessions(roots);
     } else {
-        sessions = codexSessions(options.codexIndexPath ?? join(homedir(), ".codex", "session_index.jsonl"));
+        sessions = codexSessions(options.codexIndexPath ? [options.codexIndexPath] : codexIndexPaths());
     }
 
     return rankByTitle(query, sessions);

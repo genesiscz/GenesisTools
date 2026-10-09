@@ -456,53 +456,59 @@ struct PRThreadsList: View {
         VStack(spacing: 0) {
             toolbar(all: all, placed: placed, shown: threads, files: groups.count)
             PanelFindBar(find: find)
-            AgentDraftsList(model: model)
+            // The agent's drafts scroll with the threads: a proposal with many drafts would otherwise take the
+            // panel's whole height and push its later drafts and every thread out of reach.
             if threads.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: store.payload == nil ? "bubble.left.and.bubble.right" : "checkmark.bubble")
-                        .font(.system(size: 20))
-                        .foregroundColor(ReviewPalette.dim)
-                    Text(store.payload == nil ? "No threads loaded yet." : showClosed || onlyThisFile ? "No thread matches these filters." : model.proposal?.drafts.isEmpty == false ? "No open PR threads." : "No open threads.")
-                        .font(.system(size: 12))
-                        .foregroundColor(ReviewPalette.dim)
+                if model.proposal?.drafts.isEmpty == false {
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            AgentDraftsList(model: model)
+                            emptyThreads.padding(.vertical, 24)
+                        }
+                    }
+                } else {
+                    emptyThreads.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    // A plain VStack: every row has its real height after one layout, so a width change (a panel
-                    // drag's release) can put the reader back exactly (PRListAnchor). A lazy stack estimated the rows
-                    // above the viewport and moved the visible ones again as it measured them. A PR has tens of threads.
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(groups) { group in
-                            VStack(alignment: .leading, spacing: 6) {
-                                fileHeader(group, placed: placed, fresh: fresh)
-                                    .modifier(PRListAnchorRow(anchor: anchor, id: "file:\(group.path)"))
-                                if !folded.contains(group.path) {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        ForEach(group.threads) { thread in
-                                            PRThreadRow(model: model, store: store, thread: thread,
-                                                        selected: model.selectedThreads.contains(thread.id),
-                                                        placement: placed[thread.id] ?? .onDiff(outdatedOnHost: false),
-                                                        fresh: fresh, atHead: atHead[thread.path],
-                                                        headSha: query?.head, compact: compact, clicks: clicks,
-                                                        editors: editors, folded: foldedThreads.contains(thread.id)) {
-                                                toggle(thread: thread.id)
+                    VStack(spacing: 0) {
+                        AgentDraftsList(model: model)
+                        // A plain VStack: every row has its real height after one layout, so a width change (a panel
+                        // drag's release) can put the reader back exactly (PRListAnchor). A lazy stack estimated the rows
+                        // above the viewport and moved the visible ones again as it measured them. A PR has tens of threads.
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(groups) { group in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    fileHeader(group, placed: placed, fresh: fresh)
+                                        .modifier(PRListAnchorRow(anchor: anchor, id: "file:\(group.path)"))
+                                    if !folded.contains(group.path) {
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            ForEach(group.threads) { thread in
+                                                PRThreadRow(model: model, store: store, thread: thread,
+                                                            selected: model.selectedThreads.contains(thread.id),
+                                                            placement: placed[thread.id] ?? .onDiff(outdatedOnHost: false),
+                                                            fresh: fresh, atHead: atHead[thread.path],
+                                                            headSha: query?.head, compact: compact, clicks: clicks,
+                                                            editors: editors, folded: foldedThreads.contains(thread.id)) {
+                                                    toggle(thread: thread.id)
+                                                }
+                                                .findRow(thread.id, cornerRadius: 8)
+                                                .modifier(PRListAnchorRow(anchor: anchor, id: thread.id))
                                             }
-                                            .findRow(thread.id, cornerRadius: 8)
-                                            .modifier(PRListAnchorRow(anchor: anchor, id: thread.id))
                                         }
-                                    }
-                                    // The file's rail: a click folds the whole file, as its header's chevron does.
-                                    .overlay(alignment: .leading) {
-                                        PRFileRail { toggle(file: group.path) }
+                                        // The file's rail: a click folds the whole file, as its header's chevron does.
+                                        .overlay(alignment: .leading) {
+                                            PRFileRail { toggle(file: group.path) }
+                                        }
                                     }
                                 }
                             }
                         }
+                        .padding(.horizontal, compact ? 8 : 12)
+                        .padding(.top, 4)
+                        .padding(.bottom, 12)
                     }
-                    .padding(.horizontal, compact ? 8 : 12)
-                    .padding(.top, 4)
-                    .padding(.bottom, 12)
+                    // The whole scrolled content, drafts included: the anchor's row frames are document offsets.
                     .coordinateSpace(name: PRListAnchor.space)
                     // The reader's place survives a width change (a panel drag's release, a window resize).
                     .background(PRScrollViewFinder { anchor.attach($0) })
@@ -539,6 +545,19 @@ struct PRThreadsList: View {
             guard !model.loading, let query else { return }
             await headFiles.load(repo: query.repo, head: query.head, shown: query.shown, paths: query.paths)?.value
         }
+    }
+
+    /// What the list shows when no thread passes the filters.
+    private var emptyThreads: some View {
+        VStack(spacing: 6) {
+            Image(systemName: store.payload == nil ? "bubble.left.and.bubble.right" : "checkmark.bubble")
+                .font(.system(size: 20))
+                .foregroundColor(ReviewPalette.dim)
+            Text(store.payload == nil ? "No threads loaded yet." : showClosed || onlyThisFile ? "No thread matches these filters." : model.proposal?.drafts.isEmpty == false ? "No open PR threads." : "No open threads.")
+                .font(.system(size: 12))
+                .foregroundColor(ReviewPalette.dim)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     /// Reads the previous visit once per PR and records this one.

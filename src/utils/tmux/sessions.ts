@@ -458,6 +458,27 @@ export async function createTmuxSession(
     ]);
 }
 
+/** What tmux reports for a pane's death, from `#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}`. A signal
+ *  death (SIGSEGV, SIGKILL) leaves the status empty and sets the signal; both are failures, as is a non-zero
+ *  status. `failure` is null for a live pane and for a clean exit. */
+export function parsePaneDeath(line: string): { dead: boolean; failure: string | null } {
+    const [dead = "", status = "", signal = ""] = line.trim().split("|");
+
+    if (dead !== "1") {
+        return { dead: false, failure: null };
+    }
+
+    if (signal.length > 0) {
+        return { dead: true, failure: `was killed by signal ${signal}` };
+    }
+
+    if (status.length > 0 && status !== "0") {
+        return { dead: true, failure: `exited with status ${status}` };
+    }
+
+    return { dead: true, failure: null };
+}
+
 /** Watch a command-line pane for `settleMs`. A pane that died with a non-zero status takes its
  *  session down and throws with the last lines it printed. */
 async function failIfCommandDied(tmuxBin: string, sessionName: string, settleMs: number): Promise<void> {
@@ -470,10 +491,10 @@ async function failIfCommandDied(tmuxBin: string, sessionName: string, settleMs:
             "-p",
             "-t",
             sessionName,
-            "#{pane_dead} #{pane_dead_status}",
+            "#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}",
         ]);
-        const [dead, status] = state.stdout.trim().split(" ");
-        if (dead === "1" && status !== undefined && status !== "0") {
+        const { dead, failure } = parsePaneDeath(state.stdout);
+        if (failure !== null) {
             const captured = await runTmux([tmuxBin, "capture-pane", "-p", "-t", sessionName, "-S", "-20"]);
             await killTmuxSession(sessionName);
             // A short-lived pane is mostly empty rows; keep only the lines with text.
@@ -481,15 +502,14 @@ async function failIfCommandDied(tmuxBin: string, sessionName: string, settleMs:
                 .split("\n")
                 .filter((line) => line.trim().length > 0)
                 .join("\n");
-            logger.warn({ sessionName, status, output }, "tmux session command exited at once");
+            logger.warn({ sessionName, failure, output }, "tmux session command exited at once");
             throw new Error(
-                `tmux session ${sessionName}: the command exited with status ${status}` +
-                    (output.length > 0 ? `:\n${output}` : "")
+                `tmux session ${sessionName}: the command ${failure}` + (output.length > 0 ? `:\n${output}` : "")
             );
         }
 
         const remaining = deadline - Date.now();
-        if (dead === "1" || remaining <= 0) {
+        if (dead || remaining <= 0) {
             return;
         }
 

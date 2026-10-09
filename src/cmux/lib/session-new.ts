@@ -292,21 +292,22 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
     const windowRef = await resolveSessionWindow(io);
     let tmuxSession: string | null = null;
     let command = claude;
-
-    if (input.viaTmux) {
-        tmuxSession = devTmuxSessionName(cwd, input.name, io.nonce());
-        const shell = assertShellExecutable(io.shell());
-        await io.createTmuxShell(tmuxSession, cwd, shell);
-        await io.sendTmuxKeys(tmuxSession, claude);
-        command = tmuxAttachCommand(tmuxSession);
-    }
-
     const name = input.name?.trim() || undefined;
     let workspace: string;
     let surface: string;
     let window: string;
 
     try {
+        if (input.viaTmux) {
+            const session = devTmuxSessionName(cwd, input.name, io.nonce());
+            const shell = assertShellExecutable(io.shell());
+            await io.createTmuxShell(session, cwd, shell);
+            // Owned from here on: any later failure must kill it.
+            tmuxSession = session;
+            await io.sendTmuxKeys(session, claude);
+            command = tmuxAttachCommand(session);
+        }
+
         const created = await io.runJSON<WorkspaceCreated>(
             buildWorkspaceCreateArgs({
                 window: windowRef,
@@ -324,7 +325,7 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
             throw new Error("cmux created a workspace but returned no workspace or surface ref");
         }
     } catch (error) {
-        // The detached tmux session already runs Claude on the prompt; nobody would ever attach to it.
+        // The detached tmux session may already run Claude on the prompt; nobody would ever attach to it.
         if (tmuxSession) {
             await io.killTmuxSession(tmuxSession).catch((killError: unknown) => {
                 log.warn({ error: killError, tmuxSession }, "could not kill the tmux session after cmux failed");

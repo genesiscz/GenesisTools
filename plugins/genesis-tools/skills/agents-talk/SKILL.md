@@ -216,7 +216,7 @@ A peer (often a remote bot that reaches this Mac only through one-shot shell cal
 
     tools agents login --agent-name <me> --session <s> --once --timeout 14400 --format json    # Bash, run_in_background: true
 
-It exits on the first message (you are woken, handle it, start it again) or after the timeout (exit 124 with `{"type":"timeout"}`). Mail that arrives while it is not running is queued and delivered by the next start, so restarting loses nothing. Keep `Monitor` for a teammate that must receive mail mid-turn while it works.
+It exits once mail arrives (you are woken; handle every message line it printed, since one wake can carry several and the cursor is already past all of them, then start it again) or after the timeout (exit 124 with `{"type":"timeout"}`). Mail that arrives while it is not running is queued and delivered by the next start, so restarting loses nothing. Keep `Monitor` for a teammate that must receive mail mid-turn while it works.
 
 **2. Never go silent: say when you leave.** A peer cannot see whether anyone reads its mail; a message to an absent agent just queues. Before you stop listening (the task is done, the session is ending, or you reached the listening time you were given), send one message to the agent that asked you to join:
 
