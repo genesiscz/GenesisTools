@@ -11,7 +11,7 @@ export interface StoreEntry {
     /** `react-native-skia-apple-ios@150.0.0@@<registry>@@@1`, or `@scope/name@…`. */
     entry: string;
     files: number;
-    /** Private bytes of the entry's listed files: what deleting it would free. */
+    /** Private bytes of the entry's listed files, once per inode: what deleting it would free. */
     privateBytes: number;
 }
 
@@ -38,8 +38,11 @@ export function bunEntryOf(root: string, file: string): string | null {
     return parts[0];
 }
 
-/** Entries whose every listed file is fully private: nothing else clones them,
- *  so no install tree uses those bytes. A file the probe cannot read keeps its
+/** Entries whose every listed file is fully private and has no hard link outside
+ *  the entry: nothing else clones or links them, so no install tree uses those
+ *  bytes. A hard-linked inode reports private == allocated on every link, so its
+ *  links are counted: one the entry does not hold keeps the entry out, and links
+ *  inside the entry count their bytes once. A file the probe cannot read keeps its
  *  entry out of the report rather than in it. */
 export function unreferencedEntries({
     root,
@@ -50,30 +53,43 @@ export function unreferencedEntries({
     files: string[];
     probe?: BlockProbe;
 }): StoreEntry[] {
-    const byEntry = new Map<string, { files: number; privateBytes: number; referenced: boolean }>();
+    const byEntry = new Map<
+        string,
+        { files: number; inodes: Map<string, { links: number; seen: number; bytes: number }>; referenced: boolean }
+    >();
     for (const file of files) {
         const entry = bunEntryOf(root, file);
         if (entry === null) {
             continue;
         }
 
-        const acc = byEntry.get(entry) ?? { files: 0, privateBytes: 0, referenced: false };
+        const acc = byEntry.get(entry) ?? { files: 0, inodes: new Map(), referenced: false };
         byEntry.set(entry, acc);
+        acc.files += 1;
         const allocated = probe.allocatedBytes(file);
         const priv = probe.privateBytes(file);
-        acc.files += 1;
-        if (allocated === null || priv === null || allocated === 0 || priv < allocated) {
+        const node = probe.inode ? probe.inode(file) : { id: file, links: 1 };
+        if (allocated === null || priv === null || node === null || allocated === 0 || priv < allocated) {
             acc.referenced = true;
             continue;
         }
 
-        acc.privateBytes += priv;
+        const inode = acc.inodes.get(node.id) ?? { links: node.links, seen: 0, bytes: priv };
+        inode.seen += 1;
+        acc.inodes.set(node.id, inode);
     }
 
-    return [...byEntry.entries()]
-        .filter(([, v]) => !v.referenced)
-        .map(([entry, v]) => ({ entry, files: v.files, privateBytes: v.privateBytes }))
-        .sort((a, b) => b.privateBytes - a.privateBytes || a.entry.localeCompare(b.entry));
+    const entries: StoreEntry[] = [];
+    for (const [entry, acc] of byEntry) {
+        const inodes = [...acc.inodes.values()];
+        if (acc.referenced || inodes.some((inode) => inode.seen < inode.links)) {
+            continue;
+        }
+
+        entries.push({ entry, files: acc.files, privateBytes: inodes.reduce((sum, inode) => sum + inode.bytes, 0) });
+    }
+
+    return entries.sort((a, b) => b.privateBytes - a.privateBytes || a.entry.localeCompare(b.entry));
 }
 
 /** Report-only scan of the bun cache: entries no install tree clones. Judged by

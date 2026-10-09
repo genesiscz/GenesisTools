@@ -179,7 +179,8 @@ export class TurnStreamer {
     /**
      * The size is checked before any parse, so a safety poll on a quiet file reads nothing. Priming reads the
      * tail page only (its turns are history); a print starts at the cursor and drains every page after it, so
-     * a burst of more turns than one page holds still prints whole.
+     * a burst of more turns than one page holds still prints whole. A failed read commits nothing, so the
+     * next call retries the same size.
      */
     private async each(args: {
         priming: boolean;
@@ -192,7 +193,6 @@ export class TurnStreamer {
             return;
         }
 
-        this.lastSize = size;
         const page = await (this.options.pager ?? transcriptPager)(resolved);
         let opts: SliceOptions = args.priming ? {} : { offset: this.cursor, limit: DEFAULT_TURN_LIMIT };
 
@@ -225,6 +225,10 @@ export class TurnStreamer {
                 this.seen.delete(index);
             }
         }
+
+        // Committed only after a whole drain: a read that throws leaves the size unseen, so the next
+        // poll retries from the cursor instead of skipping a write it never printed.
+        this.lastSize = size;
     }
 }
 

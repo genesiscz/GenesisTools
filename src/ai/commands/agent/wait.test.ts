@@ -67,13 +67,27 @@ describe("TurnStreamer", () => {
     const turn = (text: string): TranscriptTurn => ({ id: text, role: "assistant", at: null, text, tools: [] });
 
     function harness(initial: TranscriptTurn[]) {
-        const transcript = { turns: initial, size: 1, reads: 0 };
+        const transcript = { turns: initial, size: 1, reads: 0, failRead: false, failPage: null as number | null };
         const lines: string[] = [];
         const pager = async (): Promise<TranscriptPager> => {
             transcript.reads += 1;
+
+            if (transcript.failRead) {
+                transcript.failRead = false;
+                throw new Error("transcript read failed");
+            }
+
             const turns = [...transcript.turns];
+            let pages = 0;
 
             return async (opts: SliceOptions): Promise<TranscriptEnvelope> => {
+                pages += 1;
+
+                if (pages === transcript.failPage) {
+                    transcript.failPage = null;
+                    throw new Error("page read failed");
+                }
+
                 const sliced = sliceTurns(turns, opts);
 
                 return {
@@ -120,5 +134,37 @@ describe("TurnStreamer", () => {
 
         expect(transcript.reads).toBe(1);
         expect(lines).toEqual([]);
+    });
+
+    it("retries a failed read at the same size and prints the final write", async () => {
+        const { transcript, lines, streamer } = harness([turn("old")]);
+        await streamer.prime();
+
+        transcript.turns = [turn("old"), turn("final answer")];
+        transcript.size = 2;
+        transcript.failRead = true;
+        await expect(streamer.print()).rejects.toThrow("transcript read failed");
+        expect(lines).toEqual([]);
+
+        await streamer.print();
+
+        expect(lines).toEqual(["final answer"]);
+    });
+
+    it("resumes a drain that failed between pages without printing a turn twice", async () => {
+        const { transcript, lines, streamer } = harness([turn("old")]);
+        await streamer.prime();
+
+        const burst = Array.from({ length: DEFAULT_TURN_LIMIT + 20 }, (_, index) => turn(`new ${index}`));
+        transcript.turns = [turn("old"), ...burst];
+        transcript.size = 2;
+        transcript.failPage = 2;
+        await expect(streamer.print()).rejects.toThrow("page read failed");
+        expect(lines.length).toBeGreaterThan(0);
+        expect(lines.length).toBeLessThan(burst.length);
+
+        await streamer.print();
+
+        expect(lines).toEqual(burst.map((entry) => entry.text));
     });
 });

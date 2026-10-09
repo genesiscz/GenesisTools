@@ -237,4 +237,43 @@ describe("unreferencedEntries", () => {
             { entry: "@s/small@1@@@1", files: 1, privateBytes: 4096 },
         ]);
     });
+
+    it("keeps out an entry hard-linked from elsewhere and counts an inode linked inside it once", () => {
+        const rows: Record<string, [number, number]> = {
+            "/cache/installed@1@@@1/a.a": [8192, 8192],
+            "/cache/twice@1@@@1/a.a": [8192, 8192],
+            "/cache/twice@1@@@1/b.a": [8192, 8192],
+        };
+        const nodes: Record<string, { id: string; links: number }> = {
+            "/cache/installed@1@@@1/a.a": { id: "1:10", links: 2 },
+            "/cache/twice@1@@@1/a.a": { id: "1:20", links: 2 },
+            "/cache/twice@1@@@1/b.a": { id: "1:20", links: 2 },
+        };
+        const entries = unreferencedEntries({
+            root,
+            files: Object.keys(rows),
+            probe: { ...probe(rows), inode: (p) => nodes[p] ?? null },
+        });
+        expect(entries).toEqual([{ entry: "twice@1@@@1", files: 2, privateBytes: 8192 }]);
+    });
+});
+
+describe.skipIf(skip.unlessMac)("unreferencedEntries on real hard links", () => {
+    it("does not report a store file an install tree hard-links", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-cl-store-"));
+        try {
+            const root = join(dir, "cache");
+            const installed = join(root, "installed@1@@@1", "lib.a");
+            const loose = join(root, "loose@1@@@1", "lib.a");
+            put(installed, randomBytes(SIZE));
+            put(loose, randomBytes(SIZE));
+            mkdirSync(join(dir, "wt", "node_modules"), { recursive: true });
+            linkSync(installed, join(dir, "wt", "node_modules", "lib.a"));
+
+            const entries = unreferencedEntries({ root, files: [installed, loose] });
+            expect(entries).toEqual([{ entry: "loose@1@@@1", files: 1, privateBytes: alloc(loose) }]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
 });
