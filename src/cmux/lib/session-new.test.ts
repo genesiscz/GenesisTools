@@ -295,7 +295,15 @@ test("--via-tmux kills its tmux session when the cmux workspace is not created",
 
     await expect(
         startDevSession(
-            { repo: "demo", account: "work", prompt: "fix it", viaTmux: true, home: HOME, cwd: "/elsewhere" },
+            {
+                agent: "claude",
+                repo: "demo",
+                account: "work",
+                prompt: "fix it",
+                viaTmux: true,
+                home: HOME,
+                cwd: "/elsewhere",
+            },
             io
         )
     ).rejects.toThrow("cmux is busy");
@@ -341,7 +349,10 @@ test("a workspace created without --via-tmux kills nothing when cmux fails", asy
     });
 
     await expect(
-        startDevSession({ repo: "demo", account: "work", prompt: "fix it", home: HOME, cwd: "/elsewhere" }, io)
+        startDevSession(
+            { agent: "claude", repo: "demo", account: "work", prompt: "fix it", home: HOME, cwd: "/elsewhere" },
+            io
+        )
     ).rejects.toThrow("no workspace or surface ref");
     expect(calls.some((call) => call[0] === "tmux-kill")).toBe(false);
 });
