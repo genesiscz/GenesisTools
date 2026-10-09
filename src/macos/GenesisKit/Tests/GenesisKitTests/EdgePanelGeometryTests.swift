@@ -1048,7 +1048,7 @@ final class WidgetRosterTests: XCTestCase {
         while model.snapshot == nil && ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(100))
         }
-        XCTAssertNotNil(model.snapshot)
+        _ = try XCTUnwrap(model.snapshot, "The fixture process did not deliver its initial snapshot within five seconds")
         try await body(model, snapshotFile, snapshot)
     }
 
@@ -1333,10 +1333,13 @@ final class WidgetRosterTests: XCTestCase {
                     let expectedX = edge == .right ? screen.frame.maxX - 42 : screen.frame.minX + 2
                     XCTAssertEqual(frame.minX, expectedX, accuracy: 0.5, "A growing content view moved the rail")
                     if let baseline = sampledFrames.first {
-                        XCTAssertEqual(frame.minY, baseline.minY, accuracy: 0.5, "A growing panel moved the rail vertically")
+
+                        XCTAssertEqual(frame.minY, baseline.minY, accuracy: 1,
+                            "A growing panel moved the rail beyond AppKit's one-point frame rounding")
                     }
                     XCTAssertTrue(panel.frame.insetBy(dx: -0.5, dy: -0.5).contains(frame), "Handle escaped panel")
                 }
+                try await Task.sleep(for: .milliseconds(100))
                 try sample()
                 for opening in [true, false, true] {
                     if opening { model.openModule("shelf", on: surface) } else { model.collapse() }
@@ -1351,7 +1354,9 @@ final class WidgetRosterTests: XCTestCase {
                 try sample()
                 XCTAssertGreaterThan(sampledFrames.count, 30)
                 let xs = sampledFrames.map { $0.minX }
-                print("RAIL_FRAME_PROOF edge=\(edge) samples=\(xs.count) x-range=\(xs.max()! - xs.min()!)")
+                let ys = sampledFrames.map { $0.minY }
+                XCTAssertLessThanOrEqual(ys.max()! - ys.min()!, 1)
+                print("RAIL_FRAME_PROOF edge=\(edge) samples=\(xs.count) x-range=\(xs.max()! - xs.min()!) y-range=\(ys.max()! - ys.min()!)")
             }
         }
     }
