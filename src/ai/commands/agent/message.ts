@@ -9,6 +9,7 @@ import {
     sendClaudePeerMessage,
 } from "@genesiscz/utils/claude/peer-message";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { type CmuxRunResult, runCmux } from "@genesiscz/utils/cmux/lib/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { resolveWaitTranscript, waitCommand } from "./wait";
@@ -294,12 +295,16 @@ export function grokMessageDriver(
     };
 }
 
-/** Paste into the session's cmux surface and submit; cmux refuses over a draft or an open dialog. */
-async function pasteIntoSurface(input: {
+/**
+ * Paste into the session's cmux surface and submit; cmux refuses over a draft or an open dialog.
+ * The paste runs through the shared bounded runner, so a wedged cmux ends in a MessageError, not a hang.
+ */
+export async function pasteIntoSurface(input: {
     alias: TurnProvider;
     sessionId: string;
     text: string;
     live?: () => Promise<LiveAgentSurface[]>;
+    run?: (args: string[]) => Promise<CmuxRunResult>;
 }): Promise<MessageDelivery> {
     const surfaces = await (input.live ?? liveAgentSurfacesNow)();
     const target = surfaces.find((entry) => entry.sessionId === input.sessionId && entry.agent === input.alias);
@@ -308,16 +313,16 @@ async function pasteIntoSurface(input: {
         throw new MessageError(`session ${input.sessionId} has no live cmux surface to paste into`);
     }
 
-    const proc = Bun.spawn(["cmux", "paste", "--surface", target.surface.ref, "--submit", "--", input.text], {
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-    });
-    const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+    const run = input.run ?? ((args: string[]) => runCmux(args));
+    const result = await run(["paste", "--surface", target.surface.ref, "--submit", "--", input.text]);
 
-    if (code !== 0) {
+    if (result.timedOut) {
+        throw new MessageError(`cmux paste into ${target.surface.ref} timed out: ${result.stderr.trim()}`);
+    }
+
+    if (result.code !== 0) {
         throw new MessageError(
-            `cmux paste refused (${code}): ${stderr.trim() || "no detail"}. It refuses while the prompt holds a draft or a question/permission dialog is open.`
+            `cmux paste refused (${result.code}): ${result.stderr.trim() || "no detail"}. It refuses while the prompt holds a draft or a question/permission dialog is open.`
         );
     }
 

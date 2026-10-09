@@ -5,6 +5,8 @@ import type { AdoptedSession } from "./session-close";
 
 export interface LiveSurface {
     ref: string;
+    /** The surface UUID (`--id-format both`); stable across cmux restarts, unlike `ref`. */
+    id: string | null;
     tty: string | null;
     workspace: string;
     window: string;
@@ -31,7 +33,7 @@ function text(value: unknown): string | null {
     return typeof value === "string" && value !== "" ? value : null;
 }
 
-/** The terminal surfaces of `cmux tree --json`, keyed by ref, with their tty, workspace and window. */
+/** The terminal surfaces of `cmux --id-format both tree --json`, keyed by ref, with their UUID, tty, workspace and window. */
 export function parseCmuxTree(stdout: string): CmuxTreeView {
     const parsed: unknown = SafeJSON.parse(stdout, { strict: true });
     const surfaces = new Map<string, LiveSurface>();
@@ -63,6 +65,7 @@ export function parseCmuxTree(stdout: string): CmuxTreeView {
                     if (isRecord(surface) && ref && surface.type === "terminal") {
                         surfaces.set(ref, {
                             ref,
+                            id: text(surface.id),
                             tty: text(surface.tty),
                             workspace: String(workspace.ref),
                             window: String(window.ref),
@@ -79,11 +82,56 @@ export function parseCmuxTree(stdout: string): CmuxTreeView {
 }
 
 /**
+ * The live surface a journal entry still runs in, or null.
+ *
+ * A ref is only meaningful inside one cmux instance: after a restart `surface:5` can name an unrelated
+ * terminal, and closing it would `/exit` and close someone else's work. So the ref only finds the
+ * candidate, and the journal's surface UUID must equal the live surface's UUID. An entry or a tree
+ * without a UUID is never trusted. The caller's own surface is never returned.
+ */
+function liveSurfaceOf(entry: SessionCmuxRefs, tree: CmuxTreeView): LiveSurface | null {
+    const ref = entry.surfaceRef;
+
+    if (!ref || ref === tree.caller) {
+        return null;
+    }
+
+    const live = tree.surfaces.get(ref);
+
+    if (!live?.id || !entry.surfaceId || live.id.toLowerCase() !== entry.surfaceId.toLowerCase()) {
+        return null;
+    }
+
+    return live;
+}
+
+/** The newest journal entry per live surface, keyed by ref, keeping only entries whose surface UUID still matches. */
+function newestPerLiveSurface(refs: Iterable<SessionCmuxRefs>, tree: CmuxTreeView): Map<string, SessionCmuxRefs> {
+    const newest = new Map<string, SessionCmuxRefs>();
+
+    for (const entry of refs) {
+        const live = liveSurfaceOf(entry, tree);
+
+        if (!live) {
+            continue;
+        }
+
+        const seen = newest.get(live.ref);
+
+        if (!seen || entry.at > seen.at) {
+            newest.set(live.ref, entry);
+        }
+    }
+
+    return newest;
+}
+
+/**
  * The live agent session a query names, from the cmux-refs journal joined with the live tree.
  *
  * The query is a session id (or a prefix of 8+ characters), a surface ref, or a workspace ref. Only the
  * newest session per surface counts (a surface that ran several sessions holds the last one), only
- * surfaces cmux still lists count, and the caller's own surface never does. A workspace ref adopts only
+ * surfaces cmux still lists under the same surface UUID count, and the caller's own surface never does. A workspace ref adopts only
  * when exactly one agent session lives in it. `providerOf` names the agent; an entry it cannot name is
  * skipped rather than guessed, because `/exit` typed into the wrong agent is not harmless.
  */
@@ -93,22 +141,7 @@ export function pickAdoptable(input: {
     tree: CmuxTreeView;
     providerOf: (entry: SessionCmuxRefs) => string | undefined;
 }): AdoptedSession | null {
-    const newestBySurface = new Map<string, SessionCmuxRefs>();
-
-    for (const entry of input.refs) {
-        const surface = entry.surfaceRef;
-
-        if (!surface || !input.tree.surfaces.has(surface) || surface === input.tree.caller) {
-            continue;
-        }
-
-        const seen = newestBySurface.get(surface);
-
-        if (!seen || entry.at > seen.at) {
-            newestBySurface.set(surface, entry);
-        }
-    }
-
+    const newestBySurface = newestPerLiveSurface(input.refs, input.tree);
     const needle = input.query.trim().toLowerCase();
     const hits = [...newestBySurface.values()].filter((entry) => {
         const live = input.tree.surfaces.get(entry.surfaceRef ?? "");
@@ -176,22 +209,7 @@ export function liveAgentSurfaces(input: {
     tree: CmuxTreeView;
     providerOf: (entry: SessionCmuxRefs) => string | undefined;
 }): LiveAgentSurface[] {
-    const newest = new Map<string, SessionCmuxRefs>();
-
-    for (const entry of input.refs) {
-        const ref = entry.surfaceRef;
-
-        if (!ref || !input.tree.surfaces.has(ref) || ref === input.tree.caller) {
-            continue;
-        }
-
-        const seen = newest.get(ref);
-
-        if (!seen || entry.at > seen.at) {
-            newest.set(ref, entry);
-        }
-    }
-
+    const newest = newestPerLiveSurface(input.refs, input.tree);
     const found: LiveAgentSurface[] = [];
 
     for (const [ref, entry] of newest) {

@@ -352,6 +352,9 @@ const GROK_WORK: ReadonlySet<string> = new Set([
     "turn_completed",
 ]);
 
+/** Grok tool-call statuses that end a call. `in_progress` and `pending` are progress, not an answer. */
+const GROK_TERMINAL_STATUSES: ReadonlySet<string> = new Set(["completed", "failed"]);
+
 /** Grok tools that stop the turn until the user answers: a question, and a plan to approve. */
 const GROK_WAITING_TOOLS: ReadonlySet<string> = new Set(["ask_user", "exit_plan"]);
 
@@ -368,7 +371,7 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
     let question: string | null = null;
     let turnStartedAt: number | null = null;
     let previousKind: string | null = null;
-    // toolCallId → question text, until a `tool_call_update` with a status answers it.
+    // toolCallId → question text, until a `tool_call_update` with a terminal status answers it.
     const open = new Map<string, string>();
 
     for (const record of input.records) {
@@ -404,7 +407,12 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
         if (parsed.kind === "tool_call" && callId && toolKind && GROK_WAITING_TOOLS.has(toolKind)) {
             question = questionTextOf(parsed.update.rawInput) ?? (toolKind === "exit_plan" ? "Approve the plan?" : "");
             open.set(callId, question);
-        } else if (parsed.kind === "tool_call_update" && callId && typeof parsed.update.status === "string") {
+        } else if (
+            parsed.kind === "tool_call_update" &&
+            callId &&
+            typeof parsed.update.status === "string" &&
+            GROK_TERMINAL_STATUSES.has(parsed.update.status)
+        ) {
             open.delete(callId);
         }
     }

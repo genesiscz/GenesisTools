@@ -80,10 +80,14 @@ fi
 echo "▶ CI guards (parallel)..."
 guard_dir=$(mktemp -d "${TMPDIR:-/tmp}/gt-pre-push-guards.XXXXXX")
 guard_pids=""
+guard_names=""
+# The subshell inherits `set -e`, so a failing guard must not end it before its status is written:
+# `|| rc=$?` keeps the subshell alive and records the real exit code.
 run_guard() {
     name="$1"
     shift
-    ("$@" > "$guard_dir/$name.log" 2>&1; echo $? > "$guard_dir/$name.status") &
+    guard_names="$guard_names $name"
+    (rc=0; "$@" > "$guard_dir/$name.log" 2>&1 || rc=$?; echo "$rc" > "$guard_dir/$name.status") &
     guard_pids="$guard_pids $!"
 }
 run_guard logging-guard bash scripts/ci/logging-guard.sh
@@ -94,13 +98,19 @@ run_guard plugin-standalone bun scripts/ci/check-plugin-standalone.ts
 run_guard tool-commands bun scripts/ci/check-tool-commands.ts --strict
 run_guard jev-instrumentation bun scripts/ci/jev-instrumentation-guard.ts
 run_guard entrypoint-imports bun scripts/ci/entrypoint-import-guard.ts
+# `wait` reports only the last pid, and under `set -e` a non-zero one would end the hook with no report.
+# The status files below are the verdict, so the wait itself must never exit.
 # shellcheck disable=SC2086
-wait $guard_pids
+wait $guard_pids || true
 
 guard_failed=0
-for status_file in "$guard_dir"/*.status; do
-    name=$(basename "$status_file" .status)
-    if [ "$(cat "$status_file")" != "0" ]; then
+for name in $guard_names; do
+    status_file="$guard_dir/$name.status"
+    if [ ! -f "$status_file" ]; then
+        echo "✖ $name wrote no status (it did not finish):"
+        tail -n 30 "$guard_dir/$name.log" 2>/dev/null || true
+        guard_failed=1
+    elif [ "$(cat "$status_file")" != "0" ]; then
         echo "✖ $name failed:"
         tail -n 30 "$guard_dir/$name.log"
         guard_failed=1

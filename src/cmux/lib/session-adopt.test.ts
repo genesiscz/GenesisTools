@@ -3,8 +3,13 @@ import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { liveAgentSurfaces, matchLiveAgentSurfaces, parseCmuxTree, pickAdoptable, ttyRunsAgent } from "./session-adopt";
 
+/** An invented surface UUID per ref, so a journal entry and the tree agree unless a test says otherwise. */
+function uuidOf(ref: string): string {
+    return `uuid-${ref}`;
+}
+
 function surface(ref: string, tty: string) {
-    return { ref, tty, type: "terminal", title: "t" };
+    return { ref, id: uuidOf(ref), tty, type: "terminal", title: "t" };
 }
 
 const TREE = SafeJSON.stringify({
@@ -30,13 +35,14 @@ function refs(
     sessionId: string,
     surfaceRef: string,
     at: number,
-    provider?: "claude" | "codex" | "grok"
+    provider?: "claude" | "codex" | "grok",
+    surfaceId: string | null = uuidOf(surfaceRef)
 ): SessionCmuxRefs {
     return {
         sessionId,
         ...(provider ? { provider } : {}),
         workspaceId: null,
-        surfaceId: null,
+        surfaceId,
         workspaceRef: null,
         paneRef: null,
         surfaceRef,
@@ -54,6 +60,7 @@ test("the tree gives each terminal surface its tty, workspace and window, and na
     expect(tree.caller).toBe("surface:1");
     expect(tree.surfaces.get("surface:6")).toEqual({
         ref: "surface:6",
+        id: "uuid-surface:6",
         tty: "ttys006",
         workspace: "workspace:2",
         window: "window:1",
@@ -121,6 +128,35 @@ test("the caller's surface, an ambiguous workspace and an agent nobody can name 
     expect(pickAdoptable({ query: "caller-session-01", refs: journal, tree, providerOf })).toBeNull();
     expect(pickAdoptable({ query: "workspace:2", refs: journal.slice(0, 3), tree, providerOf })).toBeNull();
     expect(pickAdoptable({ query: "untagged-v7-session", refs: journal, tree, providerOf })).toBeNull();
+});
+
+test("a ref that cmux renumbered onto another terminal is never adopted or listed", () => {
+    // After a cmux restart, surface:5 is an unrelated terminal: its UUID is not the one the journal holds.
+    const stale = [refs("0199dead-0000-7000-8000-000000000001", "surface:5", 7, "claude", "uuid-of-a-closed-surface")];
+    const noUuid = [refs("0199dead-0000-7000-8000-000000000002", "surface:6", 7, "grok", null)];
+
+    expect(pickAdoptable({ query: "surface:5", refs: stale, tree, providerOf })).toBeNull();
+    expect(pickAdoptable({ query: "0199dead-0000-7000-8000-000000000001", refs: stale, tree, providerOf })).toBeNull();
+    expect(pickAdoptable({ query: "surface:6", refs: noUuid, tree, providerOf })).toBeNull();
+    expect(liveAgentSurfaces({ refs: [...stale, ...noUuid], tree, providerOf })).toEqual([]);
+});
+
+test("a stale entry does not shadow the session whose surface UUID still matches", () => {
+    const journal = [
+        refs("0199beef-0000-7000-8000-000000000001", "surface:5", 3, "codex"),
+        refs("0199dead-0000-7000-8000-000000000003", "surface:5", 9, "claude", "uuid-of-a-closed-surface"),
+    ];
+
+    // Negative control: the matching UUID (compared case-insensitively) still adopts.
+    expect(pickAdoptable({ query: "surface:5", refs: journal, tree, providerOf })).toMatchObject({
+        sessionId: "0199beef-0000-7000-8000-000000000001",
+        agent: "codex",
+        surface: "surface:5",
+    });
+    const upper = [refs("0199beef-0000-7000-8000-000000000002", "surface:6", 3, "grok", "UUID-SURFACE:6")];
+    expect(liveAgentSurfaces({ refs: upper, tree, providerOf }).map((hit) => hit.sessionId)).toEqual([
+        "0199beef-0000-7000-8000-000000000002",
+    ]);
 });
 
 test("the tty listing matches the agent binary or its tools launcher, not a word inside a path", () => {

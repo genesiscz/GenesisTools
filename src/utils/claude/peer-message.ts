@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { classifyPid } from "@genesiscz/utils/process-identity";
+import { batchPsInfo } from "@genesiscz/utils/process/ps";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 
 /**
  * Claude Code's cross-session messaging (2.1.224+): every interactive session listens on a Unix socket
@@ -47,16 +48,35 @@ function text(value: unknown): string | null {
     return typeof value === "string" && value !== "" ? value : null;
 }
 
-/** A registry entry outlives its process; a recycled pid that runs something other than Claude is gone too. */
-function isAlive(pid: number): boolean {
-    const identity = classifyPid(pid, (command) => /claude/i.test(command));
+const CLAUDE_COMMAND = /claude/i;
 
-    if (identity.status === "dead" || identity.status === "foreign") {
-        log.debug({ pid, status: identity.status, command: identity.command }, "registry entry's process is gone");
-        return false;
+/**
+ * Which registry pids still run Claude. A registry entry outlives its process, and a recycled pid that runs
+ * something other than Claude is gone too. Liveness is a signal-0 probe per pid; the commands come from ONE
+ * batched `ps` for the whole inventory, never one `ps` per entry. A live pid whose command cannot be read
+ * stays (unverified), as `classifyPid` treats it.
+ */
+export function liveClaudePids(
+    pids: number[],
+    matches: (command: string) => boolean = (command) => CLAUDE_COMMAND.test(command)
+): Set<number> {
+    const running = new Set(pids.filter((pid) => isProcessAlive(pid)));
+    const rows = running.size > 0 ? batchPsInfo([...running]) : new Map<number, { command: string }>();
+    const live = new Set<number>();
+
+    for (const pid of pids) {
+        const command = rows.get(pid)?.command;
+
+        if (!running.has(pid)) {
+            log.debug({ pid, status: "dead" }, "registry entry's process is gone");
+        } else if (command !== undefined && !matches(command)) {
+            log.debug({ pid, status: "foreign", command }, "registry entry's process is gone");
+        } else {
+            live.add(pid);
+        }
     }
 
-    return true;
+    return live;
 }
 
 /** Parse one `<pid>.json` registry file; null when it is not a messaging-capable session. */
@@ -95,10 +115,10 @@ export function parseRegistryEntry(raw: string, file: string): ClaudeLiveSession
     };
 }
 
-/** Every live Claude session that advertises a messaging socket. */
+/** Every live Claude session that advertises a messaging socket. `liveOf` checks the whole inventory at once. */
 export function listClaudeLiveSessions(
     dir: string = claudeSessionsDir(),
-    alive: (pid: number) => boolean = isAlive
+    liveOf: (pids: number[]) => Set<number> = (pids) => liveClaudePids(pids)
 ): ClaudeLiveSession[] {
     let names: string[];
 
@@ -109,7 +129,7 @@ export function listClaudeLiveSessions(
         return [];
     }
 
-    const sessions: ClaudeLiveSession[] = [];
+    const entries: ClaudeLiveSession[] = [];
 
     for (const name of names) {
         if (!/^\d+\.json$/.test(name)) {
@@ -128,12 +148,17 @@ export function listClaudeLiveSessions(
 
         const entry = parseRegistryEntry(raw, file);
 
-        if (entry && alive(entry.pid)) {
-            sessions.push(entry);
+        if (entry) {
+            entries.push(entry);
         }
     }
 
-    return sessions;
+    if (entries.length === 0) {
+        return [];
+    }
+
+    const live = liveOf(entries.map((entry) => entry.pid));
+    return entries.filter((entry) => live.has(entry.pid));
 }
 
 /**

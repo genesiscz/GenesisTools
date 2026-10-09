@@ -94,7 +94,8 @@ function isAlive(pid: number): boolean {
 }
 
 async function liveTree() {
-    const result = await runCmux(["tree"], { json: true });
+    // The surface UUIDs let adoption tell a session's own surface from a renumbered ref.
+    const result = await runCmux(["--id-format", "both", "tree"], { json: true });
 
     if (result.code !== 0) {
         throw new Error(`cmux tree failed (${result.code}): ${result.stderr.trim()}`);

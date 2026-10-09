@@ -1,12 +1,18 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withCrossMessages } from "@app/claude/lib/cross-messages";
 import type { ClaudeLiveSession } from "@genesiscz/utils/claude/peer-message";
-import { parseRegistryEntry, peerFrames, sendClaudePeerMessage } from "@genesiscz/utils/claude/peer-message";
+import {
+    listClaudeLiveSessions,
+    liveClaudePids,
+    parseRegistryEntry,
+    peerFrames,
+    sendClaudePeerMessage,
+} from "@genesiscz/utils/claude/peer-message";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { claudeMessageDriver, codexMessageDriver, MessageError, pickClaudeSession } from "./message";
+import { claudeMessageDriver, codexMessageDriver, MessageError, pasteIntoSurface, pickClaudeSession } from "./message";
 
 function live(sessionId: string, name: string | null, status = "idle"): ClaudeLiveSession {
     return {
@@ -148,4 +154,82 @@ test("a message longer than one socket write arrives whole (Bun sockets do not b
         server.stop(true);
         rmSync(dir, { recursive: true, force: true });
     }
+});
+
+test("the keystroke fallback pastes through the bounded cmux runner and reports its timeout", async () => {
+    const target = {
+        sessionId: "cccc4444-0000-4000-8000-000000000004",
+        agent: "grok" as const,
+        surface: {
+            ref: "surface:7",
+            id: "uuid-surface:7",
+            tty: "ttys007",
+            workspace: "workspace:2",
+            window: "window:1",
+            title: "side - grok",
+            workspaceTitle: null,
+        },
+        cwd: "/repo/side",
+    };
+    const calls: string[][] = [];
+    const delivered = await pasteIntoSurface({
+        alias: "grok",
+        sessionId: target.sessionId,
+        text: "hello",
+        live: async () => [target],
+        run: async (args) => {
+            calls.push(args);
+            return { code: 0, stdout: "", stderr: "" };
+        },
+    });
+
+    expect(calls).toEqual([["paste", "--surface", "surface:7", "--submit", "--", "hello"]]);
+    expect(delivered).toMatchObject({ via: "cmux-paste", name: "side - grok" });
+
+    const wedged = pasteIntoSurface({
+        alias: "grok",
+        sessionId: target.sessionId,
+        text: "hello",
+        live: async () => [target],
+        run: async () => ({ code: -1, stdout: "", stderr: "cmux paste timed out after 30000 ms", timedOut: true }),
+    });
+    await expect(wedged).rejects.toThrow(MessageError);
+    await expect(wedged).rejects.toThrow("timed out");
+});
+
+test("the live-session listing checks every registry pid in ONE batch, not one probe per entry", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-peer-registry-"));
+
+    try {
+        for (const pid of [101, 202, 303]) {
+            writeFileSync(
+                join(dir, `${pid}.json`),
+                SafeJSON.stringify({
+                    pid,
+                    sessionId: `dddd${pid}-0000-4000-8000-000000000000`,
+                    messagingSocketPath: `/s${pid}.sock`,
+                })
+            );
+        }
+
+        const batches: number[][] = [];
+        const sessions = listClaudeLiveSessions(dir, (pids) => {
+            batches.push([...pids].sort((a, b) => a - b));
+            return new Set([202]);
+        });
+
+        expect(batches).toEqual([[101, 202, 303]]);
+        expect(sessions.map((entry) => entry.pid)).toEqual([202]);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("a registry pid counts only while it runs and its command looks like Claude", () => {
+    const exited = Bun.spawnSync(["true"], { env: process.env }).pid;
+
+    expect(liveClaudePids([process.pid], () => true)).toEqual(new Set([process.pid]));
+    // Negative control: the same live pid running something else is a recycled pid, not a session.
+    expect(liveClaudePids([process.pid], () => false)).toEqual(new Set());
+    expect(liveClaudePids([exited], () => true)).toEqual(new Set());
 });
