@@ -274,7 +274,11 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
                     return { kind: "unreadable", sessionId: null, detail: panes.reason };
                 }
 
-                tmuxPanes = panes.items.map((pane) => pane.pane);
+                // The recorded agent pane only: another agent the user started in a second pane is not this one.
+                // A record from before panes were stored matches any pane of its session.
+                tmuxPanes = panes.items
+                    .map((pane) => pane.pane)
+                    .filter((pane) => !record.tmuxPane || pane === record.tmuxPane);
             }
 
             const sessionId = isAdopted(record)

@@ -280,6 +280,9 @@ describe("turnStartedAt", () => {
             )
         );
         expect(grok.turnStartedAt).toBe(T0 + 5000);
+        // The newest turn's whole prompt, across its chunks, tells same-second Grok turns apart.
+        expect(grok.turnPrompt).toBe("again please");
+        expect(codex.turnPrompt).toBeUndefined();
         expect(
             codexTurnState(input([codexLine(2, "response_item", { type: "reasoning" })], 5)).turnStartedAt
         ).toBeNull();

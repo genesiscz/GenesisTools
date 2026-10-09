@@ -15,7 +15,7 @@ import { FeedLogCursor, withFeedLock } from "../lib/feed";
 import { isVisibleToAgent } from "../lib/filter";
 import { formatEventPretty } from "../lib/format-pretty";
 import { deriveMainAgentId, isMainId } from "../lib/id-gen";
-import { announceJoinIfNew, announceLeave, leaveReasonOf } from "../lib/leave";
+import { announceLeave, leaveReasonOf, logInAndAnnounceJoin } from "../lib/leave";
 import { onShutdown } from "../lib/lifecycle";
 import { createListenerFilter } from "../lib/listener-filter";
 import { formatReadyEvent, loginStderrAllowed, writeLoginJsonLine } from "../lib/login-io";
@@ -403,16 +403,12 @@ async function emitLoggedIn({
     mode: "stream" | "once";
     loginId: string;
 }): Promise<void> {
-    const { appendFeed, readFeed } = await import("../lib/feed");
-    const before = await readFeed(paths);
-    await appendFeed(paths, {
-        type: "logged_in",
+    await logInAndAnnounceJoin(paths, {
         agent_id: record.agent_id,
         agent_name: record.agent_name,
         mode,
         login_id: loginId,
     });
-    await announceJoinIfNew(paths, { agent_id: record.agent_id, agent_name: record.agent_name, before });
 }
 
 async function emitLoggedOut({

@@ -100,6 +100,7 @@ export async function messageCommand(alias: TurnProvider, query: string, parts: 
                 quiet: flags.quiet,
                 sentAt,
                 baselineTurnStartedAt: baselineStartFor(baseline, delivery.sessionId),
+                sentText: text,
                 embed: { delivery },
             });
             return;

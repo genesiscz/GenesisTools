@@ -94,6 +94,11 @@ export function recordedSessionIdOf(input: {
     const { record } = input;
     const since = Date.parse(record.createdAt) - JOURNAL_START_SLACK_MS;
     const inSession = (entry: SessionCmuxRefs): boolean => {
+        // Another agent in the same surface or tmux session is not this record's agent.
+        if (entry.provider !== undefined && entry.provider !== record.agent) {
+            return false;
+        }
+
         if (record.tmuxSession) {
             return entry.tmuxPane !== null && input.tmuxPanes.includes(entry.tmuxPane);
         }
@@ -162,6 +167,45 @@ async function tmuxPaneProblem(
     }
 
     return null;
+}
+
+/**
+ * What `--kill-tmux` may kill, checked right before the kill: the session id (`$3`) of the session that still has
+ * the recorded name AND the recorded creation time. Another session that took the name after this one ended is
+ * never killed. A record from before creation times were stored is killed by its exact name.
+ */
+async function tmuxKillTarget(
+    record: CloseSubject,
+    session: string,
+    io: Pick<SessionCloseIO, "tmuxPanes">
+): Promise<{ kind: "kill"; target: string } | { kind: "skip"; note: string; leftBehind: boolean }> {
+    const listing = await io.tmuxPanes(session);
+
+    if (!listing.ok) {
+        return {
+            kind: "skip",
+            leftBehind: true,
+            note: `tmux session ${session} was not killed: it could not be checked (${listing.reason})`,
+        };
+    }
+
+    const live = listing.items[0];
+
+    if (!live) {
+        return { kind: "skip", leftBehind: false, note: `tmux session ${session} is already gone` };
+    }
+
+    const recorded = record.tmuxSessionCreatedMs;
+
+    if (recorded !== undefined && recorded !== null && live.sessionCreatedMs !== recorded) {
+        return {
+            kind: "skip",
+            leftBehind: false,
+            note: `tmux session ${session} is now a different session (created ${new Date(live.sessionCreatedMs).toISOString()}); it was not killed`,
+        };
+    }
+
+    return { kind: "kill", target: live.sessionId ?? session };
 }
 
 /** The open record whose surface UUID is this live surface's, if any. A ref never decides: refs renumber after a restart. */
@@ -620,14 +664,21 @@ async function closeTarget(input: {
 
     if (record?.tmuxSession) {
         if (options.killTmux) {
-            const killed = await io.killTmux(record.tmuxSession);
-            report.steps.tmuxKilled = killed.ok;
+            const target = await tmuxKillTarget(record, record.tmuxSession, io);
 
-            if (!killed.ok) {
-                tmuxLeftBehind = true;
-                report.notes.push(
-                    `tmux session ${record.tmuxSession} may still run (${killed.reason}); end it with tmux kill-session -t ${record.tmuxSession}`
-                );
+            if (target.kind === "kill") {
+                const killed = await io.killTmux(target.target);
+                report.steps.tmuxKilled = killed.ok;
+
+                if (!killed.ok) {
+                    tmuxLeftBehind = true;
+                    report.notes.push(
+                        `tmux session ${record.tmuxSession} may still run (${killed.reason}); end it with tmux kill-session -t ${record.tmuxSession}`
+                    );
+                }
+            } else {
+                tmuxLeftBehind = target.leftBehind;
+                report.notes.push(target.note);
             }
         } else {
             // The closed record leaves the open list, so a second `close --kill-tmux` cannot find it: name tmux itself.

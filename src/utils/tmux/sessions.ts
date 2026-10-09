@@ -381,6 +381,8 @@ export interface TmuxPaneInfo {
     sessionCreatedMs: number;
     /** The active pane of the session's active window: what an attached client displays. */
     visible: boolean;
+    /** The session's id (`$3`): unique while the tmux server runs, unlike its name. */
+    sessionId?: string;
 }
 
 export interface TmuxClientInfo {
@@ -444,11 +446,12 @@ export async function listTmuxPanes(session?: string): Promise<TmuxListing<TmuxP
         "#{session_created}",
         "#{window_active}",
         "#{pane_active}",
+        "#{session_id}",
     ]);
 
     return tmuxListing(
         ["list-panes", ...scope, "-F", format],
-        ([pane, name, tty, created, windowActive, paneActive]) =>
+        ([pane, name, tty, created, windowActive, paneActive, sessionId]) =>
             pane && name
                 ? {
                       pane,
@@ -456,6 +459,7 @@ export async function listTmuxPanes(session?: string): Promise<TmuxListing<TmuxP
                       tty: tty || null,
                       sessionCreatedMs: Number(created) * 1000,
                       visible: windowActive === "1" && paneActive === "1",
+                      ...(sessionId ? { sessionId } : {}),
                   }
                 : null
     );
@@ -796,7 +800,9 @@ export async function ensureTmuxServerPersists(tmuxBin?: string): Promise<void> 
  * within the shared deadline does not.
  */
 export async function killTmuxSessionExact(sessionName: string): Promise<{ ok: true } | { ok: false; reason: string }> {
-    const result = await runTmux([resolveTmuxBin(), "kill-session", "-t", `=${sessionName}`]);
+    // A session id (`$3`) names one session for the server's lifetime; a name is matched exactly.
+    const target = sessionName.startsWith("$") ? sessionName : `=${sessionName}`;
+    const result = await runTmux([resolveTmuxBin(), "kill-session", "-t", target]);
     const stderr = result.stderr?.trim() ?? "";
 
     if (result.exitCode === 0 || (result.exitCode !== null && TMUX_ABSENT.test(stderr))) {

@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as delivery from "@app/ai/lib/agent-message/delivery";
 import { codexNativeLinesToTurns } from "@genesiscz/utils/ai/transcripts/codex";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
@@ -32,6 +35,7 @@ import {
     WAIT_EXIT_DONE,
     WAIT_EXIT_STALLED,
     WAIT_EXIT_TIMEOUT,
+    waitCommand,
 } from "./wait";
 
 describe("wait exit codes", () => {
@@ -507,5 +511,57 @@ describe("message --wait with a bad wait flag", () => {
 
         expect(deliver).toHaveBeenCalledTimes(1);
         expect(process.exitCode).toBe(1);
+    });
+});
+
+describe("message --wait --stream on a reply that is already being written", () => {
+    afterEach(() => {
+        mock.restore();
+        process.exitCode = 0;
+    });
+
+    it("prints the whole reply, including the text written before the stream was primed", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-wait-partial-"));
+        const file = join(dir, "partial.jsonl");
+        const sentAt = Date.now() - 2_000;
+        const at = (ms: number) => new Date(sentAt + ms).toISOString();
+        const line = (record: Record<string, unknown>) => `${SafeJSON.stringify(record, { strict: true })}\n`;
+        const assistant = (ms: number, text: string, stop: string | null) =>
+            line({
+                type: "assistant",
+                timestamp: at(ms),
+                message: { id: "msg_reply", role: "assistant", content: [{ type: "text", text }], stop_reason: stop },
+            });
+        // The answering turn began after the send and has written its first part when the wait starts.
+        writeFileSync(
+            file,
+            line({ type: "user", timestamp: at(100), message: { role: "user", content: "the question" } }) +
+                assistant(200, "first part", null)
+        );
+        const stdout: string[] = [];
+        spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array, ...rest: unknown[]) => {
+            stdout.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+            // A flush waits for the write callback (the last argument when one is given).
+            const done = rest.at(-1);
+
+            if (typeof done === "function") {
+                done(null);
+            }
+
+            return true;
+        });
+        const finish = setTimeout(() => appendFileSync(file, assistant(300, "second part", "end_turn")), 100);
+
+        try {
+            await waitCommand("claude", file, { stream: true, sentAt, timeout: "10", stallTimeout: "0" });
+        } finally {
+            clearTimeout(finish);
+            rmSync(dir, { recursive: true, force: true });
+        }
+
+        const printed = stdout.join("");
+        expect(process.exitCode).toBe(0);
+        expect(printed).toContain("first part");
+        expect(printed).toContain("second part");
     });
 });

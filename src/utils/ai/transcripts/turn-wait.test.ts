@@ -167,6 +167,37 @@ describe("waitForTurn", () => {
         expect(turnAnswers(120, { turnStartedAfter: 90, turnNewerThan: 100 })).toBe(true);
     });
 
+    it("with turnNewerThan, a Grok reply that opened in the baseline's very second counts by its prompt", async () => {
+        // Grok stamps whole seconds: the pre-send turn and the reply both opened at 10_000.
+        const second = 10_000;
+        const turn = (state: ActivityState, lastEventAt: number, prompt: string): TurnSnapshot => ({
+            ...snap(state, lastEventAt, second),
+            turnPrompt: prompt,
+        });
+        const reader = script(
+            turn("AWAITING-INPUT", second, "earlier question"),
+            turn("RUNNING", second, "the sent message"),
+            turn("AWAITING-INPUT", second, "the sent message")
+        );
+        const window = { turnStartedAfter: second - 500, turnNewerThan: second, prompt: "the sent message" };
+        // A deadline, so a regression fails as a timeout instead of waiting for ever.
+        const result = await waitForTurn({
+            read: reader.read,
+            next: true,
+            ...window,
+            timeoutMs: 10_000,
+            pollMs: 1000,
+            ...clock(),
+        });
+
+        expect(result.outcome).toBe("done");
+        expect(result.snapshot?.turnPrompt).toBe("the sent message");
+        // The pre-send turn itself never counts, and without a prompt an equal start stays excluded.
+        expect(turnAnswers(second, window, "earlier question")).toBe(false);
+        expect(turnAnswers(second, window, "the  sent message ")).toBe(true);
+        expect(turnAnswers(second, { ...window, prompt: undefined }, "the sent message")).toBe(false);
+    });
+
     it("with turnStartedAfter, a turn whose start is outside the tail still counts", async () => {
         const reader = script(snap("RUNNING", 90, null), snap("AWAITING-INPUT", 100, null));
         const result = await waitForTurn({

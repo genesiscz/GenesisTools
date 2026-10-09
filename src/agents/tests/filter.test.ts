@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { appendFeed, readFeed } from "../lib/feed";
 import { filterForAgent, isVisibleToAgent } from "../lib/filter";
-import { announceLeave, leaveReasonOf, presentAgents, remainingAgentNames } from "../lib/leave";
+import { announceLeave, leaveReasonOf, logInAndAnnounceJoin, presentAgents, remainingAgentNames } from "../lib/leave";
 import { ensureSessionDir, sessionPaths } from "../lib/paths";
 import type { AgentRecord, FeedEvent } from "../lib/types";
 
@@ -380,6 +380,60 @@ describe("agent_left", () => {
             });
             expect(current).toMatchObject({ type: "agent_left", login_id: "login-new" });
             expect(presentAgents(await readFeed(paths)).has("agt_alpha")).toBe(false);
+        });
+    });
+
+    test("a replacement login announces its join whenever the old login's leave landed before its logged_in", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-join-race-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            for (const [round, order] of ["leave-first", "login-first", "together"].entries()) {
+                const paths = sessionPaths(`join-race-${round}`);
+                ensureSessionDir(paths);
+                await logInAndAnnounceJoin(paths, {
+                    agent_id: "agt_alpha",
+                    agent_name: "alpha",
+                    mode: "stream",
+                    login_id: "old",
+                });
+                const leave = () =>
+                    announceLeave(paths, {
+                        agent_id: "agt_alpha",
+                        agent_name: "alpha",
+                        reason: "signal",
+                        login_id: "old",
+                    });
+                const login = () =>
+                    logInAndAnnounceJoin(paths, {
+                        agent_id: "agt_alpha",
+                        agent_name: "alpha",
+                        mode: "stream",
+                        login_id: "new",
+                    });
+
+                if (order === "leave-first") {
+                    await leave();
+                    await login();
+                } else if (order === "login-first") {
+                    await login();
+                    await leave();
+                } else {
+                    await Promise.all([leave(), login()]);
+                }
+
+                const events = await readFeed(paths);
+                const newLogin = events.findIndex((event) => event.type === "logged_in" && event.login_id === "new");
+                const leftBefore = events
+                    .slice(0, newLogin)
+                    .some((event) => event.type === "agent_left" && event.agent_id === "agt_alpha");
+                const joinedAfter = events
+                    .slice(newLogin + 1)
+                    .some((event) => event.type === "agent_joined" && event.agent_id === "agt_alpha");
+
+                expect({ order, present: presentAgents(events).has("agt_alpha") }).toEqual({ order, present: true });
+                // Peers that were told alpha left are told it is back.
+                expect({ order, joinedAfter }).toEqual({ order, joinedAfter: leftBefore });
+            }
         });
     });
 });

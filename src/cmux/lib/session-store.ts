@@ -29,6 +29,8 @@ export interface SessionCreatedRecord {
     tmuxSession: string | null;
     /** The tmux pane (`%41`) the agent runs in; the exit command targets it. Absent on older lines. */
     tmuxPane?: string | null;
+    /** When the tmux session was created (`session_created`, ms): `--kill-tmux` kills only that session. */
+    tmuxSessionCreatedMs?: number | null;
     /** The shell that runs the agent writes its pid here. */
     pidFile: string;
     command: string;

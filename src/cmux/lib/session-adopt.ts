@@ -289,6 +289,7 @@ function adoptedFrom({ entry, live, tmux }: ResolvedEntry, agent: SessionAgentId
         tmuxSession: tmux?.session ?? null,
         // The exit command targets this pane, never the session's current one: the user may switch panes.
         tmuxPane: tmux?.pane ?? null,
+        tmuxSessionCreatedMs: tmux?.sessionCreatedMs ?? null,
         pidFile: "",
         command: "",
         createdAt: new Date(entry.at).toISOString(),

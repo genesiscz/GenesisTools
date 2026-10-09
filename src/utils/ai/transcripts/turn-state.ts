@@ -52,6 +52,11 @@ export interface TurnSnapshot {
      * tell the turn that answers its message from one that was already running when the message was queued.
      */
     turnStartedAt: number | null;
+    /**
+     * Grok only: the text of the prompt that opened the newest turn. Grok stamps whole seconds, so two turns that
+     * open in the same second share `turnStartedAt`; the prompt tells the one a sent message opened apart.
+     */
+    turnPrompt?: string;
     /** The newer of `lastEventAt` and the file's modification time. */
     lastActivityAt: number;
     /** `now` minus `lastActivityAt`. */
@@ -136,6 +141,7 @@ function snapshotOf({
     endedTurn,
     interrupted = false,
     turnStartedAt,
+    turnPrompt,
 }: {
     input: TurnStateInput;
     events: ActivityEvent[];
@@ -145,6 +151,7 @@ function snapshotOf({
     endedTurn: boolean;
     interrupted?: boolean;
     turnStartedAt: number | null;
+    turnPrompt?: string;
 }): TurnSnapshot {
     const lastEventAt = events.at(-1)?.ts ?? null;
     const lastActivityAt = Math.max(lastEventAt ?? 0, input.lastModified);
@@ -164,6 +171,7 @@ function snapshotOf({
         interrupted,
         lastEventAt,
         turnStartedAt,
+        ...(turnPrompt !== undefined ? { turnPrompt } : {}),
         lastActivityAt,
         silenceMs: input.now - lastActivityAt,
     };
@@ -370,6 +378,7 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
     let ended = false;
     let question: string | null = null;
     let turnStartedAt: number | null = null;
+    let turnPrompt: string | undefined;
     let previousKind: string | null = null;
     // toolCallId → question text, until a `tool_call_update` with a terminal status answers it.
     const open = new Map<string, string>();
@@ -384,6 +393,11 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
         // A prompt arrives as several chunks: the first one opens the turn.
         if (parsed.kind === "user_message_chunk" && previousKind !== "user_message_chunk") {
             turnStartedAt = parsed.ts;
+            turnPrompt = "";
+        }
+
+        if (parsed.kind === "user_message_chunk") {
+            turnPrompt = (turnPrompt ?? "") + grokText(parsed.update.content);
         }
 
         previousKind = parsed.kind;
@@ -427,6 +441,7 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
         question: question || null,
         endedTurn: ended || waiting,
         turnStartedAt,
+        turnPrompt,
     });
 }
 

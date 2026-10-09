@@ -1,6 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
-import { appendFeed, appendFeedWhen } from "./feed";
-import type { AgentLeftEvent, FeedEvent, SessionPaths } from "./types";
+import { appendFeedEvents, appendFeedWhen, type NonMessageInput } from "./feed";
+import type { AgentLeftEvent, AgentMode, FeedEvent, SessionPaths } from "./types";
 
 const log = logger.child({ component: "agents:leave" });
 
@@ -46,26 +46,41 @@ function endsCurrentLogin(current: { loginId: string | undefined } | undefined, 
 }
 
 /**
- * Log an agent in, and announce `agent_joined` when it was not on the bus. Called with the feed as it was
- * BEFORE this login, so a `--once` receiver's next cycle (already present) stays silent.
+ * Log an agent in, and announce `agent_joined` when it was not on the bus, in ONE feed reservation: presence is
+ * read from the feed as it is right before `logged_in` is written. A presence snapshot taken earlier could miss an
+ * old listener's leave that landed in between, and then the reopened channel would never be announced. A
+ * `--once` receiver's next cycle (still present) stays silent.
  */
-export async function announceJoinIfNew(
+export async function logInAndAnnounceJoin(
     paths: SessionPaths,
-    input: { agent_id: string; agent_name: string; before: readonly FeedEvent[] }
-): Promise<boolean> {
-    const present = presentAgents(input.before);
+    input: { agent_id: string; agent_name: string; mode: AgentMode; login_id: string }
+): Promise<{ joined: boolean }> {
+    const appended = await appendFeedEvents(paths, (events) => {
+        const present = presentAgents(events);
+        const loggedIn: NonMessageInput = {
+            type: "logged_in",
+            agent_id: input.agent_id,
+            agent_name: input.agent_name,
+            mode: input.mode,
+            login_id: input.login_id,
+        };
 
-    if (present.has(input.agent_id)) {
-        return false;
-    }
+        if (present.has(input.agent_id)) {
+            return [loggedIn];
+        }
 
-    await appendFeed(paths, {
-        type: "agent_joined",
-        agent_id: input.agent_id,
-        agent_name: input.agent_name,
-        present: [...present.values()],
+        return [
+            loggedIn,
+            {
+                type: "agent_joined",
+                agent_id: input.agent_id,
+                agent_name: input.agent_name,
+                present: [...present.values()],
+            },
+        ];
     });
-    return true;
+
+    return { joined: appended.some((event) => event.type === "agent_joined") };
 }
 
 /**

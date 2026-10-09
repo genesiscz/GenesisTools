@@ -34,6 +34,8 @@ export interface SessionNewResult {
     tmuxSession: string | null;
     /** The tmux pane the agent runs in (`%41`), so close types its exit there and nowhere else. */
     tmuxPane: string | null;
+    /** When the tmux session was created, so `--kill-tmux` never kills a later session with the same name. */
+    tmuxSessionCreatedMs: number | null;
     cwd: string;
     command: string;
 }
@@ -68,8 +70,12 @@ export interface SessionNewIO {
     runJSON<T>(args: string[]): Promise<T>;
     runOk(args: string[]): Promise<void>;
     shell(): string;
-    /** Start the detached tmux shell; returns its pane id, or null when tmux did not list it. */
-    createTmuxShell(session: string, cwd: string, shell: string): Promise<string | null>;
+    /** Start the detached tmux shell; returns its pane and creation time, or null when tmux did not list it. */
+    createTmuxShell(
+        session: string,
+        cwd: string,
+        shell: string
+    ): Promise<{ pane: string; sessionCreatedMs: number } | null>;
     sendTmuxKeys(session: string, command: string): Promise<void>;
     killTmuxSession(session: string): Promise<void>;
     repoFs: RepoFs;
@@ -337,6 +343,7 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
     const windowRef = await resolveSessionWindow(io);
     let tmuxSession: string | null = null;
     let tmuxPane: string | null = null;
+    let tmuxSessionCreatedMs: number | null = null;
     let command = agentLine;
     const name = input.name?.trim() || undefined;
     let workspace: string;
@@ -348,7 +355,9 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
         if (input.viaTmux) {
             const session = devTmuxSessionName(cwd, input.name, io.nonce());
             const shell = assertShellExecutable(io.shell());
-            tmuxPane = await io.createTmuxShell(session, cwd, shell);
+            const shellPane = await io.createTmuxShell(session, cwd, shell);
+            tmuxPane = shellPane?.pane ?? null;
+            tmuxSessionCreatedMs = shellPane?.sessionCreatedMs ?? null;
             // Owned from here on: any later failure must kill it.
             tmuxSession = session;
             await io.sendTmuxKeys(session, agentLine);
@@ -388,7 +397,18 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
         await io.ensureTitle({ workspace, window, title: name });
     }
 
-    return { agent: input.agent, workspace, surface, window, ...ids, tmuxSession, tmuxPane, cwd, command };
+    return {
+        agent: input.agent,
+        workspace,
+        surface,
+        window,
+        ...ids,
+        tmuxSession,
+        tmuxPane,
+        tmuxSessionCreatedMs,
+        cwd,
+        command,
+    };
 }
 
 async function spawnTmux(argv: string[]): Promise<void> {
@@ -468,7 +488,7 @@ export function liveSessionIO(): SessionNewIO {
                 return null;
             }
 
-            return panes.items[0].pane;
+            return { pane: panes.items[0].pane, sessionCreatedMs: panes.items[0].sessionCreatedMs };
         },
         sendTmuxKeys: async (session, command) => {
             const tmux = resolveTmuxBin();

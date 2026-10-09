@@ -23,7 +23,7 @@ function ensureFeedFile(path: string): void {
 
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
 export type FeedEventInput = DistributiveOmit<FeedEvent, "seq" | "ts">;
-type NonMessageInput = Exclude<FeedEventInput, { type: "message" }>;
+export type NonMessageInput = Exclude<FeedEventInput, { type: "message" }>;
 export type MessageEventInput = DistributiveOmit<MessageEvent, "seq" | "ts" | "message_id">;
 
 export async function readFeed(paths: SessionPaths): Promise<FeedEvent[]> {
@@ -174,21 +174,38 @@ export async function appendFeedWhen(
     paths: SessionPaths,
     build: (existing: readonly FeedEvent[]) => NonMessageInput | null
 ): Promise<FeedEvent | null> {
+    const [appended] = await appendFeedEvents(paths, (existing) => {
+        const event = build(existing);
+        return event ? [event] : [];
+    });
+
+    return appended ?? null;
+}
+
+/**
+ * Append the events `build` returns for the feed as it is under the feed lock, in order and with consecutive
+ * seqs. Nothing else is written between the read and the last of them.
+ */
+export async function appendFeedEvents(
+    paths: SessionPaths,
+    build: (existing: readonly FeedEvent[]) => NonMessageInput[]
+): Promise<FeedEvent[]> {
     return withFileLock(
         `${paths.feedPath}.lock`,
         async () => {
             ensureFeedFile(paths.feedPath);
             const existing = await readFeed(paths);
-            const event = build(existing);
+            let seq = nextSeqFromEvents(existing);
+            const appended: FeedEvent[] = [];
 
-            if (!event) {
-                return null;
+            for (const event of build(existing)) {
+                const fullEvent = { ...event, seq, ts: new Date().toISOString() } as unknown as FeedEvent;
+                appendLine(paths.feedPath, fullEvent);
+                appended.push(fullEvent);
+                seq += 1;
             }
 
-            const seq = nextSeqFromEvents(existing);
-            const fullEvent = { ...event, seq, ts: new Date().toISOString() } as unknown as FeedEvent;
-            appendLine(paths.feedPath, fullEvent);
-            return fullEvent;
+            return appended;
         },
         FEED_LOCK_TIMEOUT_MS
     );

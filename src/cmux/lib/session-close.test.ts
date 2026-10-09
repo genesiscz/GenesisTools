@@ -673,3 +673,75 @@ test("a close of a name another agents command holds is refused as in use, and t
     expect(report).toMatchObject({ outcome: "refused", reason: "in-use" });
     expect(busy.calls).toEqual([]);
 });
+
+test("a recorded tmux session's turn comes from its own pane and its own agent, never a second pane's or another agent's", () => {
+    const start = Date.parse("2026-10-08T17:00:00.000Z");
+    const record = created({ tmuxSession: "cmux-app-ab12cd", tmuxPane: "%41" });
+    const refs = [
+        journal({ sessionId: "codex-in-41", at: start + 1_000, tmuxPane: "%41", provider: "codex" }),
+        // Newer: a grok the user started in the same pane after codex, and a codex in a second pane.
+        journal({ sessionId: "grok-in-41", at: start + 5_000, tmuxPane: "%41", provider: "grok" }),
+        journal({ sessionId: "codex-in-42", at: start + 9_000, tmuxPane: "%42", provider: "codex" }),
+    ];
+
+    // The live adapter passes only the recorded pane (%41).
+    expect(recordedSessionIdOf({ record, refs, tmuxPanes: ["%41"] })).toBe("codex-in-41");
+    // A legacy record without a pane: any pane of its session, still only its own agent.
+    expect(
+        recordedSessionIdOf({
+            record: created({ tmuxSession: "cmux-app-ab12cd" }),
+            refs,
+            tmuxPanes: ["%41", "%42"],
+        })
+    ).toBe("codex-in-42");
+});
+
+test("--kill-tmux kills the recorded tmux session by id, never a newer session that took its name", async () => {
+    const created_ms = 1_760_000_000_000;
+    const lines = [created({ tmuxSession: "cmux-app-ab12cd", tmuxSessionCreatedMs: created_ms })];
+    const listing = (sessionCreatedMs: number): TmuxListing<TmuxPaneInfo> => ({
+        ok: true,
+        items: [
+            {
+                pane: "%41",
+                session: "cmux-app-ab12cd",
+                tty: "/dev/ttys041",
+                sessionCreatedMs,
+                visible: true,
+                sessionId: "$7",
+            },
+        ],
+    });
+
+    // The record has no pane, so the only tmux lookup is the one right before the kill: a newer session has the name.
+    const replaced = fake({
+        lines,
+        runningChecks: 1,
+        tmuxPanes: () => listing(created_ms + 5_000),
+    });
+    replaced.io.killTmux = async () => {
+        throw new Error("tmux kill-session must not run on a replacement session");
+    };
+    const report = await closeSession("codex-app-ab12cd", { graceMs: 1_000, killTmux: true }, replaced.io);
+    expect(report).toMatchObject({ outcome: "closed", steps: { tmuxKilled: false } });
+    expect(report.notes.join(" ")).toContain("now a different session");
+
+    // tmux does not answer before the kill: nothing is killed and the close stays partial.
+    const unknown = fake({
+        lines,
+        runningChecks: 1,
+        tmuxPanes: () => ({ ok: false, reason: "tmux list-panes did not answer" }),
+    });
+    unknown.io.killTmux = async () => {
+        throw new Error("tmux kill-session must not run unchecked");
+    };
+    expect((await closeSession("codex-app-ab12cd", { graceMs: 1_000, killTmux: true }, unknown.io)).outcome).toBe(
+        "partial"
+    );
+
+    // The control: the same session is killed, by its id.
+    const same = fake({ lines, runningChecks: 1, tmuxPanes: () => listing(created_ms) });
+    const ok = await closeSession("codex-app-ab12cd", { graceMs: 1_000, killTmux: true }, same.io);
+    expect(ok).toMatchObject({ outcome: "closed", steps: { tmuxKilled: true } });
+    expect(same.calls).toContain("kill $7");
+});
