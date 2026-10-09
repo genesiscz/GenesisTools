@@ -515,6 +515,113 @@ final class WidgetJournalTests: XCTestCase {
     }
 }
 
+/// A model over a fake `tools` that serves one snapshot (one session, key `k1`) and logs every action it receives.
+final class WidgetConnectionTests: XCTestCase {
+    private struct Fixture {
+        let directory: URL
+        let actions: URL
+        let model: WidgetModel
+        let domain: String
+    }
+
+    @MainActor
+    private func fixture(watchExits: Bool = false) throws -> Fixture {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "widget-connection-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let snapshot = """
+            {"version":1,"state":{"version":1,"revision":0,"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":false,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":""},"assets":{},"drafts":{},"outgoing":[]},"sessions":[{"key":"k1","target":{"hostId":"local","provider":"codex","sessionId":"s1","sourceHome":"","cwd":"/"},"title":"Fixture","project":"Fixture","activityAt":1,"status":"recent","pinned":true,"visible":true,"hiddenByFilter":false}],"cards":[],"manifests":{},"errors":[]}
+            """
+        try snapshot.write(to: directory.appendingPathComponent("snapshot.json"), atomically: true, encoding: .utf8)
+        let actions = directory.appendingPathComponent("actions.jsonl")
+        let script = directory.appendingPathComponent("tools")
+        let watch = watchExits ? "exit 3" : "cat > /dev/null; exit 0"
+        try """
+        #!/bin/sh
+        case "$*" in
+          *watch*) cat '\(directory.path)/snapshot.json'; printf '\\n'; \(watch) ;;
+          *snapshot*) cat '\(directory.path)/snapshot.json'; exit 0 ;;
+        esac
+        while [ "$#" -gt 0 ]; do
+          if [ "$1" = "--input" ]; then shift; cat "$1" >> '\(actions.path)'; printf '\\n' >> '\(actions.path)'; fi
+          shift
+        done
+        printf '{}'
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        let model = WidgetModel(
+            binaryPath: script.path, stateRoot: directory.path, defaults: defaults,
+            appearance: NativeSettingsAppearance(
+                defaults: defaults, notificationNamespace: domain, observeExternalChanges: false))
+        return Fixture(directory: directory, actions: actions, model: model, domain: domain)
+    }
+
+    private func cleanUp(_ fixture: Fixture) {
+        UserDefaults(suiteName: fixture.domain)?.removePersistentDomain(forName: fixture.domain)
+        do { try FileManager.default.removeItem(at: fixture.directory) } catch { XCTFail("Fixture cleanup: \(error)") }
+    }
+
+    @MainActor
+    private func waitFor(_ condition: () throws -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while try !condition() && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    private func actionNames(_ fixture: Fixture) throws -> [String] {
+        guard FileManager.default.fileExists(atPath: fixture.actions.path) else { return [] }
+        return try String(contentsOf: fixture.actions, encoding: .utf8).split(separator: "\n").map { line in
+            let request = try JSONDecoder().decode(WidgetJSON.self, from: Data(line.utf8))
+            guard case .object(let fields) = request, case .string(let name) = fields["action"] else { return "?" }
+            return name
+        }
+    }
+
+    /// Clearing the composer and pressing Edit at once: the debounced empty save must reach the hub before the
+    /// edit, never after it, where it would wipe the restored message.
+    @MainActor
+    func testClearingTheDraftAndEditingAtOnceKeepsTheRestoredMessage() async throws {
+        let fixture = try fixture()
+        defer { cleanUp(fixture) }
+        let model = fixture.model
+        defer { model.stop() }
+        model.startSettings()
+        try await waitFor { model.selectedKey == "k1" }
+        XCTAssertEqual(model.selectedKey, "k1")
+        let message = try JSONDecoder().decode(
+            WidgetOutgoing.self,
+            from: Data(
+                """
+                {"id":"m1","target":{"hostId":"local","provider":"codex","sessionId":"s1","sourceHome":"","cwd":"/"},
+                "payload":{"kind":"followup","text":"Restore me"},"assetIds":["a1"],"createdAt":1,"sequence":1,
+                "state":"failed"}
+                """.utf8))
+        model.setText("")
+        model.editOutgoing(message)
+        try await waitFor { try self.actionNames(fixture).contains("edit") && model.notice != nil }
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(try actionNames(fixture), ["draft-text", "edit"])
+        XCTAssertEqual(model.drafts["k1"], WidgetDraft(text: "Restore me", assetIds: ["a1"]))
+    }
+
+    @MainActor
+    func testAWatcherThatStopsLeavesReconnectAvailableBesideTheLastSnapshot() async throws {
+        let fixture = try fixture(watchExits: true)
+        defer { cleanUp(fixture) }
+        let model = fixture.model
+        defer { model.stop() }
+        model.start()
+        try await waitFor { model.connectionLost }
+        XCTAssertTrue(model.connectionLost)
+        XCTAssertNotNil(model.snapshot, "the stale snapshot stays, so the view cannot rely on snapshot == nil")
+        model.error = nil
+        XCTAssertTrue(model.connectionLost, "dismissing the error keeps Reconnect")
+    }
+}
+
 final class WidgetOutgoingTests: XCTestCase {
     private func message(_ index: Int, state: String, payload: String? = nil) throws -> WidgetOutgoing {
         let json = """

@@ -4,7 +4,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { LockTimeoutError, withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { mutateWidgetState, readWidgetState, widgetRoot } from "../widget/storage";
-import { type WidgetOutgoing, type WidgetState, widgetSessionKey } from "../widget/types";
+import { type WidgetAsset, type WidgetOutgoing, type WidgetState, widgetSessionKey } from "../widget/types";
 import { messageReadiness, nextOutgoingByConversation } from "./outbox";
 import { serializeWidgetMessage } from "./serialize";
 
@@ -16,8 +16,9 @@ export interface DispatchReceipt {
     entryId?: string;
 }
 export interface OutboxDispatcher {
-    validate(message: WidgetOutgoing): Promise<void>;
-    dispatch(message: WidgetOutgoing, text: string): Promise<DispatchReceipt>;
+    /** `assets`: the message's attachments, resolved from the widget state it was serialized from. */
+    validate(message: WidgetOutgoing, assets: WidgetAsset[]): Promise<void>;
+    dispatch(message: WidgetOutgoing, text: string, assets: WidgetAsset[]): Promise<DispatchReceipt>;
 }
 
 export async function processWidgetOutbox({
@@ -61,9 +62,10 @@ export async function processWidgetOutbox({
 
                     let text: string;
                     const assetsBefore = SafeJSON.stringify(first.assetIds.map((id) => current.assets[id]));
+                    const assets = first.assetIds.flatMap((id) => current.assets[id] ?? []);
                     try {
                         text = await serializeWidgetMessage(first, current);
-                        await dispatcher.validate(first);
+                        await dispatcher.validate(first, assets);
                     } catch (error) {
                         // A shutdown during the checks is not a verdict on the message: it stays queued.
                         if (signal?.aborted) {
@@ -99,7 +101,7 @@ export async function processWidgetOutbox({
                     }
 
                     try {
-                        const receipt = await dispatcher.dispatch(first, text);
+                        const receipt = await dispatcher.dispatch(first, text, assets);
                         await updateOutgoing(directory, first.id, (message) => {
                             message.state = receipt.delivered
                                 ? "sent"

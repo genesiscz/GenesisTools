@@ -11,10 +11,12 @@ import { type DecisionRecord, kindOf, readDecisions } from "@app/question/lib/de
 import { answerInboxDecision } from "@app/question/lib/inbox/answer";
 import { waitingBlock } from "@app/question/lib/inbox/load";
 import { type AskDeps, answerAskForm, checkAskAnswer, getAskForm } from "@app/question/lib/pending/ask";
+import { attachImageFiles } from "@app/question/lib/pending/form";
+import type { AskAnswer, AskForm } from "@app/question/lib/pending/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
-import type { WidgetOutgoing } from "../widget/types";
+import type { WidgetAsset, WidgetOutgoing } from "../widget/types";
 import type { OutboxDispatcher } from "./engine";
 
 async function runWidgetDelivery({ args, signal }: { args: string[]; signal?: AbortSignal }) {
@@ -95,6 +97,23 @@ function holdsThisAnswer(row: DecisionRecord, payload: DecisionPayload): boolean
     );
 }
 
+/**
+ * The widget's image attachments become images of the form's first item that accepts pasted images, before the
+ * answer is checked and recorded. Otherwise an image-only answer to such an item fails as incomplete, because the
+ * images reach the form only as media context, which never answers an item.
+ */
+function formAnswersWithImages(form: AskForm, answers: AskAnswer[], assets: WidgetAsset[]): AskAnswer[] {
+    const item = form.items.find((entry) => entry.allowImagePaste);
+    if (!item) {
+        return answers;
+    }
+
+    return attachImageFiles(
+        answers,
+        assets.flatMap((asset) => (asset.type === "image" ? [`${item.id}=${asset.path}`] : []))
+    );
+}
+
 export function widgetDispatcher({
     deliver: supplied,
     signal,
@@ -108,7 +127,7 @@ export function widgetDispatcher({
 } = {}): OutboxDispatcher {
     const deliver = supplied ?? { runTool: (args: string[]) => runWidgetDelivery({ args, signal }) };
     return {
-        async validate(message) {
+        async validate(message, assets) {
             const payload = message.payload;
             if (payload.kind === "decision") {
                 const row = readDecisions(files.file).find((entry) => entry.id === payload.id);
@@ -139,7 +158,7 @@ export function widgetDispatcher({
                 if ((form.sessionHint || form.id) !== message.target.sessionId) {
                     throw new Error("This question belongs to another session.");
                 }
-                const checked = checkAskAnswer(payload.id, payload.answers, ask);
+                const checked = checkAskAnswer(payload.id, formAnswersWithImages(form, payload.answers, assets), ask);
                 if (!checked.ok) {
                     throw new Error(checked.error);
                 }
@@ -147,7 +166,7 @@ export function widgetDispatcher({
                 throw new Error("Choose a specific destination session before sending this follow-up.");
             }
         },
-        async dispatch(message: WidgetOutgoing, text: string) {
+        async dispatch(message: WidgetOutgoing, text: string, assets: WidgetAsset[]) {
             const payload = message.payload;
             if (payload.kind === "form") {
                 const existing = getAskForm(payload.id, ask);
@@ -159,7 +178,7 @@ export function widgetDispatcher({
                         detail: "Question was resolved elsewhere; your submitted answer was not recorded.",
                     };
                 }
-                const answers = payload.answers.map((answer, index) => ({
+                const answers = formAnswersWithImages(existing, payload.answers, assets).map((answer, index) => ({
                     ...answer,
                     ...(index === 0 && text ? { mediaContext: text } : {}),
                 }));

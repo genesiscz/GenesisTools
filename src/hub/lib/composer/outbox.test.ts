@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
 import { postDecisions, readDecisions } from "@app/question/lib/decisions/store";
 import { postAskForm } from "@app/question/lib/pending/ask";
-import { listFormsSnapshot, openPendingStore } from "@app/question/lib/pending/store";
+import { getForm, listFormsSnapshot, openPendingStore } from "@app/question/lib/pending/store";
 import * as transcripts from "@genesiscz/utils/ai/transcripts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as commands from "@genesiscz/utils/process/bounded-command";
@@ -22,7 +22,7 @@ import {
     widgetForms,
     widgetSnapshot,
 } from "../widget/snapshot";
-import { mutateWidgetState, readWidgetState } from "../widget/storage";
+import { MAX_WIDGET_STATE_BYTES, mutateWidgetState, readWidgetState } from "../widget/storage";
 import {
     shownOutgoing,
     type WidgetAsset,
@@ -310,7 +310,7 @@ describe("widget source and delivery contracts", () => {
             state: "queued",
             payload: { kind: "decision", id: one.id, number: two.number, expectedRevision: 1, option: "a" },
         });
-        await expect(dispatcher.validate(message)).rejects.toThrow("changed");
+        await expect(dispatcher.validate(message, [])).rejects.toThrow("changed");
         expect(sends).toBe(0);
         message.payload = {
             kind: "decision",
@@ -320,20 +320,20 @@ describe("widget source and delivery contracts", () => {
             option: "a",
             text: "",
         };
-        await dispatcher.validate(message);
-        const receipt = await dispatcher.dispatch(message, "");
+        await dispatcher.validate(message, []);
+        const receipt = await dispatcher.dispatch(message, "", []);
         expect(receipt.delivered).toBe(true);
         expect(receipt.certainty).toBeUndefined();
         expect(sends).toBe(1);
         expect(readDecisions(files.file).find((row) => row.id === two.id)?.state).toBe("open");
         // A delivered answer settles a repeat of the same message without typing it again.
-        await dispatcher.validate(message);
-        expect(await dispatcher.dispatch(message, "")).toMatchObject({ delivered: true, channel: "decisions" });
+        await dispatcher.validate(message, []);
+        expect(await dispatcher.dispatch(message, "", [])).toMatchObject({ delivered: true, channel: "decisions" });
         expect(sends).toBe(1);
         // Another answer to the same decision is not this message's.
-        await expect(dispatcher.validate({ ...message, payload: { ...message.payload, option: "b" } })).rejects.toThrow(
-            "changed"
-        );
+        await expect(
+            dispatcher.validate({ ...message, payload: { ...message.payload, option: "b" } }, [])
+        ).rejects.toThrow("changed");
     });
 
     test("a refused transport keeps the stored answer, and a Retry sends that same answer", async () => {
@@ -366,13 +366,13 @@ describe("widget source and delivery contracts", () => {
             state: "queued",
             payload: { kind: "decision", id: row.id, number: row.number, expectedRevision: 1, option: "b" },
         });
-        await dispatcher.validate(message);
-        expect(await dispatcher.dispatch(message, "")).toMatchObject({ delivered: false, certainty: "not-sent" });
+        await dispatcher.validate(message, []);
+        expect(await dispatcher.dispatch(message, "", [])).toMatchObject({ delivered: false, certainty: "not-sent" });
         expect(readDecisions(files.file)[0]?.state).toBe("answered");
 
         accept = true;
-        await dispatcher.validate(message);
-        expect((await dispatcher.dispatch(message, "")).delivered).toBe(true);
+        await dispatcher.validate(message, []);
+        expect((await dispatcher.dispatch(message, "", [])).delivered).toBe(true);
         expect(typed).toHaveLength(2);
         expect(readDecisions(files.file)[0]).toMatchObject({ state: "sent", option: "b" });
     });
@@ -408,8 +408,8 @@ describe("widget source and delivery contracts", () => {
             state: "queued",
             payload: { kind: "decision", id: row.id, number: row.number, expectedRevision: 1, option: "a" },
         });
-        await dispatcher.validate(message);
-        expect((await dispatcher.dispatch(message, "")).delivered).toBe(false);
+        await dispatcher.validate(message, []);
+        expect((await dispatcher.dispatch(message, "", [])).delivered).toBe(false);
         expect(readDecisions(files.file)[0]).toEqual(row);
     });
 
@@ -442,12 +442,61 @@ describe("widget source and delivery contracts", () => {
                 state: "queued",
                 payload: { kind: "form", id: form.id, answers: [{ itemId: "layout", selectedChoices: ["compact"] }] },
             });
-            await expect(dispatcher.validate(message)).rejects.toThrow("another session");
+            await expect(dispatcher.validate(message, [])).rejects.toThrow("another session");
             message.target = target;
-            await dispatcher.validate(message);
-            expect((await dispatcher.dispatch(message, "<fromImage>fixture</fromImage>")).delivered).toBe(true);
-            await expect(dispatcher.validate(message)).rejects.toThrow("already resolved");
-            expect((await dispatcher.dispatch(message, "a different answer")).delivered).toBe(false);
+            await dispatcher.validate(message, []);
+            expect((await dispatcher.dispatch(message, "<fromImage>fixture</fromImage>", [])).delivered).toBe(true);
+            await expect(dispatcher.validate(message, [])).rejects.toThrow("already resolved");
+            expect((await dispatcher.dispatch(message, "a different answer", [])).delivered).toBe(false);
+        } finally {
+            db.close();
+        }
+    });
+
+    test("an image-only answer satisfies a required image item and is recorded with the image", async () => {
+        const directory = await root();
+        const db = openPendingStore(join(directory, "questions.db"));
+        const ask = { db, eventBase: directory, logBase: directory, notify: false, env: {}, ambient: false };
+        try {
+            const form = await postAskForm(
+                {
+                    projectPath: "/fixture/project",
+                    sessionHint: target.sessionId,
+                    items: [
+                        { id: "shot", promptMarkdown: "Show the bug", allowFreeText: false, allowImagePaste: true },
+                    ],
+                },
+                ask
+            );
+            const imagePath = join(directory, "shot.png");
+            await writeFile(imagePath, createCanvas(2, 2).toBuffer("image/png"));
+            const image: WidgetAsset = {
+                id: randomUUID(),
+                type: "image",
+                name: "shot.png",
+                path: imagePath,
+                sha256: "fixture-image",
+                mimeType: "image/png",
+                width: 2,
+                height: 2,
+                bytes: 0,
+            };
+            const dispatcher = widgetDispatcher({ ask });
+            const message = widgetOutgoingSchema.parse({
+                id: randomUUID(),
+                target,
+                assetIds: [image.id],
+                sequence: 1,
+                createdAt: Date.now(),
+                state: "queued",
+                payload: { kind: "form", id: form.id, answers: [{ itemId: "shot" }] },
+            });
+            await expect(dispatcher.validate(message, [])).rejects.toThrow();
+            await dispatcher.validate(message, [image]);
+            expect((await dispatcher.dispatch(message, "<fromImage>shot</fromImage>", [image])).delivered).toBe(true);
+            const recorded = getForm(db, form.id);
+            expect(recorded?.status).toBe("answered");
+            expect(recorded?.answers?.shot?.images?.map((entry) => entry.name)).toEqual(["shot.png"]);
         } finally {
             db.close();
         }
@@ -725,6 +774,23 @@ test("malformed stored times sort as the oldest activity instead of breaking the
     const wire = SafeJSON.stringify(snapshot);
     expect(wire).not.toContain('"activityAt":null');
     expect(wire).not.toContain('"at":null');
+});
+
+test("a change that would push widget history past the read limit is refused and the stored state stays readable", async () => {
+    const directory = await root();
+    await enqueue(directory, "Kept");
+    await expect(
+        mutateWidgetState(directory, (state) => {
+            state.drafts[widgetSessionKey(target)] = { text: "small", assetIds: [] };
+            const id = randomUUID();
+            state.assets[id] = readyVideo(id, "x".repeat(MAX_WIDGET_STATE_BYTES));
+        })
+    ).rejects.toThrow("exceed 32 MiB");
+    const state = await readWidgetState(directory);
+    expect(state.outgoing.map((message) => message.payload.text)).toEqual(["Kept"]);
+    expect(Object.keys(state.assets)).toHaveLength(0);
+    await changeOutgoing({ root: directory, id: state.outgoing[0].id, action: "cancel" });
+    expect((await readWidgetState(directory)).outgoing[0].state).toBe("cancelled");
 });
 
 test("an unhinted pending form keeps its card when the widget selects the session named after it", async () => {

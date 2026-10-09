@@ -20,6 +20,9 @@ public final class WidgetModel: ObservableObject {
     private var hoverTask: Task<Void, Never>?
     @Published public var error: String?
     @Published public var drafts: [String: WidgetDraft] = [:]
+    /// The watch worker exited on its own. The snapshot is stale and nothing dispatches queued messages until
+    /// `start()` runs again, so the view keeps a Reconnect action visible even after the error is dismissed.
+    @Published public private(set) var connectionLost = false
     @Published public var formAnswers: [String: [String: WidgetFormAnswer]] = [:] {
         didSet {
             do {
@@ -196,6 +199,7 @@ public final class WidgetModel: ObservableObject {
     public func start() {
         guard watcher == nil else { return }
         stopping = false
+        connectionLost = false
         do {
             try FileManager.default.createDirectory(at: journal, withIntermediateDirectories: true)
             watcher = try ToolsLineStream(
@@ -204,6 +208,7 @@ public final class WidgetModel: ObservableObject {
                 onExit: { [weak self] exit in
                     guard let self, !self.stopping, !exit.stopped else { return }
                     self.watcher = nil
+                    self.connectionLost = true
                     self.error = "Widget connection stopped. " + exit.stderr.suffix(600)
                 })
             drainJournal()
@@ -689,25 +694,41 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    /// Runs behind every pending mutation. A draft save still waiting on its debounce is sent first, so it reaches
+    /// the hub before the edit and can never overwrite the restored text afterwards.
     public func editOutgoing(_ message: WidgetOutgoing) {
-        Task {
+        let key = snapshot?.sessions.first { $0.target.hasSameIdentity(as: message.target) }?.key ?? selectedKey
+        if draftTasks[key] != nil {
+            draftTasks[key]?.cancel()
+            draftTasks[key] = nil
+            action(["action": "draft-text", "key": .string(key), "text": .string(drafts[key]?.text ?? "")])
+        }
+        let previous = mutationTask
+        mutationTask = Task { [weak self] in
+            await previous?.value
+            guard let self else { return }
             do {
-                _ = try await call(["action": "edit", "id": .string(message.id)])
-                let key = snapshot?.sessions.first { $0.target.hasSameIdentity(as: message.target) }?.key ?? selectedKey
-                dirtyDrafts.remove(key)
-                submittedAssets.subtract(message.assetIds)
+                _ = try await self.call(["action": "edit", "id": .string(message.id)])
+                var restored = WidgetDraft(assetIds: message.assetIds)
+                if case .object(let fields) = message.payload, case .string(let text) = fields["text"] {
+                    restored.text = text
+                }
+                self.drafts[key] = restored
+                self.dirtyDrafts.remove(key)
+                self.submittedAssets.subtract(message.assetIds)
                 if case .object(let fields) = message.payload, case .string(let id) = fields["id"] {
-                    selectedCardID = (fields["kind"] == .string("form") ? "form:" : "decision:") + id
-                    submittedCards.remove(selectedCardID ?? "")
+                    self.selectedCardID = (fields["kind"] == .string("form") ? "form:" : "decision:") + id
+                    self.submittedCards.remove(self.selectedCardID ?? "")
                     if let answers = fields["answers"] {
                         let decoded = try JSONDecoder().decode(
                             [WidgetFormAnswer].self, from: JSONEncoder().encode(answers))
-                        formAnswers["form:" + id] = Dictionary(uniqueKeysWithValues: decoded.map { ($0.itemId, $0) })
+                        self.formAnswers["form:" + id] = Dictionary(
+                            uniqueKeysWithValues: decoded.map { ($0.itemId, $0) })
                     }
                 }
-                selectedKey = key
-                notice = "Message restored as a draft."
-            } catch { report(error) }
+                self.selectedKey = key
+                self.notice = "Message restored as a draft."
+            } catch { self.report(error) }
         }
     }
 

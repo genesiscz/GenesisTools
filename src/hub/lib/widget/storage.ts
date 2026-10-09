@@ -7,6 +7,9 @@ import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { type WidgetState, widgetStateSchema } from "./types";
 
+/** readWidgetState refuses a larger file, so mutateWidgetState never writes one. */
+export const MAX_WIDGET_STATE_BYTES = 32 * 1024 * 1024;
+
 export function widgetRoot(root?: string): string {
     return root ? resolve(root) : toolDataDir("hub", "widget");
 }
@@ -16,7 +19,7 @@ export async function readWidgetState(root?: string): Promise<WidgetState> {
         return widgetStateSchema.parse({});
     }
 
-    if (file.size > 32 * 1024 * 1024) {
+    if (file.size > MAX_WIDGET_STATE_BYTES) {
         throw new Error("Widget history exceeds 32 MiB; export and clean up old outgoing items");
     }
 
@@ -36,9 +39,15 @@ export async function mutateWidgetState<T>(root: string | undefined, update: (st
             }
             state.revision += 1;
             widgetStateSchema.parse(state);
+            const serialized = SafeJSON.stringify(state);
+            // A larger file could never be read again, and every later snapshot, cancel and edit would fail.
+            if (Buffer.byteLength(serialized) > MAX_WIDGET_STATE_BYTES) {
+                throw new Error("This change was not saved: widget history would exceed 32 MiB");
+            }
+
             const temporary = join(directory, `state.${randomUUID()}.tmp`);
             try {
-                await Bun.write(temporary, SafeJSON.stringify(state));
+                await Bun.write(temporary, serialized);
                 await rename(temporary, join(directory, "state.json"));
             } catch (error) {
                 try {

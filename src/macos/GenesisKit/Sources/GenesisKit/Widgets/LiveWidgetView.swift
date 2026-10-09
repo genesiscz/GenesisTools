@@ -120,6 +120,15 @@ public struct LiveWidgetView: View {
                     }.buttonStyle(.plain)
                 }
             }
+            if model.connectionLost && model.snapshot != nil {
+                HStack {
+                    Image(systemName: "bolt.horizontal.circle")
+                    Text("Disconnected. Sessions may be out of date and queued messages wait.")
+                        .font(.system(size: 11))
+                    Spacer(minLength: 4)
+                    Button("Reconnect", action: model.start).font(.caption)
+                }.foregroundStyle(.orange)
+            }
             if let errors = model.snapshot?.errors, !errors.isEmpty {
                 DisclosureGroup("Some sources are unavailable") {
                     Text(errors.joined(separator: "\n")).font(.caption).foregroundStyle(.orange)
@@ -136,7 +145,7 @@ public struct LiveWidgetView: View {
                 VStack(spacing: 12) {
                     ProgressView()
                     Text("Connecting to your local agents…").font(.callout).foregroundStyle(.secondary)
-                    if model.error != nil { Button("Reconnect", action: model.start) }
+                    if model.error != nil || model.connectionLost { Button("Reconnect", action: model.start) }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if model.selected == nil {
                 VStack(spacing: 10) {
