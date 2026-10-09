@@ -297,6 +297,49 @@ function adoptedFrom({ entry, live, tmux }: ResolvedEntry, agent: SessionAgentId
     };
 }
 
+/** What a bounded process query returned (session-close-live.ts `runBounded`). */
+export interface ProcessQuery {
+    code: number | null;
+    stdout: string;
+    stderr: string;
+    timedOut: boolean;
+}
+
+/**
+ * Is the agent still running on its tty, from `ps -t <tty> -o args=`? Only a listing that worked can say no: a
+ * clean listing without the agent, `ps` exiting 1 with no output (nothing on the tty), or a tty that no longer
+ * exists. Any other failure (a timeout, another status, another error) cannot rule the agent out, so it counts
+ * as running, and close does not close a surface over an agent it could not see quit.
+ */
+export function psShowsAgentRunning(ps: ProcessQuery, agent: SessionAgentId): boolean {
+    if (ps.timedOut) {
+        return true;
+    }
+
+    if (ps.code === 0) {
+        return ttyRunsAgent(ps.stdout, agent);
+    }
+
+    const stderr = ps.stderr.trim();
+    return !(ps.code === 1 && (stderr === "" || /No such file or directory/.test(stderr)));
+}
+
+/**
+ * Does the recorded shell still have a child (the agent), from `pgrep -P <pid>`? pgrep exits 0 with matches and 1
+ * with none; anything else (2 syntax, 3 fatal, a timeout) is unknown and counts as running.
+ */
+export function pgrepShowsChild(pgrep: ProcessQuery): boolean {
+    if (pgrep.timedOut) {
+        return true;
+    }
+
+    if (pgrep.code === 0) {
+        return pgrep.stdout.trim() !== "";
+    }
+
+    return pgrep.code !== 1;
+}
+
 /** Does a `ps -t <tty> -o args=` listing show the agent? Its binary, or the `tools <agent>` launcher. */
 export function ttyRunsAgent(psArgs: string, agent: SessionAgentId): boolean {
     const word = new RegExp(`(^|[\\s/])${agent}(\\s|$)`);

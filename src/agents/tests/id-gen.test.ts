@@ -10,6 +10,7 @@ function rec(agent_id: string): AgentRecord {
         is_main: false,
         role: null,
         registered_at: "t",
+        registered_seq: 0,
         logged_in_at: null,
         logged_out_at: null,
         mode: null,

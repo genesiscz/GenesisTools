@@ -116,6 +116,11 @@ export interface AgentRecord {
     is_main: boolean;
     role: string | null;
     registered_at: string;
+    /**
+     * The feed `seq` of the registration. Feed order is `seq` (allocated under the feed lock); two events can share
+     * a millisecond `ts`, so `registered_at` cannot order them.
+     */
+    registered_seq: number;
     logged_in_at: string | null;
     logged_out_at: string | null;
     mode: AgentMode | null;

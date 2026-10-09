@@ -16,6 +16,7 @@ import { Command } from "commander";
 import { messageCommand } from "./message";
 import {
     answeredBeforeWatch,
+    baselineStartFor,
     DEFAULT_WAIT_STALL_SECONDS,
     exitCodeOf,
     parseSeconds,
@@ -23,6 +24,7 @@ import {
     printsFinalText,
     readTurnExtras,
     registerAgentWaitCommand,
+    sentAtSlackMs,
     streamsLive,
     type TranscriptPager,
     TurnStreamer,
@@ -58,16 +60,37 @@ describe("answeredBeforeWatch", () => {
     }
 
     it("takes an ended answering turn as the reply", () => {
-        expect(answeredBeforeWatch(snapshot("FINISHED", 2000), 1000)).toBe(true);
-        expect(answeredBeforeWatch(snapshot("AWAITING-INPUT", 2000), 1000)).toBe(true);
+        expect(answeredBeforeWatch(snapshot("FINISHED", 2000), { turnStartedAfter: 1000 })).toBe(true);
+        expect(answeredBeforeWatch(snapshot("AWAITING-INPUT", 2000), { turnStartedAfter: 1000 })).toBe(true);
     });
 
     it("never takes a stalled or running answering turn as done, nor a turn from before the send", () => {
-        expect(answeredBeforeWatch(snapshot("STALLED", 2000), 1000)).toBe(false);
-        expect(answeredBeforeWatch(snapshot("RUNNING", 2000), 1000)).toBe(false);
-        expect(answeredBeforeWatch(snapshot("FINISHED", 500), 1000)).toBe(false);
-        expect(answeredBeforeWatch(snapshot("FINISHED", 2000), undefined)).toBe(false);
-        expect(answeredBeforeWatch(null, 1000)).toBe(false);
+        expect(answeredBeforeWatch(snapshot("STALLED", 2000), { turnStartedAfter: 1000 })).toBe(false);
+        expect(answeredBeforeWatch(snapshot("RUNNING", 2000), { turnStartedAfter: 1000 })).toBe(false);
+        expect(answeredBeforeWatch(snapshot("FINISHED", 500), { turnStartedAfter: 1000 })).toBe(false);
+        expect(answeredBeforeWatch(snapshot("FINISHED", 2000), {})).toBe(false);
+        expect(answeredBeforeWatch(null, { turnStartedAfter: 1000 })).toBe(false);
+    });
+
+    it("never takes the turn that was current before the send, even inside the timestamp tolerance", () => {
+        // Grok: the send at 10_500 allows starts from 9_500; the previous turn began at 10_000 and already ended.
+        const sentAt = 10_500;
+        const window = { turnStartedAfter: sentAt - sentAtSlackMs("grok"), turnNewerThan: 10_000 };
+
+        expect(answeredBeforeWatch(snapshot("FINISHED", 10_000), window)).toBe(false);
+        // The reply's turn, stamped in the same whole second as the send, still counts.
+        expect(answeredBeforeWatch(snapshot("FINISHED", 10_000 + 1), window)).toBe(true);
+        // Millisecond clocks get no tolerance: a Claude or Codex turn from 500 ms before the send is not the reply.
+        expect(sentAtSlackMs("claude")).toBe(0);
+        expect(sentAtSlackMs("codex")).toBe(0);
+        expect(answeredBeforeWatch(snapshot("FINISHED", sentAt - 500), { turnStartedAfter: sentAt })).toBe(false);
+    });
+
+    it("keeps the baseline only for the session the message went to", () => {
+        expect(baselineStartFor({ sessionId: "s-1", turnStartedAt: 10_000 }, "s-1")).toBe(10_000);
+        expect(baselineStartFor({ sessionId: "s-1", turnStartedAt: 10_000 }, "s-2")).toBeUndefined();
+        expect(baselineStartFor({ sessionId: "s-1", turnStartedAt: null }, "s-1")).toBeUndefined();
+        expect(baselineStartFor(null, "s-1")).toBeUndefined();
     });
 });
 

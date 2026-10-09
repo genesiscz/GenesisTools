@@ -4,7 +4,7 @@ import type { PeerPriority } from "@genesiscz/utils/claude/peer-message";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
-import { parseWaitFlags, UsageError, waitCommand } from "./wait";
+import { baselineStartFor, parseWaitFlags, readTurnBaseline, UsageError, waitCommand } from "./wait";
 
 /**
  * `tools <agent> message <session> <text>`: the CLI adapter over `@app/ai/lib/agent-message/delivery`, which
@@ -71,6 +71,8 @@ export async function messageCommand(alias: TurnProvider, query: string, parts: 
         }
     }
 
+    // Read before delivery: the turn that is current now (ended or running) must never count as the reply.
+    const baseline = flags.wait ? await readTurnBaseline(alias, query, flags.first === true) : null;
     const sentAt = Date.now();
 
     try {
@@ -97,6 +99,7 @@ export async function messageCommand(alias: TurnProvider, query: string, parts: 
                 tools: flags.tools,
                 quiet: flags.quiet,
                 sentAt,
+                baselineTurnStartedAt: baselineStartFor(baseline, delivery.sessionId),
                 embed: { delivery },
             });
             return;

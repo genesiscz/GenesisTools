@@ -252,6 +252,7 @@ function registerInLock(opts: {
         is_main: opts.isMain,
         role: opts.role,
         registered_at: event.ts,
+        registered_seq: event.seq,
         logged_in_at: null,
         logged_out_at: null,
         mode: null,

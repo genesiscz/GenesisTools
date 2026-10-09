@@ -17,11 +17,13 @@ import {
     joinTmuxPanes,
     type LiveAgentSurface,
     liveAgentSurfaces,
+    type ProcessQuery,
     parseCmuxTree,
+    pgrepShowsChild,
     pickAdoptable,
+    psShowsAgentRunning,
     type TmuxPaneSurface,
     tmuxPaneStillShown,
-    ttyRunsAgent,
 } from "./session-adopt";
 import {
     type AdoptedSession,
@@ -84,13 +86,16 @@ async function adoptedAgentRunning(record: CloseSubject & { tty: string | null }
     }
 
     const ps = await runBounded(["ps", "-t", record.tty, "-o", "args="]);
+    const running = psShowsAgentRunning(ps, record.agent);
 
-    // An unanswered ps cannot show the agent quit: count it as running, like a missing tty.
-    if (ps.timedOut) {
-        return true;
+    if (running && ps.code !== 0) {
+        log.warn(
+            { tty: record.tty, code: ps.code, stderr: ps.stderr.trim() },
+            "ps failed; the agent counts as running"
+        );
     }
 
-    return ps.code === 0 && ttyRunsAgent(ps.stdout, record.agent);
+    return running;
 }
 
 function readPid(record: SessionCreatedRecord): number | null {
@@ -150,16 +155,8 @@ const CHILD_DEADLINE_MS = 8_000;
 /** The parent stops waiting a little later, in case the watchdog itself is stuck. */
 const CHILD_WAIT_MS = 10_000;
 
-interface Ran {
-    code: number | null;
-    stdout: string;
-    stderr: string;
-    /** Killed at the deadline: the answer is unknown, never "no". */
-    timedOut: boolean;
-}
-
 /** One bounded child (ps, pgrep, tmux): a wedged tmux server must not hang `agents close`. */
-async function runBounded(argv: string[]): Promise<Ran> {
+async function runBounded(argv: string[]): Promise<ProcessQuery> {
     const [command, ...args] = argvWithChildDeadline(argv, CHILD_DEADLINE_MS);
 
     if (!command) {
@@ -343,13 +340,16 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
 
             // pgrep exits 1 when the shell has no child: the agent has quit and the shell is at its prompt.
             const children = await runBounded(["pgrep", "-P", String(pid)]);
+            const running = pgrepShowsChild(children);
 
-            // An unanswered pgrep cannot show the agent quit.
-            if (children.timedOut) {
-                return true;
+            if (running && children.code !== 0) {
+                log.warn(
+                    { pid, code: children.code, stderr: children.stderr.trim() },
+                    "pgrep failed; the agent counts as running"
+                );
             }
 
-            return children.code === 0 && children.stdout.trim() !== "";
+            return running;
         },
         async closeWorkspace(workspace, window, force) {
             await runCmuxOk([

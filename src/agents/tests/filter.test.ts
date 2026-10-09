@@ -15,7 +15,7 @@ const agentAlpha: AgentRecord = {
     is_main: false,
     role: null,
     registered_at: "2026-01-01T00:00:00Z",
-
+    registered_seq: 0,
     logged_in_at: "2026-01-01T00:00:01Z",
     logged_out_at: null,
     mode: "stream",
@@ -286,6 +286,16 @@ describe("agent_left", () => {
     test("reaches every agent but the leaver, a --once receiver included", () => {
         expect(isVisibleToAgent(left(5, "agt_beta", "beta"), agentAlpha)).toBe(true);
         expect(isVisibleToAgent(left(5, "agt_alpha", "alpha"), agentAlpha)).toBe(false);
+    });
+
+    test("presence is ordered by feed seq: a peer event in the registration's millisecond but after it is news", () => {
+        // Registered at seq 7; the peer events share its timestamp to the millisecond.
+        const registered: AgentRecord = { ...agentAlpha, registered_at: "2026-01-01T00:00:02Z", registered_seq: 7 };
+        const at = (seq: number, event: FeedEvent): FeedEvent => ({ ...event, seq, ts: registered.registered_at });
+
+        expect(isVisibleToAgent(at(8, left(0, "agt_beta", "beta")), registered)).toBe(true);
+        expect(isVisibleToAgent(at(6, left(0, "agt_beta", "beta")), registered)).toBe(false);
+        expect(isVisibleToAgent(at(7, left(0, "agt_beta", "beta")), registered)).toBe(false);
     });
 
     test("remaining agents are those that logged in and did not leave since; a --once logout is not leaving", () => {

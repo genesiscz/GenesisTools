@@ -10,6 +10,7 @@ describe("formatReadyEvent", () => {
             is_main: true,
             role: null,
             registered_at: "t",
+            registered_seq: 0,
             logged_in_at: "t",
             logged_out_at: null,
             mode: "stream",

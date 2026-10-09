@@ -22,6 +22,7 @@ export function deriveRegistry(events: FeedEvent[]): AgentRecord[] {
                 is_main: event.is_main,
                 role: event.role,
                 registered_at: event.ts,
+                registered_seq: event.seq,
                 logged_in_at: null,
                 logged_out_at: null,
                 mode: null,

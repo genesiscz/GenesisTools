@@ -6,7 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import type { ActivityState } from "./activity";
 import type { TurnSnapshot } from "./turn-state";
 import { codexTurnState, grokTurnState, readTurnState } from "./turn-state";
-import { looksLikeQuestion, questionOf, TRANSCRIPT_GONE_MS, waitForTurn, watchTurn } from "./turn-wait";
+import { looksLikeQuestion, questionOf, TRANSCRIPT_GONE_MS, turnAnswers, waitForTurn, watchTurn } from "./turn-wait";
 
 function snap(state: ActivityState, lastEventAt: number | null, turnStartedAt: number | null = null): TurnSnapshot {
     return {
@@ -142,6 +142,29 @@ describe("waitForTurn", () => {
 
         expect(result.outcome).toBe("done");
         expect(result.snapshot?.lastEventAt).toBe(180);
+    });
+
+    it("with turnNewerThan, the turn that was current before the send is not the answer even inside the tolerance", async () => {
+        // The send was at 110 with 20 ms of tolerance; the previous turn began at 100 and was still running.
+        const reader = script(
+            snap("RUNNING", 105, 100),
+            snap("AWAITING-INPUT", 115, 100),
+            snap("RUNNING", 130, 120),
+            snap("AWAITING-INPUT", 180, 120)
+        );
+        const result = await waitForTurn({
+            read: reader.read,
+            next: true,
+            turnStartedAfter: 90,
+            turnNewerThan: 100,
+            pollMs: 1000,
+            ...clock(),
+        });
+
+        expect(result.outcome).toBe("done");
+        expect(result.snapshot?.lastEventAt).toBe(180);
+        expect(turnAnswers(100, { turnStartedAfter: 90, turnNewerThan: 100 })).toBe(false);
+        expect(turnAnswers(120, { turnStartedAfter: 90, turnNewerThan: 100 })).toBe(true);
     });
 
     it("with turnStartedAfter, a turn whose start is outside the tail still counts", async () => {
