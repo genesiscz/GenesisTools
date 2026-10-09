@@ -1,5 +1,12 @@
+import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import type { CaptureSpec } from "./capture-plan";
+
+export const CAPTURE_CANVAS_VALUES = ["crop", "display"] as const;
+export const CAPTURE_CODEC_VALUES = ["h264", "prores4444"] as const;
 
 /**
  * argv for `ax-tool capture`, the ScreenCaptureKit recorder. The runner prepends the binary
@@ -165,7 +172,7 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         throw new Error("apps must contain app names, bundle IDs or exact process IDs");
     }
 
-    if (cap.canvas !== undefined && !["crop", "display"].includes(cap.canvas)) {
+    if (cap.canvas !== undefined && !CAPTURE_CANVAS_VALUES.includes(cap.canvas)) {
         throw new Error("canvas must be crop or display");
     }
 
@@ -188,7 +195,7 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         throw new Error("outputScale must be greater than 0 and at most 8 pixels per logical point");
     }
 
-    if (cap.codec !== undefined && !["h264", "prores4444"].includes(cap.codec)) {
+    if (cap.codec !== undefined && !CAPTURE_CODEC_VALUES.includes(cap.codec)) {
         throw new Error("codec must be h264 or prores4444");
     }
 
@@ -223,12 +230,13 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
 export interface CaptureFlags {
     windowIds?: string;
     includeApp?: string[];
-    canvas?: string;
+    /** `true` when the flag was given without a value; see resolveCaptureEnumFlags. */
+    canvas?: string | true;
     screenIndex?: string;
     outputSize?: string;
     outputScale?: string;
     transparent?: boolean;
-    codec?: string;
+    codec?: string | true;
     indicator?: boolean;
     duration?: string;
     videoOut?: string;
@@ -260,22 +268,79 @@ export function addCaptureFlags(command: Command): Command {
         .option("--threshold <percent>", "PNG change threshold (0–100)", "2.5");
 }
 
+type CaptureEnumKey = "canvas" | "codec";
+
+const CAPTURE_ENUMS: { key: CaptureEnumKey; flag: string; values: readonly string[]; label: string }[] = [
+    {
+        key: "canvas",
+        flag: "--canvas",
+        values: CAPTURE_CANVAS_VALUES,
+        label: "Canvas: follow the selection or one display",
+    },
+    { key: "codec", flag: "--codec", values: CAPTURE_CODEC_VALUES, label: "Video codec" },
+];
+
+/**
+ * `--canvas` and `--codec` are closed sets declared `[value]`, so a bare flag arrives as `true`.
+ * A terminal gets a prompt; anything else gets the values and a filled-in command on stderr.
+ *
+ * @returns the flags with both values settled, or `undefined` when the caller should exit 1.
+ */
+export async function resolveCaptureEnumFlags(
+    flags: CaptureFlags,
+    { subcommand, interactive = isInteractive() }: { subcommand: string[]; interactive?: boolean }
+): Promise<CaptureFlags | undefined> {
+    const resolved = { ...flags };
+    for (const { key, flag, values, label } of CAPTURE_ENUMS) {
+        const given = resolved[key];
+        if (given === undefined || (typeof given === "string" && values.includes(given))) {
+            continue;
+        }
+
+        const help = suggestEnumFlag(toolCommand("control"), flag, values, {
+            subcommand,
+            given: typeof given === "string" && given !== "" ? given : undefined,
+        });
+        if (typeof given === "string" && given !== "") {
+            out.log.error(`Unknown value for ${flag}: ${given}\n${help}`);
+            return undefined;
+        }
+
+        if (!interactive) {
+            out.log.error(help);
+            return undefined;
+        }
+
+        const picked = await p.select({ message: label, options: values.map((value) => ({ value, label: value })) });
+        if (p.isCancel(picked) || typeof picked !== "string" || !values.includes(picked)) {
+            return undefined;
+        }
+
+        resolved[key] = picked;
+    }
+
+    return resolved;
+}
+
+/** `WIDTHxHEIGHT` with two integer parts; anything else is NaN so validation names the flag. */
+function parseOutputSize(raw: string): { width: number; height: number } {
+    const match = /^(\d+)x(\d+)$/.exec(raw);
+    return match ? { width: Number(match[1]), height: Number(match[2]) } : { width: Number.NaN, height: Number.NaN };
+}
+
 export function captureFromFlags(flags: CaptureFlags): CaptureSpec {
-    const dimensions = flags.outputSize?.split("x").map(Number);
     const cap: CaptureSpec = {
         mode: "isolated",
         backend: "native",
         duration: flags.duration === undefined ? 3 : Number(flags.duration),
         windowIds: flags.windowIds?.split(",").map(Number),
         apps: flags.includeApp,
-        canvas: flags.canvas as CaptureSpec["canvas"],
+        canvas: enumFlag("canvas", CAPTURE_CANVAS_VALUES, flags.canvas),
         screenIndex: flags.screenIndex === undefined ? undefined : Number(flags.screenIndex),
-        outputSize: dimensions
-            ? { width: dimensions[0], height: dimensions.length === 2 ? dimensions[1] : Number.NaN }
-            : undefined,
+        outputSize: flags.outputSize === undefined ? undefined : parseOutputSize(flags.outputSize),
         outputScale: flags.outputScale === undefined ? undefined : Number(flags.outputScale),
         transparent: flags.transparent,
-        codec: flags.codec as CaptureSpec["codec"],
+        codec: enumFlag("codec", CAPTURE_CODEC_VALUES, flags.codec),
         indicator: flags.indicator,
         videoOut: flags.videoOut,
         activeFps: flags.activeFps === undefined ? undefined : Number(flags.activeFps),
@@ -284,6 +349,24 @@ export function captureFromFlags(flags: CaptureFlags): CaptureSpec {
     };
     validateCaptureOptions(cap);
     return cap;
+}
+
+/** A flag the CLI could not settle is refused with the plan validation message, never defaulted. */
+function enumFlag<T extends string>(
+    name: string,
+    values: readonly T[],
+    given: string | true | undefined
+): T | undefined {
+    if (given === undefined) {
+        return undefined;
+    }
+
+    const match = values.find((value) => value === given);
+    if (!match) {
+        throw new Error(`${name} must be ${values.join(" or ")}`);
+    }
+
+    return match;
 }
 
 interface RawScreen {
@@ -388,4 +471,61 @@ export function parseNativeWindowList(data: unknown): WindowBounds[] {
     });
 
     return bounds;
+}
+
+/** Where screen points land in the frames of a native screen recording. */
+export interface CaptureFrameGeometry {
+    width: number;
+    height: number;
+    /** Frame pixels per logical point. */
+    scale: number;
+    /** Aspect-fit padding on each side, in frame pixels. */
+    padX: number;
+    padY: number;
+}
+
+/**
+ * Mirrors ax-tool's `CaptureSelectionOptions.dimensions` and the screen stream's
+ * `preservesAspectRatio`: an explicit outputSize letterboxes the display into those pixels, and
+ * outputScale (default: the display's backing scale) sizes the frame, which H.264 video rounds
+ * down to even pixels. A crop measured in native display pixels misses on any other geometry.
+ */
+export function screenCaptureFrame(cap: CaptureSpec, screen: ScreenInfo): CaptureFrameGeometry {
+    const { width: pointsW, height: pointsH } = screen.points;
+    let width = cap.outputSize?.width ?? Math.round(pointsW * (cap.outputScale ?? screen.scaleFactor));
+    let height = cap.outputSize?.height ?? Math.round(pointsH * (cap.outputScale ?? screen.scaleFactor));
+    if (!cap.outputSize && cap.videoOut && (cap.codec ?? "h264") === "h264") {
+        width -= width % 2;
+        height -= height % 2;
+    }
+
+    const scale = Math.min(width / pointsW, height / pointsH);
+    return { width, height, scale, padX: (width - pointsW * scale) / 2, padY: (height - pointsH * scale) / 2 };
+}
+
+/** A window's global CG bounds as a crop in recorded frame pixels, clipped to the display's content. */
+export function projectCropRegion(
+    window: { x: number; y: number; w: number; h: number },
+    screen: ScreenInfo,
+    frame: CaptureFrameGeometry
+): { region: { x: number; y: number; w: number; h: number } } | { error: string } {
+    const left = frame.padX;
+    const top = frame.padY;
+    const contentRight = frame.padX + screen.points.width * frame.scale;
+    const contentBottom = frame.padY + screen.points.height * frame.scale;
+    const x = Math.max(Math.round(left), Math.round(left + (window.x - screen.originCG.x) * frame.scale));
+    const y = Math.max(Math.round(top), Math.round(top + (window.y - screen.originCG.y) * frame.scale));
+    const right = Math.min(
+        Math.round(contentRight),
+        Math.round(left + (window.x - screen.originCG.x + window.w) * frame.scale)
+    );
+    const bottom = Math.min(
+        Math.round(contentBottom),
+        Math.round(top + (window.y - screen.originCG.y + window.h) * frame.scale)
+    );
+    if (right <= x || bottom <= y) {
+        return { error: "Native crop target lies outside the captured screen." };
+    }
+
+    return { region: { x, y, w: right - x, h: bottom - y } };
 }

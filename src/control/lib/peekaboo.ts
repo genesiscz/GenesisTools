@@ -6,6 +6,7 @@
 
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { abortableSleep } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { wrapWithGenesisApp } from "@genesiscz/utils/macos/genesis-app";
@@ -569,7 +570,8 @@ function run() {
 }`;
 }
 
-export async function runCountdown(sec: number): Promise<void> {
+/** Returns early when `signal` aborts, taking the overlay down with it. */
+export async function runCountdown(sec: number, signal?: AbortSignal): Promise<void> {
     // overlay runs detached and paces itself; stderr ticks are the guaranteed channel
     const overlay = Bun.spawn(
         wrapWithGenesisApp(["osascript", "-l", "JavaScript", "-e", countdownOverlayScript(sec)]),
@@ -582,7 +584,46 @@ export async function runCountdown(sec: number): Promise<void> {
 
     for (let i = sec; i >= 1; i--) {
         console.error(`capture-with-actions: recording in ${i}… don't move mouse/keyboard`);
-        await Bun.sleep(1000);
+        try {
+            await abortableSleep(1000, signal);
+        } catch (error) {
+            if (!signal?.aborted) {
+                throw error;
+            }
+
+            overlay.kill();
+            return;
+        }
+    }
+}
+
+/** How long an arming recorder gets to exit on SIGINT before its tree is killed. */
+export const ARMING_STOP_GRACE_MS = 5_000;
+
+/**
+ * Stop a recorder that was cancelled before its first frame. SIGINT lets it tear down its
+ * stream and border the way a finished recording does; the tree is killed only if it outlives
+ * the grace period.
+ */
+export async function stopArmingRecorder(
+    proc: Pick<Bun.Subprocess, "pid" | "exitCode" | "exited" | "kill">,
+    graceMs = ARMING_STOP_GRACE_MS
+): Promise<void> {
+    if (proc.exitCode !== null) {
+        return;
+    }
+
+    proc.kill("SIGINT");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const exited = await Promise.race([
+        proc.exited.then(() => true),
+        new Promise<boolean>((resolve) => {
+            timer = setTimeout(() => resolve(false), graceMs);
+        }),
+    ]);
+    clearTimeout(timer);
+    if (!exited) {
+        killTree(proc.pid);
     }
 }
 
@@ -718,7 +759,11 @@ export interface CaptureAttempt {
 
 // Recording-start detection: peekaboo writes keep-0001.png into a fresh
 // capture-<UUID> dir the moment the first frame is grabbed.
-export async function startCapture(argv: string[]): Promise<CaptureAttempt> {
+/**
+ * `signal` cancels arming: a recorder that has not written its first frame is stopped and the
+ * attempt comes back without a session dir, so the caller never waits out the 15 s deadline.
+ */
+export async function startCapture(argv: string[], signal?: AbortSignal): Promise<CaptureAttempt> {
     const sessionsRoot = captureSessionsRoot();
     mkdirSync(sessionsRoot, { recursive: true });
     const preexisting = new Set(readdirSync(sessionsRoot));
@@ -734,6 +779,7 @@ export async function startCapture(argv: string[]): Promise<CaptureAttempt> {
 
     let dir: string | null = null;
     let exitedEarly = false;
+    let cancelled = false;
     const armDeadline = Date.now() + 15_000;
     while (Date.now() < armDeadline) {
         const fresh = readdirSync(sessionsRoot).filter(
@@ -750,11 +796,19 @@ export async function startCapture(argv: string[]): Promise<CaptureAttempt> {
             break;
         }
 
+        if (signal?.aborted) {
+            cancelled = true;
+            break;
+        }
+
         await Bun.sleep(50);
     }
 
     let failDiag = "";
-    if (!dir) {
+    if (!dir && cancelled) {
+        await stopArmingRecorder(p);
+        failDiag = `${tool} was cancelled while arming, before it wrote a frame; it was stopped`;
+    } else if (!dir) {
         killTree(p.pid);
         // peekaboo --json puts the REAL error in the STDOUT envelope
         // (error.code/message); stderr usually carries only visualizer noise.

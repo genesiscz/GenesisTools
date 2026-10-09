@@ -53,7 +53,8 @@ func captureSelectionOptions(mode: String) -> CaptureSelectionOptions {
     }
     if mode == "isolated" {
         guard !ids.isEmpty || !apps.isEmpty else { errorExit("isolated mode needs --window-ids or --include-app") }
-        guard argValue("--app") == nil, argValue("--window-id") == nil, argValue("--region") == nil else {
+        let singular = ["--app", "--window-id", "--window-title", "--window-index", "--region"]
+        guard singular.allSatisfy({ !CommandLine.arguments.contains($0) }) else {
             errorExit("isolated mode uses --window-ids/--include-app, not singular window selectors or --region")
         }
     } else if !ids.isEmpty || !apps.isEmpty || argValue("--canvas") != nil {
@@ -63,8 +64,9 @@ func captureSelectionOptions(mode: String) -> CaptureSelectionOptions {
     guard ["crop", "display"].contains(canvas) else { errorExit("--canvas must be crop or display") }
     var size: CGSize?
     if let raw = argValue("--output-size") {
-        let parts = raw.split(separator: "x").compactMap { Int($0) }
-        guard parts.count == 2, parts.allSatisfy({ $0 >= 2 && $0 <= 16384 }) else {
+        let raws = raw.split(separator: "x", omittingEmptySubsequences: false)
+        let parts = raws.compactMap { Int($0) }
+        guard raws.count == 2, parts.count == 2, parts.allSatisfy({ $0 >= 2 && $0 <= 16384 }) else {
             errorExit("--output-size must be WIDTHxHEIGHT in pixels, each from 2 to 16384")
         }
         size = CGSize(width: parts[0], height: parts[1])
@@ -204,20 +206,22 @@ private func captureWindowBounds(_ row: [CFString: Any]) -> CGRect? {
     return CGRect(dictionaryRepresentation: bounds)
 }
 
+private struct SourceFrame {
+    let buffer: CVPixelBuffer
+    /// Surface pixels with a top-left origin, as ScreenCaptureKit reports it.
+    let contentRect: CGRect?
+}
+
 @available(macOS 14.0, *)
-// Stream samples, buffer, geometry and resize completion are serialized on compositor.queue.
+// Stream samples, frames, geometry and resize completion are serialized on compositor.queue.
 private final class IsolatedWindowSource: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     let target: SelectedWindow
     private let filter: SCContentFilter
     private let fps: Double
     lazy var stream = SCStream(filter: filter, configuration: Self.configuration(size: pixelSize, fps: fps), delegate: self)
     weak var compositor: IsolatedCompositor?
-    var buffer: CVPixelBuffer?
     var contentRect: CGRect?
     var nativeScale: CGFloat
-    var bounds: CGRect
-    var visible = true
-    var ended = false
     var pixelSize: CGSize
     private var updating = false
     private var configuredFps: Double
@@ -225,7 +229,6 @@ private final class IsolatedWindowSource: NSObject, SCStreamOutput, SCStreamDele
     init(target: SelectedWindow, window: SCWindow, fps: Double) {
         self.target = target
         self.nativeScale = target.scale
-        self.bounds = target.bounds
         self.pixelSize = CGSize(width: max(2, (target.bounds.width * target.scale).rounded()),
                                 height: max(2, (target.bounds.height * target.scale).rounded()))
         self.filter = SCContentFilter(desktopIndependentWindow: window)
@@ -247,7 +250,7 @@ private final class IsolatedWindowSource: NSObject, SCStreamOutput, SCStreamDele
         configuration.minimumFrameInterval = CMTime(seconds: 1 / fps, preferredTimescale: 600)
         return configuration
     }
-    func updateSize(fps: Double) {
+    func updateSize(bounds: CGRect, fps: Double) {
         let size = CGSize(width: max(2, (bounds.width * nativeScale).rounded()),
                           height: max(2, (bounds.height * nativeScale).rounded()))
         guard size != pixelSize || fps != configuredFps, !updating else { return }
@@ -269,25 +272,21 @@ private final class IsolatedWindowSource: NSObject, SCStreamOutput, SCStreamDele
               let status = attachments.first?[SCStreamFrameInfo.status.rawValue] as? Int,
               SCFrameStatus(rawValue: status) == .complete,
               let buffer = CMSampleBufferGetImageBuffer(sample) else { return }
-        self.buffer = buffer
         contentRect = attachments.first?[SCStreamFrameInfo.contentRect.rawValue] as? CGRect
         if let scale = attachments.first?[SCStreamFrameInfo.scaleFactor.rawValue] as? CGFloat, scale > 0 {
             nativeScale = scale
         }
-        compositor?.render()
+        compositor?.receive(SourceFrame(buffer: buffer, contentRect: contentRect), from: target.id)
     }
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         compositor?.queue.async { [weak self] in
-            guard let self else { return }
-            self.ended = true
+            guard let self, let compositor = self.compositor else { return }
             let present = captureWindowRows().contains { ($0[kCGWindowNumber] as? CGWindowID) == self.target.id &&
                 ($0[kCGWindowOwnerPID] as? pid_t) == self.target.pid }
-            if present {
-                self.compositor?.error = error
+            if compositor.layers.streamEnded(id: self.target.id, windowPresent: present) {
+                compositor.error = error
             } else {
-                self.visible = false
-                self.buffer = nil
-                self.compositor?.render(force: true)
+                compositor.render(force: true)
             }
         }
     }
@@ -302,90 +301,111 @@ private final class IsolatedCompositor {
     let displayCanvas: CGRect?
     let context = CIContext(options: [.cacheIntermediates: false])
     var sources: [IsolatedWindowSource] = []
+    var layers: IsolatedLayers<SourceFrame>
     var error: Error?
-    var lastRender = -Double.infinity
     var currentFps: Double
     var geometryHistory: [[String: Any]] = []
+    private var throttle = RenderThrottle()
+    /// Set once the streams have stopped and the last pending content is in the movie.
+    private var finished = false
     private var previousGeometry: [CGRect] = []
     private let epoch = CMClockGetTime(CMClockGetHostTimeClock())
     private var pool: CVPixelBufferPool?
     var queue: DispatchQueue { recorder.frameQueue }
+    /// Session time of the first composite frame: stream startup before it is not movie time.
+    var firstFrameAfterStartMs: Int? { throttle.firstRender.map { Int($0 * 1000) } }
 
-    init(recorder: NativeRecorder, options: RecordOptions, canvas: CGRect, displayCanvas: CGRect?, output: CGSize) {
+    init(recorder: NativeRecorder, options: RecordOptions, selected: [SelectedWindow], canvas: CGRect, displayCanvas: CGRect?, output: CGSize) {
         self.recorder = recorder
         self.options = options
         self.currentFps = options.activeFps
         self.output = output
         self.initialCanvas = canvas
         self.displayCanvas = displayCanvas
+        self.layers = IsolatedLayers(selected.map { IsolatedLayer(id: $0.id, pid: $0.pid, bounds: $0.bounds) })
         CVPixelBufferPoolCreate(nil, nil, [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
                                           kCVPixelBufferWidthKey: Int(output.width), kCVPixelBufferHeightKey: Int(output.height),
                                           kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pool)
     }
+    func source(_ id: CGWindowID) -> IsolatedWindowSource? { sources.first { $0.target.id == id } }
+    func receive(_ frame: SourceFrame, from id: CGWindowID) {
+        layers.receive(frame, for: id)
+        render()
+    }
+    func updateSizes() {
+        for layer in layers.layers where layer.visible && !layer.ended {
+            source(layer.id)?.updateSize(bounds: layer.bounds, fps: currentFps)
+        }
+    }
     func render(force: Bool = false) {
-        guard error == nil, sources.filter({ $0.visible }).allSatisfy({ $0.buffer != nil }) else { return }
+        guard error == nil, !finished, layers.readyToRender else { return }
         let timestamp = CMClockGetTime(CMClockGetHostTimeClock())
         let elapsed = CMTimeGetSeconds(CMTimeSubtract(timestamp, epoch))
-        guard force || elapsed - lastRender >= 1 / currentFps else { return }
-        lastRender = elapsed
-        let visible = sources.filter { $0.visible }
+        switch throttle.request(at: elapsed, interval: 1 / currentFps, force: force) {
+        case .coalesced:
+            return
+        case .schedule(let delay):
+            queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, self.throttle.trailingFired() else { return }
+                self.render()
+            }
+            return
+        case .render:
+            break
+        }
+        let visible = layers.layers.filter(\.visible)
         let union = visible.reduce(CGRect.null) { $0.union($1.bounds) }
         let canvas = displayCanvas ?? (union.isNull ? initialCanvas : union)
         let geometry = CaptureCanvasGeometry(canvas: canvas, output: output)
-        let outputRect = CGRect(origin: .zero, size: output)
-        var image = CIImage(color: options.selection.transparent ? CIColor.clear : CIColor.black).cropped(to: outputRect)
-        // Sources are front-to-back CG order, so paint the backmost selected window first.
-        for source in visible.reversed() {
-            guard let buffer = source.buffer else { continue }
-            let full = CIImage(cvPixelBuffer: buffer)
-            // SCK may letterbox a window for a frame while a resize configuration is in flight.
-            // contentRect is in surface pixels with a top-left origin; CI uses bottom-left.
-            let topRect = source.contentRect ?? full.extent
-            let content = CGRect(x: topRect.minX, y: full.extent.height - topRect.maxY, width: topRect.width, height: topRect.height).intersection(full.extent)
-            guard !content.isEmpty, !content.isNull else { continue }
-            let raw = full.cropped(to: content).transformed(by: CGAffineTransform(translationX: -content.minX, y: -content.minY))
-            let destination = geometry.destination(for: source.bounds)
-            let placed = raw.transformed(by: CGAffineTransform(scaleX: destination.width / raw.extent.width,
-                                                               y: destination.height / raw.extent.height))
-                .transformed(by: CGAffineTransform(translationX: destination.minX, y: destination.minY))
-            image = placed.composited(over: image)
+        let paints = layers.paintOrder.compactMap { layer -> IsolatedPaint? in
+            guard let frame = layer.frame else { return nil }
+            return IsolatedPaint(image: CIImage(cvPixelBuffer: frame.buffer), contentRect: frame.contentRect, bounds: layer.bounds)
         }
+        let image = composeIsolatedFrame(paints, geometry: geometry, transparent: options.selection.transparent)
+        let outputRect = CGRect(origin: .zero, size: output)
         guard let pool else { return }
         var buffer: CVPixelBuffer?
         guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer) == kCVReturnSuccess, let buffer else { return }
-        context.render(image.cropped(to: outputRect), to: buffer, bounds: outputRect,
-                       colorSpace: CGColorSpaceCreateDeviceRGB())
+        context.render(image, to: buffer, bounds: outputRect, colorSpace: CGColorSpaceCreateDeviceRGB())
         recorder.consume(buffer, timestamp: timestamp)
-        let currentGeometry = [canvas] + sources.map { $0.visible ? $0.bounds : .null }
+        layers.markRendered()
+        let movieSeconds = throttle.rendered(at: elapsed)
+        let currentGeometry = [canvas] + layers.geometry
         if currentGeometry != previousGeometry {
             previousGeometry = currentGeometry
             geometryHistory.append([
-                "timestampMs": Int(elapsed * 1000), "canvas": captureRectJSON(canvas), "pixelsPerPoint": geometry.scale,
-                "windows": visible.map { ["id": $0.target.id, "bounds": captureRectJSON($0.bounds),
-                                           "nativeScale": $0.nativeScale, "interpolatedUpscale": geometry.scale > $0.nativeScale,
-                                           "sourcePixels": ["width": $0.pixelSize.width, "height": $0.pixelSize.height],
-                                           "sourceContentRect": captureRectJSON($0.contentRect ?? CGRect(origin: .zero, size: $0.pixelSize))] as [String: Any] },
+                // Movie time: the origin kept frames use, so a geometry entry names the frame it describes.
+                "timestampMs": Int((movieSeconds * 1000).rounded()), "canvas": captureRectJSON(canvas), "pixelsPerPoint": geometry.scale,
+                "windows": visible.map { layer -> [String: Any] in
+                    let source = self.source(layer.id)
+                    let nativeScale = source?.nativeScale ?? 1
+                    let pixelSize = source?.pixelSize ?? .zero
+                    return ["id": layer.id, "bounds": captureRectJSON(layer.bounds),
+                            "nativeScale": nativeScale, "interpolatedUpscale": geometry.scale > nativeScale,
+                            "sourcePixels": ["width": pixelSize.width, "height": pixelSize.height],
+                            "sourceContentRect": captureRectJSON(layer.frame?.contentRect ?? CGRect(origin: .zero, size: pixelSize))]
+                },
             ])
         }
     }
+    /// Runs on the queue after every stream stopped: content that waited for its throttled
+    /// frame goes into the movie, and nothing renders after the writer finishes.
+    func finish() {
+        if throttle.pending {
+            render(force: true)
+        }
+        finished = true
+    }
     func refresh(_ rows: [[CFString: Any]]) {
+        let windows = rows.compactMap { row -> IsolatedWindowRow? in
+            guard let id = row[kCGWindowNumber] as? CGWindowID, let pid = row[kCGWindowOwnerPID] as? pid_t,
+                  let bounds = captureWindowBounds(row) else { return nil }
+            return IsolatedWindowRow(id: id, pid: pid, bounds: bounds)
+        }
         queue.async { [self] in
-            let before = sources.map { $0.visible ? $0.bounds : .null }
-            for source in sources {
-                if let row = rows.first(where: { ($0[kCGWindowNumber] as? CGWindowID) == source.target.id &&
-                    ($0[kCGWindowOwnerPID] as? pid_t) == source.target.pid }), let bounds = captureWindowBounds(row) {
-                    source.visible = true
-                    source.bounds = bounds
-                    source.updateSize(fps: currentFps)
-                } else {
-                    source.visible = false
-                    source.buffer = nil
-                }
-            }
-            let order = rows.compactMap { $0[kCGWindowNumber] as? CGWindowID }
-            sources.sort { (order.firstIndex(of: $0.target.id) ?? Int.max) < (order.firstIndex(of: $1.target.id) ?? Int.max) }
-            let after = sources.map { $0.visible ? $0.bounds : .null }
-            render(force: before != after)
+            let changed = layers.refresh(windows)
+            updateSizes()
+            render(force: changed)
         }
     }
 }
@@ -432,11 +452,12 @@ func captureIsolatedWindows(_ options: RecordOptions) {
     let nativeScale = selected.map(\.scale).max() ?? 1
     let output = options.selection.dimensions(points: canvas.size, nativeScale: nativeScale, video: options.videoOut != nil)
     let recorder = NativeRecorder(options: options, configuration: SCStreamConfiguration())
-    let compositor = IsolatedCompositor(recorder: recorder, options: options, canvas: canvas, displayCanvas: displayCanvas, output: output)
+    let compositor = IsolatedCompositor(recorder: recorder, options: options, selected: selected, canvas: canvas,
+                                        displayCanvas: displayCanvas, output: output)
     recorder.rateChanged = { [weak compositor] fps in
         guard let compositor else { return }
         compositor.currentFps = fps
-        compositor.sources.forEach { $0.updateSize(fps: fps) }
+        compositor.updateSizes()
     }
     let indicator = RecordingIndicator(enabled: options.selection.indicator)
     indicator.update(displayCanvas.map { [$0] } ?? selected.map(\.bounds))
@@ -474,11 +495,11 @@ func captureIsolatedWindows(_ options: RecordOptions) {
     }
     indicator.close()
     for source in compositor.sources {
-        if compositor.queue.sync(execute: { source.ended }) { continue }
+        if compositor.queue.sync(execute: { compositor.layers.layer(source.target.id)?.ended ?? false }) { continue }
         do { try awaitResult { try await source.stream.stopCapture() } }
         catch { compositor.queue.sync { compositor.error = error } }
     }
-    compositor.queue.sync {}
+    compositor.queue.sync { compositor.finish() }
     let duration = Date().timeIntervalSince(started)
     recorder.finishVideo(duration: duration)
     if let error = compositor.error { errorExit("isolated recording stopped early: \(error.localizedDescription)") }
@@ -496,8 +517,9 @@ func captureIsolatedWindows(_ options: RecordOptions) {
         "geometry": compositor.geometryHistory,
         "frames": recorder.kept.map { ["index": $0.index - 1, "file": $0.file, "path": directory.appendingPathComponent($0.file).path,
                                        "timestampMs": $0.timestampMs, "changePercent": $0.changePercent, "reason": $0.reason] as [String: Any] },
-        "stats": ["durationMs": Int(duration * 1000), "capturedFrames": recorder.captured, "keptFrames": recorder.kept.count],
-        "warnings": recorder.warnings,
+        "stats": ["durationMs": Int(duration * 1000), "capturedFrames": recorder.captured, "keptFrames": recorder.kept.count,
+                  "firstFrameAfterStartMs": compositor.firstFrameAfterStartMs ?? -1] as [String: Any],
+        "warnings": recorder.warnings + compositor.queue.sync { compositor.layers.warnings },
     ]
     let contact = directory.appendingPathComponent("contact.png")
     if let layout = writeContactSheet(recorder.kept, in: directory, to: contact) {

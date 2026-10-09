@@ -45,7 +45,7 @@ describe("captureToolCommand", () => {
     });
 });
 
-function captureFixture(options: { noAfter?: boolean } = {}) {
+function captureFixture(options: { noAfter?: boolean; noIdentity?: boolean } = {}) {
     const calls: string[][] = [];
     let launch = 123;
     let missing = false;
@@ -54,8 +54,7 @@ function captureFixture(options: { noAfter?: boolean } = {}) {
     const snapshot = (id = 10) => ({
         ok: true,
         app: "Fixture",
-        pid: 7,
-        processLaunch: launch,
+        ...(options.noIdentity ? {} : { pid: 7, processLaunch: launch }),
         scope: "window",
         snapshot: `s${calls.length}`,
         window: { id, title, x: 0, y: 0, width: 400, height: 300 },
@@ -163,6 +162,16 @@ describe("native capture target binding", () => {
         expect(result.ok).toBe(false);
         expect(result.stderr).toContain("process changed");
         expect(f.calls.filter((args) => args[0] === "act")).toHaveLength(1);
+        f.controls.dispose();
+    });
+
+    it("an observation without the process identity fails by name and dispatches nothing", async () => {
+        const f = captureFixture({ noIdentity: true });
+        const result = await f.controls.run({ do: "ax-press", axId: "save", app: "Fixture", atMs: 0 });
+        expect(result.ok).toBe(false);
+        expect(result.stderr).toContain("did not report the app process identity (missing pid and processLaunch)");
+        expect(result.stderr).not.toContain("invalid_type");
+        expect(f.calls.filter((args) => args[0] === "act")).toHaveLength(0);
         f.controls.dispose();
     });
 

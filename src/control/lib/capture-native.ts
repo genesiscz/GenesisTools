@@ -3,7 +3,13 @@ import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 import type { Action, CaptureSpec, CropTarget, Plan } from "./capture-plan";
 import { type ComputerElement, type ComputerState, ComputerUse, type NativeBridge } from "./computer-use/session";
-import { parseNativeWindowList, parseScreenList, type ScreenInfo } from "./native-record";
+import {
+    type CaptureFrameGeometry,
+    parseNativeWindowList,
+    parseScreenList,
+    projectCropRegion,
+    type ScreenInfo,
+} from "./native-record";
 import { type AxResult, runAx, runAxAsync } from "./runner";
 
 function required(result: AxResult): AxResult {
@@ -73,7 +79,17 @@ export class NativeCaptureControls {
                     const appIndex = request.args.indexOf("--app");
                     if (result.ok && request.args[0] === "see" && appIndex >= 0) {
                         const app = request.args[appIndex + 1];
-                        const identity = z.object({ pid: z.number(), processLaunch: z.number() }).parse(result);
+                        const parsed = z.object({ pid: z.number(), processLaunch: z.number() }).safeParse(result);
+                        if (!parsed.success) {
+                            const missing = ["pid", "processLaunch"].filter(
+                                (field) => typeof (result as Record<string, unknown>)[field] !== "number"
+                            );
+                            throw new Error(
+                                `Native observation of ${app} did not report the app process identity (missing ${missing.join(" and ")}). Rebuild ax-tool from this checkout, then start a fresh recording.`
+                            );
+                        }
+
+                        const identity = parsed.data;
                         const previous = this.identities.get(app);
                         if (
                             previous &&
@@ -324,7 +340,8 @@ export class NativeCaptureControls {
         this.dispose();
     }
 }
-export function nativeTargetRegion(target: CropTarget, screen: ScreenInfo) {
+/** `frame` is the recording's own pixel geometry (see screenCaptureFrame), not the display's. */
+export function nativeTargetRegion(target: CropTarget, screen: ScreenInfo, frame: CaptureFrameGeometry) {
     const windows = nativeWindows(target.app).filter(
         (window) => target.windowTitle === undefined || window.title === target.windowTitle
     );
@@ -332,15 +349,7 @@ export function nativeTargetRegion(target: CropTarget, screen: ScreenInfo) {
     if (!match) {
         return { error: "No native window matches the crop target." };
     }
-    const sf = screen.scaleFactor;
-    const x = Math.max(0, Math.round((match.x - screen.originCG.x) * sf));
-    const y = Math.max(0, Math.round((match.y - screen.originCG.y) * sf));
-    const right = Math.min(screen.framePixels.width, Math.round((match.x - screen.originCG.x + match.w) * sf));
-    const bottom = Math.min(screen.framePixels.height, Math.round((match.y - screen.originCG.y + match.h) * sf));
-    if (right <= x || bottom <= y) {
-        return { error: "Native crop target lies outside the captured screen." };
-    }
-    return { region: { x, y, w: right - x, h: bottom - y } };
+    return projectCropRegion(match, screen, frame);
 }
 export function nativeCapturePreflight(appArg?: string): Record<string, unknown> {
     const snapshot = required(runAx(["snapshot"]));

@@ -8,7 +8,7 @@ import type { Command } from "commander";
 import { nativeCapturePreflight } from "../lib/capture-native";
 import { CAPTURE_HELP, type Plan } from "../lib/capture-plan";
 import { CaptureRunError, type RunResult, runCapturePlan, runClickmap, runRecrop } from "../lib/capture-runner";
-import { addCaptureFlags, type CaptureFlags, captureFromFlags } from "../lib/native-record";
+import { addCaptureFlags, type CaptureFlags, captureFromFlags, resolveCaptureEnumFlags } from "../lib/native-record";
 
 function fail(msg: string, exitCode = 2): never {
     console.error(`capture-with-actions: ${msg}`);
@@ -81,8 +81,14 @@ export function registerCaptureCommands(program: Command): void {
     addCaptureFlags(capture.command("record").description("Record only selected windows/apps using ScreenCaptureKit"))
         .option("--duration <seconds>", "Recording duration, 0.1–180 seconds", "3")
         .action(async (options: CaptureFlags) => {
+            const flags = await resolveCaptureEnumFlags(options, { subcommand: ["capture", "record"] });
+            if (!flags) {
+                process.exitCode = 1;
+                return;
+            }
+
             try {
-                printRunResult(await runCapturePlan({ capture: captureFromFlags(options), actions: [] }));
+                printRunResult(await runCapturePlan({ capture: captureFromFlags(flags), actions: [] }));
             } catch (e) {
                 if (e instanceof CaptureRunError) {
                     fail(e.message, e.exitCode);

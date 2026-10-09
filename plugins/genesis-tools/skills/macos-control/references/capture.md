@@ -107,6 +107,14 @@ input actions into the separate `control run` or semantic `replay-plan` format; 
 record a movie or automatically authorize replay. Movie output refuses to overwrite an
 existing file. Plan geometry and codec errors are rejected before focus or input actions.
 
+Isolated `geometry[].timestampMs` uses the movie timeline, the same origin as kept frames;
+`stats.firstFrameAfterStartMs` reports stream startup separately. A window that leaves the
+screen drops out of later frames while the other windows keep recording. If its stream ended,
+it stays out even when it returns, and `warnings` says so. Content throttled by the frame rate
+appears at the next permitted frame and is flushed before the movie finishes. A cancellation
+before the first frame stops the recorder and exits 130. Frames from a failed recorder are not
+published to vitrinka unless `vitrinka.force` is set.
+
 ## One process owns a timed sequence
 
 Do not drive recording actions through separate model/tool turns. Model latency and round trips

@@ -6,6 +6,10 @@ import {
     nativeCaptureArgv,
     parseNativeWindowList,
     parseScreenList,
+    projectCropRegion,
+    resolveCaptureEnumFlags,
+    type ScreenInfo,
+    screenCaptureFrame,
     validateCaptureOptions,
 } from "./native-record";
 
@@ -277,9 +281,72 @@ describe("isolated capture contract", () => {
         ]) {
             expect(() => validateCaptureOptions({ ...base, ...extra })).toThrow();
         }
-        expect(() => captureFromFlags({ windowIds: "12", outputSize: "200x800x2" })).toThrow();
+        for (const outputSize of ["200x800x2", "200xx800", "200xgarbagex800", " 200x800", "200x"]) {
+            expect(() => captureFromFlags({ windowIds: "12", outputSize })).toThrow(/outputSize/);
+        }
         expect(() => validateCaptureOptions({ mode: "isolated", duration: 1 })).toThrow();
         expect(() => validateCaptureOptions({ mode: "isolated", windowIds: [0], duration: 1 })).toThrow();
         expect(() => validateCaptureOptions({ mode: "screen", windowIds: [12], duration: 1 })).toThrow();
+    });
+
+    it("settles --canvas and --codec as closed sets: a bare or unknown value stops with the choices", async () => {
+        const parse = (args: string[]) => addCaptureFlags(new Command()).parse(args, { from: "user" }).opts();
+
+        expect(parse(["--canvas"]).canvas).toBe(true);
+        for (const args of [["--canvas"], ["--codec"], ["--canvas", "full"], ["--codec", "vp9"]]) {
+            expect(
+                await resolveCaptureEnumFlags(parse(["--window-ids", "12", ...args]), {
+                    subcommand: ["capture", "record"],
+                    interactive: false,
+                })
+            ).toBeUndefined();
+        }
+
+        const settled = await resolveCaptureEnumFlags(parse(["--window-ids", "12", "--codec", "prores4444"]), {
+            subcommand: ["capture", "record"],
+            interactive: false,
+        });
+        expect(settled).toMatchObject({ canvas: "crop", codec: "prores4444" });
+        // A caller that skipped the resolver still gets the validation message, never a default.
+        expect(() => captureFromFlags({ windowIds: "12", canvas: true })).toThrow("canvas must be crop or display");
+    });
+});
+
+describe("crop targets in a screen recording's own pixels", () => {
+    const retina: ScreenInfo = {
+        index: 0,
+        name: "Built-in",
+        isPrimary: true,
+        points: { width: 1512, height: 982 },
+        scaleFactor: 2,
+        framePixels: { width: 3024, height: 1964 },
+        originCG: { x: 0, y: 0 },
+    };
+    const window = { x: 100, y: 50, w: 400, h: 300 };
+
+    it("uses the backing scale when the plan sets no output geometry", () => {
+        const frame = screenCaptureFrame({ mode: "screen", duration: 1 }, retina);
+        expect(frame).toEqual({ width: 3024, height: 1964, scale: 2, padX: 0, padY: 0 });
+        expect(projectCropRegion(window, retina, frame)).toEqual({ region: { x: 200, y: 100, w: 800, h: 600 } });
+    });
+
+    it("a Retina display recorded at outputScale 1 crops at one pixel per point", () => {
+        const frame = screenCaptureFrame({ mode: "screen", duration: 1, outputScale: 1 }, retina);
+        expect(frame).toMatchObject({ width: 1512, height: 982, scale: 1 });
+        expect(projectCropRegion(window, retina, frame)).toEqual({ region: { x: 100, y: 50, w: 400, h: 300 } });
+    });
+
+    it("an explicit output size adds the aspect-fit padding and clips to the display's content", () => {
+        const frame = screenCaptureFrame(
+            { mode: "screen", duration: 1, outputSize: { width: 1512, height: 1200 } },
+            retina
+        );
+        expect(frame.scale).toBe(1);
+        expect(frame.padY).toBe(109);
+        expect(projectCropRegion(window, retina, frame)).toEqual({ region: { x: 100, y: 159, w: 400, h: 300 } });
+        expect(projectCropRegion({ x: -50, y: 900, w: 100, h: 200 }, retina, frame)).toEqual({
+            region: { x: 0, y: 1009, w: 50, h: 82 },
+        });
+        expect("error" in projectCropRegion({ x: 2000, y: 0, w: 10, h: 10 }, retina, frame)).toBe(true);
     });
 });

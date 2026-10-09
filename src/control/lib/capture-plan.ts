@@ -290,7 +290,7 @@ PLAN CONTRACT (TypeScript)
       include?: ("strip" | "crops" | "frames")[];  // what to publish; default ["strip"]
       route?: string;             // vitrinka add --route (default "/")
       note?: string;              // shared note for the shots
-      force?: boolean;            // publish even a 1-frame no-motion capture (default: refuse)
+      force?: boolean;            // publish even a 1-frame no-motion capture or frames salvaged from a failed recording (default: refuse)
   }
   // include semantics — PUBLISH filter only; crops/strip are still COMPUTED
   // locally whenever crop windows exist. Entries are ADDITIVE:

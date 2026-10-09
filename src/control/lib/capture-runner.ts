@@ -29,7 +29,7 @@ import {
     validatePlan,
 } from "./capture-plan";
 import { applyCrops } from "./crop-compositing";
-import { nativeCaptureArgv, validateCaptureOptions } from "./native-record";
+import { nativeCaptureArgv, screenCaptureFrame, validateCaptureOptions } from "./native-record";
 import {
     AX_TOOL_PATH,
     axToolAvailable,
@@ -146,7 +146,15 @@ type CaptureSpec = NonNullable<Plan["capture"]>;
  * in-process CG) fail when THIS process's own TCC ancestry lacks the grant, exactly the case
  * where a bridge host still works. The retry always takes the path attempt 1 did not.
  */
-async function startPeekabooCapture(cap: CaptureSpec, warnings: string[]): Promise<CaptureAttempt> {
+async function startPeekabooCapture({
+    cap,
+    warnings,
+    signal,
+}: {
+    cap: CaptureSpec;
+    warnings: string[];
+    signal: AbortSignal;
+}): Promise<CaptureAttempt> {
     const args = ["capture", "live", "--mode", cap.mode, "--duration", peekabooDurationArg(cap.duration), "--json"];
     if (cap.screenIndex !== undefined) {
         args.push("--screen-index", String(cap.screenIndex));
@@ -182,8 +190,8 @@ async function startPeekabooCapture(cap: CaptureSpec, warnings: string[]): Promi
         args.push("--capture-engine", cap.captureEngine);
     }
 
-    let attempt = await startCapture(["peekaboo", ...args]);
-    if (!attempt.sessionDir) {
+    let attempt = await startCapture(["peekaboo", ...args], signal);
+    if (!attempt.sessionDir && !signal.aborted) {
         const bypassed = Boolean(cap.noRemote);
         const diag1 = attempt.failDiag;
         const retryArgs = bypassed
@@ -192,10 +200,19 @@ async function startPeekabooCapture(cap: CaptureSpec, warnings: string[]): Promi
         warnings.push(
             `recording never started via ${bypassed ? "bypass (--no-remote)" : "bridge"} — ${diag1} — retrying once via ${bypassed ? "bridge" : "--no-remote --capture-engine cg"}`
         );
-        await Bun.sleep(2_000);
-        attempt = await startCapture(["peekaboo", ...retryArgs]);
+        try {
+            await abortableSleep(2_000, signal);
+        } catch (error) {
+            if (!signal.aborted) {
+                throw error;
+            }
 
-        if (!attempt.sessionDir) {
+            return attempt;
+        }
+
+        attempt = await startCapture(["peekaboo", ...retryArgs], signal);
+
+        if (!attempt.sessionDir && !signal.aborted) {
             throw new CaptureRunError(
                 `recording never started on either transport.\n  attempt 1 (${bypassed ? "bypass" : "bridge"}): ${diag1}\n  retry (${bypassed ? "bridge" : "bypass"}): ${attempt.failDiag}`
             );
@@ -209,7 +226,62 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
     return withInterrupt((signal) => runCapturePlanWithSignal({ plan, signal }), { handleTermination: true });
 }
 
-async function runCapturePlanWithSignal({ plan, signal }: { plan: Plan; signal: AbortSignal }): Promise<RunResult> {
+/** How long a cancelled recorder gets to finalize its movie before its process tree is killed. */
+export const RECORDER_STOP_GRACE_MS = 20_000;
+
+/** Exit code a shell reports for an interrupted command; a cancelled run that never recorded uses it. */
+const CANCELLED_EXIT_CODE = 130;
+
+/**
+ * A recorder failed when its envelope says so or when it did not exit 0. Frames it left on disk
+ * are salvage, not a recording, so nothing irreversible may consume them as one.
+ */
+export function recorderFailed(captureResult: unknown, exitCode: number | null): boolean {
+    const envelope = captureResult as { failed?: boolean; ok?: boolean; success?: boolean } | null | undefined;
+    return envelope?.failed === true || envelope?.ok === false || envelope?.success === false || exitCode !== 0;
+}
+
+/** Why `plan.vitrinka` must not publish this run, or undefined when it may. */
+export function vitrinkaRefusal(input: {
+    aborted: boolean;
+    captureFailed: boolean;
+    noMotion: boolean;
+    force?: boolean;
+}): string | undefined {
+    if (input.aborted) {
+        return "refusing to publish a cancelled recording";
+    }
+
+    if (input.captureFailed && !input.force) {
+        return "refusing to publish frames from a failed recording (they are salvage, not a finished capture); fix the recorder failure or set vitrinka.force";
+    }
+
+    if (input.noMotion && !input.force) {
+        return "refusing to publish a 1-frame no-motion capture (this is what litters boards with dead sets); fix the plan or set vitrinka.force";
+    }
+
+    return undefined;
+}
+
+/** `signal` is the run's cancellation; `stopGraceMs` exists for tests of the SIGINT-then-kill escalation. */
+export async function runCapturePlanWithSignal({
+    plan,
+    signal,
+    stopGraceMs = RECORDER_STOP_GRACE_MS,
+}: {
+    plan: Plan;
+    signal: AbortSignal;
+    stopGraceMs?: number;
+}): Promise<RunResult> {
+    const throwIfCancelled = (stage: string) => {
+        if (signal.aborted) {
+            throw new CaptureRunError(
+                `Recording cancelled ${stage}; no recorder is running and no action was dispatched.`,
+                CANCELLED_EXIT_CODE
+            );
+        }
+    };
+
     normalizePlan(plan);
     const cap = plan.capture;
     if (!cap?.mode || !cap?.duration) {
@@ -232,6 +304,7 @@ async function runCapturePlanWithSignal({ plan, signal }: { plan: Plan; signal: 
         warnings.push("crop target markers only work with capture.mode 'screen' — they will be dropped");
     }
 
+    throwIfCancelled("before it started");
     const backend = cap.backend ?? "native";
     let axTool = AX_TOOL_PATH;
     if (backend === "native") {
@@ -272,22 +345,28 @@ async function runCapturePlanWithSignal({ plan, signal }: { plan: Plan; signal: 
         }
     }
 
+    throwIfCancelled("during focus");
     if (cap.countdownSec && cap.countdownSec > 0) {
-        await runCountdown(Math.min(cap.countdownSec, 10));
+        await runCountdown(Math.min(cap.countdownSec, 10), signal);
     }
 
+    throwIfCancelled("before the recorder started");
     let attempt: CaptureAttempt;
     if (backend === "native") {
         const outDir = join(captureSessionsRoot(), `native-${Date.now()}`);
-        attempt = await startCapture([axTool, ...nativeCaptureArgv(cap, outDir)]);
+        attempt = await startCapture([axTool, ...nativeCaptureArgv(cap, outDir)], signal);
 
         if (!attempt.sessionDir) {
+            throwIfCancelled("while the recorder was arming");
             throw new CaptureRunError(
                 `Native recording never started: ${attempt.failDiag}. No fallback was attempted.`
             );
         }
     } else {
-        attempt = await startPeekabooCapture(cap, warnings);
+        attempt = await startPeekabooCapture({ cap, warnings, signal });
+        if (!attempt.sessionDir) {
+            throwIfCancelled("while the recorder was arming");
+        }
     }
 
     const proc = attempt.proc;
@@ -303,7 +382,7 @@ async function runCapturePlanWithSignal({ plan, signal }: { plan: Plan; signal: 
             if (proc.exitCode === null) {
                 killTree(proc.pid);
             }
-        }, 20_000);
+        }, stopGraceMs);
     };
     signal.addEventListener("abort", stopRecording, { once: true });
     using _recordingLifetime = {
@@ -511,7 +590,7 @@ async function runCapturePlanWithSignal({ plan, signal }: { plan: Plan; signal: 
                     }
 
                     const resolved = nativeControls
-                        ? nativeTargetRegion(action.target!, screen)
+                        ? nativeTargetRegion(action.target!, screen, screenCaptureFrame(cap, screen))
                         : resolveTargetRegion(action.target!, screen);
                     if ("error" in resolved) {
                         result = { ok: false, stdout: "", stderr: resolved.error };
@@ -656,22 +735,21 @@ async function runCapturePlanWithSignal({ plan, signal }: { plan: Plan; signal: 
         );
     }
 
+    // Decided before publishing: an upload and a remote board cannot be taken back.
+    const captureFailed = recorderFailed(captureResult, proc.exitCode);
     let vitrinka: { ok: boolean; urls: string[]; error?: string } | undefined;
-    if (plan.vitrinka && !signal.aborted) {
-        if (motionFired && frames.length <= 1 && !plan.vitrinka.force) {
-            vitrinka = {
-                ok: false,
-                urls: [],
-                error: "refusing to publish a 1-frame no-motion capture (this is what litters boards with dead sets); fix the plan or set vitrinka.force",
-            };
-        } else {
-            vitrinka = publishVitrinka(plan.vitrinka, sessionDir, frames, crops, strip);
-        }
+    if (plan.vitrinka) {
+        const refusal = vitrinkaRefusal({
+            aborted: signal.aborted,
+            captureFailed,
+            noMotion: motionFired && frames.length <= 1,
+            force: plan.vitrinka.force,
+        });
+        vitrinka = refusal
+            ? { ok: false, urls: [], error: refusal }
+            : publishVitrinka(plan.vitrinka, sessionDir, frames, crops, strip);
     }
 
-    const envelope = captureResult as { failed?: boolean; ok?: boolean; success?: boolean };
-    const captureFailed =
-        envelope?.failed === true || envelope?.ok === false || envelope?.success === false || proc.exitCode !== 0;
     const actionsFailed = fired.some((f) => !f.ok && !f.skipped);
 
     return {

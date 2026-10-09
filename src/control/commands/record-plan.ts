@@ -8,7 +8,7 @@ import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identi
 import type { Command } from "commander";
 import pc from "picocolors";
 import { attachSemanticPlan } from "../lib/decision/workflow";
-import { addCaptureFlags, captureFromFlags } from "../lib/native-record";
+import { addCaptureFlags, captureFromFlags, resolveCaptureEnumFlags } from "../lib/native-record";
 import { ensureBinary, RECORD_DIR, RECORD_SESSION, recordSource } from "../lib/runner";
 
 const COMMANDS_LOG = join(RECORD_DIR, "commands.jsonl");
@@ -448,7 +448,13 @@ export function registerRecordPlanCommand(program: Command): void {
         .option("--json", "machine output for start/status/stop metadata")
         .action(async (action: string | undefined, opts, command: Command) => {
             if (action === "capture") {
-                const plan = { capture: captureFromFlags(opts), actions: [] };
+                const flags = await resolveCaptureEnumFlags(opts, { subcommand: ["record-plan", "capture"] });
+                if (!flags) {
+                    process.exitCode = 1;
+                    return;
+                }
+
+                const plan = { capture: captureFromFlags(flags), actions: [] };
                 const json = `${SafeJSON.stringify(plan, null, 2)}\n`;
                 if (opts.out) {
                     writeFileSync(opts.out, json);
