@@ -745,3 +745,55 @@ test("--kill-tmux kills the recorded tmux session by id, never a newer session t
     expect(ok).toMatchObject({ outcome: "closed", steps: { tmuxKilled: true } });
     expect(same.calls).toContain("kill $7");
 });
+
+test("a tmux session that came back under the same name and pane id gets no exit, even with --force", async () => {
+    const createdMs = 1_760_000_000_000;
+    const pane = (sessionCreatedMs: number): TmuxListing<TmuxPaneInfo> => ({
+        ok: true,
+        items: [{ pane: "%41", session: "work-grok", tty: "/dev/ttys041", sessionCreatedMs, visible: true }],
+    });
+    const adopted = { ...adoptedTmux(), tmuxSessionCreatedMs: createdMs };
+
+    // The adopted session: never skipped, also with --force. The exit, close and kill fakes throw.
+    for (const force of [false, true]) {
+        const restarted = fake({
+            adoptable: adopted,
+            tmuxPanes: () => pane(createdMs + 60_000),
+            forbidIrreversible: true,
+        });
+        const report = await closeSession("0199ee55", { graceMs: 1_000, force, killTmux: true }, restarted.io);
+
+        expect({ force, outcome: report.outcome, exitSent: report.steps.exitSent }).toEqual({
+            force,
+            outcome: "refused",
+            exitSent: false,
+        });
+        expect(report.notes.join(" ")).toContain("newer session");
+        expect(restarted.calls).toEqual(["adopt 0199ee55"]);
+    }
+
+    // A recorded session is refused before the exit too.
+    const lines = [created({ tmuxSession: "work-grok", tmuxPane: "%41", tmuxSessionCreatedMs: createdMs })];
+    const recorded = fake({ lines, tmuxPanes: () => pane(createdMs + 60_000), forbidIrreversible: true });
+    expect((await closeSession("codex-app-ab12cd", { graceMs: 0 }, recorded.io)).reason).toBe("workspace-moved");
+    expect(recorded.calls).toEqual([]);
+
+    // The control: the same generation still quits through its pane.
+    const same = fake({ adoptable: adopted, tmuxPanes: () => pane(createdMs), runningChecks: 1 });
+    expect((await closeSession("0199ee55", { graceMs: 1_000 }, same.io)).outcome).toBe("closed");
+    expect(same.calls).toContain("exit /exit");
+});
+
+test("the caller's own workspace is never closed, whatever case its UUID is printed in", async () => {
+    for (const caller of ["W9", "w9"]) {
+        const own = fake({ caller, forbidIrreversible: true });
+        const report = await closeSession("codex-app-ab12cd", { graceMs: 0, force: true }, own.io);
+
+        expect({ caller, reason: report.reason }).toEqual({ caller, reason: "own-workspace" });
+        expect(own.calls).toEqual([]);
+    }
+
+    // The control: another workspace's caller closes normally.
+    const other = fake({ caller: "W-OTHER", runningChecks: 1 });
+    expect((await closeSession("codex-app-ab12cd", { graceMs: 1_000 }, other.io)).outcome).toBe("closed");
+});

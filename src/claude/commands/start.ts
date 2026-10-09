@@ -1,4 +1,4 @@
-import { withCrossMessages } from "@app/claude/lib/cross-messages";
+import { startPassthrough } from "@app/claude/lib/cross-messages";
 import { accountOwningKeychain } from "@app/claude/lib/doctor";
 import { findRecentSessions, type SessionSummary } from "@app/claude/lib/history/limit-kill";
 import {
@@ -1157,7 +1157,16 @@ export function registerStartCommand(program: Command): void {
         .action(async (name: string | undefined, opts: StartOptions, command: Command) => {
             const split = splitStartOperands({ name, operands: command.args, argv: process.argv });
             const nameArg = split.nameArg;
-            const passthrough = opts.crossMessages ? withCrossMessages(split.passthrough) : split.passthrough;
+            const resolved = startPassthrough(opts.crossMessages, split.passthrough);
+
+            if ("error" in resolved) {
+                out.error(resolved.error);
+                process.exitCode = 2;
+                await out.flush();
+                return;
+            }
+
+            const passthrough = resolved.args;
 
             // No Anthropic account name contains a slash, but every ai-proxy target
             // does (`martin/grok`, `work/xai/grok-4.6`). That makes the split

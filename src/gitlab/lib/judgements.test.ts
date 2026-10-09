@@ -532,6 +532,30 @@ describe("a judgements file edited by hand", () => {
         expect(errorsOf(flat, "judgements.json")).toEqual([]);
     });
 
+    test("a field set both under fields and at the top keeps the fields value and says so", () => {
+        const both = SafeJSON.stringify({
+            items: [
+                {
+                    id: "N01",
+                    fields: { Verdict: "Bug [85%]", Action: "comment" },
+                    texts: { "Proposed draft comment": "Tady se vrací dřív." },
+                    verdict: "Nit [40%]",
+                    "proposed draft comment": "jiný text",
+                },
+            ],
+        });
+        const parsed = parseJudgementsFile(both, "judgements.json");
+
+        expect(parsed.items[0].fields.get("Verdict")).toBe("Bug [85%]");
+        expect(parsed.items[0].fences.get("Proposed draft comment")).toBe("Tady se vrací dřív.");
+        expect(parsed.warnings.map((w) => w.message)).toEqual(
+            expect.arrayContaining([
+                '"verdict" is also set under fields; the fields value is kept and "verdict" is ignored',
+                '"proposed draft comment" is also set under texts; the texts value is kept and "proposed draft comment" is ignored',
+            ])
+        );
+    });
+
     test("a JSON value of the wrong type is an error, because its content would be lost", () => {
         const wrong = SafeJSON.stringify({
             overal: "Approve",

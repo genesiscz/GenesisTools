@@ -19,3 +19,22 @@ export function withCrossMessages(passthrough: readonly string[]): string[] {
 
     return ["--settings", SafeJSON.stringify(CROSS_MESSAGES_SETTINGS), ...passthrough];
 }
+
+/**
+ * The Claude args `tools claude run` passes on, or the usage error to print: a `--settings` of the caller's own and
+ * `--cross-messages` cannot both be honoured. Returned, not thrown, so the command prints one line and exits 2.
+ */
+export function startPassthrough(
+    crossMessages: boolean | undefined,
+    passthrough: readonly string[]
+): { args: string[] } | { error: string } {
+    if (!crossMessages) {
+        return { args: [...passthrough] };
+    }
+
+    try {
+        return { args: withCrossMessages(passthrough) };
+    } catch (error) {
+        return { error: error instanceof Error ? error.message : String(error) };
+    }
+}

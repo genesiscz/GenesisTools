@@ -9,6 +9,7 @@ import {
     createTmuxSessionRunning,
     ensureTmuxServerPersists,
     getTmuxScrollState,
+    killTmuxSessionExact,
     listTmuxClients,
     listTmuxPanes,
     listTmuxSessionActivePanes,
@@ -81,6 +82,20 @@ describe("tmux sessions", () => {
 
         answer = { exitCode: 1, stdout: "", stderr: "no server running on /private/tmp/tmux-501/default" };
         expect(await listTmuxPanes()).toEqual({ ok: true, items: [] });
+        answer = {
+            exitCode: 1,
+            stdout: "",
+            stderr: "error connecting to /private/tmp/tmux-501/default (No such file or directory)",
+        };
+        expect(await listTmuxPanes()).toEqual({ ok: true, items: [] });
+        // A socket tmux cannot open is a failure: the server and its sessions may well be there.
+        answer = {
+            exitCode: 1,
+            stdout: "",
+            stderr: "error connecting to /private/tmp/tmux-501/default (Permission denied)",
+        };
+        expect((await listTmuxPanes()).ok).toBe(false);
+        expect(await killTmuxSessionExact("cmux-app")).toMatchObject({ ok: false });
 
         answer = { exitCode: null, stdout: "" };
         const unanswered = await listTmuxPanes("cmux-app");

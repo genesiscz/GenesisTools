@@ -555,6 +555,15 @@ host.addEventListener("click", (event) => {
  */
 let selectableCard: HTMLElement | null = null;
 
+/** The selectable card, or null once a re-render replaced it: a detached card is never reused or held on to. */
+function liveSelectableCard(): HTMLElement | null {
+    if (selectableCard && !selectableCard.isConnected) {
+        selectableCard = null;
+    }
+
+    return selectableCard;
+}
+
 function setCardSelectable(card: HTMLElement, selectable: boolean): void {
     card.style.setProperty("-webkit-user-select", selectable ? "text" : "none");
     card.style.setProperty("user-select", selectable ? "text" : "none");
@@ -571,12 +580,14 @@ host.addEventListener(
                 ? slot.firstElementChild
                 : null;
 
-        if (card === selectableCard) {
+        const current = liveSelectableCard();
+
+        if (card === current) {
             return;
         }
 
-        if (selectableCard) {
-            setCardSelectable(selectableCard, false);
+        if (current) {
+            setCardSelectable(current, false);
         }
 
         if (card) {
@@ -592,14 +603,15 @@ host.addEventListener(
 // next text it could select further down the card, and the gap between them was painted as selected.
 host.addEventListener("click", (event) => {
     const selection = document.getSelection();
+    const card = liveSelectableCard();
 
-    if (event.detail !== 3 || !selectableCard || !selection || selection.rangeCount === 0) {
+    if (event.detail !== 3 || !card || !selection || selection.rangeCount === 0) {
         return;
     }
 
     const path = event.composedPath().filter((node) => node instanceof HTMLElement);
 
-    if (!path.includes(selectableCard) || path.some((node) => node.matches("textarea, input"))) {
+    if (!path.includes(card) || path.some((node) => node.matches("textarea, input"))) {
         return;
     }
 

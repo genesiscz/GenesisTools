@@ -87,8 +87,8 @@ export class TurnJudge {
             turnStartedAfter?: number;
             /** See `WaitForTurnOptions.turnNewerThan`. */
             turnNewerThan?: number;
-            /** See `WaitForTurnOptions.prompt`. */
-            prompt?: string;
+            /** See `WaitForTurnOptions.openedFromByte`. */
+            openedFromByte?: number;
         }
     ) {}
 
@@ -122,7 +122,8 @@ export class TurnJudge {
         // This also keeps the running-turn rule above honest for `message --wait`: seeing the turn that was
         // already running when the message was sent makes its end "new", but it did not begin after the send.
         const answering =
-            snapshot.turnStartedAt === null || turnAnswers(snapshot.turnStartedAt, this.options, snapshot.turnPrompt);
+            snapshot.turnStartedAt === null ||
+            turnAnswers(snapshot.turnStartedAt, this.options, snapshot.turnStartOffset);
 
         if (ended && isNew && answering) {
             return this.result("done");
@@ -151,12 +152,14 @@ export class TurnJudge {
  * Does a turn that began at `turnStartedAt` answer a sent message? It must begin at or after `turnStartedAfter`, and
  * after `turnNewerThan` (the start of the turn that was current before the send): that turn, ended or still
  * running, was not started by the message, even when it began within the timestamp tolerance. A turn that began in
- * the very same instant (Grok stamps whole seconds) counts only when its prompt is the sent `prompt`.
+ * the very same instant (Grok stamps whole seconds) counts only when its opening record lies at or past
+ * `openedFromByte`, the transcript's size before the send: the file only grows, so it opened after the send.
+ * Equal prompt text proves nothing, since the same message can be sent twice.
  */
 export function turnAnswers(
     turnStartedAt: number,
-    window: { turnStartedAfter?: number; turnNewerThan?: number; prompt?: string },
-    turnPrompt?: string
+    window: { turnStartedAfter?: number; turnNewerThan?: number; openedFromByte?: number },
+    turnStartOffset?: number
 ): boolean {
     if (window.turnStartedAfter !== undefined && turnStartedAt < window.turnStartedAfter) {
         return false;
@@ -168,15 +171,10 @@ export function turnAnswers(
 
     return (
         turnStartedAt === window.turnNewerThan &&
-        window.prompt !== undefined &&
-        turnPrompt !== undefined &&
-        samePrompt(turnPrompt, window.prompt)
+        window.openedFromByte !== undefined &&
+        turnStartOffset !== undefined &&
+        turnStartOffset >= window.openedFromByte
     );
-}
-
-function samePrompt(left: string, right: string): boolean {
-    const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
-    return normalize(left) !== "" && normalize(left) === normalize(right);
 }
 
 export interface WaitForTurnOptions {
@@ -190,8 +188,9 @@ export interface WaitForTurnOptions {
     turnStartedAfter?: number;
     /** Only a turn that began strictly after this instant ends the wait (see `turnAnswers`). */
     turnNewerThan?: number;
-    /** The sent message: a turn that began in the same instant as `turnNewerThan` counts when this is its prompt. */
-    prompt?: string;
+    /** The transcript's byte size before the send: a turn that began in the same instant as `turnNewerThan` counts
+     *  when it opened at or past it (see `turnAnswers`). */
+    openedFromByte?: number;
     /** Give up after this long. Undefined waits for ever. */
     timeoutMs?: number;
     /** Time between two reads. */
@@ -226,7 +225,7 @@ function judgeFor(options: {
     next?: boolean;
     turnStartedAfter?: number;
     turnNewerThan?: number;
-    prompt?: string;
+    openedFromByte?: number;
     now: () => number;
 }): TurnJudge {
     return new TurnJudge({
@@ -236,7 +235,7 @@ function judgeFor(options: {
         now: options.now,
         turnStartedAfter: options.turnStartedAfter,
         turnNewerThan: options.turnNewerThan,
-        prompt: options.prompt,
+        openedFromByte: options.openedFromByte,
     });
 }
 
@@ -249,7 +248,7 @@ export async function waitForTurn(options: WaitForTurnOptions): Promise<TurnWait
         next: options.next,
         turnStartedAfter: options.turnStartedAfter,
         turnNewerThan: options.turnNewerThan,
-        prompt: options.prompt,
+        openedFromByte: options.openedFromByte,
         now,
     });
     const deadline = options.timeoutMs === undefined ? Number.POSITIVE_INFINITY : now() + options.timeoutMs;
@@ -282,8 +281,8 @@ export interface WatchTurnOptions {
     turnStartedAfter?: number;
     /** See `WaitForTurnOptions.turnNewerThan`. */
     turnNewerThan?: number;
-    /** See `WaitForTurnOptions.prompt`. */
-    prompt?: string;
+    /** See `WaitForTurnOptions.openedFromByte`. */
+    openedFromByte?: number;
     timeoutMs?: number;
     /** The safety poll: how soon silence (a stall) and the deadline are noticed. Writes wake at once. */
     pollMs: number;
@@ -299,7 +298,7 @@ export async function watchTurn(options: WatchTurnOptions): Promise<TurnWaitResu
         next: options.next,
         turnStartedAfter: options.turnStartedAfter,
         turnNewerThan: options.turnNewerThan,
-        prompt: options.prompt,
+        openedFromByte: options.openedFromByte,
         now: Date.now,
     });
     let settled: TurnWaitResult | null = null;

@@ -104,8 +104,8 @@ export function leaveReasonOf(
 }
 
 /**
- * Announce that an agent left, or nothing (null) when `login_id` names a login that is no longer the agent's
- * current one: a newer login of the same agent took over, and it stays on the bus. Decided under the feed lock.
+ * Announce that an agent left, or nothing (null) when it is not on the bus, or when `login_id` names a login that is
+ * no longer the agent's current one (a newer login of the same agent took over and stays). Decided under the feed lock.
  */
 export async function announceLeave(
     paths: SessionPaths,
@@ -118,7 +118,11 @@ export async function announceLeave(
     }
 ): Promise<FeedEvent | null> {
     const appended = await appendFeedWhen(paths, (events) => {
-        if (!endsCurrentLogin(presence(events).get(input.agent_id), input.login_id)) {
+        const current = presence(events).get(input.agent_id);
+
+        // Not on the bus (it left already, or never logged in): another agent_left would wake every peer for a
+        // departure that did not happen.
+        if (!current || !endsCurrentLogin(current, input.login_id)) {
             return null;
         }
 
@@ -134,7 +138,10 @@ export async function announceLeave(
     });
 
     if (!appended) {
-        log.debug({ agentId: input.agent_id, loginId: input.login_id }, "leave skipped: a newer login is current");
+        log.debug(
+            { agentId: input.agent_id, loginId: input.login_id },
+            "leave skipped: the agent is not on the bus, or a newer login is current"
+        );
     }
 
     return appended;

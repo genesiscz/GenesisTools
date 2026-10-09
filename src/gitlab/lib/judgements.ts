@@ -523,8 +523,16 @@ export function parseJudgementsJson(value: unknown): Judgements {
             }
 
             const under = TEXT_FIELDS.has(name) ? "texts" : "fields";
+            const entries = under === "texts" ? textEntries : fieldEntries;
+
+            // The explicit value under fields or texts wins; the stray top-level copy is not read over it.
+            if (entries.some(([existing]) => canonicalField(existing) === name)) {
+                warn(`"${key}" is also set under ${under}; the ${under} value is kept and "${key}" is ignored`);
+                continue;
+            }
+
             warn(`"${key}" belongs under ${under}; read as "${name}"`);
-            (under === "texts" ? textEntries : fieldEntries).push([name, fieldValue]);
+            entries.push([name, fieldValue]);
         }
 
         for (const [key, fieldValue] of fieldEntries) {

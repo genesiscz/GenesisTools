@@ -22,6 +22,9 @@ async function resolveByTitle(alias: TurnProvider, query: string, first: boolean
     return resolveTranscript(hits[0].locator, {}, alias);
 }
 
+/** Nothing matched the query at all; every other error from `resolveSessionTranscript` tells the user what to do. */
+export class NoSessionMatchError extends Error {}
+
 /**
  * The transcript a query names: a session id (or 8+ character prefix), a transcript path, or a `/rename`
  * title. Native sessions only; a `tools <agent> worker` session has its own verbs.
@@ -46,7 +49,9 @@ export async function resolveSessionTranscript(
     }
 
     if (!resolved) {
-        throw new Error(`No ${alias} session matches "${query}" (tried session id, path and /rename title)`);
+        throw new NoSessionMatchError(
+            `No ${alias} session matches "${query}" (tried session id, path and /rename title)`
+        );
     }
 
     if (resolved.source === "worker") {
