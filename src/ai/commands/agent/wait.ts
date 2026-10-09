@@ -145,6 +145,8 @@ export class TurnStreamer {
     private cursor = 0;
     private cursorId: string | null = null;
     private lastSize = -1;
+    /** Reads run one at a time: a timeout's final printRest() must not drain beside a print still in flight. */
+    private queue: Promise<unknown> = Promise.resolve();
 
     constructor(
         private readonly options: {
@@ -157,14 +159,22 @@ export class TurnStreamer {
     ) {}
 
     async prime(): Promise<void> {
-        await this.each({ priming: true, visit: () => {} });
+        await this.serial(() => this.each({ priming: true, visit: () => {} }));
     }
 
     async print(): Promise<void> {
-        await this.each({
-            priming: false,
-            visit: (turn) => this.printTurn(turn),
-        });
+        await this.serial(() =>
+            this.each({
+                priming: false,
+                visit: (turn) => this.printTurn(turn),
+            })
+        );
+    }
+
+    private serial(task: () => Promise<void>): Promise<void> {
+        const run = this.queue.then(task);
+        this.queue = run.catch(() => undefined);
+        return run;
     }
 
     /**

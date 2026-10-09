@@ -171,6 +171,44 @@ describe("TurnStreamer", () => {
         expect(lines).toEqual(["final answer"]);
     });
 
+    it("runs the final printRest after a print still in flight, never beside it", async () => {
+        const { transcript, lines, streamer } = harness([turn("old")]);
+        await streamer.prime();
+        transcript.turns = [turn("old"), turn("final answer")];
+        transcript.size = 2;
+
+        let release: () => void = () => {};
+        const held = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let active = 0;
+        let overlap = false;
+        const original = streamer["options"].pager;
+        streamer["options"].pager = async (resolved) => {
+            active += 1;
+            overlap ||= active > 1;
+
+            if (transcript.reads === 1) {
+                await held;
+            }
+
+            try {
+                return (await original?.(resolved)) as TranscriptPager;
+            } finally {
+                active -= 1;
+            }
+        };
+
+        const inFlight = streamer.print();
+        const rest = streamer.printRest();
+        release();
+        await inFlight;
+
+        expect(await rest).toBe(true);
+        expect(overlap).toBe(false);
+        expect(lines).toEqual(["final answer"]);
+    });
+
     it("resumes a drain that failed between pages without printing a turn twice", async () => {
         const { transcript, lines, streamer } = harness([turn("old")]);
         await streamer.prime();
