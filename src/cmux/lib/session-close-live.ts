@@ -170,6 +170,9 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
         async surfaceListed(surface) {
             return (await liveTree()).surfaces.has(surface);
         },
+        async surfaceId(surface) {
+            return (await liveTree()).surfaces.get(surface)?.id ?? null;
+        },
         async closeSurface(surface, window) {
             await runCmuxOk(["close-surface", "--surface", surface, ...(window ? ["--window", window] : [])]);
         },

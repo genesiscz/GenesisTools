@@ -1,8 +1,9 @@
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
+import { readSnapshotsCache, type SnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
-import type { AccountChoice, SessionAgentId } from "./session-agents";
+import { type AccountChoice, type SessionAgentId, sessionAgent } from "./session-agents";
 
 const { log } = logger.scoped("cmux-session");
 
@@ -96,17 +97,54 @@ export function accountChoiceMessage(input: {
     ].join("\n");
 }
 
-/** Latest usage for the agent's accounts. Probe mode: it never spends a single-use refresh token. */
+/** A cached reading older than this gets an age note: the poller daemon may not be running. */
+const CACHE_AGE_NOTE_MS = 10 * 60_000;
+
+/**
+ * Budgets from the poller's snapshot cache, without polling. A reading older than ten minutes carries its age
+ * in the note, unless the snapshot already explains why it is old or failed.
+ */
+export function budgetsFromCache(input: {
+    provider: string;
+    accounts: readonly AccountChoice[];
+    cache: SnapshotsCache | null;
+    now: number;
+}): AccountBudget[] {
+    const snapshots = (input.cache?.providers[input.provider]?.accounts ?? []).map((snapshot) => {
+        const age = input.now - Date.parse(snapshot.fetchedAt);
+
+        if (snapshot.error || snapshot.stale || !(age > CACHE_AGE_NOTE_MS)) {
+            return snapshot;
+        }
+
+        return {
+            ...snapshot,
+            stale: {
+                lastSuccessAt: snapshot.fetchedAt,
+                reason: `cached ${until(age)} ago; ${toolCommand("ai usage")} refreshes it`,
+            },
+        };
+    });
+
+    return budgetsFromSnapshots(input.accounts, snapshots);
+}
+
+/**
+ * Latest usage for the agent's accounts, read from the poller's snapshot cache only. It polls nothing, so it
+ * writes no cache, loads no AI config (a load may migrate it) and never reaches a refresh token.
+ */
 export async function liveAccountBudgets(
     agent: SessionAgentId,
     accounts: readonly AccountChoice[]
 ): Promise<AccountBudget[]> {
+    const provider = sessionAgent(agent).provider;
+
     try {
-        const { pollAccounts } = await import("@genesiscz/utils/ai/usage-poll/poll");
-        const snapshots = await pollAccounts({ providers: [agent], probe: true, maxStaleMs: 10 * 60_000 });
-        return budgetsFromSnapshots(accounts, snapshots);
+        const cache = await readSnapshotsCache();
+        log.debug({ agent, provider, fetchedAt: cache?.fetchedAt ?? null }, "account budgets from the usage cache");
+        return budgetsFromCache({ provider, accounts, cache, now: Date.now() });
     } catch (error) {
-        log.warn({ error, agent }, "usage poll failed; listing accounts without budgets");
+        log.warn({ error, agent }, "usage cache unreadable; listing accounts without budgets");
         return budgetsFromSnapshots(accounts, []);
     }
 }

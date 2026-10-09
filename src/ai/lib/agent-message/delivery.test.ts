@@ -12,7 +12,17 @@ import {
     sendClaudePeerMessage,
 } from "@genesiscz/utils/claude/peer-message";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { claudeMessageDriver, codexMessageDriver, MessageError, pasteIntoSurface, pickClaudeSession } from "./message";
+import {
+    claudeMessageDriver,
+    codexMessageDriver,
+    deliverMessage,
+    grokMessageDriver,
+    type MessageDelivery,
+    MessageError,
+    NoChannelError,
+    pasteIntoSurface,
+    pickClaudeSession,
+} from "./delivery";
 
 function live(sessionId: string, name: string | null, status = "idle"): ClaudeLiveSession {
     return {
@@ -87,10 +97,56 @@ test("a /rename title resolves through the transcripts, and a session that is no
 test("codex queue failures name the shared app-server and the keystroke fallback", async () => {
     const driver = codexMessageDriver({
         resolveId: async () => "0199aaaa-0000-7000-8000-000000000001",
-        queue: async () => ({ code: 1, stderr: "No active session" }),
+        queue: async () => ({ code: 1, stderr: "No active session", timedOut: false }),
     });
 
     await expect(driver.deliver({ query: "0199aaaa", text: "x" })).rejects.toThrow("--remote");
+});
+
+test("a codex queue past its deadline is an unknown send: no keystroke fallback, even when keystrokes are allowed", async () => {
+    const driver = codexMessageDriver({
+        resolveId: async () => "0199aaaa-0000-7000-8000-000000000001",
+        queue: async () => ({ code: 1, stderr: "Command deadline reached.", timedOut: true }),
+    });
+    const pasted: string[] = [];
+    const paste = async (input: { sessionId: string }): Promise<MessageDelivery> => {
+        pasted.push(input.sessionId);
+        throw new Error("the keystroke fallback must not run after a timed-out queue");
+    };
+
+    const error = await deliverMessage({
+        alias: "codex",
+        request: { query: "0199aaaa", text: "x" },
+        allowKeystrokes: true,
+        driver,
+        paste,
+    }).catch((failure: unknown) => failure);
+
+    expect(error).toBeInstanceOf(MessageError);
+    expect(error).not.toBeInstanceOf(NoChannelError);
+    expect(error instanceof Error ? error.message : "").toContain("may or may not be queued");
+    expect(pasted).toEqual([]);
+});
+
+test("no structured channel pastes only with --allow-keystrokes, and otherwise names the flag", async () => {
+    const driver = grokMessageDriver({ resolveId: async () => "0199cccc-0000-7000-8000-000000000003" });
+    const pasted: string[] = [];
+    const paste = async (input: { sessionId: string; text: string }): Promise<MessageDelivery> => {
+        pasted.push(`${input.sessionId} ${input.text}`);
+        return { agent: "grok", sessionId: input.sessionId, name: null, via: "cmux-paste", note: "pasted" };
+    };
+    const request = { query: "vybava", text: "hello" };
+
+    const refused = await deliverMessage({ alias: "grok", request, allowKeystrokes: false, driver, paste }).catch(
+        (error: unknown) => error
+    );
+    expect(refused).toBeInstanceOf(MessageError);
+    expect(refused instanceof MessageError ? refused.suggestions.join(" ") : "").toContain("--allow-keystrokes");
+    expect(pasted).toEqual([]);
+
+    const delivered = await deliverMessage({ alias: "grok", request, allowKeystrokes: true, driver, paste });
+    expect(delivered.via).toBe("cmux-paste");
+    expect(pasted).toEqual(["0199cccc-0000-7000-8000-000000000003 hello"]);
 });
 
 test("frames: auth line only with a token, then one user frame carrying the receiver's session id", () => {
@@ -165,6 +221,7 @@ test("the keystroke fallback pastes through the bounded cmux runner and reports 
             id: "uuid-surface:7",
             tty: "ttys007",
             workspace: "workspace:2",
+            workspaceId: "uuid-workspace:2",
             window: "window:1",
             title: "side - grok",
             workspaceTitle: null,

@@ -18,6 +18,12 @@ export interface SessionCreatedRecord {
     window: string;
     workspace: string;
     surface: string;
+    /**
+     * The cmux UUIDs of `workspace` and `surface`. Refs renumber after a cmux restart and these do not, so
+     * `close` acts on the refs only while the UUIDs still match. Lines written before they were stored lack them.
+     */
+    workspaceId?: string | null;
+    surfaceId?: string | null;
     tmuxSession: string | null;
     /** The shell that runs the agent writes its pid here. */
     pidFile: string;

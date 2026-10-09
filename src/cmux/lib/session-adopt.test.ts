@@ -21,6 +21,7 @@ const TREE = SafeJSON.stringify({
                 { ref: "workspace:1", panes: [{ surfaces: [surface("surface:1", "ttys001")] }] },
                 {
                     ref: "workspace:2",
+                    id: "uuid-workspace:2",
                     panes: [
                         { surfaces: [surface("surface:5", "ttys005")] },
                         { surfaces: [surface("surface:6", "ttys006")] },
@@ -63,10 +64,12 @@ test("the tree gives each terminal surface its tty, workspace and window, and na
         id: "uuid-surface:6",
         tty: "ttys006",
         workspace: "workspace:2",
+        workspaceId: "uuid-workspace:2",
         window: "window:1",
         title: "t",
         workspaceTitle: null,
     });
+    expect(tree.surfaces.get("surface:1")?.workspaceId).toBeNull();
 });
 
 test("a live agent session is found by part of its tab title, workspace title or cwd folder", () => {

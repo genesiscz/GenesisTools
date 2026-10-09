@@ -196,6 +196,8 @@ export async function runSessionNew(
         window: result.window,
         workspace: result.workspace,
         surface: result.surface,
+        workspaceId: result.workspaceId,
+        surfaceId: result.surfaceId,
         tmuxSession: result.tmuxSession,
         pidFile,
         command: result.command,

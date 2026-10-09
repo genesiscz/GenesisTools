@@ -9,6 +9,8 @@ export interface LiveSurface {
     id: string | null;
     tty: string | null;
     workspace: string;
+    /** The workspace UUID (`--id-format both`); stable across cmux restarts, unlike `workspace`. */
+    workspaceId: string | null;
     window: string;
     /** The tab title (`vybava - grok`). */
     title: string | null;
@@ -68,6 +70,7 @@ export function parseCmuxTree(stdout: string): CmuxTreeView {
                             id: text(surface.id),
                             tty: text(surface.tty),
                             workspace: String(workspace.ref),
+                            workspaceId: text(workspace.id),
                             window: String(window.ref),
                             title: text(surface.title),
                             workspaceTitle: text(workspace.title),
@@ -181,6 +184,8 @@ function adoptedFrom(entry: SessionCmuxRefs, live: LiveSurface, agent: SessionAg
         window: live.window,
         workspace: live.workspace,
         surface: live.ref,
+        workspaceId: live.workspaceId,
+        surfaceId: live.id,
         tmuxSession: null,
         pidFile: "",
         command: "",

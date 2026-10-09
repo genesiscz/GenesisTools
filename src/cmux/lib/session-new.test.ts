@@ -5,7 +5,7 @@ import { out } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { Command } from "commander";
 import { registerAgentsCommand, runSessionNew } from "../commands/agents";
-import { accountChoiceMessage, budgetsFromSnapshots } from "./account-budgets";
+import { accountChoiceMessage, budgetsFromCache, budgetsFromSnapshots } from "./account-budgets";
 import { agentRunCommand, pickSessionAccount, sessionAgent, withPidNote } from "./session-agents";
 import {
     assertShellExecutable,
@@ -68,6 +68,7 @@ function harness(overrides: Partial<SessionNewIO> = {}): { io: SessionNewIO; cal
             calls.push(["title", workspace, window, title]);
             return "already-set";
         },
+        surfaceIds: async () => ({ workspaceId: "uuid-workspace:9", surfaceId: "uuid-surface:8" }),
         ...overrides,
     };
 
@@ -201,6 +202,8 @@ test("the focused window is passed even when the caller is outside cmux, and foc
         workspace: "workspace:9",
         surface: "surface:8",
         window: "window:1",
+        workspaceId: "uuid-workspace:9",
+        surfaceId: "uuid-surface:8",
         tmuxSession: null,
         cwd: DEMO,
         command: CLAUDE,
@@ -208,6 +211,44 @@ test("the focused window is passed even when the caller is outside cmux, and foc
     expect(calls).toEqual([
         ["workspace", "create", "--window", "window:1", "--cwd", DEMO, "--focus", "false", "--command", CLAUDE],
     ]);
+});
+
+test("the new session's cmux UUIDs come from the create answer first, then the live tree, and never fail the start", async () => {
+    const request = { agent: "claude" as const, repo: "demo", account: "work", home: HOME, cwd: "/elsewhere" };
+    const lookups: string[] = [];
+    const answered = harness({
+        runJSON: async <T>(): Promise<T> =>
+            ({
+                workspace_ref: "workspace:9",
+                surface_ref: "surface:8",
+                window_ref: "window:1",
+                workspace_id: "W-CREATE",
+                surface_id: "S-CREATE",
+            }) as T,
+        surfaceIds: async (surface) => {
+            lookups.push(surface);
+            return null;
+        },
+    });
+    expect(await startDevSession(request, answered.io)).toMatchObject({
+        workspaceId: "W-CREATE",
+        surfaceId: "S-CREATE",
+    });
+    expect(lookups).toEqual([]);
+
+    const fromTree = await startDevSession(request, harness().io);
+    expect(fromTree).toMatchObject({ workspaceId: "uuid-workspace:9", surfaceId: "uuid-surface:8" });
+
+    const broken = harness({
+        surfaceIds: async () => {
+            throw new Error("cmux tree failed");
+        },
+    });
+    expect(await startDevSession(request, broken.io)).toMatchObject({
+        workspace: "workspace:9",
+        workspaceId: null,
+        surfaceId: null,
+    });
 });
 
 test("a missing focused window uses an existing one, and creates a window only when none exist", async () => {
@@ -597,4 +638,52 @@ test("without --account the error lists every account's 5h and weekly budget and
     expect(message).toContain("shop  5h ?   weekly ?   [no usage reading]");
     expect(message).toContain("AGENT INSTRUCTION: do not choose silently");
     expect(message).toContain("tell the user in your reply which one you picked and why");
+});
+
+test("budgets come from the poller's cache slice of the agent's provider, and an old reading says how old", () => {
+    const now = Date.parse("2026-10-08T20:00:00Z");
+    const reading = (accountId: string, accountName: string, fetchedAt: string) => ({
+        provider: "anthropic-sub",
+        accountId,
+        accountName,
+        fetchedAt,
+        limits: [{ key: "five_hour", label: "5h", kind: "session" as const, percentUsed: 40 }],
+    });
+    const budgets = budgetsFromCache({
+        provider: "anthropic-sub",
+        accounts: [
+            { id: "acc_work", name: "work", provider: "anthropic-sub", enabled: true },
+            { id: "acc_shop", name: "shop", provider: "anthropic-sub", enabled: true },
+            { id: "acc_side", name: "side", provider: "anthropic-sub", enabled: true },
+        ],
+        cache: {
+            fetchedAt: "2026-10-08T19:59:00Z",
+            providers: {
+                "anthropic-sub": {
+                    alias: "claude",
+                    displayName: "Claude",
+                    prominent: [],
+                    accounts: [
+                        reading("acc_work", "work", "2026-10-08T19:59:00Z"),
+                        reading("acc_shop", "shop", "2026-10-08T17:00:00Z"),
+                    ],
+                },
+                "openai-sub": {
+                    alias: "codex",
+                    displayName: "Codex",
+                    prominent: [],
+                    accounts: [{ ...reading("acc_side", "side", "2026-10-08T19:59:00Z"), provider: "openai-sub" }],
+                },
+            },
+        },
+        now,
+    });
+
+    expect(budgets).toEqual([
+        expect.objectContaining({ name: "work", fiveHourLeft: 60, note: null }),
+        expect.objectContaining({ name: "shop", fiveHourLeft: 60 }),
+        expect.objectContaining({ name: "side", fiveHourLeft: null, note: "no usage reading" }),
+    ]);
+    expect(budgets[1].note).toContain("cached 3h 0m ago");
+    expect(budgetsFromCache({ provider: "anthropic-sub", accounts: [], cache: null, now })).toEqual([]);
 });

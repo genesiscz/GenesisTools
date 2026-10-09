@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { runCmux, runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 
 import { windowList } from "@genesiscz/utils/cmux/lib/socket";
 import { focusedPlace } from "@genesiscz/utils/cmux/open-command";
@@ -16,6 +16,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import { createTmuxSession, killTmuxSession } from "@genesiscz/utils/tmux/sessions";
+import { parseCmuxTree } from "./session-adopt";
 import { agentRunCommand, type SessionAgentId, withPidNote } from "./session-agents";
 
 const { log } = logger.scoped("cmux-session");
@@ -28,6 +29,8 @@ export interface SessionNewResult {
     workspace: string;
     surface: string;
     window: string;
+    workspaceId: string | null;
+    surfaceId: string | null;
     tmuxSession: string | null;
     cwd: string;
     command: string;
@@ -69,12 +72,55 @@ export interface SessionNewIO {
     repoFs: RepoFs;
     nonce(): string;
     ensureTitle(input: { workspace: string; window: string; title: string }): Promise<WorkspaceTitleOutcome>;
+    /** The UUIDs behind a surface ref and its workspace, from the live tree; null when cmux lists no such surface. */
+    surfaceIds(surface: string): Promise<SessionCmuxIds | null>;
 }
 
 interface WorkspaceCreated {
     workspace_ref?: string;
     surface_ref?: string;
     window_ref?: string;
+    workspace_id?: string;
+    surface_id?: string;
+}
+
+/** The cmux UUIDs of a workspace and surface; null where cmux named none. */
+export interface SessionCmuxIds {
+    workspaceId: string | null;
+    surfaceId: string | null;
+}
+
+/**
+ * The UUIDs of the workspace and surface just created: from the create answer, else from the live tree, read
+ * at once while the fresh refs still name them. A failed lookup never fails the session that is already open;
+ * `close` then refuses its refs until `--force`.
+ */
+async function createdIds(input: {
+    created: WorkspaceCreated;
+    surface: string;
+    io: Pick<SessionNewIO, "surfaceIds">;
+}): Promise<SessionCmuxIds> {
+    let workspaceId = input.created.workspace_id?.trim() || null;
+    let surfaceId = input.created.surface_id?.trim() || null;
+
+    if (!workspaceId || !surfaceId) {
+        try {
+            const live = await input.io.surfaceIds(input.surface);
+            workspaceId = workspaceId ?? live?.workspaceId ?? null;
+            surfaceId = surfaceId ?? live?.surfaceId ?? null;
+        } catch (error) {
+            log.warn({ error, surface: input.surface }, "could not read the new session's cmux UUIDs");
+        }
+    }
+
+    if (!workspaceId || !surfaceId) {
+        log.warn(
+            { surface: input.surface, workspaceId, surfaceId },
+            "the session has no cmux UUIDs; close will need --force"
+        );
+    }
+
+    return { workspaceId, surfaceId };
 }
 
 /**
@@ -284,6 +330,7 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
     let workspace: string;
     let surface: string;
     let window: string;
+    let created: WorkspaceCreated;
 
     try {
         if (input.viaTmux) {
@@ -296,7 +343,7 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
             command = tmuxAttachCommand(session);
         }
 
-        const created = await io.runJSON<WorkspaceCreated>(
+        created = await io.runJSON<WorkspaceCreated>(
             buildWorkspaceCreateArgs({
                 window: windowRef,
                 cwd,
@@ -323,11 +370,13 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
         throw error;
     }
 
+    const ids = await createdIds({ created, surface, io });
+
     if (name) {
         await io.ensureTitle({ workspace, window, title: name });
     }
 
-    return { agent: input.agent, workspace, surface, window, tmuxSession, cwd, command };
+    return { agent: input.agent, workspace, surface, window, ...ids, tmuxSession, cwd, command };
 }
 
 async function spawnTmux(argv: string[]): Promise<void> {
@@ -410,5 +459,15 @@ export function liveSessionIO(): SessionNewIO {
         repoFs: liveRepoFs(),
         nonce: () => randomBytes(3).toString("hex"),
         ensureTitle: (input) => ensureWorkspaceTitle(input),
+        surfaceIds: async (surface) => {
+            const result = await runCmux(["--id-format", "both", "tree"], { json: true });
+
+            if (result.code !== 0) {
+                throw new Error(`cmux tree failed (${result.code}): ${result.stderr.trim()}`);
+            }
+
+            const live = parseCmuxTree(result.stdout).surfaces.get(surface);
+            return live ? { workspaceId: live.workspaceId, surfaceId: live.id } : null;
+        },
     };
 }

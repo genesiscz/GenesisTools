@@ -13,6 +13,8 @@ function created(overrides: Partial<SessionCreatedRecord> = {}): SessionCreatedR
         window: "window:1",
         workspace: "workspace:9",
         surface: "surface:8",
+        workspaceId: "W9",
+        surfaceId: "S8",
         tmuxSession: null,
         pidFile: "/state/sessions/codex-app-ab12cd.pid",
         command: "tools codex run side",
@@ -36,11 +38,24 @@ function fake(input: {
     /** How many `agentRunning` checks answer true before the agent is gone. */
     runningChecks?: number;
     adoptable?: AdoptedSession | null;
+    /** What cmux lists now; called once per listing, so a test can renumber refs mid-close. */
+    listing?: (call: number) => ListedWorkspace[];
+    /** The UUID behind a surface ref, per lookup; defaults to `S<n>` for `surface:<n>`. */
+    surfaceUuid?: (surface: string, call: number) => string | null;
+    /** The exit command and the workspace close THROW: a refusal test fails loudly if it reaches them. */
+    forbidIrreversible?: boolean;
 }): Fake {
     const calls: string[] = [];
     const lines = [...(input.lines ?? [created()])];
     let workspaces = input.workspaces ?? [{ ref: "workspace:9", id: "W9", cwd: "/repo/app" }];
     let surfaces = new Set(["surface:8", "surface:21"]);
+    let listings = 0;
+    let lookups = 0;
+    const forbid = (step: string) => {
+        if (input.forbidIrreversible) {
+            throw new Error(`${step} must not run`);
+        }
+    };
     let running = input.runningChecks ?? 2;
     let clock = 0;
     const io: SessionCloseIO = {
@@ -51,12 +66,24 @@ function fake(input: {
             },
             pidFile: (name) => `/state/sessions/${name}.pid`,
         },
-        listWorkspaces: async () => workspaces,
+        listWorkspaces: async () => {
+            listings += 1;
+            return input.listing ? input.listing(listings) : workspaces;
+        },
         adopt: async (query) => {
             calls.push(`adopt ${query}`);
             return input.adoptable ?? null;
         },
         surfaceListed: async (surface) => surfaces.has(surface),
+        surfaceId: async (surface) => {
+            lookups += 1;
+
+            if (input.surfaceUuid) {
+                return input.surfaceUuid(surface, lookups);
+            }
+
+            return surfaces.has(surface) ? `S${surface.split(":")[1]}` : null;
+        },
         closeSurface: async (surface) => {
             calls.push(`close-surface ${surface}`);
             surfaces = new Set([...surfaces].filter((entry) => entry !== surface));
@@ -65,6 +92,7 @@ function fake(input: {
         turnState: async () => (input.turn === undefined ? { sessionId: "s-1", state: "AWAITING-INPUT" } : input.turn),
         sendExit: async (_record, text) => {
             calls.push(`exit ${text}`);
+            forbid("the exit command");
         },
         agentRunning: async () => {
             running -= 1;
@@ -72,6 +100,7 @@ function fake(input: {
         },
         closeWorkspace: async (workspace, _window, force) => {
             calls.push(force ? `close ${workspace} --force` : `close ${workspace}`);
+            forbid("the workspace close");
             workspaces = workspaces.filter((entry) => entry.ref !== workspace);
         },
         killTmux: async (session) => {
@@ -110,8 +139,12 @@ test("no record, the caller's own workspace, a moved ref and a running turn are 
     expect(ownReport.reason).toBe("own-workspace");
     expect(own.calls).toEqual([]);
 
-    const moved = fake({ workspaces: [{ ref: "workspace:9", id: "W9", cwd: "/other" }] });
+    const moved = fake({
+        workspaces: [{ ref: "workspace:9", id: "W-OTHER", cwd: "/repo/app" }],
+        forbidIrreversible: true,
+    });
     expect((await closeSession("codex-app-ab12cd", { graceMs: 0 }, moved.io)).reason).toBe("workspace-moved");
+    expect(moved.calls).toEqual([]);
 
     const busy = fake({ turn: { sessionId: "s-1", state: "RUNNING" } });
     const busyReport = await closeSession("codex-app-ab12cd", { graceMs: 0 }, busy.io);
@@ -160,6 +193,8 @@ test("an agent session agents new did not open is adopted: the agent quits, only
             agent: "grok",
             workspace: "workspace:3",
             surface: "surface:21",
+            workspaceId: "W3",
+            surfaceId: "S21",
             pidFile: "",
         }),
         createdBy: "adopted",
@@ -203,4 +238,76 @@ test("a session id whose surface agents new recorded closes as the recorded sess
 
     expect(report).toMatchObject({ adopted: false, session: "codex-app-ab12cd", outcome: "closed" });
     expect(calls).toContain("close workspace:9");
+});
+
+test("a recorded session whose UUIDs match closes even after its shell changed folder", async () => {
+    const drifted = fake({ workspaces: [{ ref: "workspace:9", id: "w9", cwd: "/repo/app/sub" }], runningChecks: 1 });
+    const report = await closeSession("codex-app-ab12cd", { graceMs: 1_000 }, drifted.io);
+
+    expect(report).toMatchObject({ outcome: "closed", reason: null });
+    expect(drifted.calls).toEqual(["exit /quit", "close workspace:9"]);
+});
+
+test("a record without cmux UUIDs is never acted on without --force, and --force still closes it", async () => {
+    const legacy = [created({ workspaceId: undefined, surfaceId: undefined })];
+    const refused = fake({ lines: legacy, forbidIrreversible: true });
+    const report = await closeSession("codex-app-ab12cd", { graceMs: 0 }, refused.io);
+
+    expect(report.reason).toBe("identity-unknown");
+    expect(report.notes[0]).toContain("pass --force");
+    expect(refused.calls).toEqual([]);
+
+    const forced = fake({ lines: legacy, runningChecks: 1 });
+    expect((await closeSession("codex-app-ab12cd", { graceMs: 1_000, force: true }, forced.io)).outcome).toBe("closed");
+    expect(forced.calls).toEqual(["exit /quit", "close workspace:9 --force"]);
+});
+
+test("a renumbered surface ref is refused before the exit command is typed into it", async () => {
+    const other = fake({ surfaceUuid: () => "S-OTHER", forbidIrreversible: true });
+    expect((await closeSession("codex-app-ab12cd", { graceMs: 0 }, other.io)).reason).toBe("workspace-moved");
+    expect(other.calls).toEqual([]);
+
+    // cmux restarts between the first check and the exit: the second lookup already names another surface.
+    const restarted = fake({
+        surfaceUuid: (_surface, call) => (call === 1 ? "S8" : "S-OTHER"),
+        forbidIrreversible: true,
+    });
+    const report = await closeSession("codex-app-ab12cd", { graceMs: 0 }, restarted.io);
+    expect(report.reason).toBe("workspace-moved");
+    expect(report.steps.exitSent).toBe(false);
+    expect(restarted.calls).toEqual([]);
+});
+
+test("a workspace ref that turns into another workspace after the exit is refused before it closes", async () => {
+    const own = { ref: "workspace:9", id: "W9", cwd: "/repo/app" };
+    const swapped = fake({
+        // Listings 1 to 3: the first look, the identity check, the check before the exit. The fourth is before the close.
+        listing: (call) => (call <= 3 ? [own] : [{ ...own, id: "W-OTHER" }]),
+        runningChecks: 1,
+    });
+    const report = await closeSession("codex-app-ab12cd", { graceMs: 1_000 }, swapped.io);
+
+    expect(report).toMatchObject({ outcome: "refused", reason: "workspace-moved" });
+    expect(report.steps.exitSent).toBe(true);
+    expect(swapped.calls).toEqual(["exit /quit"]);
+});
+
+test("an adopted session on a stale record's surface ref but another surface UUID closes as adopted, not as the record", async () => {
+    const adoptable: AdoptedSession = {
+        ...created({
+            name: "0199dd44-0000-7000-8000-000000000004",
+            surface: "surface:8",
+            surfaceId: "S-NEW",
+            pidFile: "",
+        }),
+        createdBy: "adopted",
+        sessionId: "0199dd44-0000-7000-8000-000000000004",
+        tty: "ttys011",
+    };
+    const { io, calls } = fake({ adoptable, runningChecks: 1 });
+    const report = await closeSession("0199dd44", { graceMs: 5_000 }, io);
+
+    expect(report).toMatchObject({ adopted: true, outcome: "closed" });
+    expect(calls).toContain("close-surface surface:8");
+    expect(calls).not.toContain("close workspace:9");
 });

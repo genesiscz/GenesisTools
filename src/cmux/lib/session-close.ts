@@ -7,6 +7,7 @@ export type CloseReason =
     | "ambiguous"
     | "not-recorded"
     | "workspace-moved"
+    | "identity-unknown"
     | "own-workspace"
     | "turn-running"
     | "agent-still-running";
@@ -67,6 +68,8 @@ export interface SessionCloseIO {
     adopt?(query: string): Promise<AdoptedSession | null>;
     /** True while cmux still lists the surface. */
     surfaceListed(surface: string): Promise<boolean>;
+    /** The UUID of the surface cmux lists at this ref now, or null when it lists none. */
+    surfaceId(surface: string): Promise<string | null>;
     closeSurface(surface: string, window: string | null): Promise<void>;
     /** The workspace this command runs in (`CMUX_WORKSPACE_ID`), never closed. */
     callerWorkspaceId(): string | undefined;
@@ -136,6 +139,66 @@ function emptySteps(): CloseSteps {
     return { exitSent: false, agentExited: false, workspaceClosed: false, tmuxKilled: false };
 }
 
+/** cmux prints UUIDs upper-case and the journal may store them lower-case; a missing id never matches. */
+function sameId(left: string | null | undefined, right: string | null | undefined): boolean {
+    return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
+}
+
+/** `check` runs before anything happens; `exit` right before the exit command is typed; `close` right before the workspace closes. */
+type IdentityStage = "check" | "exit" | "close";
+
+/**
+ * Why a recorded session's refs may no longer name its own workspace and surface, or null when they do.
+ *
+ * cmux refs renumber after a restart, so `workspace:9` from an old record can name an unrelated workspace in
+ * the same repo. The stored UUIDs decide: the workspace listed at the ref must carry the record's workspace
+ * UUID, and the surface at the ref its surface UUID. A record without UUIDs (written before they were stored)
+ * cannot be verified and is refused. A workspace that is no longer listed is not refused here: nothing at that
+ * ref gets closed. Before the exit command is typed into a surface (not tmux), that surface must be listed.
+ */
+async function recordedIdentityProblem(input: {
+    record: SessionCreatedRecord;
+    stage: IdentityStage;
+    window: string | null;
+    io: Pick<SessionCloseIO, "listWorkspaces" | "surfaceId">;
+}): Promise<{ reason: CloseReason; note: string } | null> {
+    const { record, io } = input;
+    const listed = (await io.listWorkspaces(input.window)).find((workspace) => workspace.ref === record.workspace);
+    const holds = listed?.cwd ? ` (it holds ${listed.cwd})` : "";
+
+    if (!record.workspaceId || !record.surfaceId) {
+        return listed || input.stage === "exit"
+            ? {
+                  reason: "identity-unknown",
+                  note: `${record.name} was recorded without cmux UUIDs, so after a cmux restart ${record.workspace}${holds} may be another session's workspace. Check it, then pass --force`,
+              }
+            : null;
+    }
+
+    if (listed && !sameId(listed.id, record.workspaceId)) {
+        return {
+            reason: "workspace-moved",
+            note: `${record.workspace} is now another workspace${holds}; cmux refs renumber after a restart. Pass --force if it is the right one`,
+        };
+    }
+
+    if (input.stage === "close") {
+        return null;
+    }
+
+    const surfaceId = await io.surfaceId(record.surface);
+    const typesIntoSurface = input.stage === "exit" && !record.tmuxSession;
+
+    if (surfaceId === null ? typesIntoSurface : !sameId(surfaceId, record.surfaceId)) {
+        return {
+            reason: "workspace-moved",
+            note: `${record.surface} is ${surfaceId === null ? "gone" : "now another surface"}, so the exit command has no safe target; cmux refs renumber after a restart. Pass --force if it is the right one`,
+        };
+    }
+
+    return null;
+}
+
 /**
  * Close an agent session: quit the agent, then close its workspace (a session `agents new` opened) or its
  * surface (an adopted session, which may share the workspace with other panes).
@@ -150,8 +213,9 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
 
     if (io.adopt && (target.kind === "bare" || (target.kind === "none" && target.reason === "not-found"))) {
         const adopted = await io.adopt(query.trim());
-        // A session id that lives in a surface `agents new` opened closes as that recorded session.
-        const recorded = adopted ? open.find((entry) => entry.surface === adopted.surface) : undefined;
+        // A session id that lives in a surface `agents new` opened closes as that recorded session. The surface
+        // UUID decides, never the ref: after a restart a stale record's `surface:N` can name the adopted surface.
+        const recorded = adopted ? open.find((entry) => sameId(entry.surfaceId, adopted.surfaceId)) : undefined;
 
         if (adopted) {
             target = { kind: "record", record: recorded ?? adopted };
@@ -206,11 +270,20 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
         return refuse("not-found", `${record.surface} is gone; the session is no longer open in cmux`);
     }
 
-    if (record && !adopted && listed?.cwd && listed.cwd !== record.cwd && !options.force) {
-        return refuse(
-            "workspace-moved",
-            `${record.workspace} now holds ${listed.cwd}, not ${record.cwd}; cmux refs renumber after a restart. Pass --force if it is the right one`
-        );
+    // A recorded session's refs are checked against its stored UUIDs here, and again right before the exit
+    // command is typed and before the workspace closes: refs renumber after a cmux restart. Only --force skips it.
+    const identityRefused = async (stage: IdentityStage): Promise<CloseReport | null> => {
+        if (!record || adopted || options.force) {
+            return null;
+        }
+
+        const problem = await recordedIdentityProblem({ record, stage, window: report.window, io });
+        return problem ? refuse(problem.reason, problem.note) : null;
+    };
+    const unverified = await identityRefused("check");
+
+    if (unverified) {
+        return unverified;
     }
 
     if (record) {
@@ -248,6 +321,12 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
 
     // An adopted session's surface was checked live above; its workspace may sit in another window.
     if (record && (listed || adopted) && (await io.agentRunning(record))) {
+        const beforeExit = await identityRefused("exit");
+
+        if (beforeExit) {
+            return beforeExit;
+        }
+
         await io.sendExit(record, sessionAgent(record.agent).exitCommand);
         report.steps.exitSent = true;
 
@@ -274,6 +353,12 @@ export async function closeSession(query: string, options: CloseOptions, io: Ses
     if (adopted && record) {
         await io.closeSurface(record.surface, report.window);
     } else if (listed) {
+        const beforeClose = await identityRefused("close");
+
+        if (beforeClose) {
+            return beforeClose;
+        }
+
         await io.closeWorkspace(report.workspace, report.window, options.force === true);
     }
 
