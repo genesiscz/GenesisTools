@@ -118,6 +118,12 @@ private struct ClickySettingsPageContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
+            if let recovery = model.statisticsLoadError {
+                Label(recovery, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12)).foregroundStyle(.orange)
+                    .padding(16).nativeGlassSurface()
+                    .accessibilityIdentifier("clicky.statistics.recovery")
+            }
             if let error = model.error {
                 HStack(alignment: .top, spacing: 12) {
                     Label(error, systemImage: "exclamationmark.triangle.fill").font(.system(size: 12)).foregroundStyle(
@@ -140,7 +146,9 @@ private struct ClickySettingsPageContent: View {
             Button("Cancel", role: .cancel) {}
             Button("Reset", role: .destructive) { model.resetStatistics() }
         } message: {
-            Text("This removes your saved aggregate counts from this Mac.")
+            Text(model.statisticsLoadError == nil
+                ? "This removes your saved aggregate counts from this Mac."
+                : "This starts a new typing history and keeps a backup of the unreadable original data.")
         }
     }
 
