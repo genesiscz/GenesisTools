@@ -16,7 +16,7 @@ import {
     type SessionAgentId,
     sessionAgent,
 } from "../lib/session-agents";
-import { closeSession } from "../lib/session-close";
+import { closeSession, recordedSessionFor } from "../lib/session-close";
 import { liveAdoptableSessions, liveSessionCloseIO } from "../lib/session-close-live";
 import {
     liveSessionIO,
@@ -259,11 +259,13 @@ async function runSessionClose(query: string, options: CloseFlags): Promise<void
 
 async function runSessionList(options: { agent?: string; all?: boolean; json?: boolean }): Promise<void> {
     const wanted = (agent: string) => !options.agent || agent === options.agent;
-    const open = openSessions(fileSessionStore().read()).filter((record) => wanted(record.agent));
-    const recordedSurfaces = new Set(open.map((record) => record.surface));
+    const allOpen = openSessions(fileSessionStore().read());
+    const open = allOpen.filter((record) => wanted(record.agent));
+    // A live session whose surface UUID an open record holds is that record (close treats it so); a stale record
+    // whose old ref a new surface took does not hide the new one.
     const adoptable = options.all
         ? (await liveAdoptableSessions()).filter(
-              (session) => wanted(session.agent) && !recordedSurfaces.has(session.surface)
+              (session) => wanted(session.agent) && !recordedSessionFor(allOpen, session.surfaceId)
           )
         : [];
 

@@ -165,14 +165,18 @@ export function pickAdoptable(input: {
     const agent = input.providerOf(entry);
     const live = input.tree.surfaces.get(entry.surfaceRef ?? "");
 
-    if (!agent || !isSessionAgentId(agent) || !live) {
+    if (!agent || !isSessionAgentId(agent) || !live?.id) {
         return null;
     }
 
-    return adoptedFrom(entry, live, agent);
+    return adoptedFrom(entry, { ...live, id: live.id }, agent);
 }
 
-function adoptedFrom(entry: SessionCmuxRefs, live: LiveSurface, agent: SessionAgentId): AdoptedSession {
+function adoptedFrom(
+    entry: SessionCmuxRefs,
+    live: LiveSurface & { id: string },
+    agent: SessionAgentId
+): AdoptedSession {
     return {
         type: "created",
         name: entry.sessionId,

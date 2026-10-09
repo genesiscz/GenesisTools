@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
+import * as delivery from "@app/ai/lib/agent-message/delivery";
 import { codexNativeLinesToTurns } from "@genesiscz/utils/ai/transcripts/codex";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TurnSnapshot } from "@genesiscz/utils/ai/transcripts/turn-state";
@@ -7,16 +8,20 @@ import {
     type SliceOptions,
     sliceTurns,
     type TranscriptEnvelope,
+    type TranscriptTool,
     type TranscriptTurn,
 } from "@genesiscz/utils/ai/transcripts/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Command } from "commander";
+import { messageCommand } from "./message";
 import {
     answeredBeforeWatch,
     DEFAULT_WAIT_STALL_SECONDS,
     exitCodeOf,
     parseSeconds,
+    parseWaitFlags,
     printsFinalText,
+    readTurnExtras,
     registerAgentWaitCommand,
     streamsLive,
     type TranscriptPager,
@@ -370,5 +375,114 @@ describe("TurnStreamer", () => {
             ...tools(after[2]),
         ]);
         expect(lines).toHaveLength(3);
+    });
+});
+
+describe("wait --last and --tools past one page", () => {
+    const tool = (name: string): TranscriptTool => ({ id: name, name, inputPreview: "", result: null, isError: false });
+
+    function pagerOver(turns: TranscriptTurn[]): { page: TranscriptPager; reads: SliceOptions[] } {
+        const reads: SliceOptions[] = [];
+        const page: TranscriptPager = async (opts) => {
+            reads.push(opts);
+            const sliced = sliceTurns(turns, opts);
+
+            return {
+                provider: "grok",
+                sessionId: "s-pages",
+                filePath: "/nonexistent/s-pages.jsonl",
+                byteSize: 1,
+                truncated: sliced.truncated,
+                nextOffset: sliced.nextOffset,
+                turns: sliced.turns,
+                turnCount: turns.length,
+            };
+        };
+
+        return { page, reads };
+    }
+
+    it("pages back until --last N assistant texts are read, though user turns fill half of each page", async () => {
+        const turns = Array.from({ length: 300 }, (_, index): TranscriptTurn => {
+            const role = index % 2 === 0 ? "user" : "assistant";
+            return { id: String(index), role, at: null, text: `${role} ${index}`, tools: [] };
+        });
+        const { page } = pagerOver(turns);
+        const extras = await readTurnExtras(page, { last: 100 });
+
+        expect(extras.lastMessages).toHaveLength(100);
+        expect(extras.lastMessages?.[0]).toBe("assistant 101");
+        expect(extras.lastMessages?.at(-1)).toBe("assistant 299");
+    });
+
+    it("counts every tool call of an ending turn longer than one page, and reads one page when that is enough", async () => {
+        const working = Array.from(
+            { length: DEFAULT_TURN_LIMIT + 40 },
+            (_, index): TranscriptTurn => ({
+                id: `a${index}`,
+                role: "assistant",
+                at: null,
+                text: "",
+                tools: [tool("Bash")],
+            })
+        );
+        const turns: TranscriptTurn[] = [
+            { id: "old", role: "assistant", at: null, text: "old", tools: [tool("Read")] },
+            { id: "ask", role: "user", at: null, text: "do it", tools: [] },
+            ...working,
+        ];
+        const long = pagerOver(turns);
+
+        expect((await readTurnExtras(long.page, { tools: true })).tools).toEqual([
+            { name: "Bash", count: DEFAULT_TURN_LIMIT + 40 },
+        ]);
+
+        const short = pagerOver(turns.slice(-10));
+        await readTurnExtras(short.page, { last: 1, tools: true });
+        expect(short.reads).toEqual([{}]);
+    });
+});
+
+describe("parseWaitFlags", () => {
+    it("validates --last as a whole number and names the flag the caller exposes", () => {
+        expect(parseWaitFlags({ timeout: "5", last: "3" })).toEqual({
+            timeoutSeconds: 5,
+            last: 3,
+            stallTimeoutMs: DEFAULT_WAIT_STALL_SECONDS * 1000,
+        });
+        expect(parseWaitFlags({ stallTimeout: "0" }).stallTimeoutMs).toBe(Number.POSITIVE_INFINITY);
+        expect(() => parseWaitFlags({ last: "2.5" })).toThrow("--last");
+        expect(() => parseWaitFlags({ timeout: "soon" }, { timeoutFlag: "--wait-timeout" })).toThrow("--wait-timeout");
+    });
+});
+
+describe("message --wait with a bad wait flag", () => {
+    afterEach(() => {
+        mock.restore();
+        process.exitCode = 0;
+    });
+
+    it("refuses before delivery, so nothing is sent", async () => {
+        const deliver = spyOn(delivery, "deliverMessage").mockImplementation(async () => {
+            throw new Error("deliverMessage must not run");
+        });
+
+        for (const flags of [{ waitTimeout: "soon" }, { last: "1.5" }, { stallTimeout: "-1" }]) {
+            await messageCommand("grok", "s-1", ["hello"], { wait: true, ...flags });
+            expect(process.exitCode).toBe(2);
+        }
+
+        expect(deliver).not.toHaveBeenCalled();
+    });
+
+    it("still delivers when the wait flags are valid", async () => {
+        const deliver = spyOn(delivery, "deliverMessage").mockImplementation(async () => {
+            throw new delivery.MessageError("delivery reached", []);
+        });
+
+        await messageCommand("grok", "s-1", ["hello"], { wait: true, waitTimeout: "5", last: "2" });
+
+        expect(deliver).toHaveBeenCalledTimes(1);
+        expect(process.exitCode).toBe(1);
     });
 });

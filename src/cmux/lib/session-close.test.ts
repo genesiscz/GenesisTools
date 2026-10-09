@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { type AdoptedSession, closeSession, type ListedWorkspace, type SessionCloseIO } from "./session-close";
+import {
+    type AdoptedSession,
+    closeSession,
+    type ListedWorkspace,
+    recordedSessionFor,
+    type SessionCloseIO,
+    surfaceTarget,
+} from "./session-close";
 import { openSessions, type SessionCreatedRecord, type SessionRecordLine } from "./session-store";
 
 function created(overrides: Partial<SessionCreatedRecord> = {}): SessionCreatedRecord {
@@ -40,8 +47,10 @@ function fake(input: {
     adoptable?: AdoptedSession | null;
     /** What cmux lists now; called once per listing, so a test can renumber refs mid-close. */
     listing?: (call: number) => ListedWorkspace[];
-    /** The UUID behind a surface ref, per lookup; defaults to `S<n>` for `surface:<n>`. */
+    /** The UUID behind a surface ref, per lookup; defaults to `uuids`, then `S<n>` for `surface:<n>`. */
     surfaceUuid?: (surface: string, call: number) => string | null;
+    /** Fixed UUIDs of listed surfaces, by ref. */
+    uuids?: Record<string, string>;
     /** The exit command and the workspace close THROW: a refusal test fails loudly if it reaches them. */
     forbidIrreversible?: boolean;
 }): Fake {
@@ -51,6 +60,7 @@ function fake(input: {
     let surfaces = new Set(["surface:8", "surface:21"]);
     let listings = 0;
     let lookups = 0;
+    const uuidOf = (ref: string) => input.uuids?.[ref] ?? `S${ref.split(":")[1]}`;
     const forbid = (step: string) => {
         if (input.forbidIrreversible) {
             throw new Error(`${step} must not run`);
@@ -74,7 +84,6 @@ function fake(input: {
             calls.push(`adopt ${query}`);
             return input.adoptable ?? null;
         },
-        surfaceListed: async (surface) => surfaces.has(surface),
         surfaceId: async (surface) => {
             lookups += 1;
 
@@ -82,11 +91,12 @@ function fake(input: {
                 return input.surfaceUuid(surface, lookups);
             }
 
-            return surfaces.has(surface) ? `S${surface.split(":")[1]}` : null;
+            return surfaces.has(surface) ? uuidOf(surface) : null;
         },
         closeSurface: async (surface) => {
             calls.push(`close-surface ${surface}`);
-            surfaces = new Set([...surfaces].filter((entry) => entry !== surface));
+            forbid("the surface close");
+            surfaces = new Set([...surfaces].filter((entry) => entry !== surface && uuidOf(entry) !== surface));
         },
         callerWorkspaceId: () => input.caller,
         turnState: async () => (input.turn === undefined ? { sessionId: "s-1", state: "AWAITING-INPUT" } : input.turn),
@@ -194,10 +204,10 @@ test("an agent session agents new did not open is adopted: the agent quits, only
             workspace: "workspace:3",
             surface: "surface:21",
             workspaceId: "W3",
-            surfaceId: "S21",
             pidFile: "",
         }),
         createdBy: "adopted",
+        surfaceId: "S21",
         sessionId: "0199aa11-2222-7333-8444-555566667777",
         tty: "ttys009",
     };
@@ -211,8 +221,81 @@ test("an agent session agents new did not open is adopted: the agent quits, only
         sessionId: "s-1",
         steps: { exitSent: true, agentExited: true, workspaceClosed: true },
     });
-    expect(calls).toEqual(["adopt 0199aa11", "exit /exit", "close-surface surface:21"]);
+    // The close names the surface UUID adoption verified, so a renumbered ref can never be what closes.
+    expect(calls).toEqual(["adopt 0199aa11", "exit /exit", "close-surface S21"]);
     expect(lines.filter((line) => line.type === "closed")).toEqual([]);
+});
+
+function adoptedGrok(): AdoptedSession {
+    return {
+        ...created({
+            name: "0199ee55-0000-7000-8000-000000000005",
+            agent: "grok",
+            workspace: "workspace:3",
+            surface: "surface:21",
+            workspaceId: "W3",
+            pidFile: "",
+        }),
+        createdBy: "adopted",
+        sessionId: "0199ee55-0000-7000-8000-000000000005",
+        surfaceId: "S21",
+        tty: "ttys012",
+    };
+}
+
+test("an adopted surface ref that names another surface after adoption gets no exit and no close, even with --force", async () => {
+    // cmux restarts during the turn check: lookup 1 (the first check) still sees S21, lookup 2 (before the exit) does not.
+    for (const force of [false, true]) {
+        const restarted = fake({
+            adoptable: adoptedGrok(),
+            surfaceUuid: (_surface, call) => (call === 1 ? "S21" : "S-OTHER"),
+            forbidIrreversible: true,
+        });
+        const report = await closeSession("0199ee55", { graceMs: 1_000, force }, restarted.io);
+
+        expect(report).toMatchObject({ adopted: true, outcome: "refused", reason: "workspace-moved" });
+        expect(report.steps.exitSent).toBe(false);
+        expect(restarted.calls).toEqual(["adopt 0199ee55"]);
+    }
+
+    // A restart during the exit grace: the agent quit, but the ref now names another terminal, which stays open.
+    const duringGrace = fake({
+        adoptable: adoptedGrok(),
+        surfaceUuid: (_surface, call) => (call <= 2 ? "S21" : "S-OTHER"),
+        runningChecks: 1,
+    });
+    const graceReport = await closeSession("0199ee55", { graceMs: 1_000 }, duringGrace.io);
+
+    expect(graceReport).toMatchObject({ outcome: "refused", reason: "workspace-moved" });
+    expect(duringGrace.calls).toEqual(["adopt 0199ee55", "exit /exit"]);
+
+    // The surface is gone by the time of the check: nothing to do, nothing typed anywhere.
+    const gone = fake({ adoptable: adoptedGrok(), surfaceUuid: () => null, forbidIrreversible: true });
+    expect((await closeSession("0199ee55", { graceMs: 0 }, gone.io)).reason).toBe("not-found");
+});
+
+test("an adopted session whose surface UUID holds through every check closes by that UUID", async () => {
+    const steady = fake({ adoptable: adoptedGrok(), runningChecks: 1 });
+    const report = await closeSession("0199ee55", { graceMs: 1_000 }, steady.io);
+
+    expect(report).toMatchObject({ outcome: "closed", reason: null, steps: { exitSent: true, workspaceClosed: true } });
+    expect(steady.calls).toEqual(["adopt 0199ee55", "exit /exit", "close-surface S21"]);
+});
+
+test("the exit command and the close target an adopted session's UUID and a recorded session's ref", () => {
+    expect(surfaceTarget(adoptedGrok())).toBe("S21");
+    expect(surfaceTarget(created())).toBe("surface:8");
+});
+
+test("a live session belongs to the open record holding its surface UUID, never to one holding only its old ref", () => {
+    const open = [
+        created({ surface: "surface:8", surfaceId: "S8" }),
+        created({ name: "legacy", surfaceId: undefined }),
+    ];
+
+    expect(recordedSessionFor(open, "s8")?.name).toBe("codex-app-ab12cd");
+    // After a restart a new surface took `surface:8`: the stale record does not claim (and hide) it.
+    expect(recordedSessionFor(open, "S-NEW")).toBeUndefined();
 });
 
 test("adoption runs only when no record matches, and a refused adopt leaves the bare-workspace rule in place", async () => {
@@ -230,6 +313,7 @@ test("a session id whose surface agents new recorded closes as the recorded sess
     const adoptable: AdoptedSession = {
         ...created({ name: "0199bb22-0000-7000-8000-000000000001", surface: "surface:8", pidFile: "" }),
         createdBy: "adopted",
+        surfaceId: "S8",
         sessionId: "0199bb22-0000-7000-8000-000000000001",
         tty: "ttys010",
     };
@@ -297,17 +381,18 @@ test("an adopted session on a stale record's surface ref but another surface UUI
         ...created({
             name: "0199dd44-0000-7000-8000-000000000004",
             surface: "surface:8",
-            surfaceId: "S-NEW",
             pidFile: "",
         }),
         createdBy: "adopted",
+        surfaceId: "S-NEW",
         sessionId: "0199dd44-0000-7000-8000-000000000004",
         tty: "ttys011",
     };
-    const { io, calls } = fake({ adoptable, runningChecks: 1 });
+    // cmux lists the new surface (UUID S-NEW) at the stale record's ref.
+    const { io, calls } = fake({ adoptable, runningChecks: 1, uuids: { "surface:8": "S-NEW" } });
     const report = await closeSession("0199dd44", { graceMs: 5_000 }, io);
 
     expect(report).toMatchObject({ adopted: true, outcome: "closed" });
-    expect(calls).toContain("close-surface surface:8");
+    expect(calls).toContain("close-surface S-NEW");
     expect(calls).not.toContain("close workspace:9");
 });

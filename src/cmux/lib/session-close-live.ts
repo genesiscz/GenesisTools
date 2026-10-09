@@ -16,6 +16,7 @@ import {
     isAdopted,
     type ListedWorkspace,
     type SessionCloseIO,
+    surfaceTarget,
 } from "./session-close";
 import type { SessionCreatedRecord, SessionStore } from "./session-store";
 
@@ -167,9 +168,6 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
             log.debug({ query, adopted: adopted?.sessionId ?? null, surface: adopted?.surface ?? null }, "adopt");
             return adopted;
         },
-        async surfaceListed(surface) {
-            return (await liveTree()).surfaces.has(surface);
-        },
         async surfaceId(surface) {
             return (await liveTree()).surfaces.get(surface)?.id ?? null;
         },
@@ -213,7 +211,7 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
                 return;
             }
 
-            const where = surfaceTargetArgs(record.surface);
+            const where = surfaceTargetArgs(surfaceTarget(record));
             await runCmuxOk(["send", ...where, "--", text]);
             await Bun.sleep(300);
             await runCmuxOk(["send-key", ...where, "enter"]);

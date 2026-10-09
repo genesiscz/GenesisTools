@@ -4,7 +4,7 @@ import type { PeerPriority } from "@genesiscz/utils/claude/peer-message";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
-import { waitCommand } from "./wait";
+import { parseWaitFlags, UsageError, waitCommand } from "./wait";
 
 /**
  * `tools <agent> message <session> <text>`: the CLI adapter over `@app/ai/lib/agent-message/delivery`, which
@@ -52,6 +52,24 @@ export async function messageCommand(alias: TurnProvider, query: string, parts: 
     }
 
     const priority = PRIORITIES.find((value) => value === flags.priority);
+
+    // Delivery cannot be undone, so the wait flags are checked first: a retry after a typo would send twice.
+    if (flags.wait) {
+        try {
+            parseWaitFlags(
+                { timeout: flags.waitTimeout, stallTimeout: flags.stallTimeout, last: flags.last },
+                { timeoutFlag: "--wait-timeout" }
+            );
+        } catch (error) {
+            if (!(error instanceof UsageError)) {
+                throw error;
+            }
+
+            out.error(`${error.message}; nothing was sent`);
+            process.exitCode = 2;
+            return;
+        }
+    }
 
     const sentAt = Date.now();
 
