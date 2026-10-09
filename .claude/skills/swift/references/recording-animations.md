@@ -240,3 +240,25 @@ Durable evidence: GenesisTools/GenesisTools.native/Widget/Screenshot/
 `2026-10-09-010830-e79bb4eb1-Top-Transparent-Unannotated.{mov,png,receipt.json,capture.json}`.
 The receipt retains exact argv, filter, native geometry and alpha checks. User reference imagery was
 used only to choose the grid style; every displayed notch frame comes from the new live capture.
+
+## Native plan timing and action reobservation
+
+For an isolated recording, select content with `capture.windowIds` or the documented application selectors.
+Put the UI routing target in `focus` or each action's `app`/`relativeTo`, not in unsupported singular
+`capture.app`/`capture.windowTitle` fields. Native plans reject AppleScript actions; use observed AX
+identifiers or native hotkeys. Retain admission failures as failed attempts rather than app regressions.
+
+An action may dispatch successfully without returning a refreshed snapshot. ComputerUse then invalidates
+its remembered rows. Before the next action, observe the same pinned window again and independently
+validate PID plus process-launch identity. A forgotten snapshot must neither block a healthy sequence nor
+permit a replacement app to receive the next action. The capture regression covers both cases; the live
+top-notch plan opened and closed the same window after this repair.
+
+Plan `actualMs` records action start, not the first presented frame after observation and dispatch.
+In one take the opening action started at 1208 ms, but its expanded pane appeared around 7 seconds.
+Read the whole movie and geometry history before choosing proof frames. A frame at 4 seconds still
+showing the compact notch was consistent with that delayed action, not evidence of a broken compositor.
+
+Choose an output canvas large enough for the expanded target's Retina pixels. Metadata distinguishes
+capture scale from interpolation; enlarging a compact 44-point rail does not create additional detail.
+Keep the exact plan/result, raw movie, build identity and failed attempts beside the unannotated alpha grid.
