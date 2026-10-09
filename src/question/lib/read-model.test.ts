@@ -121,6 +121,20 @@ describe("read-model", () => {
         expect(markEntriesRead(db, ["r1"], { logBase })).toBe(0);
     });
 
+    it("close settles ingested rows and read marks into the store file", () => {
+        const logBase = mkdtempSync(join(tmpdir(), "qa-log-"));
+        const dbPath = join(mkdtempSync(join(tmpdir(), "qa-db-")), "qa.db");
+        appendEntry(e("c1"), logBase);
+        const db = openReadModel(dbPath);
+        expect(getEntryById(db, "c1", { logBase })?.id).toBe("c1");
+        expect(markEntriesRead(db, ["c1"], { logBase })).toBe(1);
+        db.close();
+
+        // A statement left unfinalized keeps the connection open after close(), so the last write stays in the
+        // WAL and reaches the store file only when garbage collection finalizes it.
+        expect(statSync(`${dbPath}-wal`, { throwIfNoEntry: false })?.size ?? 0).toBe(0);
+    });
+
     it("marks entries unread", () => {
         const logBase = mkdtempSync(join(tmpdir(), "qa-log-"));
         const dbPath = join(mkdtempSync(join(tmpdir(), "qa-db-")), "qa.db");

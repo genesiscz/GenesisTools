@@ -108,12 +108,12 @@ function catchUp(db: Database, logBase?: string): void {
         return;
     }
 
-    const insert = db.prepare(`INSERT OR REPLACE INTO entries
+    const insert = db.query(`INSERT OR REPLACE INTO entries
         (id,ts,session_id,session_title,project,repo_root,cwd,branch,commit_sha,commit_message,agent,is_worktree,worktree_path,ai_agent,agent_label,tag,question,answer_md,refs_json,source,turn_uuid,superseded_by,read_at,dedupe_key,attachments_json,transcript_anchor_json)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,?)`);
-    const getOff = db.prepare("SELECT byte_offset FROM ingest_offsets WHERE file = ?");
-    const setOff = db.prepare("INSERT OR REPLACE INTO ingest_offsets (file, byte_offset) VALUES (?, ?)");
-    const supersede = db.prepare(
+    const getOff = db.query("SELECT byte_offset FROM ingest_offsets WHERE file = ?");
+    const setOff = db.query("INSERT OR REPLACE INTO ingest_offsets (file, byte_offset) VALUES (?, ?)");
+    const supersede = db.query(
         "UPDATE entries SET superseded_by = ? WHERE dedupe_key = ? AND id != ? AND superseded_by IS NULL"
     );
 
@@ -195,7 +195,7 @@ function backfillAttachments(db: Database, dir: string): void {
     }
 
     const pending = new Set(missing.map((row) => row.id));
-    const update = db.prepare(
+    const update = db.query(
         "UPDATE entries SET attachments_json = COALESCE(attachments_json, ?), transcript_anchor_json = COALESCE(transcript_anchor_json, ?) WHERE id = ?"
     );
 
@@ -235,7 +235,7 @@ function backfillAttachments(db: Database, dir: string): void {
 
     // Entries whose source log was retired have no attachment metadata to recover.
     const finish = db.transaction(() => {
-        const retained = db.prepare("SELECT * FROM entries WHERE id = ?");
+        const retained = db.query("SELECT * FROM entries WHERE id = ?");
         for (const id of pending) {
             const row = retained.get(id) as Record<string, unknown> | null;
             if (row) {
@@ -373,7 +373,7 @@ export function markEntriesRead(db: Database, ids: string[], opts: Pick<QueryOpt
 
     catchUp(db, opts.logBase);
     const now = Date.now();
-    const stmt = db.prepare("UPDATE entries SET read_at = ? WHERE id = ? AND read_at IS NULL");
+    const stmt = db.query("UPDATE entries SET read_at = ? WHERE id = ? AND read_at IS NULL");
     let updated = 0;
 
     const tx = db.transaction((rowIds: string[]) => {
