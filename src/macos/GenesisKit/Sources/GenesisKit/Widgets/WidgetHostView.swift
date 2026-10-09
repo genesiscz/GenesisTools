@@ -11,6 +11,7 @@ struct WidgetHostView: View {
     var headerMinimumHeight: CGFloat = 36
     let visibleHeight: CGFloat
     var railScreenCenterY: () -> CGFloat? = { nil }
+    var expandedContentWidth: (String) -> CGFloat? = { _ in nil }
     var topSizeChanged: (CGSize) -> Void = { _ in }
     @State private var measuredHeaderHeight: CGFloat = 0
     @State private var dragOrigin: Double?
@@ -271,7 +272,10 @@ struct WidgetHostView: View {
                     selected.content(.expanded)
                 }
             }
-            .frame(maxWidth: presentation == .preview ? selected.previewSize.width : .infinity, maxHeight: .infinity)
+            // Reveal a fully sized pane; reflowing long messages through a near-zero opening width stalls AppKit.
+            .frame(width: presentation == .preview ? selected.previewSize.width
+                : expandedContentWidth(selected.id) ?? selected.expandedSize.width)
+            .frame(maxHeight: .infinity)
             .transition(.opacity)
         } else {
             VStack(spacing: 12) {
