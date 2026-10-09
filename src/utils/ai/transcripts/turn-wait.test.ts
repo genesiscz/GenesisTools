@@ -228,6 +228,40 @@ describe("watchTurn on a real transcript", () => {
     });
 });
 
+describe("a snapshot callback that throws", () => {
+    const failing = () => {
+        throw new Error("stream read failed");
+    };
+
+    it("does not stop waitForTurn from judging the snapshot", async () => {
+        const reader = script(snap("RUNNING", 10), snap("STALLED", 10));
+        const result = await waitForTurn({ read: reader.read, pollMs: 1000, onSnapshot: failing, ...clock() });
+
+        expect(result.outcome).toBe("stalled");
+    });
+
+    it("does not keep watchTurn from reaching STALLED before its deadline", async () => {
+        const file = join(mkdtempSync(join(tmpdir(), "turn-watch-")), "s.jsonl");
+        writeFileSync(file, "{}\n");
+        const reader = script(snap("RUNNING", 10), snap("STALLED", 10));
+        let calls = 0;
+
+        const result = await watchTurn({
+            path: file,
+            read: reader.read,
+            pollMs: 100,
+            timeoutMs: 5_000,
+            onSnapshot: () => {
+                calls += 1;
+                failing();
+            },
+        });
+
+        expect(result.outcome).toBe("stalled");
+        expect(calls).toBeGreaterThanOrEqual(2);
+    });
+});
+
 describe("watchTurn deadline", () => {
     it("times out on time even when the transcript stays quiet and the poll is slow", async () => {
         const file = join(mkdtempSync(join(tmpdir(), "turn-watch-")), "quiet.jsonl");

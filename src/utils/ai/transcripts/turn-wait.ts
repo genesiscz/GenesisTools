@@ -19,6 +19,7 @@
  * wakes it at once and the slow poll only exists to notice silence (a stall) and the deadline.
  */
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
+import { logger } from "@genesiscz/utils/logger";
 import type { TurnSnapshot } from "./turn-state";
 
 export type TurnWaitOutcome = "done" | "stalled" | "timeout";
@@ -126,8 +127,26 @@ export interface WaitForTurnOptions {
     now?: () => number;
     sleep?: (ms: number) => Promise<void>;
     signal?: AbortSignal;
-    /** Called with every snapshot read, including the last one. */
+    /** Called with every snapshot read, including the last one. One that throws is logged, and the
+     *  snapshot is judged anyway. */
     onSnapshot?: (snapshot: TurnSnapshot) => void | Promise<void>;
+}
+
+/** Hands the snapshot to the caller's callback. A callback that fails (a `--stream` read) must not stop
+ *  the judge: a RUNNING turn has to reach STALLED, and the deadline still has to end the wait. */
+async function observe(
+    onSnapshot: ((snapshot: TurnSnapshot) => void | Promise<void>) | undefined,
+    snapshot: TurnSnapshot | null
+): Promise<void> {
+    if (!snapshot || !onSnapshot) {
+        return;
+    }
+
+    try {
+        await onSnapshot(snapshot);
+    } catch (err) {
+        logger.warn({ err, state: snapshot.state }, "[transcripts] turn wait: the snapshot callback threw");
+    }
 }
 
 function judgeFor(options: { read: () => TurnSnapshot | null; next?: boolean; now: () => number }): TurnJudge {
@@ -148,11 +167,7 @@ export async function waitForTurn(options: WaitForTurnOptions): Promise<TurnWait
 
     while (true) {
         const snapshot = options.read();
-
-        if (snapshot) {
-            await options.onSnapshot?.(snapshot);
-        }
-
+        await observe(options.onSnapshot, snapshot);
         const settled = judge.step(snapshot);
 
         if (settled) {
@@ -178,6 +193,7 @@ export interface WatchTurnOptions {
     /** The safety poll: how soon silence (a stall) and the deadline are noticed. Writes wake at once. */
     pollMs: number;
     signal?: AbortSignal;
+    /** As in `waitForTurn`: one that throws is logged, and the snapshot is judged anyway. */
     onSnapshot?: (snapshot: TurnSnapshot) => void | Promise<void>;
 }
 
@@ -199,11 +215,7 @@ export async function watchTurn(options: WatchTurnOptions): Promise<TurnWaitResu
             signal: AbortSignal.any(signals),
             onChange: async () => {
                 const snapshot = options.read();
-
-                if (snapshot) {
-                    await options.onSnapshot?.(snapshot);
-                }
-
+                await observe(options.onSnapshot, snapshot);
                 settled = judge.step(snapshot);
 
                 return settled ? { done: true } : undefined;

@@ -167,6 +167,21 @@ export class TurnStreamer {
         });
     }
 
+    /**
+     * The last print, once the wait has settled. A failed print does not hold the judge back
+     * (turn-wait.ts), so a turn can end with its final write unprinted; this read catches up, and reads
+     * nothing when the stream is current. False when it failed too: the live output may miss the end.
+     */
+    async printRest(): Promise<boolean> {
+        try {
+            await this.print();
+            return true;
+        } catch (err) {
+            log.warn({ err, file: this.options.resolved.filePath }, "--stream: the final transcript read failed");
+            return false;
+        }
+    }
+
     private printTurn(turn: TranscriptTurn): void {
         const previous = this.printed.get(turn.id);
 
@@ -368,6 +383,13 @@ export async function waitCommand(alias: TurnProvider, query: string, options: W
                 await streamer?.print();
             },
         });
+
+        if (streamer && !(await streamer.printRest())) {
+            out.printlnErr(
+                pc.yellow("--stream: the last transcript read failed, so the output above may miss the end")
+            );
+        }
+
         const report = reportOf({ ...result, resolved, provider: alias, waitedMs: result.waitedMs });
 
         process.exitCode = exitCodeOf(result.outcome);

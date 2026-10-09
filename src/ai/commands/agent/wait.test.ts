@@ -153,6 +153,24 @@ describe("TurnStreamer", () => {
         expect(lines).toEqual(["final answer"]);
     });
 
+    it("catches up after the wait settled on a failed print, and reports a final read that fails too", async () => {
+        const { transcript, lines, streamer } = harness([turn("old")]);
+        await streamer.prime();
+
+        transcript.turns = [turn("old"), turn("final answer")];
+        transcript.size = 2;
+        transcript.failRead = true;
+        await expect(streamer.print()).rejects.toThrow("transcript read failed");
+        expect(await streamer.printRest()).toBe(true);
+        expect(lines).toEqual(["final answer"]);
+
+        transcript.turns = [...transcript.turns, turn("after")];
+        transcript.size = 3;
+        transcript.failRead = true;
+        expect(await streamer.printRest()).toBe(false);
+        expect(lines).toEqual(["final answer"]);
+    });
+
     it("resumes a drain that failed between pages without printing a turn twice", async () => {
         const { transcript, lines, streamer } = harness([turn("old")]);
         await streamer.prime();
