@@ -228,10 +228,12 @@ export async function performWidgetAction({
                 const db = openReadModel(toolDataDir("question", "qa.db"));
                 try {
                     const row = getEntryById(db, sourceId);
+                    // An answer with no known agent is grouped onto its session by id alone (see snapshot.ts).
+                    const provider = row ? widgetProvider(row.agent) : undefined;
                     if (
                         !row ||
                         (row.sessionId || row.id) !== target.sessionId ||
-                        widgetProvider(row.agent) !== target.provider
+                        (provider !== "unknown" && provider !== target.provider)
                     ) {
                         throw new Error("The answer belongs to a different session.");
                     }

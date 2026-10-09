@@ -108,6 +108,7 @@ describe("resolveForTask availability chain", () => {
 
     test("supported defaults and explicitly named models retain their provider identity", () => {
         expect(taskModelRef({ provider: "deepgram" }, "transcribe")).toBe("deepgram/nova-3");
+        expect(taskModelRef({ provider: "elevenlabs" }, "transcribe")).toBe("elevenlabs/scribe_v1");
         expect(taskModelRef({ provider: "local-hf" }, "transcribe")).toBe(
             "local-hf/onnx-community/whisper-large-v3-turbo"
         );

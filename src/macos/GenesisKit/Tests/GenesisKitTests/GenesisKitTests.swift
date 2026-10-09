@@ -531,6 +531,35 @@ final class WidgetVoiceDraftOrderingTests: XCTestCase {
         XCTAssertEqual(model.selectedKey, "another")
         XCTAssertFalse(backend.calls.contains("enqueue"))
     }
+    func testOversizedAttachIsRefusedBeforeAnyBackendWrite() async throws {
+        let backend = ShelfDraftBackend()
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        let typed = String(repeating: "a", count: WidgetModel.draftTextLimit - 11)
+        model.setText(typed)
+        do {
+            try await model.attachVoiceNote(note(), to: "chosen")
+            XCTFail("an attachment past the draft limit must be refused")
+        } catch ToolsBridgeError.refused(let message) {
+            XCTAssertEqual(message, "The combined draft is too long. Shorten it before attaching.")
+        }
+        XCTAssertFalse(backend.calls.contains("append-draft"))
+        XCTAssertFalse(backend.drafts["chosen"]?.text.contains("Voice words") ?? false)
+        XCTAssertEqual(model.drafts["chosen"]?.text, typed)
+    }
+    func testAttachThatExactlyFillsTheDraftLimitStillAppends() async throws {
+        let backend = ShelfDraftBackend()
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        let typed = String(repeating: "a", count: WidgetModel.draftTextLimit - 12)
+        model.setText(typed)
+        try await model.attachVoiceNote(note(), to: "chosen")
+        XCTAssertTrue(backend.calls.contains("append-draft"))
+        XCTAssertEqual(backend.drafts["chosen"]?.text, typed + " Voice words")
+        XCTAssertEqual(backend.drafts["chosen"]?.text.count, WidgetModel.draftTextLimit)
+    }
     func testTypingDuringAppendIsMergedAndLaterTypingWinsFinalSave() async throws {
         let backend = ShelfDraftBackend()
         backend.drafts["chosen"] = WidgetDraft(text: "Initial", assetIds: ["image"])
@@ -999,6 +1028,13 @@ final class WidgetInboxNotificationTests: XCTestCase {
     private func item(_ id: String, at: Double, pending: Bool = false) -> WidgetInboxItem {
         WidgetInboxItem(id: (pending ? "form:" : "answer:") + id, sourceId: id,
                         kind: pending ? "form" : "answer", key: key, at: at, needsAnswer: pending)
+    }
+    func testInboxTooltipDescribesOnlyTheAgentsModule() {
+        let inbox = WidgetInboxSummary(unread: 3, needsAnswer: 1, complete: true, truncated: false, sessions: [])
+        XCTAssertEqual(WidgetHostView.moduleTooltip(id: "agents", title: "Agents", inbox: inbox),
+                       "Inbox: 3 unread, 1 need an answer")
+        XCTAssertEqual(WidgetHostView.moduleTooltip(id: "shelf", title: "Shelf", inbox: inbox), "Shelf")
+        XCTAssertEqual(WidgetHostView.moduleTooltip(id: nil, title: "Widgets", inbox: inbox), "Widgets")
     }
     private func summary(_ item: WidgetInboxItem) -> WidgetInboxSummary {
         WidgetInboxSummary(unread: item.needsAnswer ? 0 : 1, needsAnswer: item.needsAnswer ? 1 : 0,

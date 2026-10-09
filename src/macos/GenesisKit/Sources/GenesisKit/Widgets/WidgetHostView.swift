@@ -101,7 +101,7 @@ struct WidgetHostView: View {
             .buttonStyle(.genHoverPlain())
             .accessibilityLabel("Open " + (selected?.title ?? "widgets"))
             .accessibilityIdentifier("widget.primary." + surface.key)
-            .instantTooltip("Inbox: \(model.inbox.unread) unread, \(model.inbox.needsAnswer) need an answer")
+            .instantTooltip(Self.moduleTooltip(id: selected?.id, title: selected?.title ?? "Widgets", inbox: model.inbox))
             HStack(spacing: 8) {
                 if selected?.id == "agents" {
                     HStack(spacing: 5) {
@@ -286,6 +286,11 @@ struct WidgetHostView: View {
         }
     }
 
+    /// Inbox counts describe only the Agents module; every other module button names its module.
+    static func moduleTooltip(id: String?, title: String, inbox: WidgetInboxSummary) -> String {
+        id == "agents" ? "Inbox: \(inbox.unread) unread, \(inbox.needsAnswer) need an answer" : title
+    }
+
     private func moduleButton(_ id: String, size: CGFloat, location: String = "content") -> some View {
         Button {
             if id == "agents", model.inboxCount > 0 { model.openInboxNotification(on: surface) }
@@ -310,7 +315,7 @@ struct WidgetHostView: View {
                     in: RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.genHoverPlain())
-        .instantTooltip(id == "agents" ? "Inbox: \(model.inbox.unread) unread, \(model.inbox.needsAnswer) need an answer" : registry.module(id)?.title ?? id)
+        .instantTooltip(Self.moduleTooltip(id: id, title: registry.module(id)?.title ?? id, inbox: model.inbox))
         .accessibilityLabel("Open " + (registry.module(id)?.title ?? id))
         .accessibilityIdentifier("widget." + location + "." + surface.key + "." + id)
     }

@@ -1,4 +1,5 @@
 import { byTaskAndProvider } from "../local/descriptors";
+import { ELEVENLABS_DEFAULT_STT_MODEL_ID } from "../providers/elevenlabs/AIElevenLabsTranscriptionProvider";
 import type { Capability } from "../providers/plugin-types";
 
 /**
@@ -29,6 +30,7 @@ const STATIC_TASK_MODELS: Record<string, Partial<Record<Capability, string>>> = 
     // carries `voice_id`, providers/xai/AIXAITextToSpeechProvider.ts:98), so the
     // id here only names the product for logs and cache keys.
     xai: { tts: "xai-tts", transcribe: "xai-stt" },
+    elevenlabs: { transcribe: ELEVENLABS_DEFAULT_STT_MODEL_ID },
     deepgram: { transcribe: "nova-3" },
     assemblyai: { transcribe: "best" },
     gladia: { transcribe: "default" },
