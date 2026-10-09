@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { codexNativeLinesToTurns } from "@genesiscz/utils/ai/transcripts/codex";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import {
     DEFAULT_TURN_LIMIT,
@@ -7,6 +8,7 @@ import {
     type TranscriptEnvelope,
     type TranscriptTurn,
 } from "@genesiscz/utils/ai/transcripts/types";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { Command } from "commander";
 import {
     DEFAULT_WAIT_STALL_SECONDS,
@@ -118,7 +120,7 @@ describe("TurnStreamer", () => {
         await streamer.prime();
 
         const burst = Array.from({ length: DEFAULT_TURN_LIMIT + 20 }, (_, index) => turn(`new ${index}`));
-        transcript.turns = [...history.slice(0, 4), turn("old 4 and more"), ...burst];
+        transcript.turns = [...history.slice(0, 4), { ...turn("old 4 and more"), id: "old 4" }, ...burst];
         transcript.size = 2;
         await streamer.print();
 
@@ -166,5 +168,67 @@ describe("TurnStreamer", () => {
         await streamer.print();
 
         expect(lines).toEqual(burst.map((entry) => entry.text));
+    });
+
+    it("follows a Codex turn list that drops a finished script turn before the final answer", async () => {
+        const row = (second: number, payload: Record<string, unknown>, type = "response_item") =>
+            SafeJSON.stringify({
+                timestamp: `2026-10-09T10:00:${String(second).padStart(2, "0")}.000Z`,
+                type,
+                payload,
+            });
+        const running = [
+            row(1, { type: "user_message", message: "go" }, "event_msg"),
+            row(2, { type: "custom_tool_call", name: "exec", call_id: "s1", input: 'tools.exec_command({cmd:"ls"})' }),
+            row(3, { type: "custom_tool_call_output", call_id: "s1", output: "Script running" }),
+            row(4, { type: "reasoning", summary: [] }),
+            row(5, {
+                type: "custom_tool_call",
+                name: "exec",
+                call_id: "s2",
+                input: 'tools.exec_command({cmd:"git status"})',
+            }),
+        ];
+        const finished = [
+            ...running,
+            row(6, { type: "custom_tool_call_output", call_id: "s1", output: "Script completed" }),
+            row(
+                7,
+                {
+                    type: "item_completed",
+                    item: {
+                        type: "CommandExecution",
+                        id: "e2",
+                        command: ["/bin/zsh", "-lc", "git status"],
+                        aggregated_output: "clean",
+                        exit_code: 0,
+                    },
+                },
+                "event_msg"
+            ),
+            row(8, { type: "custom_tool_call_output", call_id: "s2", output: "Script completed" }),
+            row(9, { type: "reasoning", summary: [] }),
+            row(10, { type: "message", role: "assistant", content: [{ type: "output_text", text: "final answer" }] }),
+            row(11, { type: "function_call", name: "shell", call_id: "c3", arguments: '{"command":"git log"}' }),
+        ];
+        const before = codexNativeLinesToTurns(running);
+        const after = codexNativeLinesToTurns(finished);
+        // The script turn of s1 is gone, so the turn of s2 moved down and the answer took its place.
+        expect(before.map((entry) => entry.id)).toEqual(["codex-user-1", "codex-2", "codex-3"]);
+        expect(after.map((entry) => entry.id)).toEqual(["codex-user-1", "codex-3", "codex-4"]);
+
+        const { transcript, lines, streamer } = harness(before);
+        await streamer.prime();
+        transcript.turns = after;
+        transcript.size = 2;
+        await streamer.print();
+
+        const tools = (turn: TranscriptTurn) => turn.tools.map((tool) => `→ ${tool.name}(${tool.inputPreview})`);
+        expect(lines.map((line) => Bun.stripANSI(line))).toEqual([
+            ...tools(after[1]),
+            "final answer",
+            ...tools(after[2]),
+        ]);
+        expect(lines).toHaveLength(3);
     });
 });

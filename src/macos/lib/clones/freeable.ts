@@ -42,11 +42,12 @@ export const apfsProbe: BlockProbe = {
 };
 
 /** Rewritten holders whose blocks really leave: a hard link frees its inode only when every link to it
- *  is rewritten, and then once. A link the scan does not see (or the keep itself) keeps the blocks. */
-function freedHolders(unit: Unit, writable: (h: string) => boolean, probe: BlockProbe): string[] {
+ *  is rewritten, and then once. A link the scan does not see (or a keep) keeps the blocks. Takes the
+ *  holders of the whole set: two links of one inode can sit at two file positions of a directory set. */
+function freedHolders(holders: readonly string[], writable: (h: string) => boolean, probe: BlockProbe): string[] {
     const byInode = new Map<string, { links: number; paths: string[] }>();
     const freed: string[] = [];
-    for (const h of unit.holders) {
+    for (const h of holders) {
         const node = probe.inode?.(h) ?? null;
         if (node === null || node.links < 2) {
             if (writable(h)) {
@@ -123,22 +124,25 @@ export function measureSetFreeable({ set, fixedRoots, storeRoots, probe = apfsPr
     let proven = 0;
     let shared = 0;
     let measured = false;
-    for (const unit of unitsOf(set)) {
-        const writable = (h: string): boolean => h !== unit.keep && !isUnderAny(h, fixedRoots);
+    const units = unitsOf(set);
+    const keeps = new Set(units.map((unit) => unit.keep));
+    const writable = (h: string): boolean => !keeps.has(h) && !isUnderAny(h, fixedRoots);
+    const holders = units.flatMap((unit) => unit.holders);
+    const privateOf = new Map<string, number>();
+    for (const h of holders.filter(writable)) {
+        const privateBytes = probe.privateBytes(h);
+        if (privateBytes !== null) {
+            measured = true;
+            privateOf.set(h, privateBytes);
+        }
+    }
+
+    for (const h of freedHolders(holders, writable, probe)) {
+        proven += privateOf.get(h) ?? 0;
+    }
+
+    for (const unit of units) {
         const families = new Map<bigint, string[]>();
-        const privateOf = new Map<string, number>();
-        for (const h of unit.holders.filter(writable)) {
-            const privateBytes = probe.privateBytes(h);
-            if (privateBytes !== null) {
-                measured = true;
-                privateOf.set(h, privateBytes);
-            }
-        }
-
-        for (const h of freedHolders(unit, writable, probe)) {
-            proven += privateOf.get(h) ?? 0;
-        }
-
         for (const h of unit.holders) {
             const id = probe.cloneId(h);
             if (id !== null && id !== 0n) {

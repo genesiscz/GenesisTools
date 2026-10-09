@@ -172,6 +172,32 @@ describe.skipIf(skip.unlessMac)("hard links", () => {
             rmSync(dir, { recursive: true, force: true });
         }
     });
+
+    it("a directory copy whose two files are links of one inode frees that inode once", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-cl-free-"));
+        try {
+            const data = randomBytes(SIZE);
+            const keep = join(dir, "keep");
+            const copy = join(dir, "copy");
+            put(join(keep, "x.a"), data);
+            put(join(keep, "y.a"), data);
+            put(join(copy, "x.a"), data);
+            linkSync(join(copy, "x.a"), join(copy, "y.a"));
+
+            const set: DuplicateSet = {
+                kind: "dir",
+                what: "keep",
+                copies: 2,
+                eachBytes: 2 * SIZE,
+                reclaimable: 2 * SIZE,
+                members: [keep, copy],
+                keep,
+            };
+            expect(measureSetFreeable({ set, fixedRoots: [], storeRoots: [] }).proven).toBe(alloc(join(copy, "x.a")));
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
 });
 
 describe.skipIf(skip.unlessMac)("a store file cloned by a tree outside the scan", () => {

@@ -137,9 +137,13 @@ async function transcriptPager(resolved: ResolvedTranscript): Promise<Transcript
 
 /** Prints what the agent wrote since the last call. The turns that exist when it is created are history. */
 export class TurnStreamer {
-    private readonly seen = new Map<number, { text: number; tools: number }>();
+    /** What was printed of each recent turn, by turn id: positions shift when a Codex script turn vanishes. */
+    private readonly printed = new Map<string, { index: number; text: number; tools: Set<string> }>();
+    /** Every turn id read so far. A known turn with no `printed` record was printed whole. */
+    private readonly known = new Set<string>();
     /** The last turn read. It can still grow, so the next read starts at it and pages on to the end. */
     private cursor = 0;
+    private cursorId: string | null = null;
     private lastSize = -1;
 
     constructor(
@@ -163,17 +167,51 @@ export class TurnStreamer {
         });
     }
 
-    private printTurn(turn: TranscriptTurn & { index: number }): void {
-        const previous = this.seen.get(turn.index) ?? { text: 0, tools: 0 };
-        const fresh = turn.role === "assistant" ? turn.text.slice(previous.text) : "";
+    private printTurn(turn: TranscriptTurn): void {
+        const previous = this.printed.get(turn.id);
+
+        if (!previous && this.known.has(turn.id)) {
+            return;
+        }
+
+        const fresh = turn.role === "assistant" ? turn.text.slice(previous?.text ?? 0) : "";
 
         if (fresh.trim()) {
             this.options.write(fresh.trimEnd());
         }
 
-        for (const tool of turn.tools.slice(previous.tools)) {
-            this.options.write(pc.dim(`→ ${tool.name}(${tool.inputPreview.slice(0, 120)})`));
+        for (const tool of turn.tools) {
+            if (!previous?.tools.has(tool.id)) {
+                this.options.write(pc.dim(`→ ${tool.name}(${tool.inputPreview.slice(0, 120)})`));
+            }
         }
+    }
+
+    /**
+     * Where a print starts reading: the cursor's turn, wherever it is now. Codex drops an assistant turn
+     * whose only content was an `exec` script that finished with nothing to show (codex.ts `snapshot`), so
+     * the turns after it move down and the cursor's turn can leave its position, or vanish. Turns are only
+     * ever dropped or appended, so the last known turn before the cursor's position is where reading resumes:
+     * every turn after it is new.
+     */
+    private async resumeAt(page: TranscriptPager): Promise<number> {
+        let end = this.cursor;
+
+        while (end > 0) {
+            const from = Math.max(0, end - DEFAULT_TURN_LIMIT);
+            const envelope = await page({ offset: from, limit: end - from });
+            const start = envelope.nextOffset - envelope.turns.length;
+
+            for (let position = envelope.turns.length - 1; position >= 0; position--) {
+                if (this.known.has(envelope.turns[position].id)) {
+                    return start + position;
+                }
+            }
+
+            end = from;
+        }
+
+        return 0;
     }
 
     /**
@@ -182,10 +220,7 @@ export class TurnStreamer {
      * a burst of more turns than one page holds still prints whole. A failed read commits nothing, so the
      * next call retries the same size.
      */
-    private async each(args: {
-        priming: boolean;
-        visit: (turn: TranscriptTurn & { index: number }) => void;
-    }): Promise<void> {
+    private async each(args: { priming: boolean; visit: (turn: TranscriptTurn) => void }): Promise<void> {
         const { resolved } = this.options;
         const size = (this.options.size ?? transcriptByteSize)(resolved);
 
@@ -194,20 +229,30 @@ export class TurnStreamer {
         }
 
         const page = await (this.options.pager ?? transcriptPager)(resolved);
-        let opts: SliceOptions = args.priming ? {} : { offset: this.cursor, limit: DEFAULT_TURN_LIMIT };
+        let envelope = await page(args.priming ? {} : { offset: this.cursor, limit: DEFAULT_TURN_LIMIT });
+
+        if (!args.priming && this.cursorId !== null && envelope.turns[0]?.id !== this.cursorId) {
+            envelope = await page({ offset: await this.resumeAt(page), limit: DEFAULT_TURN_LIMIT });
+        }
 
         while (true) {
-            const envelope = await page(opts);
             const start = envelope.nextOffset - envelope.turns.length;
 
             for (const [position, turn] of envelope.turns.entries()) {
-                const index = start + position;
-                args.visit({ ...turn, index });
-                this.seen.set(index, { text: turn.text.length, tools: turn.tools.length });
+                args.visit(turn);
+                this.known.add(turn.id);
+                this.printed.set(turn.id, {
+                    index: start + position,
+                    text: turn.text.length,
+                    tools: new Set(turn.tools.map((tool) => tool.id)),
+                });
             }
 
-            if (envelope.turns.length > 0) {
+            const last = envelope.turns.at(-1);
+
+            if (last) {
                 this.cursor = envelope.nextOffset - 1;
+                this.cursorId = last.id;
             }
 
             const atEnd = envelope.nextOffset >= (envelope.turnCount ?? envelope.nextOffset);
@@ -216,13 +261,13 @@ export class TurnStreamer {
                 break;
             }
 
-            opts = { offset: envelope.nextOffset, limit: DEFAULT_TURN_LIMIT };
+            envelope = await page({ offset: envelope.nextOffset, limit: DEFAULT_TURN_LIMIT });
         }
 
         // Only the cursor's turn can still grow; the ones before it are printed whole.
-        for (const index of this.seen.keys()) {
-            if (index < this.cursor) {
-                this.seen.delete(index);
+        for (const [id, record] of this.printed) {
+            if (record.index < this.cursor) {
+                this.printed.delete(id);
             }
         }
 
