@@ -441,7 +441,6 @@ enum CommitMenu {
         }
 
         guard let full = found.full else { return }
-        let label = "\(full.prefix(10)) \(found.subject.prefix(50))"
         switch action {
         case .thisReview:
             model.setScope(.commit(sha: full, title: found.subject))
@@ -449,7 +448,7 @@ enum CommitMenu {
             guard let executable = Bundle.main.executableURL else { return }
             let process = Process()
             process.executableURL = executable
-            process.arguments = ["--review", "--repo", model.repo.path, "--range", "\(full)^..\(full)", "--label", label]
+            process.arguments = newWindowArguments(repo: model.repo.path, sha: full, subject: found.subject)
             do {
                 try process.run()
                 HubPerf.log("review.commitRef new window \(full.prefix(10))")
@@ -459,6 +458,12 @@ enum CommitMenu {
         case .host:
             break
         }
+    }
+
+    /// A review window on one commit. `--commit`, not `<sha>^..<sha>`: a root commit has no parent, and
+    /// the commit scope diffs it against the empty tree.
+    static func newWindowArguments(repo: String, sha: String, subject: String) -> [String] {
+        ["--review", "--repo", repo, "--commit", sha, "--label", subject]
     }
 
     /// Blocking git: only from the detached task.

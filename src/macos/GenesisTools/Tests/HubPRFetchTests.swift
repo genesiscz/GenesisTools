@@ -80,6 +80,23 @@ final class HubPRFetchTests: XCTestCase {
         XCTAssertEqual(head.branchNote, "feature/widgets at aaaa1111bb, not checked out in this folder")
     }
 
+    func testAStandaloneReviewWindowRebuildsTheRemoteHeadFromItsArguments() throws {
+        let fork = try decodePR(kind: "gitlab", headSha: nil, cross: true, headRepo: "\"dave/app\"")
+        let args = ["--review", "--repo", "/work/app", "--range", "base0..aaaa1111bbbb", "--label", "!12"]
+            + ReviewRemoteHead.launchArguments(branch: "feature/widgets", sha: "aaaa1111bbbb", base: "base0", forge: fork.commitForge)
+        let head = try XCTUnwrap(ReviewRemoteHead(launchArguments: args))
+        XCTAssertEqual(head.branch, "feature/widgets")
+        XCTAssertEqual(head.commitRange, ["base0..aaaa1111bbbb"], "the Committed menu lists the PR's commits")
+        XCTAssertEqual(head.hostURL("a.ts", 3)?.absoluteString, fork.blobURL("aaaa1111bbbb", path: "a.ts", line: 3)?.absoluteString,
+                       "a line click opens the host's file, as in the hub")
+        XCTAssertNotNil(head.hostURL("a.ts", 3))
+
+        let noBase = try XCTUnwrap(ReviewRemoteHead(launchArguments: ReviewRemoteHead.launchArguments(branch: "b", sha: "s", base: nil, forge: nil)))
+        XCTAssertEqual(noBase.commitRange, ["s"])
+        XCTAssertNil(noBase.hostURL("a.ts", nil))
+        XCTAssertNil(ReviewRemoteHead(launchArguments: ["--review", "--repo", "/work/app"]), "a worktree PR has no remote head")
+    }
+
     func testOnlyCommitAndRangeScopesWorkWithoutTheCheckout() {
         XCTAssertFalse(DiffScope.range(base: "a", head: "b", label: "l").readsTheCheckout)
         XCTAssertFalse(DiffScope.commit(sha: "a", title: "t").readsTheCheckout)

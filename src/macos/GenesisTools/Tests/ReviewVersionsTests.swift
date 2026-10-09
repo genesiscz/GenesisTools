@@ -77,6 +77,34 @@ final class ReviewVersionsTests: XCTestCase {
         XCTAssertEqual(try git("diff", "--name-only", from.head, to.head), "a.txt\nu.txt")
     }
 
+    func testANewWindowOnTheRootCommitShowsItAgainstTheEmptyTree() throws {
+        try write("a.txt", "1\n")
+        let root = try commit("root")
+        let args = CommitMenu.newWindowArguments(repo: repo.path, sha: root, subject: "root")
+        XCTAssertEqual(args, ["--review", "--repo", repo.path, "--commit", root, "--label", "root"], "no `<sha>^`: a root commit has no parent")
+        let snapshot = try GitWorkingTreeSource(repo: repo).load(scope: .commit(sha: root, title: "root"))
+        XCTAssertEqual(snapshot.files.map(\.path), ["a.txt"])
+    }
+
+    func testAPushFetchedByIdLeavesFetchHeadToAPullInTheSameCheckout() throws {
+        try write("a.txt", "1\n")
+        let base = try commit("base")
+        try git("checkout", "-q", "-b", "pr")
+        try write("a.txt", "1\n2\n")
+        let head = try commit("pr: line 2")
+        try git("checkout", "-q", "main")
+        let clone = repo.deletingLastPathComponent().appendingPathComponent("\(repo.lastPathComponent)-clone")
+        defer { try? FileManager.default.removeItem(at: clone) }
+        try git("clone", "-q", "--single-branch", "-b", "main", "file://\(repo.path)", clone.path)
+        let fetchHead = clone.appendingPathComponent(".git/FETCH_HEAD")
+        let pulled = "\(base)\t\tbranch 'main' of origin\n"
+        try pulled.write(to: fetchHead, atomically: true, encoding: .utf8)
+
+        let snapshot = try GitWorkingTreeSource(repo: clone).load(scope: .range(base: base, head: head, label: "#7"))
+        XCTAssertEqual(snapshot.files.map(\.path), ["a.txt"], "the head was fetched by id")
+        XCTAssertEqual(try String(contentsOf: fetchHead, encoding: .utf8), pulled)
+    }
+
     func testTheBranchScopeComparesAgainstThePRTargetWhenItExists() throws {
         try write("a.txt", "1\n")
         _ = try commit("base")

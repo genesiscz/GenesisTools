@@ -516,7 +516,8 @@ struct GitWorkingTreeSource {
     /// The commit is here, or one fetch of it by id brings it (GitLab keeps every MR version's head).
     private func ensureCommit(_ sha: String) throws {
         if (try? git(["cat-file", "-e", "\(sha)^{commit}"])) != nil { return }
-        _ = try? git(["fetch", "--no-tags", "--quiet", "--end-of-options", "origin", sha])
+        // --no-write-fetch-head: a `git pull` running in this checkout reads FETCH_HEAD for what to merge.
+        _ = try? git(["fetch", "--no-tags", "--quiet", "--no-write-fetch-head", "--end-of-options", "origin", sha])
         guard (try? git(["cat-file", "-e", "\(sha)^{commit}"])) != nil else {
             throw ReviewError.git("commit \(sha.prefix(10)) is not in \(repo.path), and fetching it from origin failed")
         }

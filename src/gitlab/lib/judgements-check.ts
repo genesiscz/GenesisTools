@@ -309,8 +309,13 @@ function lintText(item: JudgementItem, field: string, text: string, rules: Draft
         }
     }
 
-    // A root-relative GitLab link (`/uploads/…` attachments, `/group/project/-/…`) is not a local file.
-    if (/file:\/\/|\]\(\/(?!\/|uploads\/)(?![^)\s]*\/-\/)/.test(text)) {
+    // A root-relative GitLab link (`/uploads/…` attachments, `/group/project/-/merge_requests/…`) is not a
+    // local file. The `<…>` destination form counts too; `/tmp/-/x` has no project before `/-/`.
+    if (
+        /file:\/\/|\]\(<?\/(?!\/|uploads\/)(?!(?:[^/)\s>]+\/){2,}-\/(?:merge_requests|issues|commits?|blob|tree|compare|pipelines|jobs)\/)/.test(
+            text
+        )
+    ) {
         problems.push({
             id: item.id,
             line: item.line,

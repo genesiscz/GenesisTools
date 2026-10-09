@@ -26,19 +26,26 @@ enum RelayJournal {
 
     private static let lock = NSLock()
 
-    static func write(_ message: String) {
+    static func write(_ message: String, to file: URL = logFile) {
         let line = "\(stamp.string(from: Date())) pid=\(getpid()) \(role) \(message)\n"
         lock.lock()
         defer { lock.unlock() }
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // The journal names the files a link opened: only this account reads it. A folder made here is
+        // private too; an existing one keeps the mode its owner gave it.
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
         // O_APPEND: the relay and every window face write this file, and NSLock serializes only one
         // process. Each record goes out in one write at the end the kernel picks, so none overwrites another.
-        let descriptor = open(logFile.path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o644)
+        let descriptor = open(file.path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o600)
         guard descriptor >= 0 else {
-            FileHandle.standardError.write(Data("link relay journal: \(logFile.path) not writable (errno \(errno))\n".utf8))
+            FileHandle.standardError.write(Data("link relay journal: \(file.path) not writable (errno \(errno))\n".utf8))
             return
         }
         defer { close(descriptor) }
+        // The open mode applies only to a new file: a journal an older build made 0644 is narrowed here.
+        if fchmod(descriptor, 0o600) != 0 {
+            FileHandle.standardError.write(Data("link relay journal: chmod 600 \(file.path) failed (errno \(errno))\n".utf8))
+        }
         let bytes = Array(line.utf8)
         let written = bytes.withUnsafeBufferPointer { Darwin.write(descriptor, $0.baseAddress, $0.count) }
         if written != bytes.count {

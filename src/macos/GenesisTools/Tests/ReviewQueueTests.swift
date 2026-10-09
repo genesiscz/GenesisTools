@@ -281,6 +281,18 @@ final class ReviewQueueTests: XCTestCase {
 
     // MARK: folding
 
+    func testAFoldedFileKeepsTheUnsentReplyAndEditOfItsCards() {
+        let editors = PRThreadEditors()
+        let reply = PRThreadEditors.Editor(replying: true, replyText: "half a reply")
+        editors.keep(reply, for: "t1")
+        editors.keep(PRThreadEditors.Editor(editingID: "n2", editText: "edited draft"), for: "t2")
+        editors.keep(PRThreadEditors.Editor(replyText: "sent and closed"), for: "t3")
+        XCTAssertEqual(editors.take("t1"), reply)
+        XCTAssertNil(editors.take("t1"), "taken once, by the card that came back")
+        XCTAssertEqual(editors.take("t2")?.editText, "edited draft")
+        XCTAssertNil(editors.take("t3"), "a closed composer has nothing to bring back")
+    }
+
     func testFoldsToggleAndAFoldedThreadShowsItsFirstLine() {
         XCTAssertEqual(PRThreadFolds.toggled(["a"], "b"), ["a", "b"])
         XCTAssertEqual(PRThreadFolds.toggled(["a", "b"], "a"), ["b"])

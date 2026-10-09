@@ -83,6 +83,25 @@ final class LinkRelayTests: XCTestCase {
         XCTAssertEqual(RelayJournal.readState(file), state)
     }
 
+    func testTheJournalIsReadableOnlyByItsOwnerEvenWhenAnOlderBuildMadeItWide() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("relay-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let fresh = folder.appendingPathComponent("app/link-relay.log")
+        RelayJournal.write("first line", to: fresh)
+        XCTAssertEqual(try permissions(fresh), 0o600)
+        XCTAssertEqual(try permissions(fresh.deletingLastPathComponent()), 0o700)
+
+        let old = folder.appendingPathComponent("old.log")
+        XCTAssertTrue(FileManager.default.createFile(atPath: old.path, contents: Data(), attributes: [.posixPermissions: 0o644]))
+        RelayJournal.write("next line", to: old)
+        XCTAssertEqual(try permissions(old), 0o600)
+        XCTAssertTrue(try String(contentsOf: old, encoding: .utf8).contains("next line"))
+    }
+
+    private func permissions(_ url: URL) throws -> Int {
+        try XCTUnwrap(FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int)
+    }
+
     func testAJournalLineKeepsTheLinkButNotItsQuery() {
         XCTAssertEqual(RelayJournal.describe("https://example.org/md/open?path=/secret&token=x"), "https://example.org/md/open?…")
         XCTAssertEqual(RelayJournal.describe("genesis-tools://hub"), "genesis-tools://hub")

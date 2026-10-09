@@ -21,6 +21,7 @@ func runReview(_ args: [String]) -> Never {
     var proposalPath: String?
     var prRef: String?
     var range: (base: String, head: String)?
+    var commit: String?
     var rangeLabel: String?
     var options = DiffViewOptions()
     var activate = true
@@ -49,6 +50,7 @@ func runReview(_ args: [String]) -> Never {
         case "--proposal": proposalPath = value; index += 1
         case "--pr": prRef = value; index += 1
         case "--label": rangeLabel = value; index += 1
+        case "--commit": commit = value; index += 1
         case "--range":
             let ends = (value ?? "").components(separatedBy: "..")
             if ends.count == 2, !ends[0].isEmpty, !ends[1].isEmpty { range = (ends[0], ends[1]) }
@@ -101,9 +103,13 @@ func runReview(_ args: [String]) -> Never {
 
     if let range {
         scope = .range(base: range.base, head: range.head, label: rangeLabel ?? "\(range.base.prefix(7))..\(range.head.prefix(7))")
+    } else if let commit, !commit.isEmpty {
+        scope = .commit(sha: commit, title: rangeLabel ?? String(commit.prefix(10)))
     }
     let model = ReviewModel(repo: URL(fileURLWithPath: repoPath).standardizedFileURL, options: options, session: session)
     model.scope = scope
+    // A PR without a local worktree (`openInReviewWindow`): its files open on the host, as in the hub.
+    model.remoteHead = ReviewRemoteHead(launchArguments: args)
     model.proposal = proposal
     if let prRef {
         model.attachPR(.ref(prRef))

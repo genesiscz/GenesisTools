@@ -140,12 +140,15 @@ extension HubPR {
 
     /// GitHub serves a fork PR's commits from the base project too; a GitLab fork's live only in the fork.
     func commitURL(_ sha: String) -> URL? {
-        (isGitLab ? headForge : forge)?.commit(sha)
+        commitForge?.commit(sha)
     }
+
+    /// The project that serves the PR's commits and their files.
+    var commitForge: ForgeWeb? { isGitLab ? headForge : forge }
 
     /// A file of one of the PR's commits, by the same rule as `commitURL`.
     func blobURL(_ sha: String, path: String, line: Int? = nil) -> URL? {
-        (isGitLab ? headForge : forge)?.blob(sha, path: path, line: line)
+        commitForge?.blob(sha, path: path, line: line)
     }
 
     var compareURL: URL? {

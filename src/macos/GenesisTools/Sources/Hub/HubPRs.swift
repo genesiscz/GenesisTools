@@ -831,7 +831,7 @@ final class PRsModel: ObservableObject {
         if let fetch {
             // The main checkout is on another branch: file actions open the host's copy at the head.
             next.remoteHead = ReviewRemoteHead(branch: pr.headBranch, sha: fetch.head, base: fetch.mergeBase ?? fetch.base,
-                                               hostURL: { path, line in pr.blobURL(fetch.head, path: path, line: line) })
+                                               forge: pr.commitForge)
         }
         // The PR's live threads on their lines, with reply / resolve / submit (`tools hub pr`): the store
         // `select` started with the detail when it is this PR's, so they are often in already.
@@ -869,6 +869,10 @@ final class PRsModel: ObservableObject {
         }
         if case .range(let base, let head, let label, _) = review.scope {
             args += ["--range", "\(base)..\(head)", "--label", label]
+        }
+        // No local worktree: the folder is on another branch, so the window opens the host's files and the PR's commits.
+        if let remote = review.remoteHead {
+            args += ReviewRemoteHead.launchArguments(branch: remote.branch, sha: remote.sha, base: remote.base, forge: pr.commitForge)
         }
         let process = Process()
         process.executableURL = executable

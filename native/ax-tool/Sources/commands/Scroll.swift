@@ -29,8 +29,11 @@ func cmdScroll(appName: String) {
     var el: AXUIElement? = nil
     if let coordStr = argValue("--coords") {
         let parts = coordStr.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
-        // `nan` and `inf` parse as Double; the window error below would trap converting them to Int.
-        guard parts.count == 2, parts.allSatisfy(\.isFinite) else { errorExit("--coords format: x,y (finite numbers)") }
+        // `nan`, `inf` and `1e100` parse as Double; the window error below would trap converting them to Int.
+        // No display reaches a million points from the origin, so that bound keeps every value representable.
+        guard parts.count == 2, parts.allSatisfy({ $0.isFinite && abs($0) < 1_000_000 }) else {
+            errorExit("--coords format: x,y (screen points, each within ±1000000)")
+        }
         point = CGPoint(x: parts[0], y: parts[1])
     } else if hasTarget {
         el = resolveElement(app, appName)

@@ -372,6 +372,7 @@ struct PRThreadsList: View {
     @State private var seenFor: String?
     @State private var clicks = PRCardClicks()
     @State private var anchor = PRListAnchor()
+    @State private var editors = PRThreadEditors()
     /// Whether each thread's file is still there at the PR's head (one `git ls-tree` per head).
     @ObservedObject private var headFiles = PRHeadFiles.shared
     /// A narrow side panel (the review window's Context panel, 320 pt at its minimum): the toolbar
@@ -469,7 +470,7 @@ struct PRThreadsList: View {
                                                         placement: placed[thread.id] ?? .onDiff(outdatedOnHost: false),
                                                         fresh: fresh, atHead: atHead[thread.path],
                                                         headSha: query?.head, compact: compact, clicks: clicks,
-                                                        folded: foldedThreads.contains(thread.id)) {
+                                                        editors: editors, folded: foldedThreads.contains(thread.id)) {
                                                 toggle(thread: thread.id)
                                             }
                                             .findRow(thread.id, cornerRadius: 8)
@@ -674,6 +675,30 @@ enum PRThreadFold {
             .first { !$0.isEmpty && !$0.hasPrefix("```") } ?? ""
         return line.replacingOccurrences(of: "[*_`>#]+", with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespaces)
+    }
+}
+
+/// The unsent reply and draft edit of each thread card. Folding a file removes its cards, and their own
+/// state goes with them; the list keeps this copy, so unfolding brings the text back.
+final class PRThreadEditors {
+    struct Editor: Equatable {
+        var replying = false
+        var replyText = ""
+        var editingID: String?
+        var editText = ""
+
+        /// A composer or an edit is open: something to bring back.
+        var isOpen: Bool { replying || editingID != nil }
+    }
+
+    private var kept: [String: Editor] = [:]
+
+    func keep(_ editor: Editor, for thread: String) {
+        kept[thread] = editor.isOpen ? editor : nil
+    }
+
+    func take(_ thread: String) -> Editor? {
+        kept.removeValue(forKey: thread)
     }
 }
 
@@ -907,6 +932,8 @@ private struct PRThreadRow: View {
     @State private var hovering = false
     /// The list's click router: a plain click anywhere on the card shows the thread in the diff.
     let clicks: PRCardClicks
+    /// Where an unsent reply or draft edit waits while its file is folded (the card itself is gone then).
+    let editors: PRThreadEditors
     /// Folded: the header, the first note's first line and the count; the chevron on the right opens it.
     var folded = false
     var toggleFold: () -> Void = {}
@@ -985,7 +1012,16 @@ private struct PRThreadRow: View {
         // never see, and reaches `PRCardClicks` through its mouse monitor by this frame.
         .onTapGesture { cardClicked() }
         .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { clicks.frames[thread.id] = $0 }
-        .onDisappear { clicks.frames[thread.id] = nil }
+        .onAppear {
+            if let kept = editors.take(thread.id) {
+                (replying, replyText, editingID, editText) = (kept.replying, kept.replyText, kept.editingID, kept.editText)
+            }
+        }
+        .onDisappear {
+            clicks.frames[thread.id] = nil
+            editors.keep(PRThreadEditors.Editor(replying: replying, replyText: replyText, editingID: editingID, editText: editText),
+                         for: thread.id)
+        }
         .onHover { inside in
             // A selection drag that leaves or enters the card does not flicker its hover.
             guard NSEvent.pressedMouseButtons == 0 || !inside, inside != hovering else { return }
