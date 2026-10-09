@@ -447,6 +447,74 @@ final class WidgetVisibilityTests: XCTestCase {
     }
 }
 
+/// The local submission journal keeps submission order per conversation across a failed enqueue.
+final class WidgetJournalTests: XCTestCase {
+    @MainActor
+    func testAFailedSubmissionHoldsBackLaterOnesToItsConversationOnly() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "widget-journal-" + UUID().uuidString)
+        let journal = directory.appendingPathComponent("native-submissions")
+        try FileManager.default.createDirectory(at: journal, withIntermediateDirectories: true)
+        defer {
+            do { try FileManager.default.removeItem(at: directory) } catch { XCTFail("Fixture cleanup: \(error)") }
+        }
+        let flag = directory.appendingPathComponent("refuse-first")
+        let sent = directory.appendingPathComponent("sent.txt")
+        let script = directory.appendingPathComponent("tools")
+        try """
+        #!/bin/sh
+        while [ "$#" -gt 0 ]; do
+          if [ "$1" = "--input" ]; then
+            shift
+            if [ -e '\(flag.path)' ] && grep -q 'first' "$1"; then echo refused >&2; exit 1; fi
+            printf '%s\\n' "$(sed -n 's/.*"text":"\\([a-z-]*\\)".*/\\1/p' "$1")" >> '\(sent.path)'
+          fi
+          shift
+        done
+        printf '{}'
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        try Data().write(to: flag)
+        func submission(_ name: String, session: String, text: String) throws {
+            let request = """
+                {"action":"enqueue","target":{"hostId":"local","provider":"codex","sessionId":"\(session)",\
+                "sourceHome":"","cwd":"/"},"payload":{"kind":"followup","text":"\(text)"}}
+                """
+            try request.write(to: journal.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        }
+        try submission("1-a.json", session: "one", text: "first")
+        try submission("2-b.json", session: "one", text: "second")
+        try submission("3-c.json", session: "two", text: "other")
+
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let model = WidgetModel(
+            binaryPath: script.path, stateRoot: directory.path, defaults: defaults,
+            appearance: NativeSettingsAppearance(
+                defaults: defaults, notificationNamespace: domain, observeExternalChanges: false))
+        func remaining() throws -> [String] {
+            try FileManager.default.contentsOfDirectory(atPath: journal.path).filter { $0.hasSuffix(".json") }.sorted()
+        }
+        func waitFor(_ condition: () throws -> Bool) async throws {
+            let deadline = ContinuousClock.now + .seconds(5)
+            while try !condition() && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+        }
+
+        model.drainJournal()
+        try await waitFor { try remaining() == ["1-a.json", "2-b.json"] && model.error != nil }
+        XCTAssertEqual(try remaining(), ["1-a.json", "2-b.json"], "the later message to the same conversation waits")
+        XCTAssertEqual(try String(contentsOf: sent, encoding: .utf8), "other\n", "another conversation still sends")
+
+        try FileManager.default.removeItem(at: flag)
+        model.drainJournal()
+        try await waitFor { try remaining().isEmpty }
+        XCTAssertEqual(try String(contentsOf: sent, encoding: .utf8), "other\nfirst\nsecond\n")
+    }
+}
+
 final class WidgetOutgoingTests: XCTestCase {
     private func message(_ index: Int, state: String, payload: String? = nil) throws -> WidgetOutgoing {
         let json = """
@@ -468,6 +536,21 @@ final class WidgetOutgoingTests: XCTestCase {
 
         let history = try (0..<30).map { try message($0, state: "sent") }
         XCTAssertEqual(WidgetOutgoing.shown(history).map(\.id), (10..<30).map { "m\($0)" })
+    }
+
+    /// Mirrors `changeOutgoing`: everything before delivery can be edited or cancelled, so a message held in
+    /// preparation or review never leaves its conversation blocked without a way out.
+    func testMessagesBeforeDeliveryCanBeWithdrawnAndStoppedOnesRecovered() throws {
+        let withdrawable = try ["preparing", "review", "queued", "failed", "waiting-route"].map {
+            try message(0, state: $0)
+        }
+        XCTAssertTrue(withdrawable.allSatisfy(\.isWithdrawable))
+        let delivering = try ["dispatching", "sent", "cancelled", "unknown"].map { try message(0, state: $0) }
+        XCTAssertFalse(delivering.contains(where: \.isWithdrawable))
+        XCTAssertEqual(
+            try ["preparing", "review", "queued", "failed", "waiting-route", "unknown", "sent"]
+                .filter { try message(0, state: $0).needsRecovery },
+            ["failed", "waiting-route", "unknown"])
     }
 
     func testAFormWithoutComposerTextKeepsItsLabel() throws {

@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
 import { postDecisions, readDecisions } from "@app/question/lib/decisions/store";
 import { postAskForm } from "@app/question/lib/pending/ask";
-import { openPendingStore } from "@app/question/lib/pending/store";
+import { listFormsSnapshot, openPendingStore } from "@app/question/lib/pending/store";
 import * as transcripts from "@genesiscz/utils/ai/transcripts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as commands from "@genesiscz/utils/process/bounded-command";
@@ -15,7 +15,13 @@ import * as videos from "@genesiscz/utils/video/probe";
 import { createCanvas } from "@napi-rs/canvas";
 import { performWidgetAction } from "../widget/actions";
 import { createWidgetHandoff } from "../widget/handoff";
-import { readWidgetChanges, readWidgetDecisionEvents, type WidgetSources, widgetSnapshot } from "../widget/snapshot";
+import {
+    readWidgetChanges,
+    readWidgetDecisionEvents,
+    type WidgetSources,
+    widgetForms,
+    widgetSnapshot,
+} from "../widget/snapshot";
 import { mutateWidgetState, readWidgetState } from "../widget/storage";
 import {
     shownOutgoing,
@@ -719,6 +725,40 @@ test("malformed stored times sort as the oldest activity instead of breaking the
     const wire = SafeJSON.stringify(snapshot);
     expect(wire).not.toContain('"activityAt":null');
     expect(wire).not.toContain('"at":null');
+});
+
+test("an unhinted pending form keeps its card when the widget selects the session named after it", async () => {
+    const directory = await root();
+    const dbPath = join(directory, "questions.db");
+    const db = openPendingStore(dbPath);
+    let formId = "";
+    try {
+        const form = await postAskForm(
+            {
+                projectPath: "/fixture/project",
+                items: [{ id: "pick", promptMarkdown: "Which one?", choices: [{ id: "a", label: "A" }] }],
+            },
+            { db, eventBase: directory, logBase: directory, notify: false, env: {}, ambient: false }
+        );
+        formId = form.id;
+        expect(form.sessionHint).toBeUndefined();
+    } finally {
+        db.close();
+    }
+    const sources: WidgetSources = {
+        ...emptySources,
+        forms: (sessionHint) => widgetForms({ dbPath, sessionHint }),
+    };
+    const roster = await widgetSnapshot({ root: directory, sources });
+    const session = roster.sessions.find((entry) => entry.target.sessionId === formId);
+    expect(session?.status).toBe("waiting");
+    await mutateWidgetState(directory, (state) => {
+        state.selectedKey = session?.key ?? null;
+        state.preferences.showChanges = false;
+    });
+    const selected = await widgetSnapshot({ root: directory, sources });
+    expect(selected.cards.map((card) => card.id)).toEqual([`form:${formId}`]);
+    expect(listFormsSnapshot({ dbPath, opts: { sessionHint: formId } })).toHaveLength(0);
 });
 
 test("an unsettled message older than the last 20 stays shown and keeps its video evidence", async () => {

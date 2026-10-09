@@ -206,12 +206,7 @@ public final class WidgetModel: ObservableObject {
                     self.watcher = nil
                     self.error = "Widget connection stopped. " + exit.stderr.suffix(600)
                 })
-            let pending = try FileManager.default.contentsOfDirectory(
-                at: journal, includingPropertiesForKeys: nil
-            ).filter { $0.pathExtension == "json" }
-            for file in pending.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
-                queueJournal(file)
-            }
+            drainJournal()
         } catch { report(error) }
     }
 
@@ -524,20 +519,52 @@ public final class WidgetModel: ObservableObject {
         return try JSONDecoder().decode(WidgetJSON.self, from: Data(result.stdout.utf8))
     }
 
-    private func queueJournal(_ file: URL) {
+    /// Sends every saved submission to the hub in submission order. After one fails, the later submissions to the
+    /// same conversation stay saved: sending them first would give them an earlier hub sequence and deliver them
+    /// ahead of it. The next drain (a new submission or a restart) retries the failed one first.
+    func drainJournal() {
         let previous = mutationTask
         mutationTask = Task { [weak self] in
             await previous?.value
             guard let self else { return }
+            let files: [URL]
             do {
-                _ = try await self.runAction(file)
-                try FileManager.default.removeItem(at: file)
+                files = try FileManager.default.contentsOfDirectory(at: self.journal, includingPropertiesForKeys: nil)
+                    .filter { $0.pathExtension == "json" }
+                    .sorted { $0.lastPathComponent < $1.lastPathComponent }
             } catch {
-                self.error =
-                    "Your message is saved locally. Reconnect to retry queuing it. "
-                    + error.localizedDescription
-                PerfLog.mark("widget.enqueue retained journal \(error.localizedDescription)")
+                self.report(error)
+                return
             }
+            var blocked = Set<String>()
+            for file in files {
+                let conversation = Self.journalConversation(file)
+                guard !blocked.contains(conversation) else { continue }
+                do {
+                    _ = try await self.runAction(file)
+                    try FileManager.default.removeItem(at: file)
+                } catch {
+                    blocked.insert(conversation)
+                    self.error =
+                        "Your message is saved locally. Reconnect to retry queuing it. "
+                        + error.localizedDescription
+                    PerfLog.mark("widget.enqueue retained journal \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    /// The conversation a saved submission targets. An unreadable file is its own conversation, so it never holds
+    /// back another one.
+    private static func journalConversation(_ file: URL) -> String {
+        do {
+            let request = try JSONDecoder().decode(WidgetJSON.self, from: Data(contentsOf: file))
+            guard case .object(let fields) = request, let target = fields["target"] else { return file.path }
+            let decoded = try JSONDecoder().decode(WidgetTarget.self, from: JSONEncoder().encode(target))
+            return [decoded.hostId, decoded.provider, decoded.sessionId, decoded.sourceHome].joined(separator: "\u{1F}")
+        } catch {
+            PerfLog.mark("widget.journal unreadable \(error.localizedDescription)")
+            return file.path
         }
     }
 
@@ -593,7 +620,7 @@ public final class WidgetModel: ObservableObject {
             submittedAssets.formUnion(submitted.assetIds)
             if let card, answering || choice != nil { submittedCards.insert(card.id) }
             action(["action": "draft-text", "key": .string(selectedKey), "text": ""])
-            queueJournal(file)
+            drainJournal()
         } catch { report(error) }
     }
 

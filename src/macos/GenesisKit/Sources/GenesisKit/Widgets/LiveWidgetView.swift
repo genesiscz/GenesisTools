@@ -532,26 +532,30 @@ public struct LiveWidgetView: View {
             if let error = message.error {
                 Text(error).font(.caption2).foregroundStyle(.orange).textSelection(.enabled)
             }
-            if ["failed", "waiting-route", "unknown"].contains(message.state) {
+            if message.isWithdrawable || message.needsRecovery {
                 HStack {
-                    Button("Retry") {
-                        if message.state == "unknown" {
-                            retry = message
-                        } else {
-                            model.action(["action": "retry", "id": .string(message.id)])
+                    if message.needsRecovery {
+                        Button("Retry") {
+                            if message.state == "unknown" {
+                                retry = message
+                            } else {
+                                model.action(["action": "retry", "id": .string(message.id)])
+                            }
                         }
                     }
-                    if message.state != "unknown" {
+                    if message.isWithdrawable {
                         Button("Edit") { model.editOutgoing(message) }
                         Button("Cancel") { model.action(["action": "cancel", "id": .string(message.id)]) }
                     } else {
                         Button("Discard…") { discard = message }
                     }
-                    Menu("Choose destination…") {
-                        Button("Resume this session in Hub…") { model.destination("resume") }
-                        Button("New agent with prepared context…") { model.destination("new") }
-                        Button("Create a handoff file") { model.destination("handoff") }
-                        Button("Open conversation") { model.openHub?(model.selected) }
+                    if message.needsRecovery {
+                        Menu("Choose destination…") {
+                            Button("Resume this session in Hub…") { model.destination("resume") }
+                            Button("New agent with prepared context…") { model.destination("new") }
+                            Button("Create a handoff file") { model.destination("handoff") }
+                            Button("Open conversation") { model.openHub?(model.selected) }
+                        }
                     }
                 }.font(.caption2)
             }

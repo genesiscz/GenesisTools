@@ -163,15 +163,21 @@ async function widgetResult(node: AgentNode): Promise<string> {
     resultCache.set(node.filePath, { mtime: stat.mtimeMs, text });
     return text;
 }
+/**
+ * Pending forms for the roster, or one session's form timeline. An unhinted form is its own session, keyed by its
+ * form id, so selecting that session must find the form by id as well as by session hint.
+ */
+export function widgetForms({ dbPath, sessionHint }: { dbPath: string; sessionHint?: string }): AskForm[] {
+    return listFormsSnapshot({
+        dbPath,
+        opts: sessionHint ? { sessionHint, includeUnhintedFormId: true, limit: 80 } : { status: "pending", limit: 250 },
+    });
+}
 export const realWidgetSources: WidgetSources = {
     sessions: (refresh) =>
         listAgentSessionRows({ hours: 168, withUsage: false, refresh, maxDiscoveryAgeMs: 15_000, failClosed: true }),
     decisions: () => readDecisions(decisionFiles().file),
-    forms: (sessionHint) =>
-        listFormsSnapshot({
-            dbPath: toolDataDir("question", "qa.db"),
-            opts: { ...(sessionHint ? { sessionHint } : { status: "pending" }), limit: sessionHint ? 80 : 250 },
-        }),
+    forms: (sessionHint) => widgetForms({ dbPath: toolDataDir("question", "qa.db"), sessionHint }),
     answers: (sessionId) =>
         queryEntriesSnapshot({
             dbPath: toolDataDir("question", "qa.db"),

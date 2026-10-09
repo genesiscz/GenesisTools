@@ -276,6 +276,11 @@ public struct WidgetOutgoing: Codable, Identifiable, Equatable, Sendable {
         return value
     }
     public var isSettled: Bool { state == "sent" || state == "cancelled" }
+    /// Not yet in delivery, so the hub still lets the user edit or cancel it (`changeOutgoing`). A preparing or
+    /// review message blocks its conversation, so these controls must not wait for a failure.
+    public var isWithdrawable: Bool { ["preparing", "review", "queued", "failed", "waiting-route"].contains(state) }
+    /// Delivery stopped and needs the user: Retry and another destination are offered.
+    public var needsRecovery: Bool { ["failed", "waiting-route", "unknown"].contains(state) }
     public static let shownHistory = 20
     /// The last 20 messages plus every older unsettled one: an unsettled message blocks its whole conversation, so
     /// its Retry, Edit and review controls must stay reachable. Mirrors `shownOutgoing` in src/hub/lib/widget/types.ts.

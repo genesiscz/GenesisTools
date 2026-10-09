@@ -195,6 +195,11 @@ export function getForm(db: Database, id: string): AskForm | null {
 
 export interface ListFormsOpts {
     sessionHint?: string;
+    /**
+     * With `sessionHint`, also match a form that has no session hint and whose id IS that value. A reader that
+     * shows an unhinted form as a session of its own (the hub widget) keys that session by the form id.
+     */
+    includeUnhintedFormId?: boolean;
     status?: AskFormStatus;
     limit?: number;
 }
@@ -213,7 +218,10 @@ export function listForms(db: Database, opts: ListFormsOpts = {}): AskForm[] {
         params.push(opts.status);
     }
 
-    if (opts.sessionHint) {
+    if (opts.sessionHint && opts.includeUnhintedFormId) {
+        clauses.push("(session_hint = ? OR (COALESCE(session_hint, '') = '' AND id = ?))");
+        params.push(opts.sessionHint, opts.sessionHint);
+    } else if (opts.sessionHint) {
         clauses.push("session_hint = ?");
         params.push(opts.sessionHint);
     }
