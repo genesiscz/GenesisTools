@@ -1,7 +1,7 @@
 /**
  * Argument parsing for the `--profile` mode of `scripts/test.ts`, the stall-tripwire
- * ceiling, and serial isolation, in their own module so they can be tested: importing the
- * runner would run the whole suite.
+ * ceiling, serial isolation and the phases of a full run, in their own module so they can be
+ * tested: importing the runner would run the whole suite.
  *
  * No imports on purpose — the runner loads this before `node_modules` is known to be present.
  */
@@ -18,6 +18,76 @@ export function withSerialIsolation(testArgs: string[]): string[] {
     );
 
     return decided ? testArgs : [...testArgs, "--isolate"];
+}
+
+/** One `bun test` process of a full (no explicit paths) run, in the order they run. */
+export interface FullRunPhase {
+    kind: "parallel" | "serial" | "own-process";
+    /** The phase in the closing `[test] phase exits:` line: its kind, or the file it runs. */
+    name: string;
+    /** Printed before the phase starts; the parallel bulk prints nothing of its own. */
+    banner?: string;
+    testArgs: string[];
+}
+
+/**
+ * The phases of a full run: the parallel bulk, then the load-sensitive files serially in one
+ * process, then each own-process file in a `bun test` of its own. Every listed file is ignored
+ * by the bulk, and an own-process file never shares a process with any other file. The later
+ * phases drop `--parallel` (and `--parallel=N`) from the caller's argv; everything else carries.
+ * Why each list exists: the block comments above `LOAD_SENSITIVE_FILES` and
+ * `OWN_PROCESS_FILES` in `scripts/test.ts`.
+ */
+export function fullRunPhases(options: {
+    args: string[];
+    excludes: string[];
+    loadSensitive: string[];
+    ownProcess: string[];
+    parallelTimeoutMs: number;
+}): FullRunPhase[] {
+    const { args, excludes, loadSensitive, ownProcess, parallelTimeoutMs } = options;
+    const hasExplicitTimeout = args.some((arg) => arg === "--timeout" || arg.startsWith("--timeout="));
+    // `startsWith`, not equality: bun also accepts `--parallel=N`, and an exact match would let
+    // that form through into the phases whose whole purpose is to keep these files apart.
+    const serialArgs = args.filter((arg) => !arg.startsWith("--parallel"));
+    const phases: FullRunPhase[] = [
+        {
+            kind: "parallel",
+            name: "parallel",
+            testArgs: [
+                ...args,
+                ...(hasExplicitTimeout ? [] : [`--timeout=${parallelTimeoutMs}`]),
+                ...excludes.map((glob) => `--path-ignore-patterns=${glob}`),
+                ...[...loadSensitive, ...ownProcess].map((file) => `--path-ignore-patterns=${file}`),
+            ],
+        },
+    ];
+
+    // An empty list must not become a `bun test` with no path, which would run the whole repo.
+    if (loadSensitive.length > 0) {
+        phases.push({
+            kind: "serial",
+            name: "serial",
+            banner: `serial phase: ${loadSensitive.length} load-sensitive file(s)`,
+            testArgs: [...serialArgs, ...loadSensitive],
+        });
+    }
+
+    ownProcess.forEach((file, index) => {
+        phases.push({
+            kind: "own-process",
+            name: file,
+            banner: `own-process phase ${index + 1}/${ownProcess.length}: ${file}`,
+            testArgs: [...serialArgs, file],
+        });
+    });
+
+    return phases;
+}
+
+/** The exit code of a whole run: the first phase that failed, else 0. */
+export function firstFailure(exits: number[]): number {
+    return exits.find((code) => code !== 0) ?? 0;
 }
 
 /** Default wall-clock ceiling for one `bun test` process, in minutes. */

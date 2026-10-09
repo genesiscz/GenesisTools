@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { DEFAULT_MAX_MINUTES, maxRunMs, profileArgs, withSerialIsolation } from "./test-args";
+import {
+    DEFAULT_MAX_MINUTES,
+    firstFailure,
+    fullRunPhases,
+    maxRunMs,
+    profileArgs,
+    withSerialIsolation,
+} from "./test-args";
 
 test("a serial run gets per-file isolation, like a parallel one", () => {
     expect(withSerialIsolation(["src/cmux"])).toEqual(["src/cmux", "--isolate"]);
@@ -74,4 +81,64 @@ test("0 disables the tripwire, a positive count is minutes in ms", () => {
     expect(maxRunMs("  0  ", warn)).toBe(0);
     expect(maxRunMs("2", warn)).toBe(120_000);
     expect(maxRunMs("  3  ", warn)).toBe(180_000);
+});
+
+const PHASE_OPTIONS = {
+    excludes: ["**/*.spec.ts"],
+    loadSensitive: ["src/a/slow.test.ts"],
+    ownProcess: ["src/q/record.test.ts", "src/q/other.test.ts"],
+    parallelTimeoutMs: 20_000,
+};
+
+test("a full run is the parallel bulk, the serial phase, then one process per own-process file", () => {
+    const phases = fullRunPhases({ ...PHASE_OPTIONS, args: ["--parallel"] });
+
+    expect(phases.map((phase) => [phase.kind, phase.name])).toEqual([
+        ["parallel", "parallel"],
+        ["serial", "serial"],
+        ["own-process", "src/q/record.test.ts"],
+        ["own-process", "src/q/other.test.ts"],
+    ]);
+    expect(phases[1].testArgs).toEqual(["src/a/slow.test.ts"]);
+    expect(phases[2].testArgs).toEqual(["src/q/record.test.ts"]);
+    expect(phases[3].testArgs).toEqual(["src/q/other.test.ts"]);
+    expect(phases[2].banner).toBe("own-process phase 1/2: src/q/record.test.ts");
+});
+
+test("the parallel bulk ignores every serial and own-process file", () => {
+    const [parallel] = fullRunPhases({ ...PHASE_OPTIONS, args: ["--parallel"] });
+
+    expect(parallel.testArgs).toEqual([
+        "--parallel",
+        "--timeout=20000",
+        "--path-ignore-patterns=**/*.spec.ts",
+        "--path-ignore-patterns=src/a/slow.test.ts",
+        "--path-ignore-patterns=src/q/record.test.ts",
+        "--path-ignore-patterns=src/q/other.test.ts",
+    ]);
+});
+
+test("later phases drop both --parallel forms and keep the rest of the caller's argv", () => {
+    const phases = fullRunPhases({ ...PHASE_OPTIONS, args: ["--parallel=4", "--bail", "--timeout=9000"] });
+
+    expect(phases[0].testArgs.slice(0, 3)).toEqual(["--parallel=4", "--bail", "--timeout=9000"]);
+    expect(phases[0].testArgs).not.toContain("--timeout=20000");
+
+    for (const phase of phases.slice(1)) {
+        expect(phase.testArgs.some((arg) => arg.startsWith("--parallel"))).toBe(false);
+        expect(phase.testArgs.slice(0, 2)).toEqual(["--bail", "--timeout=9000"]);
+    }
+});
+
+test("an empty list adds no phase, so no phase is a pathless bun test of the whole repo", () => {
+    const phases = fullRunPhases({ ...PHASE_OPTIONS, args: ["--parallel"], loadSensitive: [], ownProcess: [] });
+
+    expect(phases.map((phase) => phase.kind)).toEqual(["parallel"]);
+});
+
+test("the run exits with the first phase that failed", () => {
+    expect(firstFailure([0, 0, 0])).toBe(0);
+    expect(firstFailure([0, 1, 137])).toBe(1);
+    expect(firstFailure([0, 0, 137])).toBe(137);
+    expect(firstFailure([])).toBe(0);
 });

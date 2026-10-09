@@ -2,7 +2,7 @@
 import { writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { dirname, join } from "node:path";
-import { maxRunMs, profileArgs, withSerialIsolation } from "./test-args";
+import { firstFailure, fullRunPhases, maxRunMs, profileArgs, withSerialIsolation } from "./test-args";
 import { diagnose, lockStamp, STAMP_FILE } from "./test-deps";
 import { descendantsOf, reap } from "./test-reap";
 
@@ -282,6 +282,25 @@ const LOAD_SENSITIVE_FILES = [
 ];
 
 /**
+ * Files that run in a `bun test` process of their OWN, one process per file, after the serial
+ * phase. LOAD_SENSITIVE_FILES protects a file FROM the parallel run; this list protects the
+ * rest of the run FROM the file: a file here is suspected of breaking the process that hosts
+ * it, so nothing else may ever share that process. Same env, isolation, tripwire and argv as
+ * the serial phase. Targeted runs (explicit paths) are untouched.
+ *
+ * record.test.ts, measured 2026-10-09 on Linux CI (bun 1.4.2, `--parallel`, 4 workers) in the
+ * runs of PRs #481, #483 and #484: one worker goes bad, record.test.ts is ALWAYS the first
+ * file in it to stall (its tests hit the 20 s timeout), and later files in the SAME worker
+ * that await a child process (src/scripts/lib/store.test.ts, src/scripts/lib/journal.test.ts,
+ * src/say/lib/credential.test.ts) then stall too. The worker log showed no leftover children.
+ * Branches without its image tests (master, #485) did not stall once in about ten runs that
+ * day. The suspect is its image decoding: it feeds broken and real images through
+ * @napi-rs/canvas `loadImage` (src/utils/image/attachments.ts) and imports `createCanvas`.
+ * That theory is NOT proven; this entry contains the damage whatever the cause turns out to be.
+ */
+const OWN_PROCESS_FILES = ["src/question/lib/record.test.ts"];
+
+/**
  * Excludes that hold even for an explicit path argument.
  *
  * An explicit path is an opt-in, so it deliberately bypasses `EXCLUDES` — that is how you
@@ -512,10 +531,11 @@ async function runBunTest(testArgs: string[]): Promise<number> {
  * The one line CI greps to tell "the suite finished" from "the suite was killed".
  *
  * bun prints its own `Ran N tests across M files.` once per PROCESS, and a full
- * run is TWO processes (the parallel bulk, then the serial load-sensitive
- * phase). That line being present therefore proves only that one of them got
- * there — a stalled serial phase would still show a completed parallel one.
- * This marker is written after every phase has exited, and nowhere else.
+ * run is SEVERAL processes (the parallel bulk, the serial load-sensitive phase,
+ * then one per OWN_PROCESS_FILES entry). That line being present therefore
+ * proves only that one of them got there — a stalled later phase would still
+ * show a completed parallel one. This marker is written after every phase has
+ * exited, and nowhere else; the exit code is the first phase that failed.
  *
  * A phase the tripwire SIGKILLed did not finish, so it must not print the marker
  * either. Without this check the tripwire would hand CI the exact false green the
@@ -690,21 +710,32 @@ if (hasExplicitPaths) {
  * An explicit --timeout on the command line wins, so a targeted run can still tighten it.
  */
 const PARALLEL_TIMEOUT_MS = 20_000;
-const hasExplicitTimeout = args.some((arg) => arg === "--timeout" || arg.startsWith("--timeout="));
 
-const parallelExit = await runBunTest([
-    ...args,
-    ...(hasExplicitTimeout ? [] : [`--timeout=${PARALLEL_TIMEOUT_MS}`]),
-    ...EXCLUDES.map((glob) => `--path-ignore-patterns=${glob}`),
-    ...LOAD_SENSITIVE_FILES.map((file) => `--path-ignore-patterns=${file}`),
-]);
-if (stalled) {
-    finish(parallelExit);
+const phases = fullRunPhases({
+    args,
+    excludes: EXCLUDES,
+    loadSensitive: LOAD_SENSITIVE_FILES,
+    ownProcess: OWN_PROCESS_FILES,
+    parallelTimeoutMs: PARALLEL_TIMEOUT_MS,
+});
+const exits: number[] = [];
+const report: string[] = [];
+
+for (const phase of phases) {
+    if (phase.banner) {
+        process.stderr.write(`\x1b[90m[test] ${phase.banner}\x1b[0m\n`);
+    }
+
+    const code = await runBunTest(phase.testArgs);
+    exits.push(code);
+    report.push(`${phase.name} ${code}`);
+
+    // A killed phase ends the run: the phases after it would only report on a machine that
+    // just needed the tripwire.
+    if (stalled) {
+        break;
+    }
 }
 
-process.stderr.write(`\x1b[90m[test] serial phase: ${LOAD_SENSITIVE_FILES.length} load-sensitive file(s)\x1b[0m\n`);
-// `startsWith`, not equality: bun also accepts `--parallel=N`, and an exact match would let
-// that form through into the phase whose whole purpose is to run these files serially.
-const serialExit = await runBunTest([...args.filter((arg) => !arg.startsWith("--parallel")), ...LOAD_SENSITIVE_FILES]);
-
-finish(parallelExit !== 0 ? parallelExit : serialExit);
+process.stderr.write(`[test] phase exits: ${report.join(", ")}\n`);
+finish(firstFailure(exits));
