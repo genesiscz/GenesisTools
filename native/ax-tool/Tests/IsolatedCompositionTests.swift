@@ -153,6 +153,32 @@ final class IsolatedCompositionTests: XCTestCase {
         }
     }
 
+    func testWindowCrossingTheDisplayEdgeStaysOutOfThePadding() {
+        // Display canvas 10x10 points in a 20x10 output: scale 1, five columns of padding each side.
+        // The window covers x 5..15, so its right half lies beyond the display.
+        let display = CGRect(x: 0, y: 0, width: 10, height: 10)
+        let window = CGRect(x: 5, y: 0, width: 10, height: 10)
+        let blue = CIImage(color: CIColor(red: 0, green: 0, blue: 1)).cropped(to: CGRect(x: 0, y: 0, width: 20, height: 20))
+        let geometry = CaptureCanvasGeometry(canvas: display, output: CGSize(width: 20, height: 10))
+        let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+        for transparent in [true, false] {
+            let image = composeIsolatedFrame([IsolatedPaint(image: blue, contentRect: nil, bounds: window)],
+                                             geometry: geometry, transparent: transparent)
+            func pixel(_ x: Int, _ y: Int) -> [UInt8] {
+                var value = [UInt8](repeating: 9, count: 4)
+                context.render(image, toBitmap: &value, rowBytes: 4, bounds: CGRect(x: x, y: y, width: 1, height: 1),
+                               format: .RGBA8, colorSpace: nil)
+                return value
+            }
+
+            let padding: [UInt8] = transparent ? [0, 0, 0, 0] : [0, 0, 0, 255]
+            XCTAssertEqual(pixel(12, 5), [0, 0, 255, 255], "the on-display part of the window is painted")
+            for x in [2, 15, 17, 19] {
+                XCTAssertEqual(pixel(x, 5), padding, "off-display window content stays out of the padding at x \(x)")
+            }
+        }
+    }
+
     func testComposedFrameKeepsAlphaAndPaintsTheFrontWindowLast() {
         let geometry = CaptureCanvasGeometry(canvas: left.union(right), output: CGSize(width: 25, height: 10))
         // 2x surfaces into 10x10 point windows; window 2 is in front, so it is painted last.
