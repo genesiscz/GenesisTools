@@ -61,7 +61,9 @@ export interface ToolRun {
 
 function liveClaudePeers(session: string, sourceHome?: string): ClaudeLiveSession[] {
     const directory = sourceHome ? join(workerSourceHome(sourceHome), "sessions") : claudeSessionsDir();
-    const candidates = listClaudeLiveSessions(directory, () => true).filter((peer) => peer.sessionId === session);
+    const candidates = listClaudeLiveSessions(directory, (pids) => new Set(pids)).filter(
+        (peer) => peer.sessionId === session
+    );
     const processes = batchPsInfo(candidates.map((peer) => peer.pid));
     return candidates.filter((peer) => {
         const process = processes.get(peer.pid);
