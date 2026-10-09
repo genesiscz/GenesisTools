@@ -708,6 +708,7 @@ describe("widget source and delivery contracts", () => {
                 `Reply to: Chat DECISION 4: next token kinds\nLedger decision 2 (${row.id})\n${media}`,
                 "--json",
                 "--paste",
+                "--exact-session",
             ],
         ]);
         expect(readDecisions(files.file).map((entry) => [entry.sessionId, entry.number, entry.state])).toEqual([
