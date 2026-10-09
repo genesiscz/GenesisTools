@@ -24,6 +24,8 @@ public struct FocusSettings: Equatable {
     public var urlMode: URLMode = .host
     public var idleThresholdSec = 120
     public var retentionDays = 365
+    /// Up to a hundred years. A larger value falls back to the default rather than overflowing the cutoff.
+    public static let retentionRange = 1...36_500
     public var interruptionThresholdSec = 45
     /// `time` shows the countdown, `dot` only the phase dot, `off` removes the item.
     public var menuBarStyle = "time"
@@ -61,7 +63,7 @@ public struct FocusSettings: Equatable {
         if let raw = focus["titleMode"] as? String, let mode = TitleMode(rawValue: raw) { settings.titleMode = mode }
         if let raw = focus["urlMode"] as? String, let mode = URLMode(rawValue: raw) { settings.urlMode = mode }
         if let value = focus["idleThresholdSec"] as? Int, value > 0 { settings.idleThresholdSec = value }
-        if let value = focus["retentionDays"] as? Int, value > 0 { settings.retentionDays = value }
+        if let value = focus["retentionDays"] as? Int, retentionRange.contains(value) { settings.retentionDays = value }
         if let value = focus["interruptionThresholdSec"] as? Int, value > 0 { settings.interruptionThresholdSec = value }
         if let raw = focus["menuBarStyle"] as? String, ["time", "dot", "off"].contains(raw) { settings.menuBarStyle = raw }
         if let list = focus["excludedBundles"] as? [String] {

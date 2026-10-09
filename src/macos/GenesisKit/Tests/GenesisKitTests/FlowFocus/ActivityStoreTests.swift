@@ -249,6 +249,23 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertTrue(try store.segments(from: 0, to: now + 1).isEmpty, "shortening retention prunes at once")
     }
 
+    @MainActor
+    func testAnOversizedRetentionFallsBackInsteadOfOverflowingTheCutoff() throws {
+        XCTAssertEqual(FocusSettings.from(appConfig: ["focus": ["retentionDays": 1_000_000_000_000]]).retentionDays, 365)
+        XCTAssertEqual(FocusSettings.from(appConfig: ["focus": ["retentionDays": 36_500]]).retentionDays, 36_500)
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let recent = try store.openSegment(segment(now - 86_400_000, title: "recent"))
+        try store.closeSegment(id: recent, at: now - 86_400_000 + 60_000)
+        let controller = FocusController()
+        controller.ownsRuntime = true
+        controller.configuration = FlowFocusConfiguration(directory: URL(fileURLWithPath: (path as NSString).deletingLastPathComponent))
+        // A valid JSON number this large used to trap in the cutoff multiplication at start.
+        controller.start(appConfig: ["focus": ["retentionDays": 1_000_000_000_000]], databasePath: path,
+                         liveServices: false, presentsWindows: false)
+        defer { controller.stop() }
+        XCTAssertEqual(try store.segments(from: 0, to: now + 1).map(\.windowTitle), ["recent"])
+    }
+
     func testForgetCanScopeToOneApp() throws {
         let brave = try store.openSegment(segment(1_000, app: "com.brave.Browser"))
         try store.closeSegment(id: brave, at: 2_000)

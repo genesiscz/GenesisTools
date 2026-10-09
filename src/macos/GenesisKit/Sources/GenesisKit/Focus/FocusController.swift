@@ -303,7 +303,9 @@ public final class FocusController: ObservableObject {
     func pruneExpiredActivity(now: Date = Date()) {
         guard ownsRuntime, remoteCommand == nil, let store else { return }
         lastPrune = now
-        let cutoff = Int64(now.timeIntervalSince1970 * 1000) - Int64(settings.retentionDays) * 86_400_000
+        let (span, overflow) = Int64(settings.retentionDays).multipliedReportingOverflow(by: 86_400_000)
+        guard !overflow else { return }
+        let cutoff = Int64(now.timeIntervalSince1970 * 1000) - span
         guard cutoff > 0 else { return }
         do {
             let removed = try store.forget(from: 0, to: cutoff)

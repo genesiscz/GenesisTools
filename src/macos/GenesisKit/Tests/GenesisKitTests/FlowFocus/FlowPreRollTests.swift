@@ -266,6 +266,27 @@ final class FlowPreRollTests: XCTestCase {
     }
 
     @MainActor
+    func testClearingHistoryWhileAHoldFinalizesKeepsItsWords() async throws {
+        let recognizer = CompanionSpeechRecognizer(audioSource: FixtureAudioSource(live: try filled(0.5)))
+        recognizer.recognizes = false
+        recognizer.retryOnEmpty = false
+        do {
+            try recognizer.start(locale: Locale(identifier: "en-US"), forceServer: true)
+        } catch CompanionSpeechError.recognizerUnavailable {
+            throw XCTSkip("No speech recognizer on this runner")
+        }
+        recognizer.recordRecognizedForTesting("words already heard")
+        // Capture has stopped once finish() begins; it then waits for the final result.
+        recognizer.recognizes = true
+        let finishing = Task { await recognizer.finish(timeoutSeconds: 0.3) }
+        for _ in 0..<100 { await Task.yield() }
+        // What clearing history (or deleting the latest entry) does meanwhile.
+        recognizer.clearTranscript()
+        let text = await finishing.value
+        XCTAssertEqual(text, "words already heard", "the finalizing hold keeps the words it already recognized")
+    }
+
+    @MainActor
     func testPreRollLeadsTheRetryClipAndACancelledHoldKeepsNoAudio() throws {
         let live = try filled(0.9)
         let preRoll = try filled(0.1)
