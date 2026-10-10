@@ -21,7 +21,7 @@ export function registerMessageCommand(program: Command): void {
         .option("--json", "print the receipt as JSON")
         .addHelpText(
             "after",
-            `\nExamples:\n  ${toolCommand("question message", "Build is green, the hub after the fix:", "--image", "/tmp/hub-after.png")}\n  ${toolCommand("question message", "--title", "Blocked", "--file", "notes.md")}\n`
+            `\nExamples:\n  ${toolCommand("question message", "Build is green, the hub after the fix:", "--image", "screenshots/hub-after.png")}\n  ${toolCommand("question message", "--title", "Blocked", "--file", "notes.md")}\n`
         )
         .action(
             async (
