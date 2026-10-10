@@ -5,10 +5,16 @@ import { basename, join, resolve } from "node:path";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { z } from "zod";
 import { importWidgetAsset } from "../composer/assets";
+import {
+    SCREENSHOT_CANCELLED,
+    type ScreenshotCancelled,
+    type ScreenshotRunner,
+    screenshotFailure,
+    takeInteractiveScreenshot,
+} from "./screenshot";
 import { mutateWidgetState, readWidgetState, widgetRoot } from "./storage";
 import type { WidgetAsset } from "./types";
 
@@ -187,14 +193,13 @@ export async function captureShelfImage({
     root,
     signal,
     capture,
+    soundEnabled,
 }: {
     root?: string;
     signal?: AbortSignal;
-    capture?: (options: {
-        output: string;
-        signal?: AbortSignal;
-    }) => Promise<{ status: number; stderr?: string; error?: Error }>;
-}): Promise<ShelfItem | { cancelled: true }> {
+    capture?: ScreenshotRunner;
+    soundEnabled?: (signal?: AbortSignal) => Promise<boolean>;
+}): Promise<ShelfItem | ScreenshotCancelled> {
     signal?.throwIfAborted();
     const directory = shelfDirectory(root);
     await mkdir(directory, { recursive: true });
@@ -203,27 +208,14 @@ export async function captureShelfImage({
         async () => {
             const output = join(directory, `capture-${randomUUID()}.png`);
             try {
-                const result = capture
-                    ? await capture({ output, signal })
-                    : await boundedCommand({
-                          command: ["/usr/sbin/screencapture", "-i", "-x", output],
-                          signal,
-                          timeoutMs: 120_000,
-                      });
-                const outputExists = await Bun.file(output).exists();
-                logger.debug(
-                    { status: result.status, error: result.error, stderr: result.stderr, outputExists },
-                    "Screenshot selection completed"
-                );
+                const outcome = await takeInteractiveScreenshot({ output, signal, run: capture, soundEnabled });
                 signal?.throwIfAborted();
-                if (result.error || result.status !== 0) {
-                    throw new Error(
-                        `Screenshot capture failed: ${result.stderr?.trim() || result.error?.message || `exit ${result.status}`}`
-                    );
+                if (outcome.kind === "cancelled") {
+                    return SCREENSHOT_CANCELLED;
                 }
 
-                if (!outputExists) {
-                    return { cancelled: true as const };
+                if (outcome.kind !== "captured") {
+                    throw screenshotFailure(outcome);
                 }
 
                 return await stageShelfImage({ root, input: output, name: "Screenshot.png", signal });

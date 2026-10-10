@@ -55,11 +55,15 @@ public final class WidgetShelfStore: ObservableObject {
     @Published public private(set) var captureAccessGranted: Bool?
     @Published public private(set) var error: String?
     @Published public private(set) var notice: String?
+    /// True once the first inventory read finished, so a view can tell a first load from an item arriving.
+    @Published public private(set) var loaded = false
     private let request: ([String], Int) async throws -> Data
     private let recipientSource: () -> [WidgetSession]
     private let didAttach: (WidgetSession) -> Void
     private let attachToDraft: ((WidgetShelfItem, WidgetSession) async throws -> Void)?
     private let onCaptureWillBegin: () -> Void
+    /// After a capture that staged an image; a host reopens the shelf so the new item is seen arriving.
+    private let onCaptureStaged: () -> Void
     private let onDialogVisibilityChanged: (Bool) -> Void
     private let screenCaptureAccess: () -> Bool
     private var visibleModules: Set<String> = []
@@ -78,6 +82,7 @@ public final class WidgetShelfStore: ObservableObject {
         recipients: @escaping () -> [WidgetSession],
         didAttach: @escaping (WidgetSession) -> Void,
         onCaptureWillBegin: @escaping () -> Void = {},
+        onCaptureStaged: @escaping () -> Void = {},
         onDialogVisibilityChanged: @escaping (Bool) -> Void = { _ in },
         attachToDraft: ((WidgetShelfItem, WidgetSession) async throws -> Void)? = nil
     ) {
@@ -97,6 +102,7 @@ public final class WidgetShelfStore: ObservableObject {
         recipientSource = recipients
         self.didAttach = didAttach
         self.onCaptureWillBegin = onCaptureWillBegin
+        self.onCaptureStaged = onCaptureStaged
         self.onDialogVisibilityChanged = onDialogVisibilityChanged
         self.attachToDraft = attachToDraft
     }
@@ -107,6 +113,7 @@ public final class WidgetShelfStore: ObservableObject {
         recipients: @escaping () -> [WidgetSession] = { [] },
         didAttach: @escaping (WidgetSession) -> Void = { _ in },
         onCaptureWillBegin: @escaping () -> Void = {},
+        onCaptureStaged: @escaping () -> Void = {},
         onDialogVisibilityChanged: @escaping (Bool) -> Void = { _ in },
         attachToDraft: ((WidgetShelfItem, WidgetSession) async throws -> Void)? = nil
     ) {
@@ -115,6 +122,7 @@ public final class WidgetShelfStore: ObservableObject {
         recipientSource = recipients
         self.didAttach = didAttach
         self.onCaptureWillBegin = onCaptureWillBegin
+        self.onCaptureStaged = onCaptureStaged
         self.onDialogVisibilityChanged = onDialogVisibilityChanged
         self.attachToDraft = attachToDraft
     }
@@ -175,6 +183,7 @@ public final class WidgetShelfStore: ObservableObject {
                         self.items = snapshot.items
                     }
                     self.statePath = snapshot.statePath
+                    if !self.loaded { self.loaded = true }
                     self.updateWatcher()
                 } catch {
                     if !self.stopped, !Task.isCancelled { self.report(error) }
@@ -334,6 +343,7 @@ public final class WidgetShelfStore: ObservableObject {
 
     private func start(success: String, action: @escaping () async throws -> Void) {
         guard !stopped, !isBusy else { return }
+        let capturing = isCapturing
         isBusy = true
         error = nil
         notice = nil
@@ -353,6 +363,7 @@ public final class WidgetShelfStore: ObservableObject {
                 try Task.checkCancellation()
                 guard !self.stopped else { return }
                 self.notice = success
+                if capturing { self.onCaptureStaged() }
             } catch {
                 guard !self.stopped else { return }
                 if Task.isCancelled || error is CancellationError {

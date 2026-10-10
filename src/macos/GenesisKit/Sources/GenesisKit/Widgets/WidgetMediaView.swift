@@ -4,20 +4,13 @@ import CoreImage
 import ImageIO
 import SwiftUI
 
+/// A sampled video frame in the frame grid: the shared thumbnail (off-main decode, identity cache, a named
+/// placeholder with Retry on failure). The grid's own context menu opens the full frame.
 public struct WidgetThumbnail: View {
     let path: String
-    @State private var image: NSImage?
     public init(path: String) { self.path = path }
     public var body: some View {
-        Group {
-            if let image {
-                Image(nsImage: image).resizable().scaledToFit()
-            } else {
-                Image(systemName: "photo").foregroundStyle(.secondary)
-            }
-        }
-        .background(.black.opacity(0.15), in: RoundedRectangle(cornerRadius: 5))
-        .task(id: path) { image = await TranscriptThumbnailCache.shared.thumbnail(for: path) }
+        MediaThumbnailView(item: MediaPreviewItem(path: path, kind: .image), cornerRadius: 5, interactive: false)
     }
 }
 
@@ -437,8 +430,13 @@ private struct WidgetImageCompare: View {
     @ViewBuilder private func bitmap(_ image: NSImage?) -> some View {
         if let image {
             Image(nsImage: image).resizable().scaledToFit()
+        } else if failure == nil {
+            ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityLabel("Loading the image")
         } else {
-            Image(systemName: "photo").foregroundStyle(.secondary)
+            Label("Not readable", systemImage: "exclamationmark.triangle")
+                .font(.caption).foregroundStyle(.orange)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
     private func updateDifference() {

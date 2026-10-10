@@ -5,13 +5,18 @@ import { decisionFiles } from "@app/question/lib/decisions/read";
 import { readDecisions, updateDecision } from "@app/question/lib/decisions/store";
 import { getEntryById, markEntriesRead, openReadModel } from "@app/question/lib/read-model";
 import { logger } from "@genesiscz/utils/logger";
-import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { videoSettingsSchema } from "@genesiscz/utils/video/types";
 import { z } from "zod";
 import { confirmVideoAsset, importWidgetAsset, reviseVideoAsset } from "../composer/assets";
 import { changeOutgoing, enqueueWidgetMessage } from "../composer/outbox";
 import { createWidgetHandoff } from "./handoff";
+import {
+    SCREENSHOT_CANCELLED,
+    type ScreenshotRunner,
+    screenshotFailure,
+    takeInteractiveScreenshot,
+} from "./screenshot";
 import { readShelfAttachment } from "./shelf";
 import { type WidgetSources, widgetProvider, widgetResultNode } from "./snapshot";
 import { acknowledgeWidgetInbox, mutateWidgetState, readWidgetState, widgetRoot } from "./storage";
@@ -76,12 +81,15 @@ export async function performWidgetAction({
     input,
     signal,
     sources,
+    capture,
 }: {
     root?: string;
     input: unknown;
     signal?: AbortSignal;
     /** The roster an inbox read of a result is checked against; tests pass fixtures. */
     sources?: Pick<WidgetSources, "agents" | "sessions">;
+    /** Stands in for `screencapture` in tests. */
+    capture?: ScreenshotRunner;
 }): Promise<unknown> {
     const request = widgetActionSchema.parse(input);
     switch (request.action) {
@@ -154,14 +162,16 @@ export async function performWidgetAction({
             await mkdir(widgetRoot(root), { recursive: true });
             const input = join(widgetRoot(root), `capture-${randomUUID()}.png`);
             try {
-                const result = await boundedCommand({
-                    command: ["/usr/sbin/screencapture", "-i", "-x", input],
-                    signal,
-                    timeoutMs: 120_000,
-                });
-                if (result.error || result.status !== 0 || !(await Bun.file(input).exists())) {
-                    throw new Error("Screenshot selection cancelled or capture permission unavailable");
+                const outcome = await takeInteractiveScreenshot({ output: input, signal, run: capture });
+                signal?.throwIfAborted();
+                if (outcome.kind === "cancelled") {
+                    return SCREENSHOT_CANCELLED;
                 }
+
+                if (outcome.kind !== "captured") {
+                    throw screenshotFailure(outcome);
+                }
+
                 return await performWidgetAction({
                     root,
                     input: { action: "import", key: request.key, type: "image", input },
