@@ -21,6 +21,7 @@ Answering a pending form also writes a normal log entry, so `/qa` shows one list
 | `answer <id>` | Answer a pending form from the terminal |
 | `cancel <id>` | Withdraw a pending form; a blocked waiter is released as cancelled |
 | `record` | Record a question and answer pair after the fact. Used by the `question_answer` MCP tool and by scripts. |
+| `message [text…]` | Send the user a message with `--image <path>` screenshots (repeatable) to the native widget inbox. The CLI twin of the `inbox_send` MCP tool. |
 | `log` | Show recorded pairs, oldest first, last N entries |
 | `tail` (alias `answers`) | Live feed of pairs as they are recorded, with a backlog |
 | `config` | Read or update the sink config: sound, notify, Obsidian template |
@@ -95,17 +96,19 @@ tools question config --notify on --sound synth:soft
 | `--a <answer>` | The answer, markdown allowed |
 | `--a-file <path>` | Read the answer from a file instead |
 | `--attachments-file <path>` | JSON array of local images and optional before/after roles |
+| `--image <path>` | A local PNG/JPEG/WebP screenshot (repeatable) |
 | `--json` | Return the record receipt with durable attachment paths |
-| `--tag <tag>` | `question`, `action` or `directive` (default: `question`) |
+| `--tag <tag>` | `question`, `action`, `directive` or `message` (default: `question`) |
 | `--agent <label>` | Subagent attribution label |
 | `--session <id>` | Override the session id |
 | `--project <name>` | Override the project |
 
 ### Images attached to recorded answers
 
-The question_answer MCP tool accepts an optional attachments array. The CLI accepts the same array from a JSON file:
+The question_answer MCP tool accepts an optional attachments array, or plain paths in `images`. The CLI takes `--image <path>` (repeatable), or the full array from a JSON file:
 
 ~~~bash
+tools question record --q "Did the layout fix work?" --a-file answer.md --image /abs/after.png
 tools question record --q "Did the layout fix work?" \
     --a-file answer.md --attachments-file screenshots.json --json
 tools question log --session SESSION_ID --format json
@@ -159,9 +162,24 @@ Existing text-only records remain valid and read with an empty attachments list.
 | `--list-sounds` | List every available sound, bundled and synth, then exit |
 | `--ask-via-question-tool [onoff]` | "Ask agents to use tools question instead of their native question tools?" `on` or `off`, default `off`. Without a value: a picker in a terminal, the possible values otherwise. Bare `tools question config` in a terminal opens the same picker. |
 
-### The agent opt-in (`--ask-via-question-tool`)
+### The agent opt-in (`--ask-via-question-tool`) and the native inbox
 
-No hook is involved. Agents learn about `tools question` from two texts of the genesis-tools MCP server: its server instructions and the `question_post` tool description, both read when the server starts. With the setting on, both tell agents to post every ❓ DECISION through `question_post` (or `tools question ask`). With it off (the default), both tell agents to ask with their native question tool (for example AskUserQuestion) and in their chat reply. A post still lands in the inbox either way, and its result says so. Every post's result also tells the agent that the inbox is a copy: the question must also be written in its own reply.
+Agents learn about `tools question` from the genesis-tools MCP server instructions and the `question_post` tool description (both read when the server starts), from the note every post returns, and from the plugin's SessionStart hook `native-inbox-hint.ts`. What they are told depends first on this Mac's native inbox (`nativeInboxState()`, `src/utils/macos/native-inbox.ts`):
+
+- `none` (no native app): nothing about the inbox at all, and no `inbox_send` tool.
+- `installed` (the widget can run here but does not): agents may post, and must ALSO ask the user directly in the chat.
+- `running`: agents post decisions, messages and screenshots to the inbox when they need the user.
+
+The opt-in only decides whether `question_post` REPLACES the agent's native question tool for ❓ DECISIONs (on), or whether the agent asks natively as usual (off, the default). It never removes the chat ask while the widget is not running, and every question is always also written in the chat reply. The texts and this precedence live in one file, `src/question/lib/inbox-guidance.ts`.
+
+### Messages and screenshots to the inbox
+
+~~~bash
+tools question message "Build is green, the hub after the fix:" --image /tmp/hub-after.png
+tools question message --title "Blocked" --file notes.md
+~~~
+
+A message is a Q→A entry tagged `message`; the widget shows it as an unread, expandable card under the posting session (status "Message"). The session is the same stamp handoffs use: `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID` or `GROK_SESSION_ID` in a harness child, or the resolved caller of the MCP gateway. `question_post` items (and `ask --json` items) accept `attachments` too: the screenshots are copied into the question store and embedded in the item's prompt, and the widget lifts every markdown image, `{{image}}` token and bare absolute image path of a card into its preview strip.
 
 ---
 

@@ -1,6 +1,8 @@
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, join } from "node:path";
 import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
 import { env } from "@genesiscz/utils/env";
+import { parseImageAttachmentInputs } from "@genesiscz/utils/image/attachments";
 import { logger } from "@genesiscz/utils/logger";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import {
@@ -124,6 +126,98 @@ export async function transcludeItems({
     }
 
     return { items: out, tokens };
+}
+
+/** A `{{…}}` param value: the grammar's quoted form escapes only `"` and `\` (src/utils/transclude/parse.ts). */
+function quoteParam(value: string): string {
+    return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+/**
+ * Turns each item's `attachments` into images at the end of its `promptMarkdown`, through the same `{{image}}` kind
+ * an agent can write inline: the file is copied into the question store by content hash and embedded as
+ * `![label](stored path)`. The widget lifts those images into the card's preview strip
+ * (src/hub/lib/widget/card-images.ts). Runs even with transclusion off, because attachments are explicit, and
+ * throws before anything is stored when a file is missing or is not an image.
+ */
+export async function embedItemAttachments({
+    items,
+    cwd,
+    options,
+}: {
+    items: QuestionItemInput[];
+    cwd: string;
+    options?: Partial<Omit<TranscludeOptions, "cwd" | "label">>;
+}): Promise<QuestionItemInput[]> {
+    const out: QuestionItemInput[] = [];
+
+    for (const [index, item] of items.entries()) {
+        const { attachments, ...rest } = item;
+
+        if (!attachments?.length) {
+            out.push(rest);
+            continue;
+        }
+
+        const inputs = parseImageAttachmentInputs(attachments);
+        const missing = inputs.filter((input) => !existsSync(input.path)).map((input) => input.path);
+
+        if (missing.length > 0) {
+            throw new Error(`item ${index + 1}: attachment not found: ${missing.join(", ")}`);
+        }
+
+        const tokens = inputs
+            .map(
+                (input) =>
+                    `{{image path=${quoteParam(input.path)} alt=${quoteParam(input.label ?? basename(input.path))}}}`
+            )
+            .join("\n\n");
+        const result = await transclude(tokens, {
+            registry: questionTokenRegistry(),
+            assetDir: questionAssetDir(),
+            logger: log,
+            ...options,
+            cwd,
+            label: `item ${index + 1} attachments`,
+        });
+        const failed = result.tokens.filter((token) => !token.ok);
+
+        if (failed.length > 0) {
+            throw new Error(
+                `item ${index + 1}: attachments could not be stored: ${failed.map((token) => token.error).join("; ")}`
+            );
+        }
+
+        out.push({ ...rest, promptMarkdown: `${rest.promptMarkdown.trimEnd()}\n\n${result.text}` });
+    }
+
+    return out;
+}
+
+/**
+ * The one preparation both doors run before a post is stored (MCP question_post and `tools question ask`): item
+ * attachments become embedded images, then the inline tokens resolve unless the caller turned that off.
+ */
+export async function prepareQuestionItems({
+    items,
+    cwd,
+    transclude: resolveTokens,
+    options,
+}: {
+    items: QuestionItemInput[];
+    cwd?: string;
+    transclude: boolean;
+    options?: Partial<Omit<TranscludeOptions, "cwd" | "label">>;
+}): Promise<TranscludedItems> {
+    const withImages = items.some((item) => item.attachments?.length)
+        ? await embedItemAttachments({ items, cwd: cwd ?? process.cwd(), options })
+        : items.map(({ attachments: _attachments, ...item }) => item);
+
+    if (!resolveTokens) {
+        return { items: withImages, tokens: [] };
+    }
+
+    return transcludeItems({ items: withImages, cwd, options });
 }
 
 function itemTexts(item: QuestionItemInput): string[] {

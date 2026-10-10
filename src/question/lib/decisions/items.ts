@@ -1,4 +1,5 @@
 import type { SourceMessage } from "@genesiscz/utils/agent/source-anchor";
+import type { ImageAttachmentInput } from "@genesiscz/utils/image/attachments";
 import { loadConfig } from "../config";
 import type { AskChoice, CreateAskItemInput } from "../pending/types";
 import { decisionTransclusion, type ItemTransclusion } from "../transclude";
@@ -28,6 +29,11 @@ export interface QuestionItemInput extends CreateAskItemInput {
     blocking?: boolean;
     /** Decision/todo: the id of an open or drafted item this post replaces; the old text is kept as a version. */
     supersedes?: string;
+    /**
+     * Screenshots for any item type. `prepareQuestionItems` copies them into the question store, appends them to
+     * `promptMarkdown` as markdown images and removes this field, so neither store ever sees it.
+     */
+    attachments?: ImageAttachmentInput[];
     /** Set by `transcludeItems`, never by the caller: the fields as written and every inline token. */
     transclusion?: ItemTransclusion;
 }
@@ -53,6 +59,7 @@ const ITEM_KEYS = new Set([
     "refs",
     "blocking",
     "supersedes",
+    "attachments",
 ]);
 
 /** The names agents reach for instead: the decision store's own fields, and the single-question shortcut. */
@@ -61,6 +68,8 @@ const KEY_HINTS: Record<string, string> = {
     question: "promptMarkdown",
     text: "promptMarkdown",
     options: "choices",
+    images: "attachments",
+    screenshots: "attachments",
 };
 
 const ITEM_TYPES = new Set(["question", "decision", "todo"]);
@@ -105,6 +114,10 @@ export function validateQuestionItems(value: unknown, help: string): QuestionIte
 
         if (record.choices !== undefined && !Array.isArray(record.choices)) {
             problems.push(`${at}: choices must be an array of labels`);
+        }
+
+        if (record.attachments !== undefined && !Array.isArray(record.attachments)) {
+            problems.push(`${at}: attachments must be an array of { type: "image", path } objects`);
         }
 
         if (record.supersedes !== undefined && record.type !== "decision" && record.type !== "todo") {

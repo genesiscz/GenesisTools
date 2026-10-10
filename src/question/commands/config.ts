@@ -3,6 +3,7 @@ import { formatAudioLibrary, parseSoundSpec } from "@genesiscz/utils/audio/libra
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { nativeInboxState } from "@genesiscz/utils/macos/native-inbox";
 import { setVaultRoot } from "@genesiscz/utils/obsidian/config";
 import type { Command } from "commander";
 import {
@@ -23,7 +24,10 @@ function failWithSounds(message: string): never {
 
 /** On/Off picker for the opt-in, with the text that says what it changes. Null when cancelled. */
 async function promptAskViaQuestionTool(current: boolean): Promise<boolean | null> {
-    p.note(ASK_VIA_QUESTION_TOOL_DESCRIPTION, "How the nudge works");
+    p.note(
+        `${ASK_VIA_QUESTION_TOOL_DESCRIPTION}\n\nNative inbox on this Mac: ${nativeInboxState({ refresh: true })}`,
+        "How the nudge works"
+    );
     const picked = await p.select({
         message: ASK_VIA_QUESTION_TOOL_LABEL,
         initialValue: current ? "on" : "off",

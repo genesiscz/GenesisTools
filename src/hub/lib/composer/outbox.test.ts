@@ -10,10 +10,11 @@ import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
 import { livePaneTargets } from "@app/question/lib/decisions/deliver.fixtures";
 import { decisionFiles, deliverDecisions } from "@app/question/lib/decisions/read";
 import { postDecisions, readDecisions } from "@app/question/lib/decisions/store";
+import { sendInboxMessage } from "@app/question/lib/message";
 import { postAskForm } from "@app/question/lib/pending/ask";
 import { MAX_ANSWER_IMAGE_BYTES } from "@app/question/lib/pending/form";
 import { getForm, listFormsSnapshot, openPendingStore } from "@app/question/lib/pending/store";
-import { openReadModel } from "@app/question/lib/read-model";
+import { openReadModel, readQuestionSnapshot } from "@app/question/lib/read-model";
 import * as queueModule from "@genesiscz/utils/agent-sessions/message-queue";
 import {
     acknowledgeSessionMessage,
@@ -24,6 +25,7 @@ import {
 import * as transcripts from "@genesiscz/utils/ai/transcripts";
 import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
+import { encodeRgbaToPng } from "@genesiscz/utils/image/raster";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as commands from "@genesiscz/utils/process/bounded-command";
 import * as fileLock from "@genesiscz/utils/storage/file-lock";
@@ -33,6 +35,7 @@ import { createCanvas } from "@napi-rs/canvas";
 import { z } from "zod";
 import type { AgentNode } from "../agents/types";
 import { performWidgetAction } from "../widget/actions";
+import { liftCardImages } from "../widget/card-images";
 import { readWidgetReceiptContext } from "../widget/context";
 import { createWidgetHandoff } from "../widget/handoff";
 import { WidgetRosterReader, type WidgetRosterReply } from "../widget/roster-reader";
@@ -3753,5 +3756,156 @@ describe("background Widget roster", () => {
         } finally {
             reader.stop();
         }
+    });
+});
+
+describe("inbox card images and agent messages", () => {
+    const quiet = { sinks: { obsidian: false, sound: false, notify: false } };
+    const noAgents = async () => ({ generatedAt: "", parents: [], orphans: [] });
+
+    function png(path: string): string {
+        writeFileSync(path, encodeRgbaToPng(new Uint8ClampedArray([30, 60, 90, 255, 200, 120, 40, 255]), 2, 1));
+        return path;
+    }
+
+    test("markdown images, raw image tokens and bare paths become card attachments; a missing file stays text", async () => {
+        const directory = await root();
+        const embedded = png(join(directory, "hub after.png"));
+        const bare = png(join(directory, "bare.png"));
+        const token = png(join(directory, "token.png"));
+        const lifted = liftCardImages([
+            `Which layout?\n\n![Hub after](${encodeURI(embedded)})`,
+            `See ${bare} for the old one.\n\n{{image path="${token}" alt="Token"}}\n\n![Gone](/fixture/missing.png)`,
+        ]);
+
+        expect(lifted.texts[0]).toBe("Which layout?");
+        expect(lifted.texts[1]).toBe(`See ${bare} for the old one.\n\n![Gone](/fixture/missing.png)`);
+        expect(lifted.attachments.map((image) => [image.path, image.label, image.width, image.height])).toEqual([
+            [embedded, "Hub after", 2, 1],
+            [token, "Token", 2, 1],
+            [bare, undefined, 2, 1],
+        ]);
+        expect(
+            lifted.attachments.every((image) => image.mimeType === "image/png" && image.id.startsWith("lifted-"))
+        ).toBe(true);
+        // Stable ids across refreshes, so the widget does not rebuild the thumbnails every five seconds.
+        expect(liftCardImages([`![Hub after](${encodeURI(embedded)})`]).attachments[0]?.id).toBe(
+            lifted.attachments[0]?.id
+        );
+        // A path the card already carries (answer attachments) is not added twice.
+        const existing = lifted.attachments[0]!;
+        expect(liftCardImages([`![again](${embedded})`], [existing]).attachments).toEqual([existing]);
+    });
+
+    test("decision and form cards carry the images of their text as attachments", async () => {
+        const directory = await root();
+        const shot = png(join(directory, "decision.png"));
+        const formShot = png(join(directory, "form.png"));
+        const file = join(directory, "decisions.jsonl");
+        await postDecisions(
+            file,
+            join(directory, "events.jsonl"),
+            {
+                sessionId: target.sessionId,
+                provider: "codex",
+                decisions: [
+                    {
+                        title: "Layout",
+                        prompt: `Keep the compact layout?\n\n![Compact](${encodeURI(shot)})`,
+                        options: ["Keep", "Drop"],
+                    },
+                ],
+            },
+            { env: {} }
+        );
+        const db = openPendingStore(join(directory, "questions.db"));
+        try {
+            await postAskForm(
+                {
+                    projectPath: "/fixture/project",
+                    sessionHint: target.sessionId,
+                    items: [{ id: "colour", promptMarkdown: `Which colour?\n\n![Blue](${formShot})` }],
+                },
+                { db, eventBase: directory, logBase: directory, notify: false, env: {}, ambient: false }
+            );
+        } finally {
+            db.close();
+        }
+
+        const sources: WidgetSources = {
+            sessions: async () => [],
+            decisions: () => readDecisions(file),
+            forms: () => widgetForms({ dbPath: join(directory, "questions.db") }),
+            answers: () => [],
+            agents: noAgents,
+        };
+        const snapshot = await widgetSnapshot({ root: directory, sources });
+        const decision = snapshot.cards.find((card) => card.kind === "decision");
+        const form = snapshot.cards.find((card) => card.kind === "form");
+
+        expect(decision?.title).toBe("Layout");
+        expect(decision?.attachments.map((image) => [image.path, image.label])).toEqual([[shot, "Compact"]]);
+        expect(form?.attachments.map((image) => [image.path, image.label])).toEqual([[formShot, "Blue"]]);
+        expect(form?.formItems?.[0]?.promptMarkdown).toBe("Which colour?");
+        expect(form?.title).toBe("Which colour?");
+    });
+
+    test("a Codex and a Grok message land as unread message cards under their own sessions, with the screenshot", async () => {
+        const directory = await root();
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
+            async () => {
+                const shot = png(join(directory, "result.png"));
+                const harnesses = [
+                    { provider: "codex", env: { CODEX_CI: "1", CODEX_THREAD_ID: "codex-thread" }, id: "codex-thread" },
+                    { provider: "grok", env: { GROK_SESSION_ID: "grok-session" }, id: "grok-session" },
+                ] as const;
+
+                for (const harness of harnesses) {
+                    await sendInboxMessage(
+                        {
+                            text: "Build is green\nAll 40 tests pass.",
+                            images: [shot],
+                            source: "cli",
+                            projectPath: directory,
+                        },
+                        { env: harness.env, attachmentsRoot: join(directory, "durable"), config: quiet }
+                    );
+                }
+
+                readQuestionSnapshot({ dbPath: toolDataDir("question", "qa.db"), read: () => undefined });
+                const snapshot = await widgetSnapshot({
+                    root: directory,
+                    sources: {
+                        ...realWidgetSources,
+                        sessions: async () => [],
+                        decisions: () => [],
+                        forms: () => [],
+                        agents: noAgents,
+                    },
+                });
+
+                for (const harness of harnesses) {
+                    const session = snapshot.sessions.find(
+                        (entry) => entry.target.provider === harness.provider && entry.target.sessionId === harness.id
+                    );
+                    const card = snapshot.cards.find(
+                        (entry) => entry.kind === "answer" && entry.sessionKey === session?.key
+                    );
+
+                    expect(session).toBeDefined();
+                    expect(card).toMatchObject({
+                        status: "message",
+                        title: "Build is green",
+                        body: "All 40 tests pass.",
+                        read: false,
+                    });
+                    expect(card?.attachments).toHaveLength(1);
+                    expect(card?.attachments[0]?.path).toStartWith(join(directory, "durable"));
+                }
+
+                expect(snapshot.sessions.some((entry) => entry.target.provider === "unknown")).toBe(false);
+            }
+        );
     });
 });

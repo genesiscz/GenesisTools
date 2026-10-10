@@ -1,3 +1,4 @@
+import { imageInputs } from "@app/question/lib/message";
 import { type RecordDeps, recordAnswer } from "@app/question/lib/record";
 import type { QaRef, QaTag } from "@app/question/lib/types";
 import { SOURCE_MESSAGE_INPUT_SCHEMA, type SourceMessage } from "@genesiscz/utils/agent/source-anchor";
@@ -13,7 +14,23 @@ export interface QuestionAnswerArgs {
     tag: QaTag;
     refs?: QaRef[];
     attachments?: ImageAttachmentInput[];
+    /** Plain screenshot paths, the shorthand of `attachments`. */
+    images?: string[];
     agentLabel?: string;
+}
+
+/** The warning an entry gets when no session could be named, so its card would land under `unknown`. */
+export function unknownSessionWarnings(
+    context: { sessionId: string; transcriptAnchor?: { kind: string } },
+    cli: string
+): string[] {
+    if (context.sessionId !== "unknown" && context.transcriptAnchor?.kind !== "unanchored") {
+        return [];
+    }
+
+    return [
+        `This gateway could not identify the originating session. Supply its known sessionHint and projectPath, or use ${cli} from the agent's worktree. Do not invent an ID.`,
+    ];
 }
 
 export async function handleQuestionAnswer(args: QuestionAnswerArgs, deps: RecordDeps = {}) {
@@ -26,7 +43,7 @@ export async function handleQuestionAnswer(args: QuestionAnswerArgs, deps: Recor
             answer: args.answer,
             tag: args.tag,
             refs: args.refs,
-            attachments: args.attachments,
+            attachments: imageInputs({ images: args.images, attachments: args.attachments, cwd: args.projectPath }),
             agentLabel: args.agentLabel,
             source: "mcp",
         },
@@ -36,12 +53,7 @@ export async function handleQuestionAnswer(args: QuestionAnswerArgs, deps: Recor
         id: res.id,
         sinks: res.sinks,
         context: res.context,
-        warnings:
-            res.context.sessionId === "unknown" || res.context.transcriptAnchor?.kind === "unanchored"
-                ? [
-                      `This gateway could not identify the originating session. Supply its known sessionHint and projectPath, or use ${toolCommand("question record")} from the agent's worktree. Do not invent an ID.`,
-                  ]
-                : [],
+        warnings: unknownSessionWarnings(res.context, toolCommand("question record")),
         attachments: res.attachments ?? [],
         summary: `Logged Q→A ${res.id} (${args.tag}).`,
     };
@@ -76,6 +88,12 @@ export const QUESTION_ANSWER_INPUT_SCHEMA = {
             },
         },
         attachments: IMAGE_ATTACHMENT_INPUT_SCHEMA,
+        images: {
+            type: "array",
+            maxItems: 24,
+            description: "shorthand for attachments: local PNG/JPEG/WebP screenshot paths",
+            items: { type: "string" },
+        },
         agentLabel: { type: "string", description: "if you are a subagent, your role/task label" },
     },
     required: ["question", "answer", "tag"],

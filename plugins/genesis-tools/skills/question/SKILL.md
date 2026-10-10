@@ -21,14 +21,19 @@ Call the `question_answer` MCP tool ONCE with:
 - `answer`: your **complete** answer in markdown (the real answer — rationale, links, refs — not a lossy one-liner).
 - `tag`: `question` (asking why/what/how), `directive` (told you to do/decide something), or `action` (a "did you / should you" nudge you acted on — include the result, e.g. "pushed @ abc1234, CI green").
 - `refs`: optional commits/files/URLs you referenced.
+- `images`: optional screenshot paths that support the answer (`["/abs/shot.png"]`, PNG/JPEG/WebP). They are copied into durable storage.
 - `agentLabel`: if you are a subagent, your role/task in 2–4 words.
 
 If the `question_answer` MCP tool is unavailable, fall back to the CLI:
 
 ```bash
-tools question record --q "<question>" --a-file <tmp-file-with-answer> --tag <tag>
+tools question record --q "<question>" --a-file <tmp-file-with-answer> --tag <tag> [--image /abs/shot.png]
 ```
 
 Then tell the user one line — "Logged ✓ (`<id>`)" — or, if the tool returns a sink error, relay its `remedy` verbatim.
 
 **Skip logging** if: the interjection was pure acknowledgement ("ok", "thanks", "continue"); there was no substantive answer to capture; or the user passed `--no-log` in `$ARGUMENTS`.
+
+## Native inbox (only when your instructions mention it)
+
+Some Macs run the native GenesisTools widget, whose inbox shows these entries as cards. Your session is told about it by the genesis-tools MCP server instructions or a SessionStart note that starts with `INBOX:`. Follow that text for WHEN to post decisions, messages and screenshots, and whether you must also ask in the chat. If no `INBOX:` text reached you, this Mac has no native inbox: do not mention it and do not use `inbox_send` or `tools question message`.

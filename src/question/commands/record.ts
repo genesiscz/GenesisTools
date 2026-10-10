@@ -4,8 +4,10 @@ import { parseImageAttachmentInputs } from "@genesiscz/utils/image/attachments";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
+import { imageInputs } from "../lib/message";
 import { recordAnswer } from "../lib/record";
 import type { QaTag } from "../lib/types";
+import { collect } from "./ask";
 
 export function registerRecordCommand(program: Command): void {
     // No `answer` alias: that verb now answers a PENDING form (`tools question answer <id>`),
@@ -20,8 +22,9 @@ export function registerRecordCommand(program: Command): void {
             "--attachments-file <path>",
             "JSON array of local image attachments, including optional comparison roles"
         )
+        .option("--image <path>", "a PNG/JPEG/WebP screenshot to attach (repeatable)", collect, [])
         .option("--json", "return the receipt and durable attachment paths as JSON")
-        .option("--tag <tag>", "question|action|directive", "question")
+        .option("--tag <tag>", "question|action|directive|message", "question")
         .option("--agent <label>", "subagent attribution label")
         .option("--session <id>", "override session id")
         .option("--project <name>", "override project")
@@ -30,7 +33,7 @@ export function registerRecordCommand(program: Command): void {
             "--source-message-file <path>",
             "JSON object containing only known native messageId, turnId or toolCallId"
         )
-        .action(async (o: Record<string, string>) => {
+        .action(async (o: Record<string, string> & { image: string[] }) => {
             const answer = o.aFile ? readFileSync(o.aFile, "utf8") : o.a;
             if (!answer) {
                 process.stderr.write("error: --a or --a-file required\n");
@@ -42,9 +45,13 @@ export function registerRecordCommand(program: Command): void {
                 question: o.q,
                 answer,
                 tag: (o.tag as QaTag) ?? "question",
-                attachments: o.attachmentsFile
-                    ? parseImageAttachmentInputs(SafeJSON.parse(readFileSync(o.attachmentsFile, "utf8")))
-                    : undefined,
+                attachments: imageInputs({
+                    images: o.image,
+                    attachments: o.attachmentsFile
+                        ? parseImageAttachmentInputs(SafeJSON.parse(readFileSync(o.attachmentsFile, "utf8")))
+                        : undefined,
+                    cwd: o.projectPath,
+                }),
                 agentLabel: o.agent,
                 sessionId: o.session,
                 project: o.project,
