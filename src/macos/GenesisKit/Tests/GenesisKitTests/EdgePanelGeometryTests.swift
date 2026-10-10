@@ -365,12 +365,21 @@ final class WidgetInteractionTests: XCTestCase {
         value.updatePreferences(["side": .string("left")])
         XCTAssertEqual(value.snapshot?.state.preferences.sidePosition, 1)
         XCTAssertEqual(value.snapshot?.state.preferences.side, "left")
-        while !FileManager.default.fileExists(atPath: actions.path) && ContinuousClock.now < deadline {
+        // The fake `tools` creates the file before it writes the row and its newline: wait for the newline, or a read
+        // in between sees an empty file (indexing it trapped and took the whole xctest process down).
+        let writeDeadline = ContinuousClock.now + .seconds(5)
+        func written() -> String {
+            (try? String(contentsOf: actions, encoding: .utf8)) ?? ""
+        }
+        while !written().contains("\n") && ContinuousClock.now < writeDeadline {
             try await Task.sleep(for: .milliseconds(100))
         }
-        let rows = try String(contentsOf: actions, encoding: .utf8).split(separator: "\n")
+        let rows = written().split(separator: "\n")
         XCTAssertEqual(rows.count, 1)
-        let request = try JSONDecoder().decode(WidgetJSON.self, from: Data(rows[0].utf8))
+        guard let row = rows.first else {
+            return XCTFail("No preference action was written within 5 s")
+        }
+        let request = try JSONDecoder().decode(WidgetJSON.self, from: Data(row.utf8))
         guard case .object(let fields) = request, case .object(let patch) = fields["patch"] else {
             return XCTFail("Expected one preference patch")
         }
