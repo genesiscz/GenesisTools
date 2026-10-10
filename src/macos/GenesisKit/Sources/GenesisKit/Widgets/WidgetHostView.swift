@@ -51,6 +51,10 @@ struct WidgetHostView: View {
                             surface.edge == .top ? 0 : WidgetSideStripMetrics.width)
                 }
             }
+            // The content fades while the window resizes (EdgePanelController: 0.40 s open, 0.28 s close). Without an
+            // animation context its `.transition(.opacity)` was inert: on close the content vanished at once and the
+            // empty expanded card stayed on screen until the shrink began.
+            .animation(model.effectiveReduceMotion ? nil : .easeOut(duration: 0.16), value: presentation != .compact)
             .overlay(alignment: surface.edge == .top ? .top : (surface.edge == .right ? .trailing : .leading)) {
                 if surface.edge == .top { topStrip } else { sideStrip }
             }
@@ -262,7 +266,8 @@ struct WidgetHostView: View {
                             .buttonStyle(.genHover()).padding(.vertical, 14)
                     }
                 } else {
-                    if moduleIDs.count > 1 {
+                    // The side strip already lists the modules; only the top edge needs this row.
+                    if moduleIDs.count > 1 && surface.edge == .top {
                         HStack(spacing: 6) {
                             ForEach(moduleIDs, id: \.self) { id in moduleButton(id, size: 27) }
                             Spacer()
