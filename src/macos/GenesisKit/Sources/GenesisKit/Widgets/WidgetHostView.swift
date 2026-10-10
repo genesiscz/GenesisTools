@@ -289,6 +289,10 @@ struct WidgetHostView: View {
                         .opacity(presentation == .expanded ? 1 : 0)
                         .allowsHitTesting(presentation == .expanded)
                         .accessibilityHidden(presentation != .expanded)
+                        // Hidden, the warm pane keeps its full size but takes no room: at its ~875 pt it made this
+                        // stack taller than the preview window, the edge overlay centred it, and the preview lost
+                        // its header above the window (Martin, 2026-10-10 22:17).
+                        .frame(height: presentation == .expanded ? nil : 0, alignment: edgeAlignment)
                 }
                 if presentation == .preview {
                     previewPane(selected)

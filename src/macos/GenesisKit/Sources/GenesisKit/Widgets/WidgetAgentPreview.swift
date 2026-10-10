@@ -168,6 +168,12 @@ struct AgentWidgetPreview: View {
                     ? "\(model.activeSessionCount) sessions are working or wait for you. Browse every project and session."
                     : "Browse every project and session")
                 .accessibilityLabel("Browse all projects and sessions")
-        }.padding(.horizontal, 13).padding(.vertical, 18)
+        }
+        .padding(.horizontal, 13).padding(.vertical, 14)
+        // Laid out at its own height and pinned to the top: the window is sized from this measurement, and while a
+        // new size is on its way an overflow may hide the footer, never the header.
+        .fixedSize(horizontal: false, vertical: true)
+        .onGeometryChange(for: CGFloat.self, of: \.size.height) { model.reportPreviewFit($0) }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
