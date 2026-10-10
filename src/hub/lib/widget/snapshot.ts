@@ -311,7 +311,8 @@ export const realWidgetSources: WidgetSources = {
     answers: (sessionId) =>
         queryEntriesSnapshot({
             dbPath: toolDataDir("question", "qa.db"),
-            opts: { sessionId, limit: sessionId ? 80 : 100 },
+            // The notified answer can sit behind 80 newer read ones; opening it must still find its card.
+            opts: sessionId ? { sessionId, limit: 80, includeNewestUnread: true } : { limit: 100 },
         }),
     agents: (refresh) => widgetAgents({ refresh }),
     inboxData: readInboxData,

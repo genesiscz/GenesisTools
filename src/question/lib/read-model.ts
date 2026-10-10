@@ -254,6 +254,8 @@ export interface QueryOpts {
     tag?: string;
     unread?: boolean;
     limit?: number;
+    /** Also return the newest unread entry when it is older than the window: a notification names that one. */
+    includeNewestUnread?: boolean;
 }
 export interface QaRow extends QaEntry {
     supersededBy: string | null;
@@ -337,8 +339,22 @@ export function queryEntries(db: Database, opts: QueryOpts = {}): QaRow[] {
             SELECT * FROM entries WHERE ${where.join(" AND ")} ORDER BY ts DESC LIMIT ?
         ) ORDER BY ts ASC
     `;
+    const filters = [...params];
     params.push(opts.limit ?? 50);
-    return (db.query(sql).all(...params) as Record<string, unknown>[]).map(rowToQaRow);
+    const rows = (db.query(sql).all(...params) as Record<string, unknown>[]).map(rowToQaRow);
+    if (!opts.includeNewestUnread || opts.unread) {
+        return rows;
+    }
+
+    const newest = db
+        .query(`SELECT * FROM entries WHERE ${[...where, "read_at IS NULL"].join(" AND ")} ORDER BY ts DESC LIMIT 1`)
+        .get(...filters) as Record<string, unknown> | null;
+    if (!newest || rows.some((row) => row.id === newest.id)) {
+        return rows;
+    }
+
+    // Older than every row in the window, so it goes first to keep the oldest-to-newest order.
+    return [rowToQaRow(newest), ...rows];
 }
 
 export function getStoredEntryById(db: Database, id: string): QaRow | null {

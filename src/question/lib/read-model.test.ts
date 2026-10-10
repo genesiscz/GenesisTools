@@ -296,6 +296,31 @@ function durableDirectoryBytes(root: string): Record<string, string> {
     return Object.fromEntries(Object.entries(directoryBytes(root)).filter(([path]) => !path.endsWith("-shm")));
 }
 
+it("the newest unread entry joins the window when newer read entries pushed it out", () => {
+    const root = mkdtempSync(join(tmpdir(), "qa-newest-unread-"));
+    const dbPath = join(root, "qa.db");
+    const logBase = join(root, "log");
+    appendEntry(e("old-unread", { ts: 1_779_000_000_000 }), logBase);
+    const newer = ["n1", "n2", "n3"];
+    for (const [index, id] of newer.entries()) {
+        appendEntry(e(id, { ts: 1_779_000_001_000 + index }), logBase);
+    }
+
+    const db = openReadModel(dbPath);
+    try {
+        markEntriesRead(db, newer, { logBase });
+        expect(queryEntries(db, { logBase, sessionId: "s", limit: 2 }).map((row) => row.id)).toEqual(["n2", "n3"]);
+        expect(
+            queryEntries(db, { logBase, sessionId: "s", limit: 2, includeNewestUnread: true }).map((row) => row.id)
+        ).toEqual(["old-unread", "n2", "n3"]);
+        expect(
+            queryEntries(db, { logBase, sessionId: "s", limit: 9, includeNewestUnread: true }).map((row) => row.id)
+        ).toEqual(["old-unread", "n1", "n2", "n3"]);
+    } finally {
+        db.close();
+    }
+});
+
 it("snapshot readers ingest fresh JSONL without creating a missing store or directory", () => {
     const root = mkdtempSync(join(tmpdir(), "qa-snapshot-missing-"));
     const dbPath = join(root, "missing", "qa.db");
