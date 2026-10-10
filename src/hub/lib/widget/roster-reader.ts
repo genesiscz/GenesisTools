@@ -87,6 +87,18 @@ export class WidgetRosterReader {
         return this.options.now?.() ?? Date.now();
     }
 
+    /**
+     * Shows a roster read earlier (the previous watch's cache) until the first run of this one completes. It does
+     * not count as a run: the first read still starts, and its result replaces this one.
+     */
+    seed(roster: { rows: AgentSessionRow[]; agents: AgentsTree }): void {
+        if (this.stopped || this.agents.generatedAt) {
+            return;
+        }
+        this.rows = roster.rows;
+        this.agents = roster.agents;
+    }
+
     /** A plain roster read, at most once per 15 s unless forced; a requested run that is already scheduled covers it. */
     refresh(force = false): void {
         if (this.stopped) {
