@@ -8,6 +8,7 @@ import {
     toolKind,
 } from "@genesiscz/utils/ai/transcripts/tool-kind";
 import { promptLabel, sectionsOf } from "@genesiscz/utils/ai/transcripts/turn-cost";
+import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 
 // The handoff composer: a markdown brief of a range of prompts, built from the transcript's
 // structure alone (no model call), so the same range always gives the same text. The hub's
@@ -189,12 +190,44 @@ function commitsOf(tools: readonly TranscriptTool[]): HandoffCommit[] {
     return commits;
 }
 
-/** The first one or two sentences of a reply, on one line. */
-function gist(text: string, max = 280): string {
+/**
+ * The first one or two sentences of a reply, on one line. The cut is at the second sentence end outside an inline
+ * code span; the text before it is kept whole. Matching sentence-shaped pieces dropped whatever did not match, and a
+ * dot inside a code span such as `` `/docs/v1.2` `` started a "sentence" mid-span, so the line opened "`), and …" (hub
+ * inventory H9).
+ */
+export function gist(text: string, max = 280): string {
     const flat = text.replace(/\s+/g, " ").trim();
-    const sentences = flat.match(/[^.!?]+[.!?]+(\s|$)/g);
-    const lead = sentences ? sentences.slice(0, 2).join("").trim() : flat;
-    return clip(lead || flat, max);
+    const spans: string[] = [];
+    // Code spans become one opaque character each, so their dots and question marks end nothing.
+    const masked = flat.replace(/`+[^`]*`+/g, (span) => {
+        spans.push(span);
+        return `${spans.length - 1}`;
+    });
+    let end = -1;
+    let ends = 0;
+
+    for (const match of masked.matchAll(/[.!?]+(?=\s|$)/g)) {
+        ends++;
+        end = match.index + match[0].length;
+
+        if (ends === 2) {
+            break;
+        }
+    }
+
+    const lead = (end > 0 ? masked.slice(0, end) : masked).replace(
+        /(\d+)/g,
+        (_, index: string) => spans[Number(index)] ?? ""
+    );
+    return clip(lead.trim() || flat, max);
+}
+
+/** "2026-10-06 11:47 to 11:49" in local time, the second date only when the day changes. */
+function localSpan(from: string, to: string): string {
+    const start = formatLocalDateTimeStamp(from, { seconds: false });
+    const end = formatLocalDateTimeStamp(to, { seconds: false });
+    return start.slice(0, 10) === end.slice(0, 10) ? `${start} to ${end.slice(11)}` : `${start} to ${end}`;
 }
 
 const TODO_LINE =
@@ -322,12 +355,10 @@ export function composeHandoff(options: {
     lines.push(`- ${place.join(" · ")}`);
 
     if (prompts.length > 0) {
-        const firstAt = slice[0]?.at?.slice(0, 16).replace("T", " ");
-        const lastAt = slice
-            .findLast((turn) => turn.at)
-            ?.at?.slice(0, 16)
-            .replace("T", " ");
-        const when = firstAt && lastAt ? `, ${firstAt} to ${lastAt} UTC` : "";
+        // Local time: every time shown to the user is (a UTC stamp read as local was two hours off in summer).
+        const firstAt = slice.find((turn) => turn.at)?.at;
+        const lastAt = slice.findLast((turn) => turn.at)?.at;
+        const when = firstAt && lastAt ? `, ${localSpan(firstAt, lastAt)}` : "";
         lines.push(
             `- Range: prompts #${fromNumber} to #${toNumber} (${prompts.length} prompt${prompts.length === 1 ? "" : "s"}${when})`
         );

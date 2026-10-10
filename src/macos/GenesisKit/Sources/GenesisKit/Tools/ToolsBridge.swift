@@ -107,6 +107,12 @@ public struct ToolsBridge: Sendable {
         if Bundle.main.object(forInfoDictionaryKey: "GenesisToolsPreview") as? Bool == true,
            let binary = Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetCLI") as? String,
            isExecutable(binary) { return binary }
+        // A worktree's debug build verifying its own CLI changes off screen:
+        // `GENESIS_TOOLS_BIN=<worktree>/tools GENESIS_HUB_SERVER=0 .build/debug/GenesisTools --hub … --snapshot x.png`.
+        // Without it every probe below is the main checkout, so a snapshot shows the main branch's data.
+        if let override = ProcessInfo.processInfo.environment["GENESIS_TOOLS_BIN"], !override.isEmpty, isExecutable(override) {
+            return override
+        }
         let candidates = [
             home.appendingPathComponent(".bun/bin/tools").path,
             home.appendingPathComponent(".local/bin/tools").path,

@@ -130,7 +130,7 @@ struct ProcStopOutcome: Decodable {
 
 enum ProcsFormat {
     static func memory(_ kb: Double) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(kb * 1024), countStyle: .memory)
+        ByteFormat.memory(Int64(kb * 1024))
     }
 
     /// `42m`, `5h 10m`, `6d 1h`: the same words as `tools hub procs`.

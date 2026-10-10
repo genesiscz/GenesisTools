@@ -306,7 +306,7 @@ struct AgentSendForm: View {
                 row(id: session.sessionId) {
                     ProviderBadge(provider: session.provider, size: 16, tooltip: session.provider.capitalized)
                     Text(verbatim: Self.title(session)).font(.system(size: 12)).lineLimit(1).truncationMode(.tail)
-                    LiveAgo(date: HubFormat.date(session.mtime)).font(.system(size: 11)).foregroundColor(ReviewPalette.dim).fixedSize()
+                    LiveAgo(date: HubFormat.date(session.mtime), style: .brief).font(.system(size: 11)).foregroundColor(ReviewPalette.dim).fixedSize()
                     Text(verbatim: session.reasons.joined(separator: " · ")).font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(1)
                     Spacer(minLength: 4)
                 }

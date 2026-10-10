@@ -21,6 +21,8 @@ final class HubFindModel: ObservableObject {
     @Published private(set) var running = false
     @Published private(set) var truncated = false
     @Published private(set) var note: String?
+    /// A search ran for the current panel: until then there is no count to show, only how to start.
+    @Published private(set) var searched = false
 
     private var process: Process?
     private var generation = 0
@@ -37,6 +39,7 @@ final class HubFindModel: ObservableObject {
         note = nil
         let needle = query.trimmingCharacters(in: .whitespaces)
         guard !needle.isEmpty, !roots.isEmpty else { return }
+        searched = true
 
         let process = Process()
         if let rg = Self.rg {
@@ -177,8 +180,8 @@ struct HubFindPanel: View {
                         }
                     }
                     .frame(width: 40, alignment: .trailing)
-                    // "0 hits" while rg still ran read as an answer.
-                    Text(verbatim: find.running && find.hits.isEmpty ? "searching…" : find.truncated ? "\(find.hits.count)+ hits" : "\(find.hits.count) hits")
+                    // "0 hits" while rg still ran read as an answer, and before any search as a result.
+                    Text(verbatim: !find.searched ? "return searches" : find.running && find.hits.isEmpty ? "searching…" : find.truncated ? "\(find.hits.count)+ hits" : Plural.count(find.hits.count, "hit"))
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.settingsTextMuted)
                 }
@@ -193,47 +196,22 @@ struct HubFindPanel: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
                 Divider().background(Color.jarvisBorder)
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        if let note = find.note {
-                            Text(verbatim: note).foregroundColor(.settingsTextMuted).padding(16)
-                        }
-                        ForEach(groups, id: \.path) { group in
-                            Text(verbatim: display(group.path))
-                                .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
-                                .foregroundColor(.settingsText)
-                                .textSelection(.enabled)
-                                .contextMenu { PathActionsMenu(path: group.path) }
-                                .padding(.horizontal, 12)
-                                .padding(.top, 8)
-                                .padding(.bottom, 2)
-                            ForEach(group.hits) { hit in
-                                Button { open(hit) } label: {
-                                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                        Text(verbatim: "\(hit.line)")
-                                            .font(.system(size: 10.5, design: .monospaced))
-                                            .foregroundColor(.settingsTextMuted)
-                                            .frame(width: 44, alignment: .trailing)
-                                        Text(verbatim: hit.text)
-                                            .font(.system(size: 11.5, design: .monospaced))
-                                            .foregroundColor(Color.white.opacity(0.8))
-                                            .lineLimit(1)
-                                            .truncationMode(.tail)
-                                        Spacer(minLength: 0)
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 3)
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.genHoverRow(accent: .white, cornerRadius: 4))
-                                // The whole matching line: a long one is cut in the row.
-                                .instantTooltip("Open \(display(hit.path)):\(hit.line)\n\(hit.text.trimmingCharacters(in: .whitespaces))")
-                            }
-                        }
+                if find.hits.isEmpty, find.note == nil {
+                    // Before a search: how it works, in a panel sized to these lines, not 460 pt of empty black (H17).
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(find.running ? "Searching…" : "Type a word or a regular expression, then press Return.")
+                            .font(.system(size: 12.5))
+                            .foregroundColor(.settingsText)
+                        Text("Searches every file in \(roots.count > 1 ? "these folders" : "this folder"), line by line. A click on a hit opens it in Cursor at its line.")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(.settingsTextMuted)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(.bottom, 8)
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    results
                 }
-                .frame(maxHeight: 460)
             }
             .frame(width: 760)
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.settingsBackground))
@@ -252,6 +230,50 @@ struct HubFindPanel: View {
         .panelFindModal()
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("Find in files"))
+    }
+
+    /// The hits, grouped by file, in a list as tall as its rows (up to 460 pt).
+    private var results: some View {
+        FittedScroll(maxHeight: 460) {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                if let note = find.note {
+                    Text(verbatim: note).foregroundColor(.settingsTextMuted).padding(16)
+                }
+                ForEach(groups, id: \.path) { group in
+                    Text(verbatim: display(group.path))
+                        .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.settingsText)
+                        .textSelection(.enabled)
+                        .contextMenu { PathActionsMenu(path: group.path) }
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
+                        .padding(.bottom, 2)
+                    ForEach(group.hits) { hit in
+                        Button { open(hit) } label: {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(verbatim: "\(hit.line)")
+                                    .font(.system(size: 10.5, design: .monospaced))
+                                    .foregroundColor(.settingsTextMuted)
+                                    .frame(width: 44, alignment: .trailing)
+                                Text(verbatim: hit.text)
+                                    .font(.system(size: 11.5, design: .monospaced))
+                                    .foregroundColor(Color.white.opacity(0.8))
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 3)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.genHoverRow(accent: .white, cornerRadius: 4))
+                        // The whole matching line: a long one is cut in the row.
+                        .instantTooltip("Open \(display(hit.path)):\(hit.line)\n\(hit.text.trimmingCharacters(in: .whitespaces))")
+                    }
+                }
+            }
+            .padding(.bottom, 8)
+        }
     }
 
     private var groups: [(path: String, hits: [HubFindHit])] {

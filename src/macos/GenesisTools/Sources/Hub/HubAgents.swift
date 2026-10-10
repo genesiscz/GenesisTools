@@ -1087,9 +1087,13 @@ struct AgentsListView: View {
         for parent in parents {
             let parentHit = needle.isEmpty || "\(parent.displayTitle) \(parent.project ?? "") \(parent.account ?? "") \(parent.sessionId) \(parent.provider)".lowercased().contains(needle)
             let children = matching(parent.children, parent: parent.sessionId, needle: parentHit ? "" : needle)
-            // With a status filter on, a parent with nothing to show stays out of the list.
-            // The parent and its Main row always show; a text filter still has to match it or a child.
-            guard parentHit || !children.isEmpty else { continue }
+            // With a status filter on, a parent with nothing to show stays out of the list: under Active a
+            // parent shows when it is live itself or has an active agent. With an empty filter text
+            // `parentHit` is always true, so this check alone let every quiet session into Active (H14).
+            // The session being read stays listed whatever the filter, as an open agent does.
+            let parentStatus = status == .all || (status == .active && agents.isLive(parent))
+                || agents.selectedParent?.sessionId == parent.sessionId
+            guard (parentHit && parentStatus) || !children.isEmpty else { continue }
             let open = needle.isEmpty || parentHit ? agents.isOpen(parent) : true
             rows.append(.parent(parent, open: open, running: parent.runningCount, total: parent.totalCount))
             guard open else { continue }
@@ -1378,9 +1382,16 @@ struct AgentsMain: View {
                 TranscriptSkeleton()
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else {
-                Text("Pick an agent to read its whole transcript")
-                    .foregroundColor(ReviewPalette.dim)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // One click to the session that is most likely wanted, instead of a page of dim text (H14).
+                let newest = agents.parents.first(where: agents.isLive) ?? agents.parents.first
+                EmptyState(
+                    symbol: "person.2",
+                    text: "No agent open",
+                    detail: "Pick an agent or a session's Main row in the list to read its whole transcript.",
+                    actionTitle: newest.map { "Open \(TitleFormatter.cleanSessionTitle($0.displayTitle) ?? $0.displayTitle)" },
+                    action: newest.map { parent in { agents.openMain(parent) } }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }

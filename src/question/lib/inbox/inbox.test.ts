@@ -15,6 +15,7 @@ import { type AskDeps, getAskForm, postAskForm } from "../pending/ask";
 import type { AskForm } from "../pending/types";
 import { answerInboxDecision, answerInboxDecisions, answerInboxForm } from "./answer";
 import { buildInbox, type InboxSessionInfo, inboxDelivery, scanTurns, sessionDecisions } from "./build";
+import { locateRef } from "./excerpts";
 import { type InboxDeps, loadInbox, loadSessionDecisions, lookupListing, lookupSessionCwd, waitingBlock } from "./load";
 
 function turn(role: TranscriptTurn["role"], text: string, at = "2026-03-01T10:00:00.000Z"): TranscriptTurn {
@@ -204,6 +205,54 @@ describe("loadSessionDecisions", () => {
 
         const unknown = await loadSessionDecisions("s-alpha", { rows: () => [], scan, sessionCwd: async () => null });
         expect(unknown[0]?.refs[0]?.missing).toBe(true);
+    });
+});
+
+describe("locateRef", () => {
+    // A worktree session of the repo "app": its folder, the checkout root, then the main checkout.
+    const files: Record<string, string[]> = {
+        "/w/app-wt": ["web/src/Routes/CheckoutRoute/CheckoutRoute.tsx", "web/src/index.ts", "api/src/index.ts"],
+        "/w/app": ["web/src/Routes/CheckoutRoute/CheckoutRoute.tsx", "docs/only-on-main.md"],
+    };
+    const onDisk = new Set(["/w/app-wt/web/src/index.ts", "/w/app/docs/only-on-main.md"]);
+    const deps = {
+        isFile: (path: string) => onDisk.has(path),
+        roots: (cwd: string) => (cwd === "/w/app-wt/web" ? ["/w/app-wt/web", "/w/app-wt", "/w/app"] : [cwd]),
+        files: (root: string) => files[root] ?? null,
+    };
+
+    test("a path relative to the checkout root resolves from a session in a sub-folder", () => {
+        expect(locateRef("web/src/index.ts", "/w/app-wt/web", deps)).toMatchObject({
+            absolute: "/w/app-wt/web/src/index.ts",
+            matches: 1,
+        });
+    });
+
+    test("a file only the main checkout has resolves there", () => {
+        expect(locateRef("docs/only-on-main.md", "/w/app-wt/web", deps).absolute).toBe("/w/app/docs/only-on-main.md");
+    });
+
+    test("a bare file name resolves by suffix when exactly one file of the checkout ends with it", () => {
+        expect(locateRef("CheckoutRoute.tsx", "/w/app-wt/web", deps)).toMatchObject({
+            absolute: "/w/app-wt/web/src/Routes/CheckoutRoute/CheckoutRoute.tsx",
+            matches: 1,
+        });
+    });
+
+    test("an ambiguous name says how many files match instead of guessing", () => {
+        expect(locateRef("index.ts", "/w/app-wt", { ...deps, roots: () => ["/w/app-wt"] })).toEqual({
+            absolute: null,
+            searched: ["/w/app-wt"],
+            matches: 2,
+        });
+    });
+
+    test("a ref from another repository names the folders it was looked for in", () => {
+        expect(locateRef("042_seed_users.sql", "/w/app-wt/web", deps)).toEqual({
+            absolute: null,
+            searched: ["/w/app-wt/web", "/w/app-wt", "/w/app"],
+            matches: 0,
+        });
     });
 });
 

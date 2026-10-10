@@ -29,7 +29,7 @@ export interface InboxRef {
     path: string;
     line: number | null;
     endLine: number | null;
-    /** Resolved against the session's folder; null when no folder is known. */
+    /** The file the path names (`locateRef` in excerpts.ts); null when it could not be located. */
     absolute: string | null;
     /** The real lines, read by the loader; null when the file could not be read. */
     excerpt: string | null;
@@ -38,6 +38,10 @@ export interface InboxRef {
     /** For syntax highlighting; null when the extension is unknown. */
     language: string | null;
     missing: boolean;
+    /** The folders a relative path was looked up in (session folder, its checkout, the main checkout). */
+    searched?: string[];
+    /** Files the path matched by suffix: 1 when found, more when it is ambiguous, 0 when it is nowhere. */
+    matches?: number;
     /** Where the reference was found: the context, an option (`option:a`), or the posted refs. */
     from: string;
 }
@@ -151,9 +155,21 @@ export interface InboxSession {
     drafted: number;
     /** Answered decisions no send has delivered yet: they ride the session's next prompt. */
     queued: number;
+    /**
+     * Quiet for longer than `INBOX_STALE_MS`: neither an item nor the session moved in three days. Its items stay
+     * listed and answerable; they stop counting as "waiting" in the badges, as in the widget.
+     */
+    stale: boolean;
     reply: InboxReply | null;
     items: InboxItem[];
 }
+
+/**
+ * How long a quiet session's open items keep counting as waiting. A decision left open in a session that ended ten
+ * days ago is not news; it stays in that session's inbox, it just stops raising a badge. One rule for the widget's
+ * badges (src/hub/lib/widget/snapshot.ts) and the hub's Inbox.
+ */
+export const INBOX_STALE_MS = 72 * 60 * 60 * 1000;
 
 /** The session fields the inbox shows; a subset of `AgentSessionRow`. */
 export interface InboxSessionInfo {
@@ -442,11 +458,15 @@ export interface BuildInboxInput {
     scans: ReadonlyMap<string, TranscriptScan>;
     rows: readonly DecisionRecord[];
     forms: readonly AskForm[];
+    /** The clock items age against (`stale`); tests pass a fixed one. */
+    now?: number;
 }
 
 interface Group {
     sessionId: string | null;
-    info: Partial<Omit<InboxSession, "items" | "waiting" | "drafted" | "queued" | "lastAt" | "reply">>;
+    info: Partial<Omit<InboxSession, "items" | "waiting" | "drafted" | "queued" | "lastAt" | "reply" | "stale">>;
+    /** When the session last wrote its transcript (epoch ms); 0 for a form no session posted. */
+    activityAt: number;
     reply: InboxReply | null;
     items: InboxItem[];
 }
@@ -458,7 +478,7 @@ interface Group {
  * the agent replies. A dismissed decision is never listed. Sessions are ordered newest first; the
  * hub re-sorts on the user's choice.
  */
-export function buildInbox({ sessions, scans, rows, forms }: BuildInboxInput): InboxSession[] {
+export function buildInbox({ sessions, scans, rows, forms, now = Date.now() }: BuildInboxInput): InboxSession[] {
     const known = new Map(sessions.map((session) => [session.sessionId, session]));
     const groups = new Map<string, Group>();
 
@@ -479,6 +499,7 @@ export function buildInbox({ sessions, scans, rows, forms }: BuildInboxInput): I
                           account: info.account,
                       }
                     : {},
+                activityAt: info?.mtime ?? 0,
                 reply: null,
                 items: [],
             };
@@ -543,6 +564,8 @@ export function buildInbox({ sessions, scans, rows, forms }: BuildInboxInput): I
         }
 
         entry.items.sort((a, b) => a.at.localeCompare(b.at));
+        const lastAt = entry.items.reduce((latest, item) => (item.at > latest ? item.at : latest), "");
+        const newest = Math.max(entry.activityAt, Date.parse(lastAt) || 0);
         result.push({
             sessionId: entry.sessionId,
             provider: entry.info.provider ?? null,
@@ -551,10 +574,11 @@ export function buildInbox({ sessions, scans, rows, forms }: BuildInboxInput): I
             cwd: entry.info.cwd ?? null,
             branch: entry.info.branch ?? null,
             account: entry.info.account ?? null,
-            lastAt: entry.items.reduce((latest, item) => (item.at > latest ? item.at : latest), ""),
+            lastAt,
             waiting: entry.items.filter((item) => item.kind === "form" || isOpen(item.status)).length,
             drafted: entry.items.filter((item) => item.kind === "decision" && hasDraft(item)).length,
             queued: entry.items.filter((item) => item.kind === "decision" && item.status === "answered").length,
+            stale: newest < now - INBOX_STALE_MS,
             reply: entry.reply,
             items: entry.items,
         });

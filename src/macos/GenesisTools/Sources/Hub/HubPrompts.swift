@@ -299,9 +299,11 @@ struct PromptPickerView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Text(verbatim: "⌘⇧P")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(Color.jarvisTeal.opacity(0.85))
+            // An icon that names the panel; the bare "⌘⇧P" glyphs read as the letters "OP" (H17).
+            Image(systemName: "text.quote")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(Color.jarvisTeal.opacity(0.9))
+                .accessibilityHidden(true)
             if chosen == nil && !composing {
                 TextField("Search saved prompts", text: $query)
                     .textFieldStyle(.plain)
@@ -340,7 +342,7 @@ struct PromptPickerView: View {
 
     private var list: some View {
         let rows = matches
-        return ScrollView {
+        return FittedScroll(maxHeight: 380) {
             LazyVStack(alignment: .leading, spacing: 2) {
                 if rows.isEmpty {
                     Text(store.loading ? "Loading…" : "No prompt matches. + saves a new one.")
@@ -358,7 +360,6 @@ struct PromptPickerView: View {
             }
             .padding(6)
         }
-        .frame(maxHeight: 380)
     }
 
     private func promptRow(_ prompt: HubPrompt, isActive: Bool) -> some View {

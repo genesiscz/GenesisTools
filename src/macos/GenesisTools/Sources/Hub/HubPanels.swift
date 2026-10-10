@@ -186,6 +186,9 @@ struct ResizableSidePanel<Content: View>: View {
     /// content that re-wraps: the PR list's two-line titles and its toolbar re-laid out on every step,
     /// so the rows jumped under the pointer for the whole drag (2026-10-04).
     var holdsContent = false
+    /// Controls drawn in the folded rail under its title, live while the panel is folded: the hub's mode
+    /// switch, so a narrow window still reaches every mode in one click (H13).
+    var railAccessory: AnyView?
     @ViewBuilder let content: () -> Content
 
     @AppStorage private var width: Double
@@ -200,7 +203,7 @@ struct ResizableSidePanel<Content: View>: View {
 
     init(key: String, edge: Edge, title: String = "panel", defaultWidth: CGFloat = 300, minWidth: CGFloat = 180,
          maxWidth: CGFloat = 900, autoCollapse: Bool = false, fitWidth: CGFloat? = nil, holdsLayout: Bool = true,
-         holdsContent: Bool = false, @ViewBuilder content: @escaping () -> Content) {
+         holdsContent: Bool = false, railAccessory: AnyView? = nil, @ViewBuilder content: @escaping () -> Content) {
         self.key = key
         self.edge = edge
         self.title = title
@@ -211,6 +214,7 @@ struct ResizableSidePanel<Content: View>: View {
         self.fitWidth = fitWidth
         self.holdsLayout = holdsLayout
         self.holdsContent = holdsContent
+        self.railAccessory = railAccessory
         self.content = content
         _width = AppStorage(wrappedValue: Double(defaultWidth), "panel.\(key).width")
         _collapsed = AppStorage(wrappedValue: false, "panel.\(key).collapsed")
@@ -304,33 +308,47 @@ struct ResizableSidePanel<Content: View>: View {
     }
 
     private var rail: some View {
-        Button {
-            if autoCollapse, !collapsed {
-                withAnimation(.snappy(duration: 0.25)) { drawerOpen.toggle() }
-            } else {
-                withAnimation(.snappy(duration: 0.25)) { collapsed = false }
+        // The whole rail opens the panel; the accessory's own controls sit on top and keep their clicks.
+        ZStack(alignment: .top) {
+            Button {
+                if autoCollapse, !collapsed {
+                    withAnimation(.snappy(duration: 0.25)) { drawerOpen.toggle() }
+                } else {
+                    withAnimation(.snappy(duration: 0.25)) { collapsed = false }
+                }
+            } label: {
+                Color.clear
+                    .frame(width: Self.railWidth)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
             }
-        } label: {
+            .buttonStyle(RowButtonStyle(cornerRadius: 0))
+            .instantTooltip(autoCollapse && !collapsed ? "Show \(title) over the content (the window is too narrow to fit it)" : "Show \(title)")
+            .accessibilityLabel(Text("Show \(title)"))
             VStack(spacing: 10) {
-                Image(systemName: edge == .leading ? "sidebar.left" : "sidebar.right")
-                    .font(.system(size: 12, weight: .medium))
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .fixedSize()
-                    .rotationEffect(.degrees(edge == .leading ? -90 : 90))
-                    .frame(width: 14, height: 80)
-                Spacer()
+                Group {
+                    Image(systemName: edge == .leading ? "sidebar.left" : "sidebar.right")
+                        .font(.system(size: 12, weight: .medium))
+                    Text(title)
+                        .font(.system(size: 11, weight: .semibold))
+                        .fixedSize()
+                        .rotationEffect(.degrees(edge == .leading ? -90 : 90))
+                        .frame(width: 14, height: 80)
+                }
+                .foregroundColor(ReviewPalette.dim)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+                if let railAccessory {
+                    Rectangle().fill(ReviewPalette.hairline).frame(width: 16, height: 1)
+                    railAccessory
+                }
             }
-            .foregroundColor(ReviewPalette.dim)
             .padding(.top, 44)
             .frame(width: Self.railWidth)
-            .frame(maxHeight: .infinity)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(RowButtonStyle(cornerRadius: 0))
+        .frame(width: Self.railWidth)
+        .frame(maxHeight: .infinity)
         .hubSurface(.chrome)
-        .instantTooltip(autoCollapse && !collapsed ? "Show \(title) over the content (the window is too narrow to fit it)" : "Show \(title)")
-        .accessibilityLabel(Text("Show \(title)"))
     }
 
     private var drawer: some View {

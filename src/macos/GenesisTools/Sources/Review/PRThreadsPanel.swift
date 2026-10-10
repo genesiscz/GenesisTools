@@ -1335,7 +1335,7 @@ private struct PRThreadRow: View {
             Button {
                 ExternalOpener.open(url)
             } label: {
-                LiveAgo(date: HubFormat.date(comment.createdAt), fallback: comment.createdAt)
+                LiveAgo(date: HubFormat.date(comment.createdAt), fallback: comment.createdAt, style: .brief)
                     .foregroundColor(ReviewPalette.dim)
             }
             .fixedSize()
@@ -1344,7 +1344,7 @@ private struct PRThreadRow: View {
             .accessibilityRemoveTraits(.isButton)
             .accessibilityAddTraits(.isLink)
         } else {
-            LiveAgo(date: HubFormat.date(comment.createdAt), fallback: comment.createdAt)
+            LiveAgo(date: HubFormat.date(comment.createdAt), fallback: comment.createdAt, style: .brief)
                 .foregroundColor(ReviewPalette.dim)
                 .fixedSize()
                 .instantTooltip(comment.createdAt)

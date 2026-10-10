@@ -41,7 +41,7 @@ public struct AgentRosterRow: View {
                     Text(title).font(.system(size: 12, weight: selected ? .semibold : .medium)).lineLimit(1)
                     Spacer(minLength: 0)
                     if unread > 0 {
-                        CountBadge(unread, tooltip: "\(unread) unread messages", color: KitPalette.modified)
+                        CountBadge(unread, tooltip: "\(Plural.count(unread, "unread message"))", color: KitPalette.modified)
                     }
                     if showsRunningLabel && status == "running" {
                         Text("running").foregroundStyle(KitPalette.added).font(.system(size: 10.5)).fixedSize()
@@ -53,22 +53,47 @@ public struct AgentRosterRow: View {
                 HStack(spacing: 5) {
                     Badge(provider, color: AgentRosterStyle.harnessColor(provider), look: .filled)
                     Badge(role)
-                    let labels = [model, account].compactMap { $0 }.filter { !$0.isEmpty }
-                    if !labels.isEmpty {
-                        Text(verbatim: labels.joined(separator: " · ")).truncationMode(.tail).layoutPriority(-1)
+                    // The model's family word ("opus", never "claude-…"), then the account; both give way before the numbers.
+                    if let model, !model.isEmpty {
+                        Text(verbatim: SessionNativeLog.shortModel(model)).lineLimit(1).layoutPriority(-1)
+                    }
+                    if let account, !account.isEmpty {
+                        Text(verbatim: account).truncationMode(.tail).layoutPriority(-2)
                     }
                     Spacer(minLength: 0)
-                    HStack(spacing: 0) {
-                        if toolCalls > 0 { Text(verbatim: "\(toolCalls) tools") }
-                        if status == "running", let startedAt {
-                            LiveTime(date: startedAt, style: .compact) { (toolCalls > 0 ? " · " : "") + "run " + $0 }
-                        } else if let duration = AgentRosterStyle.duration(from: startedAt, to: lastAt) {
-                            Text(verbatim: (toolCalls > 0 ? " · " : "") + "ran " + duration)
-                        }
-                    }.font(.system(size: 10.5, design: .monospaced)).fixedSize()
+                    // Words when they fit, glyphs when they do not: "247 tools · run 1h 05m" ran past a 320 pt sidebar.
+                    ViewThatFits(in: .horizontal) {
+                        stats(words: true)
+                        stats(words: false)
+                    }
+                    .font(.system(size: 10.5, design: .monospaced))
                 }.font(.system(size: 10.5)).foregroundStyle(KitPalette.dim).lineLimit(1)
             }
         }.contentShape(Rectangle())
+    }
+
+    /// The tool count and run time: "247 tools · run 1h 05m", or "⚒247 ▸1h 05m" where the words do not fit.
+    private func stats(words: Bool) -> some View {
+        HStack(spacing: words ? 0 : 5) {
+            if toolCalls > 0 {
+                if words {
+                    Text(verbatim: Plural.count(toolCalls, "tool"))
+                } else {
+                    HStack(spacing: 2) {
+                        Image(systemName: "hammer").font(.system(size: 9))
+                        Text(verbatim: "\(toolCalls)")
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(Plural.count(toolCalls, "tool"))
+                }
+            }
+            if status == "running", let startedAt {
+                LiveTime(date: startedAt, style: .compact) { words ? (toolCalls > 0 ? " · " : "") + "run " + $0 : "▸" + $0 }
+            } else if let duration = AgentRosterStyle.duration(from: startedAt, to: lastAt) {
+                Text(verbatim: words ? (toolCalls > 0 ? " · " : "") + "ran " + duration : duration)
+            }
+        }
+        .fixedSize()
     }
 }
 
@@ -111,7 +136,8 @@ public struct AgentRosterGroupLabel: View {
                         Text(account).padding(.horizontal, 5).padding(.vertical, 1)
                             .background(Capsule().stroke(.white.opacity(0.15))).layoutPriority(-1)
                     }
-                    Text(verbatim: running > 0 ? "\(total) agents · \(running) running" : "\(total) agents")
+                    // `total` counts sub-agents; the session's own Main row is listed under it, so "0 agents" read wrong.
+                    Text(verbatim: total == 0 ? "no sub-agents" : running > 0 ? "\(Plural.count(total, "sub-agent")) · \(running) running" : Plural.count(total, "sub-agent"))
                         .foregroundStyle(running > 0 ? KitPalette.added : KitPalette.dim).fixedSize()
                     Spacer(minLength: 0)
                     LiveAgo(date: lastAt, style: .brief).fixedSize()

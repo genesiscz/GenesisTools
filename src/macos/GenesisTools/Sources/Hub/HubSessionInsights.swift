@@ -741,6 +741,6 @@ struct ToolAnalyticsSection: View {
         let action = on ? "Click to show every row again" : "Click to show only these calls (in the loaded turns)"
         let bound = tool.timing == "exact" ? "" : "≤"
         let times = "total \(bound)\(InsightFormat.duration(ms: tool.totalMs > 0 ? tool.totalMs : nil)), slowest \(bound)\(InsightFormat.duration(ms: tool.slowestMs))"
-        return "\(tool.name): \(tool.count) calls, \(failed), \(times), \(timing)\n\(action)"
+        return "\(tool.name): \(Plural.count(tool.count, "call")), \(failed), \(times), \(timing)\n\(action)"
     }
 }

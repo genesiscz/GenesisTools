@@ -189,6 +189,16 @@ final class HubTimelineTests: XCTestCase {
 
     // MARK: Filters and grouping
 
+    /// H3: the disk cache is keyed by the range's name, so "last 24 hours" written three days ago painted
+    /// last turns stamped "3 days ago" into today's 21:00 group. A page keeps only what is in the range.
+    func testAPageFromDiskKeepsOnlyTheRowsInsideTheRangeOnScreen() throws {
+        let interval = DateInterval(start: date("2026-10-09T19:22:00Z"), end: date("2026-10-10T19:22:00Z"))
+        let stale = try event("session.turn:a", kind: "session.turn", at: "2026-10-07T12:40:00Z")
+        let fresh = try event("session.turn:b", kind: "session.turn", at: "2026-10-10T19:19:00Z")
+        let edge = try event("commit:c", kind: "commit", at: "2026-10-09T19:22:00Z")
+        XCTAssertEqual(HubTimelineModel.inRange([stale, fresh, edge], interval: interval).map(\.id), ["session.turn:b", "commit:c"])
+    }
+
     @MainActor
     func testShownAppliesKindsProjectFilterAndFindText() throws {
         HubDefaults.isolate()

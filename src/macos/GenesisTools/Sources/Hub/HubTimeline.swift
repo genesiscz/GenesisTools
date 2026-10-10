@@ -326,6 +326,16 @@ final class HubTimelineModel: ObservableObject {
         events.filter { $0.kind == kind.rawValue && (project == nil || $0.project == project) }.count
     }
 
+    /// A count over the loaded pages: "154+" while older pages of the range exist, so a page size never
+    /// reads as a total (H7: "200 events", "Every project 200" were the page size).
+    func pageCount(_ count: Int) -> String {
+        Self.pageCount(count, hasMore: hasMore)
+    }
+
+    nonisolated static func pageCount(_ count: Int, hasMore: Bool) -> String {
+        hasMore && count > 0 ? "\(count)+" : "\(count)"
+    }
+
     var projects: [(name: String, count: Int)] {
         let grouped = Dictionary(grouping: events.compactMap(\.project), by: { $0 })
         return grouped.map { ($0.key, $0.value.count) }.sorted { $0.count == $1.count ? $0.name < $1.name : $0.count > $1.count }
@@ -418,21 +428,29 @@ final class HubTimelineModel: ObservableObject {
     private func apply(_ envelope: TimelineEnvelope, key: String, interval: DateInterval) {
         let samePage = shownKey == key
         shownKey = key
-        let before = samePage ? Dictionary(events.map { ($0.id, "\($0.hashValue)") }, uniquingKeysWith: { first, _ in first }) : [:]
-        let moved = SWR.changed(before: before, after: envelope.events.map { ($0.id, "\($0.hashValue)") })
-        let land = {
-            if self.events != envelope.events {
-                self.events = envelope.events
-            }
-            self.changed = moved
+        let fresh = Self.inRange(envelope.events, interval: interval)
+        if fresh.count != envelope.events.count {
+            HubPerf.log("timeline.apply dropped \(envelope.events.count - fresh.count) of \(envelope.events.count) events before \(HubFormat.iso.string(from: interval.start)) (page from \(envelope.since))")
         }
-        // Only a few rows of the page on screen slide: a first paint, another range or a refresh that moved
-        // most rows lands at once. Animated, the cached first page built an insertion for each of its 200 rows
-        // (`hub.mode.timeline` 556 ms of main thread in a debug build, 2026-10-10).
-        if samePage, !before.isEmpty, moved.count <= Self.animatedChangeLimit {
-            withAnimation(SWR.animation, land)
+        let before = samePage ? Dictionary(events.map { ($0.id, "\($0.hashValue)") }, uniquingKeysWith: { first, _ in first }) : [:]
+        let after = fresh.map { ($0.id, "\($0.hashValue)") }
+        // Only a small refresh of the page on screen slides and flashes: a first paint, another range or a wholesale
+        // swap lands at once. Animated, the cached first page built an insertion for each of its 200 rows
+        // (`hub.mode.timeline` 556 ms of main thread, 2026-10-10), and a swap left fading rows among the new ones.
+        if SWR.animates(before: before, after: after, limit: Self.animatedChangeLimit) {
+            let moved = SWR.changed(before: before, after: after)
+            withAnimation(SWR.animation) {
+                if events != fresh {
+                    events = fresh
+                }
+                changed = moved
+            }
+            SWR.fade(moved, current: { [weak self] in self?.changed }, clear: { [weak self] in self?.changed = [] })
         } else {
-            land()
+            if events != fresh {
+                events = fresh
+            }
+            changed = []
         }
         warnings = envelope.warnings
         truncated = envelope.truncated ?? []
@@ -440,7 +458,15 @@ final class HubTimelineModel: ObservableObject {
         until = HubFormat.date(envelope.until) ?? interval.end
         hasMore = envelope.hasMore ?? false
         nextBefore = envelope.nextBefore
-        SWR.fade(moved, current: { [weak self] in self?.changed }, clear: { [weak self] in self?.changed = [] })
+    }
+
+    /// The events of a page that belong to the range on screen. The disk cache is keyed by the range's
+    /// name, so "last 24 hours" from a run three days ago paints rows that are no longer in it.
+    nonisolated static func inRange(_ events: [TimelineEvent], interval: DateInterval) -> [TimelineEvent] {
+        events.filter { event in
+            guard let date = event.date else { return true }
+            return date >= interval.start
+        }
     }
 
     /// The next older page of the same range; rows already shown (a boundary shared by two pages) are skipped.
@@ -978,7 +1004,7 @@ struct TimelineListView: View {
             Image(systemName: kind.symbol).foregroundColor(kind.color).frame(width: 16)
             Text(kind.title).font(.system(size: 12.5))
             Spacer()
-            Text(verbatim: "\(timeline.count(kind))")
+            Text(verbatim: timeline.pageCount(timeline.count(kind)))
                 .font(.system(size: 10.5, design: .monospaced))
                 .foregroundColor(ReviewPalette.dim)
         }
@@ -989,7 +1015,7 @@ struct TimelineListView: View {
             if on { timeline.hidden.insert(kind.rawValue) } else { timeline.hidden.remove(kind.rawValue) }
         }
         .padding(.horizontal, 6)
-        .instantTooltip(on ? "Hide \(kind.title.lowercased())" : "Show \(kind.title.lowercased())")
+        .instantTooltip((on ? "Hide \(kind.title.lowercased())" : "Show \(kind.title.lowercased())") + (timeline.hasMore ? "\nThe count is of the loaded events; Load older at the end of the feed reads more." : ""))
     }
 
     private func projectRow(name: String?, count: Int) -> some View {
@@ -1002,7 +1028,7 @@ struct TimelineListView: View {
                 .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
                 .lineLimit(1)
             Spacer()
-            Text(verbatim: "\(count)")
+            Text(verbatim: timeline.pageCount(count))
                 .font(.system(size: 10.5, design: .monospaced))
                 .foregroundColor(ReviewPalette.dim)
         }
@@ -1213,7 +1239,7 @@ struct TimelineMain: View {
                         .lineLimit(2)
                 }
             } else if !timeline.events.isEmpty {
-                Text("Everything in this range is shown (\(timeline.events.count) events, \(shown) after the filters).")
+                Text(verbatim: "Everything in this range is shown (\(Plural.count(timeline.events.count, "event")), \(shown) after the filters).")
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
             }
@@ -1236,7 +1262,7 @@ struct TimelineMain: View {
                             .foregroundColor(ReviewPalette.dim)
                             .lineLimit(1)
                     }
-                    Text(verbatim: "\(count) events")
+                    Text(verbatim: "\(timeline.pageCount(count)) \(count == 1 ? "event" : "events")")
                         .font(.system(size: 12))
                         .foregroundColor(ReviewPalette.dim)
                 }
@@ -1390,7 +1416,7 @@ struct TimelineRowView: View {
                 if let author = event.author, kind != .session, kind != .sessionStart {
                     authorLabel(author, live: live)
                 }
-                LiveAgo(date: event.date)
+                LiveAgo(date: event.date, style: .brief)
                     .font(.system(size: 10.5))
                     .foregroundColor(ReviewPalette.dim)
                     .lineLimit(1)
@@ -1407,12 +1433,13 @@ struct TimelineRowView: View {
                         }
                     } else {
                         ForEach(actions) { action in
+                            // Faint at rest: the same glyphs come alive as buttons under the pointer, so at full
+                            // strength they read as six decorations per row (H19).
                             Image(systemName: action.symbol)
                                 .font(.system(size: 11))
                                 .frame(width: 16, height: 16)
                                 .padding(3)
-                                // A disabled IconButton: the style's 0.4 under the row's 0.35.
-                                .opacity(action.disabled ? 0.4 * 0.35 : 1)
+                                .opacity(action.disabled ? 0.4 * 0.35 : 0.4)
                         }
                         .accessibilityHidden(true)
                     }

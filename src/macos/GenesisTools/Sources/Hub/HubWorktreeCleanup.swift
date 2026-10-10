@@ -397,7 +397,7 @@ final class WorktreeCleanupStore: ObservableObject {
 
 enum CleanupFormat {
     static func bytes(_ value: Double) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(value), countStyle: .file)
+        ByteFormat.file(Int64(value))
     }
 }
 
@@ -407,6 +407,7 @@ struct WorktreeCleanupView: View {
     @AppStorage(WorktreeCleanup.showBlockedKey) private var showBlocked = false
     @State private var pending: [CleanupRow]?
     @State private var pendingMove: [CleanupRow]?
+    @State private var rulesOpen = false
     @State private var find = PanelFindModel(scope: "worktree.cleanup", title: "the worktrees")
 
     /// The main checkout of every repository the Worktrees mode lists.
@@ -600,13 +601,21 @@ struct WorktreeCleanupView: View {
                     ProgressView().controlSize(.small)
                     Text(verbatim: "Removing \(progress.done) of \(progress.total)…").font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim)
                 }
-                Toggle("Show blocked (\(store.rows.count - removable.count))", isOn: Binding(get: { showBlocked }, set: { next in
+                // Drawn like the rows' checkboxes: the AppKit checkbox drew as a dark box that nearly vanished here.
+                Button {
                     HubMainBusy.measure("worktrees.cleanup.showBlocked")
-                    showBlocked = next
-                }))
-                    .toggleStyle(.checkbox)
+                    showBlocked.toggle()
+                } label: {
+                    Label {
+                        Text(verbatim: "Show blocked (\(store.rows.count - removable.count))")
+                    } icon: {
+                        Image(systemName: showBlocked ? "checkmark.square.fill" : "square")
+                            .foregroundColor(showBlocked ? ReviewPalette.renamed : Color.white.opacity(0.75))
+                    }
                     .font(.system(size: 12))
-                    .instantTooltip("Also list the worktrees that stay, each with the reason")
+                }
+                .instantTooltip("Also list the worktrees that stay, each with the reason")
+                .accessibilityAddTraits(showBlocked ? [.isSelected] : [])
                 Button {
                     pending = chosen
                 } label: {
@@ -646,13 +655,14 @@ struct WorktreeCleanupView: View {
                         ProgressView().controlSize(.small)
                         Text(verbatim: "Moving \(progress.done) of \(progress.total)…").font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim)
                     }
+                    // The label names what the stepper steps; "any age ⌃⌄" alone did not (H15).
                     Stepper(value: $store.olderThanDays, in: 0...90) {
-                        Text(verbatim: store.olderThanDays == 0 ? "any age" : "idle ≥ \(store.olderThanDays) d")
-                            .font(.system(size: 11.5, design: .monospaced))
+                        Text(verbatim: store.olderThanDays == 0 ? "Idle for: any time" : "Idle for: \(Plural.count(store.olderThanDays, "day"))+")
+                            .font(.system(size: 11.5))
                     }
                     .fixedSize()
                     .disabled(store.loading)
-                    .instantTooltip("Only worktrees idle at least this many days count as removable (0: any age)")
+                    .instantTooltip("Only worktrees idle at least this many days count as removable (0: any idle time)")
                     if !removable.isEmpty {
                         Button(store.selected.count == removable.count ? "Select none" : "Select all removable") {
                             store.selected = store.selected.count == removable.count ? [] : Set(removable.map(\.path))
@@ -661,12 +671,40 @@ struct WorktreeCleanupView: View {
                         .font(.system(size: 11.5))
                     }
                 }
-                Text("Removable: the branch is in the base (merged, rebased or squashed, or it has no commits), nothing is uncommitted or untracked, no stash names it, nothing runs in it, no agent session wrote in it in the last 30 minutes, and it is idle for the chosen number of days. Move aside deletes nothing; Remove runs `git worktree remove`.")
-                    .font(.system(size: 11))
-                    .foregroundColor(ReviewPalette.dim)
-                    .fixedSize(horizontal: false, vertical: true)
+                // One line; the full rule list is one click away instead of three lines of small print (H15).
+                HStack(spacing: 6) {
+                    Text("Only merged, clean and idle worktrees are removable. Move aside deletes nothing.")
+                        .font(.system(size: 11))
+                        .foregroundColor(ReviewPalette.dim)
+                        .lineLimit(1)
+                    IconButton(systemName: "info.circle", tooltip: "What makes a worktree removable", size: 11) { rulesOpen.toggle() }
+                        .popover(isPresented: $rulesOpen, arrowEdge: .bottom) { removableRules }
+                }
             }
         }
+    }
+
+    /// The rules behind "removable", for the info popover.
+    private var removableRules: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("A worktree is removable when").font(.system(size: 12.5, weight: .semibold))
+            ForEach([
+                "its branch is in the base: merged, rebased or squashed, or it has no commits of its own",
+                "nothing in it is uncommitted or untracked, and no stash names its branch",
+                "nothing runs in it, and no agent session wrote in it in the last 30 minutes",
+                "it has been idle for the days the stepper sets",
+            ], id: \.self) { rule in
+                Label { Text(rule).fixedSize(horizontal: false, vertical: true) } icon: { Image(systemName: "checkmark").foregroundColor(ReviewPalette.added) }
+                    .font(.system(size: 11.5))
+            }
+            Divider()
+            Text("Remove asks first and runs `git worktree remove` without --force; the branches stay. Move aside moves the folder into today's /tmp folder and prints the command that puts it back.")
+                .font(.system(size: 11))
+                .foregroundColor(ReviewPalette.dim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(width: 380)
     }
 
     private func summary(removable: Int, sized: Int, total: Double, frees: Double) -> String {
@@ -746,7 +784,7 @@ struct WorktreeCleanupView: View {
                             .instantTooltip("\(row.changedCount ?? 0) uncommitted, \(row.untrackedCount ?? 0) untracked")
                     }
                     if let commit = row.lastCommit {
-                        LiveAgo(date: commit, format: { "commit \($0)" })
+                        LiveAgo(date: commit, style: .brief, format: { "commit \($0)" })
                             .font(.system(size: 10.5))
                             .foregroundColor(ReviewPalette.dim)
                             .lineLimit(1)
@@ -762,7 +800,7 @@ struct WorktreeCleanupView: View {
             }
             Spacer(minLength: 8)
             sizeCell(row)
-            LiveAgo(date: row.lastActivity)
+            LiveAgo(date: row.lastActivity, style: .brief)
                 .font(.system(size: 11))
                 .foregroundColor(ReviewPalette.dim)
                 .frame(width: 90, alignment: .trailing)

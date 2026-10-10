@@ -76,6 +76,15 @@ final class HubDailyTests: XCTestCase {
         XCTAssertTrue(work.windows[1].detail(clock: { _ in "Fri 15:00" }).contains("lasts to the reset (70% then)"))
     }
 
+    /// H12: an old sample reads as an old reading, never as "it hit 100% four days ago".
+    func testAStaleWindowSaysHowOldItsNumberIs() throws {
+        let side = try XCTUnwrap(decode(HubForecastResult.self, forecastJSON).accounts.last)
+        let window = try XCTUnwrap(side.windows.first)
+        XCTAssertTrue(window.stale)
+        XCTAssertTrue(window.summary().contains("% as of "), window.summary())
+        XCTAssertFalse(window.summary().contains(" · "), window.summary())
+    }
+
     func testForecastAccountWithOnlyAPastWindowHasNothingCurrent() throws {
         let side = try XCTUnwrap(decode(HubForecastResult.self, forecastJSON).accounts.last)
         XCTAssertTrue(side.current.isEmpty)
@@ -94,7 +103,7 @@ final class HubDailyTests: XCTestCase {
          "decisions":{"posted":[{"id":"d1","number":1,"title":"Pick a TTL","state":"open","sessionId":"s1","project":"shop","at":"2026-03-02T08:00:00Z","answer":null}],"answered":[]},
          "ci":{"failed":1,"passed":0},"pushes":1,"warnings":[],"exported":"/vault/Daily/2026-03-02 Agents digest.md"}
         """)
-        XCTAssertEqual(digest.summary, "1 sessions · 1 commits · 2 files (+11 −3) · 1 PRs opened, 0 merged · 1 decisions posted, 0 answered")
+        XCTAssertEqual(digest.summary, "1 session · 1 commit · 2 files (+11 −3) · 1 PR opened, 0 merged · 1 decision posted, 0 answered")
         XCTAssertEqual(digest.exported, "/vault/Daily/2026-03-02 Agents digest.md")
         XCTAssertEqual(digest.files.repos.first?.paths.first?.path, "src/cart.ts")
     }

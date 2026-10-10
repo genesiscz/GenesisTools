@@ -312,12 +312,19 @@ struct HandoffComposerSheet: View {
             .disabled(prompts.isEmpty && mode == .last)
             .instantTooltip(prompts.isEmpty ? "The range needs the session's prompts, which have not loaded" : "The last N prompts, or a range of them")
             if mode == .last {
+                // Never more than the session has: "5 prompts" over a one-prompt session read as five (H9).
                 Stepper(value: $lastCount, in: 1...max(1, prompts.isEmpty ? 50 : prompts.count)) {
-                    Text(verbatim: "\(lastCount) prompt\(lastCount == 1 ? "" : "s")")
+                    Text(verbatim: prompts.isEmpty || lastCount < prompts.count
+                        ? Plural.count(lastCount, "prompt")
+                        : "all \(Plural.count(prompts.count, "prompt"))")
                         .font(SessionPalette.mono(11.5))
                         .foregroundStyle(SessionPalette.secondary)
                 }
                 .fixedSize()
+                .instantTooltip(prompts.isEmpty ? "How many of the newest prompts the brief covers" : "How many of the newest prompts the brief covers (the session has \(Plural.count(prompts.count, "prompt")))")
+                .onChange(of: prompts.count, initial: true) { _, count in
+                    if count > 0, lastCount > count { lastCount = count }
+                }
             } else {
                 promptMenu(title: "From", value: from) { from = $0 }
                 promptMenu(title: "to", value: to) { to = $0 }

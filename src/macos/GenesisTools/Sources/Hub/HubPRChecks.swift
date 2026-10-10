@@ -271,7 +271,7 @@ struct PRChecksSection: View {
                 HStack(spacing: 6) {
                     Text(verbatim: section.name).font(.system(size: 11.5, weight: .semibold)).lineLimit(1).truncationMode(.middle)
                         .instantTooltip(section.name)
-                    Text(verbatim: section.totalLines > section.lines.count ? "last \(section.lines.count) of \(section.totalLines) lines" : "\(section.lines.count) lines")
+                    Text(verbatim: section.totalLines > section.lines.count ? "last \(section.lines.count) of \(section.totalLines) lines" : Plural.count(section.lines.count, "line"))
                         .font(.system(size: 10.5, design: .monospaced))
                         .foregroundColor(ReviewPalette.dim)
                     Spacer(minLength: 4)
