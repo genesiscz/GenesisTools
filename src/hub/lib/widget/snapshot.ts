@@ -20,6 +20,7 @@ import { hubAgents } from "../agents";
 import type { AgentNode, AgentsTree } from "../agents/types";
 import { readAssetManifest } from "../composer/serialize";
 import { liftCardImages } from "./card-images";
+import { WIDGET_DISCOVERY_REUSE_MS, WIDGET_ROSTER_HOURS, WIDGET_ROSTER_LIMIT } from "./roster-index";
 import { readWidgetState } from "./storage";
 import { parseWidgetSessionKey, shownOutgoing, type WidgetTarget, widgetSessionKey } from "./types";
 
@@ -258,13 +259,9 @@ export function readWidgetDecisionEvents({
         .slice(-100);
 }
 let cachedAgents: { at: number; refreshed: boolean; promise: Promise<AgentsTree> } | undefined;
-export function invalidateWidgetAgents(): void {
-    cachedAgents = undefined;
-}
-
 export function widgetAgents({ refresh = false }: { refresh?: boolean } = {}): Promise<AgentsTree> {
     if (!cachedAgents || Date.now() - cachedAgents.at > 15_000 || (refresh && !cachedAgents.refreshed)) {
-        const promise = hubAgents({ hours: 168, limit: 150, refresh });
+        const promise = hubAgents({ hours: WIDGET_ROSTER_HOURS, limit: WIDGET_ROSTER_LIMIT, refresh });
         cachedAgents = { at: Date.now(), refreshed: refresh, promise };
         promise.catch((error) => {
             if (cachedAgents?.promise === promise) {
@@ -311,7 +308,13 @@ export function widgetForms({ dbPath, sessionHint }: { dbPath: string; sessionHi
 }
 export const realWidgetSources: WidgetSources = {
     sessions: (refresh) =>
-        listAgentSessionRows({ hours: 168, withUsage: false, refresh, maxDiscoveryAgeMs: 15_000, failClosed: true }),
+        listAgentSessionRows({
+            hours: WIDGET_ROSTER_HOURS,
+            withUsage: false,
+            refresh,
+            maxDiscoveryAgeMs: WIDGET_DISCOVERY_REUSE_MS,
+            failClosed: true,
+        }),
     decisions: () => readDecisions(decisionFiles().file),
     forms: (sessionHint) => widgetForms({ dbPath: toolDataDir("question", "qa.db"), sessionHint }),
     answers: (sessionId) =>

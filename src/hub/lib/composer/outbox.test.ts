@@ -38,6 +38,8 @@ import { performWidgetAction } from "../widget/actions";
 import { liftCardImages } from "../widget/card-images";
 import { readWidgetReceiptContext } from "../widget/context";
 import { createWidgetHandoff } from "../widget/handoff";
+import { readWidgetRosterCache, writeWidgetRosterCache } from "../widget/roster-cache";
+import { widgetRosterChange } from "../widget/roster-index";
 import { WidgetRosterReader, type WidgetRosterReply } from "../widget/roster-reader";
 import {
     classifyScreenshot,
@@ -150,7 +152,6 @@ describe("video dispatch media bounds", () => {
             signal: controller.signal,
             emit: () => {},
             dependencies: {
-                discover: async () => {},
                 inboxPaths: {
                     answerLog: join(directory, "question/log"),
                     database: join(directory, "question/qa.db"),
@@ -3623,12 +3624,6 @@ test("incoming answer, Decision and pending-form writes wake the Widget without 
         const database = join(directory, "question", "qa.db");
         const decisions = join(directory, "question", "decisions", "decisions.jsonl");
         const subscriptions: { directory: string; notify: (path: string) => Promise<void>; closed: boolean }[] = [];
-        let releaseDiscovery!: () => void;
-        const discoveryGate = new Promise<void>((resolve) => {
-            releaseDiscovery = resolve;
-        });
-        let discoveryStarted = false;
-        let discoverySignal: AbortSignal | undefined;
         let emitted = 0;
         let ready!: () => void;
         const started = new Promise<void>((resolve) => {
@@ -3642,11 +3637,6 @@ test("incoming answer, Decision and pending-form writes wake the Widget without 
                 ready();
             },
             dependencies: {
-                discover: async (signal) => {
-                    discoveryStarted = true;
-                    discoverySignal = signal;
-                    await discoveryGate;
-                },
                 inboxPaths: { answerLog, database, decisions },
                 watchInbox: async (directory, callback, options) => {
                     const subscription = {
@@ -3668,10 +3658,7 @@ test("incoming answer, Decision and pending-form writes wake the Widget without 
                         },
                     };
                 },
-                snapshot: async (options) => {
-                    if (options.refresh) {
-                        await discoveryGate;
-                    }
+                snapshot: async () => {
                     return {
                         version: 1,
                         state: await readWidgetState(directory),
@@ -3693,7 +3680,6 @@ test("incoming answer, Decision and pending-form writes wake the Widget without 
         try {
             await withTimeout(started, 3000);
             expect(subscriptions).toHaveLength(1);
-            expect(discoveryStarted).toBe(true);
             expect(subscriptions[0].directory).toBe(join(directory, "question"));
             for (const file of [join(answerLog, "2026-01-01.jsonl"), decisions, `${database}-wal`, database]) {
                 const before = emitted;
@@ -3706,10 +3692,8 @@ test("incoming answer, Decision and pending-form writes wake the Widget without 
             expect(emitted).toBe(before);
         } finally {
             controller.abort();
-            releaseDiscovery();
             await withTimeout(worker, 3000);
         }
-        expect(discoverySignal?.aborted).toBe(true);
         expect(subscriptions.every((subscription) => subscription.closed)).toBe(true);
     });
 });
@@ -3858,6 +3842,364 @@ describe("background Widget roster", () => {
         } finally {
             reader.stop();
         }
+    });
+
+    function scheduled() {
+        let now = 0;
+        let cpu = 0;
+        const timers: { at: number; run: () => void; cancelled: boolean }[] = [];
+        const requests: { id: number; index?: string[]; onlyIfChanged?: boolean }[] = [];
+        const workers: Pick<Worker, "postMessage" | "terminate" | "onmessage" | "onerror">[] = [];
+        let changes = 0;
+        const reader = new WidgetRosterReader({
+            now: () => now,
+            cpuMs: () => cpu,
+            changed: () => {
+                changes++;
+            },
+            timer: (run, ms) => {
+                const entry = { at: now + ms, run, cancelled: false };
+                timers.push(entry);
+                return () => {
+                    entry.cancelled = true;
+                };
+            },
+            createWorker: () => {
+                const worker: Pick<Worker, "postMessage" | "terminate" | "onmessage" | "onerror"> = {
+                    onmessage: null,
+                    onerror: null,
+                    postMessage: (request) => {
+                        requests.push(request);
+                    },
+                    terminate: () => {},
+                };
+                workers.push(worker);
+                return worker;
+            },
+        });
+        return {
+            reader,
+            requests,
+            changes: () => changes,
+            /** Moves the clock and fires every timer that came due. */
+            advance: (ms: number) => {
+                now += ms;
+                for (const entry of timers.filter((timer) => !timer.cancelled && timer.at <= now)) {
+                    entry.cancelled = true;
+                    entry.run();
+                }
+            },
+            pendingTimers: () => timers.filter((timer) => !timer.cancelled).length,
+            spendCpu: (ms: number) => {
+                cpu += ms;
+            },
+            reply: (id: number) => {
+                const worker = workers[workers.length - 1];
+                const data: WidgetRosterReply = {
+                    id,
+                    ok: true,
+                    rows: [],
+                    agents: { generatedAt: `run ${id}`, parents: [], orphans: [] },
+                };
+                worker.onmessage?.call(worker as Worker, { data } as MessageEvent<WidgetRosterReply>);
+            },
+            replyUnchanged: (id: number) => {
+                const worker = workers[workers.length - 1];
+                const data: WidgetRosterReply = { id, ok: true, unchanged: true };
+                worker.onmessage?.call(worker as Worker, { data } as MessageEvent<WidgetRosterReply>);
+            },
+            roster: () => reader.agents.generatedAt,
+        };
+    }
+
+    test("a refresh that changed no index row keeps the roster and rebuilds nothing; a read request always reads", () => {
+        const f = scheduled();
+        try {
+            f.reader.request(["grok"]);
+            f.advance(250);
+            expect(f.requests[0]).toEqual({ id: 1, index: ["grok"], onlyIfChanged: true });
+            f.reply(1);
+            expect(f.changes()).toBe(1);
+            f.reader.request(["grok"]);
+            f.advance(4000);
+            expect(f.requests[1]).toEqual({ id: 2, index: ["grok"], onlyIfChanged: true });
+            f.replyUnchanged(2);
+            expect(f.changes()).toBe(1);
+            expect(f.roster()).toBe("run 1");
+            expect(f.reader.loading).toBe(false);
+            f.reader.request(["claude"], { read: true });
+            f.advance(4000);
+            expect(f.requests[2]).toEqual({ id: 3, index: ["claude"] });
+        } finally {
+            f.reader.stop();
+        }
+    });
+
+    test("a burst of session changes becomes one run that carries every scope, after a settle delay", () => {
+        const f = scheduled();
+        try {
+            f.reader.request(["claude"]);
+            f.reader.request(["codex"]);
+            f.reader.request([]);
+            expect(f.requests).toEqual([]);
+            f.advance(249);
+            expect(f.requests).toEqual([]);
+            f.advance(1);
+            expect(f.requests).toHaveLength(1);
+            expect(f.requests[0].index?.sort()).toEqual(["claude", "codex"]);
+            expect(f.pendingTimers()).toBe(0);
+        } finally {
+            f.reader.stop();
+        }
+    });
+
+    test("changes during a run wait for a pause that grows with the run's cost, then run once", () => {
+        const f = scheduled();
+        try {
+            f.reader.request(["claude"]);
+            f.advance(250);
+            f.reader.request(["grok"]);
+            f.reader.request(["claude-agents"]);
+            expect(f.requests).toHaveLength(1);
+            // The run took 1 s: the next one waits ten times that from its end, not the 4 s minimum.
+            f.advance(1000);
+            f.reply(1);
+            expect(f.changes()).toBe(1);
+            f.advance(9999);
+            expect(f.requests).toHaveLength(1);
+            f.advance(1);
+            expect(f.requests).toHaveLength(2);
+            expect(f.requests[1].index?.sort()).toEqual(["claude-agents", "grok"]);
+            // A cheap run: the pause is the 4 s floor.
+            f.advance(10);
+            f.reply(2);
+            f.reader.request([]);
+            f.advance(3999);
+            expect(f.requests).toHaveLength(2);
+            f.advance(1);
+            expect(f.requests[2]).toEqual({ id: 3 });
+            // A quick run that burned 400 ms of CPU: twenty times that, so a busy stream stays under 5% of a core.
+            f.spendCpu(400);
+            f.advance(50);
+            f.reply(3);
+            f.reader.request(["claude"]);
+            f.advance(7999);
+            expect(f.requests).toHaveLength(3);
+            f.advance(1);
+            expect(f.requests).toHaveLength(4);
+        } finally {
+            f.reader.stop();
+        }
+    });
+
+    test("an immediate request skips the pause, a plain refresh defers to a scheduled run, stop cancels it", () => {
+        const f = scheduled();
+        try {
+            f.reader.refresh();
+            expect(f.requests).toEqual([{ id: 1 }]);
+            f.reader.request(["all"], { immediate: true });
+            f.advance(5000);
+            f.reply(1);
+            f.advance(250);
+            expect(f.requests[1]).toEqual({ id: 2, index: ["all"] });
+            f.advance(100);
+            f.reply(2);
+            f.reader.request(["claude"]);
+            f.advance(20_000);
+            f.reader.refresh();
+            expect(f.requests).toHaveLength(3);
+            f.advance(100);
+            f.reply(3);
+            f.reader.request(["codex"]);
+            f.reader.refresh();
+            expect(f.requests).toHaveLength(3);
+            f.reader.stop();
+            f.advance(60_000);
+            expect(f.requests).toHaveLength(3);
+        } finally {
+            f.reader.stop();
+        }
+    });
+
+    test("a changed file names the index scope it can affect; a listed lead's sub-agent asks for a read only", () => {
+        const roots = {
+            claude: ["/fixture/claude/projects"],
+            codex: ["/fixture/codex/sessions"],
+            grok: ["/fixture/grok/sessions"],
+        };
+        const change = (path: string, listed = false) =>
+            widgetRosterChange({ path, roots, listedParent: (id) => listed && id === "lead-session" });
+        expect(change("/fixture/claude/projects/-fixture-project/lead-session.jsonl")).toBe("claude");
+        expect(change("/fixture/claude/projects/-fixture-project/lead-session/subagents/agent-a1.jsonl", true)).toBe(
+            "read"
+        );
+        expect(
+            change("/fixture/claude/projects/-fixture-project/lead-session/subagents/agent-a1.meta.json", true)
+        ).toBe("read");
+        expect(change("/fixture/claude/projects/-fixture-project/old-lead/subagents/agent-a1.jsonl")).toBe(
+            "claude-agents"
+        );
+        expect(change("/fixture/claude/projects/-fixture-project/lead-session/tool-results/out.txt")).toBeUndefined();
+        expect(change("/fixture/claude/projects/-fixture-project/memory.md")).toBeUndefined();
+        expect(change("/fixture/codex/sessions/2026/10/10/rollout-fixture.jsonl")).toBe("codex");
+        expect(change("/fixture/grok/sessions/%2Ffixture/session-1/chat_history.jsonl")).toBe("grok");
+        expect(change("/fixture/grok/sessions/%2Ffixture/session-1/chat_history.jsonl.lock")).toBeUndefined();
+        expect(change("/fixture/elsewhere/file.jsonl")).toBeUndefined();
+    });
+
+    test("session-root events reach the roster as one scoped request; shutdown closes every root watcher", async () => {
+        const directory = await root();
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {
+            const sessionRoots = {
+                claude: [join(directory, "claude")],
+                codex: [join(directory, "codex")],
+                grok: [join(directory, "absent-grok")],
+            };
+            await mkdir(sessionRoots.claude[0], { recursive: true });
+            await mkdir(sessionRoots.codex[0], { recursive: true });
+            const watched: {
+                directory: string;
+                callback: (events: { type: "update"; path: string }[]) => void | Promise<void>;
+                closed: boolean;
+                filter?: (event: { type: "update"; path: string }) => boolean;
+            }[] = [];
+            const requests: { scopes: string[]; immediate?: boolean; read?: boolean }[] = [];
+            const request = spyOn(WidgetRosterReader.prototype, "request").mockImplementation((scopes, options) => {
+                requests.push({ scopes: [...scopes].sort(), immediate: options?.immediate, read: options?.read });
+            });
+            const refresh = spyOn(WidgetRosterReader.prototype, "refresh").mockImplementation(() => {});
+            const controller = new AbortController();
+            let ready!: () => void;
+            const started = new Promise<void>((resolve) => {
+                ready = resolve;
+            });
+            const worker = watchWidget({
+                root: directory,
+                signal: controller.signal,
+                emit: () => ready(),
+                dependencies: {
+                    inboxPaths: {
+                        answerLog: join(directory, "question/log"),
+                        database: join(directory, "question/qa.db"),
+                        decisions: join(directory, "question/decisions.jsonl"),
+                    },
+                    watchInbox: async () => ({ active: true, errorCount: 0, unsubscribe: async () => {} }),
+                    sessionRoots,
+                    watchSessions: async (path, callback, options) => {
+                        const entry = { directory: path, callback, closed: false, filter: options?.filter };
+                        watched.push(entry);
+                        return {
+                            active: true,
+                            errorCount: 0,
+                            unsubscribe: async () => {
+                                entry.closed = true;
+                            },
+                        };
+                    },
+                    dispatcher: {
+                        validate: async () => {},
+                        dispatch: async () => ({ delivered: true, channel: "fixture" }),
+                    },
+                },
+            });
+            try {
+                await withTimeout(started, 5000);
+                expect(watched.map((entry) => entry.directory)).toEqual([
+                    sessionRoots.claude[0],
+                    sessionRoots.codex[0],
+                ]);
+                expect(requests).toEqual([{ scopes: ["all"], immediate: true, read: undefined }]);
+                const claudeFile = join(sessionRoots.claude[0], "-fixture-project", "fixture-session.jsonl");
+                expect(watched[0].filter?.({ type: "update", path: claudeFile })).toBe(true);
+                expect(watched[0].filter?.({ type: "update", path: join(sessionRoots.claude[0], "notes.txt") })).toBe(
+                    false
+                );
+                await watched[0].callback([
+                    { type: "update", path: claudeFile },
+                    { type: "update", path: join(sessionRoots.claude[0], "-fixture-project", "other.jsonl") },
+                ]);
+                await watched[1].callback([
+                    { type: "update", path: join(sessionRoots.codex[0], "2026", "rollout-fixture.jsonl") },
+                    { type: "update", path: join(sessionRoots.codex[0], "2026", "notes.jsonl") },
+                ]);
+                // A sub-agent of a lead the roster does not list needs the sub-agent listing, not just a read.
+                await watched[0].callback([
+                    {
+                        type: "update",
+                        path: join(
+                            sessionRoots.claude[0],
+                            "-fixture-project",
+                            "old-lead",
+                            "subagents",
+                            "agent-a.jsonl"
+                        ),
+                    },
+                ]);
+                expect(requests.slice(1)).toEqual([
+                    { scopes: ["claude"], immediate: undefined, read: false },
+                    { scopes: ["codex"], immediate: undefined, read: false },
+                    { scopes: ["claude-agents"], immediate: undefined, read: false },
+                ]);
+            } finally {
+                controller.abort();
+                await withTimeout(worker, 5000);
+                request.mockRestore();
+                refresh.mockRestore();
+            }
+            expect(watched.every((entry) => entry.closed)).toBe(true);
+        });
+    });
+
+    test("a one-shot snapshot reads the watch's fresh roster and falls back to the index when it is stale", async () => {
+        const directory = await root();
+        const agents = { generatedAt: "fixture", parents: [], orphans: [] };
+        const rows = [
+            {
+                provider: "claude" as const,
+                sessionId: "fixture-session",
+                title: "Invented fixture session",
+                cwd: "/fixture/project",
+                cwdShort: "/fixture/project",
+                project: "fixture",
+                mtime: 1_791_000_000_000,
+                model: null,
+                account: null,
+                filePath: "/fixture/project/fixture-session.jsonl",
+            },
+        ];
+        await writeWidgetRosterCache({ root: directory, roster: { rows, agents }, now: 1000 });
+        expect(await readWidgetRosterCache({ root: directory, now: 1000 + 90_000, alive: () => true })).toEqual({
+            rows,
+            agents,
+        });
+        expect(await readWidgetRosterCache({ root: directory, now: 1000 + 90_001, alive: () => true })).toBeUndefined();
+        expect(await readWidgetRosterCache({ root: directory, now: 2000, alive: () => false })).toBeUndefined();
+        await writeFile(join(directory, "roster-cache.json"), '{"version":2}');
+        expect(await readWidgetRosterCache({ root: directory, now: 2000, alive: () => true })).toBeUndefined();
+
+        // Parity: the cached roster renders exactly what the same roster read from its source renders.
+        const base = {
+            decisions: () => [],
+            forms: () => [],
+            answers: () => [],
+        };
+        const fromCache = await widgetSnapshot({
+            root: directory,
+            sources: { ...base, sessions: async () => rows, agents: async () => agents },
+        });
+        await writeWidgetRosterCache({ root: directory, roster: { rows, agents } });
+        const cached = await readWidgetRosterCache({ root: directory });
+        expect(cached).toEqual({ rows, agents });
+        const fromFile = await widgetSnapshot({
+            root: directory,
+            sources: {
+                ...base,
+                sessions: async () => cached?.rows ?? [],
+                agents: async () => cached?.agents ?? agents,
+            },
+        });
+        expect(SafeJSON.stringify(fromFile, { strict: true })).toBe(SafeJSON.stringify(fromCache, { strict: true }));
+        expect(fromFile.sessions.map((session) => session.key)).toHaveLength(1);
     });
 });
 

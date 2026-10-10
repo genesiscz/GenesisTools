@@ -1,6 +1,7 @@
 import { realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { concurrentMap } from "@genesiscz/utils/async";
+import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { sourceFingerprint } from "./fingerprint";
 import { historySourceKey } from "./identity";
@@ -29,6 +30,28 @@ class MetadataSnapshotChanged extends Error {
     constructor() {
         super("Source changed before metadata commit");
     }
+}
+
+const IDENTITY_CONFLICT = "Multiple live files claim one native session identity";
+
+class IdentityConflict extends Error {
+    constructor(readonly holder: string) {
+        super(IDENTITY_CONFLICT);
+    }
+}
+
+/**
+ * Sources whose metadata names a native identity another live file already holds, by provider and path, with the
+ * fingerprint they had then. Such a source gets no row, so every sync used to read it again only to fail the same
+ * way, and its persisted issue kept every listing off the unchanged fast path (a forked 2.4 MB Codex rollout was
+ * parsed by every refresh, 1.5 to 4 s each under load, 2026-10-10). While the source keeps that fingerprint and the
+ * holder still exists, the conflict is reported again without a read. In-process: a resident caller pays it once.
+ */
+const identityConflicts = new Map<string, { revision: string; holder: string }>();
+const IDENTITY_CONFLICT_LIMIT = 1000;
+
+function conflictKey(providerId: string, filePath: string): string {
+    return `${providerId}\u0000${filePath}`;
 }
 
 function canonicalRoot(path: string): string {
@@ -140,15 +163,37 @@ export async function synchronizeHistory(options: {
             sourcesUnder(resolve(issue.path))
     );
     const status = repository.status(providerId);
+    const observedByPath = new Map(observed.sources.map((source) => [source.filePath, source]));
+    const knownConflict = (source: NativeSessionSource<string> | undefined): boolean => {
+        const conflict = source ? identityConflicts.get(conflictKey(providerId, source.filePath)) : undefined;
+        if (!source || !conflict || options.rebuild || observedCounts.get(source.filePath) !== 1) {
+            return false;
+        }
+
+        try {
+            return (
+                conflict.revision === sourceFingerprint({ source, parserVersion: reader.parserVersion }) &&
+                sourceExists(conflict.holder)
+            );
+        } catch (error) {
+            logger.debug({ error, path: source.filePath }, "[history] conflict source unreadable; it is read again");
+            return false;
+        }
+    };
     const unchangedSnapshot =
         !options.rebuild &&
         !needsPrune &&
         !hasIssues &&
-        status.issues.length === 0 &&
+        status.issues.every(
+            (issue) => issue.message === IDENTITY_CONFLICT && knownConflict(observedByPath.get(issue.path))
+        ) &&
         observed.completeRoots.every((root) => observedRoots.has(root)) &&
         selected.every((source) => {
             signal?.throwIfAborted();
             const previous = cachedByPath.get(source.filePath);
+            if (previous === undefined && knownConflict(source)) {
+                return true;
+            }
 
             if (source.kind !== reader.kind || previous?.length !== 1 || observedCounts.get(source.filePath) !== 1) {
                 return false;
@@ -240,6 +285,11 @@ export async function synchronizeHistory(options: {
             previous?.metadataRevision === sourceFingerprint({ source, parserVersion: reader.parserVersion })
         ) {
             unchanged++;
+            return null;
+        }
+
+        if (!readAttempts && !previous && knownConflict(source)) {
+            issues.push({ path: source.filePath, message: IDENTITY_CONFLICT });
             return null;
         }
 
@@ -356,7 +406,7 @@ export async function synchronizeHistory(options: {
                         target.filePath !== current.source.filePath &&
                         (currentPaths.has(target.filePath) || sourceExists(target.filePath))
                     ) {
-                        throw new Error("Multiple live files claim one native session identity");
+                        throw new IdentityConflict(target.filePath);
                     }
 
                     const previous = current.previous
@@ -408,6 +458,20 @@ export async function synchronizeHistory(options: {
                     }
 
                     continue;
+                }
+
+                if (error instanceof IdentityConflict) {
+                    identityConflicts.delete(conflictKey(providerId, current.source.filePath));
+                    identityConflicts.set(conflictKey(providerId, current.source.filePath), {
+                        revision: current.revision,
+                        holder: error.holder,
+                    });
+                    if (identityConflicts.size > IDENTITY_CONFLICT_LIMIT) {
+                        const oldest = identityConflicts.keys().next().value;
+                        if (oldest !== undefined) {
+                            identityConflicts.delete(oldest);
+                        }
+                    }
                 }
 
                 issues.push({
