@@ -1,11 +1,12 @@
 import { stat } from "node:fs/promises";
-import { basename, dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { boundHistoryText, HISTORY_METADATA_LIMITS } from "@genesiscz/utils/agent-sessions/metadata";
 import { flattenToolInput } from "@genesiscz/utils/agent-sessions/native-content";
 import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/source-scan";
 import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import type {
     BoundedMetadataField,
@@ -36,10 +37,11 @@ interface GrokSummary {
     createdAt: string | null;
     updatedAt: string | null;
     /**
-     * `last_active_at` is the last real turn. `updated_at` is not: a Grok CLI that still
-     * holds the session open rewrites the summary (recap, title, counters) with no user
+     * `last_active_at` is the last real turn more often than `updated_at`: a Grok CLI that
+     * still holds the session open rewrites the summary (recap, title, counters) with no user
      * turn at all, which made the monitor restart the prompt-cache clock and post a
-     * "went cold" card for a session nobody had touched since the day before.
+     * "went cold" card for a session nobody had touched since the day before. It is not
+     * always a turn either; `capAtLastTurn` handles the stamp Grok writes with no turn.
      */
     lastActiveAt: string | null;
     /** `summary.json` `session_kind`. `"subagent"` is a delegated Grok Build worker. */
@@ -519,6 +521,51 @@ async function readSummary(
     };
 }
 
+/**
+ * Files a Grok session writes only when a model turn runs. Measured on 2026-10-10 over 48 sessions
+ * with real turns: `last_active_at` was at most 3 ms later than the newer of the two.
+ */
+const GROK_TURN_FILES = ["updates.jsonl", "events.jsonl"];
+/** A stamp this far past the last turn write is housekeeping, not a turn. */
+const HOUSEKEEPING_SLACK_MS = 60_000;
+
+/** Newest write of the turn files beside `chatPath`, or null when there are none. Two stats. */
+async function lastTurnWriteMs(chatPath: string): Promise<number | null> {
+    const directory = dirname(chatPath);
+    const stamps = await Promise.all(
+        GROK_TURN_FILES.map(async (name) => {
+            const path = join(directory, name);
+            try {
+                return (await stat(path)).mtimeMs;
+            } catch (err) {
+                logger.debug({ err, path }, "[grok] turn file unreadable; the summary stamp stands");
+                return null;
+            }
+        })
+    );
+    const known = stamps.filter((stamp): stamp is number => stamp !== null);
+    return known.length > 0 ? Math.max(...known) : null;
+}
+
+/**
+ * Grok also moves `last_active_at` with no turn: an open CLI appends `system_reminder` records
+ * (skill and MCP announcements) to every idle session of the folder it runs in and stamps each one
+ * active. On 2026-10-10 that put five idle sessions back on a warm prompt-cache clock, 80 minutes
+ * to 29 hours after their last turn, and the monitor counted each one down to "Session went
+ * cold". The turn files do not move for those records, so they bound the stamp.
+ */
+function capAtLastTurn(lastTimestamp: string | null, turnWriteMs: number | null): string | null {
+    if (lastTimestamp === null || turnWriteMs === null) {
+        return lastTimestamp;
+    }
+
+    if (Date.parse(lastTimestamp) - turnWriteMs <= HOUSEKEEPING_SLACK_MS) {
+        return lastTimestamp;
+    }
+
+    return new Date(turnWriteMs).toISOString();
+}
+
 function pushBounded(fields: BoundedMetadataField[], field: BoundedMetadataField, condition: boolean): void {
     if (condition && !fields.includes(field)) {
         fields.push(field);
@@ -587,6 +634,8 @@ async function readGrokMetadataUncounted(
             userBounded ||= text.length > remaining;
         }
     }
+
+    lastTimestamp = capAtLastTurn(lastTimestamp, await lastTurnWriteMs(chatPath));
 
     if (validRecords === 0 && issues.length > 0) {
         return { metadata: null, issues, complete: false };
