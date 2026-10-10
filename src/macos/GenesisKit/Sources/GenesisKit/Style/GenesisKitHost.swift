@@ -21,6 +21,9 @@ public protocol GenesisKitHost: AnyObject {
     /// The transcript's markdown (replies, prompt parts) in the app's own renderer; nil draws inline
     /// markdown in one `Text`.
     func transcriptMarkdown(_ text: String, style: TranscriptMarkdownStyle) -> AnyView?
+    /// What a NEW process of this app reads for `kind`. macOS caches Input Monitoring and Screen Recording per
+    /// process, so a grant given while this one runs shows only in a new one. nil when the app has no probe.
+    func freshPermissionStatus(_ kind: PermissionKind) async -> PermissionStatus?
 }
 
 public extension GenesisKitHost {
@@ -30,6 +33,7 @@ public extension GenesisKitHost {
     func findText(_ text: String, field: String) -> AnyView? { nil }
     var perf: PerfConfiguration { .fallback }
     func transcriptMarkdown(_ text: String, style: TranscriptMarkdownStyle) -> AnyView? { nil }
+    func freshPermissionStatus(_ kind: PermissionKind) async -> PermissionStatus? { nil }
 }
 
 public enum GenesisKit {

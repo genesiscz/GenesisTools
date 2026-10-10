@@ -75,6 +75,8 @@ public final class ActivityRecorder: ObservableObject {
 
     private let store: ActivityStore
     private let counter = InputCounter()
+    /// Where a missing Accessibility grant goes: the GenesisKit permission dialog, once per process after "Not now".
+    var permissionPresenter: @MainActor (PermissionNeed) -> Void = { PermissionCenter.shared.require($0) }
     private var settings: FocusSettings
     private var segmentId: Int64?
     /// Segments whose close failed (SQLite busy, a write error), with the end they should get. Retried on every
@@ -182,7 +184,7 @@ public final class ActivityRecorder: ObservableObject {
         if pausedUntil == nil { closeOpenGap(only: ["capture_off", "app_not_running"]) }
         guard liveServices else { return }
         // A pause restored by closeDowntime keeps input uncounted; resumeIfPauseExpired starts the counter.
-        if pausedUntil == nil { _ = counter.start() }
+        if pausedUntil == nil { startCounter() }
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(appActivated(_:)),
             name: NSWorkspace.didActivateApplicationNotification, object: nil)
@@ -272,12 +274,31 @@ public final class ActivityRecorder: ObservableObject {
         }
     }
 
+    /// Counting key presses and clicks needs Accessibility. A missing grant opens the permission dialog (an
+    /// automatic one: capture starts by itself) instead of leaving the counts silently empty.
+    private func startCounter() {
+        if counter.start() { return }
+        guard !PermissionAccess.live.isGranted(.accessibility) else {
+            FlowFocusLog.focus.error("input counter tap could not start although Accessibility is granted")
+            return
+        }
+
+        permissionPresenter(PermissionNeed(
+            .accessibility,
+            reason: "Focus counts key presses and clicks to measure how active you are. It never records what you type.",
+            trigger: .automatic,
+            onGranted: { [weak self] in
+                guard let self, self.isCapturing, self.liveServices, self.pausedUntil == nil else { return }
+                self.startCounter()
+            }))
+    }
+
     public func resumeCapture() {
         if let remoteCommand { remoteCommand("focus.capture.resume", Data()); return }
         pausedUntil = nil
         closeOpenGap(only: ["capture_paused"])
         guard isCapturing, liveServices else { return }
-        _ = counter.start()
+        startCounter()
         tick()
     }
 
@@ -290,7 +311,7 @@ public final class ActivityRecorder: ObservableObject {
         if now < until { return false }
         pausedUntil = nil
         closeOpenGap(only: ["capture_paused"])
-        if isCapturing, liveServices { _ = counter.start() }
+        if isCapturing, liveServices { startCounter() }
         return true
     }
 
@@ -416,7 +437,7 @@ public final class ActivityRecorder: ObservableObject {
         }
         let hadGap = openGapId != nil
         closeOpenGap()
-        if hadGap, isCapturing, liveServices, pausedUntil == nil { _ = counter.start() }
+        if hadGap, isCapturing, liveServices, pausedUntil == nil { startCounter() }
         let parts = settings.urlParts(probe.url)
         let cmux = CmuxAttribution.parse(title: probe.title, bundle: bundle)
         let project = settings.project(cmuxSession: cmux.session, title: probe.title,

@@ -184,8 +184,8 @@ private struct FlowSettingsPane: View {
                     .disabled(session.isRequestingPermissions)
                     .accessibilityIdentifier("flow-review-permissions")
                     HStack(spacing: GenSpacing.md) {
-                        Button("Microphone settings") { openPrivacy("Privacy_Microphone") }
-                        Button("Speech Recognition settings") { openPrivacy("Privacy_SpeechRecognition") }
+                        Button("Microphone settings") { PermissionAccess.live.openSettings(.microphone) }
+                        Button("Speech Recognition settings") { PermissionAccess.live.openSettings(.speechRecognition) }
                     }
                     .buttonStyle(.genHoverPlain())
                     .font(GenTypography.caption(11))
@@ -256,11 +256,6 @@ private struct FlowSettingsPane: View {
             .padding(GenSpacing.xl)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    private func openPrivacy(_ pane: String) {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") else { return }
-        NSWorkspace.shared.open(url)
     }
 
     /// Writes go through `FlowSession.config`, whose `didSet` persists once per

@@ -425,14 +425,14 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
                       prompt: @escaping () async throws -> VoiceMicrophonePermission = { XCTFail("unexpected permission request"); return .denied },
                       activate: @escaping () -> Void = {},
                       acquire: @escaping () async throws -> any VoiceRecordingLease = { FixtureVoiceLease() },
-                      openSettings: @escaping () -> Void = {},
+                      presentPermission: @escaping @MainActor (PermissionNeed) -> Void = { _ in },
                       recipients: [WidgetSession]? = nil, finish: @escaping () -> Void = {},
                       launcher: String = "/fixture/Preview.app/Contents/MacOS/launcher") -> WidgetVoiceNotesStore {
         WidgetVoiceNotesStore(micLauncher: launcher, request: request,
             execute: execute, finishCapture: finish, cancelCommand: {}, acquireAudio: acquire,
             settings: { WidgetVoiceNoteSettings(provider: "fixture", model: "test-model", language: "en") },
             sessions: { recipients ?? [self.recipient] }, attachDraft: attach, readMicrophonePermission: permission,
-            requestMicrophonePermission: prompt, activateForMicrophone: activate, openMicrophoneSettings: openSettings)
+            requestMicrophonePermission: prompt, activateForMicrophone: activate, presentMicrophonePermission: presentPermission)
     }
 
     func testOpeningVoiceNotesDoesNotBuildHundredsOfRecipientMenuItems() async throws {
@@ -476,23 +476,23 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
     func testKnownDeniedAndRestrictedPermissionsNeverAcquireAudioOrSpawn() async throws {
         for state in [VoiceMicrophonePermission.denied, .restricted] {
             var activated = 0
-            var settingsOpened = 0
+            var dialogs: [PermissionKind] = []
             let store = make(request: { _ in try self.data(["revision": 0, "notes": [], "statePath": "/fixture/widget/voice-notes/notes.json"]) },
                 execute: { _, _, _ in XCTFail("must not spawn capture"); throw CancellationError() },
                 permission: { state }, activate: { activated += 1 },
                 acquire: { XCTFail("must not acquire microphone lease"); return FixtureVoiceLease() },
-                openSettings: { settingsOpened += 1 })
+                presentPermission: { dialogs.append($0.kind) })
             XCTAssertEqual(activated, 0)
-            XCTAssertEqual(settingsOpened, 0)
+            XCTAssertEqual(dialogs, [])
             store.record()
             await store.waitForOperation()
             await store.waitForRefresh()
             XCTAssertEqual(store.microphonePermission, state)
-            XCTAssertTrue(store.presentsMicrophoneAlert)
+            XCTAssertEqual(dialogs, [.microphone], "one permission dialog, not an alert inside the widget")
             XCTAssertNotNil(store.microphonePermission.guidance)
             XCTAssertEqual(activated, 1)
-            store.openMicrophoneSettings()
-            XCTAssertEqual(settingsOpened, 1)
+            store.reviewMicrophoneAccess()
+            XCTAssertEqual(dialogs, [.microphone, .microphone])
             store.stop()
         }
     }
@@ -526,14 +526,16 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
 
     func testDecliningFirstUseRemainsVisibleAndDoesNotStartCapture() async throws {
         var permission = VoiceMicrophonePermission.notDetermined
+        var dialogs: [PermissionKind] = []
         let store = make(request: { _ in try self.data(["revision": 0, "notes": [], "statePath": "/fixture/widget/voice-notes/notes.json"]) },
             permission: { permission }, prompt: { permission = .denied; return permission },
-            acquire: { XCTFail("declined permission must not acquire capture"); return FixtureVoiceLease() })
+            acquire: { XCTFail("declined permission must not acquire capture"); return FixtureVoiceLease() },
+            presentPermission: { dialogs.append($0.kind) })
         store.record()
         await store.waitForOperation()
         await store.waitForRefresh()
         XCTAssertEqual(store.microphonePermission, .denied)
-        XCTAssertTrue(store.presentsMicrophoneAlert)
+        XCTAssertEqual(dialogs, [.microphone])
         XCTAssertTrue(store.microphoneGuidance?.contains("Microphone") == true)
         permission = .authorized
         store.refreshMicrophonePermission()
@@ -543,13 +545,15 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
 
     func testPromptStillOpenWhenTheWaitEndsIsNotADenialAndAllowingItClearsTheMessage() async throws {
         var permission = VoiceMicrophonePermission.notDetermined
+        var dialogs: [PermissionKind] = []
         let store = make(request: { _ in try self.data(["revision": 0, "notes": [], "statePath": "/fixture/widget/voice-notes/notes.json"]) },
             permission: { permission }, prompt: { .notDetermined },
-            acquire: { XCTFail("an unanswered prompt must not acquire capture"); return FixtureVoiceLease() })
+            acquire: { XCTFail("an unanswered prompt must not acquire capture"); return FixtureVoiceLease() },
+            presentPermission: { dialogs.append($0.kind) })
         store.record()
         await store.waitForOperation()
         await store.waitForRefresh()
-        XCTAssertFalse(store.presentsMicrophoneAlert, "the user has not denied anything")
+        XCTAssertEqual(dialogs, [], "the user has not denied anything")
         XCTAssertEqual(store.microphonePermission, .notDetermined)
         XCTAssertEqual(store.error, VoiceCommandFailure.microphonePromptOpen.errorDescription)
         permission = .authorized
@@ -559,17 +563,20 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
         store.stop()
     }
 
-    func testDenialAlertClosesWhenAccessIsGrantedLater() async throws {
+    func testDenialDialogReportsTheGrantAndTheStoreDropsItsGuidanceWhenAccessIsGrantedLater() async throws {
         var permission = VoiceMicrophonePermission.denied
+        var needs: [PermissionNeed] = []
         let store = make(request: { _ in try self.data(["revision": 0, "notes": [], "statePath": "/fixture/widget/voice-notes/notes.json"]) },
-            permission: { permission }, acquire: { XCTFail("a denied microphone must not acquire capture"); return FixtureVoiceLease() })
+            permission: { permission }, acquire: { XCTFail("a denied microphone must not acquire capture"); return FixtureVoiceLease() },
+            presentPermission: { needs.append($0) })
         store.record()
         await store.waitForOperation()
         await store.waitForRefresh()
-        XCTAssertTrue(store.presentsMicrophoneAlert)
+        XCTAssertEqual(needs.map(\.kind), [.microphone])
+        XCTAssertNotNil(store.microphoneGuidance)
         permission = .authorized
-        store.refreshMicrophonePermission()
-        XCTAssertFalse(store.presentsMicrophoneAlert, "the alert describes a state that no longer holds")
+        needs.first?.onGranted?()
+        XCTAssertNil(store.microphoneGuidance, "the guidance describes a state that no longer holds")
         store.stop()
     }
 
@@ -594,11 +601,12 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
     func testSyntheticCaptureBypassesMicrophonePermissionAndNoAudioDoesNotClaimDenial() async throws {
         let store = make(request: { _ in try self.data(["revision": 0, "notes": [], "statePath": "/fixture/widget/voice-notes/notes.json"]) },
             execute: { _, lease, _ in try await lease?.release(); throw VoiceCommandFailure.noAudio },
-            permission: { .authorized }, activate: { XCTFail("no permission UI for fixture") })
+            permission: { .authorized }, activate: { XCTFail("no permission UI for fixture") },
+            presentPermission: { _ in XCTFail("no permission dialog for fixture input") })
         store.record(input: "/fixture/synthetic.pcm")
         await store.waitForOperation()
         XCTAssertEqual(store.microphonePermission, .authorized)
-        XCTAssertFalse(store.presentsMicrophoneAlert)
+
         XCTAssertTrue(store.error?.contains("No audio") == true)
         store.stop()
     }

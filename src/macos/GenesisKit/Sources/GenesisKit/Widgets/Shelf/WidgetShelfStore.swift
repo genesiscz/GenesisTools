@@ -66,6 +66,9 @@ public final class WidgetShelfStore: ObservableObject {
     private let onCaptureStaged: () -> Void
     private let onDialogVisibilityChanged: (Bool) -> Void
     private let screenCaptureAccess: () -> Bool
+    /// Screen Recording for a capture: true when the screenshot may run, otherwise the permission dialog is up.
+    private let permissionGate: @MainActor (PermissionNeed) async -> Bool
+    private var checkingCaptureAccess = false
     private var visibleModules: Set<String> = []
     private var watcher: DirectoryWatcher?
     private var statePath: String?
@@ -86,7 +89,8 @@ public final class WidgetShelfStore: ObservableObject {
         onDialogVisibilityChanged: @escaping (Bool) -> Void = { _ in },
         attachToDraft: ((WidgetShelfItem, WidgetSession) async throws -> Void)? = nil
     ) {
-        screenCaptureAccess = { CGPreflightScreenCaptureAccess() }
+        screenCaptureAccess = { PermissionAccess.live.isGranted(.screenRecording) }
+        permissionGate = { await PermissionCenter.shared.ensure($0) }
         let bridge = ToolsBridge(binaryPath: binaryPath)
         self.request = { arguments, timeout in
             var prefix = ["widget"]
@@ -110,6 +114,7 @@ public final class WidgetShelfStore: ObservableObject {
     init(
         request: @escaping ([String], Int) async throws -> Data,
         screenCaptureAccess: @escaping () -> Bool = { true },
+        permissionGate: @escaping @MainActor (PermissionNeed) async -> Bool = { _ in true },
         recipients: @escaping () -> [WidgetSession] = { [] },
         didAttach: @escaping (WidgetSession) -> Void = { _ in },
         onCaptureWillBegin: @escaping () -> Void = {},
@@ -119,6 +124,7 @@ public final class WidgetShelfStore: ObservableObject {
     ) {
         self.request = request
         self.screenCaptureAccess = screenCaptureAccess
+        self.permissionGate = permissionGate
         recipientSource = recipients
         self.didAttach = didAttach
         self.onCaptureWillBegin = onCaptureWillBegin
@@ -210,10 +216,40 @@ public final class WidgetShelfStore: ObservableObject {
     }
 
     public func capture() {
-        guard !stopped, !isBusy else { return }
+        guard !stopped, !isBusy, !checkingCaptureAccess else { return }
         let allowed = screenCaptureAccess()
         captureAccessGranted = allowed
         PerfLog.mark("widget.capture.preflight pid=\(ProcessInfo.processInfo.processIdentifier) screenRecording=\(allowed)")
+        guard !allowed else {
+            beginCapture(allowed: true)
+            return
+        }
+
+        // This process may hold an old answer, and the screenshot runs in a new process that reads the grant
+        // again: the gate asks one, and shows the permission dialog only when the grant is really missing.
+        checkingCaptureAccess = true
+        Task { [weak self] in
+            guard let self else { return }
+            let ready = await self.permissionGate(self.screenRecordingNeed)
+            self.checkingCaptureAccess = false
+            guard !self.stopped else { return }
+            if ready {
+                self.beginCapture(allowed: false)
+            } else {
+                self.notice = "Capture needs Screen Recording. The permission window shows how to allow it."
+            }
+        }
+    }
+
+    private var screenRecordingNeed: PermissionNeed {
+        PermissionNeed(
+            .screenRecording,
+            reason: "Capture takes a screenshot of the area you select and stages it in the widget.",
+            grantWorksInNewProcess: true,
+            onGranted: { [weak self] in self?.capture() })
+    }
+
+    private func beginCapture(allowed: Bool) {
         isCapturing = true
         onCaptureWillBegin()
         start(success: "Screenshot staged. Choose an inbox when you are ready.") {

@@ -80,21 +80,19 @@ public enum FlowInjectOutcome: Equatable {
 @MainActor
 public enum FlowInjector {
 
-    /// Is the app trusted for Accessibility right now? Does not prompt.
+    /// Is the app trusted for Accessibility right now? Does not prompt. The denial simulation applies.
     public static var isAccessibilityTrusted: Bool {
-        AXIsProcessTrusted()
+        PermissionAccess.live.isGranted(.accessibility)
     }
 
     /// Ask macOS to show the Accessibility prompt. Safe to call repeatedly;
     /// macOS only shows the dialog once per app version.
     public static func requestAccessibility() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
+        Task { _ = await PermissionAccess.live.request(.accessibility) }
     }
 
     public static func openAccessibilitySettings() {
-        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
-        NSWorkspace.shared.open(url)
+        PermissionAccess.live.openSettings(.accessibility)
     }
 
     /// Deliver `text` to `target`.

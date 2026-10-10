@@ -18,6 +18,16 @@ let arguments = suppliedArguments.isEmpty && NativePreview.enabled ? ["--widget"
 let firstArgument = arguments.first ?? ""
 let wantsWindow = arguments.isEmpty || firstArgument == "--window" || firstArgument.hasPrefix("-psn_")
 
+// GenesisTools --permission-status <kind> | --permission-dialog <kind>: the fresh-process grant probe and the
+// permission dialog for faces without a window (see PermissionFaces.swift). Before any face setup: neither needs it.
+if firstArgument == "--permission-status" {
+    runPermissionStatus(Array(arguments.dropFirst()))
+}
+
+if firstArgument == "--permission-dialog" {
+    runPermissionDialog(Array(arguments.dropFirst()))
+}
+
 // The widget and Clicky are in staging: the Preview bundles run them, and the normal app only after
 // `bun scripts/native/staging.ts on` on this machine (NativeStaging), so a normal install or `tools update` never does.
 if (firstArgument == "--widget" || firstArgument == "--clicky") && !NativeStaging.facesEnabled

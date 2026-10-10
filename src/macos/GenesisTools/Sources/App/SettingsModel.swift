@@ -66,10 +66,7 @@ final class SettingsModel: ObservableObject {
     }
 
     func openPrivacySettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy") else {
-            return
-        }
-
+        let url = PermissionKind.settingsURL(anchor: "Privacy")
         report(NSWorkspace.shared.open(url), what: "open System Settings > Privacy & Security")
     }
 

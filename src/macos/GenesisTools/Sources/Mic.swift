@@ -20,27 +20,33 @@ private func micUsage() -> Never {
     exit(64)
 }
 
+/// Through GenesisKit's permission module, so the denial simulation applies here too.
 private func requestMicrophoneAccess(timeoutSeconds: Double) -> Bool {
-    switch AVCaptureDevice.authorizationStatus(for: .audio) {
-    case .authorized:
+    switch PermissionAccess.live.status(.microphone) {
+    case .granted:
         return true
-    case .denied, .restricted:
-        return false
     case .notDetermined:
         let semaphore = DispatchSemaphore(value: 0)
-        var granted = false
-        AVCaptureDevice.requestAccess(for: .audio) { result in
-            granted = result
+        let answer = MicGrantAnswer()
+        Task.detached {
+            answer.set(await PermissionAccess.live.request(.microphone).isGranted)
             semaphore.signal()
         }
         if semaphore.wait(timeout: .now() + timeoutSeconds) == .timedOut {
             micLog("microphone permission prompt timed out after \(Int(timeoutSeconds)) s")
             return false
         }
-        return granted
-    @unknown default:
+        return answer.value
+    default:
         return false
     }
+}
+
+private final class MicGrantAnswer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var granted = false
+    var value: Bool { lock.withLock { granted } }
+    func set(_ value: Bool) { lock.withLock { granted = value } }
 }
 
 private func listInputDevices() -> Never {
@@ -80,6 +86,8 @@ func runMic(_ args: [String]) -> Never {
 
     guard requestMicrophoneAccess(timeoutSeconds: 30) else {
         micLog("microphone access denied for com.genesiscz.genesistools; grant it under System Settings > Privacy & Security > Microphone")
+        // This face has no window: the permission dialog face explains the grant and opens the Microphone pane.
+        launchPermissionDialog(.microphone, reason: "Voice input records from your microphone through GenesisTools.")
         exit(77)
     }
 
