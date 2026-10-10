@@ -193,6 +193,14 @@ public final class CompanionSpeechRecognizer: ObservableObject {
 
     public private(set) var lastHold: HoldReport?
 
+    /// Drops the finished hold's text; a hold in progress keeps its own. That includes a hold whose capture has
+    /// stopped but whose finish() still waits for the final result: it reads the accumulator after that wait.
+    func clearTranscript() {
+        guard !isActive, finishing == 0 else { return }
+        acc.reset()
+        if !partialText.isEmpty { partialText = "" }
+    }
+
     func applyRemote(partialText: String, micLevel: Double) {
         guard !isActive else { return }
         if self.partialText != partialText { self.partialText = partialText }
@@ -220,6 +228,14 @@ public final class CompanionSpeechRecognizer: ObservableObject {
     private var holdId = 0
     /// finish() waiting for the final result; woken by it, by a cancel, by its deadline or by task cancellation.
     private var finalWaiter: CheckedContinuation<Void, Never>?
+    /// True from the start of finish() until it returns; capture (`isActive`) ends earlier, before the final wait.
+    /// finish() calls still running. A count, not a flag: a cancelled hold's finish can still be returning while
+    /// the next hold's finish waits, and the older one must not end the newer one's protection.
+    private var finishing = 0
+    var finishCallsRunning: Int { finishing }
+    /// Which waitForFinal call `finalWaiter` belongs to: its deadline and cancellation wake only that one.
+    private var finalWaiterToken = 0
+    private var finalWaitCount = 0
     var currentHold: Int { holdId }
 
     /// A mic level belongs on the ring only while the hold that measured it is live.
@@ -353,6 +369,8 @@ public final class CompanionSpeechRecognizer: ObservableObject {
                 FlowFocusLog.speech.info("stt pre-roll spliced buffers=\(buffers.count)")
             }
         }
+        // The retry clip is built from the same audio, in the same order, as the streaming request.
+        capture.prepend(preRollBuffers)
         box.open(after: preRollBuffers)
 
         FlowFocusLog.speech.info("stt start locale=\(recognizer.locale.identifier) onDevice=\(self.onDevice) device=\(self.audioSource.deviceLabel) inputRate=\(Int(format.sampleRate)) ch=\(format.channelCount) sourceStartMs=\(sourceStartMs)")
@@ -367,6 +385,8 @@ public final class CompanionSpeechRecognizer: ObservableObject {
     /// the release drops it.
     public func finish(timeoutSeconds: Double = 3.0, tailMs: Int = 0) async -> String {
         guard isActive || request != nil else { return "" } // never started
+        finishing += 1
+        defer { finishing -= 1 }
         let hold = holdId
         let heldMs = Int(Date().timeIntervalSince(startedAt) * 1000)
         if tailMs > 0, isActive {
@@ -416,10 +436,12 @@ public final class CompanionSpeechRecognizer: ObservableObject {
     /// passes, or the calling task is cancelled. Event-driven: one deadline timer, no polling.
     func waitForFinal(timeoutSeconds: Double, hold: Int) async {
         guard recognizes, !finalized, hold == holdId else { return }
+        finalWaitCount &+= 1
+        let token = finalWaitCount
         let deadline = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(max(0, timeoutSeconds) * 1_000_000_000))
             guard !Task.isCancelled else { return }
-            self?.wakeFinalWaiter()
+            self?.wakeFinalWaiter(token: token)
         }
         defer { deadline.cancel() }
         await withTaskCancellationHandler {
@@ -430,18 +452,32 @@ public final class CompanionSpeechRecognizer: ObservableObject {
                 }
                 wakeFinalWaiter()
                 finalWaiter = continuation
+                finalWaiterToken = token
             }
         } onCancel: {
-            Task { @MainActor [weak self] in self?.wakeFinalWaiter() }
+            // Runs later, on the main actor: by then a cancel() and a new hold may have installed another
+            // waiter, which this must not end.
+            Task { @MainActor [weak self] in self?.wakeFinalWaiter(token: token) }
         }
     }
+
+    /// Puts recognized text in the current hold, as a recognition result would; tests have no recognizer.
+    func recordRecognizedForTesting(_ text: String) {
+        acc.update(text)
+        partialText = acc.text
+    }
+
+    /// The audio finish() would retry with, oldest first.
+    var retainedForRetry: [AVAudioPCMBuffer] { capture.retainedBuffers() }
 
     func markFinalized() {
         finalized = true
         wakeFinalWaiter()
     }
 
-    private func wakeFinalWaiter() {
+    /// `token`: wake only if the waiter is still that wait's own; nil wakes whichever is waiting.
+    private func wakeFinalWaiter(token: Int? = nil) {
+        if let token, token != finalWaiterToken { return }
         let waiter = finalWaiter
         finalWaiter = nil
         waiter?.resume()
@@ -605,6 +641,8 @@ public final class CompanionSpeechRecognizer: ObservableObject {
     // MARK: - Internals
 
     private func teardown() {
+        // The retained clip exists for finish()'s empty-result retry only; a cancelled or finished hold drops it.
+        capture.reset()
         task?.cancel()
         task = nil
         request = nil

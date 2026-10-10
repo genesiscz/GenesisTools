@@ -365,7 +365,7 @@ final class WidgetVisibilityTests: XCTestCase {
     private func waitFor(_ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(5)
         while !condition() && ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(50))
+            try await Task.sleep(for: .milliseconds(100))
         }
     }
 
@@ -520,7 +520,7 @@ final class WidgetJournalTests: XCTestCase {
         func waitFor(_ condition: () throws -> Bool) async throws {
             let deadline = ContinuousClock.now + .seconds(5)
             while try !condition() && ContinuousClock.now < deadline {
-                try await Task.sleep(for: .milliseconds(50))
+                try await Task.sleep(for: .milliseconds(100))
             }
         }
 
@@ -588,7 +588,7 @@ final class WidgetConnectionTests: XCTestCase {
     private func waitFor(_ condition: () throws -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(5)
         while try !condition() && ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(50))
+            try await Task.sleep(for: .milliseconds(100))
         }
     }
 
@@ -640,6 +640,12 @@ final class WidgetConnectionTests: XCTestCase {
         XCTAssertNotNil(model.snapshot, "the stale snapshot stays, so the view cannot rely on snapshot == nil")
         model.error = nil
         XCTAssertTrue(model.connectionLost, "dismissing the error keeps Reconnect")
+
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: fixture.directory.appendingPathComponent("tools").path)
+        model.start()
+        XCTAssertNotNil(model.error, "the tools binary can no longer launch")
+        XCTAssertTrue(model.connectionLost, "a reconnect that cannot launch keeps Reconnect beside the snapshot")
     }
 }
 

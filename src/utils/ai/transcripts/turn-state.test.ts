@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -280,9 +280,7 @@ describe("turnStartedAt", () => {
             )
         );
         expect(grok.turnStartedAt).toBe(T0 + 5000);
-        // The newest turn's whole prompt, across its chunks, tells same-second Grok turns apart.
-        expect(grok.turnPrompt).toBe("again please");
-        expect(codex.turnPrompt).toBeUndefined();
+        expect(codex.turnStartOffset).toBeUndefined();
         expect(
             codexTurnState(input([codexLine(2, "response_item", { type: "reasoning" })], 5)).turnStartedAt
         ).toBeNull();
@@ -304,5 +302,48 @@ describe("readTurnState", () => {
         expect(snap?.lastText).toBe("hi");
         expect(readTurnState("claude", empty, { stallTimeoutMs: 900_000 })).toBeNull();
         expect(readTurnState("claude", join(dir, "missing.jsonl"), { stallTimeoutMs: 900_000 })).toBeNull();
+    });
+
+    it("gives a Grok turn the byte offset its opening record starts at, so a repeated prompt in one second is told apart", () => {
+        const dir = mkdtempSync(join(tmpdir(), "turn-state-"));
+        const file = join(dir, "grok.jsonl");
+        const text = (value: string) => ({ content: { type: "text", text: value } });
+        // The same prompt twice in one whole second; a multi-byte reply in between shifts bytes from characters.
+        const first = [
+            grokLine(0, "user_message_chunk", text("continue")),
+            grokLine(0, "agent_message_chunk", text("ok — žluťoučký kůň")),
+            grokLine(0, "turn_completed", { stop_reason: "end_turn" }),
+        ]
+            .map((line) => `${SafeJSON.stringify(line)}\n`)
+            .join("");
+        writeFileSync(file, first);
+        const before = statSync(file).size;
+        const firstTurn = readTurnState("grok", file, { stallTimeoutMs: 900_000 });
+
+        appendFileSync(file, `${SafeJSON.stringify(grokLine(0, "user_message_chunk", text("continue")))}\n`);
+        const secondTurn = readTurnState("grok", file, { stallTimeoutMs: 900_000 });
+
+        expect(firstTurn?.turnStartOffset).toBe(0);
+        expect(secondTurn?.turnStartedAt).toBe(firstTurn?.turnStartedAt ?? -1);
+        expect(secondTurn?.turnStartOffset).toBe(before);
+    });
+
+    it("keeps a Grok turn's byte offset exact past a line that holds invalid UTF-8", () => {
+        const dir = mkdtempSync(join(tmpdir(), "turn-state-"));
+        const file = join(dir, "grok.jsonl");
+        const text = (value: string) => ({ content: { type: "text", text: value } });
+        const first = [
+            grokLine(0, "user_message_chunk", text("first")),
+            grokLine(0, "agent_message_chunk", text("ok")),
+            grokLine(0, "turn_completed", { stop_reason: "end_turn" }),
+        ]
+            .map((line) => `${SafeJSON.stringify(line)}\n`)
+            .join("");
+        writeFileSync(file, first);
+        // Two bytes that are not UTF-8: decoded, each becomes a three-byte replacement character.
+        appendFileSync(file, Buffer.from([0xff, 0xfe, 0x41, 0x0a]));
+        const before = statSync(file).size;
+        appendFileSync(file, `${SafeJSON.stringify(grokLine(1, "user_message_chunk", text("second")))}\n`);
+        expect(readTurnState("grok", file, { stallTimeoutMs: 900_000 })?.turnStartOffset).toBe(before);
     });
 });

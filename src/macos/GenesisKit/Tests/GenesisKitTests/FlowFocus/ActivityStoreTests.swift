@@ -228,6 +228,127 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertEqual(series.last?.segmentId, long, "input after the range stays with the segment's id")
     }
 
+    @MainActor
+    func testTheOwnerDeletesActivityOlderThanTheRetentionPeriod() throws {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let day: Int64 = 86_400_000
+        let old = try store.openSegment(segment(now - 40 * day, title: "old"))
+        try store.closeSegment(id: old, at: now - 40 * day + 60_000)
+        let recent = try store.openSegment(segment(now - day, title: "recent"))
+        try store.closeSegment(id: recent, at: now - day + 60_000)
+        let controller = FocusController()
+        controller.ownsRuntime = true
+        controller.configuration = FlowFocusConfiguration(directory: URL(fileURLWithPath: (path as NSString).deletingLastPathComponent))
+        controller.start(appConfig: ["focus": ["retentionDays": 30]], databasePath: path,
+                         liveServices: false, presentsWindows: false)
+        defer { controller.stop() }
+        XCTAssertEqual(try store.segments(from: 0, to: now + 1).map(\.windowTitle), ["recent"],
+                       "activity older than 30 days is deleted; the last day stays")
+
+        controller.apply(appConfig: ["focus": ["retentionDays": 1]])
+        // The recent segment crosses the new one-day cutoff: its part before the cutoff goes at once.
+        let trimmed = try store.segments(from: 0, to: now + 1)
+        XCTAssertEqual(trimmed.map(\.windowTitle), ["recent"])
+        XCTAssertGreaterThan(trimmed.first?.startedMs ?? 0, now - day, "shortening retention prunes at once")
+    }
+
+    @MainActor
+    func testAnOversizedRetentionFallsBackInsteadOfOverflowingTheCutoff() throws {
+        XCTAssertEqual(FocusSettings.from(appConfig: ["focus": ["retentionDays": 1_000_000_000_000]]).retentionDays, 365)
+        XCTAssertEqual(FocusSettings.from(appConfig: ["focus": ["retentionDays": 36_500]]).retentionDays, 36_500)
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let recent = try store.openSegment(segment(now - 86_400_000, title: "recent"))
+        try store.closeSegment(id: recent, at: now - 86_400_000 + 60_000)
+        let controller = FocusController()
+        controller.ownsRuntime = true
+        controller.configuration = FlowFocusConfiguration(directory: URL(fileURLWithPath: (path as NSString).deletingLastPathComponent))
+        // A valid JSON number this large used to trap in the cutoff multiplication at start.
+        controller.start(appConfig: ["focus": ["retentionDays": 1_000_000_000_000]], databasePath: path,
+                         liveServices: false, presentsWindows: false)
+        defer { controller.stop() }
+        XCTAssertEqual(try store.segments(from: 0, to: now + 1).map(\.windowTitle), ["recent"])
+    }
+
+    func testRetentionKeepsTheRecentPartOfASegmentOpenAcrossTheCutoff() throws {
+        let cutoff: Int64 = 100_000
+        let old = try store.openSegment(segment(10_000, title: "old"))
+        try store.closeSegment(id: old, at: 20_000)
+        try store.appendInput(bucketMs: 10_000, segmentId: old, counts: .init(keys: 1))
+        // The recorder still holds this window's segment; it started before the cutoff.
+        let open = try store.openSegment(segment(60_000, title: "open"))
+        try store.touchSegment(id: open, at: 150_000)
+        try store.appendInput(bucketMs: 60_000, segmentId: open, counts: .init(keys: 2))
+        try store.appendInput(bucketMs: 120_000, segmentId: open, counts: .init(keys: 5))
+        let crossing = try store.openSegment(segment(80_000, title: "crossing"))
+        try store.closeSegment(id: crossing, at: 130_000)
+
+        try store.prune(before: cutoff)
+        let rows = try store.segments(from: 0, to: 1_000_000)
+        XCTAssertEqual(Set(rows.compactMap(\.windowTitle)), ["open", "crossing"], "only what lies wholly before the cutoff goes")
+        XCTAssertTrue(rows.allSatisfy { $0.startedMs >= cutoff }, "nothing older than the cutoff stays")
+        XCTAssertEqual(rows.first { $0.id == open }?.endedMs, 150_000)
+        XCTAssertEqual(try store.openSegments().map(\.id), [open], "the recorder's segment keeps its id and stays open")
+        XCTAssertEqual(try store.inputSeries(from: 0, to: 1_000_000).map(\.bucketMs), [120_000],
+                       "input after the cutoff stays with it; input before goes")
+        try store.touchSegment(id: open, at: 160_000)
+        XCTAssertEqual(try store.segments(from: 0, to: 1_000_000).first { $0.id == open }?.endedMs, 160_000)
+    }
+
+    func testRetentionTrimsFinishedSessionsAndPausesButLeavesTheRunningTimer() throws {
+        let cutoff: Int64 = 100_000
+        func session(_ start: Int64) throws -> Int64 {
+            try store.startSession(.init(kind: "flow", plannedSec: 60, startedMs: start, state: "running", cycleIndex: 0))
+        }
+        let old = try session(10_000)
+        _ = try store.recordPause(sessionId: old, startedMs: 15_000, endedMs: 16_000, reason: .manual)
+        try store.endSession(id: old, at: 20_000, state: .done)
+        let crossing = try session(80_000)
+        _ = try store.recordPause(sessionId: crossing, startedMs: 82_000, endedMs: 85_000, reason: .manual)
+        _ = try store.recordPause(sessionId: crossing, startedMs: 90_000, endedMs: 120_000, reason: .idle)
+        try store.endSession(id: crossing, at: 130_000, state: .done)
+        let running = try session(50_000)
+        _ = try store.recordPause(sessionId: running, startedMs: 60_000, endedMs: 70_000, reason: .manual)
+        _ = try store.recordPause(sessionId: running, startedMs: 80_000, endedMs: 120_000, reason: .idle)
+
+        try store.prune(before: cutoff)
+        XCTAssertNil(try store.session(id: old))
+        let trimmed = try XCTUnwrap(store.session(id: crossing))
+        XCTAssertEqual(trimmed.startedMs, cutoff, "a finished session keeps only its part after the cutoff")
+        XCTAssertEqual(trimmed.endedMs, 130_000)
+        XCTAssertEqual(try store.pauses(sessionId: crossing).map(\.startedMs), [cutoff],
+                       "its pause before the cutoff goes and the crossing one starts at the cutoff")
+        XCTAssertEqual(try store.pauses(sessionId: crossing).map(\.endedMs), [120_000])
+        // Negative control: the running timer's bookkeeping is untouched, so its elapsed time does not jump.
+        XCTAssertEqual(try store.session(id: running)?.startedMs, 50_000)
+        XCTAssertEqual(try store.pauses(sessionId: running).map(\.startedMs), [60_000, 80_000])
+    }
+
+    @MainActor
+    func testARetentionPruneTheLedgerRefusedIsRetriedWithinMinutes() throws {
+        let now = Date()
+        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+        let controller = FocusController()
+        controller.ownsRuntime = true
+        controller.configuration = FlowFocusConfiguration(directory: URL(fileURLWithPath: (path as NSString).deletingLastPathComponent))
+        controller.start(appConfig: ["focus": ["retentionDays": 30]], databasePath: path,
+                         liveServices: false, presentsWindows: false)
+        defer { controller.stop() }
+        let old = try store.openSegment(segment(nowMs - 40 * 86_400_000, title: "old"))
+        try store.closeSegment(id: old, at: nowMs - 40 * 86_400_000 + 60_000)
+        // Another writer holds the ledger, so this prune fails after the busy timeout.
+        var other: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &other), SQLITE_OK)
+        defer { sqlite3_close(other) }
+        XCTAssertEqual(sqlite3_exec(other, "BEGIN IMMEDIATE;", nil, nil, nil), SQLITE_OK)
+        controller.pruneExpiredActivity(now: now)
+        XCTAssertEqual(sqlite3_exec(other, "ROLLBACK;", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(try store.segments(from: 0, to: nowMs + 1).count, 1)
+
+        controller.pruneIfDue(now: now.addingTimeInterval(FocusController.pruneRetryInterval + 1))
+        XCTAssertTrue(try store.segments(from: 0, to: nowMs + 1).isEmpty,
+                      "expired activity goes minutes later, not a day later")
+    }
+
     func testForgetCanScopeToOneApp() throws {
         let brave = try store.openSegment(segment(1_000, app: "com.brave.Browser"))
         try store.closeSegment(id: brave, at: 2_000)

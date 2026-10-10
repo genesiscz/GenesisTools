@@ -393,7 +393,11 @@ export interface TmuxClientInfo {
 /** A tmux listing, or why tmux did not answer. A server or session that does not exist is an empty listing. */
 export type TmuxListing<T> = { ok: true; items: T[] } | { ok: false; reason: string };
 
-const TMUX_ABSENT = /no server running|can't find session|error connecting|no such file or directory/i;
+/**
+ * tmux's answers that mean nothing is there: no server, no such session, or a server socket that does not exist.
+ * `error connecting to <socket>` with any other cause (Permission denied) is a failure, not an empty server.
+ */
+const TMUX_ABSENT = /no server running|can't find session|error connecting to \S+ \(No such file or directory\)/i;
 
 /** Runs one bounded listing (child deadline plus TMUX_SPAWN_GUARD timeout) and parses its RS-framed records. */
 async function tmuxListing<T>(args: string[], parse: (fields: string[]) => T | null): Promise<TmuxListing<T>> {

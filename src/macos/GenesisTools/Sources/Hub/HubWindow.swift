@@ -2068,16 +2068,19 @@ private struct SessionListView: View {
             } else if model.mode == .timeline {
                 TimelineListView(model: model, timeline: model.timeline)
             } else if model.mode == .agents {
-                Button { WidgetLaunch.start() } label: {
-                    Label("Widget sessions", systemImage: "rectangle.rightthird.inset.filled")
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                // Staging: the widget and Clicky entries exist only in the Preview app (main.swift).
+                if NativePreview.enabled {
+                    Button { WidgetLaunch.start() } label: {
+                        Label("Widget sessions", systemImage: "rectangle.rightthird.inset.filled")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain).padding(.horizontal, 14).padding(.bottom, 9)
+                    Button { ClickyLaunch.openSettings() } label: {
+                        Label("Clicky", systemImage: "keyboard")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain).padding(.horizontal, 14).padding(.bottom, 9)
                 }
-                .buttonStyle(.plain).padding(.horizontal, 14).padding(.bottom, 9)
-                Button { ClickyLaunch.openSettings() } label: {
-                    Label("Clicky", systemImage: "keyboard")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain).padding(.horizontal, 14).padding(.bottom, 9)
                 AgentsListView(model: model, agents: model.agents)
             } else {
                 ScrollView {

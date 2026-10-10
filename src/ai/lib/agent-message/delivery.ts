@@ -1,4 +1,4 @@
-import { resolveSessionTranscript } from "@app/ai/lib/sessions/resolve-transcript";
+import { NoSessionMatchError, resolveSessionTranscript } from "@app/ai/lib/sessions/resolve-transcript";
 import { type LiveAgentSurface, matchLiveAgentSurfaces } from "@app/cmux/lib/session-adopt";
 import { liveAgentSurfacesNow, tmuxPaneStillShownNow } from "@app/cmux/lib/session-close-live";
 import type { TurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
@@ -12,7 +12,8 @@ import {
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type CmuxRunResult, runCmux } from "@genesiscz/utils/cmux/lib/cli";
 import { logger } from "@genesiscz/utils/logger";
-import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import { type BoundedCommandResult, boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import { childDeadlineTermination } from "@genesiscz/utils/process/child-deadline";
 
 const { log } = logger.scoped("agent-message");
 
@@ -53,6 +54,9 @@ export class MessageError extends Error {
     }
 }
 
+/** The transcript resolver's own answer for a query (several sessions share the title, a worker session): kept. */
+export class SessionQueryError extends MessageError {}
+
 /** The session was found but its agent offers no structured way in (or refused); keystrokes are the only path. */
 export class NoChannelError extends MessageError {
     constructor(
@@ -86,10 +90,18 @@ export async function resolveSessionId(input: {
         (async (query, first) => (await resolveSessionTranscript(input.alias, query, first)).sessionId);
     const live = input.live ?? liveAgentSurfacesNow;
 
+    // An error that says what to do (a title several sessions carry: pass the id or --first; a worker session) is
+    // the answer when no cmux tab matches either, not "no session matches".
+    let transcriptProblem: string | null = null;
+
     try {
         return await transcript(input.query, input.first);
     } catch (error) {
         log.debug({ error, query: input.query, alias: input.alias }, "no transcript match; trying live cmux tabs");
+
+        if (!(error instanceof NoSessionMatchError)) {
+            transcriptProblem = error instanceof Error ? error.message : String(error);
+        }
     }
 
     const surfaces = await live().catch((error: unknown) => {
@@ -104,6 +116,14 @@ export async function resolveSessionId(input: {
 
     const mine = surfaces.filter((entry) => entry.agent === input.alias);
     const shown = hits.length > 1 ? hits : mine;
+
+    if (hits.length === 0 && transcriptProblem) {
+        throw new SessionQueryError(
+            transcriptProblem,
+            shown.map((entry) => `tools ${input.alias} message ${entry.sessionId} "<text>"`)
+        );
+    }
+
     throw new MessageError(
         hits.length > 1
             ? `"${input.query}" matches ${hits.length} running ${input.alias} sessions:\n${hits.map((hit) => `  ${liveLabel(hit)}`).join("\n")}`
@@ -183,7 +203,10 @@ export function claudeMessageDriver(
 
                 // Not a live id or name: maybe a /rename title or a path the transcript resolver knows.
                 const sessionId = await resolveId(request.query, request.first === true).catch((resolveError) => {
-                    if (resolveError instanceof MessageError && resolveError.suggestions.length > 0) {
+                    if (
+                        resolveError instanceof SessionQueryError ||
+                        (resolveError instanceof MessageError && resolveError.suggestions.length > 0)
+                    ) {
                         throw resolveError;
                     }
 
@@ -232,8 +255,33 @@ export const CODEX_QUEUE_TIMEOUT_MS = 30_000;
 export interface CodexQueueResult {
     code: number;
     stderr: string;
-    /** The deadline passed: the message may or may not be queued. */
-    timedOut: boolean;
+    /**
+     * Why the outcome is unknown, or null when `codex queue` finished and its status is its answer. The runner ended
+     * it early (the deadline, an output budget, a pipe error, a signal) after it may have queued the message.
+     */
+    unknown: string | null;
+}
+
+/**
+ * Reads a bounded `codex queue` run. Only a command that finished (an exit status, no runner error), or one that
+ * never started (no such binary), has a known outcome; anything the runner cut short may have queued already.
+ * The runner wraps the command in the child-deadline watchdog, which reports a kill as an exit status
+ * (124, or 128 + signal); those are cut short too.
+ */
+export function codexQueueResultOf(result: BoundedCommandResult): CodexQueueResult {
+    const neverStarted = result.error?.code === "ENOENT";
+    const killed = childDeadlineTermination(result.status);
+    const finished = result.status !== null && !result.error && killed === null;
+    const unknown =
+        finished || neverStarted
+            ? null
+            : (result.error?.message ?? killed ?? `ended by ${result.signal ?? "a signal"}`);
+
+    return {
+        code: result.status ?? 1,
+        stderr: result.stderr.trim() || result.error?.message || "",
+        unknown,
+    };
 }
 
 /** `codex queue` under the shared bounded runner: a deadline with kill escalation, and both pipes drained. */
@@ -242,17 +290,13 @@ async function runCodexQueue(threadId: string, text: string): Promise<CodexQueue
         command: ["codex", "queue", "--thread", threadId, "--message", text],
         timeoutMs: CODEX_QUEUE_TIMEOUT_MS,
     });
-    const timedOut = result.error?.code === "ETIMEDOUT";
+    const read = codexQueueResultOf(result);
     log.debug(
-        { threadId, status: result.status, signal: result.signal, error: result.error?.message, timedOut },
+        { threadId, status: result.status, signal: result.signal, error: result.error?.message, unknown: read.unknown },
         "codex queue finished"
     );
 
-    return {
-        code: result.status ?? 1,
-        stderr: result.stderr.trim() || result.error?.message || "",
-        timedOut,
-    };
+    return read;
 }
 
 /**
@@ -275,9 +319,9 @@ export function codexMessageDriver(
             const result = await queue(sessionId, request.text);
 
             // Not a NoChannelError: the queue may hold the message already, and a keystroke fallback would send it twice.
-            if (result.timedOut) {
+            if (result.unknown !== null) {
                 throw new MessageError(
-                    `codex queue gave no answer within ${CODEX_QUEUE_TIMEOUT_MS / 1000} s, so the message may or may not be queued in ${sessionId}. Check the session before you send it again.`
+                    `codex queue did not finish normally (${result.unknown}), so the message may or may not be queued in ${sessionId}. Check the session before you send it again.`
                 );
             }
 

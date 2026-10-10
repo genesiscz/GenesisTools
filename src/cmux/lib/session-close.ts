@@ -170,6 +170,42 @@ async function tmuxPaneProblem(
 }
 
 /**
+ * Why the tmux session that has the recorded name is not the recorded one, or null when it is (or nothing was
+ * recorded to compare). A tmux server restart can bring back a session with the same name and pane id; its
+ * creation time differs. That is proof of another session, never a judgement call, so `--force` never skips it.
+ */
+async function tmuxGenerationProblem(
+    record: CloseSubject,
+    io: Pick<SessionCloseIO, "tmuxPanes">
+): Promise<{ reason: CloseReason; note: string } | null> {
+    const created = record.tmuxSessionCreatedMs;
+
+    if (!record.tmuxSession || created === undefined || created === null) {
+        return null;
+    }
+
+    const listing = await io.tmuxPanes(record.tmuxSession);
+
+    if (!listing.ok) {
+        return {
+            reason: "identity-unknown",
+            note: `tmux session ${record.tmuxSession} could not be checked (${listing.reason}), so nothing is typed into it`,
+        };
+    }
+
+    const live = listing.items[0];
+
+    if (live && live.sessionCreatedMs !== created) {
+        return {
+            reason: "workspace-moved",
+            note: `tmux session ${record.tmuxSession} is a newer session than the recorded one, so nothing is typed into it`,
+        };
+    }
+
+    return null;
+}
+
+/**
  * What `--kill-tmux` may kill, checked right before the kill: the session id (`$3`) of the session that still has
  * the recorded name AND the recorded creation time. Another session that took the name after this one ended is
  * never killed. A record from before creation times were stored is killed by its exact name.
@@ -531,7 +567,8 @@ async function closeTarget(input: {
 
     // An adopted session closes only its own surface, so sharing the caller's workspace is fine; `adopt`
     // never returns the caller's own surface.
-    if (!adopted && listed && caller && listed.id === caller) {
+    // `CMUX_WORKSPACE_ID` and `cmux workspace list` may print the same UUID in different cases.
+    if (!adopted && listed && caller && sameId(listed.id, caller)) {
         return refuse("own-workspace", `${report.workspace} is the workspace this command runs in; it is never closed`);
     }
 
@@ -541,6 +578,15 @@ async function closeTarget(input: {
     const identityRefused = async (stage: IdentityStage): Promise<CloseReport | null> => {
         if (!record) {
             return null;
+        }
+
+        // Before anything is typed: a replacement tmux session is refused for every session, --force or not.
+        if (stage !== "close") {
+            const replaced = await tmuxGenerationProblem(record, io);
+
+            if (replaced) {
+                return refuse(replaced.reason, replaced.note);
+            }
         }
 
         if (isAdopted(record)) {

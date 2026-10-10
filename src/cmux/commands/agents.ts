@@ -280,17 +280,16 @@ async function runSessionList(options: { agent?: string; all?: boolean; json?: b
 
     if (options.json) {
         out.result(options.all ? { recorded: open, adoptable } : open);
-        return;
-    }
-
-    if (open.length === 0 && adoptable.length === 0) {
+    } else if (open.length === 0 && adoptable.length === 0) {
         out.println(
             options.all ? "No agent sessions in cmux." : "No open sessions from agents new (--all adds the others)."
         );
-        return;
+    } else {
+        out.println(formatSessionList({ open, adoptable }));
     }
 
-    out.println(formatSessionList({ open, adoptable }));
+    // The writes above are asynchronous; like new and close, the command ends only after they drained.
+    await out.flush();
 }
 
 /** Paths and session ids are long; the shared default of 50 would cut the cwd a reader needs. */

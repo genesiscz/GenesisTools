@@ -37,6 +37,84 @@ final class FlowFocusRuntimeTests: XCTestCase {
         XCTAssertEqual((raw["app"] as? [String: Any])?["focusWhileListening"] as? Bool, false)
     }
 
+    func testARestartDuringAStopWaitsSoTheStopCannotReleaseTheNewOwnership() async throws {
+        let runtime = FlowFocusRuntime(dataRoot: directory, hostID: "test.restart", liveServices: false, presentsWindows: false)
+        await runtime.start()
+        XCTAssertTrue(runtime.role.isOwner)
+        // The host quits and relaunches the runtime while the stop is held right before its settings flush.
+        let gate = ShutdownGate()
+        runtime.beforeShutdownFlush = { await gate.hold() }
+        let stopping = Task { await runtime.stop() }
+        for _ in 0..<1_000 where !gate.isHolding { await Task.yield() }
+        XCTAssertTrue(gate.isHolding)
+        let restarting = Task { await runtime.start() }
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertEqual(runtime.role, .stopped, "the restart waits while the stop is still running")
+        runtime.beforeShutdownFlush = nil
+        gate.release()
+        await stopping.value
+        await restarting.value
+        XCTAssertTrue(runtime.role.isOwner)
+        // Stopping right after the restart really stops it: no finished shutdown is left to be mistaken for a live one.
+        await runtime.stop()
+        XCTAssertEqual(runtime.role, .stopped)
+        let rival = FlowFocusRuntime(dataRoot: directory, hostID: "test.rival", liveServices: false, presentsWindows: false)
+        await rival.start()
+        XCTAssertTrue(rival.role.isOwner, "the stopped runtime released the owner lease")
+        await rival.stop()
+    }
+
+    func testAStartCancelledWhileAStopRunsNeverBeginsAndLeavesTheRuntimeStartable() async throws {
+        let runtime = FlowFocusRuntime(dataRoot: directory, hostID: "test.cancelled-start", liveServices: false, presentsWindows: false)
+        await runtime.start()
+        let gate = ShutdownGate()
+        runtime.beforeShutdownFlush = { await gate.hold() }
+        let stopping = Task { await runtime.stop() }
+        for _ in 0..<1_000 where !gate.isHolding { await Task.yield() }
+        let starting = Task { await runtime.start() }
+        for _ in 0..<100 { await Task.yield() }
+        starting.cancel()
+        runtime.beforeShutdownFlush = nil
+        gate.release()
+        await stopping.value
+        await starting.value
+        XCTAssertEqual(runtime.role, .stopped, "a start cancelled while it waited never began")
+        await runtime.start()
+        XCTAssertTrue(runtime.role.isOwner, "a later start still works")
+        await runtime.stop()
+    }
+
+    func testARestartDuringAFailedStartsCleanupKeepsItsOwnRole() async throws {
+        let root = directory.appendingPathComponent("flow")
+        let store = FlowStore(directory: root)
+        store.saveHistory([FlowEntry(text: "Fixture", rawText: "Fixture", targetBundleId: nil, targetAppName: nil,
+                                     durationSeconds: 1, injected: false, wordCount: 1)])
+        let statsURL = root.appendingPathComponent("stats.json")
+        store.beforeOwnedWrite = { name in
+            guard name == "stats.json" else { return }
+            try FileManager.default.removeItem(at: statsURL)
+            try FileManager.default.createDirectory(at: statsURL, withIntermediateDirectories: false)
+        }
+        XCTAssertFalse(store.saveHistoryAndStats(history: [], stats: FlowStats()))
+        let runtime = FlowFocusRuntime(dataRoot: directory, hostID: "test.failed-then-restarted", liveServices: false,
+                                       presentsWindows: false)
+        // The first start fails (pending history cannot be replayed) and is held in its cleanup.
+        let gate = ShutdownGate()
+        runtime.beforeShutdownFlush = { await gate.hold() }
+        let failing = Task { await runtime.start() }
+        for _ in 0..<1_000 where !gate.isHolding { await Task.yield() }
+        XCTAssertTrue(gate.isHolding)
+        try FileManager.default.removeItem(at: statsURL)
+        let restarting = Task { await runtime.start() }
+        for _ in 0..<100 { await Task.yield() }
+        runtime.beforeShutdownFlush = nil
+        gate.release()
+        await failing.value
+        await restarting.value
+        XCTAssertTrue(runtime.role.isOwner, "the failed start's cleanup must not mark the restarted owner unavailable")
+        await runtime.stop()
+    }
+
     func testOwnerReplaysPendingHistoryBeforeStartingAnyServices() async throws {
         let root = directory.appendingPathComponent("flow")
         let store = FlowStore(directory: root)
@@ -219,6 +297,29 @@ final class FlowFocusRuntimeTests: XCTestCase {
             await owner.stop()
             throw error
         }
+        await client.stop()
+        await owner.stop()
+    }
+
+    func testTheOwnerRefusesANewTrailingGraceOutsideItsRange() async throws {
+        let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.grace-owner", liveServices: false, presentsWindows: false)
+        let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.grace-client", liveServices: false, presentsWindows: false)
+        await owner.start()
+        await client.start()
+        let before = owner.flow.config.trailingGraceMs
+        do {
+            _ = try await client.send(action: "flow.config", payload: JSONSerialization.data(withJSONObject: ["trailingGraceMs": 60_000]))
+            XCTFail("a new out-of-range grace must be refused, not clamped")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Trailing grace"), error.localizedDescription)
+        }
+        XCTAssertEqual(owner.flow.config.trailingGraceMs, before)
+        do {
+            _ = try await client.send(action: "flow.config", payload: JSONSerialization.data(withJSONObject: ["trailingGraceMs": 500]))
+        } catch {
+            XCTFail("an in-range grace is accepted: \(error.localizedDescription)")
+        }
+        XCTAssertEqual(owner.flow.config.trailingGraceMs, 500)
         await client.stop()
         await owner.stop()
     }
@@ -637,5 +738,22 @@ final class FlowFocusRuntimeTests: XCTestCase {
         } catch {
             XCTAssertTrue(error.localizedDescription.contains("did not answer"))
         }
+    }
+}
+
+/// Holds a runtime's shutdown at its settings flush until the test releases it.
+@MainActor
+private final class ShutdownGate {
+    private var waiting: CheckedContinuation<Void, Never>?
+    private(set) var isHolding = false
+
+    func hold() async {
+        isHolding = true
+        await withCheckedContinuation { waiting = $0 }
+    }
+
+    func release() {
+        waiting?.resume()
+        waiting = nil
     }
 }

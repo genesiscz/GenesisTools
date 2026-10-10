@@ -16,7 +16,7 @@ import { statSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type ActivityEvent, type ActivityState, classifyActivity, claudeRecordsToEvents } from "./activity";
-import { readTail } from "./native-scan";
+import { readTailAt } from "./native-scan";
 import { parseTranscriptLine } from "./parse-line";
 
 export type TurnProvider = "claude" | "grok" | "codex";
@@ -53,10 +53,11 @@ export interface TurnSnapshot {
      */
     turnStartedAt: number | null;
     /**
-     * Grok only: the text of the prompt that opened the newest turn. Grok stamps whole seconds, so two turns that
-     * open in the same second share `turnStartedAt`; the prompt tells the one a sent message opened apart.
+     * Grok only: the byte offset in the transcript of the record that opened the newest turn. Grok stamps whole
+     * seconds, so two turns that open in the same second share `turnStartedAt`; the file only grows, so the one
+     * that opened after a send starts at or past the size the file had before it.
      */
-    turnPrompt?: string;
+    turnStartOffset?: number;
     /** The newer of `lastEventAt` and the file's modification time. */
     lastActivityAt: number;
     /** `now` minus `lastActivityAt`. */
@@ -71,6 +72,8 @@ export interface TurnStateInput {
     now: number;
     /** Silence longer than this is a stall. `Number.POSITIVE_INFINITY` never stalls. */
     stallTimeoutMs: number;
+    /** The byte offset in the file where each record's line starts, aligned with `records`. */
+    offsets?: ReadonlyArray<number>;
 }
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -141,7 +144,7 @@ function snapshotOf({
     endedTurn,
     interrupted = false,
     turnStartedAt,
-    turnPrompt,
+    turnStartOffset,
 }: {
     input: TurnStateInput;
     events: ActivityEvent[];
@@ -151,7 +154,7 @@ function snapshotOf({
     endedTurn: boolean;
     interrupted?: boolean;
     turnStartedAt: number | null;
-    turnPrompt?: string;
+    turnStartOffset?: number;
 }): TurnSnapshot {
     const lastEventAt = events.at(-1)?.ts ?? null;
     const lastActivityAt = Math.max(lastEventAt ?? 0, input.lastModified);
@@ -171,7 +174,7 @@ function snapshotOf({
         interrupted,
         lastEventAt,
         turnStartedAt,
-        ...(turnPrompt !== undefined ? { turnPrompt } : {}),
+        ...(turnStartOffset !== undefined ? { turnStartOffset } : {}),
         lastActivityAt,
         silenceMs: input.now - lastActivityAt,
     };
@@ -378,12 +381,12 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
     let ended = false;
     let question: string | null = null;
     let turnStartedAt: number | null = null;
-    let turnPrompt: string | undefined;
+    let turnStartOffset: number | undefined;
     let previousKind: string | null = null;
     // toolCallId → question text, until a `tool_call_update` with a terminal status answers it.
     const open = new Map<string, string>();
 
-    for (const record of input.records) {
+    for (const [index, record] of input.records.entries()) {
         const parsed = grokUpdateOf(record);
 
         if (!parsed || !GROK_WORK.has(parsed.kind) || parsed.ts === undefined) {
@@ -393,11 +396,9 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
         // A prompt arrives as several chunks: the first one opens the turn.
         if (parsed.kind === "user_message_chunk" && previousKind !== "user_message_chunk") {
             turnStartedAt = parsed.ts;
-            turnPrompt = "";
-        }
-
-        if (parsed.kind === "user_message_chunk") {
-            turnPrompt = (turnPrompt ?? "") + grokText(parsed.update.content);
+            turnStartOffset = input.offsets?.[index];
+            // A new prompt starts another turn: a question the last one left open is not this turn's to wait on.
+            open.clear();
         }
 
         previousKind = parsed.kind;
@@ -441,7 +442,7 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
         question: question || null,
         endedTurn: ended || waiting,
         turnStartedAt,
-        turnPrompt,
+        turnStartOffset,
     });
 }
 
@@ -595,13 +596,28 @@ export function readTurnState(
             return null;
         }
 
-        const records = readTail(filePath, TURN_TAIL_BYTES)
-            .split("\n")
-            .map((line) => parseTranscriptLine(line))
-            .filter((record): record is JsonRecord => record !== null);
+        const tail = readTailAt(filePath, TURN_TAIL_BYTES);
+        const records: JsonRecord[] = [];
+        const offsets: number[] = [];
+        // Lines are cut from the raw bytes, so an offset stays exact past a line that holds invalid UTF-8.
+        let from = 0;
+
+        while (from <= tail.raw.length) {
+            const newline = tail.raw.indexOf(0x0a, from);
+            const end = newline === -1 ? tail.raw.length : newline;
+            const record = parseTranscriptLine(tail.raw.subarray(from, end).toString("utf8"));
+
+            if (record !== null) {
+                records.push(record);
+                offsets.push(tail.start + from);
+            }
+
+            from = end + 1;
+        }
 
         return turnStateOf(provider, {
             records,
+            offsets,
             lastModified: stat.mtimeMs,
             now,
             stallTimeoutMs: options.stallTimeoutMs,

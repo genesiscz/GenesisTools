@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { type BoundedCommandResult, boundedCommand } from "./bounded-command";
+import { CHILD_DEADLINE_EXIT, childDeadlineTermination } from "./child-deadline";
 
 let dir: string | undefined;
 let survivor: number | undefined;
@@ -92,3 +93,15 @@ test("a deadline kills a TERM-ignoring descendant that let go of our pipes", asy
     expect(result.error?.code).toBe("ETIMEDOUT");
     expect(await stopsRunningWithin(pid, 2000)).toBe(true);
 }, 10_000);
+
+test("the child-deadline watchdog's kill statuses read as cut short; an ordinary exit does not", async () => {
+    const killed = await boundedCommand({ command: ["/bin/sh", "-c", "kill -9 $$"], timeoutMs: 10_000 });
+    const finished = await boundedCommand({ command: ["/bin/sh", "-c", "exit 3"], timeoutMs: 10_000 });
+
+    // The wrapped child's SIGKILL arrives as exit 137, with no signal on the result.
+    expect({ status: killed.status, signal: killed.signal }).toEqual({ status: 137, signal: null });
+    expect(childDeadlineTermination(killed.status)).toBe("it was killed by signal 9");
+    expect(childDeadlineTermination(CHILD_DEADLINE_EXIT)).toBe("the child deadline killed it");
+    expect(childDeadlineTermination(finished.status)).toBeNull();
+    expect(childDeadlineTermination(null)).toBeNull();
+});

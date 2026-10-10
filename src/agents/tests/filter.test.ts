@@ -380,6 +380,15 @@ describe("agent_left", () => {
             });
             expect(current).toMatchObject({ type: "agent_left", login_id: "login-new" });
             expect(presentAgents(await readFeed(paths)).has("agt_alpha")).toBe(false);
+
+            // A second leave (a repeated `tools agents leave`, or one after a --once timeout) announces nothing.
+            const again = await announceLeave(paths, { agent_id: "agt_alpha", agent_name: "alpha", reason: "leave" });
+            expect(again).toBeNull();
+            expect((await readFeed(paths)).filter((event) => event.type === "agent_left")).toHaveLength(1);
+            // Nor does a leave of an agent that never logged in.
+            expect(
+                await announceLeave(paths, { agent_id: "agt_ghost", agent_name: "ghost", reason: "leave" })
+            ).toBeNull();
         });
     });
 

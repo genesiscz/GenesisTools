@@ -713,11 +713,12 @@ test("--kill-tmux kills the recorded tmux session by id, never a newer session t
         ],
     });
 
-    // The record has no pane, so the only tmux lookup is the one right before the kill: a newer session has the name.
+    // Lookups 1 and 2 (before the check and the exit) see the recorded session; lookup 3, right before the kill,
+    // sees a newer session that took the name.
     const replaced = fake({
         lines,
         runningChecks: 1,
-        tmuxPanes: () => listing(created_ms + 5_000),
+        tmuxPanes: (_session, call) => listing(call <= 2 ? created_ms : created_ms + 5_000),
     });
     replaced.io.killTmux = async () => {
         throw new Error("tmux kill-session must not run on a replacement session");
@@ -730,7 +731,8 @@ test("--kill-tmux kills the recorded tmux session by id, never a newer session t
     const unknown = fake({
         lines,
         runningChecks: 1,
-        tmuxPanes: () => ({ ok: false, reason: "tmux list-panes did not answer" }),
+        tmuxPanes: (_session, call) =>
+            call <= 2 ? listing(created_ms) : { ok: false, reason: "tmux list-panes did not answer" },
     });
     unknown.io.killTmux = async () => {
         throw new Error("tmux kill-session must not run unchecked");
@@ -744,4 +746,85 @@ test("--kill-tmux kills the recorded tmux session by id, never a newer session t
     const ok = await closeSession("codex-app-ab12cd", { graceMs: 1_000, killTmux: true }, same.io);
     expect(ok).toMatchObject({ outcome: "closed", steps: { tmuxKilled: true } });
     expect(same.calls).toContain("kill $7");
+});
+
+test("a tmux session that came back under the same name and pane id gets no exit, even with --force", async () => {
+    const createdMs = 1_760_000_000_000;
+    const pane = (sessionCreatedMs: number): TmuxListing<TmuxPaneInfo> => ({
+        ok: true,
+        items: [{ pane: "%41", session: "work-grok", tty: "/dev/ttys041", sessionCreatedMs, visible: true }],
+    });
+    const adopted = { ...adoptedTmux(), tmuxSessionCreatedMs: createdMs };
+
+    // The adopted session: never skipped, also with --force. The exit, close and kill fakes throw.
+    for (const force of [false, true]) {
+        const restarted = fake({
+            adoptable: adopted,
+            tmuxPanes: () => pane(createdMs + 60_000),
+            forbidIrreversible: true,
+        });
+        const report = await closeSession("0199ee55", { graceMs: 1_000, force, killTmux: true }, restarted.io);
+
+        expect({ force, outcome: report.outcome, exitSent: report.steps.exitSent }).toEqual({
+            force,
+            outcome: "refused",
+            exitSent: false,
+        });
+        expect(report.notes.join(" ")).toContain("newer session");
+        expect(restarted.calls).toEqual(["adopt 0199ee55"]);
+    }
+
+    // A recorded session is refused before the exit too, with and without --force: --force overrides a cmux ref
+    // that may be right, never proof of another tmux session.
+    const lines = [created({ tmuxSession: "work-grok", tmuxPane: "%41", tmuxSessionCreatedMs: createdMs })];
+
+    for (const force of [false, true]) {
+        const recorded = fake({ lines, tmuxPanes: () => pane(createdMs + 60_000), forbidIrreversible: true });
+        const report = await closeSession("codex-app-ab12cd", { graceMs: 0, force, killTmux: true }, recorded.io);
+
+        expect({ force, reason: report.reason, exitSent: report.steps.exitSent }).toEqual({
+            force,
+            reason: "workspace-moved",
+            exitSent: false,
+        });
+        expect(recorded.calls).toEqual([]);
+    }
+
+    // The tmux server restarts during the turn check: the check right before the exit catches it, with --force.
+    const lateRestart = fake({
+        lines,
+        tmuxPanes: (_session, call) => pane(call === 1 ? createdMs : createdMs + 60_000),
+        forbidIrreversible: true,
+    });
+    const late = await closeSession("codex-app-ab12cd", { graceMs: 0, force: true }, lateRestart.io);
+    expect({ reason: late.reason, exitSent: late.steps.exitSent }).toEqual({
+        reason: "workspace-moved",
+        exitSent: false,
+    });
+    expect(lateRestart.calls).toEqual([]);
+
+    // The control for --force: the recorded generation still quits and closes, by its id.
+    const forced = fake({ lines, tmuxPanes: () => pane(createdMs), runningChecks: 1 });
+    const forcedReport = await closeSession("codex-app-ab12cd", { graceMs: 1_000, force: true }, forced.io);
+    expect(forcedReport.outcome).toBe("closed");
+    expect(forced.calls).toEqual(["exit /quit", "close workspace:9 --force"]);
+
+    // The control: the same generation still quits through its pane.
+    const same = fake({ adoptable: adopted, tmuxPanes: () => pane(createdMs), runningChecks: 1 });
+    expect((await closeSession("0199ee55", { graceMs: 1_000 }, same.io)).outcome).toBe("closed");
+    expect(same.calls).toContain("exit /exit");
+});
+
+test("the caller's own workspace is never closed, whatever case its UUID is printed in", async () => {
+    for (const caller of ["W9", "w9"]) {
+        const own = fake({ caller, forbidIrreversible: true });
+        const report = await closeSession("codex-app-ab12cd", { graceMs: 0, force: true }, own.io);
+
+        expect({ caller, reason: report.reason }).toEqual({ caller, reason: "own-workspace" });
+        expect(own.calls).toEqual([]);
+    }
+
+    // The control: another workspace's caller closes normally.
+    const other = fake({ caller: "W-OTHER", runningChecks: 1 });
+    expect((await closeSession("codex-app-ab12cd", { graceMs: 1_000 }, other.io)).outcome).toBe("closed");
 });

@@ -198,9 +198,12 @@ public struct IsolatedPaint {
     }
 }
 
-/// Paints `layers` (back to front) into the output. Padding stays transparent when asked.
+/// Paints `layers` (back to front) into the output. Each layer is clipped to the canvas's place
+/// in the output, so a window crossing a display canvas's edge never paints into the aspect-fit
+/// padding, which stays transparent when asked.
 public func composeIsolatedFrame(_ layers: [IsolatedPaint], geometry: CaptureCanvasGeometry, transparent: Bool) -> CIImage {
     let outputRect = CGRect(origin: .zero, size: geometry.output)
+    let canvasRect = geometry.destination(for: geometry.canvas)
     var image = CIImage(color: transparent ? CIColor.clear : CIColor.black).cropped(to: outputRect)
     for layer in layers {
         let full = layer.image
@@ -215,7 +218,7 @@ public func composeIsolatedFrame(_ layers: [IsolatedPaint], geometry: CaptureCan
         let placed = raw.transformed(by: CGAffineTransform(scaleX: destination.width / raw.extent.width,
                                                            y: destination.height / raw.extent.height))
             .transformed(by: CGAffineTransform(translationX: destination.minX, y: destination.minY))
-        image = placed.composited(over: image)
+        image = placed.cropped(to: canvasRect).composited(over: image)
     }
     return image.cropped(to: outputRect)
 }

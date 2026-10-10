@@ -112,6 +112,7 @@ public final class FocusController: ObservableObject {
             // Order matters: the downtime gap is measured from what is already on disk, so it
             // must be written before the recorder opens today's first segment.
             recorder.closeDowntime()
+            pruneExpiredActivity()
             recorder.installTerminateHook()
             if liveServices && settings.captureEnabled { recorder.start() }
             engine.resumeOpenSessionIfAny()
@@ -234,7 +235,10 @@ public final class FocusController: ObservableObject {
 
     /// Saves a plan edited from the HUD menu and applies it: the same path Settings uses.
     public func updatePlan(_ plan: PomodoroPlan) {
-        configuration.updateFocus(settings: settings, plan: plan)
+        // The settings written with the plan come from the configuration as it is now, not from the copy this
+        // controller took at start: a client's copy is stale once the owner changes them, and writing it back
+        // would undo that change (capture turned back on by a timer edit).
+        configuration.updateFocus(settings: FocusSettings.from(appConfig: configuration.app), plan: plan)
         apply(appConfig: configuration.app)
     }
 
@@ -284,9 +288,41 @@ public final class FocusController: ObservableObject {
     }
 
     public func apply(appConfig: [String: Any]) {
+        let previousRetention = settings.retentionDays
         settings = FocusSettings.from(appConfig: appConfig)
         recorder?.apply(settings: settings)
         engine?.plan = PomodoroPlan.from(appConfig: appConfig)
+        if settings.retentionDays != previousRetention { pruneExpiredActivity() }
+    }
+
+    /// When the next retention prune is due: a day after one that succeeded, a few minutes after one that failed.
+    private(set) var nextPrune: Date?
+    static let pruneInterval: TimeInterval = 86_400
+    static let pruneRetryInterval: TimeInterval = 300
+
+    /// Retention is a privacy setting, so it is enforced: the owner deletes activity older than
+    /// `retentionDays` (titles, sites, projects, input, sessions, gaps) at start, when the setting changes and
+    /// once a day while it runs. A prune the ledger refused (busy) is retried soon. Clients never write the ledger.
+    func pruneExpiredActivity(now: Date = Date()) {
+        guard ownsRuntime, remoteCommand == nil, let store else { return }
+        let (span, overflow) = Int64(settings.retentionDays).multipliedReportingOverflow(by: 86_400_000)
+        let cutoff = Int64(now.timeIntervalSince1970 * 1000) - span
+        guard !overflow, cutoff > 0 else {
+            nextPrune = now.addingTimeInterval(Self.pruneInterval)
+            return
+        }
+        do {
+            let removed = try store.prune(before: cutoff)
+            nextPrune = now.addingTimeInterval(Self.pruneInterval)
+            FlowFocusLog.focus.info("retention \(self.settings.retentionDays)d removed segments=\(removed.segments) sessions=\(removed.sessions)")
+        } catch {
+            nextPrune = now.addingTimeInterval(Self.pruneRetryInterval)
+            FlowFocusLog.focus.error("retention prune failed, retrying in \(Int(Self.pruneRetryInterval)) s: \(error.localizedDescription)")
+        }
+    }
+
+    func pruneIfDue(now: Date = Date()) {
+        if let nextPrune, now >= nextPrune { pruneExpiredActivity(now: now) }
     }
 
     // MARK: - Interruptions
@@ -338,6 +374,7 @@ public final class FocusController: ObservableObject {
 
     public func drainIntents() {
         guard ownsRuntime else { return }
+        pruneIfDue()
         guard let store, let engine else { return }
         guard let intents = try? store.takeIntents(), !intents.isEmpty else { return }
         for intent in intents {

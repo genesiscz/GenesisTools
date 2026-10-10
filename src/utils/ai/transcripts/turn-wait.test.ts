@@ -167,19 +167,20 @@ describe("waitForTurn", () => {
         expect(turnAnswers(120, { turnStartedAfter: 90, turnNewerThan: 100 })).toBe(true);
     });
 
-    it("with turnNewerThan, a Grok reply that opened in the baseline's very second counts by its prompt", async () => {
-        // Grok stamps whole seconds: the pre-send turn and the reply both opened at 10_000.
+    it("with turnNewerThan, a Grok reply that opened in the baseline's very second counts by where it opened", async () => {
+        // Grok stamps whole seconds: the pre-send turn and the reply both opened at 10_000. The transcript held
+        // 4_000 bytes before the send; the pre-send turn opened at byte 3_000, the reply at byte 4_200.
         const second = 10_000;
-        const turn = (state: ActivityState, lastEventAt: number, prompt: string): TurnSnapshot => ({
+        const turn = (state: ActivityState, lastEventAt: number, turnStartOffset: number): TurnSnapshot => ({
             ...snap(state, lastEventAt, second),
-            turnPrompt: prompt,
+            turnStartOffset,
         });
         const reader = script(
-            turn("AWAITING-INPUT", second, "earlier question"),
-            turn("RUNNING", second, "the sent message"),
-            turn("AWAITING-INPUT", second, "the sent message")
+            turn("AWAITING-INPUT", second, 3_000),
+            turn("RUNNING", second, 4_200),
+            turn("AWAITING-INPUT", second, 4_200)
         );
-        const window = { turnStartedAfter: second - 500, turnNewerThan: second, prompt: "the sent message" };
+        const window = { turnStartedAfter: second - 500, turnNewerThan: second, openedFromByte: 4_000 };
         // A deadline, so a regression fails as a timeout instead of waiting for ever.
         const result = await waitForTurn({
             read: reader.read,
@@ -191,11 +192,13 @@ describe("waitForTurn", () => {
         });
 
         expect(result.outcome).toBe("done");
-        expect(result.snapshot?.turnPrompt).toBe("the sent message");
-        // The pre-send turn itself never counts, and without a prompt an equal start stays excluded.
-        expect(turnAnswers(second, window, "earlier question")).toBe(false);
-        expect(turnAnswers(second, window, "the  sent message ")).toBe(true);
-        expect(turnAnswers(second, { ...window, prompt: undefined }, "the sent message")).toBe(false);
+        expect(result.snapshot?.turnStartOffset).toBe(4_200);
+        // The pre-send turn never counts, whatever its prompt was (the same message can be sent twice).
+        expect(turnAnswers(second, window, 3_000)).toBe(false);
+        expect(turnAnswers(second, window, 4_000)).toBe(true);
+        // Without the size before the send, or without the turn's position, an equal start stays excluded.
+        expect(turnAnswers(second, { ...window, openedFromByte: undefined }, 4_200)).toBe(false);
+        expect(turnAnswers(second, window, undefined)).toBe(false);
     });
 
     it("with turnStartedAfter, a turn whose start is outside the tail still counts", async () => {
@@ -348,6 +351,10 @@ describe("questions asked while the turn keeps running", () => {
         expect(
             grokTurnState(input([ask, update("tool_call_update", { toolCallId: "t1", status: "failed" })])).asksQuestion
         ).toBe(false);
+        // A new prompt starts another turn: the question left open in the last one is not this turn's.
+        const prompt = update("user_message_chunk", { content: { type: "text", text: "never mind, do X" } });
+        expect(grokTurnState(input([ask, prompt]))).toMatchObject({ asksQuestion: false, question: null });
+        expect(grokTurnState(input([ask, prompt])).state).not.toBe("AWAITING-INPUT");
 
         const wording = update("agent_message_chunk", { content: { type: "text", text: "Shall I do B? ❓" } });
         expect(grokTurnState(input([wording]))).toMatchObject({ asksQuestion: false, question: null });

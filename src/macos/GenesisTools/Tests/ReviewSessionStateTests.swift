@@ -255,3 +255,19 @@ final class ReviewSessionStateTests: XCTestCase {
         XCTAssertEqual(object["argv"] as? [String], ["--review", "--repo", "/a b"], "the path keeps its space")
     }
 }
+
+final class WidgetInstanceLockTests: XCTestCase {
+    /// A face the widget launches must not inherit the lock: if it did, it would keep the lock after the widget
+    /// died, and every later --widget would take the "already running" path and exit.
+    func testTheWidgetInstanceLockIsClosedOnExec() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("widget-lock-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer {
+            do { try FileManager.default.removeItem(at: base) } catch { XCTFail("Fixture cleanup: \(error)") }
+        }
+        let descriptor = openWidgetInstanceLock(in: base)
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        defer { close(descriptor) }
+        XCTAssertNotEqual(fcntl(descriptor, F_GETFD) & FD_CLOEXEC, 0)
+    }
+}

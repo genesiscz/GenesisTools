@@ -1,4 +1,5 @@
 // Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Tests/GenesisTests/FlowTests.swift at 2026-10-08T05:04:08+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
+import AppKit
 import AVFoundation
 import XCTest
 @testable import GenesisKit
@@ -338,12 +339,120 @@ final class FlowTests: XCTestCase {
     @MainActor
     func testThePasteIsReportedOnlyWhenTheTargetIsStillFrontmost() async {
         var pasted = 0
-        let moved = await FlowInjector.pasteAfterActivation(target: 42, frontmost: { 7 }, paste: { pasted += 1 })
+        let moved = await FlowInjector.pasteAfterActivation(target: 42, written: 3, changeCount: { 3 }, frontmost: { 7 },
+                                                            paste: { pasted += 1 })
         XCTAssertEqual(moved, .focusMoved)
         XCTAssertEqual(pasted, 0, "no keystroke reaches another app")
-        let landed = await FlowInjector.pasteAfterActivation(target: 42, frontmost: { 42 }, paste: { pasted += 1 })
+        let replaced = await FlowInjector.pasteAfterActivation(target: 42, written: 3, changeCount: { 4 },
+                                                               frontmost: { 42 }, paste: { pasted += 1 })
+        XCTAssertEqual(replaced, .clipboardChanged, "a copy made during the wait is never pasted in the transcript's place")
+        XCTAssertEqual(pasted, 0)
+        let landed = await FlowInjector.pasteAfterActivation(target: 42, written: 3, changeCount: { 3 },
+                                                             frontmost: { 42 }, paste: { pasted += 1 })
         XCTAssertEqual(landed, .injected)
         XCTAssertEqual(pasted, 1)
+    }
+
+    @MainActor
+    func testATurnsTranscriptEventGoesToItsOwnStoreNotTheProcessDefault() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-scoped-events-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let previousURL = FlowEvents.logURL
+        // Another runtime in this process points the default somewhere else.
+        FlowEvents.logURL = root.appendingPathComponent("other/events.jsonl")
+        defer { FlowEvents.logURL = previousURL }
+        let store = FlowStore(directory: root.appendingPathComponent("mine"))
+        let session = FlowSession(store: store)
+        session.injectEffect = { _ in .copiedOnly }
+        await session.completeTurn(raw: "scoped fixture")
+        XCTAssertTrue(try String(contentsOf: store.eventsURL, encoding: .utf8).contains("scoped fixture"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: FlowEvents.logURL.path))
+        session.clearHistory()
+        XCTAssertTrue(try Data(contentsOf: store.eventsURL).isEmpty, "deleting history reaches the events it wrote")
+    }
+
+    @MainActor
+    func testRemovingTheLatestTurnAlsoRemovesItFromTheLiveSnapshot() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-clear-live-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let session = FlowSession(store: FlowStore(directory: root))
+        session.injectEffect = { _ in .copiedOnly }
+        await session.completeTurn(raw: "older fixture")
+        await session.completeTurn(raw: "private fixture")
+        session.recognizer.applyRemote(partialText: "private fixture", micLevel: 0)
+        let older = try XCTUnwrap(session.history.last)
+        session.deleteEntry(older.id)
+        XCTAssertEqual(session.liveSnapshot.lastInjected, "private fixture", "deleting an older turn leaves the latest shown")
+        session.deleteEntry(try XCTUnwrap(session.history.first).id)
+        XCTAssertNil(session.liveSnapshot.lastInjected)
+        XCTAssertEqual(session.liveSnapshot.partialText, "")
+
+        await session.completeTurn(raw: "another private fixture")
+        session.recognizer.applyRemote(partialText: "another private fixture", micLevel: 0)
+        session.clearHistory()
+        XCTAssertNil(session.liveSnapshot.lastInjected, "the published snapshot no longer carries the cleared text")
+        XCTAssertEqual(session.liveSnapshot.partialText, "")
+    }
+
+    @MainActor
+    func testTrailingGraceOutsideItsRangeIsRefusedBeforeItIsStored() throws {
+        func decode(_ grace: String) throws -> FlowConfig {
+            try JSONDecoder().decode(FlowConfig.self, from: Data("{\"trailingGraceMs\": \(grace), \"localeIdentifier\": \"cs-CZ\"}".utf8))
+        }
+        // A configuration saved before the range existed is migrated into it, keeping every other setting.
+        XCTAssertEqual(try decode("18446744073710").trailingGraceMs, 2_000, "a value that would trap on key release")
+        XCTAssertEqual(try decode("5000").trailingGraceMs, 2_000)
+        XCTAssertEqual(try decode("5000").localeIdentifier, "cs-CZ", "the rest of the stored configuration survives")
+        XCTAssertEqual(try decode("-1").trailingGraceMs, 0)
+        XCTAssertEqual(try decode("2000").trailingGraceMs, 2_000)
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-grace-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let session = FlowSession(store: FlowStore(directory: root))
+        session.config.trailingGraceMs = 60_000
+        XCTAssertEqual(session.config.trailingGraceMs, 350, "the owner's setter keeps the previous value")
+        XCTAssertNotNil(session.lastError)
+    }
+
+    @MainActor
+    func testACopyMadeWhileTheTargetActivatesIsNeverPasted() async {
+        let board = NSPasteboard(name: NSPasteboard.Name("flow-test-\(UUID().uuidString)"))
+        defer { board.releaseGlobally() }
+        var pasted = 0
+        let target = FlowFocusTarget(bundleIdentifier: "test.target", localizedName: "Target", processIdentifier: 4242)
+        var seams = FlowInjector.Seams()
+        seams.pasteboard = board
+        // Another process copies something while the target is being activated.
+        seams.reactivate = { _ in
+            board.clearContents()
+            board.setString("copied meanwhile", forType: .string)
+            return true
+        }
+        seams.trusted = { true }
+        seams.frontmost = { 4242 }
+        seams.paste = { pasted += 1 }
+        let replaced = await FlowInjector.inject("fixture transcript", into: target, usePaste: true,
+                                                 restoreClipboard: false, seams: seams)
+        XCTAssertEqual(replaced, .clipboardChanged)
+        XCTAssertEqual(pasted, 0, "the copy made during activation is never pasted as the transcript")
+
+        seams.reactivate = { _ in true }
+        let landed = await FlowInjector.inject("fixture transcript", into: target, usePaste: true,
+                                               restoreClipboard: false, seams: seams)
+        XCTAssertEqual(landed, .injected, "an untouched clipboard still pastes")
+        XCTAssertEqual(pasted, 1)
+    }
+
+    @MainActor
+    func testAPasteWithheldForAChangedClipboardIsNotShownAsInserted() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-clipboard-changed-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let session = FlowSession(store: FlowStore(directory: root))
+        session.injectEffect = { _ in .clipboardChanged }
+        await session.completeTurn(raw: "withheld fixture")
+        XCTAssertNil(session.lastInjected, "nothing was pasted and nothing is on the clipboard")
+        XCTAssertEqual(session.history.first?.text, "withheld fixture", "history keeps the transcript")
+        XCTAssertEqual(session.history.first?.injected, false)
     }
 
     @MainActor

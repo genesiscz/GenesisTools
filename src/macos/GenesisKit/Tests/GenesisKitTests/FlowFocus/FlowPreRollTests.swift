@@ -249,6 +249,92 @@ final class FlowPreRollTests: XCTestCase {
         XCTAssertLessThan(clock.now - started, .seconds(5), "a cancelled caller stops waiting")
     }
 
+    @MainActor
+    func testACancelledWaitNeverEndsTheNextHoldsWait() async throws {
+        let recognizer = CompanionSpeechRecognizer(audioSource: PermissionGuardAudioSource())
+        let first = Task { await recognizer.waitForFinal(timeoutSeconds: 30, hold: recognizer.currentHold) }
+        for _ in 0..<100 { await Task.yield() }
+        // The caller gives up, the hold is cancelled, and the next hold starts waiting before the
+        // cancellation's main-actor hop has run.
+        first.cancel()
+        recognizer.cancel()
+        let clock = ContinuousClock()
+        let started = clock.now
+        await recognizer.waitForFinal(timeoutSeconds: 0.5, hold: recognizer.currentHold)
+        XCTAssertGreaterThanOrEqual(clock.now - started, .milliseconds(400), "the second wait runs to its own deadline")
+        await first.value
+    }
+
+    @MainActor
+    func testClearingHistoryWhileAHoldFinalizesKeepsItsWords() async throws {
+        let recognizer = CompanionSpeechRecognizer(audioSource: FixtureAudioSource(live: try filled(0.5)))
+        recognizer.recognizes = false
+        recognizer.retryOnEmpty = false
+        do {
+            try recognizer.start(locale: Locale(identifier: "en-US"), forceServer: true)
+        } catch CompanionSpeechError.recognizerUnavailable {
+            throw XCTSkip("No speech recognizer on this runner")
+        }
+        recognizer.recordRecognizedForTesting("words already heard")
+        // Capture has stopped once finish() begins; it then waits for the final result.
+        recognizer.recognizes = true
+        let finishing = Task { await recognizer.finish(timeoutSeconds: 0.3) }
+        for _ in 0..<100 { await Task.yield() }
+        // What clearing history (or deleting the latest entry) does meanwhile.
+        recognizer.clearTranscript()
+        let text = await finishing.value
+        XCTAssertEqual(text, "words already heard", "the finalizing hold keeps the words it already recognized")
+    }
+
+    @MainActor
+    func testAnOlderFinishReturningDoesNotExposeTheNewerHoldsWords() async throws {
+        let recognizer = CompanionSpeechRecognizer(audioSource: FixtureAudioSource(live: try filled(0.5)))
+        recognizer.recognizes = false
+        recognizer.retryOnEmpty = false
+        do {
+            try recognizer.start(locale: Locale(identifier: "en-US"), forceServer: true)
+        } catch CompanionSpeechError.recognizerUnavailable {
+            throw XCTSkip("No speech recognizer on this runner")
+        }
+        // The first hold is released with a tail, and cancelled while the tail runs.
+        let older = Task { await recognizer.finish(timeoutSeconds: 0.1, tailMs: 200) }
+        // Cancel only once the older finish is inside its tail; cancelled earlier, it would return at its first guard.
+        for _ in 0..<1_000 where recognizer.finishCallsRunning == 0 { await Task.yield() }
+        XCTAssertEqual(recognizer.finishCallsRunning, 1, "the older finish is in its tail")
+        recognizer.cancel()
+        // The next hold starts and finishes while the older finish is still in its tail.
+        try recognizer.start(locale: Locale(identifier: "en-US"), forceServer: true)
+        recognizer.recordRecognizedForTesting("the newer hold's words")
+        recognizer.recognizes = true
+        let newer = Task { await recognizer.finish(timeoutSeconds: 0.8) }
+        _ = await older.value
+        // History is cleared after the older finish returned, while the newer one still waits.
+        recognizer.clearTranscript()
+        let text = await newer.value
+        XCTAssertEqual(text, "the newer hold's words")
+    }
+
+    @MainActor
+    func testPreRollLeadsTheRetryClipAndACancelledHoldKeepsNoAudio() throws {
+        let live = try filled(0.9)
+        let preRoll = try filled(0.1)
+        let recognizer = CompanionSpeechRecognizer(audioSource: FixtureAudioSource(live: live))
+        recognizer.recognizes = false
+        recognizer.preRollProvider = { [preRoll] }
+        do {
+            try recognizer.start(locale: Locale(identifier: "en-US"), forceServer: true)
+        } catch CompanionSpeechError.recognizerUnavailable {
+            throw XCTSkip("No speech recognizer on this runner")
+        }
+        let clip = recognizer.retainedForRetry
+        XCTAssertEqual(clip.count, 2)
+        XCTAssertEqual(try XCTUnwrap(clip.first?.floatChannelData)[0][0], 0.1, accuracy: 0.0001,
+                       "the retry starts with the pre-roll, as the streaming request did")
+        XCTAssertEqual(try XCTUnwrap(clip.last?.floatChannelData)[0][0], 0.9, accuracy: 0.0001)
+        recognizer.cancel()
+        XCTAssertTrue(recognizer.retainedForRetry.isEmpty, "a cancelled hold keeps none of its audio")
+    }
+
     func testWholeClipHelperReturnsWithoutStartingUnauthorizedRecognition() async throws {
         guard !CompanionSpeechRecognizer.speechAuthorized() else {
             throw XCTSkip("Negative control needs a runner without Speech authorization")
@@ -332,6 +418,19 @@ final class FlowPreRollTests: XCTestCase {
     func testPreRollIsOffByDefault() {
         XCTAssertFalse(FlowConfig().preRoll)
     }
+}
+
+/// Delivers one live buffer while it starts, the way a tap can fire before start() returns.
+@MainActor
+private final class FixtureAudioSource: CompanionAudioSource {
+    let deviceLabel = "fixture-source"
+    let live: AVAudioPCMBuffer
+    init(live: AVAudioPCMBuffer) { self.live = live }
+    func start(onBuffer: @escaping (AVAudioPCMBuffer) -> Void) throws -> AVAudioFormat {
+        onBuffer(live)
+        return live.format
+    }
+    func stop() {}
 }
 
 @MainActor

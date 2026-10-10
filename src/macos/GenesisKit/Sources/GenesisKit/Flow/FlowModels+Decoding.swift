@@ -31,6 +31,10 @@ extension FlowConfig {
         guard historyLimit > 0 else {
             throw DecodingError.dataCorruptedError(forKey: .historyLimit, in: values, debugDescription: "History limit must be positive")
         }
+        // A stored value from before the range existed is migrated into it, never a reason to drop the whole
+        // configuration. New out-of-range values are refused where they are set (FlowStore.persistConfig and the
+        // owner's flow.config command).
+        trailingGraceMs = min(max(trailingGraceMs, Self.trailingGraceRange.lowerBound), Self.trailingGraceRange.upperBound)
     }
 }
 

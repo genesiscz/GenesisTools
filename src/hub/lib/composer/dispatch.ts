@@ -11,7 +11,7 @@ import { type DecisionRecord, kindOf, readDecisions } from "@app/question/lib/de
 import { answerInboxDecision } from "@app/question/lib/inbox/answer";
 import { waitingBlock } from "@app/question/lib/inbox/load";
 import { type AskDeps, answerAskForm, checkAskAnswer, getAskForm } from "@app/question/lib/pending/ask";
-import { attachImageFiles } from "@app/question/lib/pending/form";
+import { attachImageFiles, MAX_ANSWER_IMAGE_BYTES } from "@app/question/lib/pending/form";
 import type { AskAnswer, AskForm } from "@app/question/lib/pending/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -97,10 +97,16 @@ function holdsThisAnswer(row: DecisionRecord, payload: DecisionPayload): boolean
     );
 }
 
+/** Widget images too large for a form answer. They still reach the form, as media context. */
+function oversizedAnswerImages(assets: WidgetAsset[]): WidgetAsset[] {
+    return assets.filter((asset) => asset.type === "image" && asset.bytes > MAX_ANSWER_IMAGE_BYTES);
+}
+
 /**
  * The widget's image attachments become images of the form's first item that accepts pasted images, before the
  * answer is checked and recorded. Otherwise an image-only answer to such an item fails as incomplete, because the
- * images reach the form only as media context, which never answers an item.
+ * images reach the form only as media context, which never answers an item. A widget image may be far larger than
+ * an answer image may be; such an image stays media context only, so it never fails an otherwise complete answer.
  */
 function formAnswersWithImages(form: AskForm, answers: AskAnswer[], assets: WidgetAsset[]): AskAnswer[] {
     const item = form.items.find((entry) => entry.allowImagePaste);
@@ -108,9 +114,10 @@ function formAnswersWithImages(form: AskForm, answers: AskAnswer[], assets: Widg
         return answers;
     }
 
+    const oversized = new Set(oversizedAnswerImages(assets));
     return attachImageFiles(
         answers,
-        assets.flatMap((asset) => (asset.type === "image" ? [`${item.id}=${asset.path}`] : []))
+        assets.flatMap((asset) => (asset.type === "image" && !oversized.has(asset) ? [`${item.id}=${asset.path}`] : []))
     );
 }
 
@@ -160,7 +167,13 @@ export function widgetDispatcher({
                 }
                 const checked = checkAskAnswer(payload.id, formAnswersWithImages(form, payload.answers, assets), ask);
                 if (!checked.ok) {
-                    throw new Error(checked.error);
+                    const oversized = oversizedAnswerImages(assets).map((asset) => asset.name);
+                    const limit = `${(MAX_ANSWER_IMAGE_BYTES / 1_000_000).toFixed(1)} MB`;
+                    throw new Error(
+                        oversized.length
+                            ? `${checked.error}. Over ${limit}, ${oversized.join(", ")} goes along as context but cannot answer a question: attach a smaller image or answer in text.`
+                            : checked.error
+                    );
                 }
             } else if (message.target.provider === "unknown") {
                 throw new Error("Choose a specific destination session before sending this follow-up.");

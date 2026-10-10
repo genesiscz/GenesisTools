@@ -79,10 +79,17 @@ public final class FlowFocusRuntime: ObservableObject {
     }
 
     public func start() async {
+        // A start during an asynchronous stop waits for it: the stop's tail releases the lease and unregisters the
+        // participant, which must never belong to the runtime a restart just set up.
+        while let shutdown { await shutdown.value }
+        // A start cancelled while it waited never begins: it would register a participant and stay `.starting`.
+        guard !Task.isCancelled else { return }
         switch role {
         case .starting, .owner, .client: return
         case .stopped, .unavailable: break
         }
+        startGeneration &+= 1
+        let generation = startGeneration
         role = .starting
         lastError = nil
         do {
@@ -90,7 +97,12 @@ public final class FlowFocusRuntime: ObservableObject {
             installDiscovery()
             try rejectLegacyOwner()
             for _ in 0 ..< 20 {
-                guard !Task.isCancelled, role == .starting else { return }
+                guard role == .starting else { return }
+                if Task.isCancelled {
+                    // Undo the registration, so a later start is not refused by a role stuck at `.starting`.
+                    await stop()
+                    return
+                }
                 if let acquired = try FlowFocusLease.acquire(directory: directory, hostID: hostID) {
                     lease = acquired
                     try becomeOwner(acquired)
@@ -106,6 +118,9 @@ public final class FlowFocusRuntime: ObservableObject {
         } catch {
             let message = error.localizedDescription
             await stop()
+            // A restart may have run while this failed start was being stopped; its role is not this start's to
+            // overwrite (an owner marked unavailable would refuse every command).
+            guard generation == startGeneration else { return }
             role = .unavailable(message)
             reportFailure(message)
             installDiscovery()
@@ -115,6 +130,27 @@ public final class FlowFocusRuntime: ObservableObject {
     /// Hosts must await this from their terminate-later delegate path. The descriptor stays held
     /// until recording has stopped and every already-queued settings write has reached disk.
     public func stop() async {
+        if let shutdown {
+            await shutdown.value
+            return
+        }
+        // The task clears itself as its last step: a start resuming between the shutdown's end and this caller's
+        // resumption must never leave a finished task behind for a later stop() to mistake for one in progress.
+        let task = Task { @MainActor [self] in
+            await self.shutDown()
+            self.shutdown = nil
+        }
+        shutdown = task
+        await task.value
+    }
+
+    private var shutdown: Task<Void, Never>?
+    /// Moves on with every start that begins, so a failed start records its failure only if no later start ran.
+    private var startGeneration = 0
+    /// Awaited inside a shutdown right before the settings flush; tests hold a shutdown open with it.
+    var beforeShutdownFlush: (() async -> Void)?
+
+    private func shutDown() async {
         role = .stopped
         publication?.cancel()
         publication = nil
@@ -140,6 +176,7 @@ public final class FlowFocusRuntime: ObservableObject {
         }
         dnd.ownsRuntime = false
         dnd.remoteCommand = nil
+        if let beforeShutdownFlush { await beforeShutdownFlush() }
         await configuration.flush()
         if Self.activeOwners[directory] === self { Self.activeOwners.removeValue(forKey: directory) }
         lease?.release()
@@ -198,7 +235,6 @@ public final class FlowFocusRuntime: ObservableObject {
     private func configureModels(owner: Bool) {
         FlowFocusConfiguration.shared = configuration
         FlowStore.shared = flowStore
-        FlowEvents.logURL = dataRoot.appendingPathComponent("flow/events.jsonl")
         flowStore.writesEnabled = owner
         flowStore.forwardWrite = nil
         flowStore.didWrite = { [weak self] in
@@ -408,6 +444,11 @@ public final class FlowFocusRuntime: ObservableObject {
         case "flow.lab": flow.setLabEnabled(try decode(Bool.self))
         case "flow.config":
             let patch = try JSONSerialization.jsonObject(with: command.payload) as? [String: Any] ?? [:]
+            // Decoding clamps a stored value; a new one outside the range is refused, not quietly changed.
+            if let grace = patch["trailingGraceMs"], !((grace as? Int).map(FlowConfig.trailingGraceRange.contains) ?? false) {
+                throw FlowFocusMailbox.Failure.unavailable(
+                    "Trailing grace must be 0 to \(FlowConfig.trailingGraceRange.upperBound) ms.")
+            }
             let raw = try JSONSerialization.jsonObject(with: JSONEncoder().encode(flow.config)) as? [String: Any] ?? [:]
             let value = try JSONDecoder().decode(FlowConfig.self, from:
                 JSONSerialization.data(withJSONObject: FlowFocusConfiguration.merge(raw, patch)))

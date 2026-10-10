@@ -529,7 +529,7 @@ public final class FlowSession: ObservableObject {
         guard phase == .listening else { return }
         phase = .transcribing
 
-        let grace = max(0, config.trailingGraceMs)
+        let grace = min(max(0, config.trailingGraceMs), FlowConfig.trailingGraceRange.upperBound)
         finishTask = Task { @MainActor [weak self] in
             guard let self else { return }
             // Trailing grace: releasing the key cuts the audio mid-syllable
@@ -614,6 +614,8 @@ public final class FlowSession: ObservableObject {
             lastError = "The target app closed — text copied to the clipboard."
         case .focusMoved:
             lastError = "The target app was not in front at paste time — text copied to the clipboard."
+        case .clipboardChanged:
+            lastError = "Something else was copied before the paste — nothing was pasted."
         case .copiedOnly:
             lastError = nil
         case .injected, .empty:
@@ -627,7 +629,9 @@ public final class FlowSession: ObservableObject {
             injected: outcome == .injected
         )
 
-        lastInjected = text
+        // A withheld paste after the clipboard changed delivered nothing and left nothing on the clipboard, so the
+        // widget must not show it as the last inserted text; history still has the transcript.
+        lastInjected = outcome == .clipboardChanged ? nil : text
         target = nil
         phase = .idle
 
@@ -751,7 +755,7 @@ public final class FlowSession: ObservableObject {
         stats.dayStreak = Self.streak(endingAt: entry.createdAt, previous: stats.lastDictationAt, current: stats.dayStreak)
         stats.lastDictationAt = entry.createdAt
         guard store.saveHistoryAndStats(history: history, stats: stats) else { return }
-        FlowEvents.publish(entry)
+        FlowEvents.publish(entry, to: store.eventsURL)
 
         guard config.dictionaryLearning else { return }
         let raised = FlowDictionary.learn(
@@ -827,9 +831,10 @@ public final class FlowSession: ObservableObject {
         guard store.recoverPendingHistory() else { return }
         reloadStoredState(preserveConfiguration: true)
         guard let removed = history.first(where: { $0.id == id }) else { return }
+        let wasLatest = history.first?.id == id
         history.removeAll { $0.id == id }
         stats = stats.removing(removed, remainingHistory: history)
-        store.saveHistoryAndStats(history: history, stats: stats)
+        if store.saveHistoryAndStats(history: history, stats: stats), wasLatest { forgetShownTranscript() }
     }
 
     public func clearHistory() {
@@ -837,7 +842,14 @@ public final class FlowSession: ObservableObject {
         guard store.recoverPendingHistory() else { return }
         history.removeAll()
         stats = FlowStats()
-        store.saveHistoryAndStats(history: history, stats: stats)
+        if store.saveHistoryAndStats(history: history, stats: stats) { forgetShownTranscript() }
+    }
+
+    /// The last turn's text is mirrored into the live snapshot (the widget, the runtime's state.json); removing
+    /// it from history removes it there too. A turn in progress keeps its own live text.
+    private func forgetShownTranscript() {
+        lastInjected = nil
+        recognizer.clearTranscript()
     }
 
     public func copyEntry(_ entry: FlowEntry) {

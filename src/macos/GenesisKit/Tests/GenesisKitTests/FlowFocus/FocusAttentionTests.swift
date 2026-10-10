@@ -266,3 +266,18 @@ final class FocusAttentionTests: XCTestCase {
     }
     #endif
 }
+
+/// The HUD's attention pulse under Reduce Motion.
+final class AttentionPulseMotionTests: XCTestCase {
+    func testReduceMotionShowsAStaticBorderInsteadOfBlinking() {
+        let style = AttentionPulseStyle.slowBorder(color: .red, cornerRadius: 8)
+        let still = AttentionPulse<Int>.steps(style: style, reduceMotion: true)
+        XCTAssertTrue(still.allSatisfy { $0.animation == nil }, "nothing fades or blinks")
+        XCTAssertEqual(still.map(\.on), [true, false], "one static indication, then gone")
+        XCTAssertEqual(still.first?.waitNanoseconds, 4_000_000_000, "held for the pulse's duration")
+
+        let blinking = AttentionPulse<Int>.steps(style: style, reduceMotion: false)
+        XCTAssertEqual(blinking.count, style.cycles * 2)
+        XCTAssertTrue(blinking.allSatisfy { $0.animation != nil })
+    }
+}
