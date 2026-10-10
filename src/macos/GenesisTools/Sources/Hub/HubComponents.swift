@@ -151,18 +151,30 @@ struct RepoFacts: Codable, Equatable {
         return forge?.compare(base: pr.target, head: branch)
     }
 
-    /// Blocking: runs `tools`, so call it off the main thread only.
-    static func fetch(_ paths: [String], pr: Bool) -> [RepoFacts] {
-        guard !paths.isEmpty else { return [] }
-        let span = HubPerf.begin("repoFacts", "\(paths.count) paths pr=\(pr)")
+    /// What the CLI answers for a folder that is no checkout: every field empty.
+    static func none(_ path: String) -> RepoFacts {
+        RepoFacts(path: path, root: nil, repo: nil, branch: nil, head: nil, origin: nil, branchUrl: nil, headUrl: nil, pr: nil, prError: nil)
+    }
+
+    /// Blocking: runs `tools`, so call it off the main thread only. A folder that is gone from disk (a deleted
+    /// Copilot session-state checkout) is answered here: `tools hub repo` on one took 1.7 to 2.5 s under load
+    /// (24 runs on 2026-10-10, inventory H20), to say what a `stat` says.
+    static func fetch(_ paths: [String], pr: Bool, run: ([String]) throws -> Data = ToolsCLIRunner.run) -> [RepoFacts] {
+        let present = paths.filter { FileManager.default.fileExists(atPath: $0) }
+        let missing = paths.filter { !present.contains($0) }.map(none)
+        if !missing.isEmpty {
+            HubPerf.log("repoFacts \(missing.count) missing folders answered without tools")
+        }
+        guard !present.isEmpty else { return missing }
+        let span = HubPerf.begin("repoFacts", "\(present.count) paths pr=\(pr)")
         defer { span.end() }
         do {
             // The CLI answers fresh by default; the PR lookup cache's own TTL (tools hub config) still caps a day.
-            let data = try ToolsCLIRunner.run(["hub", "repo"] + paths + (pr ? ["--pr", "--max-cache-age", "86400"] : []))
-            return try JSONDecoder().decode([RepoFacts].self, from: data)
+            let data = try run(["hub", "repo"] + present + (pr ? ["--pr", "--max-cache-age", "86400"] : []))
+            return try JSONDecoder().decode([RepoFacts].self, from: data) + missing
         } catch {
             HubPerf.log("repoFacts failed: \(error)")
-            return []
+            return missing
         }
     }
 }
@@ -210,6 +222,11 @@ final class RepoFactsStore: ObservableObject {
     /// The cached facts, or nil until the batch that fetches them lands. `pr` adds the PR/MR lookup (gh / glab).
     func facts(for path: String, pr: Bool = false) -> RepoFacts? {
         guard !path.isEmpty else { return nil }
+        // A folder this run already found to be no checkout has no branch, so no PR either: no second
+        // `tools hub repo --pr` for it on the next selection.
+        if pr, fresh.contains(path), byPath[path]?.root == nil {
+            return byPath[path]
+        }
         if pr {
             if requestedPR.insert(path).inserted {
                 requested.insert(path)

@@ -197,6 +197,8 @@ enum TimelineAuthor: String, CaseIterable {
 @MainActor
 final class HubTimelineModel: ObservableObject {
     static let pageSize = 200
+    /// More changed rows than this land without the slide (see `apply`).
+    static let animatedChangeLimit = 8
 
     @Published private(set) var events: [TimelineEvent] = []
     @Published private(set) var since: Date?
@@ -418,11 +420,19 @@ final class HubTimelineModel: ObservableObject {
         shownKey = key
         let before = samePage ? Dictionary(events.map { ($0.id, "\($0.hashValue)") }, uniquingKeysWith: { first, _ in first }) : [:]
         let moved = SWR.changed(before: before, after: envelope.events.map { ($0.id, "\($0.hashValue)") })
-        withAnimation(SWR.animation) {
-            if events != envelope.events {
-                events = envelope.events
+        let land = {
+            if self.events != envelope.events {
+                self.events = envelope.events
             }
-            changed = moved
+            self.changed = moved
+        }
+        // Only a few rows of the page on screen slide: a first paint, another range or a refresh that moved
+        // most rows lands at once. Animated, the cached first page built an insertion for each of its 200 rows
+        // (`hub.mode.timeline` 556 ms of main thread in a debug build, 2026-10-10).
+        if samePage, !before.isEmpty, moved.count <= Self.animatedChangeLimit {
+            withAnimation(SWR.animation, land)
+        } else {
+            land()
         }
         warnings = envelope.warnings
         truncated = envelope.truncated ?? []

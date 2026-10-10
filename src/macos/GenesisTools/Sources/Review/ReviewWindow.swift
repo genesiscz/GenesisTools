@@ -299,9 +299,10 @@ final class ReviewModel: ObservableObject {
     @Published var commentCount = 0
     @Published var unsentCount = 0
     @Published var notice: String?
-    @Published var treeMode = true {
-        didSet { MainActor.assumeIsolated { HubMainBusy.measure("review.files.tree") } }
-    }
+    /// The Files list as a tree or flat. Its click measures itself (`review.files.tree`, at the toggle): measured
+    /// here, every launch's session-state restore logged the whole launch as the tree's cost ("897 ms of 600 ms",
+    /// six at a time from parallel snapshot runs, 2026-10-10).
+    @Published var treeMode = true
     @Published var collapsed: Set<String> = []
     /// Set only when the diff moves to a file on its own (a find match), so a click in the list never scrolls the list.
     @Published var sidebarScrollTarget: String?
@@ -796,6 +797,8 @@ final class ReviewModel: ObservableObject {
         guard !seeded.isEmpty else { return }
         HubPerf.log("review.cache paint \(files.count) -> \(ReviewRoots.merge(next).count) files, \(scope)")
         HubMainBusy.measure("review.cache.paint")
+        // The paint's own main-thread work; the busy window above also holds whatever else the launch draws.
+        let span = HubPerf.begin("review.cache.apply")
         // No comment re-anchoring here: that writes the comments file, and a list-only snapshot has no lines.
         roots = next
         cachedFolders.formUnion(seeded)
@@ -805,6 +808,7 @@ final class ReviewModel: ObservableObject {
         }
         pushToRenderer()
         resetBlame()
+        span.end("\(files.count) files")
     }
 
     private func applyLayout(_ layout: ReviewRepositoryLayout, to root: inout ReviewRoot) {
@@ -2798,6 +2802,7 @@ struct FileSidebar: View {
                 .frame(height: 30)
                 .background(RoundedRectangle(cornerRadius: 8).stroke(ReviewPalette.hairline))
                 Button {
+                    HubMainBusy.measure("review.files.tree")
                     model.treeMode.toggle()
                 } label: {
                     Image(systemName: model.treeMode ? "list.bullet.indent" : "list.bullet")

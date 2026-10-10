@@ -127,7 +127,10 @@ public enum HangWatch {
             return
         }
         var shouldSample = false
-        if gap > sampleThreshold, !sampledThisStall, now - lastSampleAt > sampleCooldown {
+        // A scripted run (`PerfContext.run`) keeps the in-process stack file but spawns no `sample`: about a
+        // second of a core on an already loaded machine, a 200 KB file, and an empty call graph, because the
+        // run exits right after its capture (four such files on 2026-10-10 21:22-21:59).
+        if gap > sampleThreshold, !sampledThisStall, now - lastSampleAt > sampleCooldown, PerfContext.run == nil {
             sampledThisStall = true
             lastSampleAt = now
             shouldSample = true

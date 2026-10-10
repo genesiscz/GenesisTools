@@ -86,6 +86,8 @@ final class PRReadinessStore: ObservableObject {
     @Published private(set) var byURL: [String: PRReadiness] = [:]
     @Published private(set) var loading = false
     private var pending: [HubPR]?
+    /// The disk's last verdicts, read once per run; a fresh batch waits for it so it never lands after one.
+    private var cachePaint: Task<Void, Never>?
     nonisolated private static let cache = HubSWR.cache("pr-readiness")
 
     func readiness(for pr: HubPR) -> PRReadiness? {
@@ -93,6 +95,19 @@ final class PRReadinessStore: ObservableObject {
         // A push since the answer: the old verdict would lie, so the badge waits for the new one.
         if let head = pr.headSha, let known = found.headSha, head != known { return nil }
         return found
+    }
+
+    /// The last known verdicts at once (Hub/HubSWR.swift), when the PR list paints its own cached rows. They
+    /// used to wait for the first fresh list, so the rows and the PR header had no badge for as long as the
+    /// forge took (`hub.prs.list` 8.6 s for ten projects, 2026-10-10 21:21). `readiness(for:)` still drops a
+    /// verdict whose head is not the PR's head now. Not animated: a first paint of every row at once.
+    func paintCached() {
+        guard cachePaint == nil, byURL.isEmpty else { return }
+        cachePaint = Task {
+            guard let cached = await Self.cache.load([String: PRReadiness].self, key: "all"), byURL.isEmpty, !cached.isEmpty else { return }
+            HubSWR.painted("prs.readiness", "\(cached.count) prs")
+            byURL = cached
+        }
     }
 
     /// After each PR list load. A load that lands while one runs is kept and runs next.
@@ -105,13 +120,9 @@ final class PRReadinessStore: ObservableObject {
         }
 
         loading = true
+        paintCached()
         Task {
-            // The last known verdicts paint first (Hub/HubSWR.swift); `readiness(for:)` still drops
-            // one whose head is not the PR's head now.
-            if byURL.isEmpty, let cached = await Self.cache.load([String: PRReadiness].self, key: "all"), byURL.isEmpty {
-                HubSWR.painted("prs.readiness", "\(cached.count) prs")
-                withAnimation(SWR.animation) { byURL = cached }
-            }
+            await cachePaint?.value
             defer {
                 let snapshot = byURL
                 Task.detached(priority: .utility) { Self.cache.write(snapshot, key: "all") }
@@ -132,10 +143,20 @@ final class PRReadinessStore: ObservableObject {
                 case .success(let outcomes):
                     let found = outcomes.compactMap(\.readiness)
                     span.end("\(found.count) answered, \(found.filter(\.cached).count) cached, \(outcomes.count - found.count) failed")
-                    for readiness in found {
-                        byURL[readiness.url] = readiness
+                    // Which PR failed and why: the count alone could not be traced to a PR (the call's argv is
+                    // cut at 300 characters), and the one failure on record was a forge token that could not
+                    // see a private repository (GraphQL NOT_FOUND, 2026-10-04).
+                    for outcome in outcomes where outcome.readiness == nil {
+                        HubPerf.log("prs.readiness \(outcome.input) failed: \(outcome.error ?? "no answer")")
                     }
-                    HubMainBusy.measure("prs.readiness.render")
+                    var next = byURL
+                    for readiness in found {
+                        next[readiness.url] = readiness
+                    }
+                    if next != byURL {
+                        byURL = next
+                        HubMainBusy.measure("prs.readiness.render")
+                    }
                 case .failure(let error):
                     span.end("failed: \(error)")
                 }

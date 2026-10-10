@@ -172,6 +172,7 @@ enum HubBench {
             if wants("fold"), model.mode == .prs { addFoldSweep() }
             if wants("prslist"), model.mode == .prs { addPRListSelect() }
             if wants("activity"), model.mode == .timeline { addActivitySweep() }
+            if wants("agents"), model.mode == .agents { addAgentsRefresh() }
             // From another mode (a session's transcript open), opt-in: GENESIS_HUB_BENCH_ONLY=inbox.
             if model.mode == .timeline ? wants("inbox") : model.mode != .inbox && only.contains("inbox") { addInboxSwitch() }
             // Opt-in only (not in the default run): it scrolls the transcript, which loads rows.
@@ -211,6 +212,20 @@ enum HubBench {
                 for click in clicks {
                     steps.append(Step(scenario: "activity", action: click, delay: 0.7))
                 }
+            }
+        }
+
+        /// `agents`: the Agents list lands again with one agent's numbers moved, 0.7 s apart, the way a refresh
+        /// after a transcript grew does (`hub.agents.refresh.render` in the live hub). Even steps move a child of
+        /// the open parent (its detail is on screen), odd steps a child of another parent (nothing on screen
+        /// should re-render beyond that row). `GENESIS_HUB_BENCH_AGENTS_ROUNDS` sets the steps (default 12).
+        private func addAgentsRefresh() {
+            let agents = model.agents
+            order.append("agents.refresh")
+            PerfLog.mark("hub.bench agents: \(agents.parents.count) parents, open \(agents.selectedID ?? "none")")
+            let rounds = ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_AGENTS_ROUNDS"].flatMap(Int.init) ?? 12
+            for round in 0..<rounds {
+                steps.append(Step(scenario: "agents.refresh", action: { agents.benchRefresh(round) }, delay: 0.7))
             }
         }
 
@@ -703,12 +718,24 @@ enum HubBenchAccessibilityClient {
 enum HubSnapshotFocus {
     @MainActor
     static func whenReady(review: @escaping @MainActor () -> ReviewModel?, file: String?, style: DiffViewOptions.Style? = nil,
+                          showsDiff: @escaping @MainActor () -> Bool = { true },
                           deadline: Date = Date().addingTimeInterval(30), then done: @escaping () -> Void) {
         var stableSince: Date?
         func check() {
+            // No diff on screen (Inbox, Activity, the Agents list, worktree cleanup, a session without Changes):
+            // nothing to wait for. These runs waited the whole deadline (35 to 44 s each, inventory H24).
+            guard showsDiff() else {
+                done()
+                return
+            }
+
             let current = review()
-            // A PR's diff also waits for its live threads, so the capture shows them on their lines.
-            let ready = current.map { !$0.loading && !$0.files.isEmpty && ($0.pr?.settled ?? true) } ?? false
+            // A PR's diff also waits for its live threads, so the capture shows them on their lines. A loaded session or
+            // worktree review with no changes is ready too (`lastLoaded`): it used to wait the whole deadline for a
+            // file. A PR's review keeps waiting for files: its first load can answer before the scope moves to the PR.
+            let ready = current.map { review in
+                !review.loading && (!review.files.isEmpty || (review.lastLoaded != nil && review.pr == nil)) && (review.pr?.settled ?? true)
+            } ?? false
             if ready {
                 stableSince = stableSince ?? Date()
             } else {

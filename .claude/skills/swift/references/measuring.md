@@ -67,10 +67,24 @@ process and one inbox receipt under 500 ms do not establish an end-to-end latenc
 GENESIS_HUB_BENCH_ONLY=open GENESIS_HUB_BENCH_OPEN=<id-prefix>,<id-prefix> GENESIS_HUB_BENCH_AX=1 \
   ~/Applications/GenesisTools.app/Contents/MacOS/GenesisTools --hub --bench /tmp/cc/<…>/b.json --panes transcript,changes
 ```
-Steps: `sidebar`, `files`, `window`, `split`, `fold` (PRs), `activity`, `inbox`, `open`, `panes`.
+Steps: `sidebar`, `files`, `window`, `split`, `fold` (PRs), `activity`, `inbox`, `open`, `panes`,
+`agents` (`--mode agents`: the list lands again with one agent's numbers moved, 0.7 s apart).
 Always `GENESIS_HUB_BENCH_AX=1` for clicks: transcript open measured 69-128 ms without and 342-367 ms
 with an AX client (the live hub had 1.5-1.8 s). Results: the JSON plus `hub.*` lines in app-perf.log.
-It runs the installed bundle: `bun run app` first.
+It runs the installed bundle: `bun run app` first. A worktree's `.build/debug/GenesisTools --hub … --bench`
+or `--snapshot` also runs (no bundle needed), but its web diff does not load (NSURLErrorDomain -1100), and
+its window starts at 1440×900, not the live hub's saved frame: pass `--width/--height` to compare.
+
+Two traps when reading a hub stall or a `main busy` line:
+- **Whose process?** Several processes write `app-perf.log` and none of its lines had a pid. A hang
+  sample's header names the process: `Parent Process: zsh` and a `/private/tmp/*/GenesisTools` path is an
+  agent's off-screen run, not the user's hub. Scripted runs now append `run=snapshot pid=<n>` (or `bench`)
+  to every stall line and spawn no `sample`. On 2026-10-10 every "hidden hub" stall reported from 21:22 to
+  22:12 was a `--snapshot` run's title bar audit.
+- **What did the window measure?** `HubMainBusy.measure` counts all main-thread work for 600 ms. One fired
+  during launch (a session-state restore setting `treeMode`) reported the launch: `review.files.tree` "897
+  ms of 600 ms", six at a time from parallel snapshots, while the tree's own work never ran. Measure at the
+  click, and put a span around the work itself (`review.cache.apply` is 5 ms inside a 416 ms window).
 
 ## 5. A/B harness — one view technique
 
