@@ -244,6 +244,32 @@ final class SettingsControlsTests: XCTestCase {
         XCTAssertTrue(settings.records(host: "example.org"))
     }
 
+    func testTheRuleEditorSavesTheRuleItOpenedAfterAnEarlierRuleIsRemoved() throws {
+        let alpha = FocusSettings.ProjectRule(name: "Alpha", cmuxSession: "alpha-")
+        let beta = FocusSettings.ProjectRule(name: "Beta", cmuxSession: "beta-")
+        let gamma = FocusSettings.ProjectRule(name: "Gamma", titleContains: "Gamma docs")
+        var editor = FocusRuleEditor(rule: beta)
+        editor.cmuxSession = "beta-edited"
+        // Alpha is removed while Beta's editor is open.
+        let remaining = [beta, gamma]
+        XCTAssertEqual(editor.index(in: remaining), 0)
+        let saved = try editor.committed(to: remaining)
+        XCTAssertEqual(saved, [FocusSettings.ProjectRule(name: "Beta", cmuxSession: "beta-edited"), gamma],
+                       "the edit lands on Beta; Gamma, now at Beta's old index, is untouched")
+
+        var last = FocusRuleEditor(rule: gamma)
+        last.host = "gamma.example.com"
+        let lastSaved = try last.committed(to: remaining)
+        XCTAssertEqual(lastSaved.count, 2, "the last rule is replaced, never appended as a copy")
+        XCTAssertEqual(lastSaved[1].host, "gamma.example.com")
+
+        var added = FocusRuleEditor()
+        added.name = "Delta"
+        added.host = "delta.example.com"
+        XCTAssertTrue(added.isNew)
+        XCTAssertEqual(try added.committed(to: [alpha]).map(\.name), ["Alpha", "Delta"])
+    }
+
     func testTheRuleEditorTrimsDropsEmptyConditionsAndRefusesUnusableRules() throws {
         let rule = try FocusSettings.ProjectRule.validated(
             name: "  Fixture project ", cmuxSession: " fixture- ", titleContains: "  ", host: "https://fixture.example.com/x",

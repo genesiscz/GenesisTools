@@ -525,6 +525,18 @@ public final class ActivityRecorder: ObservableObject {
         }
     }
 
+    /// The ledger just forgot `from..<to` (`ActivityStore.forget`). A segment that started before the range keeps its
+    /// row and id there, so recording goes on in it. One that started inside the range is gone: its id is dropped, so
+    /// the next probe opens a new segment instead of touching a missing row and filing input under it. The current
+    /// minute's counts, counted inside the range, are discarded rather than written back after the deletion.
+    public func ledgerForgot(from: Int64, to: Int64) {
+        guard remoteCommand == nil, from < to else { return }
+        counter.discardPending(overlapping: from, to: to)
+        if segmentId != nil, segmentStartedMs >= from, segmentStartedMs < to {
+            segmentId = nil
+        }
+    }
+
     private func persistInput(bucketMs: Int64, counts: ActivityStore.InputCounts) {
         guard let id = segmentId else { return }
         persist("input bucket") { try store.appendInput(bucketMs: bucketMs, segmentId: id, counts: counts) }

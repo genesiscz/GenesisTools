@@ -43,20 +43,9 @@ public struct NativeSettingsDisclosure<Content: View>: View {
 
 extension View {
     /// The pointing-hand cursor over a clickable settings control, so a row, a recorder or a text-like button reads as
-    /// clickable before it is pressed.
-    public func nativeSettingsPointer() -> some View { modifier(NativeSettingsPointer()) }
-}
-
-private struct NativeSettingsPointer: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(macOS 15, *) {
-            content.pointerStyle(.link)
-        } else {
-            content.onHover { inside in
-                if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-            }
-        }
-    }
+    /// clickable before it is pressed. The shared `pointerCursor()`, which also resets the cursor when the control
+    /// disappears under the pointer.
+    public func nativeSettingsPointer() -> some View { pointerCursor() }
 }
 
 public struct NativeSettingsNumberPicker: View {

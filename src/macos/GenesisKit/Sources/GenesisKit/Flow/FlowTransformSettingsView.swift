@@ -13,6 +13,7 @@ public struct FlowTransformSettingsView: View {
     /// The model reference stored in client.json, to tell an unsaved choice from the saved one.
     @State private var savedRef = ""
     @State private var justSaved = false
+    @State private var saving = false
 
     public init(tools: FlowTransformTools) {
         self.tools = tools
@@ -64,9 +65,9 @@ public struct FlowTransformSettingsView: View {
                             .font(.caption).foregroundStyle(.orange)
                     }
                     Spacer()
-                    Button("Save", action: save)
+                    Button(saving ? "Saving…" : "Save", action: save)
                         .buttonStyle(.borderedProminent)
-                        .disabled(!canSave || !hasUnsavedChoice)
+                        .disabled(saving || !canSave || !hasUnsavedChoice)
                         .accessibilityIdentifier("flow.transforms.save")
                 }
             }
@@ -93,11 +94,17 @@ public struct FlowTransformSettingsView: View {
         canSave && "@account/\(accountID):\(trimmedModel)" != savedRef
     }
 
+    /// "Saved" only after the write landed. A refused or failed write keeps the choice unsaved, so Save stays on to
+    /// retry, and `configuration.lastError` (shown below the card) says why.
     private func save() {
-        tools.save(accountID: accountID, model: modelID)
-        savedRef = tools.modelRef
-        justSaved = true
+        let ref = "@account/\(accountID):\(trimmedModel)"
+        saving = true
         Task { @MainActor in
+            let saved = await tools.save(accountID: accountID, model: modelID)
+            saving = false
+            guard saved else { return }
+            savedRef = ref
+            justSaved = true
             try? await Task.sleep(for: .seconds(2))
             justSaved = false
         }

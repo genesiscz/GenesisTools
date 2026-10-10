@@ -1670,7 +1670,8 @@ final class WidgetRosterTests: XCTestCase {
         try await withFixture { model, _, snapshot in
             XCTAssertEqual(model.sessions, snapshot.sessions.filter(\.visible))
             XCTAssertEqual(model.previewSessions, referencePreview(snapshot.sessions))
-            XCTAssertEqual(model.previewHeight, 316)
+            // Before the preview is measured: the estimate 112 + 56 per row (WidgetModel.previewHeight), 4 rows.
+            XCTAssertEqual(model.previewHeight, 336)
             XCTAssertEqual(model.previewSessions.map(\.key), ["fixture-750", "fixture-738", "fixture-744", "fixture-732"])
         }
     }

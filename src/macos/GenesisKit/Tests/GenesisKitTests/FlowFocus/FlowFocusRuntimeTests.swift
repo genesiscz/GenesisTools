@@ -390,7 +390,7 @@ final class FlowFocusRuntimeTests: XCTestCase {
         await owner.start()
         await client.start()
         do {
-            FlowTransformTools(bridge: ToolsBridge(binaryPath: "/usr/bin/false"), configuration: client.configuration).save(accountID: "work", model: "fixture-model")
+            await FlowTransformTools(bridge: ToolsBridge(binaryPath: "/usr/bin/false"), configuration: client.configuration).save(accountID: "work", model: "fixture-model")
             try await waitUntil {
                 (owner.configuration.app["flowTransforms"] as? [String: Any])?["modelRef"] as? String == "@account/work:fixture-model"
             }

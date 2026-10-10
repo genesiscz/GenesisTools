@@ -509,7 +509,7 @@ public final class FlowFocusRuntime: ObservableObject {
             let range = try decode(FocusForgetCommand.self)
             guard range.from < range.to, let store = focus.store else { throw invalidCommand() }
             reply = try JSONEncoder().encode(FocusForgetResult.forget(range, in: store))
-            focus.studioModel?.reload()
+            focus.didForget(range)
         case "focus.dnd.begin": _ = try dnd.beginSession(reason: String(data: command.payload, encoding: .utf8) ?? "genesis-voice")
         case "focus.dnd.end":
             let reason = String(data: command.payload, encoding: .utf8).flatMap { $0.isEmpty ? nil : $0 }

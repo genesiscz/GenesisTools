@@ -10,10 +10,11 @@
  * `hover <edge> [group]`, `unhover <edge> [group]`, `collapse`, `select <session key>`, `settings [page]`.
  * Edges: top, right, left. The face honours them only with staging on (`bun scripts/native/staging.ts on`) or in the
  * Preview bundle. `--preview` (first argument) drives GenesisTools Preview.app instead of the normal app. `record` films only the widget's own windows (ScreenCaptureKit via `tools control capture record`)
- * and sends each step at its offset in seconds after the recording starts.
+ * and sends each step at its offset in seconds after the recording's first frame.
  */
-import { mkdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { captureSessionsRoot } from "@app/control/lib/peekaboo";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 const REPO = resolve(import.meta.dir, "..", "..");
@@ -61,6 +62,35 @@ function windows(): WindowInfo[] {
     return parsed.windows ?? [];
 }
 
+/** The recorder starts `tools`, checks its native build and sets up ScreenCaptureKit before the first frame. */
+const FIRST_FRAME_DEADLINE_MS = 120_000;
+
+/**
+ * Resolves when the recorder has its first frame on disk: a new folder under `captureSessionsRoot()` holding
+ * `keep-0001.png`, the same signal the capture runner waits for before it starts a plan's own timeline. A step timed
+ * from the spawn instead can land before the capture starts and be missing from the recording.
+ */
+async function firstFrame(recorder: Bun.Subprocess<"ignore", "pipe", "pipe">, before: Set<string>): Promise<void> {
+    const root = captureSessionsRoot();
+    const deadline = Date.now() + FIRST_FRAME_DEADLINE_MS;
+    while (Date.now() < deadline) {
+        const names = existsSync(root) ? readdirSync(root) : [];
+        if (names.some((name) => !before.has(name) && existsSync(join(root, name, "keep-0001.png")))) {
+            return;
+        }
+
+        if (recorder.exitCode !== null) {
+            const stderr = await new Response(recorder.stderr).text();
+            throw new Error(`the recorder exited (code ${recorder.exitCode}) before its first frame: ${stderr.trim()}`);
+        }
+
+        await Bun.sleep(100);
+    }
+
+    recorder.kill();
+    throw new Error(`the recorder wrote no frame within ${FIRST_FRAME_DEADLINE_MS / 1000} s; it was stopped`);
+}
+
 async function record(args: string[]): Promise<void> {
     let seconds = 6;
     let out = "";
@@ -88,6 +118,8 @@ async function record(args: string[]): Promise<void> {
         throw new Error("the widget face shows no windows (is the widget turned on?)");
     }
 
+    const sessionsRoot = captureSessionsRoot();
+    const before = new Set(existsSync(sessionsRoot) ? readdirSync(sessionsRoot) : []);
     const recorder = Bun.spawn(
         [
             `${REPO}/tools`,
@@ -105,6 +137,7 @@ async function record(args: string[]): Promise<void> {
         ],
         { cwd: out, stdout: "pipe", stderr: "pipe" }
     );
+    await firstFrame(recorder, before);
     const started = performance.now();
 
     for (const step of steps.sort((a, b) => a.at - b.at)) {

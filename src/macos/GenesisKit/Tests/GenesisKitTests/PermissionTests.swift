@@ -11,6 +11,8 @@ final class PermissionTests: XCTestCase {
     final class FakePermissionSystem: PermissionSystem, @unchecked Sendable {
         var statuses: [PermissionKind: PermissionStatus] = [:]
         var grantOnRequest: Set<PermissionKind> = []
+        /// What a probe kind's request answers while `status` reads `.unknown`, as the real probes do.
+        var probeAnswers: [PermissionKind: PermissionStatus] = [:]
         private(set) var requests: [PermissionKind] = []
         private(set) var opened: [PermissionKind] = []
 
@@ -18,6 +20,7 @@ final class PermissionTests: XCTestCase {
 
         func request(_ kind: PermissionKind) async -> PermissionStatus {
             requests.append(kind)
+            if let answer = probeAnswers[kind] { return answer }
             if grantOnRequest.contains(kind) { statuses[kind] = .granted }
             return status(kind)
         }
@@ -239,6 +242,36 @@ final class PermissionTests: XCTestCase {
         XCTAssertEqual(retries, 1)
         XCTAssertNil(center.dialogs[.microphone])
         XCTAssertFalse(center.dismissed.contains(.microphone), "a grant is not a Not now")
+    }
+
+    func testARefusedProbeIsProbedAgainSoAGrantInSystemSettingsClosesTheDialog() async {
+        let system = FakePermissionSystem()
+        system.statuses[.automation] = .unknown("asks on first use")
+        system.probeAnswers[.automation] = .denied
+        let (center, presenter) = center(system)
+        var retries = 0
+        center.require(PermissionNeed(.automation, onGranted: { retries += 1 }))
+        let dialog = center.dialogs[.automation]
+        dialog?.primary()
+        await waitUntil { dialog?.status == .denied && dialog?.phase == .asking }
+        XCTAssertEqual(dialog?.primaryAction, .openSettings)
+        dialog?.primary()
+        await waitUntil { dialog?.phase == .waiting }
+
+        await dialog?.refresh(explicit: false)
+        XCTAssertEqual(dialog?.status, .denied, "the poll keeps the refusal instead of reading it as never asked")
+        XCTAssertEqual(dialog?.primaryAction, .openSettings)
+        XCTAssertEqual(system.requests, [.automation], "the plain poll never runs the probe")
+
+        await dialog?.refresh(explicit: true)
+        XCTAssertEqual(system.requests, [.automation, .automation], "Check again probes the refused grant")
+        XCTAssertNotNil(dialog?.note, "still refused, and it says so")
+
+        system.probeAnswers[.automation] = .granted
+        await dialog?.refresh(explicit: true)
+        await waitUntil { presenter.closed == [.automation] }
+        XCTAssertEqual(dialog?.phase, .granted)
+        XCTAssertEqual(retries, 1)
     }
 
     func testOpenSettingsListsTheAppFirstThenWaitsAndCheckAgainCloses() async {

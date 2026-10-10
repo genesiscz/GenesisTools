@@ -60,10 +60,12 @@ import {
 import {
     claudeAssistantText,
     discoverWidgetCatalog,
+    inboxWindowCounts,
     lastClaudeAssistantText,
     readWidgetChanges,
     readWidgetDecisionEvents,
     realWidgetSources,
+    type WidgetInboxWindow,
     type WidgetSources,
     widgetForms,
     widgetResultNode,
@@ -2624,7 +2626,7 @@ describe("widget inbox notifications", () => {
             forms: () => [],
             answers: () => [],
             agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
-            inboxData: () => ({
+            inboxData: (window) => ({
                 answers: [],
                 forms: [
                     {
@@ -2636,6 +2638,7 @@ describe("widget inbox notifications", () => {
                         cwd: "/fixture",
                         at: 1,
                         count: 1,
+                        ...inboxWindowCounts([1], window),
                         total: 1,
                     },
                 ],
@@ -2693,7 +2696,7 @@ describe("widget inbox notifications", () => {
                     updatedTs: new Date(at).toISOString(),
                 });
                 let decisions = [decision("ended-fixture", now - 240 * hour), decision("live-fixture", now - hour)];
-                const group = (sessionId: string, at: number, count: number) => ({
+                const group = (sessionId: string, at: number, count: number, window: WidgetInboxWindow) => ({
                     id: `${sessionId}-newest`,
                     sessionId,
                     provider: "codex",
@@ -2702,6 +2705,7 @@ describe("widget inbox notifications", () => {
                     cwd: "/fixture",
                     at,
                     count,
+                    ...inboxWindowCounts(Array<number>(count).fill(at), window),
                     total: count,
                 });
                 const sources: WidgetSources = {
@@ -2710,9 +2714,9 @@ describe("widget inbox notifications", () => {
                     forms: () => [],
                     answers: () => [],
                     agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
-                    inboxData: () => ({
-                        answers: [group("answer-fixture", now - 10 * 60 * 1000, 2)],
-                        forms: [group("form-fixture", now - 120 * hour, 3)],
+                    inboxData: (window) => ({
+                        answers: [group("answer-fixture", now - 10 * 60 * 1000, 2, window)],
+                        forms: [group("form-fixture", now - 120 * hour, 3, window)],
                         complete: true,
                         truncated: false,
                     }),
@@ -2754,6 +2758,43 @@ describe("widget inbox notifications", () => {
                 );
                 decisions = [...decisions, decision("new-fixture", now + 1000)];
                 expect((await widgetSnapshot({ root: directory, sources, now })).notifications?.needsAnswer).toBe(1);
+            }
+        );
+    });
+
+    test("a new question after Mark all read counts alone, never with the session's cleared ones", async () => {
+        const directory = await root();
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
+            async () => {
+                const now = Date.now();
+                const post = (id: string, at: number) => {
+                    const db = openPendingStore(toolDataDir("question", "qa.db"));
+                    db.query(
+                        "INSERT INTO qa_pending (id,created_at,status,source,session_hint,project_path,cwd,items_json) VALUES (?,?,'pending','Question','form-fixture','/fixture','/fixture','[]')"
+                    ).run(id, at);
+                    db.close();
+                };
+                for (const [index, at] of [now - 3000, now - 2000, now - 1000].entries()) {
+                    post(`cleared-${index}`, at);
+                }
+                // The real SQL source, so the per-item counts are what qa.db holds.
+                const sources: WidgetSources = {
+                    sessions: async () => [],
+                    decisions: () => [],
+                    forms: () => [],
+                    answers: () => [],
+                    agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+                    inboxData: realWidgetSources.inboxData,
+                };
+                const needsAnswer = async (at: number) =>
+                    (await widgetSnapshot({ root: directory, sources, now: at })).notifications?.needsAnswer;
+                expect(await needsAnswer(now)).toBe(3);
+                await performWidgetAction({ root: directory, input: { action: "inbox-clear", at: now } });
+                expect(await needsAnswer(now)).toBe(0);
+
+                post("after-clear", now + 1000);
+                expect(await needsAnswer(now + 2000)).toBe(1);
             }
         );
     });

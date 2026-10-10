@@ -30,9 +30,7 @@ if firstArgument == "--permission-dialog" {
 
 // The widget and Clicky are in staging: the Preview bundles run them, and the normal app only after
 // `bun scripts/native/staging.ts on` on this machine (NativeStaging), so a normal install or `tools update` never does.
-if (firstArgument == "--widget" || firstArgument == "--clicky") && !NativeStaging.facesEnabled
-    && !arguments.contains("--snapshot")
-{
+if NativeStaging.refuses(arguments, facesEnabled: NativeStaging.facesEnabled) {
     FileHandle.standardError.write(Data(
         "GenesisTools: \(firstArgument) is in staging. Run it in the Preview app (bun scripts/build-widget-preview.ts) or turn it on for this machine (bun scripts/native/staging.ts on).\n".utf8
     ))

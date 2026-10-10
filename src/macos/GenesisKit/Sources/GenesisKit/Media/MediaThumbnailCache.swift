@@ -196,34 +196,45 @@ public actor MediaThumbnailCache {
         -> MediaThumbnailResult
     {
         let started = ContinuousClock.now
-        let result = await withTaskGroup(of: MediaThumbnailResult?.self) { group in
-            group.addTask {
-                switch kind {
-                case .image:
-                    if let image = decodeImage(path: path, bucket: bucket) { return .ready(image) }
-                    // Quick Look reads a few formats ImageIO does not; its file-type icon is no picture of this one.
-                    let fallback = await decodeDocument(path: path, bucket: bucket, kind: .image)
-                    if case .ready(let thumbnail) = fallback, thumbnail.isIcon {
-                        return .failed("The image could not be read.")
-                    }
-                    return fallback
-                case .video: return await decodeVideo(path: path, bucket: bucket)
-                case .file: return await decodeDocument(path: path, bucket: bucket, kind: .file)
+        let decoded = await firstResult(within: deadline) { () async -> MediaThumbnailResult in
+            switch kind {
+            case .image:
+                if let image = decodeImage(path: path, bucket: bucket) { return .ready(image) }
+                // Quick Look reads a few formats ImageIO does not; its file-type icon is no picture of this one.
+                let fallback = await decodeDocument(path: path, bucket: bucket, kind: .image)
+                if case .ready(let thumbnail) = fallback, thumbnail.isIcon {
+                    return .failed("The image could not be read.")
                 }
+                return fallback
+            case .video: return await decodeVideo(path: path, bucket: bucket)
+            case .file: return await decodeDocument(path: path, bucket: bucket, kind: .file)
             }
-            group.addTask {
-                try? await Task.sleep(for: deadline)
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first ?? .failed("The preview took too long to make.")
         }
+        let result = decoded ?? .failed("The preview took too long to make.")
         let elapsed = ContinuousClock.now - started
         if elapsed > .milliseconds(100) {
             PerfLog.mark("media.thumbnail SLOW kind=\(kind.rawValue) px=\(bucket) \(elapsed) \((path as NSString).lastPathComponent)")
         }
         return result
+    }
+
+    /// The work's result, or nil once `deadline` passes, whichever comes first. A task group would wait for its
+    /// children before returning, and ImageIO decodes synchronously with no cancellation point, so a stalled decode
+    /// would hold the caller and its concurrency slot past the deadline. Here the work runs in its own task: on expiry
+    /// it is cancelled (Quick Look and AVFoundation requests stop), the caller goes on at once, and a late result is
+    /// dropped.
+    static func firstResult<T: Sendable>(within deadline: Duration, _ work: @escaping @Sendable () async -> T) async
+        -> T?
+    {
+        await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
+            let race = DeadlineRace(continuation)
+            race.start(
+                timer: Task {
+                    try? await Task.sleep(for: deadline)
+                    if !Task.isCancelled { race.finish(nil) }
+                },
+                worker: Task { race.finish(await work()) })
+        }
     }
 
     private static func decodeImage(path: String, bucket: Int) -> MediaThumbnail? {
@@ -269,7 +280,11 @@ public actor MediaThumbnailCache {
             generator.requestedTimeToleranceAfter = .positiveInfinity
             // A first frame is often black (a fade in, a screen recording's first blank frame).
             let poster = duration.isFinite && duration > 0 ? min(1, duration * 0.1) : 0
-            let (image, _) = try await generator.image(at: CMTime(seconds: poster, preferredTimescale: 600))
+            let (image, _) = try await withTaskCancellationHandler {
+                try await generator.image(at: CMTime(seconds: poster, preferredTimescale: 600))
+            } onCancel: {
+                generator.cancelAllCGImageGeneration()
+            }
             return .ready(MediaThumbnail(
                 image: image, kind: .video, sourceSize: sourceSize,
                 duration: duration.isFinite ? duration : nil))
@@ -283,7 +298,11 @@ public actor MediaThumbnailCache {
             fileAt: URL(fileURLWithPath: path), size: CGSize(width: bucket, height: bucket), scale: 1,
             representationTypes: .all)
         do {
-            let representation = try await QLThumbnailGenerator.shared.generateBestRepresentation(for: request)
+            let representation = try await withTaskCancellationHandler {
+                try await QLThumbnailGenerator.shared.generateBestRepresentation(for: request)
+            } onCancel: {
+                QLThumbnailGenerator.shared.cancel(request)
+            }
             let image = representation.cgImage
             return .ready(MediaThumbnail(
                 image: image, kind: kind, sourceSize: CGSize(width: image.width, height: image.height), duration: nil,
@@ -291,6 +310,46 @@ public actor MediaThumbnailCache {
         } catch {
             return .failed(kind == .image ? "The image could not be read." : "No preview for this file.")
         }
+    }
+}
+
+/// One continuation resumed exactly once, by the work or by the deadline; the loser is cancelled.
+private final class DeadlineRace<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T?, Never>?
+    private var timer: Task<Void, Never>?
+    private var worker: Task<Void, Never>?
+
+    init(_ continuation: CheckedContinuation<T?, Never>) {
+        self.continuation = continuation
+    }
+
+    func start(timer: Task<Void, Never>, worker: Task<Void, Never>) {
+        lock.lock()
+        let finished = continuation == nil
+        if !finished {
+            self.timer = timer
+            self.worker = worker
+        }
+        lock.unlock()
+        // Either task can finish before this runs; whatever is still running then is not needed.
+        if finished {
+            timer.cancel()
+            worker.cancel()
+        }
+    }
+
+    func finish(_ value: T?) {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        let tasks = [timer, worker]
+        timer = nil
+        worker = nil
+        lock.unlock()
+        guard let pending else { return }
+        pending.resume(returning: value)
+        for task in tasks { task?.cancel() }
     }
 }
 

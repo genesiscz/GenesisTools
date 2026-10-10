@@ -39,4 +39,17 @@ final class FaceMarkerTests: XCTestCase {
     func testReadsTheRealResponsibleProcess() {
         XCTAssertNotNil(FaceMarker.responsibleProcess()?.inode)
     }
+
+    /// Staged faces (main.swift): only a Clicky Settings snapshot runs while staging is off.
+    func testStagingRefusesEveryStagedFaceExceptAClickySnapshot() {
+        XCTAssertTrue(NativeStaging.refuses(["--widget"], facesEnabled: false))
+        XCTAssertTrue(NativeStaging.refuses(["--widget", "--snapshot", "/tmp/fixture.png"], facesEnabled: false),
+                      "the widget has no snapshot mode, so the flag must not start it")
+        XCTAssertTrue(NativeStaging.refuses(["--clicky", "--page", "general"], facesEnabled: false))
+        XCTAssertFalse(NativeStaging.refuses(["--clicky", "--page", "general", "--snapshot", "/tmp/fixture.png"],
+                                             facesEnabled: false))
+        XCTAssertFalse(NativeStaging.refuses(["--widget"], facesEnabled: true))
+        XCTAssertFalse(NativeStaging.refuses(["--hub", "--snapshot", "/tmp/fixture.png"], facesEnabled: false))
+        XCTAssertFalse(NativeStaging.refuses([], facesEnabled: false))
+    }
 }

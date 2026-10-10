@@ -730,6 +730,7 @@ export async function reviseTodo({
     expected,
     signal,
     now = () => new Date().toISOString(),
+    beforeRevise,
 }: {
     file: string;
     events: string;
@@ -739,6 +740,8 @@ export async function reviseTodo({
     expected: TodoUpdateSnapshot;
     signal?: AbortSignal;
     now?: () => string;
+    /** Throws to refuse the edit, seeing the stored row under the ledger lock (a caller's own limits). */
+    beforeRevise?: (row: DecisionRecord) => void;
 }): Promise<DecisionRecord> {
     const nextTitle = title.trim();
     const nextDetails = details?.trim();
@@ -764,6 +767,7 @@ export async function reviseTodo({
             throw new Error(`Only an open task can be edited; reopen ${row.id} first`);
         }
 
+        beforeRevise?.(row);
         const ts = laterThan(expected.updatedTs, now);
         const next: DecisionRecord = {
             ...row,

@@ -42,9 +42,12 @@ export const widgetTaskActionSchema = z.object({
 export type WidgetTaskAction = z.infer<typeof widgetTaskActionSchema>;
 /** The session a task the user writes without choosing one belongs to. */
 export const LOCAL_TASK_SESSION = "local";
+/** The most text the widget shows and writes: a longer task arrives as an excerpt (`truncated`). */
+const TASK_TITLE_CHARS = 180;
+const TASK_DETAILS_CHARS = 2000;
 const taskTextSchema = {
-    title: z.string().trim().min(1, "A task needs a title").max(180),
-    details: z.string().trim().max(2000).optional(),
+    title: z.string().trim().min(1, "A task needs a title").max(TASK_TITLE_CHARS),
+    details: z.string().trim().max(TASK_DETAILS_CHARS).optional(),
 };
 export const widgetTaskCreateSchema = z.object({
     ...taskTextSchema,
@@ -99,9 +102,9 @@ export function widgetTask(row: DecisionRecord): WidgetTask {
     return {
         id: row.id,
         number: row.number,
-        title: (row.title || row.prompt).slice(0, 180),
-        summary: row.prompt.slice(0, 2000),
-        truncated: row.prompt.length > 2000,
+        title: (row.title || row.prompt).slice(0, TASK_TITLE_CHARS),
+        summary: row.prompt.slice(0, TASK_DETAILS_CHARS),
+        truncated: row.prompt.length > TASK_DETAILS_CHARS || (row.title?.length ?? 0) > TASK_TITLE_CHARS,
         revision: row.revision ?? 1,
         state: row.state,
         updatedTs: row.updatedTs,
@@ -320,6 +323,14 @@ export async function editWidgetTask({
         expected: request.expected,
         signal,
         now,
+        // The widget shows a long task as an excerpt; saving that excerpt would cut the stored text to it.
+        beforeRevise: (stored) => {
+            if (widgetTask(stored).truncated) {
+                throw new Error(
+                    `This task is longer than the widget shows (${TASK_DETAILS_CHARS} characters), so it cannot be edited here without cutting it. Change it where it was written.`
+                );
+            }
+        },
     });
     taskCache.delete(files.file);
     logger.debug({ id: row.id, revision: row.revision ?? 1 }, "Widget task edited");

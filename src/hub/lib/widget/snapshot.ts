@@ -102,8 +102,15 @@ export interface WidgetSources {
     answers(session?: string): QaRow[];
     agents(refresh?: boolean): Promise<AgentsTree>;
     events?(ids: string[]): WidgetActivityEvent[];
-    inboxData?(): WidgetInboxData;
+    inboxData?(window: WidgetInboxWindow): WidgetInboxData;
     rosterStatus?(): { loading: boolean; error?: string };
+}
+/** The cut-offs the badges count against, applied to every item before it is grouped. */
+export interface WidgetInboxWindow {
+    /** The last "Mark all read": only items after it count. */
+    clearedAt: number;
+    /** A quiet session's items count only from here on (`INBOX_STALE_MS` before now). */
+    staleBefore: number;
 }
 export interface WidgetInboxGroup {
     id: string;
@@ -112,9 +119,26 @@ export interface WidgetInboxGroup {
     title: string;
     project: string;
     cwd: string;
+    /** The group's newest item. */
     at: number;
     count: number;
+    /** Items after the window's `clearedAt`. */
+    afterClear: number;
+    /** Of those, the ones at or after `staleBefore`: what a quiet session counts. */
+    recentAfterClear: number;
     total: number;
+}
+
+/** How many of a group's item times fall in the window: the per-item counts a source without SQL reports. */
+export function inboxWindowCounts(
+    times: number[],
+    window: WidgetInboxWindow
+): Pick<WidgetInboxGroup, "afterClear" | "recentAfterClear"> {
+    const afterClear = times.filter((at) => at > window.clearedAt);
+    return {
+        afterClear: afterClear.length,
+        recentAfterClear: afterClear.filter((at) => at >= window.staleBefore).length,
+    };
 }
 export interface WidgetInboxData {
     answers: WidgetInboxGroup[];
@@ -147,13 +171,22 @@ export interface WidgetInboxSummary {
     profile?: { hostId: "local" };
 }
 
-function readInboxData(): WidgetInboxData {
+/**
+ * Per session and provider, each group's newest item and its counts. `afterClear` and `recentAfterClear` count the
+ * group's ITEMS against the window (?1 = clearedAt, ?2 = staleBefore), so a new item in a session never brings back
+ * the older items "Mark all read" cleared or the stale ones beside it.
+ */
+const INBOX_WINDOW_COUNTS = `SUM(CASE WHEN at > ?1 THEN 1 ELSE 0 END) OVER (PARTITION BY sessionId,provider) AS afterClear,
+                        SUM(CASE WHEN at > ?1 AND at >= ?2 THEN 1 ELSE 0 END) OVER (PARTITION BY sessionId,provider) AS recentAfterClear`;
+
+function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
+    const bounds: [number, number] = [window.clearedAt, window.staleBefore];
     return readQuestionSnapshot({
         dbPath: toolDataDir("question", "qa.db"),
         read: (db) => {
             runMigrations(db, PENDING_MIGRATIONS, { tableName: "qa_pending" });
             const answers = db
-                .query<WidgetInboxGroup, []>(`
+                .query<WidgetInboxGroup, [number, number]>(`
                 WITH unseen AS (
                     SELECT id, COALESCE(NULLIF(session_id,''),id) AS sessionId,
                         CASE WHEN agent IN ('claude','claude-code') THEN 'claude'
@@ -165,16 +198,17 @@ function readInboxData(): WidgetInboxData {
                         AND NOT EXISTS (SELECT 1 FROM qa_pending WHERE entry_id=entries.id)
                 ), ranked AS (
                     SELECT *, COUNT(*) OVER (PARTITION BY sessionId,provider) AS count,
+                        ${INBOX_WINDOW_COUNTS},
                         ROW_NUMBER() OVER (PARTITION BY sessionId,provider ORDER BY at DESC,id DESC) AS position
                     FROM unseen
-                ) SELECT id,sessionId,provider,title,project,cwd,at,count,total
+                ) SELECT id,sessionId,provider,title,project,cwd,at,count,afterClear,recentAfterClear,total
                   FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
             `)
-                .all();
+                .all(...bounds);
             const hasForms = db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='qa_pending'").get();
             const forms = hasForms
                 ? db
-                      .query<WidgetInboxGroup, []>(`
+                      .query<WidgetInboxGroup, [number, number]>(`
                 WITH pending AS (
                     SELECT id, COALESCE(NULLIF(session_hint,''),id) AS sessionId,
                         CASE WHEN json_valid(poster_json) THEN NULLIF(json_extract(poster_json,'$.agent'),'unknown') END AS poster,
@@ -188,12 +222,13 @@ function readInboxData(): WidgetInboxData {
                         ELSE 'unknown' END AS provider FROM pending
                 ), ranked AS (
                     SELECT *, COUNT(*) OVER (PARTITION BY sessionId,provider) AS count,
+                        ${INBOX_WINDOW_COUNTS},
                         ROW_NUMBER() OVER (PARTITION BY sessionId,provider ORDER BY at DESC,id DESC) AS position
                     FROM normalized
-                ) SELECT id,sessionId,provider,title,project,cwd,at,count,total
+                ) SELECT id,sessionId,provider,title,project,cwd,at,count,afterClear,recentAfterClear,total
                   FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
             `)
-                      .all()
+                      .all(...bounds)
                 : [];
             return {
                 answers: answers.slice(0, 256),
@@ -606,8 +641,18 @@ export async function widgetSnapshot({
         read("agents", () => sources.agents(refresh), { generatedAt: "", parents: [], orphans: [] }),
         read("answer sessions", () => sources.answers(), []),
     ]);
-    const inboxData = sources.inboxData
-        ? await read("inbox metadata", sources.inboxData, { answers: [], forms: [], complete: false, truncated: false })
+    const inboxWindow: WidgetInboxWindow = {
+        clearedAt: state.inboxClearedAt ?? 0,
+        staleBefore: now - INBOX_STALE_MS,
+    };
+    const inboxSource = sources.inboxData;
+    const inboxData = inboxSource
+        ? await read("inbox metadata", () => inboxSource(inboxWindow), {
+              answers: [],
+              forms: [],
+              complete: false,
+              truncated: false,
+          })
         : {
               answers: answerRoster
                   .filter((row) => row.readAt === null)
@@ -620,6 +665,7 @@ export async function widgetSnapshot({
                       cwd: row.cwd,
                       at: row.ts,
                       count: 1,
+                      ...inboxWindowCounts([row.ts], inboxWindow),
                       total: answerRoster.filter((entry) => entry.readAt === null).length,
                   })),
               forms: waitingForms.map((form) => ({
@@ -631,6 +677,7 @@ export async function widgetSnapshot({
                   cwd: form.cwd,
                   at: form.createdAt,
                   count: 1,
+                  ...inboxWindowCounts([form.createdAt], inboxWindow),
                   total: waitingForms.length,
               })),
               complete: false,
@@ -839,8 +886,9 @@ export async function widgetSnapshot({
         }
         inboxSessions.set(session.key, entry);
     };
-    // Counted per group: the SQL groups carry their session's count and newest item, and `total` also covers groups
-    // past the row limit, so each group left out of the count is subtracted from it.
+    // Counted per item: each SQL group carries its session's newest item and how many of its items fall after the
+    // clear watermark and after the stale cut-off. `total` also covers groups past the row limit, so every item of a
+    // listed group left out of the count is subtracted from it.
     const skipped = { answer: 0, form: 0 };
     for (const [kind, groups] of [
         ["answer", inboxData.answers],
@@ -856,11 +904,15 @@ export async function widgetSnapshot({
                     row.project,
                     row.at
                 );
+            // `inboxCounted` per item: a working or lately active session counts every item after the watermark,
+            // a quiet one only its recent items.
+            const sessionFresh = session.status === "working" || session.activityAt >= inboxWindow.staleBefore;
+            const counted = sessionFresh ? row.afterClear : row.recentAfterClear;
             if (kind === "form" && inboxFresh(session, row.at)) {
                 session.status = "waiting";
             }
-            if (!inboxCounted(session, row.at)) {
-                skipped[kind] += row.count;
+            skipped[kind] += row.count - counted;
+            if (counted === 0) {
                 continue;
             }
             putInbox(
@@ -873,7 +925,7 @@ export async function widgetSnapshot({
                     at: row.at,
                     needsAnswer: kind === "form",
                 },
-                row.count
+                counted
             );
         }
     }

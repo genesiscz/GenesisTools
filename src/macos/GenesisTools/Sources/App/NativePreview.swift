@@ -22,4 +22,12 @@ enum NativePreview {
 enum NativeStaging {
     static let defaultsKey = "GenesisToolsStagingFaces"
     static var facesEnabled: Bool { NativePreview.enabled || UserDefaults.standard.bool(forKey: defaultsKey) }
+
+    /// Whether these arguments start a staged face this app may not run. The one exception is a Clicky Settings
+    /// snapshot (`--clicky --page <id> --snapshot <png>`): it draws one page off screen and exits, starting neither
+    /// Clicky nor Flow. The widget has no snapshot mode, so `--widget --snapshot` is refused like any widget launch.
+    static func refuses(_ arguments: [String], facesEnabled: Bool) -> Bool {
+        guard !facesEnabled, let face = arguments.first, face == "--widget" || face == "--clicky" else { return false }
+        return !(face == "--clicky" && arguments.contains("--snapshot"))
+    }
 }

@@ -208,7 +208,6 @@ private struct MediaPreviewOverlay: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.genHoverPlain(scale: 1.06))
-        .modifier(MediaPointerCursor())
         .instantTooltip(tooltip)
         .accessibilityLabel(Text(tooltip))
     }
@@ -261,28 +260,5 @@ private struct MediaInlinePlayer: NSViewRepresentable {
     static func dismantleNSView(_ view: AVPlayerView, coordinator: ()) {
         view.player?.pause()
         view.player = nil
-    }
-}
-
-/// The pointing hand over a clickable picture, set on every move so a text view underneath cannot take it back,
-/// and reset when the view goes away under the pointer.
-struct MediaPointerCursor: ViewModifier {
-    @State private var inside = false
-
-    func body(content: Content) -> some View {
-        content
-            .onContinuousHover { phase in
-                switch phase {
-                case .active:
-                    inside = true
-                    NSCursor.pointingHand.set()
-                case .ended:
-                    inside = false
-                    NSCursor.arrow.set()
-                }
-            }
-            .onDisappear {
-                if inside { NSCursor.arrow.set() }
-            }
     }
 }

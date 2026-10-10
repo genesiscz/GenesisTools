@@ -349,8 +349,15 @@ public final class FocusController: ObservableObject {
             }.value
         }
         FlowFocusLog.focus.info("forgot activity \(range.from)..<\(range.to): segments=\(result.segments) sessions=\(result.sessions)")
-        studioModel?.reload()
+        didForget(range)
         return result
+    }
+
+    /// After the owner's ledger forgot a range (here or for a client's `focus.forget`): the live recorder lets go of
+    /// a segment the deletion removed, and the views read the ledger again.
+    func didForget(_ range: FocusForgetCommand) {
+        recorder?.ledgerForgot(from: range.from, to: range.to)
+        studioModel?.reload()
     }
 
     // MARK: - Interruptions

@@ -1963,4 +1963,23 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
             editWidgetTask({ files, input: { id: row.id, title: "Too late", expected: expected(finished) } })
         ).rejects.toThrow("Only an open task");
     });
+
+    test("a task the widget shows as an excerpt cannot be edited there, so its full text is never cut", async () => {
+        const { files, row } = fixture();
+        const long: DecisionRecord = { ...row, prompt: `${"Check every step. ".repeat(150)}The last line.` };
+        writeFileSync(files.file, `${SafeJSON.stringify(long)}\n`);
+        expect(listWidgetTasks({ file: files.file }).tasks[0]?.truncated).toBe(true);
+        const before = readFileSync(files.file, "utf8");
+        await expect(
+            editWidgetTask({ files, input: { id: row.id, title: "Shorter title", expected: expected(long) } })
+        ).rejects.toThrow("longer than the widget shows");
+        expect(readFileSync(files.file, "utf8")).toBe(before);
+
+        const longTitle: DecisionRecord = { ...row, title: "t".repeat(200) };
+        writeFileSync(files.file, `${SafeJSON.stringify(longTitle)}\n`);
+        expect(listWidgetTasks({ file: files.file }).tasks[0]?.truncated).toBe(true);
+        await expect(
+            editWidgetTask({ files, input: { id: row.id, title: "t".repeat(180), expected: expected(longTitle) } })
+        ).rejects.toThrow("longer than the widget shows");
+    });
 });

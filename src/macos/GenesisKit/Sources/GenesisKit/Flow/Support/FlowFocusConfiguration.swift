@@ -72,12 +72,26 @@ public final class FlowFocusConfiguration: ObservableObject {
 
     func reportFailure(_ message: String) {
         lastError = message
+        failures &+= 1
         revision &+= 1
         onFailure?(message)
     }
 
+    /// Counts every reported failure, so a caller can tell whether its own write failed while it waited.
+    private var failures: UInt64 = 0
+
     public func setAppValue(_ value: Any, forKey key: String) {
         applyPatch([key: value])
+    }
+
+    /// `setAppValue`, then waits for the write: false when it was refused or failed (`lastError` says why), true once
+    /// the owner wrote client.json. A runtime client hands the patch to its owner and cannot see that write, so for a
+    /// client true means the patch was handed over.
+    public func saveAppValue(_ value: Any, forKey key: String) async -> Bool {
+        let before = failures
+        applyPatch([key: value])
+        await flush()
+        return failures == before
     }
 
     /// Writes every Focus setting the Settings page shows, under the same `app.focus` keys `FocusSettings.from` and

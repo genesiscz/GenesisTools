@@ -21,8 +21,8 @@ final class FlowFocusConfigurationTests: XCTestCase {
         let config = FlowFocusConfiguration(directory: directory)
         config.allowsWrites = true
         let adapter = FlowTransformTools(bridge: ToolsBridge(binaryPath: "/missing/fixture-tools"), configuration: config)
-        adapter.save(accountID: "acc_work", model: "fixture-writer")
-        await config.flush()
+        let stored = await adapter.save(accountID: "acc_work", model: "fixture-writer")
+        XCTAssertTrue(stored)
         var inputURL: URL?
         adapter.runCommand = { args, timeout in
             XCTAssertEqual(Array(args.prefix(2)), ["transforms", "run"])
@@ -56,6 +56,32 @@ final class FlowFocusConfigurationTests: XCTestCase {
             _ = try await adapter.run(.init(systemPrompt: "Rewrite.", text: "Fixture"))
             XCTFail("expected execution failure")
         } catch { XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(inputURL).path)) }
+    }
+
+    @MainActor
+    func testATransformChoiceTheWriterRefusesIsNotReportedAsSaved() async throws {
+        let config = FlowFocusConfiguration(directory: directory)
+        let adapter = FlowTransformTools(bridge: ToolsBridge(binaryPath: "/missing/fixture-tools"), configuration: config)
+        let refused = await adapter.save(accountID: "acc_work", model: "fixture-writer")
+        XCTAssertFalse(refused, "a configuration without its runtime owner refuses the write")
+        XCTAssertNotNil(config.lastError)
+        XCTAssertEqual(adapter.modelRef, "")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: client.path))
+
+        // A write the owner accepts but the disk refuses (its folder is a file) fails after the optimistic patch.
+        let notAFolder = directory.appendingPathComponent("not-a-folder")
+        try Data("fixture".utf8).write(to: notAFolder)
+        let blocked = FlowFocusConfiguration(directory: notAFolder)
+        blocked.allowsWrites = true
+        let failed = await FlowTransformTools(bridge: ToolsBridge(binaryPath: "/missing/fixture-tools"), configuration: blocked)
+            .save(accountID: "acc_work", model: "fixture-writer")
+        XCTAssertFalse(failed)
+        XCTAssertNotNil(blocked.lastError)
+
+        config.allowsWrites = true
+        let saved = await adapter.save(accountID: "acc_work", model: "fixture-writer")
+        XCTAssertTrue(saved)
+        XCTAssertEqual(adapter.modelRef, "@account/acc_work:fixture-writer")
     }
 
     @MainActor

@@ -82,7 +82,6 @@ public struct MediaThumbnailView: View {
             } else if interactive && emphasis != .large {
                 Button(action: open) { picture }
                     .buttonStyle(.genHoverPlain(brighten: 0.06))
-                    .modifier(MediaPointerCursor())
                     .onHover { hovering = $0 }
                     .instantTooltip(item.kind == .video ? "Play \(item.name)" : "Preview \(item.name)")
                     .accessibilityLabel(Text(verbatim: (item.kind == .video ? "Play " : "Preview ") + item.name))
@@ -191,7 +190,6 @@ public struct MediaThumbnailView: View {
                     Label("Retry", systemImage: "arrow.clockwise").font(.system(size: 9.5, weight: .medium))
                 }
                 .buttonStyle(.genHover(padding: EdgeInsets(top: 2, leading: 5, bottom: 2, trailing: 5)))
-                .modifier(MediaPointerCursor())
                 .accessibilityLabel(Text(verbatim: "Retry the preview of \(item.name)"))
             } else {
                 IconButton(systemName: "arrow.clockwise", tooltip: "Retry the preview of \(item.name)", size: 9) { retry() }

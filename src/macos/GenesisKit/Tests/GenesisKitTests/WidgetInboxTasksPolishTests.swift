@@ -143,6 +143,9 @@ final class WidgetTasksPolishTests: XCTestCase {
             "--provider", "codex"])
         XCTAssertEqual(store.receipt, "Saved: Water every plant")
         XCTAssertFalse(task(state: "acknowledged").editable)
+        var excerpt = task()
+        excerpt.truncated = true
+        XCTAssertFalse(excerpt.editable, "an excerpt saved as the task's text would cut the rest of it")
         XCTAssertEqual(task(state: "implemented").toggleAction, .reopen)
         XCTAssertEqual(task(state: "acknowledged").toggleAction, .complete)
         XCTAssertNil(WidgetTaskAction.returning(to: "acknowledged"))

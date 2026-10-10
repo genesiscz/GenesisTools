@@ -440,7 +440,20 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
     /// every few seconds (each ask starts a process).
     func refresh(explicit: Bool, fresh: Bool = false) async {
         guard let center, phase != .granted, phase != .working else { return }
-        let current = center.access.status(kind)
+        var current = center.access.status(kind)
+        if kind.requestStyle == .probe, status == .denied, case .unknown = current {
+            // A probe kind has no silent read. Once its probe was refused, macOS has the answer, so touching the
+            // resource again never prompts: it tells a grant made in System Settings from a refusal. It runs on
+            // "Check again" and when the user comes back from another app (System Settings), at most every few
+            // seconds, never on the plain poll: each probe runs AppleScript or lists a folder.
+            let due = lastFreshCheck.map { Date().timeIntervalSince($0) > 3 } ?? true
+            guard explicit || (fresh && due) else { return }
+            lastFreshCheck = Date()
+            if explicit { checking = true }
+            current = await center.access.request(kind)
+            checking = false
+            guard phase != .granted, phase != .working else { return }
+        }
         if current != status { status = current }
         if current.isGranted {
             grant()

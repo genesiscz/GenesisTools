@@ -100,17 +100,32 @@ function isAxRow(value: unknown): value is AxRow {
     );
 }
 
-function readSwitches(pid: number): SwitchState[] {
-    const { out } = ax(["json", String(pid)]);
+/**
+ * One read of the page's switches. `drawn` tells a page that has no switches from one that was never read: an AX
+ * failure (no Accessibility grant, a dead process) is an `error`, and a page whose window never appeared is not drawn.
+ */
+interface SwitchRead {
+    switches: SwitchState[];
+    drawn: boolean;
+    error?: string;
+}
+
+function readSwitches(pid: number): SwitchRead {
+    const { ok, out } = ax(["json", String(pid)]);
+    if (!ok) {
+        return { switches: [], drawn: false, error: out || "ax json failed with no output" };
+    }
+
     const rows = out
         .split("\n")
         .filter((line) => line.startsWith("{"))
         .map((line): unknown => SafeJSON.parse(line, { strict: true }))
         .filter(isAxRow);
-    return rows
+    const switches = rows
         .filter((row) => row.role === "AXCheckBox" && row.enabled && (row.id || row.title))
         .map((row) => ({ key: row.id || row.title, id: row.id, title: row.title, value: row.value }))
         .filter((row) => !SKIP.has(row.key));
+    return { switches, drawn: rows.some((row) => row.role === "AXWindow") };
 }
 
 function press(pid: number, state: SwitchState): boolean {
@@ -120,17 +135,25 @@ function press(pid: number, state: SwitchState): boolean {
     return result.ok;
 }
 
-async function openPage(page: string): Promise<{ pid: number; child: Bun.Subprocess; switches: SwitchState[] }> {
+interface OpenPage {
+    pid: number;
+    child: Bun.Subprocess;
+    switches: SwitchState[];
+    /** Why the page could not be read; a page that drew with no switches has none. */
+    failure?: string;
+}
+
+async function openPage(page: string): Promise<OpenPage> {
     const child = Bun.spawn([APP, "--clicky", "--page", page, "--headless"], { stdout: "ignore", stderr: "ignore" });
     const deadline = Date.now() + READY_TIMEOUT_MS;
-    let last: SwitchState[] = [];
+    let last: SwitchRead = { switches: [], drawn: false };
     let stableRounds = 0;
 
     // Ready when two reads in a row agree: the stored values arrive a moment after the window draws.
     while (Date.now() < deadline) {
         await Bun.sleep(Math.min(700, Math.max(0, deadline - Date.now())));
         const now = readSwitches(child.pid);
-        const same = now.length > 0 && SafeJSON.stringify(now) === SafeJSON.stringify(last);
+        const same = now.switches.length > 0 && SafeJSON.stringify(now.switches) === SafeJSON.stringify(last.switches);
         stableRounds = same ? stableRounds + 1 : 0;
         last = now;
         if (stableRounds >= 2) {
@@ -138,7 +161,8 @@ async function openPage(page: string): Promise<{ pid: number; child: Bun.Subproc
         }
     }
 
-    return { pid: child.pid, child, switches: last };
+    const failure = last.error ?? (last.drawn ? undefined : "the page never drew a window");
+    return { pid: child.pid, child, switches: last.switches, failure };
 }
 
 async function closePage(child: Bun.Subprocess): Promise<void> {
@@ -152,9 +176,18 @@ function switchValue(switches: SwitchState[], key: string): string | undefined {
 
 const results: SwitchResult[] = [];
 const leftFlipped: string[] = [];
+/** Pages that were never read; each one fails the run, since nothing on it was tested. */
+const unread: string[] = [];
 
 for (const page of PAGES) {
     const first = await openPage(page);
+    if (first.failure) {
+        await closePage(first.child);
+        unread.push(`${page} (${first.failure})`);
+        console.log(`${page}: NOT READ: ${first.failure}`);
+        continue;
+    }
+
     if (first.switches.length === 0) {
         await closePage(first.child);
         console.log(`${page}: no switches`);
@@ -165,7 +198,7 @@ for (const page of PAGES) {
     for (const entry of first.switches) {
         const pressed = press(first.pid, entry);
         await Bun.sleep(SETTLE_MS);
-        const now = switchValue(readSwitches(first.pid), entry.key);
+        const now = switchValue(readSwitches(first.pid).switches, entry.key);
         pageResults.push({
             page,
             key: entry.key,
@@ -191,7 +224,9 @@ for (const page of PAGES) {
     }
 
     for (const state of toRestore) {
-        press(second.pid, state);
+        if (!press(second.pid, state)) {
+            console.log(`${page}: restoring ${state.key} failed to press`);
+        }
         await Bun.sleep(SETTLE_MS);
     }
 
@@ -212,10 +247,16 @@ for (const page of PAGES) {
     console.log(`${page}: ${good}/${pageResults.length} switches flip, persist and restore`);
 }
 
+const passed = (result: SwitchResult) => result.flippedInUi && result.persisted && result.restored;
+const failedSwitches = results.filter((result) => !passed(result)).length;
 const lines = [
     leftFlipped.length > 0
         ? `⚠️ LEFT FLIPPED (set back by hand): ${leftFlipped.join("; ")}`
         : "Every switch was restored to its value before the run.",
+    unread.length > 0
+        ? `❌ NOT READ (nothing on these pages was tested): ${unread.join("; ")}`
+        : "Every page was read.",
+    `${results.length - failedSwitches}/${results.length} switches flip, persist and restore.`,
     "",
     ...results.map(
         (result) =>
@@ -226,11 +267,12 @@ const lines = [
     ),
 ];
 
-console.log(lines[0]);
+console.log(lines.slice(0, 3).join("\n"));
 if (OUT) {
     writeFileSync(OUT, `${lines.join("\n")}\n`);
 }
 
-if (leftFlipped.length > 0) {
+// A switch that did not flip, persist or restore, and a page that could not be read, each fail the run.
+if (leftFlipped.length > 0 || unread.length > 0 || failedSwitches > 0) {
     process.exitCode = 1;
 }

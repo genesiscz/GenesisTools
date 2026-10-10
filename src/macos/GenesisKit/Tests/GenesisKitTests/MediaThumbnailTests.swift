@@ -32,6 +32,24 @@ final class MediaThumbnailCacheTests: XCTestCase {
         XCTAssertTrue(CGImageDestinationFinalize(destination))
     }
 
+    /// ImageIO decodes synchronously and never checks for cancellation; a task group would wait for it.
+    private static func decodeThatIgnoresCancellation(seconds: TimeInterval) -> Int {
+        Thread.sleep(forTimeInterval: seconds)
+        return 1
+    }
+
+    func testTheDecodeDeadlineHoldsEvenWhenTheDecodeIgnoresCancellation() async {
+        let started = ContinuousClock.now
+        let late = await MediaThumbnailCache.firstResult(within: .milliseconds(40)) {
+            Self.decodeThatIgnoresCancellation(seconds: 0.8)
+        }
+        XCTAssertNil(late)
+        XCTAssertLessThan(ContinuousClock.now - started, .milliseconds(500),
+                          "the caller and its slot are free at the deadline, not when the decoder gives up")
+        let quick = await MediaThumbnailCache.firstResult(within: .seconds(5)) { 7 }
+        XCTAssertEqual(quick, 7)
+    }
+
     func testBucketsRoundUpToPowersOfTwoWithinBounds() {
         XCTAssertEqual(MediaThumbnailCache.bucket(forPixels: 1), 64)
         XCTAssertEqual(MediaThumbnailCache.bucket(forPixels: 100), 128)
