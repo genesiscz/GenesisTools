@@ -27,20 +27,21 @@ export interface QuestionConfig {
 export const ASK_VIA_QUESTION_TOOL_LABEL = `Ask agents to use ${toolCommand("question")} instead of their native question tools?`;
 
 /**
- * What the setting changes, shown by `tools question config`. Keep it in step with the texts it names:
- * `serverInstructions()` in src/genesis-tools-mcp/lib/server.ts, `questionPostDescription()` in
- * src/genesis-tools-mcp/lib/tools/question-post.ts and `agentNote()` in ./agent-note.ts.
+ * What the setting changes, shown by `tools question config`. The texts it describes, and the precedence between this
+ * opt-in and the native inbox state, live in ./inbox-guidance.ts.
  */
 export const ASK_VIA_QUESTION_TOOL_DESCRIPTION = [
-    `No hook is involved. Agents learn about ${toolCommand("question")} from two texts of the genesis-tools MCP server:`,
-    "its server instructions and the question_post tool description. Both are read when the server starts,",
-    "so a change reaches an agent session started after it.",
-    `On: both texts tell agents to post every ❓ DECISION with question_post (or ${toolCommand("question ask")}).`,
-    "Off (the default): both texts tell agents to ask with their native question tool (for example",
-    "AskUserQuestion) and in their chat reply. A post still lands in the inbox, and its result reminds",
-    "the agent that you have not opted in.",
-    "Either way, every post tells the agent that the inbox holds a copy: the question must also be written",
-    "in its chat reply.",
+    `Agents learn about ${toolCommand("question")} from the genesis-tools MCP server instructions, the question_post`,
+    "tool description and the note every post returns. The first two are read when the server starts, so a change",
+    "reaches an agent session started after it.",
+    "The native GenesisTools inbox comes first. While its widget runs, agents post decisions, messages and",
+    "screenshots there when they need you. While it is installed but not running, they may post and must ALSO",
+    "ask you in the chat. Without the native app they hear nothing about the inbox.",
+    "This setting decides only whether question_post REPLACES the agent's native question tool for ❓ DECISIONs:",
+    `On: agents post every ❓ DECISION with question_post (or ${toolCommand("question ask")}) instead.`,
+    "Off (the default): agents ask with their native question tool (for example AskUserQuestion) as usual.",
+    "It never removes the chat ask while the widget is not running, and every question is always also written",
+    "in the agent's chat reply.",
 ].join("\n");
 
 const DEFAULT: QuestionConfig = {

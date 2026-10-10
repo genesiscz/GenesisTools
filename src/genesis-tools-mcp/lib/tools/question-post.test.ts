@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -30,11 +30,15 @@ mock.module("@app/question/lib/hub-link", () => ({
 }));
 
 import { readDecisions } from "@app/question/lib/decisions/store";
+import { inboxInstructions } from "@app/question/lib/inbox-guidance";
 import { type AskDeps, getAskForm } from "@app/question/lib/pending/ask";
 import { PENDING_MIGRATIONS } from "@app/question/lib/pending/store";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
+import { encodeRgbaToPng } from "@genesiscz/utils/image/raster";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { serverInstructions } from "../server";
+import type { NativeInboxState } from "@genesiscz/utils/macos/native-inbox";
+import { createGenesisToolsServer, serverInstructions } from "../server";
 import {
     handleQuestionCancel,
     handleQuestionPoll,
@@ -444,15 +448,21 @@ describe("question_post notifications", () => {
 describe("the opt-in nudge", () => {
     const decision = { type: "decision" as const, promptMarkdown: "Keep it?", choices: ["yes"] };
 
-    function withLog(askViaQuestionTool: boolean): QuestionDeps {
+    function withLog(askViaQuestionTool: boolean, inboxState: NativeInboxState = "none"): QuestionDeps {
         const dir = mkdtempSync(join(tmpdir(), "gt-mcp-nudge-"));
 
         return {
             ...deps,
             askViaQuestionTool,
+            inboxState,
             decisionLog: { file: join(dir, "decisions.jsonl"), events: join(dir, "events.jsonl"), session: "sess-1" },
         };
     }
+
+    const texts = (askViaQuestionTool: boolean, inboxState: NativeInboxState) => [
+        serverInstructions({ askViaQuestionTool, inboxState }),
+        questionPostDescription({ askViaQuestionTool, inboxState }),
+    ];
 
     test("off: the post is saved, and the agent is told to ask natively and in its reply", async () => {
         const text = await handleQuestionPost({ sessionHint: "sess-1", items: [decision] }, withLog(false));
@@ -460,27 +470,146 @@ describe("the opt-in nudge", () => {
         expect(text).toContain("Posted d_1_sess-1");
         expect(text).toContain("has not opted in");
         expect(text).toContain("AskUserQuestion");
-        expect(text).toContain("also write every question");
+        expect(text).toContain("Also write every question");
     });
 
     test("on: no opt-out note, but the reply still carries the question", async () => {
         const text = await handleQuestionPost({ sessionHint: "sess-1", items: [decision] }, withLog(true));
 
         expect(text).not.toContain("has not opted in");
-        expect(text).toContain("also write every question");
+        expect(text).toContain("Also write every question");
     });
 
-    test("the server instructions and the tool description nudge only with the opt-in", () => {
-        expect(serverInstructions(true)).toContain("Post every ❓ DECISION this way");
-        expect(serverInstructions(false)).not.toContain("Post every ❓ DECISION");
-        expect(serverInstructions(false)).toContain("NOT opted in");
-        expect(questionPostDescription(true)).toContain("Post every ❓ DECISION you ask this way");
-        expect(questionPostDescription(false)).not.toContain("Post every ❓ DECISION");
-        expect(questionPostDescription(false)).toContain("AskUserQuestion");
+    test("without the native app nothing names the inbox, the widget or the hub, whatever the opt-in", async () => {
+        for (const askViaQuestionTool of [true, false]) {
+            const note = await handleQuestionPost(
+                { sessionHint: "sess-1", items: [decision] },
+                withLog(askViaQuestionTool)
+            );
 
-        for (const text of [questionPostDescription(true), questionPostDescription(false)]) {
-            expect(text).toContain("The inbox is a copy");
+            for (const text of [...texts(askViaQuestionTool, "none"), note]) {
+                expect(text).not.toMatch(/inbox|widget|GenesisTools hub/i);
+                expect(text).not.toContain("INBOX:");
+            }
         }
+
+        expect(serverInstructions({ askViaQuestionTool: true, inboxState: "none" })).toContain(
+            "Post every ❓ DECISION this way"
+        );
+        expect(serverInstructions({ askViaQuestionTool: false, inboxState: "none" })).toContain("NOT opted in");
+    });
+
+    test("installed but not running: posting is allowed and the chat ask is required, even with the opt-in", async () => {
+        for (const askViaQuestionTool of [true, false]) {
+            const [instructions, description] = texts(askViaQuestionTool, "installed");
+
+            expect(instructions).toContain(inboxInstructions("installed"));
+            expect(instructions).toContain("ALWAYS also ask the user directly in this chat");
+            expect(description).toContain("widget is not running");
+            expect(description).not.toContain("Post every ❓ DECISION");
+
+            const note = await handleQuestionPost(
+                { sessionHint: "sess-1", items: [decision] },
+                withLog(askViaQuestionTool, "installed")
+            );
+            expect(note).toContain("Ask the user directly in this chat now");
+        }
+    });
+
+    test("running: post to the inbox when the user is needed; the opt-in only decides whether it replaces the native tool", async () => {
+        const [onInstructions, onDescription] = texts(true, "running");
+        const [offInstructions, offDescription] = texts(false, "running");
+
+        for (const text of [onInstructions, offInstructions]) {
+            expect(text).toContain(inboxInstructions("running"));
+            expect(text).toContain("inbox_send");
+            expect(text).toContain(`${toolCommand("question message")} "<text>" --image`);
+            expect(text).toContain("Never post routine progress");
+        }
+
+        expect(onDescription).toContain("instead of your native question tool");
+        expect(offDescription).toContain("also post each ❓ DECISION here");
+        expect(offDescription).toContain("AskUserQuestion");
+
+        const note = await handleQuestionPost({ sessionHint: "sess-1", items: [decision] }, withLog(false, "running"));
+        expect(note).toContain("Posted to the user's widget inbox");
+    });
+
+    test("inbox_send is registered only with the native app, and the question_answer capability carries it", async () => {
+        const none = await createGenesisToolsServer({
+            capabilities: ["question_answer", "inbox", "question_ask"],
+            inboxState: "none",
+        });
+        const running = await createGenesisToolsServer({ capabilities: ["question_answer"], inboxState: "running" });
+        const installed = await createGenesisToolsServer({ capabilities: ["inbox"], inboxState: "installed" });
+
+        expect(none.tools).not.toContain("inbox_send");
+        expect(running.tools.sort()).toEqual(["inbox_send", "question_answer"]);
+        expect(installed.tools).toEqual(["inbox_send"]);
+    });
+});
+
+describe("question_post item attachments", () => {
+    function screenshot(dir: string, name: string): string {
+        const path = join(dir, name);
+        writeFileSync(path, encodeRgbaToPng(new Uint8ClampedArray([10, 20, 30, 255]), 1, 1));
+        return path;
+    }
+
+    test("a decision's screenshots are copied into the question store and embedded in its prompt", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-mcp-attach-"));
+        const shot = screenshot(dir, "after.png");
+        const assetDir = join(dir, "assets");
+        const logDeps: QuestionDeps = {
+            ...deps,
+            inboxState: "running",
+            transclude: { assetDir },
+            decisionLog: { file: join(dir, "decisions.jsonl"), events: join(dir, "events.jsonl"), session: "sess-1" },
+        };
+
+        await handleQuestionPost(
+            {
+                sessionHint: "sess-1",
+                transclude: false,
+                items: [
+                    {
+                        type: "decision",
+                        promptMarkdown: "Ship this layout?",
+                        choices: ["yes", "no"],
+                        attachments: [{ type: "image", path: shot, label: "After" }],
+                    },
+                ],
+            },
+            logDeps
+        );
+
+        const [row] = readDecisions(logDeps.decisionLog!.file);
+        const stored = readdirSync(assetDir);
+        expect(stored).toHaveLength(1);
+        expect(row?.prompt).toBe(`Ship this layout?\n\n![After](${encodeURI(join(assetDir, stored[0]!))})`);
+        expect(row).not.toHaveProperty("attachments");
+    });
+
+    test("a missing screenshot refuses the post before anything is stored", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-mcp-attach-missing-"));
+        const file = join(dir, "decisions.jsonl");
+
+        await expect(
+            handleQuestionPost(
+                {
+                    sessionHint: "sess-1",
+                    items: [
+                        {
+                            type: "decision",
+                            promptMarkdown: "Ship?",
+                            attachments: [{ type: "image", path: join(dir, "gone.png") }],
+                        },
+                    ],
+                },
+                { ...deps, decisionLog: { file, events: join(dir, "events.jsonl"), session: "sess-1" } }
+            )
+        ).rejects.toThrow("item 1: attachment not found");
+        expect(existsSync(file)).toBe(false);
     });
 });
 
@@ -648,7 +777,7 @@ describe("question_post inline tokens and superseding", () => {
         expect(preview).toContain("one");
         expect(preview).toContain('transclude: {{tial n=1}}: unknown kind "tial" (did you mean tail?)');
         expect(existsSync(logDeps.decisionLog.file)).toBe(false);
-        expect(questionPostDescription(false)).toContain("pr-thread");
+        expect(questionPostDescription({ askViaQuestionTool: false, inboxState: "none" })).toContain("pr-thread");
     });
 });
 

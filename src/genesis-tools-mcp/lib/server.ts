@@ -1,8 +1,10 @@
 import { loadConfig as loadQuestionConfig } from "@app/question/lib/config";
+import { decisionNudge, inboxInstructions, inboxSendDescription } from "@app/question/lib/inbox-guidance";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env/envVariables";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { type NativeInboxState, nativeInboxState } from "@genesiscz/utils/macos/native-inbox";
 import {
     type CallToolResult,
     type ListToolsResult,
@@ -30,6 +32,7 @@ import {
     handleHandoffList,
     handleHandoffPost,
 } from "./tools/handoff";
+import { handleInboxSend, INBOX_SEND_INPUT_SCHEMA, type InboxSendArgs } from "./tools/inbox-send";
 import { handleQuestionAnswer, QUESTION_ANSWER_INPUT_SCHEMA, type QuestionAnswerArgs } from "./tools/question-answer";
 import {
     handleQuestionCancel,
@@ -72,26 +75,24 @@ const QUESTION_ANSWER_DESCRIPTION =
     "— or right after you answer a substantive question/directive/status-nudge the user interjected " +
     'mid-session. Not for routine task instructions you simply execute or pure acknowledgements ("ok", "thanks").';
 
-/** The ❓ DECISION sentence of the instructions; the nudge only with the user's opt-in (`tools question config`). */
-function decisionNudge(askViaQuestionTool: boolean): string {
-    if (askViaQuestionTool) {
-        return "Post every ❓ DECISION this way, and also write it in your reply: the log is a copy. ";
-    }
-
-    return (
-        "The user has NOT opted in to agents asking through question_post, so ask decisive questions with your " +
-        "native question tool (for example AskUserQuestion) and in your reply; a post here only adds a copy to " +
-        "the inbox. "
-    );
+/** What the instruction and description texts depend on. Both are read once, when the harness starts the server. */
+export interface InstructionContext {
+    /** The question config's opt-in (`tools question config --ask-via-question-tool`). */
+    askViaQuestionTool: boolean;
+    /** This Mac's native inbox; see the precedence in src/question/lib/inbox-guidance.ts. */
+    inboxState: NativeInboxState;
 }
 
 /**
- * The server instructions, read once when the server starts. `askViaQuestionTool` is the question
- * config's opt-in; no hook nudges agents toward question_post, only this text and its tool description.
+ * The server instructions, read once when the server starts, so the inbox state they name is a snapshot: the note
+ * each post returns carries the live one. Without the native app (`none`) they say nothing about the inbox.
  */
-export function serverInstructions(askViaQuestionTool: boolean): string {
+export function serverInstructions({ askViaQuestionTool, inboxState }: InstructionContext): string {
+    const inbox = inboxInstructions(inboxState);
+
     return (
         "Genesis Tools — question/answer server. TWO question surfaces, opposite directions:\n\n" +
+        (inbox ? `${inbox}\n\n` : "") +
         "1. ASK THE USER (blocking, they answer): `question_post` creates a PENDING form — a question you " +
         "need decided before you can continue. It lands on the dev-dashboard /qa Pending section and raises a " +
         "notification. Default is NON-BLOCKING: you get a form id immediately and collect the answer with " +
@@ -107,7 +108,7 @@ export function serverInstructions(askViaQuestionTool: boolean): string {
         'DECISIONS AND TODOS: a `question_post` item with `type: "decision"` or `type: "todo"` is not a form. ' +
         "It is numbered in this session's decision log (❓ DECISION N, TODO N; numbers never reused) and the " +
         "result is the markdown section to paste into your reply. " +
-        decisionNudge(askViaQuestionTool) +
+        decisionNudge({ state: inboxState, askViaQuestionTool }) +
         "Record " +
         "progress (acknowledged, implemented, commit refs, verdict, comments, a copy of a chat answer) with " +
         `\`question_update\`, several items per call. CLI: \`${toolCommand("question ask", "--json", "-")}\`, ` +
@@ -116,8 +117,9 @@ export function serverInstructions(askViaQuestionTool: boolean): string {
         "cmd, url, image, pr-thread), resolved into real content when the item is saved; `question_tokens` lists " +
         "them and previews a text. To correct an unanswered item, post it again with `supersedes: <id>`.\n\n" +
         "2. LOG YOUR OWN ANSWER (after the fact, no waiting): `question_answer`, described next.\n\n" +
-        'Screenshot evidence goes in optional attachments: [{type: "image", path: "/absolute/local/image.png", ' +
-        'label: "Result"}]. PNG/JPEG/WebP files are validated and copied into durable storage. For comparison, ' +
+        'Screenshot evidence goes in optional images: ["/absolute/local/image.png"], or in attachments: [{type: ' +
+        '"image", path: "/absolute/local/image.png", label: "Result"}] (the same for question_post items). ' +
+        "PNG/JPEG/WebP files are validated and copied into durable storage. For comparison, " +
         'add comparison: {group: "layout", role: "before" or "after"}. Keep refs for ordinary source references.\n\n' +
         "WHEN TO USE THE question_answer TOOL:\n" +
         '- The user directly asks a question important enough to preserve for later review: rationale ("why did ' +
@@ -166,7 +168,22 @@ export interface ToolEntry {
     handler: (args: Record<string, unknown>, context?: { signal?: AbortSignal }) => Promise<string>;
 }
 
-function buildToolRegistry(askViaQuestionTool: boolean): Record<string, ToolEntry> {
+/** `inbox_send` exists only on a Mac with the native inbox: users without the app never see it. */
+function inboxEntries(inboxState: NativeInboxState): Record<string, ToolEntry> {
+    if (inboxState === "none") {
+        return {};
+    }
+
+    return {
+        inbox_send: {
+            description: inboxSendDescription(inboxState),
+            inputSchema: INBOX_SEND_INPUT_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => SafeJSON.stringify(await handleInboxSend(args as unknown as InboxSendArgs)),
+        },
+    };
+}
+
+function buildToolRegistry(context: InstructionContext): Record<string, ToolEntry> {
     return {
         question_answer: {
             description: QUESTION_ANSWER_DESCRIPTION,
@@ -176,8 +193,9 @@ function buildToolRegistry(askViaQuestionTool: boolean): Record<string, ToolEntr
                 return SafeJSON.stringify(r);
             },
         },
+        ...inboxEntries(context.inboxState),
         question_post: {
-            description: questionPostDescription(askViaQuestionTool),
+            description: questionPostDescription(context),
             inputSchema: QUESTION_POST_INPUT_SCHEMA as unknown as Record<string, unknown>,
             handler: async (args) => handleQuestionPost(args as unknown as QuestionPostArgs),
         },
@@ -270,7 +288,10 @@ const DECISION_TOOLS = new Set(["question_post", "question_poll", "question_upda
  * history-recording tool as well, which is the separation this map exists to enforce.
  */
 const CAPABILITY_MATCHERS: Record<string, (name: string) => boolean> = {
-    question_answer: (name) => name === "question_answer",
+    // inbox_send writes the same after-the-fact Q→A store as question_answer and blocks nobody, so the existing
+    // `question_answer` configs (every harness entry on this Mac uses it) get it without an edit.
+    question_answer: (name) => name === "question_answer" || name === "inbox_send",
+    inbox: (name) => name === "inbox_send",
     question_ask: (name) => QUESTION_ASK_TOOLS.has(name),
     handoff: (name) => name.startsWith("handoff_"),
     decision: (name) => DECISION_TOOLS.has(name),
@@ -313,16 +334,16 @@ function loadJevEntries(): Promise<Record<string, ToolEntry>> {
 
 /** One registry per instructions variant; a resident server builds it once, not per request. */
 async function toolRegistry(
-    askViaQuestionTool: boolean,
+    context: InstructionContext,
     capabilities: string[] | undefined
 ): Promise<Record<string, ToolEntry>> {
     const withJev = capabilities === undefined || capabilities.includes("jev");
-    const key = `${askViaQuestionTool}:${withJev}`;
+    const key = `${context.askViaQuestionTool}:${context.inboxState}:${withJev}`;
     let registry = registries.get(key);
     if (!registry) {
         registry = {
             ...(withJev ? await loadJevEntries() : {}),
-            ...buildToolRegistry(askViaQuestionTool),
+            ...buildToolRegistry(context),
         };
         registries.set(key, registry);
     }
@@ -333,20 +354,22 @@ async function toolRegistry(
 /**
  * The genesis-tools MCP server for one stdio connection or one HTTP request. `runCall` wraps every
  * tool handler; the resident HTTP server uses it to run the handler as the calling session.
+ * `inboxState` is injected by tests; production reads this Mac's (remembered for 15 s across requests).
  */
 export async function createGenesisToolsServer(opts: {
     capabilities: string[] | undefined;
     runCall?: <T>(fn: () => Promise<T>) => Promise<T>;
-}): Promise<{ server: Server; tools: string[]; askViaQuestionTool: boolean }> {
-    const askViaQuestionTool = loadQuestionConfig().askViaQuestionTool === true;
-    const registry = filterRegistryByCapabilities(
-        await toolRegistry(askViaQuestionTool, opts.capabilities),
-        opts.capabilities
-    );
+    inboxState?: NativeInboxState;
+}): Promise<{ server: Server; tools: string[]; askViaQuestionTool: boolean; inboxState: NativeInboxState }> {
+    const context: InstructionContext = {
+        askViaQuestionTool: loadQuestionConfig().askViaQuestionTool === true,
+        inboxState: opts.inboxState ?? nativeInboxState(),
+    };
+    const registry = filterRegistryByCapabilities(await toolRegistry(context, opts.capabilities), opts.capabilities);
     const runCall = opts.runCall ?? ((fn) => fn());
     const server = new Server(
         { name: "genesis-tools", version: "1.0.0" },
-        { capabilities: { tools: {} }, instructions: serverInstructions(askViaQuestionTool) }
+        { capabilities: { tools: {} }, instructions: serverInstructions(context) }
     );
 
     server.setRequestHandler(
@@ -383,14 +406,14 @@ export async function createGenesisToolsServer(opts: {
         }
     });
 
-    return { server, tools: Object.keys(registry), askViaQuestionTool };
+    return { server, tools: Object.keys(registry), ...context };
 }
 
 export async function startMcpServer(): Promise<void> {
     const capabilities = env.tools.getMcpCapabilities();
-    const { server, tools, askViaQuestionTool } = await createGenesisToolsServer({ capabilities });
+    const { server, tools, askViaQuestionTool, inboxState } = await createGenesisToolsServer({ capabilities });
     log.info(
-        { capabilities: capabilities ?? "all", tools, askViaQuestionTool },
+        { capabilities: capabilities ?? "all", tools, askViaQuestionTool, inboxState },
         "genesis-tools MCP tool registry resolved"
     );
 

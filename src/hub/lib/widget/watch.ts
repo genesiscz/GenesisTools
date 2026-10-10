@@ -6,6 +6,7 @@ import { sessionMessageQueueRoot } from "@genesiscz/utils/agent-sessions/message
 import { createWatcher, type WatcherSubscription, watchPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { nativeInboxState } from "@genesiscz/utils/macos/native-inbox";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { profiler } from "@genesiscz/utils/profile";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
@@ -60,6 +61,8 @@ export async function watchWidget({
     await withFileLock(
         join(directory, "worker.lock"),
         async () => {
+            // This lock is the widget's "running" signal; refreshing now keeps the plugin hooks' state file current.
+            nativeInboxState({ refresh: true });
             await recoverWidgetOutbox(directory);
             const jobs = new Map<string, { revision: number; controller: AbortController; done: Promise<void> }>();
             const dispatcher = dependencies.dispatcher ?? widgetDispatcher({ signal });

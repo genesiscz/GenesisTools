@@ -1,7 +1,12 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { MockMCPProvider } from "@app/mcp-manager/commands/__tests__/test-utils";
 import * as installCommand from "@app/mcp-manager/commands/install";
-import { genesisToolsMcpRegistration, installGenesisToolsMcp, type McpRegistrationReader } from "./mcp-install";
+import {
+    buildInstallArgs,
+    genesisToolsMcpRegistration,
+    installGenesisToolsMcp,
+    type McpRegistrationReader,
+} from "./mcp-install";
 
 function fakeReader(overrides: Partial<McpRegistrationReader> = {}): McpRegistrationReader {
     return {
@@ -79,6 +84,29 @@ describe("installGenesisToolsMcp", () => {
 
             expect(install).toHaveBeenCalledTimes(1);
             expect(install.mock.calls[0]?.[3]).toEqual({ type: "stdio", provider: "claude" });
+        } finally {
+            install.mockRestore();
+        }
+    });
+});
+
+describe("install --agent", () => {
+    it("maps claude, codex and grok to their providers and refuses anything else", () => {
+        expect(buildInstallArgs({}).options.provider).toBe("claude");
+        expect(buildInstallArgs({ agent: "codex" }).options.provider).toBe("codex");
+        expect(buildInstallArgs({ agent: "grok" }).options.provider).toBe("grok");
+        expect(() => buildInstallArgs({ agent: "gemini" })).toThrow("--agent must be one of claude, codex, grok");
+    });
+
+    it("installs into Grok through installServer when ~/.grok/config.toml exists", async () => {
+        const install = spyOn(installCommand, "installServer").mockImplementation(async () => undefined);
+
+        try {
+            await installGenesisToolsMcp({ agent: "grok", providers: [new MockMCPProvider("grok")] });
+
+            expect(install).toHaveBeenCalledTimes(1);
+            expect(install.mock.calls[0]?.[0]).toBe("genesis-tools");
+            expect(install.mock.calls[0]?.[3]).toEqual({ type: "stdio", provider: "grok" });
         } finally {
             install.mockRestore();
         }

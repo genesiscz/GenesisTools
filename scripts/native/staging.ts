@@ -10,6 +10,7 @@
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { nativeInboxState } from "@genesiscz/utils/macos/native-inbox";
 
 const DOMAIN = "com.genesiscz.genesistools";
 const KEY = "GenesisToolsStagingFaces";
@@ -34,11 +35,14 @@ if (verb === "on" || verb === "off") {
     }
 
     console.log(`Staging widget and Clicky faces ${verb === "on" ? "ON" : "OFF"} for ${DOMAIN}.`);
+    // Agents' instructions follow this (src/question/lib/inbox-guidance.ts); the refresh rewrites the hooks' state file.
+    console.log(`Native inbox for agents: ${nativeInboxState({ refresh: true })}`);
     if (verb === "on") {
         console.log("Start the widget: bun scripts/native/staging.ts start");
     }
 } else if (verb === "status") {
     console.log(`${KEY} = ${enabled() ? "on" : "off"} (${DOMAIN})`);
+    console.log(`Native inbox for agents: ${nativeInboxState({ refresh: true })}`);
 } else if (verb === "start") {
     if (!enabled()) {
         console.error("Staging faces are off. Run: bun scripts/native/staging.ts on");

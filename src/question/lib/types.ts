@@ -1,7 +1,8 @@
 import type { SourceMessage, TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import type { ImageAttachment, ImageAttachmentInput } from "@genesiscz/utils/image/attachments";
 
-export type QaTag = "question" | "action" | "directive";
+/** `message`: an agent-to-user message with no question (`inbox_send`, `tools question message`). */
+export type QaTag = "question" | "action" | "directive" | "message";
 /** `ask` marks an entry that came from answering a blocking pending form, not a log-after call. */
 export type QaSource = "question" | "mcp" | "skill" | "cli" | "ask";
 export type QaAgent = "claude-code" | "codex" | "grok" | "copilot" | "unknown";

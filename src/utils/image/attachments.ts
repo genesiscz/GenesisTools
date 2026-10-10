@@ -10,7 +10,7 @@ import { checkImageDimensions } from "./dimensions";
 export const MAX_IMAGE_ATTACHMENTS = 24;
 export const MAX_IMAGE_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 export const MAX_IMAGE_BATCH_BYTES = 100 * 1024 * 1024;
-const MAX_IMAGE_PIXELS = 48_000_000;
+export const MAX_IMAGE_PIXELS = 48_000_000;
 
 const inputSchema = z
     .object({

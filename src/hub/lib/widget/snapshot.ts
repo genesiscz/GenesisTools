@@ -19,6 +19,7 @@ import { workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import { hubAgents } from "../agents";
 import type { AgentNode, AgentsTree } from "../agents/types";
 import { readAssetManifest } from "../composer/serialize";
+import { liftCardImages } from "./card-images";
 import { readWidgetState } from "./storage";
 import { parseWidgetSessionKey, shownOutgoing, type WidgetTarget, widgetSessionKey } from "./types";
 
@@ -357,6 +358,17 @@ function targetOf(
 }
 function cleanVisibleContext(text: string): string {
     return text.replace(/<from(?:Image|Video)>[\s\S]*?<\/from(?:Image|Video)>/g, "").trim();
+}
+
+/** `body` without its first line when that line is the card title, so a message does not repeat its own title. */
+function withoutLeadingLine(body: string, title: string): string {
+    const [first = "", ...rest] = body.split("\n");
+
+    if (first.replace(/^#{1,6}\s+/, "").trim() !== title.trim()) {
+        return body;
+    }
+
+    return rest.join("\n").trim();
 }
 function flattenAgents(nodes: AgentNode[]): AgentNode[] {
     return nodes.flatMap((node) => [node, ...flattenAgents(node.children)]);
@@ -872,6 +884,8 @@ export async function widgetSnapshot({
                 row.project,
                 row.ts
             );
+        const answerImages = liftCardImages([row.question, cleanVisibleContext(row.answerMd)], row.attachments ?? []);
+        const [answerTitle, answerBody] = answerImages.texts;
         cards.push({
             id: `answer:${row.id}`,
             kind: "answer",
@@ -892,11 +906,12 @@ export async function widgetSnapshot({
             sessionKey: session.key,
             sourceId: row.id,
             at: row.ts,
-            title: row.question,
-            body: cleanVisibleContext(row.answerMd),
-            status: "answered",
+            title: answerTitle,
+            // A message's title is usually its own first line (src/question/lib/message.ts); it is not repeated.
+            body: row.tag === "message" ? withoutLeadingLine(answerBody, answerTitle) : answerBody,
+            status: row.tag === "message" ? "message" : "answered",
             choices: [],
-            attachments: row.attachments ?? [],
+            attachments: answerImages.attachments,
             refs: row.refs,
             read: row.readAt !== null,
         });
@@ -906,6 +921,15 @@ export async function widgetSnapshot({
         if (!session || (selectedKey && session.key !== selectedKey)) {
             continue;
         }
+        // The prompt is lifted too: an item's attachments are embedded there, and with a title it is not drawn.
+        const decisionImages = liftCardImages([
+            row.title ?? row.prompt,
+            cleanVisibleContext(
+                [row.context, row.reasoning, row.proposal, row.answer, row.notes].filter(Boolean).join("\n\n")
+            ),
+            ...(row.title ? [row.prompt] : []),
+        ]);
+        const [decisionTitle, decisionBody] = decisionImages.texts;
         cards.push({
             id: `decision:${row.id}`,
             kind: kindOf(row),
@@ -925,10 +949,8 @@ export async function widgetSnapshot({
             sessionKey: session.key,
             sourceId: row.id,
             at: timeOf(row.updatedTs),
-            title: row.title ?? row.prompt,
-            body: cleanVisibleContext(
-                [row.context, row.reasoning, row.proposal, row.answer, row.notes].filter(Boolean).join("\n\n")
-            ),
+            title: decisionTitle,
+            body: decisionBody,
             status: row.delivery?.uncertain ? "delivery unknown" : row.state,
             number: row.number,
             revision: row.revision ?? 1,
@@ -937,7 +959,7 @@ export async function widgetSnapshot({
                 title,
                 recommended: row.recommended === String.fromCharCode(97 + index),
             })),
-            attachments: [],
+            attachments: decisionImages.attachments,
             refs: (row.refs ?? []).map((ref) => ({ type: "file", value: ref.path })),
             read: true,
         });
@@ -949,6 +971,13 @@ export async function widgetSnapshot({
         if (!session || (selectedKey && session.key !== selectedKey)) {
             continue;
         }
+        // Each item's prompt is drawn by the form view, so the lifted images leave the prompts the widget receives.
+        const formImages = liftCardImages([
+            form.status === "answered" ? cleanVisibleContext(renderFormAnswer(form, form.answers ?? {})) : "",
+            ...form.items.map((item) => item.promptMarkdown),
+        ]);
+        const [formAnswer, ...formPrompts] = formImages.texts;
+        const formItems = form.items.map((item, index) => ({ ...item, promptMarkdown: formPrompts[index] ?? "" }));
         cards.push({
             id: `form:${form.id}`,
             kind: "form",
@@ -962,18 +991,18 @@ export async function widgetSnapshot({
             sessionKey: session.key,
             sourceId: form.id,
             at: form.resolvedAt ?? form.createdAt,
-            title: form.items[0]?.promptMarkdown ?? "Question",
+            title: formItems[0]?.promptMarkdown || "Question",
             body:
                 form.status === "answered"
-                    ? cleanVisibleContext(renderFormAnswer(form, form.answers ?? {}))
+                    ? formAnswer
                     : form.items.length > 1
                       ? `${String(form.items.length)} questions`
                       : "",
             status: form.status,
             choices: [],
-            formItems: form.items,
+            formItems,
             formAnswers: form.answers,
-            attachments: [],
+            attachments: formImages.attachments,
             refs: [],
             read: form.status !== "pending",
             entryId: form.entryId,
@@ -988,6 +1017,10 @@ export async function widgetSnapshot({
             continue;
         }
         const result = selectedKey ? await read("agent result", () => widgetResult(node), "") : "";
+        const resultImages = liftCardImages([
+            result ||
+                `Task context: ${node.spawnPromptPreview ?? node.description ?? "Open the conversation to read the agent's result."}`,
+        ]);
         cards.push({
             id: `result:${node.harness}:${node.id}`,
             kind: "result",
@@ -995,12 +1028,10 @@ export async function widgetSnapshot({
             sourceId: node.id,
             at: timeOf(node.lastAt),
             title: node.name ?? node.description ?? node.id,
-            body:
-                result ||
-                `Task context: ${node.spawnPromptPreview ?? node.description ?? "Open the conversation to read the agent's result."}`,
+            body: resultImages.texts[0],
             status: node.status,
             choices: [],
-            attachments: [],
+            attachments: resultImages.attachments,
             refs: node.filePath ? [{ type: "file", value: node.filePath }] : [],
             read:
                 (state.inboxRead[`${session.key}|result:${node.harness}:${node.id}`] ?? -1) >= Date.parse(node.lastAt),

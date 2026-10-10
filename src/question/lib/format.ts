@@ -10,6 +10,7 @@ const TAG_TINT: Record<string, (s: string) => string> = {
     question: (s) => pc.bold(pc.blue(s)),
     action: (s) => pc.bold(pc.yellow(s)),
     directive: (s) => pc.bold(pc.green(s)),
+    message: (s) => pc.bold(pc.magenta(s)),
 };
 
 type FormattableEntry = Pick<

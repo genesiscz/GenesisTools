@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { buildPidRecord, serializePidRecord } from "@genesiscz/utils/process/pidfile";
 import { skip } from "@genesiscz/utils/test/skip";
 import {
     describeResponsibleIdentity,
@@ -12,6 +14,16 @@ import {
     responsibleIdentity,
     wrapWithGenesisApp,
 } from "./genesis-app";
+import {
+    inboxStateFromSignals,
+    isLiveWidgetLock,
+    isWidgetWatchCommand,
+    nativeInboxRecord,
+    nativeInboxState,
+    nativeInboxStateFile,
+    widgetLockPaths,
+    writeNativeInboxStateFile,
+} from "./native-inbox";
 
 describe("responsibleIdentity", () => {
     it("reports GenesisTools.app when the launcher marker is set", async () => {
@@ -172,5 +184,117 @@ describe.skipIf(skip.unlessMac)("genesisAppLauncher decides per caller", () => {
                 expect(genesisAppLauncher()).toBe(launcher);
             }
         );
+    });
+});
+
+describe("nativeInboxState", () => {
+    const off = { platform: true, previewBundle: false, appBundle: false, stagingFaces: false, widgetRunning: false };
+
+    it("maps the signals: Preview bundle or staged normal app is installed, a live widget lock is running", () => {
+        expect(inboxStateFromSignals(off)).toBe("none");
+        expect(inboxStateFromSignals({ ...off, appBundle: true })).toBe("none");
+        expect(inboxStateFromSignals({ ...off, appBundle: true, stagingFaces: true })).toBe("installed");
+        expect(inboxStateFromSignals({ ...off, previewBundle: true })).toBe("installed");
+        expect(inboxStateFromSignals({ ...off, previewBundle: true, widgetRunning: true })).toBe("running");
+        // A lock without an install (a dev build run by hand) is not a native inbox, and neither is another OS.
+        expect(inboxStateFromSignals({ ...off, widgetRunning: true })).toBe("none");
+        expect(inboxStateFromSignals({ ...off, platform: false, previewBundle: true, widgetRunning: true })).toBe(
+            "none"
+        );
+    });
+
+    it("reads the bundles, the staging key and the widget locks of this home", async () => {
+        const home = mkdtempSync(join(tmpdir(), "native-inbox-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+            const [lock] = widgetLockPaths();
+            const live = new Set<string>();
+            const deps = {
+                platform: "darwin",
+                liveWidgetLock: (path: string) => live.has(path),
+                readStagingMarker: () => true,
+            };
+
+            expect(nativeInboxState({ deps })).toBe("none");
+            expect(nativeInboxState({ deps: { ...deps, platform: "linux" } })).toBe("none");
+
+            mkdirSync(join(home, "Applications", "GenesisTools.app"), { recursive: true });
+            expect(nativeInboxState({ deps })).toBe("installed");
+            expect(nativeInboxState({ deps: { ...deps, readStagingMarker: () => false } })).toBe("none");
+
+            mkdirSync(join(home, "Applications", "GenesisTools Preview.app"), { recursive: true });
+            // The Preview bundle is an install on its own, whatever the staging key says.
+            const previewOnly = { ...deps, readStagingMarker: () => false };
+            expect(nativeInboxState({ deps: previewOnly })).toBe("installed");
+
+            // A live verdict for a lock file that does not exist never counts.
+            live.add(lock!);
+            expect(nativeInboxState({ deps: previewOnly })).toBe("installed");
+            mkdirSync(join(lock!, ".."), { recursive: true });
+            writeFileSync(lock!, "{}");
+            expect(nativeInboxState({ deps: previewOnly })).toBe("running");
+            live.clear();
+            expect(nativeInboxState({ deps: previewOnly })).toBe("installed");
+        });
+    });
+
+    it("a lock counts only while its pid still runs the widget watcher it recorded", async () => {
+        expect(isWidgetWatchCommand("bun /repo/src/hub/index.ts widget watch --stop-on-stdin")).toBe(true);
+        expect(
+            isWidgetWatchCommand("bun /repo/src/hub/index.ts widget --state-root /home/.genesis-tools/data watch")
+        ).toBe(true);
+        expect(isWidgetWatchCommand("bun /repo/src/hub/index.ts widget snapshot --json")).toBe(false);
+        expect(isWidgetWatchCommand("bun /repo/src/watch/index.ts watchwidget")).toBe(false);
+        const dir = mkdtempSync(join(tmpdir(), "native-inbox-lock-"));
+        const lock = join(dir, "worker.lock");
+        const watcher = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 30000)", "widget", "watch"], {
+            env: process.env,
+            stdout: "ignore",
+            stderr: "ignore",
+        });
+
+        try {
+            writeFileSync(lock, serializePidRecord(buildPidRecord(watcher.pid)));
+            expect(isWidgetWatchCommand(buildPidRecord(watcher.pid).command)).toBe(true);
+            expect(isLiveWidgetLock(lock)).toBe(true);
+
+            // This test process is alive, but it is not the program a widget lock names.
+            writeFileSync(lock, serializePidRecord(buildPidRecord(process.pid)));
+            expect(isLiveWidgetLock(lock)).toBe(false);
+
+            // A recycled pid: the record names the watcher, the pid now runs something else.
+            writeFileSync(
+                lock,
+                SafeJSON.stringify({ ...buildPidRecord(process.pid), command: "bun src/hub/index.ts widget watch" })
+            );
+            expect(isLiveWidgetLock(lock)).toBe(false);
+        } finally {
+            watcher.kill();
+            await watcher.exited;
+        }
+
+        writeFileSync(lock, serializePidRecord({ ...buildPidRecord(process.pid), pid: watcher.pid }));
+        expect(isLiveWidgetLock(lock)).toBe(false);
+    });
+
+    it("writes the hooks' state file only for a native install, and rewrites it when the install goes away", async () => {
+        const home = mkdtempSync(join(tmpdir(), "native-inbox-file-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+            const path = nativeInboxStateFile();
+            const none = nativeInboxRecord({ ...off });
+            const installed = nativeInboxRecord({ ...off, previewBundle: true });
+
+            expect(writeNativeInboxStateFile(none, path)).toBe(false);
+            expect(existsSync(path)).toBe(false);
+            expect(writeNativeInboxStateFile(installed, path)).toBe(true);
+            expect(SafeJSON.parse(readFileSync(path, "utf8"))).toEqual({
+                version: 1,
+                installed: true,
+                bundles: [join(home, "Applications", "GenesisTools Preview.app")],
+                widgetLocks: widgetLockPaths(),
+            });
+            expect(writeNativeInboxStateFile(installed, path)).toBe(false);
+            expect(writeNativeInboxStateFile(none, path)).toBe(true);
+            expect(SafeJSON.parse(readFileSync(path, "utf8")).installed).toBe(false);
+        });
     });
 });

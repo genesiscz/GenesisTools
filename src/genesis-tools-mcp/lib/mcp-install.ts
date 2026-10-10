@@ -3,6 +3,7 @@ import { ClaudeProvider } from "@app/mcp-manager/utils/providers/claude.js";
 import { CodexProvider } from "@app/mcp-manager/utils/providers/codex.js";
 import { CursorProvider } from "@app/mcp-manager/utils/providers/cursor.js";
 import { GeminiProvider } from "@app/mcp-manager/utils/providers/gemini.js";
+import { GrokProvider } from "@app/mcp-manager/utils/providers/grok.js";
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
@@ -47,11 +48,29 @@ export async function genesisToolsMcpRegistration(
 
 /** Mirrors the private getProviders() in src/mcp-manager/index.ts (not exported). */
 function buildProviders(): MCPProvider[] {
-    return [new ClaudeProvider(), new GeminiProvider(), new CodexProvider(), new CursorProvider()];
+    return [new ClaudeProvider(), new GeminiProvider(), new CodexProvider(), new CursorProvider(), new GrokProvider()];
+}
+
+/**
+ * The harnesses this server is installed into. Grok's entry is `[mcp_servers.genesis-tools]` in ~/.grok/config.toml
+ * (`command`, `args`, optional `env`), written by mcp-manager's GrokProvider, whose `installServer` reads the file and
+ * replaces only that one server, so the rest of the config survives.
+ */
+export const INSTALL_AGENTS = ["claude", "codex", "grok"] as const;
+export type InstallAgent = (typeof INSTALL_AGENTS)[number];
+
+function isInstallAgent(value: string): value is InstallAgent {
+    return (INSTALL_AGENTS as readonly string[]).includes(value);
 }
 
 export function buildInstallArgs(o: { agent?: string }): InstallArgs {
-    const provider = o.agent === "codex" ? "codex" : "claude";
+    const agent = o.agent ?? "claude";
+
+    if (!isInstallAgent(agent)) {
+        throw new Error(`--agent must be one of ${INSTALL_AGENTS.join(", ")}, not "${agent}"`);
+    }
+
+    const provider = agent;
     // Stable global command (not the ephemeral worktree path) so the registration survives.
     return {
         serverName: "genesis-tools",
@@ -89,8 +108,8 @@ export async function installGenesisToolsMcp(
 
 export function registerMcpInstallCommand(mcp: Command): void {
     mcp.command("install")
-        .description("Register the genesis-tools MCP server with Claude (or Codex via --agent codex)")
-        .option("--agent <name>", "claude|codex", "claude")
+        .description("Register the genesis-tools MCP server with Claude (or Codex / Grok via --agent)")
+        .option("--agent <name>", INSTALL_AGENTS.join("|"), "claude")
         .action(async (o: { agent?: string }) => {
             await installGenesisToolsMcp(o);
         });
