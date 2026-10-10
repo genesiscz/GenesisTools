@@ -449,6 +449,7 @@ public final class FlowFocusRuntime: ObservableObject {
         case "flow.permissions": flow.requestDictationPermissions()
         case "flow.accessibility": flow.requestAccessibility()
         case "flow.lab": flow.setLabEnabled(try decode(Bool.self))
+        case "flow.hotkey.suspend": flow.suspendHotkey(try decode(Bool.self))
         case "flow.config":
             let patch = try JSONSerialization.jsonObject(with: command.payload) as? [String: Any] ?? [:]
             // Decoding clamps a stored value; a new one outside the range is refused, not quietly changed.

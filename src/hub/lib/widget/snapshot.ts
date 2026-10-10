@@ -126,7 +126,11 @@ export interface WidgetInboxGroup {
     afterClear: number;
     /** Of those, the ones at or after `staleBefore`: what a quiet session counts. */
     recentAfterClear: number;
-    total: number;
+    /**
+     * `recentAfterClear` summed over EVERY group, the ones past the row limit too, on every row. The groups the
+     * snapshot never sees are counted by this session-blind rule; the listed ones by their session's freshness.
+     */
+    recentAfterClearTotal: number;
 }
 
 /** How many of a group's item times fall in the window: the per-item counts a source without SQL reports. */
@@ -177,7 +181,8 @@ export interface WidgetInboxSummary {
  * the older items "Mark all read" cleared or the stale ones beside it.
  */
 const INBOX_WINDOW_COUNTS = `SUM(CASE WHEN at > ?1 THEN 1 ELSE 0 END) OVER (PARTITION BY sessionId,provider) AS afterClear,
-                        SUM(CASE WHEN at > ?1 AND at >= ?2 THEN 1 ELSE 0 END) OVER (PARTITION BY sessionId,provider) AS recentAfterClear`;
+                        SUM(CASE WHEN at > ?1 AND at >= ?2 THEN 1 ELSE 0 END) OVER (PARTITION BY sessionId,provider) AS recentAfterClear,
+                        SUM(CASE WHEN at > ?1 AND at >= ?2 THEN 1 ELSE 0 END) OVER () AS recentAfterClearTotal`;
 
 function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
     const bounds: [number, number] = [window.clearedAt, window.staleBefore];
@@ -192,8 +197,7 @@ function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
                         CASE WHEN agent IN ('claude','claude-code') THEN 'claude'
                              WHEN agent IN ('codex','grok') THEN agent ELSE 'unknown' END AS provider,
                         COALESCE(session_title,session_id,id) AS title, COALESCE(project,'') AS project,
-                        COALESCE(cwd,'') AS cwd, ts AS at,
-                        COUNT(*) OVER () AS total
+                        COALESCE(cwd,'') AS cwd, ts AS at
                     FROM entries WHERE read_at IS NULL AND superseded_by IS NULL
                         AND NOT EXISTS (SELECT 1 FROM qa_pending WHERE entry_id=entries.id)
                 ), ranked AS (
@@ -201,7 +205,7 @@ function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
                         ${INBOX_WINDOW_COUNTS},
                         ROW_NUMBER() OVER (PARTITION BY sessionId,provider ORDER BY at DESC,id DESC) AS position
                     FROM unseen
-                ) SELECT id,sessionId,provider,title,project,cwd,at,count,afterClear,recentAfterClear,total
+                ) SELECT id,sessionId,provider,title,project,cwd,at,count,afterClear,recentAfterClear,recentAfterClearTotal
                   FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
             `)
                 .all(...bounds);
@@ -213,8 +217,7 @@ function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
                     SELECT id, COALESCE(NULLIF(session_hint,''),id) AS sessionId,
                         CASE WHEN json_valid(poster_json) THEN NULLIF(json_extract(poster_json,'$.agent'),'unknown') END AS poster,
                         CASE WHEN json_valid(transcript_anchor_json) THEN json_extract(transcript_anchor_json,'$.provider') END AS anchor,
-                        COALESCE(source,'Question') AS title, project_path AS project, cwd, created_at AS at,
-                        COUNT(*) OVER () AS total
+                        COALESCE(source,'Question') AS title, project_path AS project, cwd, created_at AS at
                     FROM qa_pending WHERE status='pending'
                 ), normalized AS (
                     SELECT *, CASE WHEN COALESCE(poster,anchor) IN ('claude','claude-code') THEN 'claude'
@@ -225,7 +228,7 @@ function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
                         ${INBOX_WINDOW_COUNTS},
                         ROW_NUMBER() OVER (PARTITION BY sessionId,provider ORDER BY at DESC,id DESC) AS position
                     FROM normalized
-                ) SELECT id,sessionId,provider,title,project,cwd,at,count,afterClear,recentAfterClear,total
+                ) SELECT id,sessionId,provider,title,project,cwd,at,count,afterClear,recentAfterClear,recentAfterClearTotal
                   FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
             `)
                       .all(...bounds)
@@ -646,6 +649,19 @@ export async function widgetSnapshot({
         staleBefore: now - INBOX_STALE_MS,
     };
     const inboxSource = sources.inboxData;
+    const rosterUnread = inboxSource ? [] : answerRoster.filter((row) => row.readAt === null);
+    const rosterRecent = {
+        answers: inboxWindowCounts(
+            rosterUnread.map((row) => row.ts),
+            inboxWindow
+        ).recentAfterClear,
+        forms: inboxSource
+            ? 0
+            : inboxWindowCounts(
+                  waitingForms.map((form) => form.createdAt),
+                  inboxWindow
+              ).recentAfterClear,
+    };
     const inboxData = inboxSource
         ? await read("inbox metadata", () => inboxSource(inboxWindow), {
               answers: [],
@@ -654,20 +670,18 @@ export async function widgetSnapshot({
               truncated: false,
           })
         : {
-              answers: answerRoster
-                  .filter((row) => row.readAt === null)
-                  .map((row) => ({
-                      id: row.id,
-                      sessionId: row.sessionId,
-                      provider: widgetProvider(row.agent),
-                      title: row.sessionTitle ?? row.sessionId,
-                      project: row.project,
-                      cwd: row.cwd,
-                      at: row.ts,
-                      count: 1,
-                      ...inboxWindowCounts([row.ts], inboxWindow),
-                      total: answerRoster.filter((entry) => entry.readAt === null).length,
-                  })),
+              answers: rosterUnread.map((row) => ({
+                  id: row.id,
+                  sessionId: row.sessionId,
+                  provider: widgetProvider(row.agent),
+                  title: row.sessionTitle ?? row.sessionId,
+                  project: row.project,
+                  cwd: row.cwd,
+                  at: row.ts,
+                  count: 1,
+                  ...inboxWindowCounts([row.ts], inboxWindow),
+                  recentAfterClearTotal: rosterRecent.answers,
+              })),
               forms: waitingForms.map((form) => ({
                   id: form.id,
                   sessionId: form.sessionHint || form.id,
@@ -678,7 +692,7 @@ export async function widgetSnapshot({
                   at: form.createdAt,
                   count: 1,
                   ...inboxWindowCounts([form.createdAt], inboxWindow),
-                  total: waitingForms.length,
+                  recentAfterClearTotal: rosterRecent.forms,
               })),
               complete: false,
               truncated: true,
@@ -887,9 +901,10 @@ export async function widgetSnapshot({
         inboxSessions.set(session.key, entry);
     };
     // Counted per item: each SQL group carries its session's newest item and how many of its items fall after the
-    // clear watermark and after the stale cut-off. `total` also covers groups past the row limit, so every item of a
-    // listed group left out of the count is subtracted from it.
-    const skipped = { answer: 0, form: 0 };
+    // clear watermark and after the stale cut-off. A listed group counts by its session's freshness; the groups past
+    // the row limit count by the session-blind rule (`recentAfterClearTotal` minus what the listed groups hold).
+    const counted = { answer: 0, form: 0 };
+    const listedRecent = { answer: 0, form: 0 };
     for (const [kind, groups] of [
         ["answer", inboxData.answers],
         ["form", inboxData.forms],
@@ -907,12 +922,13 @@ export async function widgetSnapshot({
             // `inboxCounted` per item: a working or lately active session counts every item after the watermark,
             // a quiet one only its recent items.
             const sessionFresh = session.status === "working" || session.activityAt >= inboxWindow.staleBefore;
-            const counted = sessionFresh ? row.afterClear : row.recentAfterClear;
+            const items = sessionFresh ? row.afterClear : row.recentAfterClear;
             if (kind === "form" && inboxFresh(session, row.at)) {
                 session.status = "waiting";
             }
-            skipped[kind] += row.count - counted;
-            if (counted === 0) {
+            counted[kind] += items;
+            listedRecent[kind] += row.recentAfterClear;
+            if (items === 0) {
                 continue;
             }
             putInbox(
@@ -925,10 +941,13 @@ export async function widgetSnapshot({
                     at: row.at,
                     needsAnswer: kind === "form",
                 },
-                counted
+                items
             );
         }
     }
+    /** What the listed groups counted, plus the recent items of the groups past the row limit. */
+    const inboxCount = (kind: "answer" | "form", groups: WidgetInboxGroup[]) =>
+        counted[kind] + Math.max(0, (groups[0]?.recentAfterClearTotal ?? 0) - listedRecent[kind]);
     let pendingDecisions = 0;
     for (const row of decisions) {
         if (kindOf(row) !== "decision" || !["open", "drafted"].includes(row.state) || row.delivery?.uncertain) {
@@ -981,8 +1000,8 @@ export async function widgetSnapshot({
         putInbox(session, { id, sourceId: node.id, kind: "result", key: session.key, at, needsAnswer: false }, 1);
     }
     const notifications: WidgetInboxSummary = {
-        unread: Math.max(0, (inboxData.answers[0]?.total ?? 0) - skipped.answer) + unreadResults,
-        needsAnswer: Math.max(0, (inboxData.forms[0]?.total ?? 0) - skipped.form) + pendingDecisions,
+        unread: inboxCount("answer", inboxData.answers) + unreadResults,
+        needsAnswer: inboxCount("form", inboxData.forms) + pendingDecisions,
         complete: inboxData.complete && errors.length === 0,
         truncated: inboxData.truncated || inboxSessions.size > 512,
         sessions: [...inboxSessions.values()]

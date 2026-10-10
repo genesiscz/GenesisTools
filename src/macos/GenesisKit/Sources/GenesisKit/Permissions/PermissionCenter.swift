@@ -205,6 +205,7 @@ public final class PermissionCenter {
     func close(_ dialog: PermissionDialogModel, dismissedByUser: Bool) {
         guard dialogs[dialog.kind] === dialog else { return }
         dialogs[dialog.kind] = nil
+        dialog.didClose()
         if dismissedByUser { dismissed.insert(dialog.kind) }
         lock?.release(dialog.kind)
         presenter.close(dialog)
@@ -248,6 +249,9 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
     private var closing: Task<Void, Never>?
     private var observers: [NSObjectProtocol] = []
     private var lastFreshCheck: Date?
+    /// The dialog left its center ("Not now", ⌘W, or after a grant). A request or probe still awaiting macOS then
+    /// finishes into nothing: no state change, no System Settings, and above all no `onGranted` the user opted out of.
+    private(set) var closed = false
 
     init(need: PermissionNeed, status: PermissionStatus, center: PermissionCenter) {
         kind = need.kind
@@ -340,7 +344,7 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
         let kind = self.kind
         Task { [weak self] in
             let result = await center.access.request(kind)
-            guard let self else { return }
+            guard let self, !self.closed else { return }
             self.status = result
             if result.isGranted {
                 self.grant()
@@ -360,8 +364,10 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
             // Asking first puts the app in System Settings' list, so turning it on is one switch.
             if self.kind.requestStyle == .promptThenSettings {
                 self.phase = .working
-                self.status = await center.access.request(self.kind)
-                if self.status.isGranted {
+                let result = await center.access.request(self.kind)
+                guard !self.closed else { return }
+                self.status = result
+                if result.isGranted {
                     self.grant()
                     return
                 }
@@ -387,8 +393,15 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
     }
 
     public func dismiss() {
+        closed = true
         stopWatching()
         center?.close(self, dismissedByUser: true)
+    }
+
+    /// The center took this dialog off the screen; nothing awaiting macOS may act for it afterwards.
+    func didClose() {
+        closed = true
+        stopWatching()
     }
 
     // MARK: - Watching for the grant
@@ -439,7 +452,7 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
     /// Reads the grant again. A cached kind also asks a new process: on "Check again" always, otherwise at most
     /// every few seconds (each ask starts a process).
     func refresh(explicit: Bool, fresh: Bool = false) async {
-        guard let center, phase != .granted, phase != .working else { return }
+        guard let center, !closed, phase != .granted, phase != .working else { return }
         var current = center.access.status(kind)
         if kind.requestStyle == .probe, status == .denied, case .unknown = current {
             // A probe kind has no silent read. Once its probe was refused, macOS has the answer, so touching the
@@ -452,7 +465,7 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
             if explicit { checking = true }
             current = await center.access.request(kind)
             checking = false
-            guard phase != .granted, phase != .working else { return }
+            guard !closed, phase != .granted, phase != .working else { return }
         }
         if current != status { status = current }
         if current.isGranted {
@@ -468,6 +481,7 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
                 if explicit { checking = true }
                 grantedElsewhere = await center.freshStatus(kind)?.isGranted == true
                 checking = false
+                guard !closed else { return }
             }
 
             if grantedElsewhere {
@@ -482,7 +496,7 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
     }
 
     private func grant() {
-        guard phase != .granted else { return }
+        guard !closed, phase != .granted else { return }
         phase = .granted
         status = .granted
         note = nil

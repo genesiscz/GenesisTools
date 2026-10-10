@@ -2639,7 +2639,7 @@ describe("widget inbox notifications", () => {
                         at: 1,
                         count: 1,
                         ...inboxWindowCounts([1], window),
-                        total: 1,
+                        recentAfterClearTotal: inboxWindowCounts([1], window).recentAfterClear,
                     },
                 ],
                 complete: true,
@@ -2696,18 +2696,22 @@ describe("widget inbox notifications", () => {
                     updatedTs: new Date(at).toISOString(),
                 });
                 let decisions = [decision("ended-fixture", now - 240 * hour), decision("live-fixture", now - hour)];
-                const group = (sessionId: string, at: number, count: number, window: WidgetInboxWindow) => ({
-                    id: `${sessionId}-newest`,
-                    sessionId,
-                    provider: "codex",
-                    title: "Fixture",
-                    project: "Fixture",
-                    cwd: "/fixture",
-                    at,
-                    count,
-                    ...inboxWindowCounts(Array<number>(count).fill(at), window),
-                    total: count,
-                });
+                // Each kind has this one group, so its own recent count is the kind's total.
+                const group = (sessionId: string, at: number, count: number, window: WidgetInboxWindow) => {
+                    const counts = inboxWindowCounts(Array<number>(count).fill(at), window);
+                    return {
+                        id: `${sessionId}-newest`,
+                        sessionId,
+                        provider: "codex",
+                        title: "Fixture",
+                        project: "Fixture",
+                        cwd: "/fixture",
+                        at,
+                        count,
+                        ...counts,
+                        recentAfterClearTotal: counts.recentAfterClear,
+                    };
+                };
                 const sources: WidgetSources = {
                     sessions: async () => [],
                     decisions: () => decisions,
@@ -2795,6 +2799,42 @@ describe("widget inbox notifications", () => {
 
                 post("after-clear", now + 1000);
                 expect(await needsAnswer(now + 2000)).toBe(1);
+            }
+        );
+    });
+
+    test("sessions past the inbox row limit count by the same watermark", async () => {
+        const directory = await root();
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
+            async () => {
+                const now = Date.now();
+                // 258 sessions with one question each: two more than the 256 groups the snapshot lists.
+                const db = openPendingStore(toolDataDir("question", "qa.db"));
+                const insert = db.query(
+                    "INSERT INTO qa_pending (id,created_at,status,source,session_hint,project_path,cwd,items_json) VALUES (?,?,'pending','Question',?,'/fixture','/fixture','[]')"
+                );
+                db.transaction(() => {
+                    for (let index = 0; index < 258; index++) {
+                        insert.run(`form-${index}`, now - 10_000 + index, `overflow-fixture-${index}`);
+                    }
+                })();
+                db.close();
+                const sources: WidgetSources = {
+                    sessions: async () => [],
+                    decisions: () => [],
+                    forms: () => [],
+                    answers: () => [],
+                    agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+                    inboxData: realWidgetSources.inboxData,
+                };
+                const notifications = async () =>
+                    (await widgetSnapshot({ root: directory, sources, now })).notifications;
+                expect((await notifications())?.needsAnswer).toBe(258);
+                await performWidgetAction({ root: directory, input: { action: "inbox-clear", at: now } });
+                const cleared = await notifications();
+                expect(cleared?.needsAnswer).toBe(0);
+                expect(cleared?.sessions.filter((session) => session.needsAnswer > 0)).toEqual([]);
             }
         );
     });

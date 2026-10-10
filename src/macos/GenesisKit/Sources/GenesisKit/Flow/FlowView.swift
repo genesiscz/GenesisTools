@@ -218,7 +218,8 @@ public struct FlowSettingsView: View {
                                 session.config = config
                             }),
                         defaultChord: HotkeyChord(keyCode: FlowConfig().keyCode, modifiers: FlowConfig.defaultModifiers),
-                        identifier: "flow-setting-shortcut")
+                        identifier: "flow-setting-shortcut",
+                        onListening: { session.suspendHotkey($0) })
                 }
                 .disabled(!session.config.enabled)
                 Divider()

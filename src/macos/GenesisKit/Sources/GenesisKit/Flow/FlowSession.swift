@@ -86,6 +86,12 @@ public final class FlowSession: ObservableObject {
     var remoteCommand: ((String, Data) -> Void)?
     var configuration = FlowFocusConfiguration.shared
     private var hotKey: CompanionHotKey?
+    /// A shortcut recorder in Settings is listening (`suspendHotkey`): the chord stays unregistered until it stops.
+    private(set) var hotkeySuspended = false
+    private var hotkeyResume: Task<Void, Never>?
+    var hotkeySuspensionLimit: Duration = .seconds(120)
+    /// Whether Carbon holds the chord in this process right now.
+    var hotkeyRegistered: Bool { hotKey != nil }
     private var startedAt: Date?
     private var target: FlowFocusTarget?
     /// Lowercase tokens the user dismissed, so the learner stops proposing them.
@@ -189,6 +195,29 @@ public final class FlowSession: ObservableObject {
         applyHotkeyBinding()
         if config.showPill, pillEffect == nil { pill.prewarm() }
         applyPreRoll()
+    }
+
+    /// Lets go of the global shortcut while a recorder in Settings waits for its replacement, and takes it back after.
+    /// Carbon swallows a registered chord system-wide, so pressing the current shortcut would start dictation instead
+    /// of reaching the recorder. A runtime client asks its owner. The owner takes the shortcut back by itself after
+    /// `hotkeySuspensionLimit`, so a recorder whose process died cannot leave dictation without its shortcut.
+    public func suspendHotkey(_ suspended: Bool) {
+        if forward("flow.hotkey.suspend", suspended) { return }
+        hotkeyResume?.cancel()
+        hotkeyResume = nil
+        if suspended {
+            let limit = hotkeySuspensionLimit
+            hotkeyResume = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: limit)
+                guard !Task.isCancelled, let self, self.hotkeySuspended else { return }
+                FlowFocusLog.flow.info("dictation hotkey suspension expired; registering it again")
+                self.suspendHotkey(false)
+            }
+        }
+        guard hotkeySuspended != suspended else { return }
+        hotkeySuspended = suspended
+        FlowFocusLog.flow.info("dictation hotkey \(suspended ? "suspended for a shortcut recorder" : "resumed")")
+        applyHotkeyBinding()
     }
 
     /// Labs switch. Off drops the hotkey and any turn in flight.
@@ -426,6 +455,13 @@ public final class FlowSession: ObservableObject {
             hotKey?.stop()
             hotKey = nil
             hotkeyStatus = .off
+            return
+        }
+
+        // Only for the moment a recorder listens: the status keeps naming the shortcut that comes back after.
+        if hotkeySuspended {
+            hotKey?.stop()
+            hotKey = nil
             return
         }
 

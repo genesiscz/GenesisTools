@@ -199,6 +199,28 @@ final class SettingsControlsTests: XCTestCase {
         XCTAssertEqual(recorded.count, 1, "Escape records nothing")
     }
 
+    func testTheRecorderTellsTheShortcutOwnerWhenListeningStartsAndEndsHoweverItEnds() {
+        let model = HotkeyRecorderModel()
+        var listening: [Bool] = []
+        let chord: (HotkeyChord) -> Void = { _ in XCTAssertEqual(listening.last, true, "a chord is saved while the live one is let go") }
+        model.start(onListening: { listening.append($0) }, onRecord: chord)
+        model.receive(keyCode: 0x0C, flags: [.command], onRecord: chord)
+        XCTAssertEqual(listening, [true], "a refused chord keeps listening, and the live shortcut stays let go")
+        model.receive(keyCode: 0x31, flags: [.control, .option], onRecord: chord)
+        XCTAssertEqual(listening, [true, false], "saving ends listening")
+
+        model.start(onListening: { listening.append($0) }, onRecord: chord)
+        model.receive(keyCode: 0x35, flags: [], onRecord: chord)
+        XCTAssertEqual(listening, [true, false, true, false], "Escape ends listening")
+
+        model.start(onListening: { listening.append($0) }, onRecord: chord)
+        model.start(onListening: { listening.append($0) }, onRecord: chord)
+        model.stop()
+        model.stop()
+        XCTAssertEqual(listening, [true, false, true, false, true, false, true, false],
+                       "a restart ends the first listening once, and a second stop says nothing")
+    }
+
     func testDictationShortcutLanguageAndGraceControlsPersistToTheFlowConfigTheSessionReads() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("flow-settings-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }

@@ -13,6 +13,8 @@ final class PermissionTests: XCTestCase {
         var grantOnRequest: Set<PermissionKind> = []
         /// What a probe kind's request answers while `status` reads `.unknown`, as the real probes do.
         var probeAnswers: [PermissionKind: PermissionStatus] = [:]
+        /// How long a request waits for "macOS" before it answers, so a test can act while it is open.
+        var requestDelay: Duration?
         private(set) var requests: [PermissionKind] = []
         private(set) var opened: [PermissionKind] = []
 
@@ -20,6 +22,7 @@ final class PermissionTests: XCTestCase {
 
         func request(_ kind: PermissionKind) async -> PermissionStatus {
             requests.append(kind)
+            if let requestDelay { try? await Task.sleep(for: requestDelay) }
             if let answer = probeAnswers[kind] { return answer }
             if grantOnRequest.contains(kind) { statuses[kind] = .granted }
             return status(kind)
@@ -272,6 +275,48 @@ final class PermissionTests: XCTestCase {
         await waitUntil { presenter.closed == [.automation] }
         XCTAssertEqual(dialog?.phase, .granted)
         XCTAssertEqual(retries, 1)
+    }
+
+    func testAProbeMacOSHoldsAnswersByItsDeadline() async {
+        let started = ContinuousClock.now
+        let held = await SystemPermissions.probe(within: 0.05) {
+            Thread.sleep(forTimeInterval: 0.6)
+            return .granted
+        }
+        XCTAssertEqual(held, .notDetermined, "an unanswered probe reads as not asked, so Continue and Check again work")
+        XCTAssertLessThan(ContinuousClock.now - started, .milliseconds(450))
+        let answered = await SystemPermissions.probe(within: 5) { .denied }
+        XCTAssertEqual(answered, .denied)
+    }
+
+    func testNotNowWhileMacOSIsAskingNeverRunsTheFeatureOrOpensSettings() async throws {
+        let system = FakePermissionSystem()
+        system.statuses[.accessibility] = .notDetermined
+        system.grantOnRequest = [.accessibility, .microphone]
+        system.requestDelay = .milliseconds(80)
+        system.statuses[.microphone] = .notDetermined
+        let (center, presenter) = center(system)
+        var retries = 0
+        // Settings-style kind: the request that lists the app is still open when the user presses "Not now".
+        center.require(PermissionNeed(.accessibility, onGranted: { retries += 1 }))
+        let settingsDialog = try XCTUnwrap(center.dialogs[.accessibility])
+        settingsDialog.primary()
+        await waitUntil { settingsDialog.phase == .working }
+        settingsDialog.dismiss()
+        // In-place prompt kind: the same, through Continue.
+        center.require(PermissionNeed(.microphone, onGranted: { retries += 1 }))
+        let promptDialog = try XCTUnwrap(center.dialogs[.microphone])
+        promptDialog.primary()
+        promptDialog.dismiss()
+
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(system.requests, [.accessibility, .microphone], "both requests reached macOS and answered granted")
+        XCTAssertEqual(retries, 0, "a grant that arrives after Not now runs no feature")
+        XCTAssertTrue(system.opened.isEmpty, "System Settings does not open after Not now")
+        XCTAssertNotEqual(settingsDialog.phase, .granted)
+        XCTAssertNotEqual(promptDialog.phase, .granted)
+        XCTAssertEqual(presenter.closed, [.accessibility, .microphone])
+        XCTAssertEqual(center.dismissed, [.accessibility, .microphone])
     }
 
     func testOpenSettingsListsTheAppFirstThenWaitsAndCheckAgainCloses() async {

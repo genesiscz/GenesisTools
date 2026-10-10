@@ -163,47 +163,59 @@ public struct SystemPermissions: PermissionSystem {
 
     /// Runs `start`, then returns once it calls back or the deadline passes, whichever is first.
     private static func waitForAnswer(_ start: (@escaping @Sendable () -> Void) -> Void) async {
-        let wait = PromptWait()
+        let wait = PromptWait<Void>()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             wait.arm(continuation)
-            start { wait.finish() }
+            start { wait.finish(()) }
             DispatchQueue.global().asyncAfter(deadline: .now() + promptDeadline) {
-                if wait.finish() { GenesisKit.log("permission prompt had no answer after \(Int(promptDeadline)) s") }
+                if wait.finish(()) { GenesisKit.log("permission prompt had no answer after \(Int(promptDeadline)) s") }
+            }
+        }
+    }
+
+    /// Runs a blocking probe off the main thread and returns its answer, or `.notDetermined` once `deadline` passes.
+    /// The probe may sit behind a macOS prompt (Automation) or a TCC check (a folder) for as long as the user leaves
+    /// it, so the dialog gets its answer by the deadline like every other request; a late answer is dropped and the
+    /// next "Check again" probes again.
+    static func probe(within deadline: TimeInterval, _ work: @escaping @Sendable () -> PermissionStatus) async
+        -> PermissionStatus
+    {
+        let wait = PromptWait<PermissionStatus>()
+        return await withCheckedContinuation { (continuation: CheckedContinuation<PermissionStatus, Never>) in
+            wait.arm(continuation)
+            DispatchQueue.global(qos: .userInitiated).async { wait.finish(work()) }
+            DispatchQueue.global().asyncAfter(deadline: .now() + deadline) {
+                if wait.finish(.notDetermined) { GenesisKit.log("permission probe had no answer after \(Int(deadline)) s") }
             }
         }
     }
 
     private static func probeAutomation() async -> PermissionStatus {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                var errorInfo: NSDictionary?
-                let script = NSAppleScript(source: "tell application \"System Events\" to get name")
-                let result = script?.executeAndReturnError(&errorInfo)
-                if let message = errorInfo?[NSAppleScript.errorMessage] as? String {
-                    GenesisKit.log("permission automation probe: \(message)")
-                }
-                continuation.resume(returning: result != nil ? .granted : .denied)
+        await probe(within: promptDeadline) {
+            var errorInfo: NSDictionary?
+            let script = NSAppleScript(source: "tell application \"System Events\" to get name")
+            let result = script?.executeAndReturnError(&errorInfo)
+            if let message = errorInfo?[NSAppleScript.errorMessage] as? String {
+                GenesisKit.log("permission automation probe: \(message)")
             }
+            return result != nil ? .granted : .denied
         }
     }
 
     private static func probeFolder(_ path: String) async -> PermissionStatus {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let readable = (try? FileManager.default.contentsOfDirectory(atPath: path)) != nil
-                continuation.resume(returning: readable ? .granted : .denied)
-            }
+        await probe(within: promptDeadline) {
+            (try? FileManager.default.contentsOfDirectory(atPath: path)) != nil ? .granted : .denied
         }
     }
 }
 
 /// One continuation resumed exactly once, by the answer or by the deadline.
-private final class PromptWait: @unchecked Sendable {
+private final class PromptWait<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<Void, Never>?
+    private var continuation: CheckedContinuation<Value, Never>?
     private var finished = false
 
-    func arm(_ continuation: CheckedContinuation<Void, Never>) {
+    func arm(_ continuation: CheckedContinuation<Value, Never>) {
         lock.lock()
         self.continuation = continuation
         lock.unlock()
@@ -211,7 +223,7 @@ private final class PromptWait: @unchecked Sendable {
 
     /// True for the call that resumed it.
     @discardableResult
-    func finish() -> Bool {
+    func finish(_ value: Value) -> Bool {
         lock.lock()
         guard !finished else {
             lock.unlock()
@@ -222,7 +234,7 @@ private final class PromptWait: @unchecked Sendable {
         let pending = continuation
         continuation = nil
         lock.unlock()
-        pending?.resume()
+        pending?.resume(returning: value)
         return true
     }
 }

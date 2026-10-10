@@ -75,18 +75,31 @@ public actor MediaThumbnailCache {
     private var order: [Key] = []
     private var bytes = 0
     private var inflight: [Key: Task<MediaThumbnailResult, Never>] = [:]
+    /// Decoders holding a slot, counted until they really exit (a decode past its deadline may still be running).
     private var running = 0
-    private var waiting: [CheckedContinuation<Void, Never>] = []
+    private var waiting: [(id: UUID, continuation: CheckedContinuation<Bool, Never>)] = []
 
     private let byteLimit: Int
     private let concurrency: Int
-    /// A decode that has not finished by then reports a failure instead of holding the tile in a loading state.
+    /// A decode that has not finished by then, or a request still waiting for a slot by then, reports a failure
+    /// instead of holding the tile in a loading state.
     private let deadline: Duration
+    typealias Decoder = @Sendable (_ path: String, _ bucket: Int, _ kind: MediaKind) async -> MediaThumbnailResult
+    private let decoder: Decoder
+    static let tooLong = "The preview took too long to make."
 
     public init(byteLimit: Int = 96 << 20, concurrency: Int = 3, deadline: Duration = .seconds(20)) {
+        self.init(byteLimit: byteLimit, concurrency: concurrency, deadline: deadline) { path, bucket, kind in
+            await MediaThumbnailCache.decodeFile(path: path, bucket: bucket, kind: kind)
+        }
+    }
+
+    /// Test seam: the same cache around another decoder.
+    init(byteLimit: Int = 96 << 20, concurrency: Int, deadline: Duration, decoder: @escaping Decoder) {
         self.byteLimit = byteLimit
         self.concurrency = concurrency
         self.deadline = deadline
+        self.decoder = decoder
     }
 
     public static func bucket(forPixels pixels: CGFloat) -> Int {
@@ -116,11 +129,18 @@ public actor MediaThumbnailCache {
         if let running = inflight[key] { return await running.value }
         let resolvedKind = kind ?? MediaKind.of(path: path)
         let deadline = deadline
+        let decoder = decoder
         let task = Task<MediaThumbnailResult, Never> {
-            await self.acquire()
-            let result = await Self.decode(path: path, bucket: bucket, kind: resolvedKind, deadline: deadline)
-            await self.release()
-            return result
+            // Slots stay taken by decoders past their deadline, so a request queued behind them gives up by its own.
+            guard await self.acquire(within: deadline) else { return .failed(Self.tooLong) }
+            let decoding = Task { await decoder(path, bucket, resolvedKind) }
+            // The slot comes back when the decoder exits, not at the deadline: ImageIO cannot be cancelled, so a
+            // decode past its deadline is still running and still counts against `concurrency`.
+            Task {
+                _ = await decoding.value
+                await self.release()
+            }
+            return await Self.result(of: decoding, path: path, bucket: bucket, kind: resolvedKind, deadline: deadline)
         }
         inflight[key] = task
         let result = await task.value
@@ -174,43 +194,59 @@ public actor MediaThumbnailCache {
         thumbnail.image.bytesPerRow * thumbnail.image.height
     }
 
-    private func acquire() async {
+    /// A slot for one decoder; false when none came free within `deadline`.
+    private func acquire(within deadline: Duration) async -> Bool {
         if running < concurrency {
             running += 1
-            return
+            return true
         }
-        await withCheckedContinuation { waiting.append($0) }
+        let id = UUID()
+        Task {
+            try? await Task.sleep(for: deadline)
+            self.expire(id)
+        }
+        return await withCheckedContinuation { waiting.append((id, $0)) }
     }
 
+    private func expire(_ id: UUID) {
+        guard let index = waiting.firstIndex(where: { $0.id == id }) else { return }
+        waiting.remove(at: index).continuation.resume(returning: false)
+    }
+
+    /// A decoder exited: its slot goes to the next waiting request, or back to the pool.
     private func release() {
         if waiting.isEmpty {
             running -= 1
         } else {
-            waiting.removeFirst().resume()
+            waiting.removeFirst().continuation.resume(returning: true)
         }
     }
 
     // MARK: - Decoding (never on the main thread: the cache actor or a detached task runs it)
 
-    private static func decode(path: String, bucket: Int, kind: MediaKind, deadline: Duration) async
-        -> MediaThumbnailResult
+    /// The file's thumbnail, decoded with ImageIO, AVFoundation or Quick Look by kind. Runs unbounded; `thumbnail`
+    /// bounds it with the deadline.
+    static func decodeFile(path: String, bucket: Int, kind: MediaKind) async -> MediaThumbnailResult {
+        switch kind {
+        case .image:
+            if let image = decodeImage(path: path, bucket: bucket) { return .ready(image) }
+            // Quick Look reads a few formats ImageIO does not; its file-type icon is no picture of this one.
+            let fallback = await decodeDocument(path: path, bucket: bucket, kind: .image)
+            if case .ready(let thumbnail) = fallback, thumbnail.isIcon {
+                return .failed("The image could not be read.")
+            }
+            return fallback
+        case .video: return await decodeVideo(path: path, bucket: bucket)
+        case .file: return await decodeDocument(path: path, bucket: bucket, kind: .file)
+        }
+    }
+
+    private static func result(of decoding: Task<MediaThumbnailResult, Never>, path: String, bucket: Int,
+                               kind: MediaKind, deadline: Duration) async -> MediaThumbnailResult
     {
         let started = ContinuousClock.now
-        let decoded = await firstResult(within: deadline) { () async -> MediaThumbnailResult in
-            switch kind {
-            case .image:
-                if let image = decodeImage(path: path, bucket: bucket) { return .ready(image) }
-                // Quick Look reads a few formats ImageIO does not; its file-type icon is no picture of this one.
-                let fallback = await decodeDocument(path: path, bucket: bucket, kind: .image)
-                if case .ready(let thumbnail) = fallback, thumbnail.isIcon {
-                    return .failed("The image could not be read.")
-                }
-                return fallback
-            case .video: return await decodeVideo(path: path, bucket: bucket)
-            case .file: return await decodeDocument(path: path, bucket: bucket, kind: .file)
-            }
-        }
-        let result = decoded ?? .failed("The preview took too long to make.")
+        let decoded = await firstResult(of: decoding, within: deadline)
+        let result = decoded ?? .failed(Self.tooLong)
         let elapsed = ContinuousClock.now - started
         if elapsed > .milliseconds(100) {
             PerfLog.mark("media.thumbnail SLOW kind=\(kind.rawValue) px=\(bucket) \(elapsed) \((path as NSString).lastPathComponent)")
@@ -220,20 +256,18 @@ public actor MediaThumbnailCache {
 
     /// The work's result, or nil once `deadline` passes, whichever comes first. A task group would wait for its
     /// children before returning, and ImageIO decodes synchronously with no cancellation point, so a stalled decode
-    /// would hold the caller and its concurrency slot past the deadline. Here the work runs in its own task: on expiry
-    /// it is cancelled (Quick Look and AVFoundation requests stop), the caller goes on at once, and a late result is
-    /// dropped.
-    static func firstResult<T: Sendable>(within deadline: Duration, _ work: @escaping @Sendable () async -> T) async
-        -> T?
-    {
+    /// would hold the caller past the deadline. Here the caller goes on at once on expiry and the work is cancelled
+    /// (Quick Look and AVFoundation requests stop); work that cannot stop runs on, and its late result is dropped.
+    /// Whoever started `work` still owns it: `thumbnail` keeps its concurrency slot until it really exits.
+    static func firstResult<T: Sendable>(of work: Task<T, Never>, within deadline: Duration) async -> T? {
         await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
             let race = DeadlineRace(continuation)
             race.start(
                 timer: Task {
                     try? await Task.sleep(for: deadline)
-                    if !Task.isCancelled { race.finish(nil) }
+                    if !Task.isCancelled, race.finish(nil) { work.cancel() }
                 },
-                worker: Task { race.finish(await work()) })
+                waiter: Task { race.finish(await work.value) })
         }
     }
 
@@ -318,38 +352,41 @@ private final class DeadlineRace<T: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<T?, Never>?
     private var timer: Task<Void, Never>?
-    private var worker: Task<Void, Never>?
+    private var waiter: Task<Void, Never>?
 
     init(_ continuation: CheckedContinuation<T?, Never>) {
         self.continuation = continuation
     }
 
-    func start(timer: Task<Void, Never>, worker: Task<Void, Never>) {
+    func start(timer: Task<Void, Never>, waiter: Task<Void, Never>) {
         lock.lock()
         let finished = continuation == nil
         if !finished {
             self.timer = timer
-            self.worker = worker
+            self.waiter = waiter
         }
         lock.unlock()
         // Either task can finish before this runs; whatever is still running then is not needed.
         if finished {
             timer.cancel()
-            worker.cancel()
+            waiter.cancel()
         }
     }
 
-    func finish(_ value: T?) {
+    /// True for the call that resumed the caller.
+    @discardableResult
+    func finish(_ value: T?) -> Bool {
         lock.lock()
         let pending = continuation
         continuation = nil
-        let tasks = [timer, worker]
+        let tasks = [timer, waiter]
         timer = nil
-        worker = nil
+        waiter = nil
         lock.unlock()
-        guard let pending else { return }
+        guard let pending else { return false }
         pending.resume(returning: value)
         for task in tasks { task?.cancel() }
+        return true
     }
 }
 

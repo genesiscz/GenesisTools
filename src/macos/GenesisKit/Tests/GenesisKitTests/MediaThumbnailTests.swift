@@ -40,14 +40,67 @@ final class MediaThumbnailCacheTests: XCTestCase {
 
     func testTheDecodeDeadlineHoldsEvenWhenTheDecodeIgnoresCancellation() async {
         let started = ContinuousClock.now
-        let late = await MediaThumbnailCache.firstResult(within: .milliseconds(40)) {
-            Self.decodeThatIgnoresCancellation(seconds: 0.8)
-        }
+        let stalled = Task { Self.decodeThatIgnoresCancellation(seconds: 0.8) }
+        let late = await MediaThumbnailCache.firstResult(of: stalled, within: .milliseconds(40))
         XCTAssertNil(late)
         XCTAssertLessThan(ContinuousClock.now - started, .milliseconds(500),
-                          "the caller and its slot are free at the deadline, not when the decoder gives up")
-        let quick = await MediaThumbnailCache.firstResult(within: .seconds(5)) { 7 }
+                          "the caller is free at the deadline, not when the decoder gives up")
+        XCTAssertTrue(stalled.isCancelled, "the work is told to stop at the deadline")
+        let quick = await MediaThumbnailCache.firstResult(of: Task { 7 }, within: .seconds(5))
         XCTAssertEqual(quick, 7)
+    }
+
+    /// Counts the decoders running at once, and the most there ever were.
+    private final class DecoderGauge: @unchecked Sendable {
+        private let lock = NSLock()
+        private var running = 0
+        private(set) var peak = 0
+
+        func enter() {
+            lock.lock()
+            running += 1
+            peak = max(peak, running)
+            lock.unlock()
+        }
+
+        func leave() {
+            lock.lock()
+            running -= 1
+            lock.unlock()
+        }
+    }
+
+    private static func message(_ result: MediaThumbnailResult) -> String? {
+        if case .failed(let message) = result { return message }
+        return nil
+    }
+
+    func testADecoderPastItsDeadlineKeepsItsSlotAndTheQueueBehindItGivesUpInTime() async throws {
+        let paths = try ["stall.png", "queued.png", "later.png"].map { name in
+            let url = directory.appendingPathComponent(name)
+            try Self.writePNG(url, width: 8, height: 8, color: CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+            return url.path
+        }
+        let gauge = DecoderGauge()
+        let cache = MediaThumbnailCache(concurrency: 1, deadline: .milliseconds(40)) { path, _, _ in
+            gauge.enter()
+            defer { gauge.leave() }
+            if path.hasSuffix("stall.png") { _ = Self.decodeThatIgnoresCancellation(seconds: 0.4) }
+            return .failed("decoded \((path as NSString).lastPathComponent)")
+        }
+        let started = ContinuousClock.now
+        let stalled = await cache.thumbnail(path: paths[0], maxPixels: 64)
+        let queued = await cache.thumbnail(path: paths[1], maxPixels: 64)
+        XCTAssertEqual(Self.message(stalled), MediaThumbnailCache.tooLong)
+        XCTAssertEqual(Self.message(queued), MediaThumbnailCache.tooLong,
+                       "the only slot still belongs to the stalled decoder, so the next request expires in the queue")
+        XCTAssertLessThan(ContinuousClock.now - started, .milliseconds(350))
+        XCTAssertEqual(gauge.peak, 1, "a decoder past its deadline still counts against the limit")
+
+        try await Task.sleep(for: .milliseconds(450))
+        let later = await cache.thumbnail(path: paths[2], maxPixels: 64)
+        XCTAssertEqual(Self.message(later), "decoded later.png", "the slot comes back when the stalled decoder exits")
+        XCTAssertEqual(gauge.peak, 1)
     }
 
     func testBucketsRoundUpToPowersOfTwoWithinBounds() {

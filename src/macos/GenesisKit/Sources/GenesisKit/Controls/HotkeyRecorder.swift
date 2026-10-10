@@ -61,23 +61,30 @@ public struct HotkeyChord: Equatable, Sendable {
 
 /// Click, then press a shortcut. Escape cancels; a shortcut that cannot work is refused with the reason, and the
 /// recorder keeps listening. Shows a reset button while the chord differs from `defaultChord`.
+///
+/// `onListening` is told when listening starts and stops (saved, cancelled, or the view went away). A global shortcut
+/// registered with Carbon is swallowed system-wide, so the owner of the shortcut being replaced lets go of it while
+/// the recorder listens, or pressing it would run the shortcut instead of recording it.
 public struct HotkeyRecorder: View {
     @Binding private var chord: HotkeyChord
     private let defaultChord: HotkeyChord?
     private let identifier: String
+    private let onListening: ((Bool) -> Void)?
     @StateObject private var recorder = HotkeyRecorderModel()
 
-    public init(chord: Binding<HotkeyChord>, defaultChord: HotkeyChord? = nil, identifier: String = "hotkey-recorder") {
+    public init(chord: Binding<HotkeyChord>, defaultChord: HotkeyChord? = nil, identifier: String = "hotkey-recorder",
+                onListening: ((Bool) -> Void)? = nil) {
         _chord = chord
         self.defaultChord = defaultChord
         self.identifier = identifier
+        self.onListening = onListening
     }
 
     public var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
             HStack(spacing: 8) {
                 Button {
-                    if recorder.recording { recorder.stop() } else { recorder.start { chord = $0 } }
+                    if recorder.recording { recorder.stop() } else { recorder.start(onListening: onListening) { chord = $0 } }
                 } label: {
                     Text(recorder.recording ? "Press a shortcut…" : chord.label)
                         .font(.system(size: 13, weight: .medium, design: .rounded))
@@ -119,11 +126,15 @@ final class HotkeyRecorderModel: ObservableObject {
     @Published private(set) var recording = false
     @Published private(set) var problem: String?
     private var monitor: Any?
+    /// Told `false` exactly once when this listening ends, however it ends.
+    private var onListening: ((Bool) -> Void)?
 
-    func start(onRecord: @escaping (HotkeyChord) -> Void) {
+    func start(onListening: ((Bool) -> Void)? = nil, onRecord: @escaping (HotkeyChord) -> Void) {
         stop()
         problem = nil
         recording = true
+        self.onListening = onListening
+        onListening?(true)
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             MainActor.assumeIsolated {
                 self?.receive(keyCode: UInt32(event.keyCode), flags: event.modifierFlags, onRecord: onRecord)
@@ -153,5 +164,8 @@ final class HotkeyRecorderModel: ObservableObject {
         monitor = nil
         recording = false
         problem = nil
+        let listener = onListening
+        onListening = nil
+        listener?(false)
     }
 }
