@@ -194,8 +194,20 @@ public final class WidgetModel: ObservableObject {
     public var waitingSessionCount: Int { sessionRoster.waiting }
     /// Top-level sessions working now or waiting for an answer; subagents and quiet sessions do not count.
     public var activeSessionCount: Int { sessionRoster.active }
+    /// The agents preview's measured height. The old estimate (100 + 54 per row) was 11 pt plus 2 pt per row short,
+    /// so the centred content lost its header and the top of its first row (2026-10-10, Martin's screenshot).
+    public private(set) var previewFitHeight: CGFloat?
     public var previewHeight: CGFloat {
-        sessionRoster.preview.isEmpty ? 180 : 100 + CGFloat(sessionRoster.preview.count) * 54
+        if let previewFitHeight { return previewFitHeight }
+        return sessionRoster.preview.isEmpty ? 180 : 112 + CGFloat(sessionRoster.preview.count) * 56
+    }
+
+    /// Whole points and a 2 pt hysteresis, as `reportAgentFit`, so the measurement cannot chase its own resize.
+    func reportPreviewFit(_ height: CGFloat) {
+        let rounded = ceil(height)
+        if let current = previewFitHeight, abs(rounded - current) < 2 { return }
+        previewFitHeight = rounded
+        presentationChanged?()
     }
 
     public var selected: WidgetSession? {
