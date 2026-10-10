@@ -697,6 +697,10 @@ final class ReviewModel: ObservableObject {
                 let result: Result<GitWorkingTreeSource.Snapshot, Error>
                 if onlyPrimary && job.repo.path != primary.path {
                     result = .success(GitWorkingTreeSource.Snapshot(branch: "", base: nil, files: []))
+                } else if !FileManager.default.fileExists(atPath: job.repo.path) {
+                    // A session's folder can be deleted under it (a Copilot session-state checkout): no git run per
+                    // refresh, one plain message on the folder row.
+                    result = .failure(MissingReviewFolder(path: job.repo.path))
                 } else {
                     let span = HubPerf.begin("review.load", namesRoot ? "\(scope) \(job.repo.lastPathComponent)" : "\(scope)")
                     let base = job.repo.path == primary.path ? preferredBase : nil
@@ -844,8 +848,11 @@ final class ReviewModel: ObservableObject {
                 // The cached files stay on screen with the error on their row, but the root no longer
                 // counts as "showing the cache": blame and the header follow the error, not the paint.
                 cachedFolders.remove(next[index].folder)
-                next[index].error = "\(failure)"
-                HubPerf.log("review.load \(next[index].folder) failed: \(failure)")
+                let message = "\(failure)"
+                if next[index].error != message {
+                    HubPerf.log("review.load \(next[index].folder) failed: \(failure)")
+                }
+                next[index].error = message
             }
         }
         if next != roots {
@@ -3337,4 +3344,10 @@ enum ReviewSnapshot {
         else { return }
         try? png.write(to: URL(fileURLWithPath: path))
     }
+}
+
+/// The review's folder is gone from disk (deleted checkout or session folder).
+struct MissingReviewFolder: Error, CustomStringConvertible {
+    let path: String
+    var description: String { "This folder no longer exists: \(path)" }
 }

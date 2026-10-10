@@ -104,6 +104,9 @@ public struct PermissionDialogView: View {
                 .accessibilityIdentifier("permission-primary")
         }
         .controlSize(.regular)
+        // The panel is non-activating, so the app is never active while it shows; AppKit then draws the prominent
+        // button in its inactive grey and the main action looks like the other two (live check, 2026-10-10 20:58).
+        .environment(\.controlActiveState, .key)
     }
 }
 
