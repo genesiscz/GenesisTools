@@ -10,12 +10,14 @@ import type { ThreadsResult } from "./pr";
 import type { HubPr } from "./prs";
 import {
     buildTimeline,
+    cachedPatchIds,
     commentTitle,
     fullPrLists,
     keepsEvent,
     lastRecordedBranch,
     pageEvents,
     parsePushes,
+    patchIdsOf,
     prListSince,
     prRangeLimit,
     realTimelineDeps,
@@ -33,11 +35,18 @@ const SINCE = new Date("2026-03-02T00:00:00");
 const at = (clock: string) => new Date(`2026-03-02T${clock}`).getTime();
 const seconds = (clock: string) => Math.floor(at(clock) / 1000);
 
-/** One commit in `git log -z LOG_FORMAT` form. */
-function logEntry(sha: string, subject: string, clock: string, email = "alice@example.com"): string {
+/** One commit in `git log -z LOG_FORMAT_WITH_SOURCE` form; `authored` is the author time when it differs (a pick). */
+function logEntry(
+    sha: string,
+    subject: string,
+    clock: string,
+    email = "alice@example.com",
+    { source = "refs/heads/main", authored }: { source?: string; authored?: string } = {}
+): string {
     const epoch = String(seconds(clock));
+    const authorEpoch = authored ? String(seconds(authored)) : epoch;
     const name = email.startsWith("alice") ? "Alice" : "Bob";
-    return [sha, sha.slice(0, 7), "", name, email, epoch, name, email, epoch, subject, ""]
+    return [sha, sha.slice(0, 7), "", name, email, authorEpoch, name, email, epoch, subject, "", source]
         .map((field) => `${field}\0`)
         .join("");
 }
@@ -201,6 +210,7 @@ function deps(overrides: Partial<TimelineDeps> = {}): TimelineDeps {
                 logEntry("c".repeat(40), "chore: bob's lint", "11:30:00", "bob@example.com"),
             email: "alice@example.com",
         }),
+        commitCopies: async () => ({ patchIds: new Map(), onHead: new Set() }),
         remoteLogs: () => [
             {
                 branch: "feat/parser",
@@ -403,6 +413,179 @@ describe("timeline", () => {
 
         expect(result.warnings).toEqual([expect.stringContaining("git log exited 128"), "PRs: gh: not logged in"]);
         expect(result.counts["session.turn"]).toBe(1);
+    });
+});
+
+describe("timeline: a change picked onto several branches is one row", () => {
+    const D = "d".repeat(40);
+    const E = "e".repeat(40);
+    const F = "f".repeat(40);
+    const G = "9".repeat(40);
+    const H = "8".repeat(40);
+    const subject = "fix(hub): stale rows";
+
+    function picks(log: string, facts: Partial<{ patchIds: Map<string, string>; onHead: Set<string> }> = {}) {
+        const asked: string[][] = [];
+        return {
+            asked,
+            deps: deps({
+                commits: async () => ({ log, email: "alice@example.com" }),
+                commitCopies: async (_repo, shas) => {
+                    asked.push(shas);
+                    return { patchIds: facts.patchIds ?? new Map(), onHead: facts.onHead ?? new Set() };
+                },
+            }),
+        };
+    }
+
+    async function commits(fixture: ReturnType<typeof picks>) {
+        const page = await buildTimeline({
+            since: SINCE,
+            now: NOW,
+            deps: fixture.deps,
+            storage: await scratchStorage(),
+            prs: false,
+            maxCacheAgeSeconds: 0,
+        });
+        return { page, rows: page.events.filter((event) => event.kind === "commit") };
+    }
+
+    test("the copy on the checked-out branch stays, even when a newer pick exists, and names the others", async () => {
+        // D landed on the checked-out branch at 12:00; E is the same change picked onto polish/hub-ui at 12:30
+        // with a conflict resolved (another patch-id), F onto polish/perf at 12:40 with the same patch as D.
+        const fixture = picks(
+            logEntry(F, subject, "12:40:00", undefined, { source: "refs/heads/polish/perf", authored: "11:50:00" }) +
+                logEntry(E, subject, "12:30:00", undefined, {
+                    source: "refs/heads/polish/hub-ui",
+                    authored: "11:50:00",
+                }) +
+                logEntry(D, subject, "12:00:00", undefined, { source: "refs/heads/feat/main", authored: "11:50:00" }) +
+                logEntry("a".repeat(40), "feat: parser", "10:00:00"),
+            {
+                patchIds: new Map([
+                    [D, "p1"],
+                    [E, "p2"],
+                    [F, "p1"],
+                ]),
+                onHead: new Set([D]),
+            }
+        );
+        const { page, rows } = await commits(fixture);
+
+        expect(rows.map((row) => row.sha)).toEqual([D, "a".repeat(40)]);
+        expect(rows[0].alsoOn).toEqual([
+            { sha: F, branch: "polish/perf" },
+            { sha: E, branch: "polish/hub-ui" },
+        ]);
+        expect(rows[0].detail).toBe("dddddddd · also on polish/perf, polish/hub-ui");
+        // The counts the hub's groups show are the rows it draws.
+        expect(page.counts.commit).toBe(rows.length);
+        expect(fixture.asked).toEqual([[F, E, D]]);
+    });
+
+    test("with no copy on the checked-out branch the newest landing stays; equal patch-ids fold a reworded pick", async () => {
+        const fixture = picks(
+            // G is H reworded while it was picked: the author time stays, the subject and the sha do not.
+            logEntry(G, "fix: cache (picked)", "12:20:00", undefined, {
+                source: "refs/remotes/origin/release",
+                authored: "12:10:00",
+            }) +
+                logEntry(H, "fix: cache", "12:10:00", undefined, { source: "refs/heads/feat/x" }) +
+                logEntry(E, "fix: cache", "12:00:00", undefined, { source: "refs/heads/feat/y" }),
+            {
+                patchIds: new Map([
+                    [G, "p9"],
+                    [H, "p9"],
+                    [E, "p7"],
+                ]),
+            }
+        );
+        const { rows } = await commits(fixture);
+
+        // G and H share a patch; E only a subject: another change with the same title stays its own row.
+        expect(rows.map((row) => row.sha)).toEqual([G, E]);
+        expect(rows[0].detail).toBe("99999999 · also on feat/x");
+    });
+
+    test("a change applied twice on the checked-out branch keeps both rows", async () => {
+        const fixture = picks(
+            logEntry(E, subject, "12:30:00", undefined, { authored: "11:50:00" }) +
+                logEntry(D, subject, "12:00:00", undefined, { authored: "11:50:00" }),
+            {
+                patchIds: new Map([
+                    [D, "p1"],
+                    [E, "p1"],
+                ]),
+                onHead: new Set([D, E]),
+            }
+        );
+        const { rows } = await commits(fixture);
+
+        expect(rows.map((row) => row.sha)).toEqual([E, D]);
+        expect(rows.every((row) => row.alsoOn === undefined)).toBe(true);
+    });
+
+    test("a page without a repeated subject or change asks git nothing more", async () => {
+        const fixture = picks(logEntry(D, "one", "12:00:00") + logEntry(E, "two", "12:10:00"));
+        await commits(fixture);
+
+        expect(fixture.asked).toEqual([]);
+    });
+
+    test("patch-ids are computed once per sha, and a sha with no patch is not asked again", async () => {
+        const storage = await scratchStorage();
+        const computed: string[][] = [];
+        const compute = async (missing: string[]) => {
+            computed.push(missing);
+            return new Map(missing.filter((sha) => sha !== F).map((sha) => [sha, `p-${sha.slice(0, 1)}`]));
+        };
+
+        const first = await cachedPatchIds({ repo: "/repo/.git", shas: [D, E, F], storage, compute });
+        const again = await cachedPatchIds({ repo: "/repo/.git", shas: [D, F, G], storage, compute });
+
+        expect(computed).toEqual([[D, E, F], [G]]);
+        expect(first.patchIds.get(D)).toBe("p-d");
+        expect(first.patchIds.has(F)).toBe(false);
+        expect(again.computed).toBe(1);
+    });
+
+    test("patchIdsOf gives a cherry-pick the patch-id of its original", async () => {
+        const repo = mkdtempSync(join(tmpdir(), "gt-timeline-picks-"));
+        const run = (...args: string[]) => {
+            const result = Bun.spawnSync(["git", ...args], {
+                cwd: repo,
+                env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" },
+            });
+
+            if (result.exitCode !== 0) {
+                throw new Error(`git ${args.join(" ")}: ${result.stderr.toString()}`);
+            }
+
+            return result.stdout.toString().trim();
+        };
+        run("init", "-q", "-b", "main");
+        run("config", "user.email", "alice@example.com");
+        run("config", "user.name", "Alice");
+        writeFileSync(join(repo, "a.txt"), "one\n");
+        run("add", "a.txt");
+        run("commit", "-q", "-m", "base");
+        run("checkout", "-q", "-b", "side");
+        writeFileSync(join(repo, "a.txt"), "one\ntwo\n");
+        run("commit", "-q", "-am", "add two");
+        const original = run("rev-parse", "HEAD");
+        run("checkout", "-q", "main");
+        // main moves on first, so the pick gets another parent (and sha) than the original.
+        writeFileSync(join(repo, "b.txt"), "other\n");
+        run("add", "b.txt");
+        run("commit", "-q", "-m", "other work");
+        run("cherry-pick", original);
+        const picked = run("rev-parse", "HEAD");
+
+        const found = await patchIdsOf(repo, [original, picked]);
+
+        expect(picked).not.toBe(original);
+        expect(found.get(original)).toBeDefined();
+        expect(found.get(picked)).toBe(found.get(original));
     });
 });
 

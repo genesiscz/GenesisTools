@@ -248,6 +248,19 @@ describe("fixture parsers", () => {
         });
         expect(commits[1].sha).toBe("sha2");
     });
+
+    it("log with source: one more token per record, the ref the walk reached it by", () => {
+        const record = (sha: string, source: string) =>
+            [sha, sha, "", "An", "a@x", "1700000000", "Cn", "c@x", "1700000010", "subject", "", source].join("\0");
+        const commits = parseLogZ(`${record("sha1", "refs/heads/main")}\0${record("sha2", "refs/heads/feat/x")}\0`, {
+            withSource: true,
+        });
+        expect(commits.map((commit) => [commit.sha, commit.source])).toEqual([
+            ["sha1", "refs/heads/main"],
+            ["sha2", "refs/heads/feat/x"],
+        ]);
+        expect("source" in parseLogZ(`${record("sha1", "x").split("\0").slice(0, 11).join("\0")}\0`)[0]).toBe(false);
+    });
 });
 
 describe("porcelain command bundles", () => {

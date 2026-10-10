@@ -242,6 +242,8 @@ export interface CommitInfo {
     committer: CommitIdentity;
     subject: string;
     body: string;
+    /** The ref the walk reached it by (`refs/heads/x`), with `LOG_FORMAT_WITH_SOURCE` only. */
+    source?: string;
 }
 
 const LOG_FIELDS = ["%H", "%h", "%P", "%an", "%ae", "%at", "%cn", "%ce", "%ct", "%s", "%b"] as const;
@@ -249,14 +251,17 @@ const LOG_FIELDS = ["%H", "%h", "%P", "%an", "%ae", "%at", "%cn", "%ce", "%ct", 
 /** Pair with `-z`: each commit becomes exactly `LOG_FIELDS.length` NUL-terminated tokens. */
 export const LOG_FORMAT = `--format=${LOG_FIELDS.join("%x00")}`;
 
-/** Parse `git log -z <LOG_FORMAT>` output. */
-export function parseLogZ(text: string): CommitInfo[] {
+/** `LOG_FORMAT` plus `%S`, the ref each commit was reached by (with `--all` or `--source`); parse with `withSource`. */
+export const LOG_FORMAT_WITH_SOURCE = `--format=${[...LOG_FIELDS, "%S"].join("%x00")}`;
+
+/** Parse `git log -z <LOG_FORMAT>` output, or `<LOG_FORMAT_WITH_SOURCE>` output with `withSource`. */
+export function parseLogZ(text: string, { withSource = false }: { withSource?: boolean } = {}): CommitInfo[] {
     const tokens = text.split("\0");
     const commits: CommitInfo[] = [];
-    const width = LOG_FIELDS.length;
+    const width = LOG_FIELDS.length + (withSource ? 1 : 0);
 
     for (let i = 0; i + width <= tokens.length; i += width) {
-        const [sha, shortSha, parents, an, ae, at, cn, ce, ct, subject, body] = tokens.slice(i, i + width);
+        const [sha, shortSha, parents, an, ae, at, cn, ce, ct, subject, body, source] = tokens.slice(i, i + width);
 
         if (!sha) {
             break;
@@ -270,6 +275,7 @@ export function parseLogZ(text: string): CommitInfo[] {
             committer: { name: cn, email: ce, epoch: Number.parseInt(ct, 10) || 0 },
             subject,
             body: body.replace(/\n+$/, ""),
+            ...(withSource ? { source } : {}),
         });
     }
 
