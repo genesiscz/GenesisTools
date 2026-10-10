@@ -174,3 +174,7 @@ are in [genesistools.md](genesistools.md)). Add a new entry at the end of its se
 
 ## Thumbnails (media stream, 2026-10-10)
 Key the cache by file identity (`stat`: inode, size, mtime), bucket pixel sizes to powers of two of the screen scale, and decode off the main thread with `kCGImageSourceShouldCacheImmediately`, so the first draw never decodes on the main thread. Measured: a 5K screenshot 50–65 ms (was 114–130 ms), a cache hit ~25 µs.
+
+
+## From the widget motion stream (2026-10-10, 417458101)
+"a computed property that filters or searches ~1000 elements, read in a layout pass, is paid once per panel per frame; store it when its inputs change". The measured share here was 25% of busy main-thread time.

@@ -201,3 +201,7 @@ round trips can also outlast a short movie. A clean recording with no action in 
 When the user is interacting concurrently, record that limitation and repeat in a quiet interval before
 attributing hover or window changes to a layout regression. Record callback timing separately from
 movie FPS; neither establishes compositor frame delivery.
+
+
+## From the widget motion stream (2026-10-10, 417458101)
+add "Edge panels: resize the window once and animate a CAShapeLayer mask; keep the old content until a shrink ends; a per-frame setFrame makes the window server fall behind (12-17 sizes per 250 ms with 40 ms holes at 120 Hz callbacks)". Add that a time-based NSAnimation plus a main-thread block before its first callback turns any transition into a jump.
