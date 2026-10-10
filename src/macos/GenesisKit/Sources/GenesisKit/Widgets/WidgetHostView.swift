@@ -4,6 +4,9 @@ import SwiftUI
 struct WidgetHostView: View {
     @ObservedObject var model: WidgetModel
     @ObservedObject var registry: WidgetModuleRegistry
+    /// What this panel shows. It follows the model's presentation, except that a shrinking panel keeps its content
+    /// until its outline is small (EdgePanelController), so closing never shows an empty card.
+    @ObservedObject var motion = EdgePanelMotion()
     let surface: WidgetSurfaceID
     let moduleIDs: [String]
     let cutout: CGFloat
@@ -12,13 +15,19 @@ struct WidgetHostView: View {
     let visibleHeight: CGFloat
     var railScreenCenterY: () -> CGFloat? = { nil }
     var expandedContentWidth: (String) -> CGFloat? = { _ in nil }
+    /// The window height this surface will have when expanded, so a pane built ahead of time needs no new layout.
+    var expandedWindowHeight: () -> CGFloat? = { nil }
     var topSizeChanged: (CGSize) -> Void = { _ in }
     @State private var measuredHeaderHeight: CGFloat = 0
     @State private var dragOrigin: Double?
     @State private var dragClusterHeight: CGFloat?
+    /// Set while the pointer is on this panel (`motion.pointerInside`): the expanded Agents pane is built then, hidden,
+    /// so a click opens it without a 40-170 ms build before the first frame (A2). Released a few seconds after the
+    /// panel is compact again and the pointer has left.
+    @State private var warm = false
     @Environment(\.nativeSettingsReduceMotion) private var reduceMotion
 
-    private var presentation: WidgetModulePresentation { model.presentation(for: surface) }
+    private var presentation: WidgetModulePresentation { motion.presentation }
     private var selected: WidgetModuleDescriptor? {
         let preferred = model.moduleSelections[surface.key]
         return moduleIDs.first(where: { $0 == preferred }).flatMap(registry.module)
@@ -34,27 +43,41 @@ struct WidgetHostView: View {
     }
 
     private var shape: EdgePanelShape {
-        EdgePanelShape(
-            placement: surface.edge,
-            shoulder: presentation == .compact ? 7 : 10,
-            corner: presentation == .compact ? (classicSide ? 21 : 13) : 22,
+        Self.panelShape(edge: surface.edge, presentation: presentation, classic: classicSide,
             joined: model.snapshot?.state.preferences.joinedEdges ?? true)
     }
 
+    /// The outline of a panel; EdgePanelController animates its mask between these, so both must agree.
+    static func panelShape(
+        edge: EdgePanelPlacement, presentation: WidgetModulePresentation, classic: Bool, joined: Bool
+    ) -> EdgePanelShape {
+        EdgePanelShape(
+            placement: edge,
+            shoulder: presentation == .compact ? 7 : 10,
+            corner: presentation == .compact ? (classic ? 21 : 13) : 22,
+            joined: joined)
+    }
+
+    private var edgeAlignment: Alignment {
+        surface.edge == .top ? .top : (surface.edge == .right ? .trailing : .leading)
+    }
+
+    private var topPadding: CGFloat {
+        surface.edge == .top ? max(headerMinimumHeight, measuredHeaderHeight > 0 ? measuredHeaderHeight : headerHeight) : 0
+    }
+
+    private var keepsExpandedPane: Bool { warm && selected?.id == "agents" }
+
     var body: some View {
         Color.clear
-            .overlay(alignment: surface.edge == .top ? .top : (surface.edge == .right ? .trailing : .leading)) {
-                if presentation != .compact {
+            .overlay(alignment: edgeAlignment) {
+                if presentation != .compact || keepsExpandedPane {
                     content
-                        .padding(.top, surface.edge == .top ? max(headerMinimumHeight, measuredHeaderHeight > 0 ? measuredHeaderHeight : headerHeight) : 0)
+                        .padding(.top, topPadding)
                         .padding(surface.edge == .right ? .trailing : .leading,
                             surface.edge == .top ? 0 : WidgetSideStripMetrics.width)
                 }
             }
-            // The content fades while the window resizes (EdgePanelController: 0.40 s open, 0.28 s close). Without an
-            // animation context its `.transition(.opacity)` was inert: on close the content vanished at once and the
-            // empty expanded card stayed on screen until the shrink began.
-            .animation(model.effectiveReduceMotion ? nil : .easeOut(duration: 0.16), value: presentation != .compact)
             .overlay(alignment: surface.edge == .top ? .top : (surface.edge == .right ? .trailing : .leading)) {
                 if surface.edge == .top { topStrip } else { sideStrip }
             }
@@ -70,6 +93,14 @@ struct WidgetHostView: View {
         .nativeSettingsAppearance(model.appearance)
         .widgetAccessibility(reduceMotion: model.reduceMotion, reduceTransparency: model.reduceTransparency)
         .onHover { model.hover(surface, inside: $0) }
+        .onChange(of: motion.pointerInside) { _, inside in
+            if inside { warm = true }
+        }
+        .task(id: motion.pointerInside || presentation != .compact) {
+            guard !motion.pointerInside, presentation == .compact, warm else { return }
+            do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            warm = false
+        }
     }
 
     private var topStrip: some View {
@@ -252,53 +283,74 @@ struct WidgetHostView: View {
 
     @ViewBuilder private var content: some View {
         if let selected {
-            VStack(spacing: 0) {
+            ZStack(alignment: edgeAlignment) {
+                if presentation == .expanded || keepsExpandedPane {
+                    expandedPane(selected)
+                        .opacity(presentation == .expanded ? 1 : 0)
+                        .allowsHitTesting(presentation == .expanded)
+                        .accessibilityHidden(presentation != .expanded)
+                }
                 if presentation == .preview {
-                    if selected.id == "agents" {
-                        AgentWidgetPreview(model: model, surface: surface)
-                    } else {
-                        Button(action: expand) {
-                            HStack {
-                                Spacer()
-                                Label("Expand", systemImage: "arrow.up.left.and.arrow.down.right")
-                                    .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                            }.padding(.horizontal, 18).padding(.vertical, 14)
-                                .contentShape(Rectangle())
-                        }.buttonStyle(.genHoverPlain())
-                            .accessibilityLabel("Expand " + selected.title)
-                            .accessibilityIdentifier("widget.expand." + selected.id)
-                        ScrollView {
-                            selected.content(.preview).frame(maxWidth: .infinity, alignment: .leading)
-                                .scrollOverflowContent()
-                        }
-                        .scrollOverflowHints()
-                        Button("Open " + selected.title) { expand() }
-                            .buttonStyle(.genHover()).padding(.vertical, 14)
-                    }
-                } else {
-                    // The side strip already lists the modules; only the top edge needs this row.
-                    if moduleIDs.count > 1 && surface.edge == .top {
-                        HStack(spacing: 6) {
-                            ForEach(moduleIDs, id: \.self) { id in moduleButton(id, size: 27) }
-                            Spacer()
-                            Text(selected.title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                        }.padding(.horizontal, 18).padding(.vertical, 12)
-                    }
-                    selected.content(.expanded)
+                    previewPane(selected)
                 }
             }
-            // Reveal a fully sized pane; reflowing long messages through a near-zero opening width stalls AppKit.
-            .frame(width: presentation == .preview ? selected.previewSize.width
-                : expandedContentWidth(selected.id) ?? selected.expandedSize.width)
-            .frame(maxHeight: .infinity)
-            .transition(.opacity)
-        } else {
+        } else if presentation != .compact {
             VStack(spacing: 12) {
                 Image(systemName: "square.grid.2x2").font(.title2).foregroundStyle(.secondary)
                 Text("Choose what lives here").font(.headline)
                 Button("Widget settings") { model.showSettings?() }.buttonStyle(.genHover())
             }.frame(width: 280).frame(maxHeight: .infinity)
         }
+    }
+
+    /// The top edge's module row above the expanded content: 27 pt buttons and 12 pt padding above and below.
+    static let topModuleRowHeight: CGFloat = 51
+
+    private func expandedPane(_ selected: WidgetModuleDescriptor) -> some View {
+        let hiddenHeight = presentation == .expanded ? nil : expandedWindowHeight().map { max(0, $0 - topPadding) }
+        return VStack(spacing: 0) {
+            // The side strip already lists the modules; only the top edge needs this row.
+            if moduleIDs.count > 1 && surface.edge == .top {
+                HStack(spacing: 6) {
+                    ForEach(moduleIDs, id: \.self) { id in moduleButton(id, size: 27) }
+                    Spacer()
+                    Text(selected.title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                }.padding(.horizontal, 18).padding(.vertical, 12)
+            }
+            selected.content(.expanded)
+        }
+        // Reveal a fully sized pane; reflowing long messages through a near-zero opening width stalls AppKit.
+        .frame(width: expandedContentWidth(selected.id) ?? selected.expandedSize.width)
+        .frame(height: hiddenHeight)
+        .frame(maxHeight: hiddenHeight == nil ? .infinity : nil)
+    }
+
+    private func previewPane(_ selected: WidgetModuleDescriptor) -> some View {
+        VStack(spacing: 0) {
+            if selected.id == "agents" {
+                AgentWidgetPreview(model: model, surface: surface)
+            } else {
+                Button(action: expand) {
+                    HStack {
+                        Spacer()
+                        Label("Expand", systemImage: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                    }.padding(.horizontal, 18).padding(.vertical, 14)
+                        .contentShape(Rectangle())
+                }.buttonStyle(.genHoverPlain())
+                    .accessibilityLabel("Expand " + selected.title)
+                    .accessibilityIdentifier("widget.expand." + selected.id)
+                ScrollView {
+                    selected.content(.preview).frame(maxWidth: .infinity, alignment: .leading)
+                        .scrollOverflowContent()
+                }
+                .scrollOverflowHints()
+                Button("Open " + selected.title) { expand() }
+                    .buttonStyle(.genHover()).padding(.vertical, 14)
+            }
+        }
+        .frame(width: selected.previewSize.width)
+        .frame(maxHeight: .infinity)
     }
 
     /// Inbox counts describe only the Agents module; every other module button names its module.

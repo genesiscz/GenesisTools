@@ -16,6 +16,13 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     private var stopped = false
     private var featureSettings: FeatureSettingsWindowController?
     private var panels: [WidgetSurfaceID: EdgePanelController<WidgetHostView>] = [:]
+    /// Screen center of each side rail, from the last `sync()`. Every layout pass of a rail reads it.
+    private var railCenters: [WidgetSurfaceID: CGFloat] = [:]
+    /// The window height of each surface when it is expanded, from the last `sync()`. A pane built ahead of the
+    /// expansion takes this height, so opening does not lay it out again.
+    private var expandedWindowHeights: [WidgetSurfaceID: CGFloat] = [:]
+    /// The Agents pane never fits below this, so a nearly empty inbox still reads as a panel.
+    static let minimumAgentHeight: CGFloat = 320
     private var display: NSScreen?
     private var lastLayout: WidgetLayoutConfiguration?
     private var settings: NSWindow?
@@ -148,6 +155,10 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                 }
             }
         model.presentationChanged = { [weak self] in self?.sync() }
+        model.pointerChanged = { [weak self] surface, inside in
+            guard let motion = self?.panels[surface]?.motion, motion.pointerInside != inside else { return }
+            motion.pointerInside = inside
+        }
         model.showSettings = { [weak self] in self?.showSettings() }
         model.showMedia = { [weak self] selection in self?.showMedia(selection) }
     }
@@ -274,11 +285,27 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func compactRailCenter(for surface: WidgetSurfaceID) -> CGFloat? {
-        guard surface.edge != .top, let screen = display else { return nil }
-        let compact = compactSideAllocation()
-        guard let index = compact.surfaces.firstIndex(of: surface) else { return nil }
-        return WidgetClusterGeometry.centers(heights: compact.heights, position: model.sidePosition,
-            visible: screen.visibleFrame, gap: compact.gap)[index]
+        surface.edge == .top ? nil : railCenters[surface]
+    }
+
+    /// The expanded content height of a surface: the Agents pane fits its measured content up to the detail size
+    /// (W3); other modules keep their declared size.
+    private func expandedContentHeight(
+        _ surface: WidgetSurfaceID, module: WidgetModuleDescriptor?, visible: CGSize
+    ) -> CGFloat {
+        guard module?.id == "agents" else { return (module?.expandedSize.height ?? 440) + 40 }
+        let detail = WidgetClusterGeometry.detailSize(visible: visible).height
+        let fitted = min(detail, max(Self.minimumAgentHeight, model.agentFitHeight ?? detail))
+        let row = surface.edge == .top && moduleIDs(for: surface).count > 1 ? WidgetHostView.topModuleRowHeight : 0
+        return fitted + row
+    }
+
+    private func panelShape(_ surface: WidgetSurfaceID, _ presentation: WidgetModulePresentation) -> EdgePanelShape {
+        let preferences = model.snapshot?.state.preferences
+        return WidgetHostView.panelShape(
+            edge: surface.edge, presentation: presentation,
+            classic: surface.edge != .top && preferences?.sideStyle == "classic",
+            joined: preferences?.joinedEdges ?? true)
     }
 
     private func moduleIDs(for surface: WidgetSurfaceID) -> [String] {
@@ -345,9 +372,10 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             let compact = CGSize(
                 width: top ? topCompactWidth : 44,
                 height: top ? topHeaderHeight : compactHeight(ids))
+            let motion = sameDisplay ? previous[surface]?.motion ?? EdgePanelMotion() : EdgePanelMotion()
             let content = { [self] in
                 WidgetHostView(
-                    model: model, registry: modules, surface: surface, moduleIDs: ids,
+                    model: model, registry: modules, motion: motion, surface: surface, moduleIDs: ids,
                     cutout: cutout, headerHeight: topHeaderHeight,
                     headerMinimumHeight: max(36, screen.safeAreaInsets.top + 6),
                     visibleHeight: screen.visibleFrame.height,
@@ -356,6 +384,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                         guard id == "agents", let visible = self?.display?.visibleFrame.size else { return nil }
                         return WidgetClusterGeometry.detailSize(visible: visible).width
                     },
+                    expandedWindowHeight: { [weak self] in self?.expandedWindowHeights[surface] },
                     topSizeChanged: { [weak self] size in
                         DispatchQueue.main.async { self?.updateTopSize(size) }
                     })
@@ -367,7 +396,11 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                 nextPanels[surface] = EdgePanelController(
                     placement: surface.edge, screen: screen, compactSize: compact,
                     expandedSize: CGSize(width: top ? 432 : 476, height: 600),
-                    title: top ? "Widgets · top" : "Widgets · side \(surface.group + 1)", content: content)
+                    title: top ? "Widgets · top" : "Widgets · side \(surface.group + 1)", motion: motion,
+                    shape: { [weak self] presentation in
+                        self?.panelShape(surface, presentation)
+                            ?? EdgePanelShape(placement: surface.edge, shoulder: 0, corner: 0, joined: false)
+                    }, content: content)
             }
         }
         panels = nextPanels
@@ -416,12 +449,20 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             case .compact: preferred = compact
             case .preview: preferred = max(compact, module?.id == "agents" ? model.previewHeight : (module?.previewSize.height ?? 310))
             case .expanded:
-                let height = module?.id == "agents"
-                    ? WidgetClusterGeometry.detailSize(visible: screen.visibleFrame.size).height
-                    : (module?.expandedSize.height ?? 440) + 40
-                preferred = max(compact, height)
+                preferred = max(compact, expandedContentHeight(surface, module: module, visible: screen.visibleFrame.size))
             }
             return (compact, preferred)
+        }
+        let compactRequests = sideSurfaces.map { surface -> (minimum: CGFloat, preferred: CGFloat) in
+            let compact = compactHeight(moduleIDs(for: surface))
+            return (compact, compact)
+        }
+        for (index, surface) in sideSurfaces.enumerated() {
+            var requests = compactRequests
+            requests[index].preferred = max(requests[index].minimum, expandedContentHeight(
+                surface, module: selectedModule(for: surface), visible: screen.visibleFrame.size))
+            expandedWindowHeights[surface] = WidgetClusterGeometry.allocate(
+                heights: requests, visibleHeight: screen.visibleFrame.height).heights[index]
         }
         let allocation = WidgetClusterGeometry.allocate(
             heights: requestedHeights, visibleHeight: screen.visibleFrame.height)
@@ -432,6 +473,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         let centers = WidgetClusterGeometry.centers(
             heights: compactAllocation.heights, position: model.sidePosition,
             visible: screen.visibleFrame, gap: compactAllocation.gap)
+        railCenters = Dictionary(zip(sideSurfaces, centers), uniquingKeysWith: { first, _ in first })
         for (surface, controller) in panels {
             let top = surface.edge == .top
             let visible = model.placement == "both" || (model.placement == "top" ? top : !top)
@@ -443,11 +485,12 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             let module = selectedModule(for: surface)
             let presentation = model.presentation(for: surface)
             let detailSize = WidgetClusterGeometry.detailSize(visible: screen.visibleFrame.size)
-            let contentHeight = module?.id == "agents" ? detailSize.height : (module?.expandedSize.height ?? 440) + 40
+            let contentHeight = expandedContentHeight(surface, module: module, visible: screen.visibleFrame.size)
             let width = module?.id == "agents" ? detailSize.width : (module?.expandedSize.width ?? 432)
             let previewSize = CGSize(width: module?.previewSize.width ?? 324,
                 height: module?.id == "agents" ? model.previewHeight : (module?.previewSize.height ?? 310))
             if top {
+                expandedWindowHeights[surface] = min(screen.visibleFrame.height - 20, contentHeight + topHeaderHeight)
                 controller.setCompactSize(CGSize(width: topCompactWidth, height: topHeaderHeight))
                 controller.setExpandedSize(
                     CGSize(

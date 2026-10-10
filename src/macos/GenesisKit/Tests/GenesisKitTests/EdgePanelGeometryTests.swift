@@ -162,14 +162,43 @@ final class EdgePanelGeometryTests: XCTestCase {
         XCTAssertTrue(small.contains(EdgePanelGeometry.mediaFrame(anchor: .zero, visible: small)))
     }
 
-    func testMotionFinishesAtExactTargetAndClosingDoesNotOvershoot() {
-        XCTAssertEqual(EdgePanelGeometry.motionProgress(0, opening: true), 0)
-        XCTAssertEqual(EdgePanelGeometry.motionProgress(1, opening: true), 1)
-        XCTAssertEqual(EdgePanelGeometry.motionProgress(1, opening: false), 1)
-        for p in stride(from: 0.0, through: 1.0, by: 0.02) {
-            let value = EdgePanelGeometry.motionProgress(p, opening: false)
-            XCTAssertGreaterThanOrEqual(value, 0)
-            XCTAssertLessThanOrEqual(value, 1)
+    func testMotionStaysUnderThreeHundredMillisecondsAndNeverOvershoots() {
+        for presentation in [WidgetModulePresentation.compact, .preview, .expanded] {
+            for shrinking in [false, true] {
+                let spec = EdgePanelGeometry.motion(to: presentation, shrinking: shrinking)
+                XCTAssertLessThanOrEqual(spec.duration, 0.30, "UI motion stays under 300 ms")
+                XCTAssertGreaterThan(spec.duration, 0.1)
+                // y control points within [0, 1]: the outline never passes its target and comes back.
+                for value in [spec.curve.1, spec.curve.3] {
+                    XCTAssertGreaterThanOrEqual(value, 0)
+                    XCTAssertLessThanOrEqual(value, 1)
+                }
+            }
+        }
+        XCTAssertLessThan(EdgePanelGeometry.motion(to: .compact, shrinking: true).duration,
+            EdgePanelGeometry.motion(to: .expanded, shrinking: false).duration, "Closing is quicker than opening")
+    }
+
+    func testMaskPathDrawsTheShapeWhereSwiftUIDrawsItInTheWindow() {
+        let window = CGRect(x: -1488, y: 1329, width: 960, height: 900)
+        let visible = CGRect(x: window.midX - 200, y: window.maxY - 54, width: 400, height: 54)
+        let top = EdgePanelGeometry.maskPath(
+            shape: EdgePanelShape(placement: .top, shoulder: 7, corner: 13), visible: visible, window: window)
+        // y-up window coordinates: the top shoulders touch the window's top edge, the rounded corners face down.
+        let left = visible.minX - window.minX
+        XCTAssertTrue(top.contains(CGPoint(x: left + 3, y: window.height - 0.2)), "Shoulder joins the top bezel")
+        XCTAssertFalse(top.contains(CGPoint(x: left + 3, y: window.height - 50)), "Bottom corner is rounded")
+        XCTAssertTrue(top.contains(CGPoint(x: window.width / 2, y: window.height - 27)))
+        XCTAssertEqual(top.boundingBoxOfPath.minY, window.height - 54, accuracy: 0.01)
+        XCTAssertEqual(top.boundingBoxOfPath.maxY, window.height, accuracy: 0.01)
+
+        let side = CGRect(x: window.maxX - 44, y: window.minY + 300, width: 44, height: 200)
+        let right = EdgePanelGeometry.maskPath(
+            shape: EdgePanelShape(placement: .right, shoulder: 7, corner: 13), visible: side, window: window)
+        XCTAssertEqual(right.boundingBoxOfPath, CGRect(x: window.width - 44, y: 300, width: 44, height: 200))
+        for y: CGFloat in [303.5, 496.5] {
+            XCTAssertTrue(right.contains(CGPoint(x: window.width - 0.2, y: y)), "Shoulder joins the right bezel")
+            XCTAssertFalse(right.contains(CGPoint(x: window.width - 6, y: y)), "Shoulder is concave")
         }
     }
 }
@@ -854,7 +883,7 @@ final class EdgePanelControllerTests: XCTestCase {
         XCTAssertEqual(value.panel.frame, initial, "Replacing modules must not reset placement")
         value.setCompactSize(CGSize(width: 40, height: 220))
         value.setPresentation(.compact, reduceMotion: false)
-        XCTAssertLessThan(value.panel.frame.height, 220, "Configuration must animate, not jump to its final size")
+        XCTAssertLessThan(value.visibleFrame.height, 220, "Configuration must animate its outline, not jump to its final size")
         let deadline = ContinuousClock.now + .seconds(3)
         while (value.lastTransitionTiming?.outcome != "completed" || value.panel.frame.height != 220), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(100))
@@ -864,6 +893,33 @@ final class EdgePanelControllerTests: XCTestCase {
         XCTAssertEqual(value.panel.frame.maxX, initial.maxX, accuracy: 0.5)
         XCTAssertEqual(value.panel.frame.midY, initial.midY, accuracy: 0.5)
         XCTAssertEqual(value.lastTransitionTiming?.outcome, "completed")
+    }
+
+    func testClosingKeepsContentUntilTheOutlineIsSmallAndOpeningSwitchesAtOnce() async throws {
+        let value = try controller()
+        defer { value.hide(); value.panel.close() }
+        value.setSideCenterY(400)
+        value.setPresentation(.compact, reduceMotion: true)
+        value.show()
+        value.setPresentation(.expanded, reduceMotion: false)
+        XCTAssertEqual(value.motion.presentation, .expanded, "A growing panel shows its new content from the start")
+        XCTAssertEqual(value.panel.frame.size, CGSize(width: 340, height: 400), "The window grows once, at the start")
+        XCTAssertLessThan(value.visibleFrame.width, 340, "The outline starts at the compact size")
+        var deadline = ContinuousClock.now + .seconds(3)
+        while value.lastTransitionTiming?.outcome != "completed", ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(value.visibleFrame, value.panel.frame)
+        value.setPresentation(.compact, reduceMotion: false)
+        XCTAssertEqual(value.motion.presentation, .expanded, "A closing panel keeps its content while it shrinks")
+        XCTAssertEqual(value.panel.frame.size, CGSize(width: 340, height: 400))
+        deadline = ContinuousClock.now + .seconds(3)
+        while value.motion.presentation != .compact, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(value.motion.presentation, .compact)
+        XCTAssertEqual(value.panel.frame.size, CGSize(width: 40, height: 100))
+        XCTAssertEqual(value.panel.frame.maxX, try XCTUnwrap(NSScreen.screens.first).frame.maxX, accuracy: 0.5)
     }
 
     func testReduceMotionAndHiddenPanelReachTheExactTargetWithoutCallbacks() throws {
@@ -941,7 +997,7 @@ final class EdgePanelControllerTests: XCTestCase {
             state.expanded = true
             value.setPresentation(.expanded, reduceMotion: false)
             try await Task.sleep(for: .milliseconds(500))
-            XCTAssertGreaterThan(errors.count, 1)
+            XCTAssertGreaterThanOrEqual(errors.count, 1)
             XCTAssertLessThanOrEqual(errors.max() ?? .infinity, 0.5, "Hosting constraints must not resize the native frame")
             XCTAssertEqual(value.panel.frame.size, CGSize(width: 400, height: 300))
         }
@@ -1304,11 +1360,13 @@ final class WidgetRosterTests: XCTestCase {
                 ) { _ in Color.blue })
                 let surface = WidgetSurfaceID(edge: edge)
                 let compactCenter = screen.visibleFrame.maxY - 100
+                let motion = EdgePanelMotion()
                 let controller = EdgePanelController(
                     placement: edge, screen: screen, compactSize: CGSize(width: 44, height: 180),
-                    expandedSize: CGSize(width: 476, height: 480), title: "Hidden rail animation fixture"
+                    expandedSize: CGSize(width: 476, height: 480), title: "Hidden rail animation fixture",
+                    motion: motion
                 ) {
-                    WidgetHostView(model: model, registry: registry, surface: surface, moduleIDs: ["shelf"],
+                    WidgetHostView(model: model, registry: registry, motion: motion, surface: surface, moduleIDs: ["shelf"],
                         cutout: 0, headerHeight: 36, visibleHeight: screen.visibleFrame.height,
                         railScreenCenterY: { compactCenter })
                 }
@@ -1505,8 +1563,9 @@ final class WidgetRosterTests: XCTestCase {
                             if expanded { model.openModule("shelf", on: surface) } else { model.collapse() }
                             let width: CGFloat = expanded ? 476 : 44
                             let root = WidgetHostView(
-                                model: model, registry: registry, surface: surface, moduleIDs: ids,
-                                cutout: 0, headerHeight: 36, visibleHeight: height)
+                                model: model, registry: registry,
+                                motion: EdgePanelMotion(presentation: expanded ? .expanded : .compact),
+                                surface: surface, moduleIDs: ids, cutout: 0, headerHeight: 36, visibleHeight: height)
                             let host = NSHostingView(rootView: root)
                             host.sizingOptions = []
                             let window = NSWindow(

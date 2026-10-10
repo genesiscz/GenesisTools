@@ -33,6 +33,8 @@ public struct LiveWidgetView: View {
     /// An unknown delivery the user checked in the conversation and wants to drop, so later follow-ups can go.
     @State private var discard: WidgetOutgoing?
     @FocusState private var editing: Bool
+    /// Heights for fitting the panel to its content (W3). A plain reference, so measuring never re-renders.
+    @State private var fit = WidgetContentFit()
 
     public init(
         model: WidgetModel, edge: EdgePanelPlacement, cutout: CGFloat = 0, compactHeight: CGFloat = 36,
@@ -184,12 +186,15 @@ public struct LiveWidgetView: View {
                             }
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
                             .scrollOverflowContent()
+                            .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.document = $0; reportFit() }
                     }
                         .modifier(LatestScrollAnchor(enabled: section == "Conversation", identity: model.selectedKey))
                         .onChange(of: WidgetOutgoingPosition(session: model.selectedKey, messageID: model.outgoing.last?.id)) { previous, next in
                             guard section == "Inbox", previous.session == next.session, let id = next.messageID else { return }
                             ScrollViewPositioning.scroll(reader, to: "outgoing-" + id, anchor: .bottom)
                         }
+                        .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.viewport = $0; reportFit() }
+                        .onDisappear { fit.viewport = nil; fit.document = nil; reportFit() }
                         // Outermost, so the scroll view's own anchor modifiers still sit directly on it.
                         .scrollOverflowHints()
                 }
@@ -198,6 +203,7 @@ public struct LiveWidgetView: View {
         }
         .mediaPreviewHost()
         .padding(18).frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.outer = $0; reportFit() }
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             for provider in providers {
                 _ = provider.loadObject(ofClass: URL.self) { url, error in
@@ -211,6 +217,26 @@ public struct LiveWidgetView: View {
                 }
             }
             return !providers.isEmpty
+        }
+    }
+
+    /// The pane needs its chrome plus the whole scroll document; without a list (connecting, nothing selected) a
+    /// short fixed height is enough.
+    /// The three heights change in separate callbacks of one layout pass; read them together after it.
+    private func reportFit() {
+        guard !fit.scheduled else { return }
+        fit.scheduled = true
+        DispatchQueue.main.async { [fit, model] in
+            fit.scheduled = false
+            guard let outer = fit.outer else { return }
+            // The same condition that chooses the list over the connecting / nothing-selected placeholders.
+            if model.snapshot != nil, model.selected != nil {
+                // The list is shown but not measured yet: wait instead of reporting the placeholder for a moment.
+                guard let viewport = fit.viewport, let document = fit.document else { return }
+                model.reportAgentFit(outer - viewport + document)
+            } else {
+                model.reportAgentFit(WidgetContentFit.placeholderHeight)
+            }
         }
     }
 
@@ -864,4 +890,13 @@ public struct LiveWidgetView: View {
             of: "<from(?:Image|Video)>[\\s\\S]*?</from(?:Image|Video)>", with: "",
             options: .regularExpression)
     }
+}
+
+/// Measured heights of LiveWidgetView's pane, its scroll viewport and the scroll document.
+final class WidgetContentFit {
+    static let placeholderHeight: CGFloat = 360
+    var outer: CGFloat?
+    var viewport: CGFloat?
+    var document: CGFloat?
+    var scheduled = false
 }
