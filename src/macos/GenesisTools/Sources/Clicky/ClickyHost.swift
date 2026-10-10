@@ -32,6 +32,32 @@ final class ClickyHost: NSObject {
         settings.register(section: section)
     }
 
+    /// `--clicky --page <id> --snapshot <png>`: draws the Settings page in a window that never reaches the screen
+    /// or the keyboard (alpha 0, `.prohibited` app), waits for its data, writes the PNG and quits.
+    func snapshotSettings(pageID: String?, to path: String, delay: Double) {
+        let window = settings.prepare(pageID: pageID)
+        window.orderInForSnapshot()
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let view = window.contentView,
+                  let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+            else {
+                FileHandle.standardError.write(Data("snapshot: no content view\n".utf8))
+                exit(1)
+            }
+            view.cacheDisplay(in: view.bounds, to: rep)
+            guard let png = rep.representation(using: .png, properties: [:]) else { exit(1) }
+            do {
+                try png.write(to: URL(fileURLWithPath: path))
+                FileHandle.standardError.write(Data("snapshot: \(path) \(rep.pixelsWide)x\(rep.pixelsHigh)\n".utf8))
+                exit(0)
+            } catch {
+                FileHandle.standardError.write(Data("snapshot: \(error.localizedDescription)\n".utf8))
+                exit(1)
+            }
+        }
+    }
+
     func showSettings(pageID: String? = nil) {
         start(standalone: standalone)
         popover?.close()
