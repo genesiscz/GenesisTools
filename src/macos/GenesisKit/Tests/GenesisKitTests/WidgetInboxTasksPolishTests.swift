@@ -227,6 +227,11 @@ final class WidgetInboxPolishTests: XCTestCase {
                        ScrollOverflow(above: true, below: false))
         XCTAssertEqual(ScrollOverflow(content: CGRect(x: 0, y: 0, width: 10, height: 500), viewportHeight: 0),
                        ScrollOverflow(above: false, below: false), "an unmeasured viewport claims nothing")
+        // A horizontal strip: `above` is the leading edge, `below` the trailing one.
+        XCTAssertEqual(ScrollOverflow(content: CGRect(x: 0, y: 0, width: 900, height: 20), viewportWidth: 400),
+                       ScrollOverflow(above: false, below: true))
+        XCTAssertEqual(ScrollOverflow(content: CGRect(x: -500, y: 0, width: 900, height: 20), viewportWidth: 400),
+                       ScrollOverflow(above: true, below: false))
     }
 
     @MainActor

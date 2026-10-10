@@ -617,7 +617,7 @@ final class PRThreadsStore: ObservableObject {
                 if let owner = published.pr, owner == identity, let ids = published.submittedIds {
                     self.onSubmitted?(owner, Set(ids))
                 }
-                self.notice = published.warning ?? "Review submitted on \(self.label) (\(event.title.lowercased()), \(published.published) comments)."
+                self.notice = published.warning ?? "Review submitted on \(self.label) (\(event.title.lowercased()), \(Plural.count(published.published, "comment")))."
             } else {
                 self.report(result, done: "Review submitted on \(self.label).")
             }

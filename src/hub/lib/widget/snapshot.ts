@@ -3,6 +3,7 @@ import { sessionChangesPath } from "@app/agents/lib/changes/log";
 import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { type DecisionRecord, kindOf, readDecisions } from "@app/question/lib/decisions/store";
+import { INBOX_STALE_MS } from "@app/question/lib/inbox/build";
 import { renderFormAnswer } from "@app/question/lib/pending/render";
 import { listFormsSnapshot, PENDING_MIGRATIONS } from "@app/question/lib/pending/store";
 import type { AskForm, AskItem } from "@app/question/lib/pending/types";
@@ -27,11 +28,9 @@ import { readWidgetState } from "./storage";
 import { parseWidgetSessionKey, shownOutgoing, type WidgetTarget, widgetSessionKey } from "./types";
 
 const prof = profiler.scope("widget");
-/**
- * How long a quiet session's unread and unanswered items keep counting in the inbox badges. A decision left open in a
- * session that ended ten days ago is not news; it stays in that session's inbox, it just stops raising the badge.
- */
-export const INBOX_STALE_MS = 72 * 60 * 60 * 1000;
+
+/** How long a quiet session's items keep counting in the badges: the hub's Inbox uses the same rule. */
+export { INBOX_STALE_MS };
 
 /**
  * Epoch milliseconds of a stored ISO time, or 0 when it is empty or malformed. A NaN here serializes as `null`, which

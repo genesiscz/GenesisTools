@@ -199,7 +199,7 @@ private struct WidgetShelfRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.name).font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(.middle)
                 HStack(spacing: 4) {
-                    Text(ByteCountFormatter.string(fromByteCount: item.bytes, countStyle: .file))
+                    Text(verbatim: ByteFormat.file(item.bytes))
                     Text(verbatim: "·")
                     Text(Date(timeIntervalSince1970: item.createdAt / 1000), style: .time)
                 }

@@ -457,6 +457,12 @@ enum HubTab: String, CaseIterable {
         }
     }
 
+    /// The Files list stops growing: three short names took a third of a 1028 pt window, and the diff beside
+    /// it cut its lines at about 530 pt (H18). The other panes take the rest.
+    var maxPaneWidth: CGFloat {
+        self == .files ? 380 : .infinity
+    }
+
     var idealPaneWidth: CGFloat {
         switch self {
         case .transcript: return 640
@@ -1734,13 +1740,14 @@ struct HubRootView: View {
         let sidebarRoom = width - mainMinWidth - 1
         let windowMinWidth = ResizableSidePanel<EmptyView>.railWidth + 1 + mainMinWidth
         HStack(spacing: 0) {
-            ResizableSidePanel(key: "hub.sidebar", edge: .leading, title: "Sessions", defaultWidth: 320,
+            ResizableSidePanel(key: "hub.sidebar", edge: .leading, title: model.mode.title, defaultWidth: 320,
                                minWidth: Self.sidebarMinWidth, maxWidth: max(Self.sidebarMinWidth, sidebarRoom),
                                autoCollapse: width > 0 && sidebarRoom < Self.sidebarMinWidth,
                                // Sessions mode holds the layout for the transcript; every other
                                // mode's main view moves with the edge and reflows on release.
                                holdsLayout: model.mode == .sessions || model.mode == .agents,
-                               holdsContent: model.mode == .prs && ProcessInfo.processInfo.environment["GENESIS_HUB_HOLD_CONTENT"] != "0") {
+                               holdsContent: model.mode == .prs && ProcessInfo.processInfo.environment["GENESIS_HUB_HOLD_CONTENT"] != "0",
+                               railAccessory: AnyView(HubModeRail(model: model, inbox: model.inbox))) {
                 SessionListView(model: model)
             }
             if model.mode == .prs {
@@ -1927,7 +1934,7 @@ private struct HubModePicker: View {
     @ObservedObject var model: HubModel
     @ObservedObject var inbox: HubInboxModel
 
-    private static let symbols: [HubMode: String] = [
+    static let symbols: [HubMode: String] = [
         .sessions: "text.bubble", .worktrees: "arrow.triangle.branch", .prs: "arrow.triangle.pull",
         .inbox: "tray", .timeline: "clock", .agents: "person.2",
     ]
@@ -1979,6 +1986,70 @@ private struct HubModePicker: View {
         .instantTooltip(mode.tooltip(waiting: waiting))
         .accessibilityLabel(Text(mode.title))
         .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+}
+
+/// A row at the top of the Agents sidebar that opens another face of the app: a title, what it opens,
+/// the row hover and the pointer.
+private struct AgentsLaunchRow: View {
+    let title: String
+    let detail: String
+    let symbol: String
+    let tooltip: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: symbol)
+                .font(.system(size: 12))
+                .foregroundColor(ReviewPalette.dim)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.system(size: 12.5))
+                Text(detail).font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "arrow.up.forward.app")
+                .font(.system(size: 10))
+                .foregroundColor(ReviewPalette.dim)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .contentShape(Rectangle())
+        .rowButton(action)
+        .padding(.horizontal, 6)
+        .instantTooltip(tooltip)
+        .accessibilityLabel(Text("\(title): \(detail)"))
+    }
+}
+
+/// The mode switch in the folded sidebar's rail: the six modes as one column of icons. At 900 pt the
+/// sidebar folds and the switch used to fold with it, so reaching Worktrees took two clicks (H13).
+private struct HubModeRail: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var inbox: HubInboxModel
+
+    var body: some View {
+        let waiting = inbox.waitingCount
+        VStack(spacing: 4) {
+            ForEach(HubMode.allCases, id: \.self) { mode in
+                let selected = model.mode == mode
+                Button {
+                    model.setMode(mode)
+                } label: {
+                    Image(systemName: mode == .inbox && waiting > 0 ? "tray.full.fill" : HubModePicker.symbols[mode] ?? "circle")
+                        .font(.system(size: 11))
+                        .foregroundColor(selected ? .white : Color.white.opacity(0.6))
+                        .frame(width: 22, height: 22)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(selected ? Color.white.opacity(0.16) : Color.clear))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.genHoverPlain())
+                .instantTooltip(mode.tooltip(waiting: waiting))
+                .accessibilityLabel(Text(mode.title))
+                .accessibilityAddTraits(selected ? [.isSelected] : [])
+            }
+        }
     }
 }
 
@@ -2034,7 +2105,8 @@ private struct SessionListView: View {
             HStack(spacing: 0) {
                 HubNavButtons(model: model)
                 Spacer(minLength: 0)
-                IconButton(systemName: "lock.shield", tooltip: "Permissions and settings (⌘,)") {
+                // A gear is the settings glyph; the shield read as a security warning (H19).
+                IconButton(systemName: "gearshape", tooltip: "Permissions and settings (⌘,)") {
                     AppMenuTarget.shared.openSettings(nil)
                 }
                 .foregroundColor(ReviewPalette.dim)
@@ -2089,16 +2161,22 @@ private struct SessionListView: View {
             } else if model.mode == .agents {
                 // Staging: the widget and Clicky entries exist only in the Preview app (main.swift).
                 if NativeStaging.facesEnabled {
-                    Button { WidgetLaunch.start() } label: {
-                        Label("Widget sessions", systemImage: "rectangle.rightthird.inset.filled")
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    // Each says what it opens: two bare names read as list entries nobody could place (H22).
+                    VStack(spacing: 2) {
+                        AgentsLaunchRow(
+                            title: "Widget",
+                            detail: "Opens the notch widget's settings",
+                            symbol: "rectangle.rightthird.inset.filled",
+                            tooltip: "Start the notch and side widget and open its settings: modules, edges and pinned sessions"
+                        ) { WidgetLaunch.start() }
+                        AgentsLaunchRow(
+                            title: "Clicky",
+                            detail: "Key sounds and the app's settings",
+                            symbol: "keyboard",
+                            tooltip: "Open the settings window at Clicky, the keyboard sounds"
+                        ) { ClickyLaunch.openSettings() }
                     }
-                    .buttonStyle(.plain).padding(.horizontal, 14).padding(.bottom, 9)
-                    Button { ClickyLaunch.openSettings() } label: {
-                        Label("Clicky", systemImage: "keyboard")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .buttonStyle(.plain).padding(.horizontal, 14).padding(.bottom, 9)
+                    .padding(.bottom, 6)
                 }
                 AgentsListView(model: model, agents: model.agents)
             } else {
@@ -2265,7 +2343,7 @@ struct SessionDetailView: View {
                     ForEach(shown, id: \.self) { tab in
                         pane(tab)
                             .freezesWidthWhileResizing(heavy: tab == .transcript)
-                            .frame(minWidth: tab.minPaneWidth, idealWidth: tab.idealPaneWidth, maxWidth: .infinity, maxHeight: .infinity)
+                            .frame(minWidth: tab.minPaneWidth, idealWidth: tab.idealPaneWidth, maxWidth: tab.maxPaneWidth, maxHeight: .infinity)
                     }
                 }
                 // The side panels' grip, target and cursor on the split's bare 1 pt dividers too.
@@ -2414,7 +2492,7 @@ struct SessionDetailView: View {
                             if session.isLive {
                                 Text("live")
                             } else {
-                                LiveAgo(date: session.lastActivity) { "idle · \($0)" }
+                                LiveAgo(date: session.lastActivity, style: .brief) { "idle · \($0)" }
                             }
                         }
                             .font(.system(size: 11.5))

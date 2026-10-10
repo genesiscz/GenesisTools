@@ -453,7 +453,7 @@ struct LaunchPicker: View {
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     CopyChip(label: String(session.sessionId.prefix(8)), value: session.sessionId, tooltip: "Copy the full session id: \(session.sessionId)")
-                    LiveAgo(date: session.lastActivity) { ago in
+                    LiveAgo(date: session.lastActivity, style: .brief) { ago in
                         [AIProviders.meta(for: session.provider).displayName, session.account, ago.isEmpty ? nil : ago]
                             .compactMap { $0 }.joined(separator: " · ")
                     }

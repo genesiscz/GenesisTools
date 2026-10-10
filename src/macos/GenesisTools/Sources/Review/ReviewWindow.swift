@@ -844,7 +844,7 @@ final class ReviewModel: ObservableObject {
                     displayedHead = snapshot.head
                     if !snapshot.compareConflicts.isEmpty {
                         let names = snapshot.compareConflicts.prefix(3).map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")
-                        notice = "\(snapshot.compareConflicts.count) files changed upstream in the same places (\(names)); their left side is the older push as it was."
+                        notice = "\(Plural.count(snapshot.compareConflicts.count, "file")) changed upstream in the same places (\(names)); their left side is the older push as it was."
                     }
                 }
                 commentStore(for: next[index])?.reanchor(files: snapshot.files)
@@ -1129,8 +1129,21 @@ final class ReviewModel: ObservableObject {
         renderer.apply(options)
     }
 
+    /// The reader picked wrap or scroll (header button, menu): from then on the width no longer decides.
+    private var wrapChosen = false
+
     func toggleWrap() {
+        wrapChosen = true
         options.wrap.toggle()
+        renderer.apply(options)
+    }
+
+    /// A narrow diff wraps its long lines until the reader picks: in a 530 pt Changes pane beside the
+    /// transcript and Files, scrolled lines ended at the pane edge with nothing to say they went on (H18).
+    func fitWrap(narrow: Bool) {
+        guard !wrapChosen, options.wrap != narrow else { return }
+        options.wrap = narrow
+        HubPerf.log("review.wrap \(narrow ? "on" : "off") for the pane width")
         renderer.apply(options)
     }
 
@@ -1311,7 +1324,7 @@ final class ReviewModel: ObservableObject {
 
         let line = "Read the review comments in \(written.file.path) and address each one."
         let host = TerminalHosts.current
-        notice = "Sending \(ids.count) comments to \(target.name)…"
+        notice = "Sending \(Plural.count(ids.count, "comment")) to \(target.name)…"
         Task { @MainActor in
             let error = await Task.detached(priority: .userInitiated) {
                 host.send(sessionId: target.sessionId, provider: target.provider, text: line)
@@ -1338,9 +1351,9 @@ final class ReviewModel: ObservableObject {
         for owner in written.owners {
             owner.store.markQueued(owner.ids)
         }
-        PathOpener.copy(written.message, what: "\(ids.count) comments")
+        PathOpener.copy(written.message, what: Plural.count(ids.count, "comment"))
         pushComments()
-        notice = "Copied \(ids.count) comments, not sent. Paste them into an agent."
+        notice = "Copied \(Plural.count(ids.count, "comment")), not sent. Paste them into an agent."
     }
 
     /// One markdown file in the outbox with every comment and its code, one section per repository.
@@ -2029,6 +2042,8 @@ struct ReviewRootView: View {
     @AppStorage(ReviewContextPanel.collapsedKey, store: HubDefaults.store) private var contextCollapsed = true
     private static let contextFraction: CGFloat = 0.4
     private static let contextMinWidth: CGFloat = 320
+    /// Below this width long diff lines wrap, unless the reader chose (`ReviewModel.fitWrap`).
+    static let wrapBelow: CGFloat = 680
 
     private var showsContext: Bool { !model.embedded }
     private var contextSqueezed: Bool { width > 0 && width * Self.contextFraction < Self.contextMinWidth }
@@ -2078,6 +2093,8 @@ struct ReviewRootView: View {
         return SideSplit(panelEdge: .trailing, maxFraction: Self.listFraction) {
             diffColumn
                 .freezesWidthWhileResizing(heavy: false)
+                // The diff's own width decides; only a crossing of the threshold re-renders.
+                .onGeometryChange(for: Bool.self, of: { $0.size.width > 0 && $0.size.width < Self.wrapBelow }) { model.fitWrap(narrow: $0) }
             if showsFileList {
                 ResizableSidePanel(key: "review.files", edge: .trailing, title: "Files", defaultWidth: 320,
                                    minWidth: Self.listMinWidth, maxWidth: max(Self.listMinWidth, room),
@@ -2274,7 +2291,7 @@ private struct ReviewHeader: View {
                     .fixedSize()
             }
             if level <= .noCompare {
-                Text(verbatim: "\(model.files.count) files")
+                Text(verbatim: Plural.count(model.files.count, "file"))
                     .font(.system(size: 12))
                     .foregroundColor(ReviewPalette.dim)
                     .fixedSize()
@@ -2291,15 +2308,16 @@ private struct ReviewHeader: View {
                 }
                 .font(.system(size: 12))
                 .foregroundColor(ReviewPalette.dim)
-                .instantTooltip("\(model.commentCount) comments, \(model.unsentCount) not sent yet")
+                .instantTooltip("\(Plural.count(model.commentCount, "comment")), \(model.unsentCount) not sent yet")
             }
             Button { pickingAgent = true } label: {
-                Label(model.unsentCount > 0 ? "Send \(model.unsentCount)…" : "Send", systemImage: "paperplane")
+                // The noun keeps the count from reading as a cut label ("Send 1…", H19).
+                Label(model.unsentCount > 0 ? "Send \(Plural.count(model.unsentCount, "comment"))…" : "Send", systemImage: "paperplane")
                     .font(.system(size: 12, weight: .semibold))
                     .fixedSize()
             }
             .disabled(model.unsentCount == 0)
-            .instantTooltip("Pick the agent session that gets the \(model.unsentCount) queued comments (AgentSend.swift)")
+            .instantTooltip(model.unsentCount > 0 ? "Pick the agent session that gets the \(Plural.count(model.unsentCount, "queued comment"))" : "No comments waiting for an agent")
             .popover(isPresented: $pickingAgent, arrowEdge: .bottom) {
                 AgentSendForm(model: model) { pickingAgent = false }
             }
@@ -2333,7 +2351,7 @@ private struct ReviewHeader: View {
 
     private var sendButton: some View {
         IconButton(systemName: "paperplane",
-                   tooltip: model.unsentCount > 0 ? "Send \(model.unsentCount) queued comments to an agent…" : "No comments waiting for an agent") {
+                   tooltip: model.unsentCount > 0 ? "Send \(Plural.count(model.unsentCount, "queued comment")) to an agent…" : "No comments waiting for an agent") {
             pickingAgent = true
         }
         .disabled(model.unsentCount == 0)
@@ -2409,7 +2427,7 @@ private struct TurnCountStepper: View {
         }
         .fixedSize()
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text(verbatim: "Last \(count) turns"))
+        .accessibilityLabel(Text(verbatim: count == 1 ? "Last turn" : "Last \(count) turns"))
         .accessibilityAdjustableAction { direction in
             switch direction {
             case .increment: change(min(99, count + 1))

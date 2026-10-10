@@ -117,6 +117,13 @@ final class HubRulesModel: ObservableObject {
         }
     }
 
+    /// "off", "30 seconds", "5 minutes": the PR lookup cache menu's words.
+    static func cacheLabel(_ seconds: Int) -> String {
+        if seconds == 0 { return "off" }
+        if seconds % 60 == 0 { return Plural.count(seconds / 60, "minute") }
+        return Plural.count(seconds, "second")
+    }
+
     func savePrCache() {
         guard let seconds = Int(prCacheSeconds.trimmingCharacters(in: .whitespaces)), seconds >= 0 else {
             notice = "Failed: the PR lookup cache takes whole seconds, 0 or more."
@@ -208,11 +215,11 @@ struct HubRulesPanel: View {
                     .buttonStyle(.genHoverPlain())
                     .font(.system(size: 12))
                     .disabled(model.busy || (model.list?.rules.isEmpty ?? true))
-                    .instantTooltip("Evaluate every rule now and show what would notify; posts nothing (tools hub rules test)")
+                    .instantTooltip("Evaluate every rule now and show what would notify; posts nothing")
                 IconButton(systemName: "xmark", tooltip: "Close (Esc)", size: 10, action: close)
             }
             .padding(12)
-            Text("Checked on every tick of the hub-pr-notify daemon task (tools hub notify install), also while the hub is closed.")
+            Text("Checked in the background on a schedule, also while the hub is closed.")
                 .font(.system(size: 11))
                 .foregroundColor(.settingsTextMuted)
                 .padding(.horizontal, 12)
@@ -238,18 +245,26 @@ struct HubRulesPanel: View {
             Divider().background(Color.jarvisBorder)
             addForm.padding(12)
             Divider().background(Color.jarvisBorder)
+            // A pick saves at once: a field with its own Save beside "Add rule" made two save models in one sheet (H17).
             HStack(spacing: 8) {
-                Text("PR lookup cache (seconds)").font(.system(size: 12)).foregroundColor(.settingsText)
-                TextField("60", text: $model.prCacheSeconds)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 60)
-                    .onSubmit { model.savePrCache() }
-                    .instantTooltip("How long a session click's PR lookup is cached; 0 turns it off (tools hub config set --pr-lookup-cache-seconds)")
-                Button("Save") { model.savePrCache() }
-                    .buttonStyle(.genHoverPlain())
-                    .font(.system(size: 12))
-                    .disabled(model.busy)
-                    .instantTooltip("Save the PR lookup cache setting to the hub config")
+                Text("Remember a session's PR for").font(.system(size: 12)).foregroundColor(.settingsText)
+                MenuButton {
+                    let current = Int(model.prCacheSeconds) ?? -1
+                    let presets = [0, 30, 60, 120, 300, 900]
+                    return (presets.contains(current) || current < 0 ? presets : (presets + [current]).sorted()).map { seconds in
+                        MenuButtonItem.action(HubRulesModel.cacheLabel(seconds), checked: seconds == current) {
+                            model.prCacheSeconds = String(seconds)
+                            model.savePrCache()
+                        }
+                    }
+                } label: {
+                    Label(Int(model.prCacheSeconds).map(HubRulesModel.cacheLabel) ?? "…", systemImage: "chevron.up.chevron.down")
+                        .font(.system(size: 12))
+                        .labelStyle(.titleAndIcon)
+                }
+                .fixedSize()
+                .disabled(model.busy)
+                .instantTooltip("How long a click on a session reuses its PR lookup before asking the forge again")
                 Spacer()
             }
             .padding(12)
@@ -339,7 +354,7 @@ struct HubRulesPanel: View {
                 .buttonStyle(.genHoverPlain())
                 .font(.system(size: 12, weight: .medium))
                 .disabled(model.busy)
-                .instantTooltip("tools hub rules add --kind \(kind.rawValue)")
+                .instantTooltip("Add this rule; the next background check uses it")
             }
         }
     }

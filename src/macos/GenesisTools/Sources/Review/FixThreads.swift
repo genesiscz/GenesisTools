@@ -126,9 +126,9 @@ struct FixThreadsForm: View {
         let ids = threads.map(\.id)
         let count = ids.count
         PRTaskForm(
-            title: "Fix \(count) \(count == 1 ? "thread" : "threads") on \(store.label)",
+            title: "Fix \(Plural.count(count, "thread")) on \(store.label)",
             subtitle: "They go as one task file; the agent gets one line that names it. Nothing is posted on the PR.",
-            what: "\(count) threads",
+            what: Plural.count(count, "thread"),
             cwd: model.repo.path,
             newAgentName: "Fix \(store.label) threads",
             branch: store.pr?.sourceBranch,
@@ -273,7 +273,7 @@ struct PRTaskForm<Summary: View>: View {
                         .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.1)))
                         .instantTooltip(owner.provider.capitalized)
                     Text(verbatim: owner.displayTitle).font(.system(size: 12)).lineLimit(1).truncationMode(.tail)
-                    LiveAgo(date: HubFormat.date(owner.mtime)).font(.system(size: 11)).foregroundColor(ReviewPalette.dim).fixedSize()
+                    LiveAgo(date: HubFormat.date(owner.mtime), style: .brief).font(.system(size: 11)).foregroundColor(ReviewPalette.dim).fixedSize()
                     Text(verbatim: owner.reasons.joined(separator: " · ")).font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(1)
                     Spacer(minLength: 4)
                     Circle()

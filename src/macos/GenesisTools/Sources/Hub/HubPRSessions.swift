@@ -120,7 +120,7 @@ struct PRSessionRow: View {
         HStack(spacing: 8) {
             ProviderBadge(provider: session.provider, size: 16, tooltip: session.provider.capitalized)
             FindText(session.displayTitle, field: "title").font(.system(size: 12)).lineLimit(1).truncationMode(.tail)
-            LiveAgo(date: session.lastActivity)
+            LiveAgo(date: session.lastActivity, style: .brief)
                 .font(.system(size: 11))
                 .foregroundColor(ReviewPalette.dim)
                 .fixedSize()
