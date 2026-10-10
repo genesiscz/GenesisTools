@@ -72,6 +72,9 @@ public struct ClickyAnalyticsView: View {
                 }
             }.font(.caption2).foregroundStyle(.secondary)
         }
+        // On the whole view, so every tab (Activity is the default) gets the once-a-second updates.
+        .onAppear { store.attach() }
+        .onDisappear { store.detach() }
     }
 
     private func summary(_ title: String, value: String, symbol: String) -> some View {
@@ -138,8 +141,6 @@ public struct ClickyAnalyticsView: View {
                 Text("Other keys: \(others.formatted()) presses").font(.caption).foregroundStyle(.secondary)
             }
         }
-        .onAppear { store.attach() }
-        .onDisappear { store.detach() }
     }
 
     private var rhythm: some View {
