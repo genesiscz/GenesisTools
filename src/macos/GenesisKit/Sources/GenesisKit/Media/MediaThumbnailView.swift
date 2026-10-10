@@ -29,6 +29,8 @@ public struct MediaThumbnailView: View {
     @State private var measure = Measure(bucket: 0, roomy: false)
     @State private var result: MediaThumbnailResult?
     @State private var attempt = 0
+    /// Bumped when the file changes on disk, so a replaced or repaired file loads again at the same path and size.
+    @State private var revision = 0
     @State private var hovering = false
     @State private var slow = false
     @State private var loadedPath: String?
@@ -73,6 +75,7 @@ public struct MediaThumbnailView: View {
         let path: String
         let bucket: Int
         let attempt: Int
+        let revision: Int
     }
 
     public var body: some View {
@@ -96,7 +99,14 @@ public struct MediaThumbnailView: View {
                 bucket: side > 0 ? MediaThumbnailCache.bucket(forPixels: side * max(1, displayScale)) : 0,
                 roomy: proxy.size.width >= 76 && proxy.size.height >= 64)
         } action: { measure = $0 }
-        .task(id: LoadKey(path: item.path, bucket: measure.bucket, attempt: attempt)) { await load() }
+        .task(id: LoadKey(path: item.path, bucket: measure.bucket, attempt: attempt, revision: revision)) {
+            await load()
+            // The cache compares the file's identity only when asked; nothing asks while the tile stays the same
+            // size. Wait for the file itself to change, then load again (the old picture stays until the new one).
+            if measure.bucket > 0, await MediaFileChange.next(path: item.path) {
+                revision += 1
+            }
+        }
     }
 
     // MARK: - States
@@ -283,5 +293,47 @@ extension MediaKind {
         case .video: return "film"
         case .file: return "doc"
         }
+    }
+}
+
+/// The next change of one file, event-driven (a vnode dispatch source, no polling): a write, an append, a delete or a
+/// rename (an atomic save replaces the file by a rename), or, while the file is missing, any change of its folder, so a
+/// repaired file is seen. True after the change, debounced by 200 ms so a file written in pieces loads once; false when
+/// the task is cancelled or nothing can be watched. Cancellation closes the descriptor.
+enum MediaFileChange {
+    private final class Outcome: @unchecked Sendable {
+        /// Touched only on `queue`, where both source handlers run.
+        var changed = false
+    }
+
+    private static let queue = DispatchQueue(label: "genesiskit.media.file-change", qos: .utility)
+
+    static func next(path: String, debounce: Duration = .milliseconds(200)) async -> Bool {
+        guard !Task.isCancelled else { return false }
+        let exists = FileManager.default.fileExists(atPath: path)
+        let descriptor = open(exists ? path : (path as NSString).deletingLastPathComponent, O_EVTONLY)
+        guard descriptor >= 0 else { return false }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor, eventMask: exists ? [.write, .extend, .delete, .rename, .revoke] : [.write],
+            queue: queue)
+        let outcome = Outcome()
+        let changed = await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                source.setEventHandler {
+                    outcome.changed = true
+                    source.cancel()
+                }
+                source.setCancelHandler {
+                    close(descriptor)
+                    continuation.resume(returning: outcome.changed)
+                }
+                source.resume()
+            }
+        } onCancel: {
+            source.cancel()
+        }
+        guard changed else { return false }
+        try? await Task.sleep(for: debounce)
+        return !Task.isCancelled
     }
 }

@@ -411,3 +411,69 @@ final class WidgetCaptureFeedbackTests: XCTestCase {
         XCTAssertFalse(WidgetCaptureError.isScreenRecordingDenied(ToolsBridgeError.refused("ERROR: Screenshot capture failed: disk full")))
     }
 }
+
+/// A tile reloads when its file changes at the same path (eve, PR #487 t27): `MediaFileChange` must fire on an in-place
+/// write, on an atomic replace and when a missing file appears, and return false at once when cancelled.
+final class MediaFileChangeTests: XCTestCase {
+    private var directory: URL!
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent("media-change-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try FileManager.default.removeItem(at: directory)
+    }
+
+    /// Starts the wait, lets the source arm, runs `change`, and returns what the wait answered within 3 s.
+    private func waitAnswer(path: String, change: @escaping () throws -> Void) async throws -> Bool {
+        let wait = Task { await MediaFileChange.next(path: path, debounce: .milliseconds(10)) }
+        try await Task.sleep(for: .milliseconds(150))
+        try change()
+        let deadline = Task {
+            try await Task.sleep(for: .seconds(3))
+            wait.cancel()
+        }
+        let answer = await wait.value
+        deadline.cancel()
+        return answer
+    }
+
+    func testAnInPlaceWriteIsAChange() async throws {
+        let file = directory.appendingPathComponent("a.png")
+        try Data([1]).write(to: file)
+        let answer = try await waitAnswer(path: file.path) {
+            let handle = try FileHandle(forWritingTo: file)
+            try handle.seekToEnd()
+            try handle.write(contentsOf: Data([2]))
+            try handle.close()
+        }
+        XCTAssertTrue(answer)
+    }
+
+    func testAnAtomicReplaceIsAChange() async throws {
+        let file = directory.appendingPathComponent("b.png")
+        try Data([1]).write(to: file)
+        let answer = try await waitAnswer(path: file.path) { try Data([3, 4]).write(to: file, options: .atomic) }
+        XCTAssertTrue(answer)
+    }
+
+    func testAMissingFileThatAppearsIsAChange() async throws {
+        let file = directory.appendingPathComponent("later.png")
+        let answer = try await waitAnswer(path: file.path) { try Data([5]).write(to: file) }
+        XCTAssertTrue(answer)
+    }
+
+    func testCancellationAnswersFalseAtOnce() async throws {
+        let file = directory.appendingPathComponent("c.png")
+        try Data([1]).write(to: file)
+        let wait = Task { await MediaFileChange.next(path: file.path) }
+        try await Task.sleep(for: .milliseconds(100))
+        let start = ContinuousClock.now
+        wait.cancel()
+        let answer = await wait.value
+        XCTAssertFalse(answer)
+        XCTAssertLessThan(ContinuousClock.now - start, .milliseconds(500))
+    }
+}
