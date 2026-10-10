@@ -16,3 +16,10 @@ enum NativePreview {
             .appendingPathComponent(name)
     }
 }
+
+/// The widget and Clicky are in staging. They run in the Preview bundles, and in the normal app only on a machine whose
+/// owner turned them on with `bun scripts/native/staging.ts on` (the defaults key below). A normal install never has it.
+enum NativeStaging {
+    static let defaultsKey = "GenesisToolsStagingFaces"
+    static var facesEnabled: Bool { NativePreview.enabled || UserDefaults.standard.bool(forKey: defaultsKey) }
+}
