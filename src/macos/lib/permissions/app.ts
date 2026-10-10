@@ -147,6 +147,27 @@ function sourceFiles(root: string): string[] {
         .sort();
 }
 
+/** The paths (not the contents) of every Swift file the build compiles, the app's and GenesisKit's. */
+function swiftFileListHash(sourceDir = APP_SOURCE_DIR): string {
+    const hash = createHash("sha256");
+
+    for (const root of SOURCE_ROOTS) {
+        const full = join(sourceDir, root);
+
+        if (!existsSync(full) || !statSync(full).isDirectory()) {
+            continue;
+        }
+
+        for (const file of sourceFiles(full)) {
+            if (file.endsWith(".swift")) {
+                hash.update(`${file}\n`);
+            }
+        }
+    }
+
+    return hash.digest("hex");
+}
+
 /** Every file under the source roots, so a new Swift file or a re-rendered icon marks the build stale. */
 export function sourceHash(sourceDir = APP_SOURCE_DIR): string {
     const hash = createHash("sha256");
@@ -413,15 +434,37 @@ async function buildAppSteps(step: (message: string) => void, relaunch: boolean)
     // this rebuilds the changed files only (5.1 s). `-O` is what the compile line carries (no `-Onone`), and no source
     // uses `#if DEBUG`. Hub resize bench, interleaved 3+3 runs (2026-10-07): sidebar p50 8.6/8.1/9.1 vs release
     // 8.6/9.5/8.8 ms, split 10.3/10.1/10.1 vs 10.3/10.0/10.2, window 17.0-17.2 vs 16.6-17.4.
-    step("swift build (optimized, incremental)");
+    // SwiftPM's cached build manifest kept the old file list of the GenesisKit path dependency: three merges that
+    // added Swift files (2026-10-10) failed with "cannot find type" on the first build and passed on the second. A
+    // changed list of Swift files rebuilds the manifest once; a build with the same files keeps the cache.
+    const fileListMarker = join(APP_SCRATCH_PATH, "genesis-swift-files.sha256");
+    const fileList = swiftFileListHash();
+    const fileListChanged = !existsSync(fileListMarker) || readFileSync(fileListMarker, "utf8") !== fileList;
+    step(
+        fileListChanged
+            ? "swift build (optimized; Swift files added or removed, fresh build manifest)"
+            : "swift build (optimized, incremental)"
+    );
     const build = run(
-        ["swift", "build", "-c", "debug", "-Xswiftc", "-O", "--scratch-path", APP_SCRATCH_PATH],
+        [
+            "swift",
+            "build",
+            "-c",
+            "debug",
+            "-Xswiftc",
+            "-O",
+            "--scratch-path",
+            APP_SCRATCH_PATH,
+            ...(fileListChanged ? ["--disable-build-manifest-caching"] : []),
+        ],
         APP_SOURCE_DIR
     );
 
     if (build.code !== 0) {
         throw new Error(`swift build failed (exit ${build.code}):\n${build.stderr || build.stdout}`);
     }
+
+    writeFileSync(fileListMarker, fileList);
 
     const builtBinary = join(APP_SCRATCH_PATH, "debug", GENESIS_APP_NAME);
 
