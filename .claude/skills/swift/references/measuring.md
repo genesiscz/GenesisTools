@@ -97,3 +97,6 @@ DispatchQueue.main.asyncAfter(deadline: .now() + 25) { exit(0) }
 - `trace=` joins an app call (`mark call t=<id> … argv=…` in app-perf.log) to its CLI lines.
 - For a slow CLI path: `bun --cpu-prof --cpu-prof-dir=<dir> src/<tool>/index.ts …` and rank
   self/total time from the `.cpuprofile` JSON.
+
+## Prove a SwiftUI image rendered
+An off-screen `NSHostingView` plus `cacheDisplay(in:to:)` and a centre-pixel check proves the image drew; plant a missing file to prove the check catches (MediaThumbnailTests, 2026-10-10).
