@@ -216,4 +216,42 @@ describe("completeTranscript", () => {
         expect(transcript).toBe(refined);
         expect(gap).toBeUndefined();
     });
+
+    test("live lines that repeat the last refined entry's speech are skipped, and the refined end moves past them", () => {
+        const spoken = (id: string, text: string, startMs: number, endMs: number) =>
+            SafeJSON.stringify({ id, text, speaker: { id: 1001 }, startRecordingMs: startMs, endRecordingMs: endMs });
+        const tailLive = parseLive(
+            [
+                spoken("r1", "we ship the release on monday", 101_000, 104_000),
+                spoken("r2", "after the security review", 120_000, 160_000),
+                spoken("n1", "next topic is hiring", 200_000, 203_000),
+            ].join("\n")
+        );
+        const refined = [entry("Speaker 2", 100, "We ship the release on Monday, after the security review.")];
+        const { transcript, gap } = completeTranscript(refined, tailLive, [self]);
+
+        expect(transcript.map((e) => e.text)).toEqual([refined[0].text, "next topic is hiring"]);
+        expect(gap).toEqual({ refinedUntilSec: 160, liveUntilSec: 203, appendedLines: 1 });
+    });
+
+    test("with no refined transcript every live line is kept, a short recording included", () => {
+        const { transcript, gap } = completeTranscript([], live, [self]);
+
+        expect(transcript.map((e) => e.text)).toEqual(["early", "from the mic", "from Filip"]);
+        expect(gap).toEqual({ refinedUntilSec: 0, liveUntilSec: 9004, appendedLines: 3 });
+    });
+
+    test("a speaker's current assignment wins over the name the live line captured", () => {
+        const renamed = { speakerId: 1001, name: "Renamed Person", isSelf: false };
+        const { transcript } = completeTranscript([entry("Speaker 1", 6, "start")], live, [self, renamed]);
+
+        expect(transcript.at(-1)).toMatchObject({ text: "from Filip", speaker: "Renamed Person" });
+    });
+
+    test("an unfinished last line is skipped while the meeting is still being written; a broken middle line throws", () => {
+        const done = SafeJSON.stringify({ text: "done", startRecordingMs: 1_000 });
+
+        expect(parseLive(`${done}\n{"text":"half`).map((l) => l.text)).toEqual(["done"]);
+        expect(() => parseLive(`{"text":"half\n${done}\n`)).toThrow();
+    });
 });

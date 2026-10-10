@@ -174,7 +174,13 @@ function readLive(meetingId: string): LiveLine[] {
         return [];
     }
 
-    return parseLive(readFileSync(path, "utf8"));
+    // The live file only completes a refined transcript; a broken one must not hide the whole meeting.
+    try {
+        return parseLive(readFileSync(path, "utf8"));
+    } catch (err) {
+        log.warn({ err, path }, "live transcript unreadable, using the refined transcript only");
+        return [];
+    }
 }
 
 /** The user's own edits to transcript lines, by entry id. The newest edit of an entry wins. */

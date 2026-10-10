@@ -90,7 +90,7 @@ export function formatClock(totalSec: number): string {
 
 export function transcriptGapNote(gap: TranscriptGap): string {
     return (
-        `Wispr Flow's refined transcript ends at ${formatClock(gap.refinedUntilSec)}, the recording at ` +
+        `Wispr Flow's refined transcript ends at ${formatClock(gap.refinedUntilSec)}, the last live line at ` +
         `${formatClock(gap.liveUntilSec)}; ${gap.appendedLines} unrefined live lines follow after ${formatClock(gap.refinedUntilSec)}.`
     );
 }
