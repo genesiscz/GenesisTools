@@ -4,11 +4,14 @@ import GenesisKit
 
 private let widgetSettingsNotification = Notification.Name(
     NativePreview.namespace + ".widget.show-settings")
+/// Scripted UI steps (scripts/native/widget-drive.ts) so recordings and tests never move the user's pointer.
+private let widgetTestNotification = Notification.Name(NativePreview.namespace + ".widget.test")
 
 @MainActor
 private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
     var coordinator: WidgetCoordinator?
     var observer: NSObjectProtocol?
+    var testObserver: NSObjectProtocol?
     let args: [String]
     let descriptor: Int32
     private var terminating = false
@@ -68,6 +71,14 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        if NativeStaging.facesEnabled {
+            testObserver = DistributedNotificationCenter.default().addObserver(
+                forName: widgetTestNotification, object: nil, queue: .main
+            ) { [weak self] notification in
+                let command = notification.userInfo?["command"] as? String ?? ""
+                MainActor.assumeIsolated { self?.runTestCommand(command) }
+            }
+        }
         let menu = NSMenu()
         let root = NSMenuItem()
         let application = NSMenu()
@@ -84,6 +95,35 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
     }
     /// While "Show the widget" is off, the coordinator opens the settings instead of a panel.
     private func openSession(_ key: String) { coordinator?.openSession(key) }
+
+    /// `expand <edge> [group]`, `module <id> <edge> [group]`, `hover <edge> [group]`, `unhover <edge> [group]`,
+    /// `collapse`, `select <session key>`, `settings [page]`. Staging only (NativeStaging); logged for the recording.
+    private func runTestCommand(_ command: String) {
+        guard let coordinator else { return }
+        let model = coordinator.model
+        let parts = command.split(separator: " ").map(String.init)
+        func surface(_ index: Int) -> WidgetSurfaceID? {
+            guard parts.indices.contains(index), let edge = EdgePanelPlacement(rawValue: parts[index]) else { return nil }
+            let group = parts.indices.contains(index + 1) ? Int(parts[index + 1]) ?? 0 : 0
+            return WidgetSurfaceID(edge: edge, group: group)
+        }
+        NSLog("widget.test %@", command)
+        switch parts.first {
+        case "expand":
+            if let target = surface(1) {
+                model.activeSideGroup = target.group
+                model.open(target.edge)
+            }
+        case "module":
+            if parts.count > 1, let target = surface(2) { model.openModule(parts[1], on: target) }
+        case "hover", "unhover":
+            if let target = surface(1) { model.hover(target, inside: parts.first == "hover") }
+        case "collapse": model.collapse()
+        case "select": if parts.count > 1 { model.select(parts[1]) }
+        case "settings": coordinator.showSettings(pageID: parts.count > 1 ? parts[1] : "widgets.general")
+        default: NSLog("widget.test: unknown command %@", command)
+        }
+    }
 
     @objc private func showWidgetSettings() { coordinator?.showSettings() }
     @objc private func showHub() { WidgetLaunch.start(["--hub", "--mode", "agents"]) }
@@ -113,6 +153,7 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         coordinator?.stop()
         if let observer { DistributedNotificationCenter.default().removeObserver(observer) }
+        if let testObserver { DistributedNotificationCenter.default().removeObserver(testObserver) }
         flock(descriptor, LOCK_UN)
         close(descriptor)
     }
