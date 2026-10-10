@@ -17,6 +17,13 @@ public struct FocusSettings: Equatable {
         public var cmuxSession: String?
         public var titleContains: String?
         public var host: String?
+
+        public init(name: String, cmuxSession: String? = nil, titleContains: String? = nil, host: String? = nil) {
+            self.name = name
+            self.cmuxSession = cmuxSession
+            self.titleContains = titleContains
+            self.host = host
+        }
     }
 
     public var captureEnabled = true
@@ -135,4 +142,87 @@ public struct FocusSettings: Equatable {
         }
         return nil
     }
+}
+
+// MARK: - Editing
+
+extension FocusSettings {
+    /// The part of `app.focus` these settings own, as client.json stores it. The built-in app exclusions are left out:
+    /// they apply whatever is stored, so the stored list holds only what the user added.
+    public var storedFields: [String: Any] {
+        [
+            "captureEnabled": captureEnabled,
+            "titleMode": titleMode.rawValue,
+            "urlMode": urlMode.rawValue,
+            "idleThresholdSec": idleThresholdSec,
+            "interruptionThresholdSec": interruptionThresholdSec,
+            "retentionDays": retentionDays,
+            "menuBarStyle": menuBarStyle,
+            "excludedBundles": excludedBundles.subtracting(Self.defaultExcludedBundles).sorted(),
+            "excludedHosts": excludedHosts.sorted(),
+            "projects": projects.map(\.storedFields),
+        ]
+    }
+
+    /// What the user typed or pasted for an excluded site ("https://www.example.com/path", "*.example.com",
+    /// "Example.com.") as the host name the recorder compares, or nil when it is not a host name.
+    public static func normalizedHost(_ raw: String) -> String? {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if text.contains("://") {
+            guard let host = URL(string: text)?.host else { return nil }
+            text = host
+        }
+        if let slash = text.firstIndex(where: { $0 == "/" || $0 == "?" || $0 == "#" }) { text = String(text[..<slash]) }
+        if let colon = text.lastIndex(of: ":"), text[text.index(after: colon)...].allSatisfy(\.isNumber) {
+            text = String(text[..<colon])
+        }
+        if text.hasPrefix("*.") { text.removeFirst(2) }
+        text = text.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard !text.isEmpty, !text.contains(".."),
+              text.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" })
+        else { return nil }
+        return text
+    }
+}
+
+extension FocusSettings.ProjectRule {
+    var storedFields: [String: Any] {
+        var fields: [String: Any] = ["name": name]
+        if let cmuxSession { fields["cmuxSession"] = cmuxSession }
+        if let titleContains { fields["titleContains"] = titleContains }
+        if let host { fields["host"] = host }
+        return fields
+    }
+
+    /// A rule from the editor's fields: trimmed, with empty conditions dropped and the site normalized. Throws a
+    /// sentence the editor shows when the name is empty or taken, or when no condition is left.
+    public static func validated(name: String, cmuxSession: String, titleContains: String, host: String,
+                                 existingNames: [String]) throws -> Self {
+        func clean(_ value: String) -> String? {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        guard let name = clean(name) else { throw FocusRuleError("Give the project a name.") }
+        guard !existingNames.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) else {
+            throw FocusRuleError("Another rule is already called \(name).")
+        }
+        var site: String?
+        if let rawHost = clean(host) {
+            guard let normalized = FocusSettings.normalizedHost(rawHost) else {
+                throw FocusRuleError("\(rawHost) is not a site name. Use a name such as example.com.")
+            }
+            site = normalized
+        }
+        let rule = Self(name: name, cmuxSession: clean(cmuxSession), titleContains: clean(titleContains), host: site)
+        guard rule.cmuxSession != nil || rule.titleContains != nil || rule.host != nil else {
+            throw FocusRuleError("Add at least one condition: a cmux session, a window title or a site.")
+        }
+        return rule
+    }
+}
+
+public struct FocusRuleError: LocalizedError, Equatable {
+    public let message: String
+    public init(_ message: String) { self.message = message }
+    public var errorDescription: String? { message }
 }

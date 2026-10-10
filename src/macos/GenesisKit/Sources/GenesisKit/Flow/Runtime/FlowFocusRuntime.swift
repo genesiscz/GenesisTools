@@ -315,6 +315,12 @@ public final class FlowFocusRuntime: ObservableObject {
         }
         do {
             try focus.attachClient(databasePath: dataRoot.appendingPathComponent("activity.db").path, command: forward)
+            focus.remoteRequest = { [weak self] action, payload in
+                guard let self else { throw CancellationError() }
+                let reply = try await self.send(action: action, payload: payload)
+                self.receiveSnapshot()
+                return reply
+            }
         } catch { focus.reportFailure(error.localizedDescription) }
         role = .client(owner.hostID)
         receivedFlowRevision = nil
@@ -427,6 +433,7 @@ public final class FlowFocusRuntime: ObservableObject {
         if command.action.hasPrefix("focus."), !command.action.hasPrefix("focus.dnd."), focus.engine == nil {
             throw FlowFocusMailbox.Failure.unavailable(focus.lastError ?? "The Focus ledger is unavailable.")
         }
+        var reply = Data()
         switch command.action {
         case "audio.acquire": try externalAudio.acquire(decode(FlowAudioAdmission.self))
         case "audio.attach": try externalAudio.attach(decode(FlowAudioAttachment.self))
@@ -497,6 +504,12 @@ public final class FlowFocusRuntime: ObservableObject {
         case "focus.note": focus.engine?.setNote(try decode(String.self))
         case "focus.capture.pause": focus.recorder?.pauseCapture(until: try decode(Date.self))
         case "focus.capture.resume": focus.recorder?.resumeCapture()
+        case "focus.forget":
+            // A client's ledger connection is read-only, so a "delete activity" request from its Settings runs here.
+            let range = try decode(FocusForgetCommand.self)
+            guard range.from < range.to, let store = focus.store else { throw invalidCommand() }
+            reply = try JSONEncoder().encode(FocusForgetResult.forget(range, in: store))
+            focus.studioModel?.reload()
         case "focus.dnd.begin": _ = try dnd.beginSession(reason: String(data: command.payload, encoding: .utf8) ?? "genesis-voice")
         case "focus.dnd.end":
             let reason = String(data: command.payload, encoding: .utf8).flatMap { $0.isEmpty ? nil : $0 }
@@ -504,7 +517,7 @@ public final class FlowFocusRuntime: ObservableObject {
         default: throw invalidCommand()
         }
         schedulePublication()
-        return Data()
+        return reply
     }
 
     private func invalidCommand() -> FlowFocusMailbox.Failure { .unavailable("Unsupported Flow and Focus command.") }

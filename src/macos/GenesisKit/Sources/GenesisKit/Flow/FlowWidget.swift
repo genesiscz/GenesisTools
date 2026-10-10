@@ -155,7 +155,7 @@ public struct FlowWidget: View {
 
     private var recentDictation: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("RECENT DICTATION").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+            Text("Recent dictation").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
             ForEach(flow.history.prefix(3)) { entry in
                 Button { flow.copyEntry(entry) } label: {
                     HStack(alignment: .top, spacing: 10) {

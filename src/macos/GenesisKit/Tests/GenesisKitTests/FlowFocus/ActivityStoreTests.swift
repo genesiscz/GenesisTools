@@ -349,6 +349,43 @@ final class ActivityStoreTests: XCTestCase {
                       "expired activity goes minutes later, not a day later")
     }
 
+    @MainActor
+    func testTheSettingsDeleteActionForgetsOnlyTheChosenPeriodAndReportsWhatWent() async throws {
+        let now = Date()
+        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+        let old = try store.openSegment(segment(nowMs - 3 * 86_400_000, title: "three days ago"))
+        try store.closeSegment(id: old, at: nowMs - 3 * 86_400_000 + 60_000)
+        let recent = try store.openSegment(segment(nowMs - 10 * 60_000, title: "ten minutes ago"))
+        try store.closeSegment(id: recent, at: nowMs - 5 * 60_000)
+        let controller = FocusController()
+        controller.ownsRuntime = true
+        controller.configuration = FlowFocusConfiguration(directory: URL(fileURLWithPath: (path as NSString).deletingLastPathComponent))
+        controller.start(appConfig: [:], databasePath: path, liveServices: false, presentsWindows: false)
+        defer { controller.stop() }
+        let result = try await controller.forgetActivity(from: now.addingTimeInterval(-3_600), to: now.addingTimeInterval(1))
+        XCTAssertEqual(result, FocusForgetResult(segments: 1, sessions: 0))
+        XCTAssertEqual(try store.segments(from: 0, to: nowMs + 1).map(\.windowTitle), ["three days ago"],
+                       "only the last hour is deleted")
+    }
+
+    @MainActor
+    func testAClientAsksTheOwnerToForgetAndNeverWritesItsReadOnlyLedger() async throws {
+        let id = try store.openSegment(segment(1_000, title: "kept"))
+        try store.closeSegment(id: id, at: 2_000)
+        let controller = FocusController()
+        var requests: [(String, Data)] = []
+        controller.remoteRequest = { action, payload in
+            requests.append((action, payload))
+            return try JSONEncoder().encode(FocusForgetResult(segments: 4, sessions: 1))
+        }
+        let result = try await controller.forgetActivity(from: Date(timeIntervalSince1970: 0), to: Date(timeIntervalSince1970: 10))
+        XCTAssertEqual(result, FocusForgetResult(segments: 4, sessions: 1))
+        XCTAssertEqual(requests.map(\.0), ["focus.forget"])
+        XCTAssertEqual(try JSONDecoder().decode(FocusForgetCommand.self, from: XCTUnwrap(requests.first?.1)),
+                       FocusForgetCommand(from: 0, to: 10_000))
+        XCTAssertEqual(try store.segments(from: 0, to: 5_000).count, 1, "nothing is deleted locally")
+    }
+
     func testForgetCanScopeToOneApp() throws {
         let brave = try store.openSegment(segment(1_000, app: "com.brave.Browser"))
         try store.closeSegment(id: brave, at: 2_000)

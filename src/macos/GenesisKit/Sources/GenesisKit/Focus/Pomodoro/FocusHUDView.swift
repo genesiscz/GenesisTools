@@ -217,7 +217,6 @@ public struct FocusHUDView: View {
             Text(phaseLabel)
                 .font(GenTypography.caption(11, weight: .semibold))
                 .foregroundStyle(Color.genTextSecondary)
-                .textCase(.uppercase)
                 .accessibilityIdentifier("focus-hud-phase")
             if let tag = engine.tag, !tag.isEmpty {
                 Text("· \(tag)")

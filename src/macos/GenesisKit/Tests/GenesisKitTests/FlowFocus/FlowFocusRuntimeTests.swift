@@ -324,6 +324,31 @@ final class FlowFocusRuntimeTests: XCTestCase {
         await owner.stop()
     }
 
+    func testDeletingActivityFromAClientSettingsWindowRunsInTheOwnersLedger() async throws {
+        let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.owner", liveServices: false, presentsWindows: false)
+        let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.client", liveServices: false, presentsWindows: false)
+        await owner.start()
+        await client.start()
+        do {
+            XCTAssertEqual(client.role, .client("test.owner"))
+            let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            let store = try XCTUnwrap(owner.focus.store)
+            let recent = try store.openSegment(ActivityStore.Segment(
+                startedMs: nowMs - 60_000, appBundle: "com.example.fixture", appName: "Fixture", windowTitle: "recent"))
+            try store.closeSegment(id: recent, at: nowMs - 30_000)
+            let result = try await client.focus.forgetActivity(from: Date().addingTimeInterval(-3_600),
+                                                               to: Date().addingTimeInterval(1))
+            XCTAssertEqual(result.segments, 1)
+            XCTAssertTrue(try store.segments(from: 0, to: nowMs + 1).isEmpty)
+        } catch {
+            await client.stop()
+            await owner.stop()
+            throw error
+        }
+        await client.stop()
+        await owner.stop()
+    }
+
     func testTwoHostsShareOneClockAndClientCommandsReachItsOwner() async throws {
         let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.owner", liveServices: false, presentsWindows: false)
         let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.client", liveServices: false, presentsWindows: false)

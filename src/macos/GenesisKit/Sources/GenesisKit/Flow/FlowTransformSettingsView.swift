@@ -10,6 +10,9 @@ public struct FlowTransformSettingsView: View {
     @State private var modelID = ""
     @State private var failure: String?
     @State private var loading = false
+    /// The model reference stored in client.json, to tell an unsaved choice from the saved one.
+    @State private var savedRef = ""
+    @State private var justSaved = false
 
     public init(tools: FlowTransformTools) {
         self.tools = tools
@@ -28,7 +31,7 @@ public struct FlowTransformSettingsView: View {
                     Picker("Transform provider", selection: $providerID) {
                         Text("Choose a provider").tag("")
                         ForEach(choices?.providers ?? []) { item in Text(item.title).tag(item.id) }
-                    }.labelsHidden().frame(width: 230)
+                    }.labelsHidden().frame(width: 230, alignment: .trailing)
                 }
                 Divider()
                 NativeSettingsRow("Account") {
@@ -38,7 +41,7 @@ public struct FlowTransformSettingsView: View {
                         if !accountID.isEmpty, provider?.accounts.contains(where: { $0.id == accountID }) != true {
                             Text("Unavailable — select another account").tag(accountID)
                         }
-                    }.labelsHidden().frame(width: 230)
+                    }.labelsHidden().frame(width: 230, alignment: .trailing)
                 }
                 Divider()
                 NativeSettingsRow("Model", detail: "Choose a supported model or enter its exact model ID.") {
@@ -54,12 +57,17 @@ public struct FlowTransformSettingsView: View {
                     if choices?.providers.isEmpty == true {
                         Text("Add an enabled chat account in AI account settings first.")
                             .font(.caption).foregroundStyle(.secondary)
+                    } else if justSaved {
+                        Label("Saved", systemImage: "checkmark").font(.caption).foregroundStyle(.secondary)
+                    } else if hasUnsavedChoice {
+                        Text("Not saved yet. Press Save to use this account and model.")
+                            .font(.caption).foregroundStyle(.orange)
                     }
                     Spacer()
-                    Button("Save") { tools.save(accountID: accountID, model: modelID) }
+                    Button("Save", action: save)
                         .buttonStyle(.borderedProminent)
-                        .disabled(provider?.accounts.contains(where: { $0.id == accountID }) != true
-                                  || modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(!canSave || !hasUnsavedChoice)
+                        .accessibilityIdentifier("flow.transforms.save")
                 }
             }
             if let message = failure ?? configuration.lastError {
@@ -75,6 +83,26 @@ public struct FlowTransformSettingsView: View {
         }
     }
 
+    private var trimmedModel: String { modelID.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var canSave: Bool {
+        provider?.accounts.contains(where: { $0.id == accountID }) == true && !trimmedModel.isEmpty
+    }
+
+    private var hasUnsavedChoice: Bool {
+        canSave && "@account/\(accountID):\(trimmedModel)" != savedRef
+    }
+
+    private func save() {
+        tools.save(accountID: accountID, model: modelID)
+        savedRef = tools.modelRef
+        justSaved = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            justSaved = false
+        }
+    }
+
     private func load() async {
         loading = true
         failure = nil
@@ -84,6 +112,7 @@ public struct FlowTransformSettingsView: View {
             try Task.checkCancellation()
             choices = loaded
             let ref = tools.modelRef
+            savedRef = ref
             if ref.hasPrefix("@account/"), let split = ref.firstIndex(of: ":") {
                 accountID = String(ref[ref.index(ref.startIndex, offsetBy: 9) ..< split])
                 modelID = String(ref[ref.index(after: split)...])

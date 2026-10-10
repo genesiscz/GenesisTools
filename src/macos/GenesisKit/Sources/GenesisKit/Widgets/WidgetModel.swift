@@ -110,6 +110,8 @@ public final class WidgetModel: ObservableObject {
     private var appearanceSubscription: AnyCancellable?
     private var settingsOnly = false
     private var settingsTask: Task<Void, Never>?
+    private var settingsRefreshAgain = false
+    private var settingsWatcher: DirectoryWatcher?
     private let stateRoot: String?
     private let journal: URL
     private var watcher: ToolsLineStream?
@@ -230,27 +232,64 @@ public final class WidgetModel: ObservableObject {
 
     private var widgetArgs: [String] { ["widget"] + (stateRoot.map { ["--state-root", $0] } ?? []) }
 
+    /// The settings-only face: one snapshot now, and another whenever the widget state file changes, so a
+    /// preference the widget face, the CLI or another window writes shows here without reopening the page.
     public func startSettings() {
         settingsOnly = true
         do {
             try FileManager.default.createDirectory(at: journal, withIntermediateDirectories: true)
             refreshSettings()
+            watchSettingsState()
         } catch { report(error) }
     }
 
+    /// Whether the settings pages have the stored preferences to show. Until then they show a loading state, never
+    /// the defaults as if they were the stored values ("Show the widget" read off while the widget was on screen).
+    public var settingsLoaded: Bool { snapshot != nil }
+
+    /// Loads a fresh snapshot for the settings pages. A load already running is never cancelled and restarted:
+    /// one `hub widget snapshot` takes seconds, and every page change used to kill it and start again, so the first
+    /// load could miss its window entirely. A request made meanwhile runs once more after the current one.
     public func refreshSettings() {
-        settingsTask?.cancel()
+        guard settingsTask == nil else {
+            settingsRefreshAgain = true
+            return
+        }
+        settingsRefreshAgain = false
         settingsTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let result = try await self.bridge.run(
                     subcommand: "hub", args: self.widgetArgs + ["snapshot", "--json"], timeoutSeconds: 30)
                 guard result.exitCode == 0 else { throw ToolsBridgeError.refused(result.stderr) }
-                guard !Task.isCancelled else { return }
-                self.receive([result.stdout])
+                if !Task.isCancelled { self.receive([result.stdout]) }
             } catch {
                 if !Task.isCancelled { self.report(error) }
             }
+            guard !Task.isCancelled else { return }
+            self.settingsTask = nil
+            if self.settingsRefreshAgain { self.refreshSettings() }
+        }
+    }
+
+    /// `state.json` of this model's widget root, the file `hub widget` reads preferences from
+    /// (`src/hub/lib/widget/storage.ts`: the state root, else `$GENESIS_TOOLS_HOME/.genesis-tools/hub/widget`).
+    nonisolated static func widgetStateFile(stateRoot: String?,
+                                            environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
+        if let stateRoot {
+            return URL(fileURLWithPath: stateRoot).standardizedFileURL.appendingPathComponent("state.json").path
+        }
+        let home = environment["GENESIS_TOOLS_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
+        return URL(fileURLWithPath: home).appendingPathComponent(".genesis-tools/hub/widget/state.json").path
+    }
+
+    private func watchSettingsState() {
+        guard settingsWatcher == nil else { return }
+        let file = URL(fileURLWithPath: Self.widgetStateFile(stateRoot: stateRoot)).resolvingSymlinksInPath().path
+        settingsWatcher = DirectoryWatcher(
+            paths: [(file as NSString).deletingLastPathComponent], latency: 0.2, accepts: { $0 == file }
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshSettings() }
         }
     }
 
@@ -281,6 +320,10 @@ public final class WidgetModel: ObservableObject {
         preferenceTask?.cancel()
         flushPreferences()
         settingsTask?.cancel()
+        settingsTask = nil
+        settingsRefreshAgain = false
+        settingsWatcher?.stop()
+        settingsWatcher = nil
         followedTranscript = nil
         stopping = true
         cancelHoverPrewarm()
