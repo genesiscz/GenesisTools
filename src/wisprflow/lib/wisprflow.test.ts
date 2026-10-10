@@ -223,7 +223,7 @@ describe("completeTranscript", () => {
         const tailLive = parseLive(
             [
                 spoken("r1", "we ship the release on monday", 101_000, 104_000),
-                spoken("r2", "after the security review", 120_000, 160_000),
+                spoken("r2", "after the security review", 106_000, 110_000),
                 spoken("n1", "next topic is hiring", 200_000, 203_000),
             ].join("\n")
         );
@@ -231,7 +231,31 @@ describe("completeTranscript", () => {
         const { transcript, gap } = completeTranscript(refined, tailLive, [self]);
 
         expect(transcript.map((e) => e.text)).toEqual([refined[0].text, "next topic is hiring"]);
-        expect(gap).toEqual({ refinedUntilSec: 160, liveUntilSec: 203, appendedLines: 1 });
+        expect(gap).toEqual({ refinedUntilSec: 110, liveUntilSec: 203, appendedLines: 1 });
+    });
+
+    test("later speech that shares most words with the last refined entry is kept", () => {
+        const later = parseLive(
+            `${SafeJSON.stringify({ text: "We ship the release on Friday", speaker: { id: 1001 }, startRecordingMs: 600_000, endRecordingMs: 604_000 })}\n`
+        );
+        const refined = [entry("Speaker 2", 100, "We ship the release on Monday")];
+        const { transcript, gap } = completeTranscript(refined, later, [self]);
+
+        expect(transcript.map((e) => e.text)).toEqual([
+            "We ship the release on Monday",
+            "We ship the release on Friday",
+        ]);
+        expect(gap).toEqual({ refinedUntilSec: 100, liveUntilSec: 604, appendedLines: 1 });
+    });
+
+    test("words in another order are new speech, even right after the refined entry", () => {
+        const reordered = parseLive(
+            `${SafeJSON.stringify({ text: "Monday on release the ship we", speaker: { id: 1001 }, startRecordingMs: 101_000, endRecordingMs: 140_000 })}\n`
+        );
+        const refined = [entry("Speaker 2", 100, "We ship the release on Monday")];
+        const { transcript } = completeTranscript(refined, reordered, [self]);
+
+        expect(transcript).toHaveLength(2);
     });
 
     test("with no refined transcript every live line is kept, a short recording included", () => {

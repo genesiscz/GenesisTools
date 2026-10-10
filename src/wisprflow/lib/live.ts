@@ -14,8 +14,15 @@ export interface LiveLine {
 /** The refined pass is allowed to end this much before the live recording without counting as cut off. */
 const GAP_TOLERANCE_SEC = 30;
 
-/** A live line counts as already refined when this share of its words is in the last refined entry. */
+/** A live line counts as already refined when this share of its words appears, in order, in the last refined entry. */
 const REFINED_OVERLAP = 0.6;
+
+/**
+ * The last refined entry is spoken at no fewer than this many words per second, plus the slack below, so a
+ * live line that starts later than that is new speech however many words it shares with the entry.
+ */
+const SLOWEST_WORDS_PER_SEC = 2;
+const REFINED_SPAN_SLACK_SEC = 10;
 
 /**
  * The `timestamp` strings in `live.ndjson` run on different clocks per audio source (mic vs system),
@@ -65,11 +72,31 @@ function words(text: string): string[] {
         .filter(Boolean);
 }
 
-function repeatsRefined(line: LiveLine, refinedWords: Set<string>): boolean {
-    const own = words(line.text ?? "");
-    const shared = own.filter((word) => refinedWords.has(word)).length;
+/** Length of the longest common subsequence: the words both share in the same order. */
+function sharedInOrder(a: string[], b: string[]): number {
+    let previous = new Array<number>(b.length + 1).fill(0);
 
-    return own.length > 0 && shared / own.length >= REFINED_OVERLAP;
+    for (const word of a) {
+        const current = new Array<number>(b.length + 1).fill(0);
+
+        for (const [index, other] of b.entries()) {
+            current[index + 1] = word === other ? previous[index] + 1 : Math.max(previous[index + 1], current[index]);
+        }
+
+        previous = current;
+    }
+
+    return previous[b.length];
+}
+
+function repeatsRefined(line: LiveLine, refinedWords: string[], refinedEndSec: number): boolean {
+    const own = words(line.text ?? "");
+
+    if (own.length === 0 || line.startRecordingMs! / 1000 > refinedEndSec) {
+        return false;
+    }
+
+    return sharedInOrder(own, refinedWords) / own.length >= REFINED_OVERLAP;
 }
 
 /**
@@ -91,10 +118,11 @@ export function completeTranscript(
     const after = live.filter((line) => !lastRefined || line.startRecordingMs! / 1000 > lastStartSec);
     // Refined lines carry only a start, so the speech of the last one runs on into live lines that start
     // after it. Those repeat its words; they are skipped, and where they end is where the refined text ends.
-    const refinedWords = new Set(words(lastRefined?.text ?? ""));
+    const refinedWords = words(lastRefined?.text ?? "");
+    const latestRefinedEndSec = lastStartSec + refinedWords.length / SLOWEST_WORDS_PER_SEC + REFINED_SPAN_SLACK_SEC;
     let repeated = 0;
 
-    while (repeated < after.length && repeatsRefined(after[repeated], refinedWords)) {
+    while (repeated < after.length && repeatsRefined(after[repeated], refinedWords, latestRefinedEndSec)) {
         repeated++;
     }
 
