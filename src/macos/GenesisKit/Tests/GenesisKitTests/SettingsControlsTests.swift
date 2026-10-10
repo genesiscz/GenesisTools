@@ -102,6 +102,53 @@ final class SettingsControlsTests: XCTestCase {
         XCTAssertEqual(model.snapshot?.state.preferences.showWidget, false)
     }
 
+    func testASnapshotReadBeforeAPreferenceWriteNeverUndoesIt() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("widget-settings-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stored = directory.appendingPathComponent("snapshot.json")
+        try snapshotJSON(showWidget: true).write(to: stored, atomically: true, encoding: .utf8)
+        try snapshotJSON(showWidget: false).write(to: directory.appendingPathComponent("after.json"), atomically: true, encoding: .utf8)
+        try Data("{}".utf8).write(to: directory.appendingPathComponent("state.json"))
+        let script = directory.appendingPathComponent("tools")
+        // A snapshot reads the stored state first and answers late, as a real one does; a preferences call stores
+        // the new state at once. So a snapshot that starts before the write answers with the old state after it.
+        try """
+        #!/bin/sh
+        case "$*" in
+        *snapshot*) content=$(cat '\(stored.path)'); sleep 0.6; printf '%s' "$content" ;;
+        *) cp '\(directory.path)/after.json' '\(stored.path)'; echo '{}' ;;
+        esac
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let domain = "settings-tests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let model = WidgetModel(binaryPath: script.path, stateRoot: directory.path, defaults: defaults,
+                                appearance: NativeSettingsAppearance(defaults: defaults, notificationNamespace: domain,
+                                                                     observeExternalChanges: false))
+        defer { model.stop() }
+        model.startSettings()
+        var deadline = ContinuousClock.now + .seconds(5)
+        while model.snapshot == nil && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertEqual(model.snapshot?.state.preferences.showWidget, true)
+
+        // A load starts with the old state, then the user turns the widget off while it runs.
+        model.refreshSettings()
+        try await Task.sleep(for: .milliseconds(50))
+        model.updatePreferences(["showWidget": .bool(false)])
+        XCTAssertEqual(model.snapshot?.state.preferences.showWidget, false, "the switch moves at once")
+
+        deadline = ContinuousClock.now + .seconds(4)
+        var sawStaleValue = false
+        while ContinuousClock.now < deadline {
+            if model.snapshot?.state.preferences.showWidget == true { sawStaleValue = true }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(sawStaleValue, "the load that read the old state was dropped, not shown")
+        XCTAssertEqual(model.snapshot?.state.preferences.showWidget, false, "the next load carries the stored change")
+    }
+
     func testTheSettingsFaceWatchesTheStateFileHubWidgetReads() {
         XCTAssertEqual(WidgetModel.widgetStateFile(stateRoot: "/fixture/root/", environment: [:]), "/fixture/root/state.json")
         XCTAssertEqual(WidgetModel.widgetStateFile(stateRoot: nil, environment: ["GENESIS_TOOLS_HOME": "/fixture/home"]),

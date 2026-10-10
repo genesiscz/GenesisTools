@@ -442,6 +442,8 @@ private struct WidgetModuleSettings: View {
                 let selected = index.map { model.layout.sideGroups[$0] } ?? model.layout.topModules
                 NativeSettingsToggle(
                     module.title, detail: module.detail,
+                    // One identifier per edge group: the same module appears in four cards on this page.
+                    identifier: "widget.modules.\(index.map { "side\($0 + 1)" } ?? "top").\(module.id)",
                     isOn: Binding(
                         get: { selected.contains(module.id) },
                         set: { enabled in
