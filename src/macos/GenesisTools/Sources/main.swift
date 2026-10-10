@@ -18,11 +18,11 @@ let arguments = suppliedArguments.isEmpty && NativePreview.enabled ? ["--widget"
 let firstArgument = arguments.first ?? ""
 let wantsWindow = arguments.isEmpty || firstArgument == "--window" || firstArgument.hasPrefix("-psn_")
 
-// The widget and Clicky are in staging: only the Preview bundles that scripts/build-widget-preview.ts and
-// GenesisClickyPreview/scripts/install.sh build may run them, so a normal install or `tools update` never does.
-if (firstArgument == "--widget" || firstArgument == "--clicky") && !NativePreview.enabled {
+// The widget and Clicky are in staging: the Preview bundles run them, and the normal app only after
+// `bun scripts/native/staging.ts on` on this machine (NativeStaging), so a normal install or `tools update` never does.
+if (firstArgument == "--widget" || firstArgument == "--clicky") && !NativeStaging.facesEnabled {
     FileHandle.standardError.write(Data(
-        "GenesisTools: \(firstArgument) is in staging and runs only in the Preview app (bun scripts/build-widget-preview.ts).\n".utf8
+        "GenesisTools: \(firstArgument) is in staging. Run it in the Preview app (bun scripts/build-widget-preview.ts) or turn it on for this machine (bun scripts/native/staging.ts on).\n".utf8
     ))
     exit(64)
 }
