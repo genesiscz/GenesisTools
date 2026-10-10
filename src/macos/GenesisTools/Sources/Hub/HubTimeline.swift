@@ -1051,6 +1051,24 @@ struct TimelineHour: Identifiable {
     /// Not the bare date: the midnight hour starts at its day's own start, and with one id for the
     /// day's section and its "00:00" group the lazy list drew that hour's header blank.
     var id: String { "hour:\(hour.timeIntervalSince1970)" }
+
+    /// The hour an event is grouped under (its local hour's start).
+    static func start(of date: Date, calendar: Calendar = .current) -> Date {
+        calendar.dateInterval(of: .hour, for: date)?.start ?? date
+    }
+}
+
+extension TimelineEvent {
+    /// The row's identity in the Activity list, for its `ForEach`, its find row and the find's scroll target: the
+    /// event inside its hour. Keyed by the event id alone, a row whose event moved to another hour kept drawing its
+    /// old content in the new place: the lazy list matched the explicit id across the hours' `ForEach`es and never
+    /// evaluated the row again. A session's "last turn" and a PR's "updated" keep their id and move on every refresh,
+    /// and the cached page paints before the fresh one, so after each load such rows showed their old time and
+    /// "1h ago" under the right hour ("22:07 say hi" under 23:00, H27, 2026-10-10).
+    var rowID: String {
+        let hour = date.map { TimelineHour.start(of: $0).timeIntervalSince1970 } ?? 0
+        return "\(hour)|\(id)"
+    }
 }
 
 /// The feed grouped by day, then by hour inside a day.
@@ -1066,7 +1084,7 @@ struct TimelineDay: Identifiable {
         }
         return byDay.keys.sorted(by: >).map { day in
             let byHour = Dictionary(grouping: byDay[day] ?? []) { event in
-                event.date.map { calendar.dateInterval(of: .hour, for: $0)?.start ?? $0 } ?? .distantPast
+                event.date.map { TimelineHour.start(of: $0, calendar: calendar) } ?? .distantPast
             }
             return TimelineDay(day: day, hours: byHour.keys.sorted(by: >).map { TimelineHour(hour: $0, events: byHour[$0] ?? []) })
         }
@@ -1138,7 +1156,8 @@ struct TimelineMain: View {
                         Section {
                             ForEach(day.hours) { hour in
                                 hourHeader(hour.hour, count: hour.events.count)
-                                ForEach(hour.events) { event in
+                                // `rowID`, not the event id: a row whose event moved hours is a new row (H27).
+                                ForEach(hour.events, id: \.rowID) { event in
                                     TimelineRowView(
                                         model: model,
                                         timeline: timeline,
@@ -1149,7 +1168,7 @@ struct TimelineMain: View {
                                         forge: event.repo.flatMap { repos.facts(for: $0)?.forge }
                                     )
                                     .swrFlash(timeline.changed.contains(event.id), cornerRadius: 6)
-                                    .findRow(event.id)
+                                    .findRow(event.rowID)
                                         .padding(.horizontal, 10)
                                         .transition(SWR.rowTransition)
                                 }
@@ -1174,7 +1193,7 @@ struct TimelineMain: View {
 
     private func findRevision(_ events: [TimelineEvent]) -> String {
         let open = events.filter(timeline.isExpanded).map { "\($0.id)\(timeline.details[$0.id] == nil ? "" : "+")" }
-        return events.map(\.id).joined(separator: "\n") + "\u{1}" + open.joined(separator: "\n") + (compact ? "\u{2}" : "")
+        return events.map(\.rowID).joined(separator: "\n") + "\u{1}" + open.joined(separator: "\n") + (compact ? "\u{2}" : "")
     }
 
     private func dayHeader(_ day: TimelineDay) -> some View {
@@ -1331,7 +1350,8 @@ struct TimelineRowView: View {
             PanelFindField("branch", event.timelineKind == .push || compact ? "" : event.branch ?? ""),
             PanelFindField("author", event.author ?? ""),
         ]
-        return PanelFindRow(id: event.id, fields: own + (detail.map(TimelineDetailFind.fields) ?? []))
+        // The id of the row's `findRow`, the scroll target of a match (`TimelineEvent.rowID`).
+        return PanelFindRow(id: event.rowID, fields: own + (detail.map(TimelineDetailFind.fields) ?? []))
     }
 
     private var openTooltip: String {

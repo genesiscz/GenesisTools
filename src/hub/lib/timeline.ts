@@ -1082,6 +1082,42 @@ export async function collectTimeline({
 
 // MARK: - Real sources
 
+/**
+ * The window's commits on every branch and remote: `--all` without `refs/stash`, whose "WIP on …" and
+ * "index on …" commits are a stash's bookkeeping, not work (a `git stash` showed as two commits, 2026-10-10).
+ */
+export function timelineLogArgs({
+    window,
+    limit,
+    author,
+    email,
+}: {
+    window: TimelineWindow;
+    limit: number;
+    author: TimelineAuthor;
+    email: string;
+}): string[] {
+    const args = [
+        "log",
+        "-z",
+        // `%S`: the ref each commit was reached by, the branch a folded copy names ("also on …").
+        LOG_FORMAT_WITH_SOURCE,
+        // Before `--all`: an exclusion applies to the next `--all`, `--branches` or `--glob` only.
+        "--exclude=refs/stash",
+        "--all",
+        `--since=${window.since.toISOString()}`,
+        `--until=${window.upper.toISOString()}`,
+        `-${limit}`,
+    ];
+
+    // "others" cannot be asked of git without PCRE, so it is filtered after the read.
+    if (author === "me" && email) {
+        args.push(`--author=${email}`);
+    }
+
+    return args;
+}
+
 export async function git(args: string[], cwd: string, runner: CommandRunner = spawnRunner): Promise<string> {
     const result = await runner(["git", ...args], { cwd, timeoutMs: 15_000 });
 
@@ -1277,23 +1313,7 @@ export const realTimelineDeps: TimelineDeps = {
     },
     commits: async (repo, window, limit, author) => {
         const email = (await git(["config", "user.email"], repo.root).catch(() => "")).trim();
-        const args = [
-            "log",
-            "-z",
-            // `%S`: the ref each commit was reached by, the branch a folded copy names ("also on …").
-            LOG_FORMAT_WITH_SOURCE,
-            "--all",
-            `--since=${window.since.toISOString()}`,
-            `--until=${window.upper.toISOString()}`,
-            `-${limit}`,
-        ];
-
-        // "others" cannot be asked of git without PCRE, so it is filtered after the read.
-        if (author === "me" && email) {
-            args.push(`--author=${email}`);
-        }
-
-        return { log: await git(args, repo.root), email };
+        return { log: await git(timelineLogArgs({ window, limit, author, email }), repo.root), email };
     },
     commitCopies: async (repo, shas, window) => {
         const { patchIds, computed } = await cachedPatchIds({

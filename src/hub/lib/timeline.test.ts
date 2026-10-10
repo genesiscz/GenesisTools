@@ -28,6 +28,7 @@ import {
     type TimelineDeps,
     type TimelineEvent,
     type TimelineNotifyItem,
+    timelineLogArgs,
 } from "./timeline";
 
 const NOW = new Date("2026-03-02T15:00:00");
@@ -586,6 +587,29 @@ describe("timeline: a change picked onto several branches is one row", () => {
         expect(picked).not.toBe(original);
         expect(found.get(original)).toBeDefined();
         expect(found.get(picked)).toBe(found.get(original));
+    });
+});
+
+describe("timeline: the commits git is asked for", () => {
+    test("every branch and remote, but not a stash's WIP and index commits", () => {
+        const args = timelineLogArgs({
+            window: { since: SINCE, upper: NOW },
+            limit: 200,
+            author: "all",
+            email: "alice@example.com",
+        });
+
+        // An exclusion only applies to the `--all` after it.
+        expect(args.indexOf("--exclude=refs/stash")).toBe(args.indexOf("--all") - 1);
+        expect(args).not.toContain("--author=alice@example.com");
+        expect(
+            timelineLogArgs({
+                window: { since: SINCE, upper: NOW },
+                limit: 200,
+                author: "me",
+                email: "alice@example.com",
+            })
+        ).toContain("--author=alice@example.com");
     });
 });
 
