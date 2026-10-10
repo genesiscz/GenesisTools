@@ -115,8 +115,9 @@ struct WidgetHostView: View {
                             } label: {
                                 sessionActivity(session)
                                     .frame(minWidth: 24, minHeight: 30).fixedSize()
-                            }.buttonStyle(.genHoverPlain()).accessibilityLabel(
-                                session.title + ", " + session.visualStatus.label)
+                            }.buttonStyle(.genHoverPlain())
+                                .instantTooltip(sessionTooltip(session))
+                                .accessibilityLabel(sessionSummary(session))
                                 .accessibilityIdentifier("widget.agent." + session.key)
                                 .onHover { model.hoverSession(session.key, on: surface, inside: $0) }
                         }
@@ -130,7 +131,8 @@ struct WidgetHostView: View {
                         model.showSettings?()
                     } label: {
                         Text("+\(moduleIDs.count - 5)").font(.caption2)
-                    }.buttonStyle(.genHoverPlain()).accessibilityLabel("Choose widgets")
+                    }.buttonStyle(.genHoverPlain()).instantTooltip("\(moduleIDs.count - 5) more widgets: choose them in Settings")
+                        .accessibilityLabel("Choose widgets")
                 }
             }.fixedSize()
         }
@@ -220,10 +222,15 @@ struct WidgetHostView: View {
                             model.openInboxNotification(on: surface, key: session.key)
                         } label: {
                             sessionActivity(session)
-                            .frame(width: WidgetSideStripMetrics.sessionWidth, height: WidgetSideStripMetrics.sessionHeight)
+                                .frame(width: WidgetSideStripMetrics.sessionWidth, height: WidgetSideStripMetrics.sessionHeight)
+                                .overlay(alignment: .bottomTrailing) {
+                                    // Which agent the count belongs to, at a glance; the tooltip names the session.
+                                    AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 11)
+                                        .opacity(0.85).allowsHitTesting(false)
+                                }
                         }
                         .buttonStyle(.genHoverPlain())
-                        .instantTooltip(sessionSummary(session))
+                        .instantTooltip(sessionTooltip(session))
                         .accessibilityLabel(sessionSummary(session))
                         .accessibilityIdentifier("widget.agent." + session.key)
                         .onHover { model.hoverSession(session.key, on: surface, inside: $0) }
@@ -260,8 +267,11 @@ struct WidgetHostView: View {
                         }.buttonStyle(.genHoverPlain())
                             .accessibilityLabel("Expand " + selected.title)
                             .accessibilityIdentifier("widget.expand." + selected.id)
-                        ScrollView { selected.content(.preview).frame(maxWidth: .infinity, alignment: .leading) }
-                            .scrollIndicators(.hidden)
+                        ScrollView {
+                            selected.content(.preview).frame(maxWidth: .infinity, alignment: .leading)
+                                .scrollOverflowContent()
+                        }
+                        .scrollOverflowHints()
                         Button("Open " + selected.title) { expand() }
                             .buttonStyle(.genHover()).padding(.vertical, 14)
                     }
@@ -330,8 +340,20 @@ struct WidgetHostView: View {
         return WidgetSessionActivity(status: session.visualStatus,
             count: (inbox?.unread ?? 0) + (inbox?.needsAnswer ?? 0),
             needsAnswer: (inbox?.needsAnswer ?? 0) > 0,
-            animate: !model.effectiveReduceMotion, complete: model.inbox.complete)
+            animate: !model.effectiveReduceMotion, complete: model.inbox.complete,
+            pulse: model.inboxPulseFor(session.key))
             .allowsHitTesting(false)
+    }
+
+    /// What a session badge means: the session, its agent and state, and what its count is made of.
+    private func sessionTooltip(_ session: WidgetSession) -> TooltipContent {
+        var lines = [AIProviders.meta(for: session.target.provider).displayName + " · " + session.visualStatus.label]
+        if let inbox = model.inboxFor(session.key) {
+            if inbox.needsAnswer > 0 { lines.append("\(inbox.needsAnswer) waiting for your answer") }
+            if inbox.unread > 0 { lines.append("\(inbox.unread) unread") }
+        }
+        lines.append("Click to open its inbox")
+        return TooltipContent(title: session.title, bullets: lines)
     }
 
     private func sessionSummary(_ session: WidgetSession) -> String {

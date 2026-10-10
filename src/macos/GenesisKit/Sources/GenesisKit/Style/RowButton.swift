@@ -19,6 +19,7 @@ private struct RowButtonBody: View {
     let configuration: ButtonStyleConfiguration
     let cornerRadius: CGFloat
     @State private var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         configuration.label
@@ -27,7 +28,8 @@ private struct RowButtonBody: View {
                     .fill(Color.white.opacity(configuration.isPressed ? 0.10 : (hovering ? 0.055 : 0)))
             )
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .onHover { hovering = $0 }
+            .pointerCursor(isEnabled)
+            .onHover { hovering = isEnabled && $0 }
             // A row that scrolls out from under a still pointer gets no exit event; reset it when
             // the row leaves the screen so it does not come back highlighted.
             .onDisappear { hovering = false }

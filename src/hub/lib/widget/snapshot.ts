@@ -24,6 +24,11 @@ import { readWidgetState } from "./storage";
 import { parseWidgetSessionKey, shownOutgoing, type WidgetTarget, widgetSessionKey } from "./types";
 
 const prof = profiler.scope("widget");
+/**
+ * How long a quiet session's unread and unanswered items keep counting in the inbox badges. A decision left open in a
+ * session that ended ten days ago is not news; it stays in that session's inbox, it just stops raising the badge.
+ */
+export const INBOX_STALE_MS = 72 * 60 * 60 * 1000;
 
 /**
  * Epoch milliseconds of a stored ISO time, or 0 when it is empty or malformed. A NaN here serializes as `null`, which
@@ -490,14 +495,23 @@ export async function widgetSnapshot({
     selectedKey,
     refresh = false,
     sources = realWidgetSources,
+    now = Date.now(),
 }: {
     root?: string;
     selectedKey?: string;
     refresh?: boolean;
     sources?: WidgetSources;
+    /** The clock the inbox ages items against; tests pass a fixed one. */
+    now?: number;
 }) {
     const state = await readWidgetState(root);
     selectedKey ??= state.selectedKey ?? undefined;
+    /** An item still matters while it is recent or its session worked lately; a session can be "working" with old items. */
+    const inboxFresh = (session: WidgetSession, at: number) =>
+        session.status === "working" || Math.max(at, session.activityAt) >= now - INBOX_STALE_MS;
+    /** Counted in the badges: fresh, and newer than the user's last "Mark all read". Every item stays in its session. */
+    const inboxCounted = (session: WidgetSession, at: number) =>
+        at > (state.inboxClearedAt ?? 0) && inboxFresh(session, at);
     const errors: string[] = [];
     const rosterStatus = sources.rosterStatus?.();
     if (rosterStatus?.error) {
@@ -696,7 +710,11 @@ export async function widgetSnapshot({
                 decision.project ?? decision.cwd ?? "",
                 timeOf(decision.updatedTs)
             );
-        if (kindOf(decision) === "decision" && ["open", "drafted"].includes(decision.state)) {
+        if (
+            kindOf(decision) === "decision" &&
+            ["open", "drafted"].includes(decision.state) &&
+            inboxFresh(session, timeOf(decision.updatedTs))
+        ) {
             session.status = "waiting";
         }
     }
@@ -752,6 +770,9 @@ export async function widgetSnapshot({
         }
         inboxSessions.set(session.key, entry);
     };
+    // Counted per group: the SQL groups carry their session's count and newest item, and `total` also covers groups
+    // past the row limit, so each group left out of the count is subtracted from it.
+    const skipped = { answer: 0, form: 0 };
     for (const [kind, groups] of [
         ["answer", inboxData.answers],
         ["form", inboxData.forms],
@@ -766,8 +787,12 @@ export async function widgetSnapshot({
                     row.project,
                     row.at
                 );
-            if (kind === "form") {
+            if (kind === "form" && inboxFresh(session, row.at)) {
                 session.status = "waiting";
+            }
+            if (!inboxCounted(session, row.at)) {
+                skipped[kind] += row.count;
+                continue;
             }
             putInbox(
                 session,
@@ -789,7 +814,7 @@ export async function widgetSnapshot({
             continue;
         }
         const session = findSession(row.sessionId, row.provider);
-        if (!session) {
+        if (!session || !inboxCounted(session, timeOf(row.updatedTs))) {
             continue;
         }
         pendingDecisions += 1;
@@ -828,15 +853,15 @@ export async function widgetSnapshot({
             continue;
         }
         const id = `result:${node.harness}:${node.id}`;
-        if ((state.inboxRead[`${session.key}|${id}`] ?? -1) >= at) {
+        if ((state.inboxRead[`${session.key}|${id}`] ?? -1) >= at || !inboxCounted(session, at)) {
             continue;
         }
         unreadResults += 1;
         putInbox(session, { id, sourceId: node.id, kind: "result", key: session.key, at, needsAnswer: false }, 1);
     }
     const notifications: WidgetInboxSummary = {
-        unread: (inboxData.answers[0]?.total ?? 0) + unreadResults,
-        needsAnswer: (inboxData.forms[0]?.total ?? 0) + pendingDecisions,
+        unread: Math.max(0, (inboxData.answers[0]?.total ?? 0) - skipped.answer) + unreadResults,
+        needsAnswer: Math.max(0, (inboxData.forms[0]?.total ?? 0) - skipped.form) + pendingDecisions,
         complete: inboxData.complete && errors.length === 0,
         truncated: inboxData.truncated || inboxSessions.size > 512,
         sessions: [...inboxSessions.values()]
@@ -1034,7 +1059,10 @@ export async function widgetSnapshot({
             attachments: resultImages.attachments,
             refs: node.filePath ? [{ type: "file", value: node.filePath }] : [],
             read:
-                (state.inboxRead[`${session.key}|result:${node.harness}:${node.id}`] ?? -1) >= Date.parse(node.lastAt),
+                Math.max(
+                    state.inboxRead[`${session.key}|result:${node.harness}:${node.id}`] ?? -1,
+                    state.inboxClearedAt ?? -1
+                ) >= Date.parse(node.lastAt),
         });
     }
     // Only the videos the widget can show: those in a draft, and those of the selected session's shown outgoing

@@ -33,6 +33,8 @@ struct WidgetSessionActivity: View {
     let needsAnswer: Bool
     let animate: Bool
     var complete = true
+    /// Grows with each arrival in this session; the count bumps once per arrival.
+    var pulse = 0
 
     var body: some View {
         Group {
@@ -46,7 +48,7 @@ struct WidgetSessionActivity: View {
                         .allowsHitTesting(false)
                 }
             } else if count > 0 {
-                WidgetInboxCount(count: count, needsAnswer: needsAnswer, pulse: 0, reduceMotion: !animate,
+                WidgetInboxCount(count: count, needsAnswer: needsAnswer, pulse: pulse, reduceMotion: !animate,
                     complete: complete)
             } else if status == .working {
                 SpinningArc(color: status.color, lineWidth: 1.7, spinning: animate)
@@ -91,6 +93,10 @@ struct AgentWidgetPreview: View {
                 if model.inboxCount == 0 {
                     Text(model.inbox.complete ? "All caught up" : "Inbox status unavailable")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
+                } else {
+                    IconButton(systemName: "checkmark.circle", tooltip: "Mark all read. Nothing is deleted.",
+                               size: 11, action: model.markAllRead)
+                        .accessibilityLabel("Mark all inbox items read")
                 }
             }.padding(.horizontal, 5).padding(.bottom, 5)
 
@@ -124,10 +130,11 @@ struct AgentWidgetPreview: View {
                             Spacer(minLength: 2)
                             if let inbox = model.inboxFor(session.key), inbox.unread + inbox.needsAnswer > 0 {
                                 WidgetInboxCount(count: inbox.unread + inbox.needsAnswer, needsAnswer: inbox.needsAnswer > 0,
-                                    pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
+                                    pulse: model.inboxPulseFor(session.key), reduceMotion: model.effectiveReduceMotion,
+                                    complete: model.inbox.complete)
                             } else {
-                            WidgetActivityIndicator(status: session.visualStatus, animate: !model.effectiveReduceMotion)
-                                .frame(width: 12, height: 12)
+                                WidgetActivityIndicator(status: session.visualStatus, animate: !model.effectiveReduceMotion)
+                                    .frame(width: 12, height: 12)
                             }
                         }
                         .padding(.horizontal, 9).padding(.vertical, 9)
@@ -149,10 +156,18 @@ struct AgentWidgetPreview: View {
                     Image(systemName: "rectangle.stack").font(.system(size: 10))
                     Text("Projects & sessions").font(.system(size: 10, weight: .medium))
                     Spacer()
-                    Text(String(model.sessions.count)).font(.system(size: 9, design: .monospaced))
+                    if model.activeSessionCount > 0 {
+                        Text("\(model.activeSessionCount) active").font(.system(size: 9.5)).monospacedDigit()
+                    }
                     Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
-                }.foregroundStyle(.white.opacity(0.5)).padding(.horizontal, 5).padding(.top, 5)
-            }.buttonStyle(.genHoverPlain()).accessibilityLabel("Browse all projects and sessions")
+                }
+                .foregroundStyle(.white.opacity(0.5)).padding(.horizontal, 5).padding(.vertical, 5)
+                .contentShape(Rectangle())
+            }.buttonStyle(.genHoverPlain())
+                .instantTooltip(model.activeSessionCount > 0
+                    ? "\(model.activeSessionCount) sessions are working or wait for you. Browse every project and session."
+                    : "Browse every project and session")
+                .accessibilityLabel("Browse all projects and sessions")
         }.padding(.horizontal, 13).padding(.vertical, 18)
     }
 }

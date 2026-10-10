@@ -52,6 +52,7 @@ public struct GenHoverButtonStyle: ButtonStyle {
             .scaleEffect(reduceMotion ? 1 : (pressed ? pressedScale : (active ? scale : 1)))
             .opacity(isEnabled ? 1 : 0.4)
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .pointerCursor(isEnabled)
             .onHover { hovering in
                 guard isEnabled else { return }
                 withAnimation(reduceMotion ? nil : KitTheme.quick) { isHovering = hovering }
@@ -126,6 +127,7 @@ struct GenHoverEffect: ViewModifier {
             )
             .scaleEffect(reduceMotion ? 1 : (isHovering ? scale : 1))
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .pointerCursor()
             .onHover { hovering in
                 withAnimation(reduceMotion ? nil : KitTheme.quick) { isHovering = hovering }
             }

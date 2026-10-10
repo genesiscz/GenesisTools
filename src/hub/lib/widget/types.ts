@@ -194,5 +194,7 @@ export const widgetStateSchema = z.object({
     drafts: z.record(z.string(), widgetDraftSchema).default({}),
     outgoing: z.array(widgetOutgoingSchema).default([]),
     inboxRead: z.record(z.string(), z.number().finite().nonnegative()).default({}),
+    /** "Mark all read": items at or before this time stop counting in the badges; they stay in their sessions. */
+    inboxClearedAt: z.number().finite().nonnegative().optional(),
 });
 export type WidgetState = z.infer<typeof widgetStateSchema>;

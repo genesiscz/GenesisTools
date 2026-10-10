@@ -3,7 +3,7 @@ import { mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { readDecisions, updateDecision } from "@app/question/lib/decisions/store";
-import { getEntryById, markEntriesRead, openReadModel } from "@app/question/lib/read-model";
+import { getEntryById, markEntriesRead, markEntriesReadThrough, openReadModel } from "@app/question/lib/read-model";
 import { logger } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { videoSettingsSchema } from "@genesiscz/utils/video/types";
@@ -71,6 +71,7 @@ export const widgetActionSchema = z.discriminatedUnion("action", [
         kind: z.enum(["answer", "result", "form", "decision"]),
         at: z.number().finite().nonnegative(),
     }),
+    z.object({ action: z.literal("inbox-clear"), at: z.number().finite().nonnegative() }),
 ]);
 
 /** How far ahead of this clock an inbox read may be stamped; a later mark would hide future items. */
@@ -273,6 +274,29 @@ export async function performWidgetAction({
             }
 
             return acknowledgeWidgetInbox({ root, key: request.key, id: request.id, at: request.at, signal });
+        }
+        case "inbox-clear": {
+            signal?.throwIfAborted();
+            if (request.at > Date.now() + INBOX_READ_CLOCK_SKEW_MS) {
+                throw new Error("The clear time is in the future.");
+            }
+
+            // Answers have a real read state, shared with Hub; results, questions and decisions stop counting by
+            // the watermark and stay answerable in their sessions.
+            const db = openReadModel(toolDataDir("question", "qa.db"));
+            let read = 0;
+            try {
+                read = markEntriesReadThrough(db, request.at);
+            } finally {
+                db.close();
+            }
+
+            const clearedAt = await mutateWidgetState(root, (state) => {
+                state.inboxClearedAt = Math.max(state.inboxClearedAt ?? 0, request.at);
+                return state.inboxClearedAt;
+            });
+            logger.debug({ read, clearedAt }, "Widget inbox marked read");
+            return { read, clearedAt };
         }
         case "read": {
             const db = openReadModel(toolDataDir("question", "qa.db"));
