@@ -294,11 +294,10 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             return
         }
         installPanelMonitors()
+        // "Main display" (an empty ID) is the display with the menu bar, as in System Settings. NSScreen.main is the
+        // display with keyboard focus, so it put the widget on whichever display the user worked on at launch.
         let requested = NSScreen.screens.first { Self.id($0) == screenID }
-        let retained = screenID.isEmpty ? display.flatMap { previous in
-            NSScreen.screens.first { Self.id($0) == Self.id(previous) }
-        } : nil
-        guard let screen = requested ?? retained ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        guard let screen = requested ?? NSScreen.screens.first else { return }
         let sameDisplay = display.map { Self.id($0) == Self.id(screen) && $0.frame == screen.frame } ?? false
         display = screen
         lastDisplayID = screenID
@@ -488,7 +487,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         let surface = WidgetSurfaceID(
             edge: model.expanded ?? model.side, group: model.expanded == .top ? 0 : model.activeSideGroup)
         let anchor = panels[surface]?.panel
-        guard let screen = anchor?.screen ?? NSScreen.main else { return }
+        guard let screen = anchor?.screen ?? NSScreen.screens.first else { return }
         let frame = EdgePanelGeometry.mediaFrame(
             anchor: anchor?.frame ?? screen.visibleFrame, visible: screen.visibleFrame)
         let window = NSWindow(
