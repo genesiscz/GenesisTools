@@ -15,3 +15,13 @@ checklist.md or motion.md as well.
   hand-edit JSON for project rules; stored settings had readers but no control.
 - 2026-10-10 — **Idle widget burned a third of a core**: a `tools hub widget discover` process every 10–20 s,
   each 2–4 s of CPU, plus a LaunchServices signature check per spawned launcher process.
+- 2026-10-10 — **Swift builds failed with "cannot find type" for types in files that existed.** The disk was full
+  (129 MiB): the compiler's emit-module step failed first and only later lines said "No space left on device". Check
+  `df -h /System/Volumes/Data` before debugging a strange build error. Stale Chrome/Brave `code_sign_clone` copies in
+  `/var/folders/*/*/X` were 16 GB of it.
+- 2026-10-10 — **Image attachments were 42 × 30 chips with a `photo` glyph.** Fix: GenesisKit `MediaThumbnailView`
+  (off-main decode, cache keyed by file identity, in-place preview). 5008ca4a5.
+- 2026-10-10 — **Disclosures reacted only on the chevron, buttons had no hand.** Fix: `GenDisclosure`; pointer built
+  into the shared hover styles. eb0292629.
+- 2026-10-10 — **Permission failures were grey text or an `.alert` inside a widget panel.** Fix: one
+  `PermissionCenter` dialog with a denial simulation for the real app. 1fcecc6b3.

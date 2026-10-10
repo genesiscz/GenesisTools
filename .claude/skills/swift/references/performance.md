@@ -171,3 +171,6 @@ are in [genesistools.md](genesistools.md)). Add a new entry at the end of its se
 ### Polling watchers
 - A safety refresh every 5 s that runs a full snapshot (~1 s CPU) averages ~20% of one core. Refresh on
   the event; keep the safety interval long and the safety check cheap.
+
+## Thumbnails (media stream, 2026-10-10)
+Key the cache by file identity (`stat`: inode, size, mtime), bucket pixel sizes to powers of two of the screen scale, and decode off the main thread with `kCGImageSourceShouldCacheImmediately`, so the first draw never decodes on the main thread. Measured: a 5K screenshot 50–65 ms (was 114–130 ms), a cache hit ~25 µs.
