@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -581,6 +581,79 @@ test("last_active_at wins over a summary rewritten with no new turn", async () =
 
     expect(result.metadata?.lastTimestamp).toBe("2026-09-01T10:05:00.000Z");
     expect(result.metadata?.isSubagent).toBe(false);
+});
+
+/**
+ * A session folder the way Grok leaves it: one real turn, then `system_reminder` records that an
+ * open CLI appends to idle sessions, a summary stamped `lastActiveAt`, and turn files last written at
+ * `turnAt`. Chat rows carry no timestamps, as in real chat histories.
+ */
+function grokSessionWithTurnFiles(options: { lastActiveAt: string; turnAt: string }): NativeSessionSource<"grok"> {
+    const home = mkdtempSync(join(tmpdir(), "gt-grok-turn-files-"));
+    const root = join(home, "sessions");
+    const directory = join(root, encodeURIComponent(CWD), SESSION_ID);
+    mkdirSync(directory, { recursive: true });
+    const chatPath = join(directory, "chat_history.jsonl");
+    const summaryPath = join(directory, "summary.json");
+    writeFileSync(
+        chatPath,
+        line({ type: "user", content: [{ type: "text", text: "<user_query>check the mail records</user_query>" }] }) +
+            line({ type: "assistant", content: "Done." }) +
+            line({ type: "user", synthetic_reason: "system_reminder", content: "skills changed" }) +
+            line({ type: "user", synthetic_reason: "system_reminder", content: "mcp servers changed" })
+    );
+    writeFileSync(
+        summaryPath,
+        SafeJSON.stringify(
+            {
+                info: { id: SESSION_ID, cwd: CWD },
+                created_at: "2026-09-01T09:00:00.000Z",
+                updated_at: options.lastActiveAt,
+                last_active_at: options.lastActiveAt,
+            },
+            { strict: true }
+        )
+    );
+    const turnSeconds = Date.parse(options.turnAt) / 1000;
+    for (const name of ["updates.jsonl", "events.jsonl"]) {
+        const path = join(directory, name);
+        writeFileSync(path, line({ type: "turn" }));
+        utimesSync(path, turnSeconds, turnSeconds);
+    }
+
+    return {
+        kind: "grok",
+        root,
+        sourceHome: home,
+        filePath: chatPath,
+        dataPaths: [chatPath],
+        metadataPaths: [summaryPath],
+    };
+}
+
+test("a last_active_at that Grok stamps without a turn falls back to the last turn write", async () => {
+    // Observed 2026-10-10: Grok appended reminders to three idle sessions and stamped them active a
+    // day after their last turn. The prompt-cache clock read them warm and the monitor posted
+    // "Session went cold" for sessions nobody had touched.
+    const source = grokSessionWithTurnFiles({
+        lastActiveAt: "2026-09-02T18:03:55.158Z",
+        turnAt: "2026-09-01T14:11:01.000Z",
+    });
+
+    const result = await readGrokMetadata(source);
+
+    expect(result.metadata?.lastTimestamp).toBe("2026-09-01T14:11:01.000Z");
+});
+
+test("a real turn keeps its last_active_at, written with the turn files", async () => {
+    const source = grokSessionWithTurnFiles({
+        lastActiveAt: "2026-09-01T14:11:01.003Z",
+        turnAt: "2026-09-01T14:11:01.000Z",
+    });
+
+    const result = await readGrokMetadata(source);
+
+    expect(result.metadata?.lastTimestamp).toBe("2026-09-01T14:11:01.003Z");
 });
 
 test("session_kind subagent is a subagent even in the user's own grok home", async () => {
