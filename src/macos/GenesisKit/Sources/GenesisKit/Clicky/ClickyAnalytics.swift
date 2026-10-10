@@ -22,9 +22,22 @@ public final class ClickyAnalyticsStore: ObservableObject {
     @Published public private(set) var snapshot = ClickyStatistics()
     public private(set) var revision: UInt64 = 0
     private var publishTask: Task<Void, Never>?
+    private var viewers = 0
+    private var latest: (@MainActor () -> ClickyStatistics?)?
+
+    /// A published snapshot shares the statistics' dictionaries, so the next key event pays a copy-on-write
+    /// of the whole history. Nothing is published while no dashboard is open; the first viewer gets the
+    /// current statistics at once.
+    public func attach() {
+        viewers += 1
+        if viewers == 1, let latest { flush(latest()) }
+    }
+
+    public func detach() { viewers = max(0, viewers - 1) }
 
     func stage(_ source: @escaping @MainActor () -> ClickyStatistics?) {
-        guard publishTask == nil else { return }
+        latest = source
+        guard viewers > 0, publishTask == nil else { return }
         publishTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(1)) } catch { return }
             self?.flush(source())

@@ -1148,6 +1148,31 @@ describe("delivery routes", () => {
         expect(unknown.queueId).toBeUndefined();
     });
 
+    test("a retry of a key an earlier attempt already saved stays in the queue, even when a live pane appears", async () => {
+        const queueRoot = mkdtempSync(join(tmpdir(), "keyed-retry-queue-"));
+        const request = {
+            session: "abc",
+            provider: "claude",
+            text: "DECISION 1: a) yes",
+            sourceHome: "/fixture/claude",
+            deliveryKey: "fixture-key",
+        };
+        const first = await deliverToSession(request, { findTargets: noPaneTargets, queueRoot });
+        expect(first.queueId).toBeDefined();
+        const never = async (): Promise<never> => {
+            throw new Error("must not type a message that is already queued");
+        };
+        const retry = await deliverToSession(request, { runTool: never, findTargets: livePaneTargets, queueRoot });
+
+        expect(retry).toMatchObject({ channel: "queued", delivered: false, queueId: first.queueId });
+        expect(
+            listSessionMessages({
+                target: { provider: "claude", sessionId: "abc", sourceHome: "/fixture/claude" },
+                root: queueRoot,
+            })
+        ).toHaveLength(1);
+    });
+
     test("Codex daemon queue acceptance and empty exit-zero output are not provider input receipts", async () => {
         for (const stdout of ["{}", '{"queued":true}', '{"queued":false}', ""]) {
             await expect(

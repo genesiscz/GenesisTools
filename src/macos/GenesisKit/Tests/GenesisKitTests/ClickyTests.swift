@@ -246,6 +246,22 @@ final class ClickyTests: XCTestCase {
         XCTAssertEqual(store.snapshot.keys[1], 100)
     }
 
+    @MainActor
+    func testAnalyticsPublishOnlyWhileADashboardIsOpen() {
+        let store = ClickyAnalyticsStore()
+        var statistics = ClickyStatistics()
+        statistics.record(keyCode: 2, release: false, at: date(13), calendar: calendar)
+        store.stage { statistics }
+        XCTAssertEqual(store.revision, 0, "No dashboard is open, so nothing shares the statistics' storage")
+        store.attach()
+        XCTAssertEqual(store.revision, 1)
+        XCTAssertEqual(store.snapshot.keys[2], 1, "The first viewer gets the latest staged statistics at once")
+        store.detach()
+        statistics.record(keyCode: 2, release: false, at: date(13), calendar: calendar)
+        store.stage { statistics }
+        XCTAssertEqual(store.revision, 1)
+    }
+
     func testQuietHoursCrossMidnightAndEndIsExclusive() {
         var preferences = ClickyPreferences()
         preferences.quietHours = true

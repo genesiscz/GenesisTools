@@ -138,6 +138,8 @@ public struct ClickyAnalyticsView: View {
                 Text("Other keys: \(others.formatted()) presses").font(.caption).foregroundStyle(.secondary)
             }
         }
+        .onAppear { store.attach() }
+        .onDisappear { store.detach() }
     }
 
     private var rhythm: some View {

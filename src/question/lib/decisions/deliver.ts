@@ -11,7 +11,11 @@ import {
 import { ClaudeWorkerStore, claudeWorkerSourceHome } from "@app/claude/lib/worker/store";
 import { CodexSessionStore, codexWorkerHome } from "@app/codex/lib/store";
 import { GrokSessionStore } from "@app/grok/lib/store";
-import { enqueueSessionMessage, sessionMessageTextHash } from "@genesiscz/utils/agent-sessions/message-queue";
+import {
+    enqueueSessionMessage,
+    findKeyedSessionMessage,
+    sessionMessageTextHash,
+} from "@genesiscz/utils/agent-sessions/message-queue";
 import {
     type ClaudeLiveSession,
     claudeSessionsDir,
@@ -382,15 +386,17 @@ export async function deliverToSession(
     deps: DeliverDeps = {}
 ): Promise<DeliveryResult> {
     const run = deps.runTool ?? runTool;
+    const nativeProvider = provider === "claude-code" ? "claude" : provider;
+    const queueTarget: { provider: "claude" | "codex" | "grok"; sessionId: string; sourceHome: string } | undefined =
+        deliveryKey &&
+        sourceHome &&
+        (nativeProvider === "claude" || nativeProvider === "codex" || nativeProvider === "grok")
+            ? { provider: nativeProvider, sessionId: session, sourceHome }
+            : undefined;
     const undelivered = async (reason: string): Promise<DeliveryResult> => {
-        const nativeProvider = provider === "claude-code" ? "claude" : provider;
-        if (
-            deliveryKey &&
-            sourceHome &&
-            (nativeProvider === "claude" || nativeProvider === "codex" || nativeProvider === "grok")
-        ) {
+        if (queueTarget && deliveryKey) {
             const queued = await enqueueSessionMessage({
-                target: { provider: nativeProvider, sessionId: session, sourceHome },
+                target: queueTarget,
                 text,
                 idempotencyKey: deliveryKey,
                 root: deps.queueRoot,
@@ -405,6 +411,17 @@ export async function deliverToSession(
         }
         return { channel: "queued", delivered: false, error: reason };
     };
+
+    // A retry of a key that an earlier attempt already saved is that same delivery. The process can exit after
+    // the save and before its receipt is recorded; sending live as well would deliver the message twice.
+    if (
+        queueTarget &&
+        deliveryKey &&
+        findKeyedSessionMessage({ target: queueTarget, root: deps.queueRoot, idempotencyKey: deliveryKey })
+    ) {
+        return undelivered("An earlier attempt already saved this message for this exact session.");
+    }
+
     const target = await resolveDeliveryTarget({ session, provider, sourceHome }, deps);
 
     if (target.kind === "none") {
