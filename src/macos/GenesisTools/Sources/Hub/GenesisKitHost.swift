@@ -34,6 +34,11 @@ final class GenesisKitHostAdapter: NSObject, GenesisKitHost {
         AnyView(MarkdownContentView(markdown: text, style: MarkdownStyle(style)))
     }
 
+    /// A new `GenesisTools --permission-status` process (PermissionFaces.swift) reads TCC without this one's cache.
+    func freshPermissionStatus(_ kind: PermissionKind) async -> PermissionStatus? {
+        await probeFreshPermissionStatus(kind)
+    }
+
     /// On by default: the app always ships as a release build (`bun run app`), and the hub's loads
     /// must be measured on every run. `scripts/perf-report.ts` reads `app-perf.log`.
     var perf: PerfConfiguration {

@@ -1093,21 +1093,33 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    /// Screen Recording for the composer's screenshot: true when it may run, otherwise the permission dialog is up.
+    var screenCaptureGate: @MainActor (PermissionNeed) async -> Bool = { await PermissionCenter.shared.ensure($0) }
+
     /// The panel steps aside for the selection, then reopens with the new attachment in the draft. Escape returns
-    /// `{cancelled: true, reason: "user"}`, which is not an error and reopens nothing; a missing Screen Recording
-    /// grant is an error whose text starts with `WidgetCaptureError.screenRecordingDenied`.
+    /// `{cancelled: true, reason: "user"}`, which is not an error and reopens nothing. A missing Screen Recording grant
+    /// (an error whose text starts with `WidgetCaptureError.screenRecordingDenied`) opens the permission dialog.
     public func capture() {
-        let returnEdge = expanded
-        collapse()
-        let request: WidgetJSON = ["action": "capture", "key": .string(selectedKey)]
+        let key = selectedKey
+        let need = PermissionNeed(
+            .screenRecording,
+            reason: "The camera button takes a screenshot of the area you select and attaches it to this session's draft.",
+            grantWorksInNewProcess: true,
+            onGranted: { [weak self] in self?.capture() })
         let previous = mutationTask
         mutationTask = Task { [weak self] in
             await previous?.value
             guard let self else { return }
+            // The screenshot runs in a new process, which reads the grant again: the gate asks one first.
+            guard await self.screenCaptureGate(need) else { return }
+            let returnEdge = self.expanded
+            self.collapse()
             do {
-                let result = try await self.call(request)
+                let result = try await self.call(["action": "capture", "key": .string(key)])
                 if case .object(let fields) = result, fields["cancelled"] == .bool(true) { return }
                 if let returnEdge, self.expanded == nil { self.open(returnEdge) }
+            } catch where WidgetCaptureError.isScreenRecordingDenied(error) {
+                PermissionCenter.shared.require(need)
             } catch {
                 self.report(error)
             }

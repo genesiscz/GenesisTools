@@ -12,10 +12,11 @@ final class ClickyTests: XCTestCase {
     @MainActor
     private final class InputMonitorStub: ClickyInputMonitoring {
         var granted = false
-        var grantOnRequest = false
         var result: ClickyInputStartResult = .started
         var permissionChecks = 0
-        var requests = 0
+        /// Permission dialogs the model asked for (the fixture's presenter), and the last need it passed.
+        var permissionDialogs = 0
+        var lastNeed: PermissionNeed?
         var starts = 0
         var stops = 0
         var reenables = 0
@@ -24,11 +25,7 @@ final class ClickyTests: XCTestCase {
             permissionChecks += 1
             return granted
         }
-        func requestPermission() -> Bool {
-            requests += 1
-            granted = grantOnRequest
-            return granted
-        }
+
         func start(handler: @escaping @MainActor (CGEventType, CGEvent) -> Void) -> ClickyInputStartResult {
             starts += 1
             self.handler = handler
@@ -54,7 +51,11 @@ final class ClickyTests: XCTestCase {
         return (
             ClickyModel(
                 defaults: defaults, previewOnly: snapshot, appearance: appearance,
-                inputMonitor: monitor, observeSystemEvents: false), defaults, suite
+                inputMonitor: monitor, observeSystemEvents: false,
+                presentPermission: { need in
+                    monitor.permissionDialogs += 1
+                    monitor.lastNeed = need
+                }), defaults, suite
         )
     }
 
@@ -517,7 +518,7 @@ final class ClickyTests: XCTestCase {
         XCTAssertTrue(model.enabled)
         XCTAssertNil(model.error)
         XCTAssertEqual(model.status, "Listening for key presses")
-        XCTAssertEqual(monitor.requests, 0)
+        XCTAssertEqual(monitor.permissionDialogs, 0)
         XCTAssertEqual(monitor.starts, 1)
         XCTAssertEqual(model.statistics.sessions, 1)
         model.activate()
@@ -538,16 +539,18 @@ final class ClickyTests: XCTestCase {
         }
         model.activate()
         XCTAssertFalse(model.enabled)
-        XCTAssertEqual(monitor.requests, 1)
+        XCTAssertEqual(monitor.permissionDialogs, 1, "the permission dialog asks; Clicky shows no second macOS prompt")
+        XCTAssertEqual(monitor.lastNeed?.kind, .inputMonitoring)
         XCTAssertEqual(monitor.starts, 0)
         XCTAssertEqual(model.statistics.sessions, 0)
         XCTAssertEqual(model.status, "Input Monitoring permission needed")
         XCTAssertTrue(model.error?.contains(model.applicationName) == true)
-        monitor.grantOnRequest = true
-        model.activate()
+        // The dialog sees the grant arrive and retries the activation that needed it.
+        monitor.granted = true
+        monitor.lastNeed?.onGranted?()
         XCTAssertTrue(model.enabled)
         XCTAssertNil(model.error)
-        XCTAssertEqual(monitor.requests, 2)
+        XCTAssertEqual(monitor.permissionDialogs, 1)
         XCTAssertEqual(monitor.starts, 1)
     }
 
@@ -563,7 +566,9 @@ final class ClickyTests: XCTestCase {
             XCTAssertNotEqual(model.status, "Listening for key presses")
             XCTAssertNotNil(model.error)
             XCTAssertEqual(model.statistics.sessions, 0)
-            XCTAssertEqual(monitor.requests, 0)
+            // A grant revoked between the check and the tap opens the permission dialog; a tap that failed
+            // for another reason is not a permission problem.
+            XCTAssertEqual(monitor.permissionDialogs, result == .permissionRequired ? 1 : 0)
             XCTAssertEqual(monitor.starts, 1)
             model.shutdown()
             defaults.removePersistentDomain(forName: suite)
@@ -582,7 +587,7 @@ final class ClickyTests: XCTestCase {
         model.activate()
         XCTAssertFalse(model.enabled)
         XCTAssertEqual(monitor.permissionChecks, 0)
-        XCTAssertEqual(monitor.requests, 0)
+        XCTAssertEqual(monitor.permissionDialogs, 0)
         XCTAssertEqual(monitor.starts, 0)
     }
 
@@ -1913,7 +1918,7 @@ extension ClickyTests {
         XCTAssertEqual(restored.preferences, original)
         XCTAssertEqual(restored.selectedSoundName, "Paper")
         XCTAssertFalse(restored.enabled)
-        XCTAssertEqual(monitor.requests, 0)
+        XCTAssertEqual(monitor.permissionDialogs, 0)
         XCTAssertEqual(monitor.starts, 0)
     }
 
@@ -1950,7 +1955,7 @@ extension ClickyTests {
         XCTAssertEqual(model.selectedSoundName, "Honey")
         XCTAssertNil(model.soundLibrary.active)
         XCTAssertFalse(model.enabled)
-        XCTAssertEqual(monitor.requests, 0)
+        XCTAssertEqual(monitor.permissionDialogs, 0)
         XCTAssertEqual(monitor.starts, 0)
         model.selectBuiltIn(.violet)
         XCTAssertNil(model.preferences.selectedPack)

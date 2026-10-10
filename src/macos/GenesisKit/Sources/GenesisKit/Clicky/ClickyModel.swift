@@ -64,13 +64,16 @@ public final class ClickyModel: ObservableObject {
     private var persistenceWork: DispatchWorkItem?
     private let previewOnly: Bool
     private let notificationClient: NativeNotificationClient
+    private let presentPermission: @MainActor (PermissionNeed) -> Void
 
     public init(
         defaults: UserDefaults = .standard, previewOnly: Bool = false, appearance: NativeSettingsAppearance? = nil,
         inputMonitor: (any ClickyInputMonitoring)? = nil, observeSystemEvents: Bool = true,
-        notificationClient: NativeNotificationClient? = nil
+        notificationClient: NativeNotificationClient? = nil,
+        presentPermission: (@MainActor (PermissionNeed) -> Void)? = nil
     ) {
         self.defaults = defaults
+        self.presentPermission = presentPermission ?? { PermissionCenter.shared.require($0) }
         soundLibrary = ClickySoundLibrary(defaults: defaults)
         self.previewOnly = previewOnly
         self.notificationClient = notificationClient ?? .system
@@ -157,7 +160,8 @@ public final class ClickyModel: ObservableObject {
         }
         guard !enabled else { return }
         error = nil
-        guard inputMonitor.hasPermission || inputMonitor.requestPermission() else {
+        // The permission dialog asks macOS and opens System Settings, so no second prompt comes from here.
+        guard inputMonitor.hasPermission else {
             permissionNeeded()
             return
         }
@@ -190,6 +194,14 @@ public final class ClickyModel: ObservableObject {
         error = "Allow Input Monitoring for \(applicationName) in System Settings, then enable Clicky again."
         stateDidChange?()
         log.notice("Activation needs Input Monitoring permission")
+        presentPermission(inputMonitoringNeed)
+    }
+
+    private var inputMonitoringNeed: PermissionNeed {
+        PermissionNeed(
+            .inputMonitoring,
+            reason: "Clicky plays a sound for each key you press. It uses key positions only and never reads what you type.",
+            onGranted: { [weak self] in self?.activate() })
     }
 
     public func deactivate() {
@@ -334,9 +346,12 @@ public final class ClickyModel: ObservableObject {
         }
     }
 
+    /// The permission dialog while Input Monitoring is missing; its System Settings pane once it is allowed.
     public func openInputSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
-            NSWorkspace.shared.open(url)
+        if inputMonitor.hasPermission {
+            PermissionAccess.live.openSettings(.inputMonitoring)
+        } else {
+            presentPermission(inputMonitoringNeed)
         }
     }
 

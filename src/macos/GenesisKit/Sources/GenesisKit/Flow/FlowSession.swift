@@ -105,6 +105,8 @@ public final class FlowSession: ObservableObject {
     var injectEffect: ((String) async -> FlowInjectOutcome)?
     var accessibilityTrustEffect: () -> Bool = { FlowInjector.isAccessibilityTrusted }
     var accessibilityRequestEffect: (() -> Void)?
+    /// Where a missing grant goes: the GenesisKit permission dialog, in the process that needs the grant.
+    var permissionPresenter: @MainActor (PermissionNeed) -> Void = { PermissionCenter.shared.require($0) }
     private var accessibilityObserver: NSObjectProtocol?
     private(set) var externalAudioHeld = false
 
@@ -242,6 +244,10 @@ public final class FlowSession: ObservableObject {
                 self.applyPreRoll()
             } else {
                 self.reportFailure("Allow Microphone and Speech Recognition for the dictation app in System Settings.")
+                // One dialog at a time: Speech Recognition follows once the microphone is allowed.
+                self.permissionPresenter(self.dictationNeed(grants.microphone ? .speechRecognition : .microphone) {
+                    [weak self] in self?.requestDictationPermissions()
+                })
             }
         }
     }
@@ -257,10 +263,25 @@ public final class FlowSession: ObservableObject {
         if let accessibilityRequestEffect {
             accessibilityRequestEffect()
         } else {
-            FlowInjector.requestAccessibility()
-            FlowInjector.openAccessibilitySettings()
+            permissionPresenter(pasteNeed(trigger: .userAction))
         }
         refreshAccessibilityTrust()
+    }
+
+    /// Dictation needs both grants; each gets its own dialog in the process that records.
+    func dictationNeed(_ kind: PermissionKind, onGranted: (@MainActor () -> Void)? = nil) -> PermissionNeed {
+        let reason = kind == .microphone
+            ? "Flow records your voice while you hold the dictation key, and only then."
+            : "Flow turns your recorded voice into text with macOS speech recognition."
+        return PermissionNeed(kind, reason: reason, onGranted: onGranted)
+    }
+
+    private func pasteNeed(trigger: PermissionTrigger) -> PermissionNeed {
+        PermissionNeed(
+            .accessibility,
+            reason: "Flow pastes your dictation into the app you were using. Without Accessibility it can only copy the text.",
+            trigger: trigger,
+            onGranted: { [weak self] in self?.refreshAccessibilityTrust() })
     }
 
     func refreshAccessibilityTrust() {
@@ -520,6 +541,11 @@ public final class FlowSession: ObservableObject {
             lastError = error.localizedDescription
             FlowFocusLog.flow.error("turn begin failed: \(error.localizedDescription)")
             applyPreRoll()
+            switch error as? CompanionSpeechError {
+            case .microphoneNotAuthorized: permissionPresenter(dictationNeed(.microphone))
+            case .speechNotAuthorized: permissionPresenter(dictationNeed(.speechRecognition))
+            default: break
+            }
         }
     }
 
@@ -610,6 +636,8 @@ public final class FlowSession: ObservableObject {
         case .notPermitted:
             refreshAccessibilityTrust()
             lastError = "Text copied — grant Accessibility to paste automatically."
+            // A side effect of a turn, not a request: after "Not now" it stays in the inline message.
+            permissionPresenter(pasteNeed(trigger: .automatic))
         case .targetLost:
             lastError = "The target app closed — text copied to the clipboard."
         case .focusMoved:

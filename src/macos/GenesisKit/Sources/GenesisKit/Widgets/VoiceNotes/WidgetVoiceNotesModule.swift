@@ -44,12 +44,7 @@ private struct WidgetVoiceNotesView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             store.refreshMicrophonePermission()
         }
-        .alert("Microphone access needed", isPresented: $store.presentsMicrophoneAlert) {
-            Button("Open Microphone Settings", action: store.openMicrophoneSettings)
-            Button("Not now", role: .cancel) { }
-        } message: {
-            Text(store.microphonePermission.guidance ?? "Microphone access was unavailable to the recorder. Review settings and try again.")
-        }
+
     }
 
     @ViewBuilder private var expanded: some View {
@@ -78,8 +73,8 @@ private struct WidgetVoiceNotesView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Label(guidance, systemImage: "mic.slash").font(.system(size: 11))
                     .fixedSize(horizontal: false, vertical: true)
-                Button("Open Microphone Settings", action: store.openMicrophoneSettings)
-                    .font(.caption).buttonStyle(.borderless)
+                Button("Review microphone access", action: store.reviewMicrophoneAccess)
+                    .font(.caption).buttonStyle(.genHoverPlain())
             }
             .padding(10).frame(maxWidth: .infinity, alignment: .leading)
             .background(.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))

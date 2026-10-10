@@ -47,7 +47,7 @@ public final class InputCounter {
     @discardableResult
     public func start() -> Bool {
         guard !isRunning else { return true }
-        guard AXIsProcessTrusted() else { return false }
+        guard PermissionAccess.live.isGranted(.accessibility) else { return false }
 
         let mask: CGEventMask =
             (1 << CGEventType.keyDown.rawValue) |

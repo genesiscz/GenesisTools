@@ -4,13 +4,14 @@ import AVFoundation
 public enum VoiceMicrophonePermission: Equatable, Sendable {
     case notDetermined, authorized, denied, restricted, unknown
 
+    /// Through GenesisKit's permission module, so the denial simulation applies to Voice Notes too.
     public static var current: Self {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        switch PermissionAccess.live.status(.microphone) {
         case .notDetermined: return .notDetermined
-        case .authorized: return .authorized
+        case .granted: return .authorized
         case .denied: return .denied
         case .restricted: return .restricted
-        @unknown default: return .unknown
+        case .partial, .unknown: return .unknown
         }
     }
 
@@ -37,8 +38,9 @@ public enum VoiceMicrophonePermission: Equatable, Sendable {
                     guard !Task.isCancelled else { return }
                     request.finish(.success(.current))
                 }
-                AVCaptureDevice.requestAccess(for: .audio) { _ in
-                    Task { @MainActor in request.finish(.success(.current)) }
+                Task { @MainActor in
+                    _ = await PermissionAccess.live.request(.microphone)
+                    request.finish(.success(.current))
                 }
             }
         } onCancel: {
