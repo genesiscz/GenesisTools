@@ -289,3 +289,38 @@ bytes), not a constant-cost live append. Repeated unchanged reads retain the war
 prefixes and concurrently written files can each pay this cost. The earlier two-hash implementation cost roughly
 130 ms for a 163 MB prefix; the current single-pass prefix alone costs about 63–64 ms for that size. No append CPU
 parity or safe append-generation guarantee is claimed.
+
+## 2026-10-10 20:59 — Widget roster: resident and event-driven instead of a discover process every 16 s
+
+Before: `tools hub widget watch` started `bun src/hub/index.ts widget discover` from its 5 s safety tick, at most
+once per 15 s. Each one was a new process with every cache cold: 2.2–3.9 s of CPU and 340–516 MB RSS per run.
+After: the resident roster worker refreshes only the index scopes a file event names (`roster-index.ts`), watched
+with `createWatcher` on every provider's session roots, then reads the roster. A run waits at least 4 s after the
+previous one, and at least 10x its wall time and 20x its CPU time; a refresh that wrote no index row skips the read.
+The safety tick is 30 s (a roster read and a snapshot) and the full catalog refresh runs every fourth tick.
+
+Measured with `scripts/benchmarks/widget/roster.ts` (in-process CPU per update, 5 interleaved rounds, load 191):
+
+| Arm | Median CPU | Notes |
+| --- | ---: | --- |
+| `discoverProcess` (old, per run) | 2643 ms | 356 MB RSS per process |
+| `residentFull` | 349 ms | the full catalog refresh plus a read |
+| `residentClaude` | 306 ms | one Claude transcript changed |
+| `residentRead` | 147 ms | a listed lead's sub-agent changed, and the safety tick |
+
+Side by side, the base commit's watch and the new watch ran in the same 5 minutes against the real index (scratch
+state roots, 60 s warm-up excluded, three runs at load 80–190; `/usr/bin/time -l` counts the discover children):
+
+| Run | Base total CPU / 5 min | New total CPU / 5 min | New steady CPU/min | Latency p50 / p90, base → new |
+| --- | ---: | ---: | ---: | --- |
+| ab1 | 76.3 s (17 discovers, 57.9 s) | 19.3 s | 3.38 s | 4.1 / 14.9 s → 3.6 / 12.0 s |
+| ab2 | 77.8 s (20 discovers, 60.9 s) | 24.6 s | 4.35 s | 4.2 / 11.0 s → 2.3 / 7.5 s |
+| ab3 | 80.7 s (18 discovers, 62.1 s) | 19.7 s | 3.33 s | 6.6 / 16.0 s → 3.9 / 9.6 s |
+
+Latency is the age of a session's new `activityAt` when the snapshot carrying it was emitted. `hub widget
+snapshot` with the watch's roster cache: 619 ms CPU and 222 MB, against 2992 ms and 405 MB cold (5 interleaved).
+Parity: `roster.ts --parity` (old discover then read, new scoped refresh then read, old again) found 0 rows or
+parents that differ from both old reads, over 145 entries, three times.
+
+What remains per run is mostly the agents tree of large live leads: `readTaskNotifications` verifies the consumed
+prefix of a changed transcript (2026-10-08 section above), and the lead of this campaign was 306 MB with 170 agents.
