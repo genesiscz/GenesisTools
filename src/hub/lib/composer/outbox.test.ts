@@ -58,7 +58,9 @@ import {
     stageShelfImage,
 } from "../widget/shelf";
 import {
+    claudeAssistantText,
     discoverWidgetCatalog,
+    lastClaudeAssistantText,
     readWidgetChanges,
     readWidgetDecisionEvents,
     realWidgetSources,
@@ -4442,5 +4444,40 @@ describe("inbox card images and agent messages", () => {
                 expect(snapshot.sessions.some((entry) => entry.target.provider === "unknown")).toBe(false);
             }
         );
+    });
+});
+
+describe("widget agent result", () => {
+    test("reads the text of a Claude assistant line and ignores everything else", () => {
+        const assistant = {
+            type: "assistant",
+            message: { role: "assistant", content: [{ type: "text", text: "Done." }] },
+        };
+        const toolOnly = { type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: {} }] } };
+        expect(claudeAssistantText(SafeJSON.stringify(assistant))).toBe("Done.");
+        expect(claudeAssistantText(SafeJSON.stringify(toolOnly))).toBeUndefined();
+        expect(claudeAssistantText(SafeJSON.stringify({ type: "user", message: { content: "hi" } }))).toBeUndefined();
+        expect(claudeAssistantText("{not json")).toBeUndefined();
+    });
+
+    test("a large transcript yields its last assistant text from the tail, past a long run of tool output", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "widget-result-"));
+        const file = join(dir, "agent-fixture.jsonl");
+        const result = { type: "assistant", message: { content: [{ type: "text", text: "Final highlights." }] } };
+        // 1 MB of tool results after the answer would hide it from a 256 KB tail; the window must grow.
+        const toolLine = SafeJSON.stringify({
+            type: "user",
+            message: { content: [{ type: "tool_result", content: "x".repeat(4000) }] },
+        });
+        const early = { type: "assistant", message: { content: [{ type: "text", text: "An early answer." }] } };
+        const lines = [
+            SafeJSON.stringify(early),
+            SafeJSON.stringify(result),
+            ...Array.from({ length: 260 }, () => toolLine),
+        ];
+        writeFileSync(file, `${lines.join("\n")}\n`);
+        const size = (await files.stat(file)).size;
+        expect(size).toBeGreaterThan(256 * 1024);
+        expect(await lastClaudeAssistantText(file, size)).toBe("Final highlights.");
     });
 });

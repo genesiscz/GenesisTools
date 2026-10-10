@@ -9,8 +9,10 @@ import type { AskForm, AskItem } from "@app/question/lib/pending/types";
 import { type QaRow, queryEntriesSnapshot, readQuestionSnapshot } from "@app/question/lib/read-model";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { resolveTranscript, transcriptEnvelope } from "@genesiscz/utils/ai/transcripts";
+import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import { runMigrations } from "@genesiscz/utils/database/migrations";
 import type { ImageAttachment } from "@genesiscz/utils/image/attachments";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -273,23 +275,88 @@ export function widgetAgents({ refresh = false }: { refresh?: boolean } = {}): P
     return cachedAgents.promise;
 }
 
+/** The text blocks of one Claude JSONL line when it is an assistant message, else undefined. */
+export function claudeAssistantText(line: string): string | undefined {
+    let parsed: unknown;
+    try {
+        parsed = SafeJSON.parse(line, { strict: true });
+    } catch (error) {
+        logger.debug({ error }, "Widget result: skipped an unreadable transcript line");
+        return undefined;
+    }
+
+    if (!parsed || typeof parsed !== "object" || !("type" in parsed) || parsed.type !== "assistant") {
+        return undefined;
+    }
+
+    const message = "message" in parsed ? parsed.message : undefined;
+    const content = message && typeof message === "object" && "content" in message ? message.content : undefined;
+    if (typeof content === "string") {
+        return content.trim() || undefined;
+    }
+
+    if (!Array.isArray(content)) {
+        return undefined;
+    }
+
+    const texts = content.flatMap((block: unknown) =>
+        block &&
+        typeof block === "object" &&
+        "type" in block &&
+        block.type === "text" &&
+        "text" in block &&
+        typeof block.text === "string"
+            ? [block.text]
+            : []
+    );
+    return texts.join("\n").trim() || undefined;
+}
+
+/**
+ * The last assistant text of a Claude transcript, read from the end of the file: the result of a 300 MB lead costs a
+ * few hundred KB instead of a whole parse. Grows the window until it finds one or has read the whole file.
+ */
+export async function lastClaudeAssistantText(filePath: string, size: number): Promise<string> {
+    for (const bytes of [256 * 1024, 2 * 1024 * 1024, 16 * 1024 * 1024]) {
+        const lines = await readTailBytes(filePath, bytes);
+        for (let index = lines.length - 1; index >= 0; index--) {
+            const text = claudeAssistantText(lines[index]);
+            if (text) {
+                return text;
+            }
+        }
+
+        if (bytes >= size) {
+            break;
+        }
+    }
+
+    return "";
+}
+
 const resultCache = new Map<string, { mtime: number; text: string }>();
 async function widgetResult(node: AgentNode): Promise<string> {
     if (!node.filePath || !existsSync(node.filePath)) {
         return "";
     }
     const stat = statSync(node.filePath);
-    if (stat.size > 8 * 1024 * 1024) {
-        return "This transcript is large. Open Conversation or Hub to read the result.";
-    }
     const cached = resultCache.get(node.filePath);
     if (cached?.mtime === stat.mtimeMs) {
         return cached.text;
     }
-    const resolved = await resolveTranscript(node.filePath, {}, node.harness);
-    const envelope = await transcriptEnvelope(resolved, { limit: 20 });
-    const text =
-        envelope.turns.findLast((turn) => turn.role === "assistant" && turn.text.trim())?.text.slice(0, 32_000) ?? "";
+    // A large transcript used to show "open Conversation or Hub": the widget must show the result itself.
+    let text: string;
+    if (stat.size > 8 * 1024 * 1024 && node.harness === "claude") {
+        text = (await lastClaudeAssistantText(node.filePath, stat.size)).slice(0, 32_000);
+    } else if (stat.size > 8 * 1024 * 1024) {
+        text = "";
+    } else {
+        const resolved = await resolveTranscript(node.filePath, {}, node.harness);
+        const envelope = await transcriptEnvelope(resolved, { limit: 20 });
+        text =
+            envelope.turns.findLast((turn) => turn.role === "assistant" && turn.text.trim())?.text.slice(0, 32_000) ??
+            "";
+    }
     if (resultCache.size >= 100) {
         resultCache.clear();
     }

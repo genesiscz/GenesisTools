@@ -506,8 +506,15 @@ public struct LiveWidgetView: View {
             }
             .buttonStyle(.genHover()).font(.caption)
             ForEach(Array(card.refs.enumerated()), id: \.offset) { _, ref in
-                Button(ref.value) { openReference(ref.value) }.buttonStyle(.link).font(.caption).lineLimit(1)
-                    .truncationMode(.middle).pointerCursor()
+                if ref.value.hasPrefix("/") {
+                    // A file is the shared path label (short, with reveal, copy and Cursor), never a raw absolute
+                    // path. A transcript is named as such: its result is the text above, not raw JSON to open.
+                    PathLabel(path: ref.value, font: .caption,
+                              title: ref.value.hasSuffix(".jsonl") ? "Transcript" : nil)
+                } else {
+                    Button(ref.value) { openReference(ref.value) }.buttonStyle(.link).font(.caption).lineLimit(1)
+                        .truncationMode(.middle).pointerCursor()
+                }
             }
         }
     }
