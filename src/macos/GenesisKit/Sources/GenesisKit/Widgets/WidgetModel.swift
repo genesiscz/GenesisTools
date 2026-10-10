@@ -111,6 +111,11 @@ public final class WidgetModel: ObservableObject {
     private var settingsOnly = false
     private var settingsTask: Task<Void, Never>?
     private var settingsRefreshAgain = false
+    /// Bumped when a preference write starts and when it lands. A settings snapshot read across either holds the
+    /// preferences from before the write; applied, it undid the optimistic change, and the next toggle built its
+    /// patch on that stale layout, so two quick module toggles lost one (settings V2 pass, 2026-10-10).
+    private var preferenceWriteEpoch = 0
+    private var preferenceWritesInFlight = 0
     private var settingsWatcher: DirectoryWatcher?
     private let stateRoot: String?
     private let journal: URL
@@ -256,13 +261,20 @@ public final class WidgetModel: ObservableObject {
             return
         }
         settingsRefreshAgain = false
+        let epoch = preferenceWriteEpoch
+        let clean = preferenceWritesInFlight == 0
         settingsTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let result = try await self.bridge.run(
                     subcommand: "hub", args: self.widgetArgs + ["snapshot", "--json"], timeoutSeconds: 30)
                 guard result.exitCode == 0 else { throw ToolsBridgeError.refused(result.stderr) }
-                if !Task.isCancelled { self.receive([result.stdout]) }
+                let current = clean && epoch == self.preferenceWriteEpoch
+                if !Task.isCancelled, current || self.snapshot == nil {
+                    self.receive([result.stdout])
+                } else if !current {
+                    self.settingsRefreshAgain = true
+                }
             } catch {
                 if !Task.isCancelled { self.report(error) }
             }
@@ -818,7 +830,11 @@ public final class WidgetModel: ObservableObject {
     private func flushPreferences() {
         let patch = pendingPreferences
         guard !patch.isEmpty else { return }
+        preferenceWriteEpoch += 1
+        preferenceWritesInFlight += 1
         func acknowledge() {
+            preferenceWriteEpoch += 1
+            preferenceWritesInFlight -= 1
             for (key, value) in patch where pendingPreferences[key] == value {
                 pendingPreferences.removeValue(forKey: key)
             }
