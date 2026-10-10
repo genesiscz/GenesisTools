@@ -13,6 +13,12 @@ import { widgetRoot } from "./storage";
  */
 export const WIDGET_ROSTER_CACHE_MAX_AGE_MS = 90_000;
 
+/**
+ * How old a cache the watch still shows at start-up, before its own first read lands (2 s cold at load 75, ~10 s
+ * under heavy load). Older than this, the list would mislead more than the "Connecting" placeholder does.
+ */
+export const WIDGET_ROSTER_WARM_START_MAX_AGE_MS = 24 * 3_600_000;
+
 interface WidgetRosterCacheFile extends WidgetRoster {
     version: 1;
     pid: number;
@@ -102,6 +108,14 @@ export async function readWidgetRosterCache({
         logger.debug({ error, path }, "Widget roster cache unreadable; reading the index");
         return undefined;
     }
+}
+
+/**
+ * The roster the previous watch of this state root last showed, for the first snapshot of a new watch. Its writer is
+ * not asked to be alive: the new watch holds the root's lock, so the writer is that previous watch, now gone.
+ */
+export function readWarmStartRoster(root?: string): Promise<WidgetRoster | undefined> {
+    return readWidgetRosterCache({ root, maxAgeMs: WIDGET_ROSTER_WARM_START_MAX_AGE_MS, alive: () => true });
 }
 
 /**

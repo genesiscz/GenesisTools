@@ -4150,6 +4150,97 @@ describe("background Widget roster", () => {
         });
     });
 
+    test("a seeded roster shows until the first run lands and never replaces a completed one", () => {
+        const f = scheduled();
+        try {
+            const cached = { generatedAt: "cached", parents: [], orphans: [] };
+            f.reader.seed({ rows: [], agents: cached });
+            expect(f.roster()).toBe("cached");
+            expect(f.changes()).toBe(0);
+            f.reader.refresh();
+            expect(f.requests).toEqual([{ id: 1 }]);
+            f.reply(1);
+            expect(f.roster()).toBe("run 1");
+            f.reader.seed({ rows: [], agents: cached });
+            expect(f.roster()).toBe("run 1");
+        } finally {
+            f.reader.stop();
+        }
+    });
+
+    async function firstWatchSnapshot(directory: string) {
+        const refresh = spyOn(WidgetRosterReader.prototype, "refresh").mockImplementation(() => {});
+        const request = spyOn(WidgetRosterReader.prototype, "request").mockImplementation(() => {});
+        const controller = new AbortController();
+        let first!: (snapshot: Awaited<ReturnType<typeof widgetSnapshot>>) => void;
+        const emitted = new Promise<Awaited<ReturnType<typeof widgetSnapshot>>>((resolve) => {
+            first = resolve;
+        });
+        const worker = watchWidget({
+            root: directory,
+            signal: controller.signal,
+            emit: (snapshot) => first(snapshot),
+            dependencies: {
+                inboxPaths: {
+                    answerLog: join(directory, "question/log"),
+                    database: join(directory, "question/qa.db"),
+                    decisions: join(directory, "question/decisions.jsonl"),
+                },
+                watchInbox: async () => ({ active: true, errorCount: 0, unsubscribe: async () => {} }),
+                sessionRoots: { claude: [], codex: [], grok: [] },
+                dispatcher: {
+                    validate: async () => {},
+                    dispatch: async () => ({ delivered: true, channel: "fixture" }),
+                },
+            },
+        });
+        try {
+            return await withTimeout(emitted, 5000);
+        } finally {
+            controller.abort();
+            await withTimeout(worker, 5000);
+            refresh.mockRestore();
+            request.mockRestore();
+        }
+    }
+
+    test("a new watch's first snapshot shows the previous watch's roster before its own first read", async () => {
+        const directory = await root();
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {
+            const row = {
+                provider: "claude" as const,
+                sessionId: "fixture-session",
+                title: "Invented fixture session",
+                cwd: "/fixture/project",
+                cwdShort: "/fixture/project",
+                project: "fixture",
+                mtime: 1_791_000_000_000,
+                model: null,
+                account: null,
+                filePath: "/fixture/project/fixture-session.jsonl",
+            };
+            const agents = { generatedAt: "previous watch", parents: [], orphans: [] };
+            // Written by a watch that has exited: its pid is dead, which a one-shot reader refuses and a new watch accepts.
+            await writeWidgetRosterCache({ root: directory, roster: { rows: [row], agents } });
+            const cache = join(directory, "roster-cache.json");
+            const file = SafeJSON.parse(await readFile(cache, "utf8"), { strict: true });
+            await writeFile(cache, SafeJSON.stringify({ ...file, pid: 2_147_483_646 }, { strict: true }));
+            const warm = await firstWatchSnapshot(directory);
+            expect(warm.rosterLoading).toBe(false);
+            expect(warm.sessions.map((session) => session.target.sessionId)).toContain("fixture-session");
+
+            // A day-old cache misleads more than the placeholder: the first snapshot waits for the read.
+            await writeWidgetRosterCache({
+                root: directory,
+                roster: { rows: [row], agents },
+                now: Date.now() - 24 * 3_600_000 - 1000,
+            });
+            const cold = await firstWatchSnapshot(directory);
+            expect(cold.rosterLoading).toBe(true);
+            expect(cold.sessions.map((session) => session.target.sessionId)).not.toContain("fixture-session");
+        });
+    });
+
     test("a one-shot snapshot reads the watch's fresh roster and falls back to the index when it is stale", async () => {
         const directory = await root();
         const agents = { generatedAt: "fixture", parents: [], orphans: [] };

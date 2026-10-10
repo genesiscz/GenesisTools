@@ -15,7 +15,7 @@ import { prepareWidgetAsset } from "../composer/assets";
 import { widgetDispatcher } from "../composer/dispatch";
 import { type OutboxDispatcher, processWidgetOutbox } from "../composer/engine";
 import { recoverWidgetOutbox } from "../composer/outbox";
-import { writeWidgetRosterCache } from "./roster-cache";
+import { readWarmStartRoster, writeWidgetRosterCache } from "./roster-cache";
 import {
     type WidgetRosterProvider,
     type WidgetRosterScope,
@@ -61,6 +61,8 @@ export async function watchWidget({
     await withFileLock(
         join(directory, "worker.lock"),
         async () => {
+            // Cold-start phases, as milliseconds since this process started (the app waits on the first snapshot).
+            prof.record("start lock", performance.now());
             // This lock is the widget's "running" signal; refreshing now keeps the plugin hooks' state file current.
             nativeInboxState({ refresh: true });
             await recoverWidgetOutbox(directory);
@@ -86,6 +88,7 @@ export async function watchWidget({
             let dispatchTask: Promise<void> | undefined;
             let last = "";
             const startedAt = Date.now();
+            let emitted = false;
             const profiledInbox = new Map<string, { at: number; id: string }>();
             const refresh = async () => {
                 const state = await readWidgetState(directory);
@@ -172,6 +175,14 @@ export async function watchWidget({
                             }
                         }
                     }
+                    if (!emitted) {
+                        emitted = true;
+                        prof.record(
+                            "start first snapshot",
+                            performance.now(),
+                            snapshot.rosterLoading ? "roster loading" : `sessions=${snapshot.sessions.length}`
+                        );
+                    }
                     emit(snapshot);
                 }
             };
@@ -201,8 +212,13 @@ export async function watchWidget({
                 await refreshing;
             };
             if (!dependencies.snapshot) {
+                let rosterReady = false;
                 roster = new WidgetRosterReader({
                     changed: () => {
+                        if (!rosterReady) {
+                            rosterReady = true;
+                            prof.record("start first roster", performance.now());
+                        }
                         // One-shot snapshots (the settings page) read this instead of rebuilding the tree cold.
                         if (roster && !roster.error && roster.agents.generatedAt) {
                             const { rows, agents } = roster;
@@ -213,6 +229,14 @@ export async function watchWidget({
                         void requestRefresh();
                     },
                 });
+                // The first read of a fresh worker takes seconds; until it lands, show what the previous watch of this
+                // root last showed, and start that read now so the worker boots while the watchers are set up.
+                const warm = await readWarmStartRoster(directory);
+                if (warm) {
+                    roster.seed(warm);
+                }
+                prof.record("start roster cache", performance.now(), warm ? "seeded" : "none");
+                roster.refresh();
             }
             const subscription = watchPath(join(directory, "state.json"), requestRefresh, { debounceMs: 180 });
             let queueSubscription: WatcherSubscription | undefined;
@@ -301,9 +325,9 @@ export async function watchWidget({
                         signal,
                     }));
                 }
+                prof.record("start watchers armed", performance.now());
                 scheduleSafety();
-                // The index read shows the list at once; the full refresh then catches up in the same resident worker.
-                roster?.refresh();
+                // The full refresh catches up behind the first read, in the same resident worker.
                 roster?.request(["all"], { immediate: true });
                 await requestRefresh();
                 await new Promise<void>((resolve) => {
