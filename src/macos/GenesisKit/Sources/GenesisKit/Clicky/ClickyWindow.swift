@@ -23,5 +23,8 @@ public final class ClickyWindowController {
 
     public func show(pageID: String? = nil) { settings.show(pageID: pageID) }
 
+    /// The window on `pageID`, built but not shown (a `--snapshot` run orders it in invisibly).
+    public func prepare(pageID: String? = nil) -> NSWindow { settings.prepare(pageID: pageID) }
+
     public func close() { settings.close() }
 }
