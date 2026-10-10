@@ -58,6 +58,12 @@ final class ClickyHost: NSObject {
         }
     }
 
+    /// `--clicky --page <id> --headless`: the live Settings window, drawn but never on screen or key, so its controls
+    /// can be driven through accessibility (`tools control act --by-identifier`) without taking the user's focus.
+    func showSettingsHeadless(pageID: String?) {
+        settings.prepare(pageID: pageID).orderInForSnapshot()
+    }
+
     func showSettings(pageID: String? = nil) {
         start(standalone: standalone)
         popover?.close()

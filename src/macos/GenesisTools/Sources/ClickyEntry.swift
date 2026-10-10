@@ -17,15 +17,19 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
     private var terminationReplied = false
 
     private let snapshotPath: String?
+    private let headless: Bool
+    /// A `--snapshot` or `--headless` run: no Flow/Focus services, no status item, no Clicky, never on screen.
+    private var offscreen: Bool { snapshotPath != nil || headless }
 
-    init(descriptor: Int32, pageID: String?, snapshotPath: String? = nil) {
+    init(descriptor: Int32, pageID: String?, snapshotPath: String? = nil, headless: Bool = false) {
         self.descriptor = descriptor
         self.initialPageID = pageID
         self.snapshotPath = snapshotPath
+        self.headless = headless
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if snapshotPath == nil { observeSettingsRequests() }
+        if !offscreen { observeSettingsRequests() }
         launch()
     }
 
@@ -61,8 +65,7 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
             guard let transforms else { throw CancellationError() }
             return try await transforms.run(request)
         }
-        // A snapshot run only draws the pages: no Flow/Focus services, no status item, no Clicky.
-        if snapshotPath == nil { runtimeStart = Task { await runtime.start() } }
+        if !offscreen { runtimeStart = Task { await runtime.start() } }
         for section in WidgetFeatureSettings.sections(
             model: model, modules: WidgetModuleChoice.builtins, flowRuntime: runtime, transforms: transforms,
             openSession: { session in
@@ -80,6 +83,10 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
         if let snapshotPath {
             let delay = Double(snapshotArgument("--snapshot-delay") ?? "") ?? 2
             ClickyHost.shared.snapshotSettings(pageID: initialPageID, to: snapshotPath, delay: delay)
+            return
+        }
+        if headless {
+            ClickyHost.shared.showSettingsHeadless(pageID: initialPageID)
             return
         }
 
@@ -147,9 +154,11 @@ func runClicky(_ args: [String] = []) -> Never {
         let snapshotPath = args.firstIndex(of: "--snapshot").flatMap { index in
             args.indices.contains(index + 1) ? args[index + 1] : nil
         }
-        if let snapshotPath {
+        let headless = args.contains("--headless")
+        if snapshotPath != nil || headless {
             let app = NSApplication.shared
-            let delegate = ClickyAppDelegate(descriptor: -1, pageID: pageID, snapshotPath: snapshotPath)
+            let delegate = ClickyAppDelegate(
+                descriptor: -1, pageID: pageID, snapshotPath: snapshotPath, headless: headless)
             app.delegate = delegate
             app.setActivationPolicy(.prohibited)
             app.run()
