@@ -30,7 +30,7 @@ public struct WidgetModuleChoice: Identifiable {
             id: "tasks", title: "Tasks", symbol: "checklist",
             detail: "A small, local list for the work in front of you."),
         .init(
-            id: "focus", title: "Flow", symbol: "waveform.circle.fill",
+            id: "focus", title: "Flow", symbol: "mic.circle.fill",
             detail: "Dictation, focus sessions and your Focus Studio."),
         .init(
             id: "voice", title: "Voice Notes", symbol: "mic.fill",
@@ -48,7 +48,7 @@ public enum WidgetFeatureSettings {
         openSession: @escaping (WidgetSession) -> Void
     ) -> [NativeSettingsSection] {
         var dictationPages = [NativeSettingsPage(
-            id: "dictation.voice", title: "Voice Notes", symbol: "waveform", tint: .pink,
+            id: "dictation.voice", title: "Voice Notes", symbol: "recordingtape", tint: .pink,
             subtitle: "Choose the speech provider for voice notes and agent drafts.") {
                 WidgetDictationSettings(model: model)
             }]
