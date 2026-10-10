@@ -472,7 +472,6 @@ public struct FocusBreakdownView: View {
         Text(title)
             .font(GenTypography.caption(10, weight: .semibold))
             .foregroundStyle(Color.genTextTertiary)
-            .textCase(.uppercase)
             .padding(.top, GenSpacing.sm)
             .padding(.bottom, GenSpacing.xs)
 

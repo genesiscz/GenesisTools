@@ -39,7 +39,7 @@ public struct NativeSettingsThemePicker: View {
                             }
                         }
                     }.frame(maxWidth: .infinity)
-                }.buttonStyle(.genHoverPlain()).accessibilityLabel("Theme: \(theme.title)")
+                }.buttonStyle(.genHoverPlain()).nativeSettingsPointer().accessibilityLabel("Theme: \(theme.title)")
                     .accessibilityIdentifier("settings.theme.\(theme.id)")
                     .accessibilityAddTraits(selection == theme ? .isSelected : [])
             }

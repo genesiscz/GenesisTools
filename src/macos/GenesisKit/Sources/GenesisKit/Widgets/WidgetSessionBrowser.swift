@@ -38,10 +38,18 @@ public struct WidgetSessionBrowser: View {
                     Text("Loading more agents…").font(.caption).foregroundStyle(.secondary)
                 }
             }
-            if groups.isEmpty && model.snapshot?.rosterLoading == true {
+            if groups.isEmpty && (model.snapshot == nil || model.snapshot?.rosterLoading == true) && model.error == nil {
+                // No snapshot yet is a load in progress, not an empty search result.
                 ProgressView("Loading your agents…").frame(maxWidth: .infinity).padding(20)
-            } else if groups.isEmpty {
+            } else if groups.isEmpty && !query.isEmpty {
                 ContentUnavailableView.search(text: query).frame(maxWidth: .infinity)
+            } else if groups.isEmpty {
+                ContentUnavailableView(
+                    onlyPinned ? "No pinned sessions" : "No sessions yet", systemImage: "rectangle.stack",
+                    description: Text(onlyPinned
+                        ? "Pin a session to keep it in the widget, or turn off Pinned only."
+                        : "Claude, Codex and Grok sessions on this Mac appear here once an agent runs."))
+                    .frame(maxWidth: .infinity)
             } else {
                 ForEach(Array(groups.prefix(limit))) { group in
                     if group.children.isEmpty {

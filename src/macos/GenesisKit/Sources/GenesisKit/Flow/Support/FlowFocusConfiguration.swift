@@ -17,7 +17,9 @@ public final class FlowFocusConfiguration: ObservableObject {
     public var allowsWrites = false
     public let directory: URL
     private var cachedApp: [String: Any]
-    private let writes = DispatchQueue(label: "dev.genesis.flow-focus.configuration", qos: .utility)
+    /// Writes run one after another, in the order they were made, off the main actor. The last one is kept so the
+    /// next write and `flush()` can wait for it; waiting for the cross-process lock suspends instead of sleeping a thread.
+    private var lastWrite: Task<Void, Never>?
 
     public init(directory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis")) {
         self.directory = directory
@@ -78,24 +80,19 @@ public final class FlowFocusConfiguration: ObservableObject {
         applyPatch([key: value])
     }
 
+    /// Writes every Focus setting the Settings page shows, under the same `app.focus` keys `FocusSettings.from` and
+    /// `PomodoroPlan.from` read: the switches, the exclusion lists, the project rules and the timer.
     func updateFocus(settings: FocusSettings, plan: PomodoroPlan) {
-        applyPatch(["focus": [
-            "captureEnabled": settings.captureEnabled,
-            "titleMode": settings.titleMode.rawValue,
-            "urlMode": settings.urlMode.rawValue,
-            "idleThresholdSec": settings.idleThresholdSec,
-            "interruptionThresholdSec": settings.interruptionThresholdSec,
-            "retentionDays": settings.retentionDays,
-            "menuBarStyle": settings.menuBarStyle,
-            "timer": [
-                "flowSec": plan.flowSec, "shortBreakSec": plan.shortBreakSec,
-                "longBreakSec": plan.longBreakSec, "cycleLength": plan.cycleLength,
-                "autoStartBreaks": plan.autoStartBreaks, "autoStartFlows": plan.autoStartFlows,
-                "allowOverrun": plan.allowOverrun, "dndWhileFlowing": plan.dndWhileFlowing,
-                "sound": plan.sound, "idlePauseSec": plan.idlePauseSec,
-                "resumeOnActivity": plan.resumeOnActivity, "nudgeEverySec": plan.nudgeEverySec,
-            ],
-        ]])
+        var focus = settings.storedFields
+        focus["timer"] = [
+            "flowSec": plan.flowSec, "shortBreakSec": plan.shortBreakSec,
+            "longBreakSec": plan.longBreakSec, "cycleLength": plan.cycleLength,
+            "autoStartBreaks": plan.autoStartBreaks, "autoStartFlows": plan.autoStartFlows,
+            "allowOverrun": plan.allowOverrun, "dndWhileFlowing": plan.dndWhileFlowing,
+            "sound": plan.sound, "idlePauseSec": plan.idlePauseSec,
+            "resumeOnActivity": plan.resumeOnActivity, "nudgeEverySec": plan.nudgeEverySec,
+        ] as [String: Any]
+        applyPatch(["focus": focus])
     }
 
     func applyPatch(_ patch: [String: Any]) {
@@ -120,15 +117,18 @@ public final class FlowFocusConfiguration: ObservableObject {
             lastError = nil
             revision &+= 1
             let directory = self.directory
-            writes.async { [weak self] in
+            let previous = lastWrite
+            lastWrite = Task.detached(priority: .utility) { [weak self] in
+                await previous?.value
+                let failure: String?
                 do {
-                    try Self.persist(data, directory: directory)
-                    Task { @MainActor in self?.finishedWrite(id, error: nil) }
+                    try await Self.persist(data, directory: directory)
+                    failure = nil
                 } catch {
                     FlowFocusLog.focus.error("configuration write failed: \(error.localizedDescription)")
-                    let message = error.localizedDescription
-                    Task { @MainActor in self?.finishedWrite(id, error: message) }
+                    failure = error.localizedDescription
                 }
+                await self?.finishedWrite(id, error: failure)
             }
         } catch { reportFailure(error.localizedDescription) }
     }
@@ -143,10 +143,9 @@ public final class FlowFocusConfiguration: ObservableObject {
         }
     }
 
+    /// Waits until every write made before this call has reached disk (or failed).
     public func flush() async {
-        await withCheckedContinuation { continuation in
-            writes.async { continuation.resume() }
-        }
+        await lastWrite?.value
     }
 
     nonisolated static func merge(_ original: [String: Any], _ patch: [String: Any]) -> [String: Any] {
@@ -230,8 +229,9 @@ public final class FlowFocusConfiguration: ObservableObject {
     }
 
     /// Matches ConfigStore and the CLI's O_EXCL protocol. Runs off the main thread and never
-    /// falls back to an unlocked write when another writer has not released its lock.
-    nonisolated static func persist(_ data: Data, directory: URL, lockTimeout: TimeInterval = 5) throws {
+    /// falls back to an unlocked write when another writer has not released its lock. While another writer holds
+    /// the lock it suspends (no thread is held) and retries every 100 ms until `lockTimeout`, then throws.
+    nonisolated static func persist(_ data: Data, directory: URL, lockTimeout: TimeInterval = 5) async throws {
         let patch = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
@@ -254,7 +254,8 @@ public final class FlowFocusConfiguration: ObservableObject {
                 throw NSError(domain: "FlowFocusConfiguration", code: 1,
                               userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for client.json.lock"])
             }
-            Thread.sleep(forTimeInterval: min(0.1, max(0, deadline.timeIntervalSinceNow)))
+            let pause = min(0.1, max(0, deadline.timeIntervalSinceNow))
+            try await Task.sleep(nanoseconds: UInt64(pause * 1_000_000_000))
         }
         defer {
             do { try FileManager.default.removeItem(at: lock) }
