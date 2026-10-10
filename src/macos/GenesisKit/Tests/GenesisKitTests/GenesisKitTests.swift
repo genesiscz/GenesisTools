@@ -370,6 +370,8 @@ private final class ShelfDraftBackend {
     var resolve: (() async throws -> Void)?
     var beforeSave: (() async throws -> Void)?
     var textSaved: (() -> Void)?
+    var beforeAppend: (() async throws -> Void)?
+    var beforeTextSave: (() async throws -> Void)?
 
     func run(_ value: WidgetJSON) async throws -> WidgetJSON {
         guard case .object(let fields) = value, case .string(let action) = fields["action"] else {
@@ -388,7 +390,16 @@ private final class ShelfDraftBackend {
         case "draft":
             try await beforeSave?()
             drafts[key] = try JSONDecoder().decode(WidgetDraft.self, from: JSONEncoder().encode(fields["draft"]))
+        case "append-draft":
+            try await beforeAppend?()
+            var draft = drafts[key] ?? WidgetDraft()
+            if case .string(let text) = fields["text"] {
+                draft.text = [draft.text, text].filter { !$0.isEmpty }.joined(separator: " ")
+            }
+            drafts[key] = draft
+            return try .value(draft)
         case "draft-text":
+            try await beforeTextSave?()
             if case .string(let text) = fields["text"] {
                 var draft = drafts[key] ?? WidgetDraft()
                 draft.text = text
@@ -426,6 +437,198 @@ private final class ShelfDraftGate {
         let pending = continuation
         continuation = nil
         pending?.resume()
+    }
+}
+
+@MainActor
+final class WidgetVoiceDraftOrderingTests: XCTestCase {
+    private func model(_ backend: ShelfDraftBackend) -> WidgetModel {
+        let defaults = UserDefaults(suiteName: "voice-attach-\(UUID().uuidString)")!
+        let appearance = NativeSettingsAppearance(defaults: defaults, notificationNamespace: "voice.fixture.\(UUID())", observeExternalChanges: false)
+        let model = WidgetModel(binaryPath: "/fixture/no-process", defaults: defaults, appearance: appearance)
+        model.actionRunner = backend.run
+        return model
+    }
+    private func note() throws -> WidgetVoiceNote {
+        try JSONDecoder().decode(WidgetVoiceNote.self, from: Data(#"{"id":"note-fixture","revision":1,"createdAt":1,"clip":{"path":"/fixture/audio.pcm","bytes":3200,"durationMs":100},"text":"Voice words","recognizedText":"Voice words","transcription":"ready"}"#.utf8))
+    }
+    private func barrier(_ model: WidgetModel) async {
+        let saved = expectation(description: "queue drained")
+        model.action(["action": "fixture-barrier"], completed: { saved.fulfill() })
+        await fulfillment(of: [saved], timeout: 2)
+    }
+    func testHostVoiceActionOpensNotesWithoutStartingLegacyListener() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("voice-routing-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let binary = root.appendingPathComponent("tools")
+        let marker = root.appendingPathComponent("voice-invoked")
+        let snapshot = #"{"version":1,"state":{"version":1,"revision":0,"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"fixture","voiceLanguage":"en"},"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}"#
+        try "#!/bin/sh\nif [ \"$1\" = voice ]; then echo \"$*\" > '\(marker.path)'; exit 0; fi\nprintf '%s\\n' '\(snapshot)'\n".write(to: binary, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
+        let defaults = UserDefaults(suiteName: "voice-routing-\(UUID())")!
+        let model = WidgetModel(binaryPath: binary.path, stateRoot: root.path, defaults: defaults)
+        defer { model.stop() }
+        let loaded = expectation(description: "snapshot loaded")
+        let subscription = model.$snapshot.compactMap { $0 }.prefix(1).sink { _ in loaded.fulfill() }
+        model.startSettings()
+        await fulfillment(of: [loaded], timeout: 3)
+        model.selectedKey = "pinned-recipient"
+        var requested: [String] = []
+        model.recordVoiceNote = { requested.append($0) }
+        model.toggleVoice()
+        XCTAssertEqual(requested, ["pinned-recipient"])
+        XCTAssertEqual(model.voiceActionLabel, "Record voice note")
+        XCTAssertFalse(model.voiceActive)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+        // Control: the same model and executable can still reach the standalone legacy listener.
+        model.recordVoiceNote = nil
+        let finished = expectation(description: "legacy fixture exits")
+        let voiceSubscription = model.$voiceActive.dropFirst().filter { !$0 }.prefix(1).sink { _ in finished.fulfill() }
+        model.toggleVoice()
+        await fulfillment(of: [finished], timeout: 3)
+        XCTAssertTrue(try String(contentsOf: marker, encoding: .utf8).contains("voice listen"))
+        withExtendedLifetime((subscription, voiceSubscription)) {}
+    }
+
+    func testCoordinatorRegistersModulesAndSettingsOverInjectedRuntimeWithoutStartingIt() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("voice-host-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let runtime = FlowFocusRuntime(dataRoot: directory, hostID: "fixture.preview", liveServices: false,
+            presentsWindows: false, sharedModels: false)
+        let coordinator = WidgetCoordinator(binaryPath: "/fixture/no-process", stateRoot: directory.path,
+            flowRuntime: runtime, micLauncher: "/fixture/Preview", openHub: { _ in })
+        XCTAssertTrue(coordinator.flowRuntime === runtime)
+        XCTAssertEqual(runtime.role, .stopped)
+        XCTAssertNotNil(coordinator.modules.module("focus"))
+        XCTAssertNotNil(coordinator.modules.module("voice"))
+        let sections = WidgetFeatureSettings.sections(model: coordinator.model, modules: WidgetModuleChoice.builtins,
+            flowRuntime: runtime, transforms: coordinator.transforms, openSession: { _ in })
+        let ids = sections.flatMap(\.pages).map(\.id)
+        XCTAssertEqual(Set(ids).count, ids.count)
+        XCTAssertTrue(ids.contains("dictation.voice"))
+        XCTAssertTrue(ids.contains("dictation.flow"))
+        XCTAssertTrue(ids.contains("dictation.transforms"))
+        XCTAssertTrue(ids.contains("focus.general"))
+        await coordinator.shutdown()
+        await coordinator.shutdown()
+        XCTAssertEqual(runtime.role, .stopped)
+    }
+
+    func testExplicitAttachPreservesDirtyTextFilesAndNonselectedRecipient() async throws {
+        let backend = ShelfDraftBackend()
+        backend.drafts["chosen"] = WidgetDraft(text: "Old", assetIds: ["existing-file"])
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        model.setText("Fresh")
+        model.selectedKey = "another"
+        try await model.attachVoiceNote(note(), to: "chosen")
+        XCTAssertEqual(backend.drafts["chosen"]?.text, "Fresh Voice words")
+        XCTAssertEqual(backend.drafts["chosen"]?.assetIds, ["existing-file"])
+        XCTAssertEqual(model.drafts["chosen"], backend.drafts["chosen"])
+        XCTAssertNil(backend.drafts["another"])
+        XCTAssertEqual(model.selectedKey, "another")
+        XCTAssertFalse(backend.calls.contains("enqueue"))
+    }
+    func testOversizedAttachIsRefusedBeforeAnyBackendWrite() async throws {
+        let backend = ShelfDraftBackend()
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        let typed = String(repeating: "a", count: WidgetModel.draftTextLimit - 11)
+        model.setText(typed)
+        do {
+            try await model.attachVoiceNote(note(), to: "chosen")
+            XCTFail("an attachment past the draft limit must be refused")
+        } catch ToolsBridgeError.refused(let message) {
+            XCTAssertEqual(message, "The combined draft is too long. Shorten it before attaching.")
+        }
+        XCTAssertFalse(backend.calls.contains("append-draft"))
+        XCTAssertFalse(backend.drafts["chosen"]?.text.contains("Voice words") ?? false)
+        XCTAssertEqual(model.drafts["chosen"]?.text, typed)
+    }
+    func testAttachThatExactlyFillsTheDraftLimitStillAppends() async throws {
+        let backend = ShelfDraftBackend()
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        let typed = String(repeating: "a", count: WidgetModel.draftTextLimit - 12)
+        model.setText(typed)
+        try await model.attachVoiceNote(note(), to: "chosen")
+        XCTAssertTrue(backend.calls.contains("append-draft"))
+        XCTAssertEqual(backend.drafts["chosen"]?.text, typed + " Voice words")
+        XCTAssertEqual(backend.drafts["chosen"]?.text.count, WidgetModel.draftTextLimit)
+    }
+    func testTypingDuringAppendIsMergedAndLaterTypingWinsFinalSave() async throws {
+        let backend = ShelfDraftBackend()
+        backend.drafts["chosen"] = WidgetDraft(text: "Initial", assetIds: ["image"])
+        let appendStarted = expectation(description: "append")
+        let gate = ShelfDraftGate()
+        backend.beforeAppend = { appendStarted.fulfill(); await gate.wait(timeout: .seconds(5)) }
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        let attachment = Task { try await model.attachVoiceNote(self.note(), to: "chosen") }
+        await fulfillment(of: [appendStarted], timeout: 2)
+        model.setText("Typed during append")
+        gate.open()
+        try await attachment.value
+        XCTAssertEqual(model.drafts["chosen"]?.text, "Typed during append Voice words")
+        XCTAssertEqual(backend.drafts["chosen"]?.text, "Typed during append Voice words")
+        XCTAssertEqual(backend.drafts["chosen"]?.assetIds, ["image"])
+    }
+    func testTypingDuringInitialFlushIsNotLost() async throws {
+        let backend = ShelfDraftBackend()
+        let flushStarted = expectation(description: "initial flush")
+        let gate = ShelfDraftGate()
+        var writes = 0
+        backend.beforeTextSave = { writes += 1; if writes == 1 { flushStarted.fulfill(); await gate.wait(timeout: .seconds(5)) } }
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        model.setText("First")
+        let attachment = Task { try await model.attachVoiceNote(self.note(), to: "chosen") }
+        await fulfillment(of: [flushStarted], timeout: 2)
+        model.setText("New typing")
+        gate.open()
+        try await attachment.value
+        XCTAssertEqual(backend.drafts["chosen"]?.text, "New typing Voice words")
+    }
+    func testTypingDuringFinalSaveRemainsQueuedAfterAttachment() async throws {
+        let backend = ShelfDraftBackend()
+        backend.drafts["chosen"] = WidgetDraft(text: "Initial", assetIds: ["file"])
+        let saving = expectation(description: "final save")
+        let gate = ShelfDraftGate()
+        var writes = 0
+        backend.beforeTextSave = { writes += 1; if writes == 1 { saving.fulfill(); await gate.wait(timeout: .seconds(5)) } }
+        let model = model(backend)
+        defer { model.stop() }
+        model.selectedKey = "chosen"
+        let attachment = Task { try await model.attachVoiceNote(self.note(), to: "chosen") }
+        await fulfillment(of: [saving], timeout: 2)
+        model.setText("Reviewed after attachment")
+        model.action(["action": "draft-text", "key": "chosen", "text": "Reviewed after attachment"])
+        gate.open()
+        try await attachment.value
+        await barrier(model)
+        XCTAssertEqual(backend.drafts["chosen"]?.text, "Reviewed after attachment")
+        XCTAssertEqual(model.drafts["chosen"]?.text, "Reviewed after attachment")
+        XCTAssertEqual(backend.drafts["chosen"]?.assetIds, ["file"])
+    }
+    func testCancellationBeforeAppendDoesNotSendOrAppendText() async throws {
+        let backend = ShelfDraftBackend()
+        backend.drafts["chosen"] = WidgetDraft(text: "Keep", assetIds: ["file"])
+        let began = expectation(description: "append begins")
+        backend.beforeAppend = { began.fulfill(); try await Task.sleep(for: .seconds(30)) }
+        let model = model(backend)
+        defer { model.stop() }
+        let attachment = Task { try await model.attachVoiceNote(self.note(), to: "chosen") }
+        await fulfillment(of: [began], timeout: 2)
+        attachment.cancel()
+        do { try await attachment.value; XCTFail("must cancel") } catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertEqual(backend.drafts["chosen"]?.text, "Keep")
+        XCTAssertFalse(backend.calls.contains("enqueue"))
     }
 }
 
@@ -803,5 +1006,240 @@ final class WidgetTasksStoreTests: XCTestCase {
         XCTAssertFalse(store.isLoading)
         XCTAssertTrue(store.tasks.isEmpty)
         XCTAssertNil(store.error)
+    }
+}
+
+@MainActor
+final class WidgetInboxNotificationTests: XCTestCase {
+    private let key = "local:codex:fixture-new:"
+    private func model() -> WidgetModel {
+        let defaults = UserDefaults(suiteName: "widget.inbox.fixture." + UUID().uuidString)!
+        let appearance = NativeSettingsAppearance(defaults: defaults,
+            notificationNamespace: "inbox.fixture." + UUID().uuidString, observeExternalChanges: false)
+        return WidgetModel(binaryPath: "/fixture/tools", stateRoot: FileManager.default.temporaryDirectory.path,
+                           defaults: defaults, appearance: appearance)
+    }
+    /// An `inbox-read` runs on the mutation chain; drain it before asserting that none was sent.
+    private func barrier(_ model: WidgetModel) async {
+        let done = expectation(description: "Mutation queue drained")
+        model.action(["action": "fixture-barrier"], completed: { done.fulfill() })
+        await fulfillment(of: [done], timeout: 2)
+    }
+    private func item(_ id: String, at: Double, pending: Bool = false) -> WidgetInboxItem {
+        WidgetInboxItem(id: (pending ? "form:" : "answer:") + id, sourceId: id,
+                        kind: pending ? "form" : "answer", key: key, at: at, needsAnswer: pending)
+    }
+    func testInboxTooltipDescribesOnlyTheAgentsModule() {
+        let inbox = WidgetInboxSummary(unread: 3, needsAnswer: 1, complete: true, truncated: false, sessions: [])
+        XCTAssertEqual(WidgetHostView.moduleTooltip(id: "agents", title: "Agents", inbox: inbox),
+                       "Inbox: 3 unread, 1 need an answer")
+        XCTAssertEqual(WidgetHostView.moduleTooltip(id: "shelf", title: "Shelf", inbox: inbox), "Shelf")
+        XCTAssertEqual(WidgetHostView.moduleTooltip(id: nil, title: "Widgets", inbox: inbox), "Widgets")
+    }
+    private func summary(_ item: WidgetInboxItem) -> WidgetInboxSummary {
+        WidgetInboxSummary(unread: item.needsAnswer ? 0 : 1, needsAnswer: item.needsAnswer ? 1 : 0,
+            complete: true, truncated: false, sessions: [WidgetInboxSession(key: key,
+                unread: item.needsAnswer ? 0 : 1, needsAnswer: item.needsAnswer ? 1 : 0, latest: item,
+                unreadItem: item.needsAnswer ? nil : item, pendingItem: item.needsAnswer ? item : nil)])
+    }
+    private func snapshot(_ notification: WidgetInboxItem, cardID: String?, selected: String) throws -> String {
+        let old = "local:codex:fixture-old:"
+        let sessions: [[String: Any]] = [old, key].map { value in
+            ["key": value, "target": ["hostId": "local", "provider": "codex", "sessionId": value == key ? "fixture-new" : "fixture-old",
+                "sourceHome": "", "cwd": "/fixture"], "title": "Fixture", "project": "Fixture", "activityAt": 0,
+             "status": notification.needsAnswer ? "waiting" : "recent", "pinned": true, "visible": true, "hiddenByFilter": false]
+        }
+        let cards: [[String: Any]] = cardID.map { id in [["id": id, "kind": notification.kind,
+            "sourceId": notification.sourceId, "sessionKey": selected, "at": notification.at, "title": "Fixture",
+            "body": "Receipt", "status": notification.needsAnswer ? "pending" : "answered", "choices": [],
+            "attachments": [], "refs": [], "read": false]] } ?? []
+        let encoded = try JSONEncoder().encode(summary(notification))
+        let notifications = try JSONSerialization.jsonObject(with: encoded)
+        let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": ["version": 1, "revision": 0,
+            "selectedKey": selected, "preferences": ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
+                "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en"],
+            "assets": [:], "drafts": [:], "outgoing": []], "sessions": sessions, "cards": cards,
+            "manifests": [:], "errors": [], "selectedKey": selected, "notifications": notifications])
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    func testFirstSnapshotAndOlderUnreadFallbackDoNotReplayAttention() {
+        let model = model()
+        defer { model.stop() }
+        let now = Date().timeIntervalSince1970 * 1000
+        model.updateInbox(summary(item("old", at: now - 1000)))
+        XCTAssertEqual(model.inboxCount, 1)
+        XCTAssertEqual(model.inboxPulse, 0)
+        let fresh = summary(item("fresh", at: now + 100_000))
+        model.updateInbox(fresh)
+        XCTAssertEqual(model.inboxPulse, 1)
+        XCTAssertEqual(model.inboxPulseFor(key), 1)
+        model.updateInbox(fresh)
+        model.updateInbox(summary(item("older", at: now - 2000)))
+        XCTAssertEqual(model.inboxPulse, 1)
+        XCTAssertEqual(model.inboxCount, 1)
+    }
+
+    func testIncompleteSnapshotDoesNotSwallowTheArrivalItCannotRaise() {
+        let model = model()
+        defer { model.stop() }
+        let now = Date().timeIntervalSince1970 * 1000
+        model.updateInbox(summary(item("old", at: now - 1000)))
+        var partial = summary(item("fresh", at: now + 100_000))
+        partial.complete = false
+        model.updateInbox(partial)
+        XCTAssertEqual(model.inboxPulse, 0)
+        model.updateInbox(summary(item("fresh", at: now + 100_000)))
+        XCTAssertEqual(model.inboxPulse, 1)
+        XCTAssertEqual(model.inboxPulseFor(key), 1)
+    }
+
+    func testColdRosterNeitherChoosesNorPersistsASelection() async throws {
+        let model = model()
+        defer { model.stop() }
+        var selections = 0
+        model.actionRunner = { value in
+            if case .object(let fields) = value, fields["action"] == .string("selection") { selections += 1 }
+            return ["ok": true]
+        }
+        func line(loading: Bool) throws -> String {
+            let base = try snapshot(item("cold", at: 1), cardID: nil, selected: "")
+            var object = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(base.utf8)) as? [String: Any])
+            object["rosterLoading"] = loading
+            return String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+        }
+        model.receive([try line(loading: true)])
+        await barrier(model)
+        XCTAssertEqual(model.selectedKey, "")
+        XCTAssertEqual(selections, 0)
+        model.receive([try line(loading: false)])
+        await barrier(model)
+        XCTAssertFalse(model.selectedKey.isEmpty)
+        XCTAssertEqual(selections, 1)
+    }
+
+    func testUnavailableThenFirstCompleteSnapshotDoesNotReplayHistoricalItems() {
+        let model = model()
+        defer { model.stop() }
+        model.updateInbox(.empty)
+        model.updateInbox(summary(item("historical", at: 1)))
+        XCTAssertEqual(model.inboxPulse, 0)
+        XCTAssertTrue(model.inbox.complete)
+    }
+
+    func testBadgeNavigationAcknowledgesOnlyTheMatchingOpenedReceipt() async throws {
+        let model = model()
+        defer { model.stop() }
+        let old = "local:codex:fixture-old:"
+        let notification = item("wanted", at: 1)
+        model.selectedKey = old
+        var reads: [WidgetJSON] = []
+        let selected = expectation(description: "Selection saved")
+        let read = expectation(description: "Visible matching receipt acknowledged")
+        model.actionRunner = { value in
+            if case .object(let fields) = value {
+                if fields["action"] == .string("selection") { selected.fulfill() }
+                if fields["action"] == .string("inbox-read") { reads.append(value); read.fulfill() }
+            }
+            return ["ok": true]
+        }
+        model.receive([try snapshot(notification, cardID: "answer:old", selected: old)])
+        model.openInboxNotification(on: .init(edge: .top, group: 0), needsAnswer: false)
+        await fulfillment(of: [selected], timeout: 2)
+        XCTAssertEqual(model.selectedKey, key)
+        XCTAssertEqual(model.selectedCardID, "answer:wanted")
+        await barrier(model)
+        XCTAssertTrue(reads.isEmpty)
+        model.receive([try snapshot(notification, cardID: "answer:unrelated", selected: key)])
+        await barrier(model)
+        XCTAssertTrue(reads.isEmpty)
+        model.receive([try snapshot(notification, cardID: "answer:wanted", selected: key)])
+        await fulfillment(of: [read], timeout: 2)
+        XCTAssertEqual(reads.count, 1)
+        model.receive([try snapshot(notification, cardID: "answer:wanted", selected: key)])
+        await barrier(model)
+        XCTAssertEqual(reads.count, 1)
+    }
+
+    func testOpeningAReadSessionNeverNavigatesToAnotherSessionsUnreadItem() {
+        let model = model()
+        defer { model.stop() }
+        let old = "local:codex:fixture-old:"
+        model.actionRunner = { _ in ["ok": true] }
+        model.updateInbox(summary(item("another-session-question", at: 1, pending: true)))
+        model.openInboxNotification(on: .init(edge: .right), key: old)
+        XCTAssertEqual(model.selectedKey, old)
+        XCTAssertNil(model.selectedCardID)
+    }
+
+    func testReadingPendingQuestionKeepsNeedsAnswerAndCollapseCancelsLateAck() async throws {
+        let model = model()
+        defer { model.stop() }
+        let notification = item("pending", at: 1, pending: true)
+        model.selectedKey = key
+        var reads = 0
+        model.actionRunner = { value in
+            if case .object(let fields) = value, fields["action"] == .string("inbox-read") { reads += 1 }
+            return ["ok": true]
+        }
+        model.receive([try snapshot(notification, cardID: nil, selected: key)])
+        model.openInboxNotification(on: .init(edge: .right, group: 0), needsAnswer: true)
+        model.collapse()
+        model.receive([try snapshot(notification, cardID: notification.id, selected: key)])
+        await barrier(model)
+        XCTAssertEqual(reads, 0)
+        XCTAssertEqual(model.inbox.needsAnswer, 1)
+    }
+}
+
+final class WidgetAgentTreeTests: XCTestCase {
+    private func session(_ key: String, parent: String? = nil, pinned: Bool = true) -> WidgetSession {
+        var value = WidgetSession(key: key,
+            target: .init(hostId: "local", provider: "codex", sessionId: key, sourceHome: "/fixture", cwd: "/fixture/project"),
+            title: key, project: "Fixture", activityAt: 1, status: "recent", pinned: pinned, visible: true, hiddenByFilter: false)
+        value.parentKey = parent
+        return value
+    }
+
+    func testChildrenStayNestedAndSearchRetainsTheirAncestors() {
+        var worker = session("named-worker", parent: "lead")
+        worker.model = "gpt-6.1-sol"
+        let nested = session("nested", parent: "named-worker")
+        let groups = WidgetAgentTree.groups([worker, nested, session("lead"), session("unrelated")])
+        XCTAssertEqual(groups.map(\.id), ["lead", "unrelated"])
+        XCTAssertEqual(groups[0].children.map(\.id), ["named-worker", "nested"])
+        XCTAssertEqual(groups[0].children.map(\.depth), [0, 1])
+        let filtered = WidgetAgentTree.groups([worker, nested, session("lead")], query: "6.1-sol")
+        XCTAssertEqual(filtered.map(\.id), ["lead"])
+        XCTAssertEqual(filtered[0].children.map(\.id), ["named-worker"])
+        let parentMatch = WidgetAgentTree.groups([worker, nested, session("lead")], query: "lead")
+        XCTAssertEqual(parentMatch[0].children.map(\.id), ["named-worker", "nested"])
+    }
+
+    func testPinnedChildKeepsUnpinnedParentAndOrphansRemainReachable() {
+        let values = [session("parent", pinned: false), session("child", parent: "parent"), session("orphan", parent: "missing")]
+        let groups = WidgetAgentTree.groups(values, onlyPinned: true)
+        XCTAssertEqual(groups.map(\.id), ["parent", "orphan"])
+        XCTAssertEqual(groups[0].children.map(\.id), ["child"])
+    }
+
+    func testCyclesAndDuplicateNativeIDsAcrossHomesNeverHideOrMergeRows() {
+        var one = session("home-one", parent: "home-two")
+        var two = session("home-two", parent: "home-one")
+        one.target.sessionId = "same-native-id"
+        two.target.sessionId = "same-native-id"
+        two.target.sourceHome = "/other-home"
+        let groups = WidgetAgentTree.groups([one, two, session("self", parent: "self")])
+        let keys = groups.flatMap { [$0.id] + $0.children.map(\.id) }
+        XCTAssertEqual(Set(keys), ["home-one", "home-two", "self"])
+        XCTAssertEqual(keys.count, 3)
+    }
+
+    func testHubDurationFormattingIsSharedWithoutChangingBoundaries() {
+        let start = Date(timeIntervalSince1970: 0)
+        XCTAssertEqual(AgentRosterStyle.duration(from: start, to: start.addingTimeInterval(59)), "59s")
+        XCTAssertEqual(AgentRosterStyle.duration(from: start, to: start.addingTimeInterval(60)), "1m 00s")
+        XCTAssertEqual(AgentRosterStyle.duration(from: start, to: start.addingTimeInterval(7500)), "2h 05m")
+        XCTAssertNil(AgentRosterStyle.duration(from: start, to: start.addingTimeInterval(-1)))
     }
 }

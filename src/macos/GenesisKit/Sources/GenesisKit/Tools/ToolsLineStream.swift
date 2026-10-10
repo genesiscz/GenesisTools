@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// One long-running child whose stdout arrives as whole lines on the main queue: a `tools … --live`
 /// follow, which prints a line per change and runs until it is stopped. Nothing polls: the pipe's
@@ -25,10 +26,11 @@ public final class ToolsLineStream: @unchecked Sendable {
     private let output = Pipe()
     private let errors = Pipe()
     private let lock = NSLock()
-    private var partial = Data()
+    private var lineBuffer = ToolsLineBuffer()
     private var stderrTail = Data()
     private var stopRequested = false
     private var outputClosed = false
+    private var inputClosed = false
     private var exited = false
     private let onLines: @MainActor ([String]) -> Void
     private let onExit: @MainActor (Exit) -> Void
@@ -110,8 +112,31 @@ public final class ToolsLineStream: @unchecked Sendable {
         }
     }
 
+    /// A small control message, written atomically without blocking the UI or raising SIGPIPE.
+    public func sendInput(_ text: String) throws {
+        let data = Data(text.utf8)
+        guard !data.isEmpty, data.count <= 512 else { throw POSIXError(.EMSGSIZE) }
+        lock.lock()
+        defer { lock.unlock() }
+        guard !inputClosed, !exited, !stopRequested else { throw POSIXError(.EPIPE) }
+        let descriptor = input.fileHandleForWriting.fileDescriptor
+        guard fcntl(descriptor, F_SETNOSIGPIPE, 1) != -1 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        let flags = fcntl(descriptor, F_GETFL)
+        guard flags != -1, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) != -1 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        let written = data.withUnsafeBytes { Darwin.write(descriptor, $0.baseAddress, $0.count) }
+        guard written == data.count else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    }
+
     /// Requests an EOF-driven finish while retaining final stdout events.
     public func finishInput() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !inputClosed else { return }
+        inputClosed = true
         do { try input.fileHandleForWriting.close() }
         catch { PerfLog.mark("tools.follow input close \(error.localizedDescription)") }
     }
@@ -123,9 +148,18 @@ public final class ToolsLineStream: @unchecked Sendable {
         stopRequested = true
         lock.unlock()
         guard first else { return }
-        try? input.fileHandleForWriting.close()
+        finishInput()
         if process.isRunning {
             process.terminate()
+        }
+    }
+
+    /// Escalation after `stop()`: SIGKILL for a child that ignored SIGTERM. `onExit` still runs.
+    public func kill() {
+        stop()
+        guard process.isRunning else { return }
+        if Darwin.kill(process.processIdentifier, SIGKILL) != 0 {
+            PerfLog.mark("tools.follow kill \(String(cString: strerror(errno)))")
         }
     }
 
@@ -138,17 +172,7 @@ public final class ToolsLineStream: @unchecked Sendable {
 
         lock.lock()
         outBytes += data.count
-        partial.append(data)
-        var lines: [String] = []
-        while let newline = partial.firstIndex(of: 0x0A) {
-            let line = partial[partial.startIndex..<newline]
-            partial.removeSubrange(partial.startIndex...newline)
-            if !line.isEmpty {
-                lines.append(String(decoding: line, as: UTF8.self))
-            }
-        }
-        // Rebase so indices stay small after many removals.
-        partial = Data(partial)
+        let lines = lineBuffer.append(data)
         let stopped = stopRequested
         lock.unlock()
         guard !lines.isEmpty, !stopped else { return }
@@ -180,5 +204,42 @@ public final class ToolsLineStream: @unchecked Sendable {
         DispatchQueue.main.async {
             MainActor.assumeIsolated { onExit(report) }
         }
+    }
+}
+
+struct ToolsLineBuffer: Sendable {
+    private var partial = Data()
+    private var searchedTo = 0
+    private(set) var scannedBytes = 0
+
+    mutating func append(_ data: Data) -> [String] {
+        partial.append(data)
+        var lines: [String] = []
+        var consumed = 0
+        var scanned = 0
+        partial.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            guard let base = bytes.baseAddress else { return }
+            var cursor = searchedTo
+            while cursor < bytes.count {
+                guard let match = memchr(base.advanced(by: cursor), 0x0A, bytes.count - cursor) else {
+                    scanned += bytes.count - cursor
+                    break
+                }
+                let newline = base.distance(to: UnsafeRawPointer(match))
+                scanned += newline - cursor + 1
+                if newline > consumed {
+                    let line = UnsafeRawBufferPointer(start: base.advanced(by: consumed), count: newline - consumed)
+                    lines.append(String(decoding: line, as: UTF8.self))
+                }
+                consumed = newline + 1
+                cursor = consumed
+            }
+        }
+        scannedBytes += scanned
+        if consumed > 0 {
+            partial.removeSubrange(partial.startIndex..<partial.index(partial.startIndex, offsetBy: consumed))
+        }
+        searchedTo = partial.count
+        return lines
     }
 }

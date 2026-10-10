@@ -10,6 +10,7 @@ import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { accountPinRefusal } from "@genesiscz/utils/worker/capabilities";
 import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
+import { assertWorkerDeliveryTarget, type WorkerDeliveryExpectation } from "@genesiscz/utils/worker/delivery";
 import {
     DEFAULT_SURFACES,
     ensureGrokWorkerConfig,
@@ -83,6 +84,7 @@ export interface RunSessionOptions {
 }
 
 export interface SteerSessionOptions {
+    delivery?: WorkerDeliveryExpectation;
     name: string;
     prompt?: string;
     promptFile?: string;
@@ -304,16 +306,25 @@ interface TurnPlan {
  * lock, so a steer that waited behind another turn builds its arguments and its safety mode from
  * what that turn left behind, not from what it read before waiting.
  */
-async function runTurn(
-    store: GrokSessionStore,
-    name: string,
-    plan: (fresh: GrokSessionMeta) => TurnPlan
-): Promise<TurnResult> {
+async function runTurn({
+    store,
+    name,
+    plan,
+    preflight,
+}: {
+    store: GrokSessionStore;
+    name: string;
+    plan: (fresh: GrokSessionMeta) => TurnPlan;
+    /** Runs on the in-lock metadata before the busy check, so a delivery refusal keeps its own error type. */
+    preflight?: (fresh: GrokSessionMeta) => void;
+}): Promise<TurnResult> {
     return withFileLock(`${sessionMetaPath(name)}.turn.lock`, async () => {
         const fresh = store.readMeta(name);
         if (!fresh) {
             throw new Error(`Grok session not found: ${name}`);
         }
+
+        preflight?.(fresh);
         if (fresh.activeTurn?.childPid && isProcessAlive(fresh.activeTurn.childPid)) {
             throw new Error(
                 `Grok session '${name}' still has turn ${fresh.activeTurn.turn} running (pid ${fresh.activeTurn.childPid})`
@@ -489,11 +500,15 @@ export async function runSession(options: RunSessionOptions): Promise<TurnResult
     };
     store.createMeta(meta);
 
-    return runTurn(store, meta.name, (fresh) => ({
-        args: buildRunArgs(fresh, promptArguments),
-        readOnly: fresh.readOnly,
-        surfaces: fresh.surfaces,
-    }));
+    return runTurn({
+        store,
+        name: meta.name,
+        plan: (fresh) => ({
+            args: buildRunArgs(fresh, promptArguments),
+            readOnly: fresh.readOnly,
+            surfaces: fresh.surfaces,
+        }),
+    });
 }
 
 export async function steerSession(options: SteerSessionOptions): Promise<TurnResult> {
@@ -503,23 +518,41 @@ export async function steerSession(options: SteerSessionOptions): Promise<TurnRe
         throw new Error(`Grok session not found: ${options.name}. Start one with '${toolCommand("grok run")}'.`);
     }
 
+    const checkDelivery = (current: GrokSessionMeta) =>
+        assertWorkerDeliveryTarget({
+            expected: options.delivery,
+            sessionId: current.sessionId,
+            sourceHome: current.workerHome,
+            turns: current.turns,
+            sessionExists: current.sessionStarted ?? (current.turns > 0 && current.lastTurn?.ended === true),
+            activeTurn: current.activeTurn,
+        });
+    checkDelivery(meta);
     const promptArguments = promptArgs(options);
-    return runTurn(store, meta.name, (fresh) => {
-        const readOnly = options.readOnly ?? fresh.readOnly;
-        const previous = fresh.surfaces ?? DEFAULT_SURFACES;
-        const surfaces = surfacesFromFlags(options.surfaces ?? {}, previous);
-        const surfacesChanged = surfaces.skills !== previous.skills || surfaces.rules !== previous.rules;
-        const reservedMetaPatch =
-            readOnly === fresh.readOnly && !surfacesChanged
-                ? undefined
-                : { ...(readOnly === fresh.readOnly ? {} : { readOnly }), ...(surfacesChanged ? { surfaces } : {}) };
+    return runTurn({
+        store,
+        name: meta.name,
+        preflight: checkDelivery,
+        plan: (fresh) => {
+            const readOnly = options.readOnly ?? fresh.readOnly;
+            const previous = fresh.surfaces ?? DEFAULT_SURFACES;
+            const surfaces = surfacesFromFlags(options.surfaces ?? {}, previous);
+            const surfacesChanged = surfaces.skills !== previous.skills || surfaces.rules !== previous.rules;
+            const reservedMetaPatch =
+                readOnly === fresh.readOnly && !surfacesChanged
+                    ? undefined
+                    : {
+                          ...(readOnly === fresh.readOnly ? {} : { readOnly }),
+                          ...(surfacesChanged ? { surfaces } : {}),
+                      };
 
-        return {
-            args: buildNextTurnArgs(fresh, readOnly, surfaces, promptArguments),
-            readOnly,
-            surfaces,
-            reservedMetaPatch,
-        };
+            return {
+                args: buildNextTurnArgs(fresh, readOnly, surfaces, promptArguments),
+                readOnly,
+                surfaces,
+                reservedMetaPatch,
+            };
+        },
     });
 }
 
@@ -528,6 +561,8 @@ export function grokTurnReport(result: TurnResult): WorkerTurnReport {
     return {
         backend: "grok",
         name: result.meta.name,
+        sessionId: result.summary.sessionId,
+        sourceHome: result.meta.workerHome,
         turn: result.turn,
         ended: result.summary.ended,
         exitCode: result.exitCode,

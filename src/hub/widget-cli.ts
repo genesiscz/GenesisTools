@@ -18,9 +18,10 @@ import {
     removeShelfItem,
     stageShelfImage,
 } from "./lib/widget/shelf";
-import { widgetSnapshot } from "./lib/widget/snapshot";
+import { discoverWidgetCatalog, widgetSnapshot } from "./lib/widget/snapshot";
 import { watchWidget } from "./lib/widget/watch";
 import { registerWidgetTasks } from "./widget-tasks-cli";
+import { registerWidgetVoiceNotes } from "./widget-voice-notes-cli";
 
 const program = new Command().name("hub");
 const widget = program
@@ -28,6 +29,7 @@ const widget = program
     .description("Native widget data, media and ordered outgoing messages")
     .option("--state-root <directory>", "Widget state/assets directory, independent of shared session history");
 registerWidgetTasks(widget);
+registerWidgetVoiceNotes(widget);
 widget
     .command("pin <session>")
     .requiredOption("--provider <provider>")
@@ -43,6 +45,12 @@ widget
         out.result(
             await performWidgetAction({ root, input: { action: "visibility", key: candidates[0].key, pinned: true } })
         );
+    });
+widget
+    .command("discover")
+    .description("Refresh the shared session catalog and agent roster independently of inbox snapshots")
+    .action(async () => {
+        out.result(await discoverWidgetCatalog());
     });
 widget
     .command("snapshot")

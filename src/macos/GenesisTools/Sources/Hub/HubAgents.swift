@@ -1239,133 +1239,41 @@ struct AgentsListView: View {
     }
 }
 
-/// A parent session: fold chevron, harness, title, live dot; project, account, counts, last activity.
+/// Hub navigation supplies values to the same rows used by the Widget session picker.
 private struct AgentParentRow: View {
     let parent: AgentParent
     let running: Int
     let total: Int
-    /// In the sticky active bucket (Live), not only live this second.
     let live: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 7) {
-            ZStack(alignment: .bottomTrailing) {
-                ProviderBadge(provider: parent.provider)
-                if live {
-                    Circle()
-                        .fill(ReviewPalette.added)
-                        .frame(width: 7, height: 7)
-                        .overlay(Circle().stroke(ReviewPalette.sidebar, lineWidth: 1.5))
-                        .offset(x: 3, y: 3)
-                }
-            }
-            .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(parent.displayTitle)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .lineLimit(2)
-                HStack(spacing: 6) {
-                    if let project = parent.project {
-                        Text(project).layoutPriority(-2)
-                    }
-                    if let account = parent.account {
-                        Text(account)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Capsule().stroke(Color.white.opacity(0.15)))
-                            .layoutPriority(-1)
-                    }
-                    Text(verbatim: running > 0 ? "\(total) agents · \(running) running" : "\(total) agents")
-                        .foregroundColor(running > 0 ? ReviewPalette.added : ReviewPalette.dim)
-                        .fixedSize()
-                    Spacer(minLength: 0)
-                    LiveAgo(date: parent.last, style: .brief).fixedSize()
-                }
-                .font(.system(size: 10.5))
-                .foregroundColor(ReviewPalette.dim)
-                .lineLimit(1)
-            }
-        }
-        .padding(.leading, 2)
-        .padding(.trailing, 10)
-        .padding(.vertical, 6)
-        .padding(.trailing, 6)
-        .contentShape(Rectangle())
+        AgentRosterGroupLabel(title: parent.displayTitle, provider: parent.provider, project: parent.project,
+                              account: parent.account, total: total, running: running, live: live, lastAt: parent.last)
+            .padding(.leading, 2).padding(.trailing, 16).padding(.vertical, 6)
     }
 }
 
-/// The first row under a parent: the lead session itself (harness, model, live state, last activity).
 private struct AgentMainRow: View {
     let parent: AgentParent
     let live: Bool
     let selected: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Circle()
-                .fill(live ? ReviewPalette.added : Color.white.opacity(0.3))
-                .frame(width: 7, height: 7)
-                .padding(.top, 5)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("Main")
-                        .font(.system(size: 12, weight: selected ? .semibold : .medium))
-                    Spacer(minLength: 0)
-                    if parent.isLive {
-                        Text("running").foregroundColor(ReviewPalette.added).font(.system(size: 10.5)).fixedSize()
-                    } else {
-                        LiveAgo(date: parent.last, style: .brief).font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).fixedSize()
-                    }
-                }
-                HStack(spacing: 5) {
-                    Badge(parent.provider, color: AgentStatusStyle.harnessColor(parent.provider), look: .filled)
-                    Badge("lead")
-                    let labels = [parent.model, parent.account].compactMap { $0 }
-                    if !labels.isEmpty {
-                        Text(verbatim: labels.joined(separator: " · ")).truncationMode(.tail).layoutPriority(-1)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .font(.system(size: 10.5))
-                .foregroundColor(ReviewPalette.dim)
-                .lineLimit(1)
-            }
-        }
-        .padding(.leading, 30)
-        .padding(.trailing, 10)
-        .padding(.vertical, 5)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(selected ? Color.white.opacity(0.08) : Color.clear)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected ? Color.accentColor.opacity(0.55) : Color.clear))
-        )
-        .padding(.horizontal, 6)
-        .contentShape(Rectangle())
+        AgentRosterRow(title: "Main", provider: parent.provider, role: "lead", model: parent.model,
+                       account: parent.account, status: live ? "running" : "recent", lastAt: parent.last,
+                       selected: selected, showsRunningLabel: true)
+            .padding(.leading, 30).padding(.trailing, 10).padding(.vertical, 5)
+            .background(selectionBackground).padding(.horizontal, 6)
+    }
+
+    private var selectionBackground: some View {
+        RoundedRectangle(cornerRadius: 8).fill(selected ? Color.white.opacity(0.08) : .clear)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected ? Color.accentColor.opacity(0.55) : .clear))
     }
 }
 
-enum AgentStatusStyle {
-    static func color(_ status: String) -> Color {
-        switch status {
-        case "running": return ReviewPalette.added
-        case "idle": return ReviewPalette.renamed
-        case "failed": return ReviewPalette.removed
-        case "killed": return ReviewPalette.modified
-        default: return Color.white.opacity(0.3)
-        }
-    }
+typealias AgentStatusStyle = AgentRosterStyle
 
-    static func harnessColor(_ harness: String) -> Color {
-        switch harness {
-        case "codex": return Color(red: 0.45, green: 0.8, blue: 0.75)
-        case "grok": return Color(red: 0.75, green: 0.6, blue: 0.95)
-        default: return Color(red: 0.9, green: 0.6, blue: 0.4)
-        }
-    }
-}
-
-/// One agent: status dot, name, unread mail, last activity; harness, kind, model, account, tool calls,
-/// start. Values only, no model: a dense list's rows must not observe the hub (HubWindow's rule).
 private struct AgentChildRow: View {
     let node: AgentNode
     let depth: Int
@@ -1373,68 +1281,17 @@ private struct AgentChildRow: View {
     let showsProject: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Circle()
-                .fill(AgentStatusStyle.color(node.status))
-                .frame(width: 7, height: 7)
-                .padding(.top, 5)
-                .instantTooltip(node.status)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(node.title)
-                        .font(.system(size: 12, weight: selected ? .semibold : .regular))
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    if let unread = node.unreadMail, unread > 0 {
-                        CountBadge(unread, tooltip: "\(unread) unread team messages waiting in its inbox", color: ReviewPalette.modified)
-                    }
-                    // The last activity, kept current by the label's own clock (GenesisKit LiveTime), never by the row.
-                    LiveAgo(date: node.last, style: .brief)
-                        .font(.system(size: 10.5))
-                        .foregroundColor(node.isRunning ? ReviewPalette.added : ReviewPalette.dim)
-                        .fixedSize()
-                }
-                HStack(spacing: 5) {
-                    Badge(node.harness, color: AgentStatusStyle.harnessColor(node.harness), look: .filled)
-                    Badge(node.kind)
-                    // One text, so a narrow row cuts it at its end instead of leaving a letter of each part.
-                    let labels = [node.model, node.account, showsProject ? node.team : nil].compactMap { $0 }
-                    if !labels.isEmpty {
-                        Text(verbatim: labels.joined(separator: " · ")).truncationMode(.tail).layoutPriority(-1)
-                    }
-                    Spacer(minLength: 0)
-                    // Tool calls and run time stay whole; model, account and team truncate first. A running agent's
-                    // run time is live ("12m"), a finished one's is fixed ("ran 41m"); the start time is the tooltip.
-                    let tools = node.toolCalls.flatMap { $0 > 0 ? "\($0) tools" : nil }
-                    HStack(spacing: 0) {
-                        if let tools {
-                            Text(verbatim: tools)
-                        }
-                        if node.isRunning, let started = node.started {
-                            LiveTime(date: started, style: .compact) { (tools == nil ? "" : " · ") + "run " + $0 }
-                        } else if let ran = AgentTree.duration(from: node.started, to: node.last) {
-                            Text(verbatim: (tools == nil ? "" : " · ") + "ran " + ran)
-                        }
-                    }
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .fixedSize()
-                    .instantTooltip(AgentTree.started(node.started).map { "Started \($0)" } ?? "Start time unknown")
-                }
-                .font(.system(size: 10.5))
-                .foregroundColor(ReviewPalette.dim)
-                .lineLimit(1)
-            }
-        }
-        .padding(.leading, 30 + CGFloat(depth) * 14)
-        .padding(.trailing, 10)
-        .padding(.vertical, 5)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(selected ? Color.white.opacity(0.08) : Color.clear)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected ? Color.accentColor.opacity(0.55) : Color.clear))
-        )
-        .padding(.horizontal, 6)
-        .contentShape(Rectangle())
+        let account = [node.account, showsProject ? node.team : nil].compactMap { $0 }.joined(separator: " · ")
+        AgentRosterRow(title: node.title, provider: node.harness, role: node.kind, model: node.model,
+                       account: account.isEmpty ? nil : account,
+                       status: node.status, startedAt: node.started, lastAt: node.last,
+                       toolCalls: node.toolCalls ?? 0, unread: node.unreadMail ?? 0, selected: selected)
+            .instantTooltip(AgentTree.started(node.started).map { "Started \($0)" } ?? "Start time unknown")
+            .padding(.leading, 30 + CGFloat(depth) * 14).padding(.trailing, 10).padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 8).fill(selected ? Color.white.opacity(0.08) : .clear)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected ? Color.accentColor.opacity(0.55) : .clear))
+            ).padding(.horizontal, 6)
     }
 }
 

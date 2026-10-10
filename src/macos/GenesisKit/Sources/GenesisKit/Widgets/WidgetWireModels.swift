@@ -74,6 +74,13 @@ public struct WidgetSession: Codable, Identifiable, Equatable, Sendable {
     public var parentSessionId: String?
     public var agentId: String?
     public var transcriptPath: String?
+    public var parentKey: String?
+    public var role: String?
+    public var model: String?
+    public var account: String?
+    public var startedAt: Double?
+    public var toolCalls: Int?
+    public var agentStatus: String?
     public var id: String { key }
     public var visualStatus: AgentWidgetStatus {
         switch status {
@@ -156,6 +163,29 @@ public struct WidgetVideoSettings: Codable, Equatable, Sendable {
     public var fps: Int
     public var framesPerImage: Int
     public var minimumDifferencePct: Double
+    public var startUs: Double? = nil
+    public var endUs: Double? = nil
+
+    func sampleRange(durationUs: Double) -> ClosedRange<Double> {
+        let duration = max(1, durationUs)
+        let end = min(duration, max(1, endUs ?? duration))
+        let start = min(end - 1, max(0, startUs ?? 0))
+        return start...end
+    }
+
+    mutating func setSampleStart(seconds: Double, durationUs: Double) {
+        guard seconds.isFinite, durationUs > 0 else { return }
+        let range = sampleRange(durationUs: durationUs)
+        let value = max(0, min((seconds * 1_000_000).rounded(), range.upperBound - min(10_000, durationUs)))
+        startUs = value == 0 ? nil : value
+    }
+
+    mutating func setSampleEnd(seconds: Double, durationUs: Double) {
+        guard seconds.isFinite, durationUs > 0 else { return }
+        let range = sampleRange(durationUs: durationUs)
+        let value = min(durationUs, max((seconds * 1_000_000).rounded(), range.lowerBound + min(10_000, durationUs)))
+        endUs = value == durationUs ? nil : value
+    }
 }
 public struct WidgetAsset: Codable, Identifiable, Equatable, Sendable {
     public struct Progress: Codable, Equatable, Sendable {
@@ -270,6 +300,13 @@ public struct WidgetOutgoing: Codable, Identifiable, Equatable, Sendable {
     public var error: String?
     public var receipt: Receipt?
     public var dispatchedAt: Double?
+    /// Its attachments are already serialized and must not change in place: dispatching, sent,
+    /// unknown, or waiting for a route behind a session-queue reservation. Mirrors `assertEditable`
+    /// in `src/hub/lib/composer/assets.ts`.
+    public var freezesAssets: Bool {
+        ["dispatching", "sent", "unknown"].contains(state)
+            || (state == "waiting-route" && receipt?.channel == "session-queue")
+    }
     /// The composer text. A form sent without any keeps a "Form answer" label, because its payload stores `text: ""`.
     public var text: String {
         guard case .object(let fields) = payload, case .string(let value) = fields["text"],
@@ -310,7 +347,36 @@ public struct WidgetActivityEvent: Codable, Equatable, Identifiable, Sendable {
     public var body: String
 }
 
+public struct WidgetInboxItem: Codable, Equatable, Sendable {
+    public var id: String
+    public var sourceId: String
+    public var kind: String
+    public var key: String
+    public var at: Double
+    public var needsAnswer: Bool
+}
+public struct WidgetInboxSession: Codable, Equatable, Sendable {
+    public var key: String
+    public var unread: Int
+    public var needsAnswer: Int
+    public var latest: WidgetInboxItem?
+    public var unreadItem: WidgetInboxItem?
+    public var pendingItem: WidgetInboxItem?
+}
+public struct WidgetInboxSummary: Codable, Equatable, Sendable {
+    public struct Profile: Codable, Equatable, Sendable { public var hostId: String }
+    public var unread: Int
+    public var needsAnswer: Int
+    public var complete: Bool
+    public var truncated: Bool
+    public var sessions: [WidgetInboxSession]
+    public var profile: Profile?
+    public static let empty = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: false, truncated: false, sessions: [])
+}
+
 public struct WidgetSnapshot: Codable, Equatable, Sendable {
+    public var notifications: WidgetInboxSummary? = nil
+    public var rosterLoading: Bool? = nil
     public struct Changes: Codable, Equatable, Sendable {
         public struct File: Codable, Identifiable, Equatable, Sendable {
             public var path: String

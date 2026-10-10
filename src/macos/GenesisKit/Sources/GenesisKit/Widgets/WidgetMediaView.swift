@@ -33,6 +33,45 @@ public enum WidgetMediaSelection: Identifiable {
     }
 }
 
+@MainActor
+final class WidgetVideoSettingsCommitter {
+    private var current: WidgetVideoSettings
+    /// The last value sent and not refused. `nil` after a refusal, so the next flush (Done, close) sends again.
+    private var submitted: WidgetVideoSettings?
+    private var pending: Task<Void, Never>?
+    /// The second argument reports that the backend refused the value.
+    private let commit: (WidgetVideoSettings, @escaping () -> Void) -> Void
+
+    init(initial: WidgetVideoSettings, commit: @escaping (WidgetVideoSettings, @escaping () -> Void) -> Void) {
+        current = initial
+        submitted = initial
+        self.commit = commit
+    }
+    func update(_ settings: WidgetVideoSettings) {
+        current = settings
+        pending?.cancel()
+        pending = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+            self?.flush()
+        }
+    }
+    func flush(force: Bool = false) {
+        pending?.cancel()
+        pending = nil
+        guard force || current != submitted else { return }
+        let value = current
+        submitted = value
+        commit(value) { [weak self] in
+            // A refusal of an older value must not undo a newer one that is still in flight.
+            if self?.submitted == value { self?.submitted = nil }
+        }
+    }
+    func finish(latest: WidgetVideoSettings? = nil) {
+        if let latest { current = latest }
+        flush()
+    }
+}
+
 struct WidgetMediaView: View {
     @ObservedObject var model: WidgetModel
     let selection: WidgetMediaSelection
@@ -40,7 +79,7 @@ struct WidgetMediaView: View {
     @State private var settings = WidgetVideoSettings(
         fps: 2, framesPerImage: 16, minimumDifferencePct: 0)
     @State private var loadedSettings = false
-    @State private var update: Task<Void, Never>?
+    @State private var updates: WidgetVideoSettingsCommitter?
     @State private var player: AVPlayer?
     @State private var showSkipped = true
 
@@ -48,15 +87,15 @@ struct WidgetMediaView: View {
     private var manifest: WidgetVideoManifest? { model.snapshot?.manifests[selection.id] }
     private var frozen: Bool {
         model.snapshot?.state.outgoing.contains {
-            $0.assetIds.contains(selection.id) && ["dispatching", "sent", "unknown"].contains($0.state)
+            $0.assetIds.contains(selection.id) && $0.freezesAssets
         } == true
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text(asset?.name ?? "Screenshots").font(.headline).lineLimit(1)
+                Text(asset?.name ?? "Screenshots").font(.headline).lineLimit(1).truncationMode(.middle)
                 Spacer()
-                Button("Done", action: close).keyboardShortcut(.cancelAction)
+                Button("Done") { updates?.finish(latest: settings); close() }.keyboardShortcut(.cancelAction)
             }
             switch selection {
             case .video:
@@ -74,30 +113,39 @@ struct WidgetMediaView: View {
                 WidgetImageCompare(images: images, selectedID: selectedID)
             }
         }
-        .padding(22).preferredColorScheme(.dark)
+        .padding(22)
+        .titlebarBackground(NativeSettingsBackdrop())
+        .titlebarZone()
+        .environment(\.nativeSettingsTheme,
+            model.snapshot?.state.preferences.glassEffect == false ? .solid : model.appearance.theme)
+        .nativeSettingsAppearance(model.appearance)
+        .preferredColorScheme(.dark)
         .onAppear {
             if let asset, asset.type == "video" {
                 settings = asset.settings ?? settings
                 player = AVPlayer(url: URL(fileURLWithPath: asset.path))
+                updatePlaybackRange(previous: nil)
+            }
+            updates = WidgetVideoSettingsCommitter(initial: settings) { value, refused in
+                do {
+                    model.action(["action": "video-settings", "id": .string(selection.id), "settings": try .value(value)],
+                        failed: refused)
+                } catch {
+                    model.error = error.localizedDescription
+                    refused()
+                }
             }
             loadedSettings = true
         }
         .onDisappear {
             player?.pause()
-            update?.cancel()
+            updates?.finish(latest: settings)
         }
-        .onChange(of: settings) { _, value in
+        .onChange(of: settings) { previous, value in
             guard loadedSettings, !frozen else { return }
-            update?.cancel()
-            // Loading saved settings fires this too; an unchanged value would restart a failed preparation.
-            guard value != asset?.settings else { return }
-            update = Task { @MainActor in
-                do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
-                do {
-                    model.action([
-                        "action": "video-settings", "id": .string(selection.id), "settings": try .value(value),
-                    ])
-                } catch { model.error = error.localizedDescription }
+            updates?.update(value)
+            if previous.startUs != value.startUs || previous.endUs != value.endUs {
+                updatePlaybackRange(previous: previous)
             }
         }
     }
@@ -108,6 +156,19 @@ struct WidgetMediaView: View {
                 WidgetVideoPlayer(player: player).frame(width: 240, height: 145).clipShape(
                     RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("Selected moment").font(.caption.weight(.semibold))
+                        Spacer()
+                        Button("Whole video") { settings.startUs = nil; settings.endUs = nil }.font(.caption)
+                            .disabled(settings.startUs == nil && settings.endUs == nil)
+                    }
+                    rangeControl("Start", value: Binding(
+                        get: { sampleRange.lowerBound / 1_000_000 },
+                        set: { settings.setSampleStart(seconds: $0, durationUs: durationUs) }))
+                    rangeControl("End", value: Binding(
+                        get: { sampleRange.upperBound / 1_000_000 },
+                        set: { settings.setSampleEnd(seconds: $0, durationUs: durationUs) }))
+                    Divider()
                     Picker("Sample rate", selection: $settings.fps) {
                         ForEach([1, 2, 3, 4], id: \.self) { Text("\($0) FPS").tag($0) }
                     }.pickerStyle(.segmented)
@@ -127,18 +188,12 @@ struct WidgetMediaView: View {
                     }
                     Slider(value: $settings.minimumDifferencePct, in: 0...100, step: 0.5)
                         .accessibilityLabel("Minimum frame difference percentage")
-                }.disabled(frozen)
+                }.padding(12).nativeGlassSurface(radius: 16).disabled(frozen)
             }
             Text(estimate).font(.caption).foregroundStyle(.secondary)
-            if let asset, let error = asset.error {
+            if let error = asset?.error {
                 Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
-                Button("Prepare again") {
-                    do {
-                        model.action([
-                            "action": "video-settings", "id": .string(asset.id), "settings": try .value(settings),
-                        ])
-                    } catch { model.error = error.localizedDescription }
-                }.disabled(frozen)
+                Button("Prepare again") { updates?.flush(force: true) }.disabled(frozen)
             }
             if asset?.status != "ready" || manifest?.settings != settings {
                 HStack {
@@ -219,11 +274,37 @@ struct WidgetMediaView: View {
             }
         }
     }
+    private var durationUs: Double { asset?.durationUs ?? 1 }
+    private var sampleRange: ClosedRange<Double> { settings.sampleRange(durationUs: durationUs) }
+
+    private func rangeControl(_ title: String, value: Binding<Double>) -> some View {
+        HStack(spacing: 8) {
+            Text(title).font(.caption).frame(width: 32, alignment: .leading)
+            Slider(value: value, in: 0...max(0.000001, durationUs / 1_000_000))
+                .accessibilityLabel("Video \(title.lowercased()) time")
+            TextField(title, value: value, format: .number.precision(.fractionLength(2)))
+                .textFieldStyle(.roundedBorder).frame(width: 64)
+                .accessibilityLabel("Video \(title.lowercased()) seconds")
+            Text("s").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func updatePlaybackRange(previous: WidgetVideoSettings?) {
+        guard let player else { return }
+        let range = sampleRange
+        player.pause()
+        player.currentItem?.reversePlaybackEndTime = CMTime(seconds: range.lowerBound / 1_000_000, preferredTimescale: 1_000_000)
+        player.currentItem?.forwardPlaybackEndTime = CMTime(seconds: range.upperBound / 1_000_000, preferredTimescale: 1_000_000)
+        let target = previous == nil || previous?.startUs != settings.startUs
+            ? range.lowerBound : max(range.lowerBound, range.upperBound - 1_000)
+        player.seek(to: CMTime(seconds: target / 1_000_000, preferredTimescale: 1_000_000), toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
     private var estimate: String {
-        let seconds = (asset?.durationUs ?? 0) / 1_000_000
+        let seconds = (sampleRange.upperBound - sampleRange.lowerBound) / 1_000_000
         let count = Int(ceil(seconds * Double(settings.fps)))
         let images = Int(ceil(Double(count) / Double(settings.framesPerImage)))
-        return String(format: "%.2f seconds", seconds)
+        return String(format: "%.2f–%.2fs · %.2f seconds selected", sampleRange.lowerBound / 1_000_000, sampleRange.upperBound / 1_000_000, seconds)
             + " · Before filtering: \(count) frames → \(images) images, up to \(settings.framesPerImage) frames each."
     }
 }

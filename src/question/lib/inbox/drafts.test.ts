@@ -117,7 +117,7 @@ describe("sendDrafts", () => {
             paneTitle: "agent",
             surfaceId: "surface:1",
             sessionIds: ["s"],
-            matchedOn: "session-id",
+            matchedOn: "title-id",
             score: 90,
             active: true,
         };
@@ -137,7 +137,16 @@ describe("sendDrafts", () => {
 
         expect(result.promoted).toEqual([1, 2]);
         expect(result.channel).toBe("cmux");
-        expect(typed[0]).toEqual(["claude", "cmux", "send", "s", "DECISION 1: a) a1 ; DECISION 2: b) note", "--json"]);
+        expect(typed[0]).toEqual([
+            "claude",
+            "cmux",
+            "send",
+            "s",
+            "DECISION 1: a) a1\nDECISION 2: b) note",
+            "--json",
+            "--paste",
+            "--exact-session",
+        ]);
         const rows = readDecisions(file);
         expect(rows.every((row: DecisionRecord) => row.state === "sent")).toBe(true);
         expect(rows.every((row: DecisionRecord) => row.draftOption === undefined)).toBe(true);
@@ -159,7 +168,7 @@ describe("sendDrafts", () => {
             paneTitle: "probe",
             surfaceId: "surface:9",
             sessionIds: ["s"],
-            matchedOn: "session-id",
+            matchedOn: "title-id",
             score: 90,
             active: true,
         };
@@ -185,7 +194,9 @@ describe("sendDrafts", () => {
         );
 
         expect(slept).toEqual([1000, 1000]);
-        expect(typed).toEqual([["claude", "cmux", "send", "s", "DECISION 1: b) b1", "--json"]]);
+        expect(typed).toEqual([
+            ["claude", "cmux", "send", "s", "DECISION 1: b) b1", "--json", "--paste", "--exact-session"],
+        ]);
         expect(result).toMatchObject({ channel: "cmux", delivered: true, target: "cmux · gt-inbox-scratch · probe" });
         expect(readDecisions(file)[0]).toMatchObject({ state: "sent", delivery: { route: "cmux" } });
     });

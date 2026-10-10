@@ -1,8 +1,10 @@
-import { describe, expect, test } from "bun:test";
-import { closeSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { describe, expect, spyOn, test } from "bun:test";
+import { closeSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
+import { WorkerDeliveryRejectedError } from "@genesiscz/utils/worker/delivery";
 import { sessionMetaPath, turnLogPath } from "./paths";
 import { GrokSessionStore } from "./store";
 import { claimTurnLog, promptArgs, runSession, steerSession } from "./worker";
@@ -151,3 +153,133 @@ describe("promptArgs", () => {
         expect(promptArgs({ prompt: "review this" })).toEqual(["-p", "review this"]);
     });
 });
+
+test("guarded Grok delivery refuses changed identity, home, turn, busy and never-started sessions before spawning", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "grok-delivery-guard-"));
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: scratch }, async () => {
+        const store = new GrokSessionStore();
+        const meta = {
+            name: "fixture",
+            sessionId: "native-session",
+            cwd: scratch,
+            workerHome: scratch,
+            readOnly: true,
+            turns: 1,
+            sessionStarted: true,
+            createdAt: new Date(0).toISOString(),
+        };
+        store.createMeta(meta);
+        const delivery = { sessionId: meta.sessionId, sourceHome: scratch, afterTurn: 1 };
+        const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
+            throw new Error("provider spawn must not be reached");
+        });
+        try {
+            for (const changed of [{ sessionId: "foreign" }, { sourceHome: "/wrong/home" }, { afterTurn: 2 }]) {
+                await expect(
+                    steerSession({ name: meta.name, prompt: "Synthetic", delivery: { ...delivery, ...changed } })
+                ).rejects.toThrow(/changed/);
+            }
+            store.updateMeta(meta.name, {
+                activeTurn: { turn: 1, ownerPid: process.pid, startedAt: new Date().toISOString() },
+            });
+            await expect(steerSession({ name: meta.name, prompt: "Synthetic", delivery })).rejects.toThrow("busy");
+            store.updateMeta(meta.name, { activeTurn: undefined, sessionStarted: false });
+            await expect(steerSession({ name: meta.name, prompt: "Synthetic", delivery })).rejects.toThrow(
+                "has not started"
+            );
+            expect(spawn).not.toHaveBeenCalled();
+            expect(store.readMeta(meta.name)?.turns).toBe(1);
+        } finally {
+            spawn.mockRestore();
+        }
+    });
+});
+
+test("a turn that starts after the pre-lock check still refuses a guarded delivery as busy", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "grok-delivery-race-"));
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: scratch }, async () => {
+        const store = new GrokSessionStore();
+        const meta = {
+            name: "fixture",
+            sessionId: "native-session",
+            cwd: scratch,
+            workerHome: scratch,
+            readOnly: true,
+            turns: 1,
+            sessionStarted: true,
+            createdAt: new Date(0).toISOString(),
+        };
+        store.createMeta(meta);
+        const read = GrokSessionStore.prototype.readMeta;
+        let reads = 0;
+        const racing = spyOn(GrokSessionStore.prototype, "readMeta").mockImplementation(function (
+            this: GrokSessionStore,
+            name: string
+        ) {
+            const current = read.call(this, name);
+            reads += 1;
+            return reads === 1 || !current
+                ? current
+                : {
+                      ...current,
+                      activeTurn: { turn: 2, ownerPid: -1, childPid: process.pid, startedAt: new Date().toISOString() },
+                  };
+        });
+        try {
+            await expect(
+                steerSession({
+                    name: meta.name,
+                    prompt: "Synthetic",
+                    delivery: { sessionId: meta.sessionId, sourceHome: scratch, afterTurn: 1 },
+                })
+            ).rejects.toBeInstanceOf(WorkerDeliveryRejectedError);
+        } finally {
+            racing.mockRestore();
+        }
+    });
+});
+
+test.skipIf(process.platform === "win32")(
+    "guarded Grok continuation resumes its existing native session and preserves its worker home and readonly mode",
+    async () => {
+        const scratch = mkdtempSync(join(tmpdir(), "grok-delivery-positive-"));
+        const argv = join(scratch, "argv");
+        const seenHome = join(scratch, "seen-home");
+        const source = join(scratch, "owned-home");
+        writeFileSync(
+            join(scratch, "grok"),
+            `#!/bin/sh\nprintf '%s\\n' "$@" > ${shellQuote(argv)}\nprintf '%s' "$GROK_HOME" > ${shellQuote(seenHome)}\nprintf '%s\\n' '{"type":"end","sessionId":"fixture-existing-session"}'\n`,
+            { mode: 0o755 }
+        );
+        await env.testing.withOverrides(
+            { HOME: scratch, GENESIS_TOOLS_HOME: scratch, PATH: `${scratch}:${env.get("PATH") ?? ""}` },
+            async () => {
+                const store = new GrokSessionStore();
+                store.createMeta({
+                    name: "fixture",
+                    sessionId: "fixture-existing-session",
+                    cwd: scratch,
+                    workerHome: source,
+                    readOnly: true,
+                    auth: "api-key",
+                    turns: 1,
+                    sessionStarted: true,
+                    createdAt: new Date(0).toISOString(),
+                });
+                const result = await steerSession({
+                    name: "fixture",
+                    prompt: "Synthetic reply",
+                    delivery: { sessionId: "fixture-existing-session", sourceHome: source, afterTurn: 1 },
+                });
+                expect(result.summary.ended).toBe(true);
+                expect(result.summary.sessionId).toBe("fixture-existing-session");
+                expect(result.turn).toBe(2);
+                expect(result.meta.readOnly).toBe(true);
+            }
+        );
+        const args = readFileSync(argv, "utf8");
+        expect(args).toContain("--resume\nfixture-existing-session");
+        expect(args).not.toContain("--session-id");
+        expect(readFileSync(seenHome, "utf8")).toBe(source);
+    }
+);

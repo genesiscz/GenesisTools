@@ -3,7 +3,7 @@ import { mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { readDecisions, updateDecision } from "@app/question/lib/decisions/store";
-import { markEntriesRead, openReadModel } from "@app/question/lib/read-model";
+import { getEntryById, markEntriesRead, openReadModel } from "@app/question/lib/read-model";
 import { logger } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -13,8 +13,10 @@ import { confirmVideoAsset, importWidgetAsset, reviseVideoAsset } from "../compo
 import { changeOutgoing, enqueueWidgetMessage } from "../composer/outbox";
 import { createWidgetHandoff } from "./handoff";
 import { readShelfAttachment } from "./shelf";
-import { mutateWidgetState, readWidgetState, widgetRoot } from "./storage";
+import { type WidgetSources, widgetProvider, widgetResultNode } from "./snapshot";
+import { acknowledgeWidgetInbox, mutateWidgetState, readWidgetState, widgetRoot } from "./storage";
 import {
+    parseWidgetSessionKey,
     widgetDraftSchema,
     widgetPayloadSchema,
     widgetPreferencesPatchSchema,
@@ -57,16 +59,29 @@ export const widgetActionSchema = z.discriminatedUnion("action", [
     z.object({ action: z.literal("cancel"), id: z.string(), confirmedUnknown: z.boolean().default(false) }),
     z.object({ action: z.literal("edit"), id: z.string() }),
     z.object({ action: z.literal("read"), id: z.string() }),
+    z.object({
+        action: z.literal("inbox-read"),
+        key: z.string(),
+        id: z.string(),
+        kind: z.enum(["answer", "result", "form", "decision"]),
+        at: z.number().finite().nonnegative(),
+    }),
 ]);
+
+/** How far ahead of this clock an inbox read may be stamped; a later mark would hide future items. */
+const INBOX_READ_CLOCK_SKEW_MS = 60_000;
 
 export async function performWidgetAction({
     root,
     input,
     signal,
+    sources,
 }: {
     root?: string;
     input: unknown;
     signal?: AbortSignal;
+    /** The roster an inbox read of a result is checked against; tests pass fixtures. */
+    sources?: Pick<WidgetSources, "agents" | "sessions">;
 }): Promise<unknown> {
     const request = widgetActionSchema.parse(input);
     switch (request.action) {
@@ -182,7 +197,13 @@ export async function performWidgetAction({
                 if (message?.payload.kind === "decision" && message.dispatchedAt) {
                     const id = message.payload.id;
                     const decision = readDecisions(decisionFiles().file).find((row) => row.id === id);
-                    if (decision && !["open", "drafted"].includes(decision.state)) {
+                    // A queued answer this message still holds is withdrawn by `changeOutgoing` itself.
+                    const queuedHere =
+                        decision?.state === "answered" &&
+                        decision.delivery?.queueId !== undefined &&
+                        message.receipt?.channel === "session-queue" &&
+                        message.receipt.entryId === decision.delivery.queueId;
+                    if (decision && !queuedHere && !["open", "drafted"].includes(decision.state)) {
                         throw new Error(
                             "This answer is now owned by Decisions. Manage its delivery in Hub; cancelling here would not withdraw it."
                         );
@@ -191,6 +212,58 @@ export async function performWidgetAction({
             }
             await changeOutgoing({ root, ...request });
             return { updated: true };
+        case "inbox-read": {
+            signal?.throwIfAborted();
+            const target = parseWidgetSessionKey(request.key);
+            if (!target || !request.id.startsWith(`${request.kind}:`)) {
+                throw new Error("The notification identity is invalid.");
+            }
+
+            if (request.at > Date.now() + INBOX_READ_CLOCK_SKEW_MS) {
+                throw new Error("The notification time is in the future.");
+            }
+
+            const sourceId = request.id.slice(request.kind.length + 1);
+            if (request.kind === "answer") {
+                const db = openReadModel(toolDataDir("question", "qa.db"));
+                try {
+                    const row = getEntryById(db, sourceId);
+                    // An answer with no known agent is grouped onto its session by id alone (see snapshot.ts).
+                    const provider = row ? widgetProvider(row.agent) : undefined;
+                    if (
+                        !row ||
+                        (row.sessionId || row.id) !== target.sessionId ||
+                        (provider !== "unknown" && provider !== target.provider)
+                    ) {
+                        throw new Error("The answer belongs to a different session.");
+                    }
+
+                    return { read: markEntriesRead(db, [sourceId]) };
+                } finally {
+                    db.close();
+                }
+            }
+
+            if (request.kind === "result") {
+                const separator = sourceId.indexOf(":");
+                const provider = sourceId.slice(0, separator);
+                if (separator < 0 || provider !== target.provider) {
+                    throw new Error("The result belongs to a different session.");
+                }
+
+                const node = await widgetResultNode({ target, agentId: sourceId.slice(separator + 1), sources });
+                if (!node) {
+                    throw new Error("The result belongs to a different session.");
+                }
+
+                // A read can cover the result as it stands, never a later one.
+                if (request.at > Date.parse(node.lastAt)) {
+                    throw new Error("The result read is newer than the result.");
+                }
+            }
+
+            return acknowledgeWidgetInbox({ root, key: request.key, id: request.id, at: request.at, signal });
+        }
         case "read": {
             const db = openReadModel(toolDataDir("question", "qa.db"));
             try {

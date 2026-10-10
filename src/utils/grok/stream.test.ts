@@ -51,3 +51,8 @@ describe("parseTurnLog", () => {
         expect(parseTurnLog("").ended).toBe(false);
     });
 });
+
+test("a completed-turn receipt retains only the provider-reported session identity", () => {
+    expect(parseTurnLog('{"type":"end","sessionId":"native-existing"}').sessionId).toBe("native-existing");
+    expect(parseTurnLog('{"type":"end"}').sessionId).toBeUndefined();
+});

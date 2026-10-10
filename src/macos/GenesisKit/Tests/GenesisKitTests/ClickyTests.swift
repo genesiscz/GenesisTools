@@ -2,6 +2,8 @@ import AVFoundation
 import Combine
 import Foundation
 import SwiftUI
+import UserNotifications
+import Vision
 import XCTest
 
 @testable import GenesisKit
@@ -64,6 +66,200 @@ final class ClickyTests: XCTestCase {
 
     private func date(_ hour: Int, _ minute: Int = 0) -> Date {
         calendar.date(from: DateComponents(year: 2026, month: 10, day: 8, hour: hour, minute: minute))!
+    }
+
+    func testLegacyStatisticsGainHistoryWithoutInventingOldEvents() throws {
+        let legacy = Data("{\"presses\":250,\"releases\":240,\"sessions\":4,\"startedAt\":700000000}".utf8)
+        var statistics = try JSONDecoder().decode(ClickyStatistics.self, from: legacy)
+        XCTAssertEqual(statistics.presses, 250)
+        XCTAssertNil(statistics.historyStartedAt)
+        XCTAssertTrue(statistics.minutes.isEmpty)
+        statistics.record(keyCode: 12, release: false, at: date(14, 32), calendar: calendar)
+        statistics.record(keyCode: 12, release: true, at: date(14, 32), calendar: calendar)
+        XCTAssertEqual(statistics.presses, 251)
+        XCTAssertEqual(statistics.releases, 241)
+        XCTAssertEqual(statistics.keys, [12: 1])
+        XCTAssertEqual(statistics.minutes.count, 1)
+        XCTAssertEqual(statistics.minutes.values.first?.presses, 1)
+        XCTAssertEqual(statistics.minutes.values.first?.releases, 1)
+        XCTAssertEqual(try JSONDecoder().decode(ClickyStatistics.self, from: JSONEncoder().encode(statistics)), statistics)
+    }
+
+    func testAnalyticsRetentionPreservesLifetimeCountsAndLongerCoarseHistory() {
+        var statistics = ClickyStatistics()
+        let start = date(12)
+        for day in 0...731 {
+            statistics.record(keyCode: 0, release: false,
+                at: calendar.date(byAdding: .day, value: day, to: start)!, calendar: calendar)
+        }
+        XCTAssertEqual(statistics.presses, 732)
+        XCTAssertEqual(statistics.keys[0], 732)
+        XCTAssertLessThanOrEqual(statistics.minutes.count, 32)
+        XCTAssertLessThanOrEqual(statistics.hours.count, 368)
+        XCTAssertLessThanOrEqual(statistics.days.count, 731)
+        XCTAssertGreaterThan(statistics.days.count, statistics.hours.count)
+        XCTAssertGreaterThan(statistics.hours.count, statistics.minutes.count)
+    }
+
+    func testPhysicalKeyChartIncludesFunctionKeysAndKeepsPositionsDistinct() {
+        let keys = ClickyKeyLayout.rows.flatMap { $0 }
+        XCTAssertEqual(Set(keys.map(\.code)).count, keys.count)
+        XCTAssertEqual(ClickyKeyLayout.label(53), "Esc")
+        XCTAssertEqual(ClickyKeyLayout.label(122), "F1")
+        XCTAssertEqual(ClickyKeyLayout.label(111), "F12")
+        XCTAssertNotEqual(ClickyKeyLayout.label(55), ClickyKeyLayout.label(54))
+    }
+
+    func testChartDragUsesAnAnchoredOriginAndClampsToHistory() {
+        let epoch = Date(timeIntervalSince1970: 0)
+        let domain = epoch...epoch.addingTimeInterval(3600)
+        let origin = epoch.addingTimeInterval(1200)
+        XCTAssertEqual(NativeChartSampling.pannedPosition(origin: origin, translation: 150, width: 300,
+            window: 600, domain: domain).timeIntervalSince1970, 900)
+        XCTAssertEqual(NativeChartSampling.pannedPosition(origin: origin, translation: -10000, width: 300,
+            window: 600, domain: domain).timeIntervalSince1970, 3000)
+        XCTAssertEqual(NativeChartSampling.pannedPosition(origin: origin, translation: 10000, width: 300,
+            window: 600, domain: domain).timeIntervalSince1970, 0)
+    }
+
+    @MainActor
+    private final class ChartInput: ObservableObject {
+        @Published var points: [NativeTimePoint]
+        @Published var end: Date
+        init(points: [NativeTimePoint], end: Date) {
+            self.points = points
+            self.end = end
+        }
+    }
+
+    private struct ChartHost: View {
+        @ObservedObject var input: ChartInput
+        var body: some View {
+            NativeTimeSeriesChart(points: input.points, interval: 3600, initialWindow: 86400, end: input.end)
+                .frame(width: 640, height: 320).environment(\.colorScheme, .dark)
+        }
+    }
+
+    @MainActor
+    func testChartMovesIntoAnEarlierPeriodWhenItsDatesChange() throws {
+        func period(_ start: Date) -> [NativeTimePoint] {
+            (0..<72).map { NativeTimePoint(date: start.addingTimeInterval(Double($0) * 3600), value: Double($0 % 7 + 1)) }
+        }
+        let later = try XCTUnwrap(ISO8601DateFormatter().date(from: "2025-03-10T00:00:00Z"))
+        let earlier = try XCTUnwrap(ISO8601DateFormatter().date(from: "2023-06-10T00:00:00Z"))
+        let input = ChartInput(points: period(later), end: later.addingTimeInterval(72 * 3600))
+        let host = NSHostingView(rootView: ChartHost(input: input))
+        host.frame = NSRect(x: 0, y: 0, width: 640, height: 320)
+        host.layoutSubtreeIfNeeded()
+        func footer() throws -> String {
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: try XCTUnwrap(bitmap.cgImage)).perform([request])
+            return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+        }
+        XCTAssertTrue(try footer().contains("2025"), "the chart opens on its own period")
+        // Custom dates moved to an earlier period: the scroll position from 2025 must not survive.
+        input.points = period(earlier)
+        input.end = earlier.addingTimeInterval(72 * 3600)
+        let seen = try footer()
+        XCTAssertTrue(seen.contains("2023"), "read: \(seen)")
+        XCTAssertFalse(seen.contains("2025"), "read: \(seen)")
+    }
+
+    func testChartReadoutKeepsFractionalValues() {
+        let english = Locale(identifier: "en_US")
+        XCTAssertEqual(NativeChartSampling.valueText(0.8, locale: english), "0.8", "four characters are 0.8 words, not 0")
+        XCTAssertEqual(NativeChartSampling.valueText(12.26, locale: english), "12.3")
+        XCTAssertEqual(NativeChartSampling.valueText(1234, locale: english), "1,234", "a whole count has no decimal")
+    }
+
+    func testCoarsenedBinsStayOnTheIntervalGridWhateverTheFirstPoint() {
+        // 100000 s of one-minute samples coarsen to two-minute bins; the first sample sits at 00:01, off that grid.
+        let points = [60.0, 120, 180].map { NativeTimePoint(date: Date(timeIntervalSince1970: $0), value: 1) }
+        let whole = NativeChartSampling.bins(points: points, start: Date(timeIntervalSince1970: 0),
+            end: Date(timeIntervalSince1970: 100_000), step: 60)
+        XCTAssertEqual(whole.prefix(2).map(\.date.timeIntervalSince1970), [0, 120])
+        XCTAssertEqual(whole.prefix(2).map(\.value), [1, 2], "00:02 belongs to the 00:02 bin, not to 00:01's")
+        // Panned past the first sample: the same bin keeps the same time and count.
+        let panned = NativeChartSampling.bins(points: points, start: Date(timeIntervalSince1970: 130),
+            end: Date(timeIntervalSince1970: 100_130), step: 60)
+        XCTAssertEqual(panned.first?.date.timeIntervalSince1970, 120)
+        XCTAssertEqual(panned.first?.value, 2)
+    }
+
+    func testChartBinningBoundsWorkWithoutLosingCounts() {
+        let points = (0..<10000).map { NativeTimePoint(date: Date(timeIntervalSince1970: Double($0) * 60), value: 1) }
+        let bins = NativeChartSampling.bins(points: points, start: Date(timeIntervalSince1970: 0),
+            end: Date(timeIntervalSince1970: 600000), step: 60)
+        XCTAssertLessThanOrEqual(bins.count, 1201)
+        XCTAssertEqual(bins.reduce(0) { $0 + $1.value }, 10000)
+        let narrow = NativeChartSampling.bins(points: points, start: Date(timeIntervalSince1970: 300000),
+            end: Date(timeIntervalSince1970: 300600), step: 60)
+        XCTAssertEqual(narrow.count, 10)
+        XCTAssertEqual(narrow.reduce(0) { $0 + $1.value }, 10)
+    }
+
+    func testExampleStatisticsHaveConsistentTotalsAndRecentDataWithoutStorage() {
+        let example = ClickyStatistics.example(now: date(23, 30), calendar: calendar)
+        XCTAssertEqual(example.keys.values.reduce(0, +), example.presses)
+        XCTAssertEqual(example.minutes.values.reduce(0) { $0 + $1.presses }, example.presses)
+        XCTAssertEqual(example.hours.values.reduce(0) { $0 + $1.presses }, example.presses)
+        XCTAssertEqual(example.days.values.reduce(0) { $0 + $1.presses }, example.presses)
+        let recent = Int(date(23).timeIntervalSince1970 / 60)
+        XCTAssertGreaterThan(example.minutes.filter { $0.key >= recent }.values.reduce(0) { $0 + $1.presses }, 0)
+    }
+
+    func testCivilTimeHeatmapAndDailyChartHandleRepeatedDSTHour() {
+        let parser = ISO8601DateFormatter()
+        var statistics = ClickyStatistics()
+        statistics.record(keyCode: 0, release: false, at: parser.date(from: "2026-10-25T00:15:00Z")!, calendar: calendar)
+        statistics.record(keyCode: 0, release: false, at: parser.date(from: "2026-10-25T01:15:00Z")!, calendar: calendar)
+        XCTAssertEqual(statistics.hours.count, 2)
+        XCTAssertEqual(statistics.days.count, 1)
+        let heat = statistics.weekdayHeatmap(calendar: calendar)
+        XCTAssertEqual(heat.first { $0.row == 6 && $0.column == 2 }?.value, 2)
+        let start = calendar.startOfDay(for: parser.date(from: "2026-10-25T00:15:00Z")!)
+        let end = calendar.date(byAdding: .day, value: 2, to: start)!
+        let bins = NativeChartSampling.bins(points: statistics.timeline(.day), start: start, end: end,
+            step: 86400, calendar: calendar)
+        XCTAssertEqual(bins.count, 2)
+        XCTAssertEqual(bins[1].date.timeIntervalSince(bins[0].date), 25 * 3600)
+        XCTAssertEqual(bins.reduce(0) { $0 + $1.value }, 2)
+    }
+
+    @MainActor
+    func testAnalyticsPublisherCoalescesInputWithoutCopyingEachEventSnapshot() {
+        let store = ClickyAnalyticsStore()
+        var reads = 0
+        var statistics = ClickyStatistics()
+        for _ in 0..<100 {
+            statistics.record(keyCode: 1, release: false, at: date(13), calendar: calendar)
+            store.stage { reads += 1; return statistics }
+        }
+        XCTAssertEqual(reads, 0, "The input callback must not build a chart snapshot for every key")
+        store.flush(statistics)
+        XCTAssertEqual(store.snapshot.presses, 100)
+        XCTAssertEqual(store.snapshot.keys[1], 100)
+    }
+
+    @MainActor
+    func testAnalyticsPublishOnlyWhileADashboardIsOpen() {
+        let store = ClickyAnalyticsStore()
+        var statistics = ClickyStatistics()
+        statistics.record(keyCode: 2, release: false, at: date(13), calendar: calendar)
+        store.stage { statistics }
+        XCTAssertEqual(store.revision, 0, "No dashboard is open, so nothing shares the statistics' storage")
+        store.attach()
+        XCTAssertEqual(store.revision, 1)
+        XCTAssertEqual(store.snapshot.keys[2], 1, "The first viewer gets the latest staged statistics at once")
+        store.detach()
+        statistics.record(keyCode: 2, release: false, at: date(13), calendar: calendar)
+        store.stage { statistics }
+        XCTAssertEqual(store.revision, 1)
     }
 
     func testQuietHoursCrossMidnightAndEndIsExclusive() {
@@ -223,6 +419,88 @@ final class ClickyTests: XCTestCase {
             XCTAssertEqual(calendar.component(.hour, from: clock), 22)
             XCTAssertEqual(calendar.component(.minute, from: clock), 15)
         }
+    }
+
+    @MainActor
+    func testUnreadablePreferencesDoNotEraseValidTypingHistory() throws {
+        let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var saved = ClickyStatistics()
+        saved.record(keyCode: 0, release: false, at: date(12))
+        defaults.set(Data("{invalid preferences".utf8), forKey: "clicky.preferences.v1")
+        defaults.set(try JSONEncoder().encode(saved), forKey: "clicky.statistics.v1")
+        let monitor = InputMonitorStub()
+        monitor.granted = true
+        let model = ClickyModel(defaults: defaults, inputMonitor: monitor, observeSystemEvents: false)
+        defer { model.shutdown() }
+        XCTAssertEqual(model.statistics, saved)
+        model.activate()
+        model.deactivate()
+        let restored = try JSONDecoder().decode(ClickyStatistics.self,
+            from: XCTUnwrap(defaults.data(forKey: "clicky.statistics.v1")))
+        XCTAssertEqual(restored.presses, saved.presses)
+        XCTAssertEqual(restored.minutes, saved.minutes)
+        XCTAssertEqual(restored.keys, saved.keys)
+        XCTAssertEqual(restored.sessions, 1)
+    }
+
+    @MainActor
+    func testUnreadableHistoryIsNeverOverwrittenByActivationOrShutdown() throws {
+        let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let original = Data("{\"presses\":12000,\"minutes\":\"unreadable\"}".utf8)
+        defaults.set(original, forKey: "clicky.statistics.v1")
+        let monitor = InputMonitorStub()
+        monitor.granted = true
+        let model = ClickyModel(defaults: defaults, inputMonitor: monitor, observeSystemEvents: false)
+        XCTAssertNotNil(model.statisticsLoadError)
+        model.activate()
+        XCTAssertTrue(model.enabled, "Sound feedback remains available while statistics are protected")
+        XCTAssertEqual(model.statistics.sessions, 0)
+        model.deactivate()
+        model.shutdown()
+        XCTAssertEqual(defaults.data(forKey: "clicky.statistics.v1"), original)
+        model.dismissError()
+        XCTAssertNotNil(model.statisticsLoadError, "The recovery warning survives transient-error dismissal")
+        model.resetStatistics()
+        XCTAssertNil(model.statisticsLoadError)
+        let backups = defaults.dictionaryRepresentation().filter { $0.key.hasPrefix("clicky.statistics.recovery.") }
+        XCTAssertEqual(backups.count, 1)
+        XCTAssertEqual(backups.values.first as? Data, original)
+        model.activate()
+        model.deactivate()
+        let fresh = try JSONDecoder().decode(ClickyStatistics.self,
+            from: XCTUnwrap(defaults.data(forKey: "clicky.statistics.v1")))
+        XCTAssertEqual(fresh.sessions, 1, "Explicit reset restores normal collection")
+        XCTAssertEqual(fresh.presses, 0)
+    }
+
+    @MainActor
+    func testHistoryRetryReopensRestoredDataWithoutResettingOrWritingIt() throws {
+        let suite = "dev.genesis.clicky.persistence.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let original = Data("unreadable".utf8)
+        defaults.set(original, forKey: "clicky.statistics.v1")
+        let model = ClickyModel(defaults: defaults, previewOnly: true, observeSystemEvents: false)
+        defer { model.shutdown() }
+        model.retryStatisticsLoad()
+        XCTAssertNotNil(model.statisticsLoadError)
+        XCTAssertEqual(defaults.data(forKey: "clicky.statistics.v1"), original)
+        var restored = ClickyStatistics()
+        restored.record(keyCode: 0, release: false, at: date(12))
+        let data = try JSONEncoder().encode(restored)
+        defaults.set(data, forKey: "clicky.statistics.v1")
+        model.retryStatisticsLoad()
+        XCTAssertNil(model.statisticsLoadError)
+        XCTAssertEqual(model.statistics, restored)
+        XCTAssertEqual(model.analytics.snapshot, restored)
+        XCTAssertEqual(defaults.data(forKey: "clicky.statistics.v1"), data)
+        XCTAssertTrue(defaults.dictionaryRepresentation().keys.filter {
+            $0.hasPrefix("clicky.statistics.recovery.")
+        }.isEmpty)
     }
 
     @MainActor
@@ -535,15 +813,100 @@ final class ClickyTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         let model = ClickyModel(defaults: defaults, previewOnly: true)
         let sections = ClickySettingsPages.sections(model: model)
-        XCTAssertEqual(sections.map(\.id), ["general", "settings", "clicky", "about"])
-        XCTAssertEqual(sections[1].pages.map(\.id), ["clicky.sound", "clicky.sleep", "clicky.notifications"])
-        XCTAssertEqual(sections[2].pages.map(\.id), ["clicky.stats", "clicky.visualizer"])
+        XCTAssertEqual(sections.map(\.id), ["general", "clicky", "about"])
+        XCTAssertEqual(sections[1].title, "Clicky")
+        XCTAssertEqual(sections[1].pages.map(\.id),
+            ["clicky.sound", "clicky.sleep", "clicky.notifications", "clicky.stats", "clicky.performance", "clicky.visualizer"])
         XCTAssertFalse(model.enabled)
         let controller = ClickyWindowController(model: model)
         XCTAssertTrue(controller.model === model)
         XCTAssertTrue(controller.settings.store.appearance === model.appearance)
         XCTAssertNil(controller.window)
         model.shutdown()
+    }
+
+    @MainActor
+    func testNotificationPermissionRoutesDeniedToSettingsAndRetainsActivationPreference() async {
+        let suite = "dev.genesis.clicky.notifications.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var authorization: UNAuthorizationStatus = .denied
+        var requests = 0
+        var settingsOpens = 0
+        let client = NativeNotificationClient(status: { authorization }, request: {
+            requests += 1
+            authorization = .authorized
+            return true
+        }, openSettings: { settingsOpens += 1; return true })
+        let model = ClickyModel(defaults: defaults, observeSystemEvents: false, notificationClient: client)
+        defer { model.shutdown() }
+        await model.refreshNotificationPermission()
+        model.setActivationNotifications(true)
+        XCTAssertTrue(model.preferences.notifications, "Blocked permission must not silently reset the preference")
+        XCTAssertEqual(model.notificationActionTitle, "Open Notification Settings")
+        await model.performNotificationAction()
+        XCTAssertEqual(requests, 0, "A denied permission cannot display another prompt")
+        XCTAssertEqual(settingsOpens, 1)
+        XCTAssertTrue(model.preferences.notifications)
+        authorization = .authorized
+        await model.refreshNotificationPermission()
+        XCTAssertEqual(model.notificationStatus, "Allowed")
+        model.setActivationNotifications(false)
+        XCTAssertFalse(model.preferences.notifications)
+        authorization = .notDetermined
+        await model.refreshNotificationPermission()
+        await model.performNotificationAction()
+        XCTAssertEqual(requests, 1, "First-time permission must still be requested")
+        XCTAssertEqual(model.notificationStatus, "Allowed")
+        XCTAssertFalse(model.preferences.notifications, "Permission alone does not change the activation preference")
+        XCTAssertFalse(model.notificationBusy)
+    }
+
+    @MainActor
+    func testStaleNotificationReadCannotOverwriteCompletedPermissionRequest() async {
+        let suite = "dev.genesis.clicky.notifications.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let started = AsyncStream<Void>.makeStream()
+        var pending: CheckedContinuation<UNAuthorizationStatus, Never>?
+        var first = true
+        let client = NativeNotificationClient(status: {
+            if first {
+                first = false
+                return await withCheckedContinuation { continuation in
+                    pending = continuation
+                    started.continuation.yield(())
+                }
+            }
+            return .notDetermined
+        }, request: { true }, openSettings: { false })
+        let model = ClickyModel(defaults: defaults, observeSystemEvents: false, notificationClient: client)
+        defer { model.shutdown() }
+        let oldRead = Task { await model.refreshNotificationPermission() }
+        var iterator = started.stream.makeAsyncIterator()
+        _ = await iterator.next()
+        await model.performNotificationAction()
+        XCTAssertEqual(model.notificationAuthorization, .authorized)
+        pending?.resume(returning: .denied)
+        await oldRead.value
+        XCTAssertEqual(model.notificationAuthorization, .authorized)
+        XCTAssertFalse(model.notificationBusy)
+    }
+
+    @MainActor
+    func testNotificationSettingsFailureIsActionable() async {
+        let suite = "dev.genesis.clicky.notifications.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = ClickyModel(defaults: defaults, observeSystemEvents: false,
+            notificationClient: NativeNotificationClient(status: { .denied }, request: {
+                XCTFail("Denied authorization must not be requested again")
+                return false
+            }, openSettings: { false }))
+        defer { model.shutdown() }
+        await model.performNotificationAction()
+        XCTAssertTrue(model.error?.contains("System Settings") == true)
+        XCTAssertFalse(model.notificationBusy)
     }
 
     func testRestoredSettingsGeometryKeepsReachableWindowsAcrossDisplays() {
@@ -1677,5 +2040,185 @@ extension ClickyPackTests {
         let calls = await loader.counts()
         XCTAssertEqual(calls.catalogue, 1)
         XCTAssertEqual(calls.prepare, 0)
+    }
+}
+
+extension ClickyTests {
+    func testPerformanceUsesEventTimeInsteadOfDelayedCallbackArrival() {
+        let now = date(12)
+        let first = ClickyInputTime.date(timestampNanoseconds: 990_000_000_000, now: now, uptime: 1000)
+        let second = ClickyInputTime.date(timestampNanoseconds: 990_250_000_000, now: now, uptime: 1000)
+        XCTAssertEqual(second.timeIntervalSince(first), 0.25)
+        XCTAssertEqual(now.timeIntervalSince(first), 10)
+        XCTAssertEqual(ClickyInputTime.date(timestampNanoseconds: 0, now: now, uptime: 1000), now)
+        XCTAssertEqual(ClickyInputTime.date(timestampNanoseconds: 1001_000_000_000, now: now, uptime: 1000), now)
+    }
+
+    func testPerformanceFiveSecondStopBoundaryExcludesLongPausesAndReleases() {
+        var stats = ClickyStatistics()
+        let start = date(12)
+        for offset in [0.0, 1.0, 6.0, 11.001, 12.001] {
+            stats.record(keyCode: 0, release: false, at: start.addingTimeInterval(offset))
+        }
+        stats.record(keyCode: 0, release: true, at: start.addingTimeInterval(14))
+        let bucket = stats.performanceMinutes.values.first!
+        XCTAssertEqual(bucket.presses, 5)
+        XCTAssertEqual(bucket.characters, 5)
+        XCTAssertEqual(bucket.bursts, 2)
+        XCTAssertEqual(bucket.activeSeconds, 7, accuracy: 0.0001)
+        XCTAssertEqual(bucket.estimatedWords, 1)
+    }
+
+    func testPerformanceShortcutsAndNavigationStopBurstsWhileModifiersDoNotAddWords() {
+        var stats = ClickyStatistics()
+        let start = date(12)
+        stats.record(keyCode: 0, release: false, at: start)
+        stats.record(keyCode: 56, release: false, at: start.addingTimeInterval(0.5))
+        stats.record(keyCode: 1, release: false, at: start.addingTimeInterval(1))
+        stats.record(keyCode: 8, release: false, at: start.addingTimeInterval(2), shortcut: true)
+        stats.record(keyCode: 0, release: false, at: start.addingTimeInterval(3))
+        stats.record(keyCode: 123, release: false, at: start.addingTimeInterval(4))
+        stats.record(keyCode: 51, release: false, at: start.addingTimeInterval(5))
+        let bucket = stats.performanceMinutes.values.first!
+        XCTAssertEqual(bucket.presses, 7)
+        XCTAssertEqual(bucket.characters, 3)
+        XCTAssertEqual(bucket.corrections, 1)
+        XCTAssertEqual(bucket.activeSeconds, 1)
+        XCTAssertEqual(bucket.bursts, 3)
+    }
+
+    func testPerformancePauseAndReloadNeverBridgeTypingTime() throws {
+        var stats = ClickyStatistics()
+        stats.record(keyCode: 0, release: false, at: date(12))
+        stats.breakTypingBurst()
+        stats.record(keyCode: 0, release: false, at: date(12).addingTimeInterval(1))
+        let encoded = try JSONEncoder().encode(stats)
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("lastTypingAt"))
+        var restored = try JSONDecoder().decode(ClickyStatistics.self, from: encoded)
+        restored.record(keyCode: 0, release: false, at: date(12).addingTimeInterval(2))
+        XCTAssertEqual(restored.performanceMinutes.values.first?.activeSeconds, 0)
+        XCTAssertEqual(restored.performanceMinutes.values.first?.bursts, 3)
+        XCTAssertEqual(stats.performanceMinutes, try JSONDecoder().decode(ClickyStatistics.self, from: encoded).performanceMinutes)
+    }
+
+    func testPerformanceSplitsMidnightAndCountsCarriedBurstInsideFilteredDay() {
+        var stats = ClickyStatistics()
+        let start = date(23, 59).addingTimeInterval(58)
+        stats.record(keyCode: 0, release: false, at: start)
+        stats.record(keyCode: 0, release: false, at: start.addingTimeInterval(4))
+        let midnight = calendar.startOfDay(for: start.addingTimeInterval(4))
+        let filter = ClickyPerformanceFilter(start: midnight, end: midnight.addingTimeInterval(3600))
+        let report = ClickyPerformanceReport(statistics: stats, filter: filter, grouping: .day, calendar: calendar)
+        XCTAssertEqual(stats.performanceMinutes.values.reduce(0) { $0 + $1.activeSeconds }, 4)
+        XCTAssertEqual(report.total.activeSeconds, 2)
+        XCTAssertEqual(report.total.bursts, 1)
+        XCTAssertEqual(report.total.characters, 1)
+        XCTAssertEqual(report.hours[0].activeSeconds, 2)
+        XCTAssertEqual(report.weekdays[4].activeSeconds, 2)
+    }
+
+    func testPerformanceCountsACarriedBurstWhenThePressLandsExactlyOnMidnight() {
+        var stats = ClickyStatistics()
+        let start = date(23, 59).addingTimeInterval(58)
+        stats.record(keyCode: 0, release: false, at: start)
+        let midnight = start.addingTimeInterval(2)
+        stats.record(keyCode: 0, release: false, at: midnight)
+        let day = calendar.startOfDay(for: midnight)
+        let filter = ClickyPerformanceFilter(start: day, end: day.addingTimeInterval(3600))
+        let report = ClickyPerformanceReport(statistics: stats, filter: filter, grouping: .day, calendar: calendar)
+        XCTAssertEqual(report.total.characters, 1)
+        XCTAssertEqual(report.total.bursts, 1, "the press at 00:00:00 continues a burst, so the new day counts it")
+    }
+
+    func testPerformanceFiltersWeightedRatesAndGroupingKeepTotals() {
+        var stats = ClickyStatistics()
+        var fast = ClickyPerformanceBucket()
+        fast.characters = 10; fast.activeSeconds = 1; fast.presses = 10
+        var slow = ClickyPerformanceBucket()
+        slow.characters = 100; slow.activeSeconds = 100; slow.presses = 100
+        stats.performanceMinutes[Int(date(12).timeIntervalSince1970 / 60)] = fast
+        stats.performanceMinutes[Int(date(12, 5).timeIntervalSince1970 / 60)] = slow
+        let all = ClickyPerformanceFilter(start: date(0), end: date(23, 59))
+        let report = ClickyPerformanceReport(statistics: stats, filter: all, grouping: .fifteenMinutes, calendar: calendar)
+        XCTAssertEqual(report.timeline.count, 1)
+        XCTAssertEqual(report.total.wordsPerMinute!, 22 * 60 / 101, accuracy: 0.0001)
+        XCTAssertEqual(report.hours[12].wordsPerMinute, report.total.wordsPerMinute)
+        var excluded = all
+        excluded.weekdays = [0]
+        XCTAssertEqual(ClickyPerformanceReport(statistics: stats, filter: excluded, grouping: .minute, calendar: calendar).total.presses, 0)
+        excluded.weekdays = Set(0..<7)
+        excluded.fromHour = 22; excluded.untilHour = 8
+        XCTAssertEqual(ClickyPerformanceReport(statistics: stats, filter: excluded, grouping: .minute, calendar: calendar).total.presses, 0)
+    }
+
+    func testDictationEstimateUsesRetainedWordConventionAndCanFavorTyping() {
+        var totals = ClickyPerformanceBucket()
+        totals.characters = 750; totals.corrections = 50; totals.activeSeconds = 180; totals.bursts = 2
+        let estimate = ClickyDictationEstimate(totals: totals, wordsPerMinute: 140, setupPerBurst: 3)
+        XCTAssertEqual(totals.estimatedWords, 150)
+        XCTAssertEqual(totals.estimatedRetainedWords, 140)
+        XCTAssertEqual(estimate.speakingSeconds, 60)
+        XCTAssertEqual(estimate.setupSeconds, 6)
+        XCTAssertEqual(estimate.differenceSeconds, 114)
+        totals.activeSeconds = 20
+        XCTAssertEqual(ClickyDictationEstimate(totals: totals, wordsPerMinute: 140, setupPerBurst: 3).differenceSeconds, -46)
+    }
+
+    func testPreparedPerformanceReportPreservesTotalsAndRejectsCancellation() async {
+        var stats = ClickyStatistics()
+        stats.record(keyCode: 0, release: false, at: date(12))
+        stats.record(keyCode: 0, release: false, at: date(12).addingTimeInterval(2))
+        let filter = ClickyPerformanceFilter(start: date(0), end: date(23, 59))
+        let calendar = self.calendar
+        let expected = ClickyPerformanceReport(statistics: stats, filter: filter, grouping: .minute, calendar: calendar)
+        let prepared = await ClickyPerformanceReport.prepare(statistics: stats, filter: filter, grouping: .minute, calendar: calendar)
+        XCTAssertEqual(prepared?.total, expected.total)
+        XCTAssertEqual(prepared?.hours, expected.hours)
+        XCTAssertEqual(prepared?.weekdays, expected.weekdays)
+        XCTAssertEqual(prepared?.timeline.map(\.date), expected.timeline.map(\.date))
+        XCTAssertEqual(prepared?.timeline.map(\.totals), expected.timeline.map(\.totals))
+        let cancelled = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await ClickyPerformanceReport.prepare(statistics: stats, filter: filter, grouping: .minute, calendar: calendar)
+        }
+        let stale = await cancelled.value
+        XCTAssertNil(stale)
+    }
+
+    func testPreparedPerformanceReportIsDroppedWhenCancelledWhileTheWorkerRuns() async {
+        var stats = ClickyStatistics()
+        stats.record(keyCode: 0, release: false, at: date(12))
+        let filter = ClickyPerformanceFilter(start: date(0), end: date(23, 59))
+        let calendar = self.calendar
+        let started = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let request = Task {
+            await ClickyPerformanceReport.prepare(statistics: stats, filter: filter, grouping: .minute, calendar: calendar,
+                                                  beforeBuild: {
+                started.signal()
+                _ = release.wait(timeout: .now() + 5)
+            })
+        }
+        let entered = await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: started.wait(timeout: .now() + 5))
+            }
+        }
+        XCTAssertEqual(entered, .success, "the worker must have started before cancellation")
+        request.cancel()
+        release.signal()
+        let stale = await request.value
+        XCTAssertNil(stale, "a request cancelled after its worker started must not publish the report")
+    }
+
+    func testPerformanceRetentionDoesNotInventLegacyTiming() throws {
+        var stats = try JSONDecoder().decode(ClickyStatistics.self, from: Data("{\"presses\":12000}".utf8))
+        XCTAssertTrue(stats.performanceMinutes.isEmpty)
+        XCTAssertNil(stats.performanceStartedAt)
+        let first = date(12)
+        stats.record(keyCode: 0, release: false, at: first)
+        stats.record(keyCode: 0, release: false, at: first.addingTimeInterval(31 * 86400))
+        XCTAssertEqual(stats.performanceMinutes.count, 1)
+        XCTAssertEqual(stats.presses, 12002)
     }
 }

@@ -15,6 +15,49 @@ struct WidgetActivityIndicator: View {
     }
 }
 
+private struct WidgetActivityRingLayout: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let text = subviews.first?.sizeThatFits(.unspecified) ?? .zero
+        let diameter = max(28, max(text.width, text.height) + 10)
+        return CGSize(width: diameter, height: diameter)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: CGPoint(x: bounds.midX, y: bounds.midY), anchor: .center, proposal: .unspecified)
+    }
+}
+
+struct WidgetSessionActivity: View {
+    let status: AgentWidgetStatus
+    let count: Int
+    let needsAnswer: Bool
+    let animate: Bool
+    var complete = true
+
+    var body: some View {
+        Group {
+            if count > 0, status == .working {
+                WidgetActivityRingLayout {
+                    Text(verbatim: count > 99 ? "99+" : String(count) + (complete ? "" : "+"))
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .monospacedDigit().foregroundStyle(needsAnswer ? Color.orange : status.color)
+                }.overlay {
+                    SpinningArc(color: status.color, lineWidth: 1.7, spinning: animate)
+                        .allowsHitTesting(false)
+                }
+            } else if count > 0 {
+                WidgetInboxCount(count: count, needsAnswer: needsAnswer, pulse: 0, reduceMotion: !animate,
+                    complete: complete)
+            } else if status == .working {
+                SpinningArc(color: status.color, lineWidth: 1.7, spinning: animate)
+                    .frame(width: 14, height: 14).padding(5)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(status.label + ", \(max(0, count)) inbox notifications")
+    }
+}
+
 struct AgentWidgetPreview: View {
     @ObservedObject var model: WidgetModel
     let surface: WidgetSurfaceID
@@ -27,16 +70,27 @@ struct AgentWidgetPreview: View {
                     .foregroundStyle(.white.opacity(0.65))
                 Text("Inbox").font(.system(size: 12, weight: .semibold))
                 Spacer()
-                if waiting > 0 {
-                    HStack(spacing: 4) {
-                        Circle().fill(.orange).frame(width: 4, height: 4)
-                        Text("\(waiting) need you")
-                    }.font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color.orange.opacity(0.95))
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(.orange.opacity(0.10), in: Capsule())
-                } else {
-                    Text("All caught up").font(.system(size: 10)).foregroundStyle(.secondary)
+                if model.inbox.needsAnswer > 0 {
+                    Button { model.openInboxNotification(on: surface, needsAnswer: true) } label: {
+                        HStack(spacing: 4) {
+                            WidgetInboxCount(count: model.inbox.needsAnswer, needsAnswer: true,
+                                pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
+                            Text("need you").font(.system(size: 10))
+                        }
+                    }.buttonStyle(.genHoverPlain()).instantTooltip("Open need you inbox items")
+                }
+                if model.inbox.unread > 0 {
+                    Button { model.openInboxNotification(on: surface, needsAnswer: false) } label: {
+                        HStack(spacing: 4) {
+                            WidgetInboxCount(count: model.inbox.unread, needsAnswer: false,
+                                pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
+                            Text("unread").font(.system(size: 10))
+                        }
+                    }.buttonStyle(.genHoverPlain()).instantTooltip("Open unread inbox items")
+                }
+                if model.inboxCount == 0 {
+                    Text(model.inbox.complete ? "All caught up" : "Inbox status unavailable")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
             }.padding(.horizontal, 5).padding(.bottom, 5)
 
@@ -52,9 +106,7 @@ struct AgentWidgetPreview: View {
             } else {
                 ForEach(model.previewSessions) { session in
                     Button {
-                        model.select(session.key)
-                        model.section = "Inbox"
-                        model.openModule("agents", on: surface)
+                        model.openInboxNotification(on: surface, key: session.key)
                     } label: {
                         HStack(spacing: 9) {
                             AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 21)
@@ -70,8 +122,13 @@ struct AgentWidgetPreview: View {
                                 }.font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.45))
                             }
                             Spacer(minLength: 2)
+                            if let inbox = model.inboxFor(session.key), inbox.unread + inbox.needsAnswer > 0 {
+                                WidgetInboxCount(count: inbox.unread + inbox.needsAnswer, needsAnswer: inbox.needsAnswer > 0,
+                                    pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
+                            } else {
                             WidgetActivityIndicator(status: session.visualStatus, animate: !model.effectiveReduceMotion)
                                 .frame(width: 12, height: 12)
+                            }
                         }
                         .padding(.horizontal, 9).padding(.vertical, 9)
                         .frame(maxWidth: .infinity, alignment: .leading)

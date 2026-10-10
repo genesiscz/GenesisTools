@@ -4,16 +4,18 @@ import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { type DecisionRecord, kindOf, readDecisions } from "@app/question/lib/decisions/store";
 import { renderFormAnswer } from "@app/question/lib/pending/render";
-import { listFormsSnapshot } from "@app/question/lib/pending/store";
+import { listFormsSnapshot, PENDING_MIGRATIONS } from "@app/question/lib/pending/store";
 import type { AskForm, AskItem } from "@app/question/lib/pending/types";
-import { type QaRow, queryEntriesSnapshot } from "@app/question/lib/read-model";
+import { type QaRow, queryEntriesSnapshot, readQuestionSnapshot } from "@app/question/lib/read-model";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { resolveTranscript, transcriptEnvelope } from "@genesiscz/utils/ai/transcripts";
+import { runMigrations } from "@genesiscz/utils/database/migrations";
 import type { ImageAttachment } from "@genesiscz/utils/image/attachments";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import { hubAgents } from "../agents";
 import type { AgentNode, AgentsTree } from "../agents/types";
 import { readAssetManifest } from "../composer/serialize";
@@ -44,6 +46,13 @@ export interface WidgetSession {
     parentSessionId?: string;
     agentId?: string;
     transcriptPath?: string;
+    parentKey?: string;
+    role?: string;
+    model?: string;
+    account?: string;
+    startedAt?: number;
+    toolCalls?: number;
+    agentStatus?: string;
 }
 export interface WidgetCard {
     transcriptAnchor?: TranscriptAnchor;
@@ -85,7 +94,109 @@ export interface WidgetSources {
     answers(session?: string): QaRow[];
     agents(refresh?: boolean): Promise<AgentsTree>;
     events?(ids: string[]): WidgetActivityEvent[];
+    inboxData?(): WidgetInboxData;
+    rosterStatus?(): { loading: boolean; error?: string };
 }
+export interface WidgetInboxGroup {
+    id: string;
+    sessionId: string;
+    provider: string;
+    title: string;
+    project: string;
+    cwd: string;
+    at: number;
+    count: number;
+    total: number;
+}
+export interface WidgetInboxData {
+    answers: WidgetInboxGroup[];
+    forms: WidgetInboxGroup[];
+    complete: boolean;
+    truncated: boolean;
+}
+export interface WidgetInboxItem {
+    id: string;
+    sourceId: string;
+    kind: "answer" | "result" | "decision" | "form";
+    key: string;
+    at: number;
+    needsAnswer: boolean;
+}
+export interface WidgetInboxSession {
+    key: string;
+    unread: number;
+    needsAnswer: number;
+    latest?: WidgetInboxItem;
+    unreadItem?: WidgetInboxItem;
+    pendingItem?: WidgetInboxItem;
+}
+export interface WidgetInboxSummary {
+    unread: number;
+    needsAnswer: number;
+    complete: boolean;
+    truncated: boolean;
+    sessions: WidgetInboxSession[];
+    profile?: { hostId: "local" };
+}
+
+function readInboxData(): WidgetInboxData {
+    return readQuestionSnapshot({
+        dbPath: toolDataDir("question", "qa.db"),
+        read: (db) => {
+            runMigrations(db, PENDING_MIGRATIONS, { tableName: "qa_pending" });
+            const answers = db
+                .query<WidgetInboxGroup, []>(`
+                WITH unseen AS (
+                    SELECT id, COALESCE(NULLIF(session_id,''),id) AS sessionId,
+                        CASE WHEN agent IN ('claude','claude-code') THEN 'claude'
+                             WHEN agent IN ('codex','grok') THEN agent ELSE 'unknown' END AS provider,
+                        COALESCE(session_title,session_id,id) AS title, COALESCE(project,'') AS project,
+                        COALESCE(cwd,'') AS cwd, ts AS at,
+                        COUNT(*) OVER () AS total
+                    FROM entries WHERE read_at IS NULL AND superseded_by IS NULL
+                        AND NOT EXISTS (SELECT 1 FROM qa_pending WHERE entry_id=entries.id)
+                ), ranked AS (
+                    SELECT *, COUNT(*) OVER (PARTITION BY sessionId,provider) AS count,
+                        ROW_NUMBER() OVER (PARTITION BY sessionId,provider ORDER BY at DESC,id DESC) AS position
+                    FROM unseen
+                ) SELECT id,sessionId,provider,title,project,cwd,at,count,total
+                  FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
+            `)
+                .all();
+            const hasForms = db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='qa_pending'").get();
+            const forms = hasForms
+                ? db
+                      .query<WidgetInboxGroup, []>(`
+                WITH pending AS (
+                    SELECT id, COALESCE(NULLIF(session_hint,''),id) AS sessionId,
+                        CASE WHEN json_valid(poster_json) THEN NULLIF(json_extract(poster_json,'$.agent'),'unknown') END AS poster,
+                        CASE WHEN json_valid(transcript_anchor_json) THEN json_extract(transcript_anchor_json,'$.provider') END AS anchor,
+                        COALESCE(source,'Question') AS title, project_path AS project, cwd, created_at AS at,
+                        COUNT(*) OVER () AS total
+                    FROM qa_pending WHERE status='pending'
+                ), normalized AS (
+                    SELECT *, CASE WHEN COALESCE(poster,anchor) IN ('claude','claude-code') THEN 'claude'
+                        WHEN COALESCE(poster,anchor) IN ('codex','grok') THEN COALESCE(poster,anchor)
+                        ELSE 'unknown' END AS provider FROM pending
+                ), ranked AS (
+                    SELECT *, COUNT(*) OVER (PARTITION BY sessionId,provider) AS count,
+                        ROW_NUMBER() OVER (PARTITION BY sessionId,provider ORDER BY at DESC,id DESC) AS position
+                    FROM normalized
+                ) SELECT id,sessionId,provider,title,project,cwd,at,count,total
+                  FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
+            `)
+                      .all()
+                : [];
+            return {
+                answers: answers.slice(0, 256),
+                forms: forms.slice(0, 256),
+                complete: true,
+                truncated: answers.length > 256 || forms.length > 256,
+            };
+        },
+    });
+}
+
 export interface WidgetActivityEvent {
     id: string;
     sourceId: string;
@@ -141,6 +252,10 @@ export function readWidgetDecisionEvents({
         .slice(-100);
 }
 let cachedAgents: { at: number; refreshed: boolean; promise: Promise<AgentsTree> } | undefined;
+export function invalidateWidgetAgents(): void {
+    cachedAgents = undefined;
+}
+
 export function widgetAgents({ refresh = false }: { refresh?: boolean } = {}): Promise<AgentsTree> {
     if (!cachedAgents || Date.now() - cachedAgents.at > 15_000 || (refresh && !cachedAgents.refreshed)) {
         const promise = hubAgents({ hours: 168, limit: 150, refresh });
@@ -196,11 +311,21 @@ export const realWidgetSources: WidgetSources = {
     answers: (sessionId) =>
         queryEntriesSnapshot({
             dbPath: toolDataDir("question", "qa.db"),
-            opts: { sessionId, limit: sessionId ? 80 : 100 },
+            // The notified answer can sit behind 80 newer read ones; opening it must still find its card.
+            opts: sessionId ? { sessionId, limit: 80, includeNewestUnread: true } : { limit: 100 },
         }),
     agents: (refresh) => widgetAgents({ refresh }),
+    inboxData: readInboxData,
     events: (ids) => readWidgetDecisionEvents({ ids }),
 };
+
+/** Refreshes both catalogs the Widget reads: indexed sessions and the agent roster, which the sessions scope excludes. */
+export async function discoverWidgetCatalog(
+    sources: Pick<WidgetSources, "agents" | "sessions"> = realWidgetSources
+): Promise<{ sessions: number; agents: number }> {
+    const [sessions, tree] = await Promise.all([sources.sessions(true), sources.agents(true)]);
+    return { sessions: sessions.length, agents: tree.parents.length + tree.orphans.length };
+}
 
 /** The provider name a Widget session key carries: unsupported agents become "unknown". */
 export function widgetProvider(value: string | null | undefined): WidgetTarget["provider"] {
@@ -235,6 +360,52 @@ function cleanVisibleContext(text: string): string {
 }
 function flattenAgents(nodes: AgentNode[]): AgentNode[] {
     return nodes.flatMap((node) => [node, ...flattenAgents(node.children)]);
+}
+
+/** Only a finished agent has a result; an idle teammate or a ready worker is still part of the work. */
+function hasResult(node: AgentNode): boolean {
+    return node.status === "completed" || node.status === "failed" || node.status === "killed";
+}
+
+/**
+ * The finished agent an inbox read names, when it still belongs to that Widget session: either the
+ * session is the agent's own (`sessionId` is the agent id or its native session id), or it is the indexed session whose
+ * transcript is the agent's file, which is how the snapshot maps a worker onto an indexed row.
+ */
+export async function widgetResultNode({
+    target,
+    agentId,
+    sources = realWidgetSources,
+}: {
+    target: WidgetTarget;
+    agentId: string;
+    sources?: Pick<WidgetSources, "agents" | "sessions">;
+}): Promise<AgentNode | undefined> {
+    const tree = await sources.agents(false);
+    const node = [...tree.parents.flatMap((parent) => flattenAgents(parent.children)), ...flattenAgents(tree.orphans)]
+        .filter(
+            (entry) => entry.id === agentId && widgetProvider(entry.harness) === target.provider && hasResult(entry)
+        )
+        .sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt))[0];
+    const ownNative =
+        node?.nativeSessionId === target.sessionId &&
+        (!node.sourceHome || workerSourceHome(node.sourceHome) === workerSourceHome(target.sourceHome));
+    if (!node || node.id === target.sessionId || ownNative) {
+        return node;
+    }
+
+    if (!node.filePath) {
+        return undefined;
+    }
+
+    const rows = await sources.sessions(false);
+    const owned = rows.some(
+        (row) =>
+            row.sessionId === target.sessionId &&
+            widgetProvider(row.provider) === target.provider &&
+            row.filePath === node.filePath
+    );
+    return owned ? node : undefined;
 }
 
 type WidgetChanges = { available: boolean; files: { path: string; at: string; source: string }[] };
@@ -316,13 +487,21 @@ export async function widgetSnapshot({
     const state = await readWidgetState(root);
     selectedKey ??= state.selectedKey ?? undefined;
     const errors: string[] = [];
+    const rosterStatus = sources.rosterStatus?.();
+    if (rosterStatus?.error) {
+        errors.push(`Agent list: ${rosterStatus.error}. Showing the last completed list.`);
+    }
     async function read<T>(name: string, fn: () => T | Promise<T>, fallback: T): Promise<T> {
+        const stop = prof.start(name);
         try {
-            return await prof.measureAsync(name, async () => fn());
+            const value = fn();
+            return value instanceof Promise ? await value : value;
         } catch (error) {
             logger.warn({ error, name }, "Widget source unavailable");
             errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
             return fallback;
+        } finally {
+            stop();
         }
     }
     const [rows, decisions, waitingForms, agents, answerRoster] = await Promise.all([
@@ -332,6 +511,36 @@ export async function widgetSnapshot({
         read("agents", () => sources.agents(refresh), { generatedAt: "", parents: [], orphans: [] }),
         read("answer sessions", () => sources.answers(), []),
     ]);
+    const inboxData = sources.inboxData
+        ? await read("inbox metadata", sources.inboxData, { answers: [], forms: [], complete: false, truncated: false })
+        : {
+              answers: answerRoster
+                  .filter((row) => row.readAt === null)
+                  .map((row) => ({
+                      id: row.id,
+                      sessionId: row.sessionId,
+                      provider: widgetProvider(row.agent),
+                      title: row.sessionTitle ?? row.sessionId,
+                      project: row.project,
+                      cwd: row.cwd,
+                      at: row.ts,
+                      count: 1,
+                      total: answerRoster.filter((entry) => entry.readAt === null).length,
+                  })),
+              forms: waitingForms.map((form) => ({
+                  id: form.id,
+                  sessionId: form.sessionHint || form.id,
+                  provider: formProvider(form) ?? "unknown",
+                  title: form.source ?? "Question",
+                  project: form.projectPath,
+                  cwd: form.cwd,
+                  at: form.createdAt,
+                  count: 1,
+                  total: waitingForms.length,
+              })),
+              complete: false,
+              truncated: true,
+          };
     const sessions = new Map<string, WidgetSession>();
     const addSession = (target: WidgetTarget, title: string, project: string, activityAt: number): WidgetSession => {
         const key = widgetSessionKey(target);
@@ -367,6 +576,8 @@ export async function widgetSnapshot({
                 row.mtime
             );
             session.transcriptPath = row.filePath;
+            session.model = row.model ?? undefined;
+            session.account = row.account ?? undefined;
         }
     }
     const findSession = (id: string, hint?: string | null) => {
@@ -375,26 +586,64 @@ export async function widgetSnapshot({
         );
         return matches.length === 1 ? matches[0] : undefined;
     };
+    // A worker reusing an indexed session keeps that session's id; `agentId` is what names the worker then.
+    const findResultSession = (node: AgentNode) =>
+        [...sessions.values()].find(
+            (entry) => entry.agentId === node.id && entry.target.provider === widgetProvider(node.harness)
+        ) ?? findSession(node.id, node.harness);
     const addWorker = (node: AgentNode, parent?: WidgetSession) => {
+        // A codex/grok worker's id is its name; replies reach it only through its native session and home.
+        const sessionId = node.nativeSessionId || node.id;
+        // The same session id is indexed once per home; only the copy in the worker's own home is the worker.
+        const home = node.sourceHome ? workerSourceHome(node.sourceHome) : undefined;
+        const indexed = [...sessions.values()].filter(
+            (entry) =>
+                entry.target.provider === node.harness &&
+                (node.nativeSessionId
+                    ? entry.target.sessionId === node.nativeSessionId &&
+                      (!home || workerSourceHome(entry.target.sourceHome) === home)
+                    : node.filePath
+                      ? entry.transcriptPath === node.filePath
+                      : entry.target.sessionId === node.id)
+        );
         const target = targetOf(
             {
                 provider: node.harness,
-                sessionId: node.id,
+                sessionId,
                 cwd: parent?.target.cwd,
-                sourceHome: parent?.target.sourceHome,
+                sourceHome:
+                    node.sourceHome ||
+                    (parent?.target.provider === node.harness ? parent.target.sourceHome : undefined),
             },
-            node.id
+            sessionId
         );
-        const session = addSession(
-            target,
-            node.name ?? node.description ?? node.id,
-            parent?.project ?? "Agent",
-            timeOf(node.lastAt)
-        );
+        const session =
+            indexed.length === 1
+                ? indexed[0]
+                : addSession(
+                      target,
+                      node.name ?? node.description ?? node.id,
+                      parent?.project ?? "Agent",
+                      timeOf(node.lastAt)
+                  );
+        session.title = node.name ?? node.description ?? session.title;
         session.status = node.status === "running" ? "working" : node.status === "completed" ? "finished" : "recent";
         session.agentId = node.id;
         session.parentSessionId = parent?.target.sessionId;
+        session.parentKey = parent?.key;
         session.transcriptPath = node.filePath ?? undefined;
+        session.role = node.kind;
+        session.model = node.model ?? session.model;
+        session.account = node.account ?? session.account;
+        session.toolCalls = node.toolCalls;
+        session.agentStatus = node.status;
+        const startedAt = Date.parse(node.startedAt ?? "");
+        if (Number.isFinite(startedAt)) {
+            session.startedAt = startedAt;
+        }
+        for (const child of node.children) {
+            addWorker(child, session);
+        }
         return session;
     };
     for (const parent of agents.parents) {
@@ -407,15 +656,23 @@ export async function widgetSnapshot({
                 timeOf(parent.lastAt)
             );
         session.transcriptPath ??= parent.filePath;
+        session.role = "lead";
+        session.model = parent.model ?? session.model;
+        session.account = parent.account ?? session.account;
+        session.agentStatus = parent.live ? "running" : "idle";
+        const startedAt = Date.parse(parent.startedAt ?? "");
+        if (Number.isFinite(startedAt)) {
+            session.startedAt = startedAt;
+        }
         const nodes = flattenAgents(parent.children);
-        for (const node of nodes) {
+        for (const node of parent.children) {
             addWorker(node, session);
         }
-        if (nodes.some((node) => node.status === "running")) {
+        if (parent.live || nodes.some((node) => node.status === "running")) {
             session.status = "working";
         }
     }
-    for (const node of flattenAgents(agents.orphans)) {
+    for (const node of agents.orphans) {
         addWorker(node);
     }
     for (const decision of decisions) {
@@ -462,6 +719,120 @@ export async function widgetSnapshot({
             addSession(target, target.sessionId, target.cwd, 0);
         }
     }
+    const inboxSessions = new Map<string, WidgetInboxSession>();
+    const putInbox = (session: WidgetSession, item: WidgetInboxItem, count: number) => {
+        const entry = inboxSessions.get(session.key) ?? { key: session.key, unread: 0, needsAnswer: 0 };
+        if (item.needsAnswer) {
+            entry.needsAnswer += count;
+        } else {
+            entry.unread += count;
+        }
+        if (
+            !entry.latest ||
+            (item.needsAnswer && !entry.latest.needsAnswer) ||
+            (item.needsAnswer === entry.latest.needsAnswer && item.at > entry.latest.at)
+        ) {
+            entry.latest = item;
+        }
+        const target = item.needsAnswer ? "pendingItem" : "unreadItem";
+        if (!entry[target] || item.at > entry[target].at) {
+            entry[target] = item;
+        }
+        inboxSessions.set(session.key, entry);
+    };
+    for (const [kind, groups] of [
+        ["answer", inboxData.answers],
+        ["form", inboxData.forms],
+    ] as const) {
+        for (const row of groups) {
+            // "unknown" is the SQL fallback, not evidence: match by session id alone, as the card loops do.
+            const session =
+                findSession(row.sessionId, row.provider === "unknown" ? undefined : row.provider) ??
+                addSession(
+                    targetOf({ sessionId: row.sessionId, provider: row.provider, cwd: row.cwd }, row.id),
+                    row.title,
+                    row.project,
+                    row.at
+                );
+            if (kind === "form") {
+                session.status = "waiting";
+            }
+            putInbox(
+                session,
+                {
+                    id: `${kind}:${row.id}`,
+                    sourceId: row.id,
+                    kind,
+                    key: session.key,
+                    at: row.at,
+                    needsAnswer: kind === "form",
+                },
+                row.count
+            );
+        }
+    }
+    let pendingDecisions = 0;
+    for (const row of decisions) {
+        if (kindOf(row) !== "decision" || !["open", "drafted"].includes(row.state) || row.delivery?.uncertain) {
+            continue;
+        }
+        const session = findSession(row.sessionId, row.provider);
+        if (!session) {
+            continue;
+        }
+        pendingDecisions += 1;
+        putInbox(
+            session,
+            {
+                id: `decision:${row.id}`,
+                sourceId: row.id,
+                kind: "decision",
+                key: session.key,
+                at: timeOf(row.updatedTs),
+                needsAnswer: true,
+            },
+            1
+        );
+    }
+    let unreadResults = 0;
+    const resultNodes = new Map<string, AgentNode>();
+    for (const node of [
+        ...agents.parents.flatMap((parent) => flattenAgents(parent.children)),
+        ...flattenAgents(agents.orphans),
+    ]) {
+        const id = `${node.harness}:${node.id}`;
+        const previous = resultNodes.get(id);
+        if (!previous || Date.parse(node.lastAt) > Date.parse(previous.lastAt)) {
+            resultNodes.set(id, node);
+        }
+    }
+    for (const node of resultNodes.values()) {
+        if (!hasResult(node)) {
+            continue;
+        }
+        const session = findResultSession(node);
+        const at = Date.parse(node.lastAt);
+        if (!session || !Number.isFinite(at)) {
+            continue;
+        }
+        const id = `result:${node.harness}:${node.id}`;
+        if ((state.inboxRead[`${session.key}|${id}`] ?? -1) >= at) {
+            continue;
+        }
+        unreadResults += 1;
+        putInbox(session, { id, sourceId: node.id, kind: "result", key: session.key, at, needsAnswer: false }, 1);
+    }
+    const notifications: WidgetInboxSummary = {
+        unread: (inboxData.answers[0]?.total ?? 0) + unreadResults,
+        needsAnswer: (inboxData.forms[0]?.total ?? 0) + pendingDecisions,
+        complete: inboxData.complete && errors.length === 0,
+        truncated: inboxData.truncated || inboxSessions.size > 512,
+        sessions: [...inboxSessions.values()]
+            .sort((a, b) => b.needsAnswer - a.needsAnswer || b.unread - a.unread)
+            .slice(0, 512),
+        ...(prof.enabled ? { profile: { hostId: "local" as const } } : {}),
+    };
+    const inboxMetadata: { notifications?: WidgetInboxSummary } = { notifications };
     const selected = selectedKey ? sessions.get(selectedKey) : undefined;
     const persistedTarget = selectedKey ? parseWidgetSessionKey(selectedKey) : undefined;
     const selectedId = selected?.target.sessionId ?? persistedTarget?.sessionId;
@@ -612,8 +983,8 @@ export async function widgetSnapshot({
         ...agents.parents.flatMap((parent) => flattenAgents(parent.children)),
         ...flattenAgents(agents.orphans),
     ]) {
-        const session = findSession(node.id, node.harness);
-        if (!session || node.status === "running" || (selectedKey && session.key !== selectedKey)) {
+        const session = findResultSession(node);
+        if (!session || !hasResult(node) || (selectedKey && session.key !== selectedKey)) {
             continue;
         }
         const result = selectedKey ? await read("agent result", () => widgetResult(node), "") : "";
@@ -631,7 +1002,8 @@ export async function widgetSnapshot({
             choices: [],
             attachments: [],
             refs: node.filePath ? [{ type: "file", value: node.filePath }] : [],
-            read: false,
+            read:
+                (state.inboxRead[`${session.key}|result:${node.harness}:${node.id}`] ?? -1) >= Date.parse(node.lastAt),
         });
     }
     // Only the videos the widget can show: those in a draft, and those of the selected session's shown outgoing
@@ -662,6 +1034,15 @@ export async function widgetSnapshot({
                   files: [],
               })
             : null;
+    // The window keeps the newest cards plus each card a notification names, so opening it can acknowledge it.
+    const selectedCards = cards
+        .filter((card) => !selectedKey || card.sessionKey === selectedKey)
+        .sort((a, b) => a.at - b.at);
+    const notified = new Set(
+        notifications.sessions.flatMap((session) => [session.unreadItem?.id, session.pendingItem?.id])
+    );
+    const windowStart = Math.max(0, selectedCards.length - 100);
+    const visibleCards = selectedCards.filter((card, index) => index >= windowStart || notified.has(card.id));
     const activity =
         selectedId && sources.events
             ? await read(
@@ -673,14 +1054,13 @@ export async function widgetSnapshot({
     return {
         version: 1,
         state,
+        ...inboxMetadata,
+        ...(rosterStatus ? { rosterLoading: rosterStatus.loading } : {}),
         activity,
         sessions: [...sessions.values()].sort(
             (a, b) => Number(b.status === "waiting") - Number(a.status === "waiting") || b.activityAt - a.activityAt
         ),
-        cards: cards
-            .filter((card) => !selectedKey || card.sessionKey === selectedKey)
-            .sort((a, b) => a.at - b.at)
-            .slice(-100),
+        cards: visibleCards,
         manifests,
         changes,
         errors,

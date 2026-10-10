@@ -350,6 +350,9 @@ describe("hub agents workers", () => {
             filePath: join(dir, "probe-codex.jsonl"),
         });
         expect(
+            codexWorkerNode({ ...meta, threadId: "thread-1", home: "/fixture/codex-home" }, dir, NOW).node
+        ).toMatchObject({ nativeSessionId: "thread-1", sourceHome: "/fixture/codex-home" });
+        expect(
             codexWorkerNode({ ...meta, status: "running", lastEventAt: new Date(NOW).toISOString() }, dir, NOW).node
                 .status
         ).toBe("running");
@@ -383,6 +386,8 @@ describe("hub agents workers", () => {
         });
         const ended = { ...meta, lastTurn: { turn: 2, ended: true, exitCode: 1, at: meta.lastTurn.at } };
         expect(grokWorkerNode(ended, dir, NOW).node.status).toBe("failed");
+        // Delivery finds a worker by its native session and home, not by the name in `id`.
+        expect(worker.node).toMatchObject({ nativeSessionId: "g-1", sourceHome: "/tmp/home" });
     });
 
     test("a grok worker's first turn runs before its meta counts any turn", () => {

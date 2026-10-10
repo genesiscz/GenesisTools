@@ -1,9 +1,10 @@
-import { describe, expect, test } from "bun:test";
-import { appendFileSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { describe, expect, spyOn, test } from "bun:test";
+import { appendFileSync, existsSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as channel from "./control-channel";
 import {
     appendControlRequest,
     ControlLogCursor,
@@ -175,5 +176,56 @@ describe("codex control channel", () => {
                 'Codex session "reviewer" is closed'
             );
         });
+    });
+});
+
+test("the final producer read rejects a reused name before append, including older daemon runtimes", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-final-identity-"));
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+        const store = new CodexSessionStore();
+        const now = new Date().toISOString();
+        const original = {
+            name: "work",
+            daemonPid: process.pid,
+            cwd: "/fixture/project",
+            home,
+            threadId: "thread-1",
+            generation: "fixture-generation",
+            sandbox: "read-only" as const,
+            approvalPolicy: "never" as const,
+            writePolicy: "deny" as const,
+            status: "ready" as const,
+            agentName: "work",
+            rendezvousSession: "fixture-parent",
+            agentsEnabled: false,
+            startedAt: now,
+            lastEventAt: now,
+            codexVersion: "0.144.5",
+            pendingApprovals: {},
+        };
+        const control = {
+            op: "steer" as const,
+            body: "fixture prompt",
+            force: false,
+            expectedTarget: { threadId: "thread-1", home },
+        };
+        const append = spyOn(channel, "appendControlRequest");
+        append.mockImplementation(async () => {
+            throw new Error("append primitive reached");
+        });
+        try {
+            for (const replacement of [{ threadId: "replacement" }, { home: join(home, "other") }]) {
+                store.writeMeta({ ...original, ...replacement });
+                await expect(sendControlRequest("work", control, 20)).rejects.toThrow("no prompt was sent");
+                expect(append).not.toHaveBeenCalled();
+                expect(existsSync(sessionControlPath("work"))).toBe(false);
+            }
+
+            store.writeMeta(original);
+            await expect(sendControlRequest("work", control, 20)).rejects.toThrow("append primitive reached");
+            expect(append).toHaveBeenCalledWith("work", "fixture-generation", control);
+        } finally {
+            append.mockRestore();
+        }
     });
 });

@@ -1,5 +1,11 @@
 import { describeMatch, type FocusTarget, isUnambiguous } from "@app/claude/lib/cmux/focus";
-import { findSessionTargets, type ResolveDeps, retryAfterStaleRefs, SOFT_SOURCES } from "@app/claude/lib/cmux/resolve";
+import {
+    findSessionTargets,
+    identifiesExactSession,
+    type ResolveDeps,
+    retryAfterStaleRefs,
+    SOFT_SOURCES,
+} from "@app/claude/lib/cmux/resolve";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
@@ -13,6 +19,8 @@ export interface SendOptions {
     first?: boolean;
     includeSelf?: boolean;
     enter?: boolean;
+    paste?: boolean;
+    exactSession?: boolean;
     enterDelay?: string;
     dryRun?: boolean;
     json?: boolean;
@@ -109,10 +117,16 @@ interface Delivery {
     text: string;
     enter: boolean;
     enterDelayMs: number;
+    paste: boolean;
 }
 
-async function deliver({ target, surfaceId, text, enter, enterDelayMs }: Delivery) {
+async function deliver({ target, surfaceId, text, enter, enterDelayMs, paste }: Delivery) {
     const where = surfaceTargetArgs(surfaceId, target.workspaceId);
+    if (paste) {
+        await runCmuxOk(["paste", ...where, ...(enter ? ["--submit"] : []), "--", text]);
+        return;
+    }
+
     await runCmuxOk(["send", ...where, "--", text]);
 
     if (enter) {
@@ -134,7 +148,10 @@ export function refuseAmbiguous(
     queryTrim: string,
     opts: SendOptions
 ): boolean {
-    if (SOFT_SOURCES.has(result.source) && result.targets.length > 1) {
+    // `--exact-session` checks the evidence each pane matched on, not only the stage that found it:
+    // a title or capture stage also returns panes that merely print the id or share a topic title.
+    const weak = SOFT_SOURCES.has(result.source) && result.targets.length > 1;
+    if (weak || (opts.exactSession && !identifiesExactSession(result))) {
         process.exitCode = 1;
 
         if (opts.json) {
@@ -148,8 +165,11 @@ export function refuseAmbiguous(
             return true;
         }
 
+        const evidence = result.targets[0] ? describeMatch(result.targets[0]) : result.source;
         out.error(
-            pc.red(`"${queryTrim}" only matched weakly (${result.source}), and ${result.targets.length} panes qualify.`)
+            pc.red(
+                `"${queryTrim}" only matched weakly (${result.source}, ${evidence}); this does not identify the recipient session.`
+            )
         );
         out.printlnErr(pc.dim("  Send a prompt in that session once so the hook can record its pane, then retry."));
         return true;
@@ -244,11 +264,11 @@ export async function sendCommand(
 
     if (surfaceId) {
         try {
-            await deliver({ target, surfaceId, text, enter, enterDelayMs });
+            await deliver({ target, surfaceId, text, enter, enterDelayMs, paste: opts.paste === true });
             report({ opts, query: queryTrim, target, surfaceId, enter, source: result.source });
             return true;
         } catch (err) {
-            if (result.source !== "recorded") {
+            if (result.source !== "recorded" || opts.paste) {
                 throw err;
             }
             // Recorded refs outlived their pane (cmux restart). Fall back to the matcher.
@@ -286,7 +306,7 @@ export async function sendCommand(
 
     target = fallback;
     surfaceId = fallbackSurface;
-    await deliver({ target, surfaceId, text, enter, enterDelayMs });
+    await deliver({ target, surfaceId, text, enter, enterDelayMs, paste: opts.paste === true });
     report({ opts, query: queryTrim, target, surfaceId, enter, source: result.source });
     return true;
 }
@@ -307,7 +327,7 @@ function report({ opts, query, target, surfaceId, enter, source }: SendReport): 
     }
 
     out.printlnErr(
-        `${pc.green("✔")} sent to ${pc.bold(target.workspaceName)} ${pc.dim(target.paneId)} ` +
+        `${pc.green("√")} sent to ${pc.bold(target.workspaceName)} ${pc.dim(target.paneId)} ` +
             pc.dim(`${surfaceId} (matched on ${describeMatch(target)})`)
     );
 }

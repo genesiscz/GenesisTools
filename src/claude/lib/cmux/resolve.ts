@@ -1,4 +1,10 @@
-import { aliasesForSession, type FocusTarget, findFocusTargets, matchingSession } from "@app/claude/lib/cmux/focus";
+import {
+    aliasesForSession,
+    type FocusMatchKind,
+    type FocusTarget,
+    findFocusTargets,
+    matchingSession,
+} from "@app/claude/lib/cmux/focus";
 import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import {
     type CmuxLiveSnapshot,
@@ -67,6 +73,32 @@ const ID_EVIDENCE_KINDS = new Set([
     "session-name",
     "pane-title",
 ]);
+
+/**
+ * Match kinds that prove a pane RUNS this exact session: the hook journal, the resume
+ * command, or the short id `restore` stamps into the tab title.
+ *
+ * Narrower than `ID_EVIDENCE_KINDS` on purpose. A full id printed anywhere on screen
+ * (`session-id`, `id-prefix`) is also true of an agent pane discussing that session, and a
+ * topic alias in a tab title (`session-name`, `pane-title`) can belong to another session
+ * with the same topic. Interactive `send` may still take those; automated delivery must not.
+ */
+const EXACT_SESSION_KINDS: ReadonlySet<FocusMatchKind> = new Set<FocusMatchKind>([
+    "recorded",
+    "resume-command",
+    "resume-prefix",
+    "title-id",
+]);
+
+/** True when exactly one pane is proven to run the session, and it is the top match. */
+export function identifiesExactSession(result: SessionTargetsResult): boolean {
+    if (SOFT_SOURCES.has(result.source)) {
+        return false;
+    }
+
+    const exact = result.targets.filter((target) => EXACT_SESSION_KINDS.has(target.matchedOn));
+    return exact.length === 1 && result.targets[0] === exact[0];
+}
 
 function recordedTarget(refs: SessionCmuxRefs): FocusTarget | null {
     // UUIDs from the launch env survive cmux ref renumbering, so prefer them;

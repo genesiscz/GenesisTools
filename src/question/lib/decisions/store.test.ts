@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listWidgetTasks, updateWidgetTask, widgetTask } from "@app/hub/lib/widget/tasks";
 import { runAsCaller } from "@genesiscz/utils/agent/runtime";
+import { listSessionMessages } from "@genesiscz/utils/agent-sessions/message-queue";
+import { withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { z } from "zod";
-import { DeliveryUnknownError, deliverToSession } from "./deliver";
+import { DeliveryUnknownError, deliverToSession, resolveDeliveryTarget } from "./deliver";
 import { livePaneTargets, noPaneTargets } from "./deliver.fixtures";
 import {
     decisionLine,
@@ -522,6 +524,19 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
         expect(decisionLine({ ...row, option: undefined })).toBe("DECISION 4: keep, and log it");
     });
 
+    test("a titled card retains its chat label separately from its allocated ledger number", () => {
+        const row = {
+            ...foreignRow("original-session", 2),
+            title: "Chat DECISION 4: next token kinds",
+            answer: '<fromImage>\n{\n  "path": "/fixture/c96d5e67-image.png"\n}\n</fromImage>',
+        };
+        expect(decisionLine(row)).toBe(
+            'Reply to: Chat DECISION 4: next token kinds\nLedger decision 2 (d_2_original-session)\n<fromImage>\n{\n  "path": "/fixture/c96d5e67-image.png"\n}\n</fromImage>'
+        );
+        expect(row.sessionId).toBe("original-session");
+        expect(row.number).toBe(2);
+    });
+
     test("the markdown numbers todos apart and marks the recommended option", async () => {
         const { file, events } = scratch();
         const rows = await postDecisions(file, events, {
@@ -627,12 +642,184 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
 describe("delivery routes", () => {
     function spy(result: { success: boolean; stdout: string; stderr?: string }) {
         const calls: string[][] = [];
+        const prompts: string[] = [];
         const runTool = async (args: string[]) => {
             calls.push(args);
+            if (args.includes("--prompt-file")) {
+                prompts.push(readFileSync(args[args.indexOf("--prompt-file") + 1], "utf8"));
+            }
             return { stderr: "", ...result };
         };
-        return { calls, runTool };
+        return { calls, prompts, runTool };
     }
+
+    test("owned Claude and Grok workers resume without cmux and require exact completed-turn receipts", async () => {
+        for (const provider of ["claude", "grok"] as const) {
+            const calls: string[][] = [];
+            let promptFile = "";
+            const result = await deliverToSession(
+                {
+                    session: "fixture-session",
+                    provider,
+                    sourceHome: "/fixture/source",
+                    text: "Synthetic answer\\nwith media references",
+                },
+                {
+                    nativeWorkers: () => [
+                        {
+                            provider,
+                            name: "fixture",
+                            sessionId: "fixture-session",
+                            sourceHome: "/fixture/source",
+                            turns: 1,
+                            ready: true,
+                        },
+                    ],
+                    findTargets: async () => {
+                        throw new Error("native route must not require cmux");
+                    },
+                    runTool: async (args) => {
+                        calls.push(args);
+                        promptFile = args[args.indexOf("--prompt-file") + 1];
+                        expect(readFileSync(promptFile, "utf8")).toBe("Synthetic answer\\nwith media references");
+                        return {
+                            success: true,
+                            stderr: "",
+                            stdout: SafeJSON.stringify({
+                                kind: "turn",
+                                backend: provider,
+                                name: "fixture",
+                                sessionId: "fixture-session",
+                                sourceHome: "/fixture/source",
+                                turn: 2,
+                                completed: true,
+                                exitCode: 0,
+                            }),
+                        };
+                    },
+                }
+            );
+            expect(result).toEqual({
+                channel: "resume",
+                delivered: true,
+                target: `${provider} worker fixture · resumed turn 2`,
+            });
+            expect(calls[0].slice(0, provider === "claude" ? 3 : 2)).toEqual(
+                provider === "claude" ? ["claude", "worker", "steer"] : ["grok", "steer"]
+            );
+            expect(calls[0]).toContain("--expect-session");
+            expect(calls[0]).not.toContain("Synthetic answer\\nwith media references");
+            expect(existsSync(promptFile)).toBe(false);
+        }
+    });
+
+    test("native route rejects wrong provider, source home, worker-name aliases, busy and unstarted sessions", async () => {
+        const worker = {
+            provider: "grok" as const,
+            name: "fixture",
+            sessionId: "fixture-session",
+            sourceHome: "/fixture/source",
+            turns: 1,
+            ready: true,
+        };
+        const lookup = { nativeWorkers: () => [worker], findTargets: noPaneTargets };
+        for (const target of [
+            { provider: "claude", session: "fixture-session", sourceHome: "/fixture/source" },
+            { provider: "grok", session: "fixture-session", sourceHome: "/different/home" },
+            { provider: "grok", session: "fixture", sourceHome: "/fixture/source" },
+        ]) {
+            expect((await resolveDeliveryTarget(target, lookup)).kind).toBe("none");
+        }
+        for (const reason of ["worker is busy", "session has not started"]) {
+            const target = await resolveDeliveryTarget(
+                { provider: "grok", session: "fixture-session", sourceHome: "/fixture/source" },
+                {
+                    nativeWorkers: () => [{ ...worker, ready: false, reason }],
+                    findTargets: async () => {
+                        throw new Error("must not reroute an owned unavailable worker");
+                    },
+                }
+            );
+            expect(target).toEqual({ kind: "none", reason });
+        }
+    });
+
+    test("native delivery never accepts a lost, incomplete, wrong-session or wrong-turn receipt", async () => {
+        const worker = {
+            provider: "grok" as const,
+            name: "fixture",
+            sessionId: "fixture-session",
+            sourceHome: "/fixture/source",
+            turns: 1,
+            ready: true,
+        };
+        const receipt = {
+            kind: "turn",
+            backend: "grok",
+            name: "fixture",
+            sessionId: "fixture-session",
+            sourceHome: "/fixture/source",
+            turn: 2,
+            completed: true,
+            exitCode: 0,
+        };
+        for (const body of [
+            "not json",
+            "{}",
+            ...[
+                { backend: "claude" },
+                { sessionId: "new-copy" },
+                { sourceHome: "/wrong/home" },
+                { turn: 3 },
+                { completed: false },
+                { exitCode: 1 },
+            ].map((change) => SafeJSON.stringify({ ...receipt, ...change })),
+        ]) {
+            let calls = 0;
+            await expect(
+                deliverToSession(
+                    {
+                        provider: "grok",
+                        session: worker.sessionId,
+                        sourceHome: worker.sourceHome,
+                        text: "Synthetic reply",
+                    },
+                    {
+                        nativeWorkers: () => [worker],
+                        runTool: async () => {
+                            calls += 1;
+                            return { success: true, stdout: body, stderr: "" };
+                        },
+                        findTargets: async () => {
+                            throw new Error("An attempted native send must not fall back and duplicate");
+                        },
+                    }
+                )
+            ).rejects.toBeInstanceOf(DeliveryUnknownError);
+            expect(calls).toBe(1);
+        }
+        const rejected = await deliverToSession(
+            { provider: "grok", session: worker.sessionId, sourceHome: worker.sourceHome, text: "Synthetic reply" },
+            {
+                nativeWorkers: () => [worker],
+                runTool: async () => ({
+                    success: false,
+                    stderr: "",
+                    stdout: SafeJSON.stringify({
+                        kind: "rejected",
+                        backend: "grok",
+                        name: "fixture",
+                        error: "Worker became busy before receiving input",
+                    }),
+                }),
+            }
+        );
+        expect(rejected).toEqual({
+            channel: "queued",
+            delivered: false,
+            error: "Worker became busy before receiving input",
+        });
+    });
 
     test("a Claude or Grok session gets one line typed into its cmux pane", async () => {
         const { calls, runTool } = spy({ success: true, stdout: '{"sent":true}' });
@@ -642,7 +829,18 @@ describe("delivery routes", () => {
         );
 
         expect(result).toMatchObject({ channel: "cmux", delivered: true, target: "cmux · work · agent" });
-        expect(calls).toEqual([["claude", "cmux", "send", "abc", "DECISION 1: a) yes ; DECISION 2: b) no", "--json"]]);
+        expect(calls).toEqual([
+            [
+                "claude",
+                "cmux",
+                "send",
+                "abc",
+                "DECISION 1: a) yes\nDECISION 2: b) no",
+                "--json",
+                "--paste",
+                "--exact-session",
+            ],
+        ]);
     });
 
     test("a closed pane is found BEFORE anything is typed: nothing runs, the reason is one sentence", async () => {
@@ -668,17 +866,346 @@ describe("delivery routes", () => {
         expect(result.delivered).toBe(false);
     });
 
+    test("an original Claude receiver takes one literal media message without terminal lookup", async () => {
+        const peer = {
+            pid: 42,
+            sessionId: "original-session",
+            name: "fixture",
+            cwd: "/fixture/project",
+            status: "busy",
+            kind: "interactive",
+            socketPath: "/fixture/receiver.sock",
+            file: "/fixture/home/sessions/42.json",
+        };
+        const received: unknown[] = [];
+        const text = '<fromImage>\n{"path":"/fixture/c96d5e67-image.png"}\n</fromImage>';
+        const result = await deliverToSession(
+            { session: peer.sessionId, provider: "claude", sourceHome: "/fixture/home", text },
+            {
+                nativeWorkers: () => [],
+                claudePeers: (home) => {
+                    expect(home).toBe("/fixture/home");
+                    return [peer];
+                },
+                peerToken: (_session, directory) => {
+                    expect(directory).toBe("/fixture/home/sessions");
+                    return null;
+                },
+                sendClaudePeer: async (input) => {
+                    received.push(input);
+                },
+                findTargets: async () => {
+                    throw new Error("Native delivery must not inspect terminals");
+                },
+                runTool: async () => {
+                    throw new Error("Native delivery must not type a fallback");
+                },
+            }
+        );
+        expect(result).toEqual({ channel: "claude-peer", delivered: true, target: "original Claude session" });
+        expect(received).toEqual([{ session: peer, text, token: null, priority: "next", timeoutMs: 5000 }]);
+    });
+
+    test("real native peer transport preserves a long Unicode reply as one user frame", async () => {
+        const home = mkdtempSync(join(tmpdir(), "p-"));
+        const socketPath = join(home, "p.sock");
+        const frames: unknown[] = [];
+        let accept!: (value: unknown) => void;
+        const received = new Promise<unknown>((resolve) => {
+            accept = resolve;
+        });
+        let buffered = "";
+        const decoder = new TextDecoder();
+        const server = Bun.listen({
+            unix: socketPath,
+            socket: {
+                data(socket, bytes) {
+                    buffered += decoder.decode(bytes, { stream: true });
+                    const newline = buffered.indexOf("\n");
+                    if (newline >= 0) {
+                        const frame: unknown = SafeJSON.parse(buffered.slice(0, newline), { strict: true });
+                        frames.push(frame);
+                        accept(frame);
+                        socket.end();
+                    }
+                },
+            },
+        });
+        const peer = {
+            pid: 42,
+            sessionId: "fixture-original-session",
+            name: null,
+            cwd: null,
+            status: "busy",
+            kind: null,
+            socketPath,
+            file: join(home, "sessions/42.json"),
+        };
+        const text =
+            "<fromVideo>\n" + "Literal line ž 漢字 /fixture/c96d5e67-image.png\n".repeat(1200) + "</fromVideo>";
+        try {
+            const result = await deliverToSession(
+                { session: peer.sessionId, provider: "claude", sourceHome: home, text },
+                {
+                    nativeWorkers: () => [],
+                    claudePeers: () => [peer],
+                    peerToken: () => null,
+                    findTargets: async () => {
+                        throw new Error("A native socket must not use terminal delivery");
+                    },
+                }
+            );
+            expect(result).toMatchObject({ channel: "claude-peer", delivered: true });
+            expect(await withTimeout(received, 5000)).toMatchObject({
+                type: "user",
+                session_id: peer.sessionId,
+                message: { role: "user", content: text },
+                priority: "next",
+            });
+            expect(frames).toHaveLength(1);
+        } finally {
+            server.stop(true);
+        }
+    });
+
+    test("a failed native Claude write never retries through a terminal or a durable queue", async () => {
+        const peer = {
+            pid: 42,
+            sessionId: "original-session",
+            name: null,
+            cwd: null,
+            status: "busy",
+            kind: null,
+            socketPath: "/fixture/receiver.sock",
+            file: "/fixture/home/sessions/42.json",
+        };
+        const queueRoot = mkdtempSync(join(tmpdir(), "peer-unknown-"));
+        await expect(
+            deliverToSession(
+                {
+                    session: peer.sessionId,
+                    provider: "claude",
+                    sourceHome: "/fixture/home",
+                    text: "literal reply",
+                    deliveryKey: "once",
+                },
+                {
+                    queueRoot,
+                    nativeWorkers: () => [],
+                    claudePeers: () => [peer],
+                    peerToken: () => null,
+                    sendClaudePeer: async () => {
+                        throw new Error("Disconnected after writing");
+                    },
+                    findTargets: async () => {
+                        throw new Error("No terminal fallback after an uncertain write");
+                    },
+                }
+            )
+        ).rejects.toBeInstanceOf(DeliveryUnknownError);
+        expect(
+            listSessionMessages({
+                root: queueRoot,
+                target: { provider: "claude", sessionId: peer.sessionId, sourceHome: "/fixture/home" },
+            })
+        ).toEqual([]);
+    });
+
+    test("a native Claude receiver swap is refused at the consuming boundary", async () => {
+        const peer = {
+            pid: 42,
+            sessionId: "original-session",
+            name: null,
+            cwd: null,
+            status: "busy",
+            kind: null,
+            socketPath: "/fixture/receiver.sock",
+            file: "/fixture/home/sessions/42.json",
+        };
+        let reads = 0;
+        const result = await deliverToSession(
+            { session: peer.sessionId, provider: "claude", sourceHome: "/fixture/home", text: "media reply" },
+            {
+                nativeWorkers: () => [],
+                claudePeers: () =>
+                    ++reads === 1 ? [peer] : [{ ...peer, pid: 43, socketPath: "/fixture/replacement.sock" }],
+                sendClaudePeer: async () => {
+                    throw new Error("The replacement must never receive a message");
+                },
+            }
+        );
+        expect(result).toMatchObject({
+            delivered: false,
+            error: "The native Claude receiver changed before delivery; no message was written.",
+        });
+        expect(reads).toBe(2);
+    });
+
+    test("native Claude routing rejects another home or duplicate receivers before any transport", async () => {
+        const peer = {
+            pid: 42,
+            sessionId: "original-session",
+            name: null,
+            cwd: null,
+            status: "busy",
+            kind: null,
+            socketPath: "/fixture/receiver.sock",
+            file: "/fixture/other-home/sessions/42.json",
+        };
+        const request = { session: peer.sessionId, provider: "claude", sourceHome: "/fixture/home" };
+        expect(
+            await resolveDeliveryTarget(request, { nativeWorkers: () => [], claudePeers: () => [peer] })
+        ).toMatchObject({ kind: "none", reason: "The native Claude receiver belongs to another source home." });
+        expect(
+            await resolveDeliveryTarget(request, { nativeWorkers: () => [], claudePeers: () => [peer, peer] })
+        ).toMatchObject({
+            kind: "none",
+            reason: "Several native Claude receivers claim this session; none was picked.",
+        });
+    });
+
+    test("automatic replies never type into a lone cwd or screen-text match", async () => {
+        for (const source of ["cwd", "screen"] as const) {
+            let sends = 0;
+            const result = await deliverToSession(
+                { session: "original-session", provider: "claude", text: "media reply" },
+                {
+                    findTargets: async (session) => ({ ...(await livePaneTargets(session)), source }),
+                    runTool: async () => {
+                        sends++;
+                        return { success: true, stdout: '{"sent":true}', stderr: "" };
+                    },
+                }
+            );
+            expect(result).toMatchObject({
+                delivered: false,
+                error: "the cmux match does not identify the exact recipient session",
+            });
+            expect(sends).toBe(0);
+        }
+    });
+
+    test("automatic replies judge the evidence, not the stage: a printed id or a topic title is refused", async () => {
+        for (const matchedOn of ["session-id", "id-prefix", "session-name", "pane-title"] as const) {
+            let sends = 0;
+            const result = await deliverToSession(
+                { session: "original-session", provider: "claude", text: "media reply" },
+                {
+                    findTargets: async (session) => {
+                        const live = await livePaneTargets(session);
+                        return { ...live, targets: live.targets.map((target) => ({ ...target, matchedOn })) };
+                    },
+                    runTool: async () => {
+                        sends++;
+                        return { success: true, stdout: '{"sent":true}', stderr: "" };
+                    },
+                }
+            );
+            expect(result).toMatchObject({
+                delivered: false,
+                error: "the cmux match does not identify the exact recipient session",
+            });
+            expect(sends).toBe(0);
+        }
+
+        // Control: the same lone pane proven by the id `restore` stamps into its tab title still receives the reply.
+        let sends = 0;
+        const proven = await deliverToSession(
+            { session: "original-session", provider: "claude", text: "media reply" },
+            {
+                findTargets: livePaneTargets,
+                runTool: async () => {
+                    sends++;
+                    return { success: true, stdout: '{"sent":true}', stderr: "" };
+                },
+            }
+        );
+        expect(proven).toMatchObject({ channel: "cmux", delivered: true });
+        expect(sends).toBe(1);
+    });
+
+    test("a readable cmux refusal reaches the durable session queue, while unreadable output does not", async () => {
+        const queueRoot = mkdtempSync(join(tmpdir(), "cmux-refusal-queue-"));
+        const request = {
+            session: "abc",
+            provider: "claude",
+            text: "DECISION 1: a) yes",
+            sourceHome: "/fixture/claude",
+            deliveryKey: "fixture-key",
+        };
+        const refused = await deliverToSession(request, {
+            runTool: spy({ success: false, stdout: '{"sent":false,"matches":[]}' }).runTool,
+            findTargets: livePaneTargets,
+            queueRoot,
+        });
+        expect(refused).toMatchObject({ channel: "queued", delivered: false });
+        expect(refused.queueId).toBeDefined();
+        const unknown = await deliverToSession(
+            { ...request, deliveryKey: "other-key" },
+            { runTool: spy({ success: false, stdout: "not json" }).runTool, findTargets: livePaneTargets, queueRoot }
+        );
+        expect(unknown).toMatchObject({ channel: "queued", delivered: false });
+        expect(unknown.queueId).toBeUndefined();
+    });
+
+    test("a retry of a key an earlier attempt already saved stays in the queue, even when a live pane appears", async () => {
+        const queueRoot = mkdtempSync(join(tmpdir(), "keyed-retry-queue-"));
+        const request = {
+            session: "abc",
+            provider: "claude",
+            text: "DECISION 1: a) yes",
+            sourceHome: "/fixture/claude",
+            deliveryKey: "fixture-key",
+        };
+        const first = await deliverToSession(request, { findTargets: noPaneTargets, queueRoot });
+        expect(first.queueId).toBeDefined();
+        const never = async (): Promise<never> => {
+            throw new Error("must not type a message that is already queued");
+        };
+        const retry = await deliverToSession(request, { runTool: never, findTargets: livePaneTargets, queueRoot });
+
+        expect(retry).toMatchObject({ channel: "queued", delivered: false, queueId: first.queueId });
+        expect(
+            listSessionMessages({
+                target: { provider: "claude", sessionId: "abc", sourceHome: "/fixture/claude" },
+                root: queueRoot,
+            })
+        ).toHaveLength(1);
+    });
+
+    test("Codex daemon queue acceptance and empty exit-zero output are not provider input receipts", async () => {
+        for (const stdout of ["{}", '{"queued":true}', '{"queued":false}', ""]) {
+            await expect(
+                deliverToSession(
+                    { session: "fixture-thread", provider: "codex", text: "Synthetic" },
+                    {
+                        codexWorkerFor: () => "fixture",
+                        runTool: async () => ({ success: true, stdout, stderr: "" }),
+                    }
+                )
+            ).rejects.toBeInstanceOf(DeliveryUnknownError);
+        }
+    });
+
     test("a Codex thread run by a tools codex worker is steered, and one without a worker is queued untouched", async () => {
-        const steered = spy({ success: true, stdout: "{}" });
-        const text = "DECISION 1: a) yes\nDECISION 2: b) no";
+        const steered = spy({ success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}' });
+        const text = ["DECISION 1: a) yes\nDECISION 2: b) no", "Synthetic media reference ".repeat(10_000)].join("\n");
 
         expect(
             await deliverToSession(
                 { session: "thread-1", provider: "codex", text },
                 { runTool: steered.runTool, codexWorkerFor: () => "reviewer" }
             )
-        ).toEqual({ channel: "codex", delivered: true, target: "codex worker reviewer" });
-        expect(steered.calls).toEqual([["codex", "steer", "--name", "reviewer", "--prompt", text]]);
+        ).toEqual({
+            channel: "codex",
+            delivered: true,
+            target: "codex worker reviewer · input acknowledged (turn fixture-turn)",
+        });
+        expect(steered.calls).toEqual([
+            ["codex", "steer", "--name", "reviewer", "--json", "--prompt-file", expect.any(String)],
+        ]);
+        expect(steered.prompts).toEqual([text]);
+        expect(existsSync(steered.calls[0][6])).toBe(false);
 
         const never = async (): Promise<never> => {
             throw new Error("must not run a tool when no worker exists");
@@ -892,11 +1419,65 @@ test("decision dry-run applies the same selected-kind filter as delivery", async
         provider: "codex",
         deps: {
             codexWorkerFor: () => "fixture-worker",
-            runTool: async () => ({ success: true, stdout: "", stderr: "" }),
+            runTool: async () => ({ success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}', stderr: "" }),
         },
     });
     expect(sent.text).toBe(preview.text);
     expect(readDecisions(file).map((row) => row.state)).toEqual(["sent", "answered"]);
+});
+
+test("a lost receipt stamps only the decisions this send claimed, never one reserved by another queue", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-claimed-"));
+    const file = join(dir, "decisions.jsonl");
+    const events = join(dir, "events.jsonl");
+    const [reserved, open] = await postDecisions(file, events, {
+        sessionId: "test-session",
+        decisions: [
+            { prompt: "First?", options: ["yes"] },
+            { prompt: "Second?", options: ["no"] },
+        ],
+    });
+    const reservation = { route: "queued" as const, queueId: "queue-a", at: "2026-01-01T00:00:00.000Z" };
+    writeFileSync(
+        file,
+        `${[
+            { ...reserved, state: "answered", option: "a", delivery: reservation },
+            { ...open, state: "answered", option: "a" },
+        ]
+            .map((row) => SafeJSON.stringify(row))
+            .join("\n")}\n`
+    );
+    await expect(
+        sendAnsweredDecisions({
+            session: "test-session",
+            files: { file, events },
+            provider: "codex",
+            deps: {
+                codexWorkerFor: () => "fixture-worker",
+                runTool: async () => ({ success: true, stdout: "not a receipt", stderr: "" }),
+            },
+        })
+    ).rejects.toThrow("acknowledgement");
+    const [first, second] = readDecisions(file);
+    expect(first.delivery).toEqual(reservation);
+    expect(second.delivery?.uncertain).toBe(true);
+});
+
+test("an answer reserved by a queued delivery cannot be changed under its queue message", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-reserved-"));
+    const file = join(dir, "decisions.jsonl");
+    const events = join(dir, "events.jsonl");
+    const [row] = await postDecisions(file, events, {
+        sessionId: "test-session",
+        decisions: [{ prompt: "Reserved?", options: ["yes", "no"] }],
+    });
+    const reservation = { route: "queued" as const, queueId: "queue-a", at: "2026-01-01T00:00:00.000Z" };
+    writeFileSync(file, `${SafeJSON.stringify({ ...row, state: "answered", option: "a", delivery: reservation })}\n`);
+    for (const patch of [{ option: "b" }, { answer: "changed" }, { draft: "changed" }, { draftOption: "b" }]) {
+        await expect(updateDecision(file, events, row.id, patch)).rejects.toThrow("reserved by a queued delivery");
+    }
+    expect(readDecisions(file)[0].option).toBe("a");
+    await updateDecision(file, events, row.id, { comment: "a note is still fine" });
 });
 
 test("decision revisions preserve the source turn of each posted version", async () => {

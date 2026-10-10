@@ -7,6 +7,7 @@ import { parseJsonl } from "@genesiscz/utils/jsonl";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import { WorkerDeliveryRejectedError, workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import type { CodexControl } from "./control";
 import { sessionControlPath, sessionResponsePath } from "./paths";
 import { CodexSessionStore } from "./store";
@@ -19,7 +20,8 @@ export interface ControlRequest {
     control: CodexControl;
 }
 
-export type ControlResponse = { ok: true; result?: unknown } | { ok: false; error: string };
+/** `code: "rejected"` marks a refusal proven before the prompt reached the provider. */
+export type ControlResponse = { ok: true; result?: unknown } | { ok: false; error: string; code?: "rejected" };
 
 export interface ControlLogReadSample {
     bytes: number;
@@ -202,6 +204,16 @@ export async function sendControlRequest(
 
     if (!isProcessAlive(meta.daemonPid)) {
         throw new Error(`Codex session "${name}" daemon is not running (pid ${meta.daemonPid})`);
+    }
+
+    if (
+        control.op === "steer" &&
+        control.expectedTarget &&
+        (meta.threadId !== control.expectedTarget.threadId ||
+            !meta.home ||
+            workerSourceHome(meta.home) !== workerSourceHome(control.expectedTarget.home))
+    ) {
+        throw new WorkerDeliveryRejectedError("The Codex thread or source home changed; no prompt was sent.");
     }
 
     const generation = meta.generation ?? meta.startedAt;

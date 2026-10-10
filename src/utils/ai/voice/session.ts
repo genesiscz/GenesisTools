@@ -139,7 +139,9 @@ export async function createVoiceSession(
                     throw new Error(event.error ?? "Speech provider failed");
                 }
 
-                if (event.kind === "final" && event.text.trim()) {
+                if (event.kind === "session_final" && event.text.trim()) {
+                    finals.splice(0, finals.length, event.text.trim());
+                } else if (event.kind === "final" && event.text.trim()) {
                     finals.push(event.text.trim());
                 }
             }

@@ -1,15 +1,18 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { AIConfig } from "../AIConfig";
 import { AiConfigStore } from "../config/AiConfigStore";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "../config/schema";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../providers/plugin-types";
 import { _resetBuiltInPluginsForTest } from "../providers/plugins";
 import { _resetPluginsForTest, registerPlugin } from "../providers/registry";
 import { NoProviderForTaskError, resolveForTask } from "./resolve-task";
+import { Transcriber } from "./Transcriber";
+import { taskModelRef } from "./task-models";
 
 /**
  * The chain is tested with fake plugins rather than the real ones: what matters
@@ -85,6 +88,39 @@ afterEach(() => {
 });
 
 describe("resolveForTask availability chain", () => {
+    test("an unsupported explicit transcription provider fails before loading or changing defaults", async () => {
+        const load = spyOn(AIConfig, "load").mockImplementation(async () => {
+            throw new Error("Unexpected config access");
+        });
+        try {
+            await expect(Transcriber.create({ provider: "darwinkit", persist: true })).rejects.toThrow(
+                'No default transcribe model is defined for provider "darwinkit"'
+            );
+            expect(load).not.toHaveBeenCalled();
+            await expect(Transcriber.create({ provider: "deepgram", persist: true })).rejects.toThrow(
+                "Unexpected config access"
+            );
+            expect(load).toHaveBeenCalledTimes(1);
+        } finally {
+            load.mockRestore();
+        }
+    });
+
+    test("supported defaults and explicitly named models retain their provider identity", () => {
+        expect(taskModelRef({ provider: "deepgram" }, "transcribe")).toBe("deepgram/nova-3");
+        expect(taskModelRef({ provider: "elevenlabs" }, "transcribe")).toBe("elevenlabs/scribe_v1");
+        expect(taskModelRef({ provider: "local-hf" }, "transcribe")).toBe(
+            "local-hf/onnx-community/whisper-large-v3-turbo"
+        );
+        expect(taskModelRef({ provider: "custom-provider", model: "speech-v2" }, "transcribe")).toBe(
+            "custom-provider/speech-v2"
+        );
+        expect(taskModelRef(undefined, "transcribe")).toBeUndefined();
+        expect(() => taskModelRef({ provider: "unsupported-provider" }, "transcribe")).toThrow(
+            "No default transcribe model"
+        );
+    });
+
     test("degrades past a provider that cannot bind, in fallback order", async () => {
         registerPlugin(fakePlugin("deepgram", { bindThrows: true }));
         registerPlugin(fakePlugin("groq", { transcription: true }));

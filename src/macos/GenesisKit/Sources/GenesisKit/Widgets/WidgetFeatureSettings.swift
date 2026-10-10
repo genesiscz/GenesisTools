@@ -14,11 +14,28 @@ public struct WidgetModuleChoice: Identifiable {
     }
 
     public static let agents = Self(
-        id: "agents", title: "Agent Inbox", symbol: "bubble.left.and.bubble.right.fill",
+        id: "agents", title: "Agent Inbox", symbol: "tray.fill",
         detail: "Questions, answers, screenshots and live conversations.")
     /// Exactly the modules `WidgetCoordinator` registers. Settings offer only these, because the layout drops any
     /// configured ID the host has not registered, so a toggle for anything else would silently do nothing.
-    public static let builtins: [Self] = [agents]
+    public static let builtins: [Self] = [
+        agents,
+        .init(
+            id: "capture", title: "Capture", symbol: "camera.viewfinder",
+            detail: "Screenshots and recordings ready for your next message."),
+        .init(
+            id: "shelf", title: "File Shelf", symbol: "tray.full.fill",
+            detail: "Keep the files you are working with within reach."),
+        .init(
+            id: "tasks", title: "Tasks", symbol: "checklist",
+            detail: "A small, local list for the work in front of you."),
+        .init(
+            id: "focus", title: "Flow", symbol: "waveform.circle.fill",
+            detail: "Dictation, focus sessions and your Focus Studio."),
+        .init(
+            id: "voice", title: "Voice Notes", symbol: "mic.fill",
+            detail: "Turn a spoken thought into editable text."),
+    ]
 }
 
 @MainActor
@@ -27,9 +44,28 @@ public enum WidgetFeatureSettings {
 
     public static func sections(
         model: WidgetModel, modules: [WidgetModuleChoice],
+        flowRuntime: FlowFocusRuntime? = nil, transforms: FlowTransformTools? = nil,
         openSession: @escaping (WidgetSession) -> Void
     ) -> [NativeSettingsSection] {
-        [
+        var dictationPages = [NativeSettingsPage(
+            id: "dictation.voice", title: "Voice Notes", symbol: "waveform", tint: .pink,
+            subtitle: "Choose the speech provider for voice notes and agent drafts.") {
+                WidgetDictationSettings(model: model)
+            }]
+        if let flowRuntime {
+            dictationPages.append(NativeSettingsPage(id: "dictation.flow", title: "Dictation", symbol: "mic",
+                tint: .cyan, subtitle: "Dictate with Apple Speech and your Flow controls.") {
+                    FlowView(session: flowRuntime.flow, initialSection: .settings).frame(minHeight: 580)
+                })
+        }
+        if let transforms {
+            dictationPages.append(NativeSettingsPage(id: "dictation.transforms", title: "Text transforms",
+                symbol: "wand.and.stars", tint: .purple,
+                subtitle: "Choose an existing AI account and model for explicit text transforms.") {
+                    FlowTransformSettingsView(tools: transforms)
+                })
+        }
+        var sections = [
             NativeSettingsSection(
                 id: "widgets", title: "Widgets",
                 pages: [
@@ -74,15 +110,17 @@ public enum WidgetFeatureSettings {
                 ], order: 30),
             NativeSettingsSection(
                 id: "dictation", title: "Dictation",
-                pages: [
-                    NativeSettingsPage(
-                        id: "dictation.voice", title: "Dictation", symbol: "waveform",
-                        tint: .pink, subtitle: "Your voice, with the provider and account you choose."
-                    ) {
-                        WidgetDictationSettings(model: model)
-                    }
-                ], order: 40),
+                pages: dictationPages, order: 40),
         ]
+        if let flowRuntime {
+            sections.append(NativeSettingsSection(id: "focus", title: "Focus", pages: [
+                NativeSettingsPage(id: "focus.general", title: "Focus", symbol: "timer", tint: .orange,
+                    subtitle: "Timer, capture, privacy and project settings.") {
+                        FocusSettingsView(controller: flowRuntime.focus, configuration: flowRuntime.configuration)
+                    }
+            ], order: 45))
+        }
+        return sections
     }
 }
 
@@ -107,14 +145,14 @@ private struct WidgetGeneralSettings: View {
                         Text("Both").tag("both")
                         Text("Top").tag("top")
                         Text("Side").tag("side")
-                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250)
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
                 Divider()
                 NativeSettingsRow("Side edge") {
                     Picker("Side edge", selection: string("side", prefs?.side ?? "right")) {
                         Text("Left").tag("left")
                         Text("Right").tag("right")
-                    }.labelsHidden().pickerStyle(.segmented).frame(width: 170)
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 170, alignment: .trailing)
                 }
                 Divider()
                 NativeSettingsRow("Display") {
@@ -123,7 +161,7 @@ private struct WidgetGeneralSettings: View {
                         ForEach(NSScreen.screens, id: \.self) { screen in
                             Text(screen.localizedName).tag(WidgetCoordinator.id(screen))
                         }
-                    }.labelsHidden().frame(width: 220)
+                    }.labelsHidden().frame(width: 220, alignment: .trailing)
                 }
             }
             NativeSettingsCard("Side widgets") {
@@ -131,7 +169,7 @@ private struct WidgetGeneralSettings: View {
                     Picker("Side arrangement", selection: string("sideLayout", prefs?.sideLayout ?? "joined")) {
                         Text("Joined").tag("joined")
                         Text("Three bubbles").tag("separated")
-                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250)
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
                 Divider()
                 NativeSettingsRow("Vertical position", detail: "You can also drag the handle on any side bubble.") {
@@ -152,7 +190,7 @@ private struct WidgetGeneralSettings: View {
                     Picker("Side style", selection: string("sideStyle", prefs?.sideStyle ?? "modular")) {
                         Text("Modular").tag("modular")
                         Text("Classic").tag("classic")
-                    }.labelsHidden().pickerStyle(.segmented).frame(width: 220)
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 220, alignment: .trailing)
                 }
                 Divider()
                 NativeSettingsToggle(
@@ -182,7 +220,7 @@ private struct WidgetGeneralSettings: View {
                         Text("15 seconds").tag(15)
                         Text("30 seconds").tag(30)
                         Text("1 minute").tag(60)
-                    }.labelsHidden().frame(width: 150)
+                    }.labelsHidden().frame(width: 150, alignment: .trailing)
                 }
                 Divider()
                 NativeSettingsToggle(
@@ -343,7 +381,7 @@ private struct WidgetDictationSettings: View {
                             set: { patch(["voiceProvider": .string($0), "voiceAccount": .null, "voiceModel": .null]) })
                     ) {
                         ForEach(configuration?.providers ?? []) { item in Text(item.title).tag(item.id) }
-                    }.labelsHidden().frame(width: 230)
+                    }.labelsHidden().frame(width: 230, alignment: .trailing)
                 }
                 Divider()
                 NativeSettingsRow("Account", detail: "Uses your existing enabled API accounts.") {
@@ -360,7 +398,7 @@ private struct WidgetDictationSettings: View {
                         {
                             Text("Unavailable — select another account").tag(missing)
                         }
-                    }.labelsHidden().frame(width: 230)
+                    }.labelsHidden().frame(width: 230, alignment: .trailing)
                 }
                 if provider?.accounts.isEmpty == true {
                     Text("No enabled API account for this provider. Add one in the Hub's AI account settings.")
@@ -379,7 +417,7 @@ private struct WidgetDictationSettings: View {
                         if let custom = prefs?.voiceModel, provider?.models.contains(custom) != true {
                             Text(custom).tag(custom)
                         }
-                    }.labelsHidden().frame(width: 280)
+                    }.labelsHidden().frame(width: 280, alignment: .trailing)
                 }
                 Divider()
                 NativeSettingsRow("Language", detail: "Language codes such as en or cs. Leave empty for automatic.") {

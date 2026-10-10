@@ -28,6 +28,8 @@ export interface DecisionAnswer {
 export interface AnswerDecisionsInput {
     session: string;
     provider?: string;
+    sourceHome?: string;
+    deliveryKey?: string;
     cwd?: string;
     answers: DecisionAnswer[];
     /** Print the lines and the route; change nothing. */
@@ -41,7 +43,7 @@ export interface AnswerDecisionDeps {
     events: string;
     /** The `❓ DECISION N` block of the session's last reply, for a decision the store does not have yet. */
     block: (session: string, number: number) => Promise<HarvestedDecision | null>;
-    /** The delivery's `tools` runner and codex lookup; tests replace them. */
+    /** Provider-worker discovery, queue location and the tools runner; tests replace them. */
     deliver?: DeliverDeps;
 }
 
@@ -57,6 +59,8 @@ export interface InboxAnswerResult {
     target?: string;
     /** One sentence saying why nothing was delivered. */
     error?: string;
+    queueId?: string;
+    queueTextHash?: string;
 }
 
 function findRow(rows: DecisionRecord[], session: string, number: number): DecisionRecord | undefined {
@@ -151,8 +155,10 @@ export async function answerInboxDecisions(
     }
 
     if (input.dryRun) {
-        const lines = checked.map((item) =>
-            decisionLine({
+        const lines = checked.map((item) => {
+            // The title switches decisionLine to the "Reply to:" payload the real send delivers.
+            const title = item.row?.title ?? item.block?.title;
+            return decisionLine({
                 id: item.row?.id ?? `d_${item.number}_${input.session}`,
                 sessionId: input.session,
                 number: item.number,
@@ -160,10 +166,11 @@ export async function answerInboxDecisions(
                 options: item.row?.options ?? item.block?.options ?? [],
                 state: "answered",
                 updatedTs: new Date().toISOString(),
+                ...(title ? { title } : {}),
                 ...(item.option ? { option: item.option } : {}),
                 ...(item.text ? { answer: item.text } : {}),
-            })
-        );
+            });
+        });
         return { session: input.session, text: lines.join("\n"), channel: "dry-run", delivered: false };
     }
 
@@ -200,6 +207,8 @@ export async function answerInboxDecisions(
         ids: updates.map((update) => update.id),
         session: input.session,
         ...(input.provider ? { provider: input.provider } : {}),
+        ...(input.sourceHome ? { sourceHome: input.sourceHome } : {}),
+        ...(input.deliveryKey ? { deliveryKey: input.deliveryKey } : {}),
         files: deps,
         deps: deps.deliver ?? {},
     });
@@ -214,6 +223,7 @@ export async function answerInboxDecisions(
         ...(detail ? { detail } : {}),
         ...(sent.target ? { target: sent.target } : {}),
         ...(sent.error ? { error: sent.error } : {}),
+        ...(sent.queueId ? { queueId: sent.queueId, queueTextHash: sent.queueTextHash } : {}),
     };
 }
 

@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { accessSync, constants, existsSync, statSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { installedGenesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
 import { profiler } from "@genesiscz/utils/profile";
@@ -6,6 +7,19 @@ import { STT_DEFAULT_SAMPLE_RATE_HZ } from "../types";
 
 const prof = profiler.scope("stt");
 const log = logger.child({ component: "ai-stt-capture" });
+
+export class PcmCaptureError extends Error {
+    constructor(readonly code: "microphone_permission" | "capture_interrupted" | "capture_failed") {
+        super(
+            code === "microphone_permission"
+                ? "Microphone access is unavailable to the recorder."
+                : code === "capture_interrupted"
+                  ? "Audio capture was interrupted."
+                  : "Audio capture failed."
+        );
+        this.name = "PcmCaptureError";
+    }
+}
 
 export const PCM_SOURCE_KINDS = ["file", "stdin", "mic", "ffmpeg"] as const;
 export type PcmSourceKind = (typeof PCM_SOURCE_KINDS)[number];
@@ -25,6 +39,8 @@ export interface PcmSource {
 }
 
 export interface OpenPcmSourceOptions {
+    /** Explicit host launcher; when supplied it is authoritative, including Preview. Never falls back. */
+    micLauncher?: string;
     /** `-` = stdin, an existing path = raw s16le file, `mic` = GenesisTools.app microphone face, `ffmpeg[:<device>]` = avfoundation. */
     input: string;
     sampleRateHz?: number;
@@ -47,7 +63,7 @@ export async function openPcmSource(options: OpenPcmSourceOptions): Promise<PcmS
     }
 
     if (input === "mic") {
-        return micSource({ sampleRateHz, signal: options.signal });
+        return micSource({ sampleRateHz, signal: options.signal, launcher: options.micLauncher });
     }
 
     if (input === "ffmpeg" || input.startsWith("ffmpeg:")) {
@@ -181,9 +197,11 @@ function spawnSource(options: {
         stderr: "pipe",
     });
     stopSpawn();
-    void child.exited.then(async (code) => {
-        const stderr = child.stderr ? await new Response(child.stderr).text() : "";
+    const diagnostics = child.stderr ? new Response(child.stderr).text() : Promise.resolve("");
+    const completion = child.exited.then(async (code) => {
+        const stderr = await diagnostics;
         log.info({ pid: child.pid, code, stderr: stderr.trim().slice(0, 500) }, "PCM capture process exited");
+        return code;
     });
     const source = streamSource({
         kind: options.kind,
@@ -201,22 +219,66 @@ function spawnSource(options: {
                 await Promise.race([child.exited, Bun.sleep(1_000)]);
                 if (child.exitCode === null) {
                     child.kill("SIGKILL");
+                    const killed = await Promise.race([
+                        child.exited.then(() => true),
+                        Bun.sleep(1_000).then(() => false),
+                    ]);
+                    if (!killed) {
+                        throw new Error("Capture process did not exit after forced shutdown");
+                    }
                 }
             }
         },
     });
+    let closed = false;
+    const close = async () => {
+        closed = true;
+        await source.close();
+    };
     options.signal?.addEventListener("abort", () => {
-        void source.close();
+        void close().catch((error) => log.debug({ error }, "Capture abort cleanup failed"));
     });
-    return source;
+    return {
+        ...source,
+        async *frames() {
+            yield* source.frames();
+            if (closed || options.signal?.aborted) {
+                return;
+            }
+            const code = await Promise.race([completion, Bun.sleep(1_000).then(() => null)]);
+            if (code !== 0) {
+                throw new PcmCaptureError(
+                    options.kind === "mic" && code === 77
+                        ? "microphone_permission"
+                        : code === 143
+                          ? "capture_interrupted"
+                          : "capture_failed"
+                );
+            }
+        },
+        close,
+    };
 }
 
 /**
  * The GenesisTools.app `--mic` face: the signed bundle owns the microphone TCC grant, so the
  * prompt names GenesisTools, not the terminal. Streams s16le mono PCM at `--rate` on stdout.
  */
-function micSource(options: { sampleRateHz: number; signal?: AbortSignal }): PcmSource {
-    const launcher = installedGenesisAppLauncher();
+function micSource(options: { sampleRateHz: number; signal?: AbortSignal; launcher?: string }): PcmSource {
+    const launcher = options.launcher ?? installedGenesisAppLauncher();
+    if (options.launcher !== undefined) {
+        if (!isAbsolute(options.launcher)) {
+            throw new Error("The microphone launcher must be an absolute executable path");
+        }
+        try {
+            accessSync(options.launcher, constants.X_OK);
+            if (!statSync(options.launcher).isFile()) {
+                throw new Error("Microphone launcher is not a file");
+            }
+        } catch {
+            throw new Error("The explicit microphone launcher is unavailable; no production fallback was started");
+        }
+    }
     if (!launcher) {
         throw new Error(
             "GenesisTools.app is not installed, so there is no microphone face. Build it with: bun run app " +

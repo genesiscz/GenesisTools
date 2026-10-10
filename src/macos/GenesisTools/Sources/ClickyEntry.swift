@@ -10,6 +10,11 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
     private let descriptor: Int32
     private let initialPageID: String?
     private var widgetModel: WidgetModel?
+    private var flowRuntime: FlowFocusRuntime?
+    private var transforms: FlowTransformTools?
+    private var runtimeStart: Task<Void, Never>?
+    private var terminating = false
+    private var terminationReplied = false
 
     init(descriptor: Int32, pageID: String?) {
         self.descriptor = descriptor
@@ -25,12 +30,29 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
                 ClickyHost.shared.showSettings(pageID: notification.userInfo?["page"] as? String)
             }
         }
+        let stateRoot = Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetStateRoot") as? String
+        let runtime: FlowFocusRuntime
+        do { runtime = try NativeFlowRuntime.resolve(stateRoot: stateRoot) }
+        catch {
+            NSLog("Feature runtime setup failed: %@", error.localizedDescription)
+            NSApp.terminate(nil)
+            return
+        }
+        flowRuntime = runtime
         let model = WidgetModel(
             binaryPath: ToolsBridge.defaultBinaryPath(),
-            stateRoot: Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetStateRoot") as? String)
+            stateRoot: stateRoot)
         widgetModel = model
+        let transforms = FlowTransformTools(bridge: model.bridge, configuration: runtime.configuration)
+        self.transforms = transforms
+        FlowFocusHost.shared.openSettings = { ClickyHost.shared.showSettings(pageID: "focus.general") }
+        FlowFocusHost.shared.runTransform = { [weak transforms] request in
+            guard let transforms else { throw CancellationError() }
+            return try await transforms.run(request)
+        }
+        runtimeStart = Task { await runtime.start() }
         for section in WidgetFeatureSettings.sections(
-            model: model, modules: WidgetModuleChoice.builtins,
+            model: model, modules: WidgetModuleChoice.builtins, flowRuntime: runtime, transforms: transforms,
             openSession: { session in
                 WidgetLaunch.start(["--widget", "--session-key", session.key])
             })
@@ -59,6 +81,31 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showSettings() { ClickyHost.shared.showSettings() }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminating else { return .terminateLater }
+        terminating = true
+        Task { [self] in
+            runtimeStart?.cancel()
+            await runtimeStart?.value
+            widgetModel?.stop()
+            await flowRuntime?.stop()
+            replyToTermination(sender)
+        }
+        Task { [self] in
+            try? await Task.sleep(for: .seconds(5))
+            replyToTermination(sender, timedOut: true)
+        }
+        return .terminateLater
+    }
+
+    /// Shutdown awaits child processes and runtimes; a hung one must not leave the app unable to quit.
+    private func replyToTermination(_ sender: NSApplication, timedOut: Bool = false) {
+        guard !terminationReplied else { return }
+        terminationReplied = true
+        if timedOut { NSLog("Shutdown did not finish within 5 seconds; quitting anyway") }
+        sender.reply(toApplicationShouldTerminate: true)
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
         widgetModel?.stop()
@@ -97,6 +144,9 @@ func runClicky(_ args: [String] = []) -> Never {
         let app = NSApplication.shared
         let delegate = ClickyAppDelegate(descriptor: descriptor, pageID: pageID)
         app.delegate = delegate
+        // A notification click that runs something hands focus back to the app it was clicked over.
+        BrowserURLForwarder.shared.trackOtherApps()
+        installNotificationClicksForWindowFace()
         app.setActivationPolicy(.accessory)
         app.run()
         withExtendedLifetime(delegate) {}

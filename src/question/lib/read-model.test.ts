@@ -68,6 +68,32 @@ describe("read-model", () => {
         expect(queryEntries(db, { logBase, unread: true }).length).toBe(2);
     });
 
+    it("indexes the newest active window before materializing answer bodies", () => {
+        const root = mkdtempSync(join(tmpdir(), "qa-window-index-"));
+        const logBase = join(root, "log");
+        for (let i = 0; i < 25; i++) {
+            appendEntry(e(`entry-${i}`, { ts: 1779000000000 + i * 3000 }), logBase);
+        }
+        const db = openReadModel(join(root, "qa.db"));
+        const queries = spyOn(db, "query");
+        try {
+            queryEntries(db, { logBase });
+            db.exec("UPDATE entries SET superseded_by='entry-23' WHERE id='entry-24'");
+            const rows = queryEntries(db, { logBase, limit: 5 });
+            expect(rows.map((row) => row.id)).toEqual(["entry-19", "entry-20", "entry-21", "entry-22", "entry-23"]);
+            const sql = queries.mock.calls
+                .map((args) => args[0])
+                .find((sql) => sql.includes("SELECT * FROM entries WHERE"));
+            expect(sql).toBeDefined();
+            const plan = db.query<{ detail: string }, [number]>(`EXPLAIN QUERY PLAN ${sql}`).all(5);
+            expect(plan.some((row) => row.detail.includes("entries USING INDEX idx_entries_active_ts"))).toBe(true);
+            expect(plan.filter((row) => row.detail.includes("TEMP B-TREE"))).toHaveLength(1);
+        } finally {
+            queries.mockRestore();
+            db.close();
+        }
+    });
+
     it("returns last N entries oldest→newest", () => {
         const logBase = mkdtempSync(join(tmpdir(), "qa-log-"));
         const dbPath = join(mkdtempSync(join(tmpdir(), "qa-db-")), "qa.db");
@@ -93,6 +119,20 @@ describe("read-model", () => {
         expect(markEntriesRead(db, ["r1", "r2"], { logBase })).toBe(2);
         expect(queryEntries(db, { logBase, unread: true }).length).toBe(0);
         expect(markEntriesRead(db, ["r1"], { logBase })).toBe(0);
+    });
+
+    it("close settles ingested rows and read marks into the store file", () => {
+        const logBase = mkdtempSync(join(tmpdir(), "qa-log-"));
+        const dbPath = join(mkdtempSync(join(tmpdir(), "qa-db-")), "qa.db");
+        appendEntry(e("c1"), logBase);
+        const db = openReadModel(dbPath);
+        expect(getEntryById(db, "c1", { logBase })?.id).toBe("c1");
+        expect(markEntriesRead(db, ["c1"], { logBase })).toBe(1);
+        db.close();
+
+        // A statement left unfinalized keeps the connection open after close(), so the last write stays in the
+        // WAL and reaches the store file only when garbage collection finalizes it.
+        expect(statSync(`${dbPath}-wal`, { throwIfNoEntry: false })?.size ?? 0).toBe(0);
     });
 
     it("marks entries unread", () => {
@@ -255,6 +295,31 @@ function durableDirectoryBytes(root: string): Record<string, string> {
     // SQLite readers update transient SHM read marks; durable DB, WAL and JSONL bytes must not change.
     return Object.fromEntries(Object.entries(directoryBytes(root)).filter(([path]) => !path.endsWith("-shm")));
 }
+
+it("the newest unread entry joins the window when newer read entries pushed it out", () => {
+    const root = mkdtempSync(join(tmpdir(), "qa-newest-unread-"));
+    const dbPath = join(root, "qa.db");
+    const logBase = join(root, "log");
+    appendEntry(e("old-unread", { ts: 1_779_000_000_000 }), logBase);
+    const newer = ["n1", "n2", "n3"];
+    for (const [index, id] of newer.entries()) {
+        appendEntry(e(id, { ts: 1_779_000_001_000 + index }), logBase);
+    }
+
+    const db = openReadModel(dbPath);
+    try {
+        markEntriesRead(db, newer, { logBase });
+        expect(queryEntries(db, { logBase, sessionId: "s", limit: 2 }).map((row) => row.id)).toEqual(["n2", "n3"]);
+        expect(
+            queryEntries(db, { logBase, sessionId: "s", limit: 2, includeNewestUnread: true }).map((row) => row.id)
+        ).toEqual(["old-unread", "n2", "n3"]);
+        expect(
+            queryEntries(db, { logBase, sessionId: "s", limit: 9, includeNewestUnread: true }).map((row) => row.id)
+        ).toEqual(["old-unread", "n1", "n2", "n3"]);
+    } finally {
+        db.close();
+    }
+});
 
 it("snapshot readers ingest fresh JSONL without creating a missing store or directory", () => {
     const root = mkdtempSync(join(tmpdir(), "qa-snapshot-missing-"));

@@ -160,6 +160,8 @@ export const widgetOutgoingSchema = z.object({
             at: z.number(),
             detail: z.string().optional(),
             entryId: z.string().optional(),
+            payloadHash: z.string().optional(),
+            payloadRevision: z.string().optional(),
         })
         .optional(),
     dispatchedAt: z.number().optional(),
@@ -191,5 +193,6 @@ export const widgetStateSchema = z.object({
     assets: z.record(z.string(), widgetAssetSchema).default({}),
     drafts: z.record(z.string(), widgetDraftSchema).default({}),
     outgoing: z.array(widgetOutgoingSchema).default([]),
+    inboxRead: z.record(z.string(), z.number().finite().nonnegative()).default({}),
 });
 export type WidgetState = z.infer<typeof widgetStateSchema>;

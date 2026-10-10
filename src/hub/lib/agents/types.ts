@@ -33,6 +33,13 @@ export interface AgentNode {
     unreadMail: number;
     team: string | null;
     backendType: string | null;
+    /**
+     * A codex/grok worker's provider-native session (codex thread id, grok session id), when known. Delivery finds
+     * a worker by this id and `sourceHome`, never by its name in `id`.
+     */
+    nativeSessionId?: string | null;
+    /** The provider home that native session lives in (CODEX_HOME, the grok worker home). */
+    sourceHome?: string | null;
     /** The transcript to open: `agent-<id>.jsonl`, a codex event log, a grok turn file. */
     filePath: string | null;
     /** The whole spawn prompt (at most 4000 chars) in the one-agent door; null in the list. */

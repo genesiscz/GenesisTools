@@ -11,6 +11,8 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
     var observer: NSObjectProtocol?
     let args: [String]
     let descriptor: Int32
+    private var terminating = false
+    private var terminationReplied = false
     init(args: [String], descriptor: Int32) {
         self.args = args
         self.descriptor = descriptor
@@ -25,11 +27,18 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
         }
         let tools = URL(fileURLWithPath: ToolsBridge.defaultBinaryPath()).resolvingSymlinksInPath()
         let wrapper = tools.deletingLastPathComponent().appendingPathComponent("widget-tools").path
+        let stateRoot = value("--state-root") ?? Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetStateRoot") as? String
+        let runtime: FlowFocusRuntime
+        do { runtime = try NativeFlowRuntime.resolve(stateRoot: stateRoot) }
+        catch {
+            NSLog("Widget runtime setup failed: %@", error.localizedDescription)
+            NSApp.terminate(nil)
+            return
+        }
         coordinator = WidgetCoordinator(
             binaryPath: value("--tools")
                 ?? (ToolsBridge.isExecutableFile(wrapper) ? wrapper : tools.path),
-            stateRoot: value("--state-root") ?? Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetStateRoot")
-                as? String,
+            stateRoot: stateRoot, flowRuntime: runtime, micLauncher: Bundle.main.executableURL?.path,
             openHub: { session in
                 var args = ["--hub", "--mode", "agents"]
                 if let session {
@@ -78,6 +87,28 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showWidgetSettings() { coordinator?.showSettings() }
     @objc private func showHub() { WidgetLaunch.start(["--hub", "--mode", "agents"]) }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminating else { return .terminateLater }
+        terminating = true
+        Task { [self] in
+            await coordinator?.shutdown()
+            replyToTermination(sender)
+        }
+        Task { [self] in
+            try? await Task.sleep(for: .seconds(5))
+            replyToTermination(sender, timedOut: true)
+        }
+        return .terminateLater
+    }
+
+    /// Shutdown awaits child processes and runtimes; a hung one must not leave the app unable to quit.
+    private func replyToTermination(_ sender: NSApplication, timedOut: Bool = false) {
+        guard !terminationReplied else { return }
+        terminationReplied = true
+        if timedOut { NSLog("Shutdown did not finish within 5 seconds; quitting anyway") }
+        sender.reply(toApplicationShouldTerminate: true)
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
         coordinator?.stop()

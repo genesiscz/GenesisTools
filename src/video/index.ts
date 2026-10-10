@@ -5,6 +5,7 @@ import { out } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { prepareVideoEvidence } from "@genesiscz/utils/video/evidence";
 import { probeVideo } from "@genesiscz/utils/video/probe";
+import { secondsToMicroseconds } from "@genesiscz/utils/video/sampling";
 import { VIDEO_FPS, VIDEO_GROUPS, videoSettingsSchema } from "@genesiscz/utils/video/types";
 import { Command } from "commander";
 
@@ -24,12 +25,21 @@ export function registerVideoCommands(program: Command): void {
         .option("--fps [value]", "Frames per second: 1, 2, 3, 4", "2")
         .option("--frames-per-image [value]", "Frames per PNG: 1, 4, 8, 16, 32", "16")
         .option("--difference <percent>", "Skip samples below this changed-pixel percentage", "0")
+        .option("--start <seconds>", "Start sampling at this original timestamp (inclusive)")
+        .option("--end <seconds>", "Stop sampling at this original timestamp (exclusive)")
         .option("--out <directory>", "Output root, with a new immutable generation per run")
         .option("--json", "Print the generation manifest")
         .action(
             async (
                 input: string,
-                options: { fps: string | boolean; framesPerImage: string | boolean; difference: string; out?: string }
+                options: {
+                    fps: string | boolean;
+                    framesPerImage: string | boolean;
+                    difference: string;
+                    start?: string;
+                    end?: string;
+                    out?: string;
+                }
             ) => {
                 for (const [flag, value, allowed] of [
                     ["--fps", options.fps, VIDEO_FPS],
@@ -46,9 +56,11 @@ export function registerVideoCommands(program: Command): void {
                     fps: Number(options.fps),
                     framesPerImage: Number(options.framesPerImage),
                     minimumDifferencePct: Number(options.difference),
+                    startUs: options.start === undefined ? undefined : secondsToMicroseconds(options.start),
+                    endUs: options.end === undefined ? undefined : secondsToMicroseconds(options.end),
                 });
                 if (!parsed.success) {
-                    out.log.error(`--difference must be a percentage between 0 and 100 (got "${options.difference}")`);
+                    out.log.error(parsed.error.issues.map((issue) => issue.message).join("; "));
                     process.exitCode = 1;
                     return;
                 }

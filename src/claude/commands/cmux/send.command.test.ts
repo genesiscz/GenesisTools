@@ -132,6 +132,26 @@ test("sends text then Enter to the pane whose tab carries the session marker", a
     );
 });
 
+test("paste submits one literal multiline message without chunking paths or issuing extra Enter keys", async () => {
+    setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
+    const text =
+        '<fromImage>\n{"path":"/fixture/' + "long-directory-".repeat(1200) + 'image-漢字.png"}\n</fromImage>\n';
+    expect(await sendCommand(SESSION_A, text, { paste: true, enter: true }, deps)).toBe(true);
+    expect(events.filter((event) => event.startsWith("paste"))).toEqual([
+        "paste --surface surface:41 --submit -- " + text,
+    ]);
+    expect(events.some((event) => event.startsWith("send"))).toBe(false);
+});
+
+test("paste can leave the complete message unsubmitted and never retries an uncertain paste", async () => {
+    setSnapshot([pane({ id: "pane:7", surfaces: [surface({ id: "surface:41", title: SESSION_A, selected: true })] })]);
+    expect(await sendCommand(SESSION_A, "a\nb\\n", { paste: true, enter: false }, deps)).toBe(true);
+    expect(events).toContain("paste --surface surface:41 -- a\nb\\n");
+    const dead = { ...deps, lookupRefs: () => recordedRefs({ surfaceId: DEAD_SURFACE_UUID }) };
+    await expect(sendCommand(SESSION_A, "a\nb", { paste: true }, dead)).rejects.toThrow("Surface is not a terminal");
+    expect(events.filter((event) => event.includes(DEAD_SURFACE_UUID))).toHaveLength(1);
+});
+
 test("--timeout ends a send whose lookup never answers, and rejects a bad value", async () => {
     const stuck = { ...deps, fetchSnapshot: () => new Promise<CmuxLiveSnapshot>(() => {}) };
     const started = Date.now();
@@ -319,6 +339,78 @@ test("refuses to type into an ambiguous working-directory match", async () => {
     expect(result.sent).toBe(false);
     expect(result.source).toBe("cwd");
     expect(events.some((event) => event.startsWith("send "))).toBe(false);
+});
+
+test("an automated exact-session reply refuses even one working-directory match", async () => {
+    setSnapshot([
+        pane({
+            id: "pane:7",
+            cwd: "/repo",
+            selectedSurfaceRef: "surface:1",
+            surfaces: [surface({ id: "surface:1", selected: true })],
+        }),
+    ]);
+    const cwdDeps = { ...deps, lookupSession: async () => ({ aliases: [], sessionId: SESSION_A, cwd: "/repo" }) };
+    await sendCommand(SESSION_A, "media reply", { exactSession: true, paste: true, json: true }, cwdDeps);
+    const result = SafeJSON.parse(await capturedResult());
+    expect(result.sent).toBe(false);
+    expect(result.source).toBe("cwd");
+    expect(events.some((event) => event.startsWith("paste ") || event.startsWith("send "))).toBe(false);
+});
+
+test("an automated exact-session reply refuses a lone pane that only prints the id or shares the topic title", async () => {
+    const printed = pane({
+        id: "pane:7",
+        selectedSurfaceRef: "surface:1",
+        surfaces: [surface({ id: "surface:1", selected: true, preview: `discussing ${SESSION_A} in another agent` })],
+    });
+    const topical = pane({
+        id: "pane:7",
+        selectedSurfaceRef: "surface:1",
+        surfaces: [surface({ id: "surface:1", selected: true, title: "Pricing rewrite" })],
+    });
+    const aliasDeps = { ...deps, lookupSession: async () => ({ aliases: ["Pricing rewrite"], sessionId: SESSION_A }) };
+
+    for (const [fixture, fixtureDeps, matchedOn] of [
+        [printed, deps, "session-id"],
+        [topical, aliasDeps, "session-name"],
+    ] as const) {
+        events = [];
+        stdout = [];
+        setSnapshot([fixture]);
+        await sendCommand(SESSION_A, "media reply", { exactSession: true, paste: true, json: true }, fixtureDeps);
+        const result = SafeJSON.parse(await capturedResult());
+        expect(result.sent).toBe(false);
+        expect(result.source).toBe("titles");
+        expect(result.matches[0].matchedOn).toBe(matchedOn);
+        expect(events.some((event) => event.startsWith("paste ") || event.startsWith("send "))).toBe(false);
+    }
+
+    // Control: without --exact-session an interactive send still takes the printed id.
+    events = [];
+    setSnapshot([printed]);
+    expect(await sendCommand(SESSION_A, "hi", { paste: true }, deps)).toBe(true);
+    expect(events).toContain("paste --surface surface:1 --submit -- hi");
+});
+
+test("an automated exact-session reply still reaches the pane resuming the session", async () => {
+    setSnapshot([
+        pane({
+            id: "pane:7",
+            selectedSurfaceRef: "surface:1",
+            surfaces: [
+                surface({ id: "surface:1", selected: true, preview: `tools claude start -- --resume '${SESSION_A}'` }),
+            ],
+        }),
+        pane({
+            id: "pane:8",
+            selectedSurfaceRef: "surface:2",
+            surfaces: [surface({ id: "surface:2", selected: true, preview: `discussing ${SESSION_A}` })],
+        }),
+    ]);
+    expect(await sendCommand(SESSION_A, "media reply", { exactSession: true, paste: true }, deps)).toBe(true);
+    expect(events).toContain("paste --surface surface:1 --submit -- media reply");
+    expect(events.some((event) => event.includes("surface:2"))).toBe(false);
 });
 
 test("a single working-directory match still delivers", async () => {

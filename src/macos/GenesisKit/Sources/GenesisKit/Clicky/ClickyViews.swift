@@ -8,6 +8,7 @@ public enum ClickyPage: String, CaseIterable, Identifiable {
     case visualizer = "Visualizer"
     case notifications = "Notifications"
     case stats = "Stats"
+    case performance = "Performance"
     case about = "About"
     public var id: String { rawValue }
     var symbol: String {
@@ -18,6 +19,7 @@ public enum ClickyPage: String, CaseIterable, Identifiable {
         case .visualizer: return "keyboard.fill"
         case .notifications: return "bell.badge.fill"
         case .stats: return "chart.bar.fill"
+        case .performance: return "speedometer"
         case .about: return "info.circle.fill"
         }
     }
@@ -29,6 +31,7 @@ public enum ClickyPage: String, CaseIterable, Identifiable {
         case .visualizer: return .purple
         case .notifications: return .orange
         case .stats: return .mint
+        case .performance: return .cyan
         }
     }
     var subtitle: String {
@@ -39,6 +42,7 @@ public enum ClickyPage: String, CaseIterable, Identifiable {
         case .visualizer: return "See the rhythm of your keyboard."
         case .notifications: return "Choose when Clicky gets your attention."
         case .stats: return "Your typing, counted locally."
+        case .performance: return "Your pace, your patterns and a little perspective."
         case .about: return "Small sounds. Made for your Mac."
         }
     }
@@ -75,10 +79,8 @@ public enum ClickySettingsPages {
                     }
                 ], order: 0),
             NativeSettingsSection(
-                id: "settings", title: "Settings", pages: [ClickyPage.sound, .sleep, .notifications].map(page),
-                order: 10),
-            NativeSettingsSection(
-                id: "clicky", title: "Clicky", pages: [ClickyPage.stats, .visualizer].map(page), order: 20),
+                id: "clicky", title: "Clicky",
+                pages: [ClickyPage.sound, .sleep, .notifications, .stats, .performance, .visualizer].map(page), order: 10),
             NativeSettingsSection(
                 id: "about", title: "",
                 pages: [
@@ -116,6 +118,12 @@ private struct ClickySettingsPageContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
+            if let recovery = model.statisticsLoadError {
+                Label(recovery, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12)).foregroundStyle(.orange)
+                    .padding(16).nativeGlassSurface()
+                    .accessibilityIdentifier("clicky.statistics.recovery")
+            }
             if let error = model.error {
                 HStack(alignment: .top, spacing: 12) {
                     Label(error, systemImage: "exclamationmark.triangle.fill").font(.system(size: 12)).foregroundStyle(
@@ -129,7 +137,14 @@ private struct ClickySettingsPageContent: View {
             case .sleep: sleep
             case .visualizer: visualizer
             case .notifications: notifications
-            case .stats: stats
+            case .stats:
+                if model.statisticsLoadError == nil { stats } else { historyRecovery }
+            case .performance:
+                if model.statisticsLoadError == nil {
+                    ClickyPerformanceView(store: model.analytics, defaults: model.settingsDefaults)
+                } else {
+                    historyRecovery
+                }
             case .about: NativeSettingsAboutPage()
             }
         }
@@ -137,7 +152,25 @@ private struct ClickySettingsPageContent: View {
             Button("Cancel", role: .cancel) {}
             Button("Reset", role: .destructive) { model.resetStatistics() }
         } message: {
-            Text("This removes your saved aggregate counts from this Mac.")
+            Text(model.statisticsLoadError == nil
+                ? "This removes your saved aggregate counts from this Mac."
+                : "This starts a new typing history and keeps a backup of the unreadable original data.")
+        }
+    }
+
+    private var historyRecovery: some View {
+        NativeSettingsCard("Typing history is unavailable") {
+            Text("Counts and charts stay hidden while the saved history cannot be read. Sound feedback can still be enabled.")
+                .font(.callout).foregroundStyle(.secondary)
+            Text("If you restore the saved data, try loading it again. Reset starts a new history and keeps a backup of the unreadable original.")
+                .font(.callout).foregroundStyle(.secondary)
+            HStack {
+                Button("Try loading again", action: model.retryStatisticsLoad)
+                    .accessibilityIdentifier("clicky.statistics.retry")
+                Spacer()
+                Button("Reset statistics…") { confirmReset = true }
+                    .accessibilityIdentifier("clicky.statistics.reset")
+            }.buttonStyle(.bordered)
         }
     }
 
@@ -161,7 +194,7 @@ private struct ClickySettingsPageContent: View {
                         })
                 ).labelsHidden().toggleStyle(.switch).accessibilityIdentifier("clicky.enabled")
             }
-            DisclosureGroup("Input permission and privacy") {
+            NativeSettingsDisclosure("Input permission and privacy", identifier: "clicky.inputPrivacy") {
                 VStack(alignment: .leading, spacing: 12) {
                     Label(model.hasInputPermission ? "Input Monitoring is allowed" : "Input Monitoring is required",
                           systemImage: model.hasInputPermission ? "checkmark.shield" : "hand.raised")
@@ -282,9 +315,9 @@ private struct ClickySettingsPageContent: View {
                 setting(
                     "Scheduled quiet hours", detail: "Automatically pause each day during this time.",
                     value: $model.preferences.quietHours)
-                HStack {
-                    DatePicker("From", selection: timeBinding(\.quietStart), displayedComponents: .hourAndMinute)
-                    DatePicker("Until", selection: timeBinding(\.quietEnd), displayedComponents: .hourAndMinute)
+                HStack(spacing: 12) {
+                    NativeSettingsTimePicker("From", identifier: "clicky.quietStart", minutes: $model.preferences.quietStart)
+                    NativeSettingsTimePicker("Until", identifier: "clicky.quietEnd", minutes: $model.preferences.quietEnd)
                 }.disabled(!model.preferences.quietHours)
                 Text("Equal start and end times disable the schedule. Sleep and screen sleep always pause sounds.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -293,29 +326,13 @@ private struct ClickySettingsPageContent: View {
                 Text("Clicky stays quiet while any of these applications is in front.").font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 ForEach(model.preferences.excludedApplications, id: \.self) { bundleID in
-                    HStack {
-                        Text(bundleID).font(.system(size: 11)).textSelection(.enabled)
-                        Spacer()
-                        IconButton(systemName: "minus.circle", tooltip: "Remove \(bundleID)") {
-                            model.preferences.excludedApplications.removeAll { $0 == bundleID }
-                        }
+                    NativeSettingsApplicationRow(bundleID: bundleID) {
+                        model.preferences.excludedApplications.removeAll { $0 == bundleID }
                     }
                 }
                 Button("Add application…", action: model.excludeApplication).buttonStyle(.bordered)
             }
         }
-    }
-
-    private func timeBinding(_ path: WritableKeyPath<ClickyPreferences, Int>) -> Binding<Date> {
-        Binding(
-            get: {
-                let minute = model.preferences[keyPath: path]
-                return ClickyPreferences.clockTime(minute: minute)
-            },
-            set: { date in
-                let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
-                model.preferences[keyPath: path] = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
-            })
     }
 
     private var visualizer: some View {
@@ -345,22 +362,19 @@ private struct ClickySettingsPageContent: View {
                     "Activation notifications", detail: "Show a macOS notification when Clicky is enabled.",
                     value: Binding(
                         get: { model.preferences.notifications },
-                        set: { enabled in
-                            if enabled && model.notificationStatus != "Allowed" {
-                                model.requestNotifications()
-                            } else {
-                                model.preferences.notifications = enabled
-                            }
-                        }))
+                        set: model.setActivationNotifications))
                 Divider()
                 HStack {
                     Text(model.notificationStatus).font(.system(size: 12)).foregroundStyle(.secondary)
                     Spacer()
-                    Button("Allow notifications", action: model.requestNotifications).buttonStyle(.bordered)
+                    if model.notificationBusy { ProgressView().controlSize(.small) }
+                    Button(model.notificationActionTitle, action: model.requestNotifications)
+                        .buttonStyle(.bordered).disabled(model.notificationBusy)
+                        .accessibilityIdentifier("clicky.notificationPermission")
                 }
             }
             Text(
-                "Clicky asks macOS only when you press Allow notifications. Notification style and sound are controlled in System Settings."
+                model.notificationHelp
             )
             .font(.system(size: 12)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -368,27 +382,16 @@ private struct ClickySettingsPageContent: View {
 
     private var stats: some View {
         VStack(spacing: 18) {
-            HStack(spacing: 14) {
-                metric("Key presses", value: model.statistics.presses, symbol: "arrow.down")
-                metric("Key releases", value: model.statistics.releases, symbol: "arrow.up")
-            }
-            card {
-                HStack {
-                    Label("Sessions enabled", systemImage: "power").font(.system(size: 13))
-                    Spacer()
-                    Text(model.statistics.sessions.formatted()).font(
-                        .system(size: 24, weight: .semibold, design: .rounded)
-                    ).monospacedDigit()
-                }
-                Text("Since \(model.statistics.startedAt.formatted(date: .abbreviated, time: .omitted))").font(
-                    .system(size: 11)
-                ).foregroundStyle(.secondary)
-            }
+            ClickyAnalyticsView(store: model.analytics)
             card("Privacy") {
                 setting(
                     "Keep local statistics",
-                    detail: "Save only total presses, releases and sessions. No words, key history or app history.",
+                    detail: "Minute and hour totals, daily totals and aggregate physical-key counts. No typed text, key sequence or application history.",
                     value: $model.preferences.collectStats)
+                Text("Minute history: 30 days · Hourly: 1 year · Daily: 2 years. Earlier lifetime totals are preserved without inventing historical detail.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("Counts are recorded while Clicky is listening. Paused or muted applications and Secure Input are not counted.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Divider()
                 Button("Reset statistics…", role: .destructive) { confirmReset = true }.buttonStyle(.genHoverPlain())
             }

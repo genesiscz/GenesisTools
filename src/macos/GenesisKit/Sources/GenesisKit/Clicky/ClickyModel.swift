@@ -18,11 +18,33 @@ public final class ClickyModel: ObservableObject {
     }
     @Published public private(set) var enabled = false
     @Published public private(set) var status = "Clicky is off"
-    @Published public private(set) var statistics: ClickyStatistics
+    public private(set) var statistics: ClickyStatistics
+    @Published public private(set) var statisticsLoadError: String?
+    public let analytics = ClickyAnalyticsStore()
     @Published public private(set) var sleepingUntil: Date?
     @Published public private(set) var pulse = 0
     @Published public private(set) var lastPan: Float = 0
-    @Published public private(set) var notificationStatus = "Not requested"
+    @Published public private(set) var notificationAuthorization: UNAuthorizationStatus = .notDetermined
+    @Published public private(set) var notificationBusy = false
+    /// Bumped by each permission request, so a status read that started before it cannot overwrite its answer.
+    private var notificationGeneration = 0
+    public var notificationStatus: String {
+        switch notificationAuthorization {
+        case .authorized, .provisional, .ephemeral: return "Allowed"
+        case .denied: return "Blocked in System Settings"
+        case .notDetermined: return "Not requested"
+        @unknown default: return "Unknown"
+        }
+    }
+    public var notificationActionTitle: String {
+        notificationAuthorization == .notDetermined ? "Allow notifications" : "Open Notification Settings"
+    }
+    public var notificationHelp: String {
+        if notificationAuthorization == .denied {
+            return "macOS is blocking notifications for \(applicationName). Open Notification Settings and turn on Allow notifications. Your activation preference is saved separately."
+        }
+        return "Activation notifications are sent when you enable Clicky. Banner style and sound are controlled in System Settings."
+    }
     @Published public private(set) var error: String?
     public var stateDidChange: (() -> Void)?
     private let defaults: UserDefaults
@@ -41,14 +63,17 @@ public final class ClickyModel: ObservableObject {
     private var pendingStats = false
     private var persistenceWork: DispatchWorkItem?
     private let previewOnly: Bool
+    private let notificationClient: NativeNotificationClient
 
     public init(
         defaults: UserDefaults = .standard, previewOnly: Bool = false, appearance: NativeSettingsAppearance? = nil,
-        inputMonitor: (any ClickyInputMonitoring)? = nil, observeSystemEvents: Bool = true
+        inputMonitor: (any ClickyInputMonitoring)? = nil, observeSystemEvents: Bool = true,
+        notificationClient: NativeNotificationClient? = nil
     ) {
         self.defaults = defaults
         soundLibrary = ClickySoundLibrary(defaults: defaults)
         self.previewOnly = previewOnly
+        self.notificationClient = notificationClient ?? .system
         self.inputMonitor = inputMonitor ?? SystemClickyInputMonitor()
         self.appearance =
             appearance ?? NativeSettingsAppearance(defaults: defaults, observeExternalChanges: !previewOnly)
@@ -60,13 +85,8 @@ public final class ClickyModel: ObservableObject {
         } else {
             preferences = ClickyPreferences()
         }
-        if let data = defaults.data(forKey: "clicky.statistics.v1"),
-            let saved = try? JSONDecoder().decode(ClickyStatistics.self, from: data)
-        {
-            statistics = saved
-        } else {
-            statistics = ClickyStatistics()
-        }
+        statistics = ClickyStatistics()
+        loadStatistics()
         if defaults.data(forKey: "clicky.preferences.v1") != nil {
             self.appearance.migrateIfNeeded(
                 reduceMotion: preferences.reduceMotion,
@@ -107,16 +127,12 @@ public final class ClickyModel: ObservableObject {
             ) { [weak self] _ in
                 MainActor.assumeIsolated { self?.shutdown() }
             })
-        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
-            Task { @MainActor in
-                switch settings.authorizationStatus {
-                case .authorized, .provisional, .ephemeral: self?.notificationStatus = "Allowed"
-                case .denied: self?.notificationStatus = "Not allowed"
-                case .notDetermined: self?.notificationStatus = "Not requested"
-                @unknown default: self?.notificationStatus = "Unknown"
-                }
-            }
-        }
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in await self?.refreshNotificationPermission() }
+        })
+        Task { [weak self] in await self?.refreshNotificationPermission() }
         refreshContext()
     }
 
@@ -159,8 +175,9 @@ public final class ClickyModel: ObservableObject {
         }
         if audio == nil { audio = ClickyAudio() }
         enabled = true
-        if preferences.collectStats {
+        if preferences.collectStats && statisticsLoadError == nil {
             statistics.sessions += 1
+            analytics.flush(statistics)
             pendingStats = true
         }
         refreshContext()
@@ -179,6 +196,7 @@ public final class ClickyModel: ObservableObject {
         previewGeneration &+= 1
         inputMonitor.stop()
         inputState.clear()
+        statistics.breakTypingBurst()
         enabled = false
         audio?.stop()
         flushStatistics()
@@ -203,6 +221,7 @@ public final class ClickyModel: ObservableObject {
         audio?.useBuiltIn()
         previewGeneration &+= 1
         inputState.clear()
+        statistics.breakTypingBurst()
         preferences.selectedPack = nil
         preferences.selectedSwitch = profile
     }
@@ -236,6 +255,7 @@ public final class ClickyModel: ObservableObject {
         sleepingUntil = Date().addingTimeInterval(Double(minutes) * 60)
         audio?.stop()
         inputState.clear()
+        statistics.breakTypingBurst()
         refreshContext()
     }
 
@@ -246,24 +266,71 @@ public final class ClickyModel: ObservableObject {
 
     public func dismissError() { error = nil }
 
+    public func retryStatisticsLoad() {
+        guard statisticsLoadError != nil else { return }
+        loadStatistics()
+    }
+
+    private func loadStatistics() {
+        do {
+            if let data = defaults.data(forKey: "clicky.statistics.v1") {
+                statistics = try JSONDecoder().decode(ClickyStatistics.self, from: data)
+            }
+            statisticsLoadError = nil
+            analytics.flush(statistics)
+        } catch {
+            statisticsLoadError = "Your saved typing history could not be read. It remains untouched. New statistics are paused until the history is restored or reset."
+            log.error("Saved typing history could not be decoded; collection paused: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     public func resetStatistics() {
+        if statisticsLoadError != nil, let original = defaults.data(forKey: "clicky.statistics.v1") {
+            defaults.set(original, forKey: "clicky.statistics.recovery.\(UUID().uuidString)")
+        }
+        statisticsLoadError = nil
         statistics = ClickyStatistics()
+        analytics.flush(statistics)
         pendingStats = true
         flushStatistics()
     }
 
+    public func refreshNotificationPermission() async {
+        guard !previewOnly, !notificationBusy else { return }
+        let generation = notificationGeneration
+        let status = await notificationClient.status()
+        // A request that started and finished while this read was suspended has the newer answer.
+        guard generation == notificationGeneration, !notificationBusy else { return }
+        notificationAuthorization = status
+    }
+
+    public func setActivationNotifications(_ enabled: Bool) {
+        preferences.notifications = enabled
+        if enabled && notificationAuthorization == .notDetermined { requestNotifications() }
+    }
+
     public func requestNotifications() {
-        guard !previewOnly else {
-            notificationStatus = "Unavailable in preview"
-            return
-        }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) {
-            [weak self] granted, error in
-            Task { @MainActor in
-                self?.notificationStatus = granted ? "Allowed" : "Not allowed"
-                self?.preferences.notifications = granted
-                if let error { self?.error = error.localizedDescription }
+        Task { await performNotificationAction() }
+    }
+
+    public func performNotificationAction() async {
+        guard !previewOnly, !notificationBusy else { return }
+        notificationGeneration &+= 1
+        notificationBusy = true
+        defer { notificationBusy = false }
+        error = nil
+        notificationAuthorization = await notificationClient.status()
+        if notificationAuthorization == .notDetermined {
+            do {
+                let granted = try await notificationClient.request()
+                notificationAuthorization = granted ? .authorized : .denied
+                if !granted { error = "Notifications are blocked. You can enable them in Notification Settings." }
+            } catch {
+                self.error = "Could not request notifications: \(error.localizedDescription)"
+                log.error("Notification permission failed: \(error.localizedDescription, privacy: .public)")
             }
+        } else if !notificationClient.openSettings() {
+            error = "Could not open Notification Settings. Open System Settings → Notifications → \(applicationName)."
         }
     }
 
@@ -302,6 +369,7 @@ public final class ClickyModel: ObservableObject {
     }
 
     private func savePreferences(previous: ClickyPreferences) {
+        if previous.collectStats != preferences.collectStats { statistics.breakTypingBurst() }
         if !syncingAppearance {
             if previous.reduceMotion != preferences.reduceMotion { appearance.reduceMotion = preferences.reduceMotion }
             if previous.reduceTransparency != preferences.reduceTransparency {
@@ -313,7 +381,8 @@ public final class ClickyModel: ObservableObject {
     }
 
     private func flushStatistics() {
-        guard pendingStats else { return }
+        analytics.flush(statistics)
+        guard statisticsLoadError == nil, pendingStats else { return }
         if let data = try? JSONEncoder().encode(statistics) { defaults.set(data, forKey: "clicky.statistics.v1") }
         pendingStats = false
     }
@@ -322,6 +391,7 @@ public final class ClickyModel: ObservableObject {
         if note.name == NSWorkspace.willSleepNotification || note.name == NSWorkspace.screensDidSleepNotification {
             systemSleeping = true
             inputState.clear()
+            statistics.breakTypingBurst()
             audio?.stop()
             flushStatistics()
         } else if note.name == NSWorkspace.didWakeNotification || note.name == NSWorkspace.screensDidWakeNotification {
@@ -349,6 +419,7 @@ public final class ClickyModel: ObservableObject {
         }
         if isPaused {
             inputState.clear()
+            statistics.breakTypingBurst()
             audio?.stop()
         }
         boundaryTimer?.invalidate()
@@ -378,6 +449,7 @@ public final class ClickyModel: ObservableObject {
         }
         guard !IsSecureEventInputEnabled() else {
             inputState.clear()
+            statistics.breakTypingBurst()
             audio?.clearHeldKeys()
             return
         }
@@ -389,6 +461,7 @@ public final class ClickyModel: ObservableObject {
                 repeatSounds: preferences.repeatSounds)
         else {
             inputState.clear()
+            statistics.breakTypingBurst()
             audio?.clearHeldKeys()
             return
         }
@@ -412,8 +485,11 @@ public final class ClickyModel: ObservableObject {
         if ClickyInputDiagnostics.enabled {
             PerfLog.mark("clicky.transition.\(diagnosticSource).\(type.rawValue).accepted")
         }
-        if preferences.collectStats && (transition.countsPress || transition.release) {
-            if transition.release { statistics.releases += 1 } else { statistics.presses += 1 }
+        if preferences.collectStats && statisticsLoadError == nil && (transition.countsPress || transition.release) {
+            statistics.record(keyCode: code, release: transition.release,
+                at: ClickyInputTime.date(timestampNanoseconds: event.timestamp),
+                shortcut: event.flags.contains(.maskCommand) || event.flags.contains(.maskControl))
+            analytics.stage { [weak self] in self?.statistics }
             pendingStats = true
             if persistenceWork == nil {
                 let work = DispatchWorkItem { [weak self] in

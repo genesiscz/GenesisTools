@@ -62,3 +62,40 @@ export async function mutateWidgetState<T>(root: string | undefined, update: (st
         10_000
     );
 }
+
+const INBOX_READ_LIMIT = 4096;
+const INBOX_READ_RETAINED = 3072;
+
+export async function acknowledgeWidgetInbox({
+    root,
+    key,
+    id,
+    at,
+    signal,
+}: {
+    root?: string;
+    key: string;
+    id: string;
+    at: number;
+    signal?: AbortSignal;
+}): Promise<{ saved: boolean }> {
+    return mutateWidgetState(root, (state) => {
+        signal?.throwIfAborted();
+        const token = `${key}|${id}`;
+        if ((state.inboxRead[token] ?? -1) >= at) {
+            return { saved: false };
+        }
+
+        const entries = Object.entries(state.inboxRead);
+        if (!(token in state.inboxRead) && entries.length >= INBOX_READ_LIMIT) {
+            // Forget the oldest marks instead of refusing every later read once the history fills up.
+            entries.sort((a, b) => a[1] - b[1]);
+            for (const [stale] of entries.slice(0, entries.length - INBOX_READ_RETAINED)) {
+                delete state.inboxRead[stale];
+            }
+        }
+
+        state.inboxRead[token] = at;
+        return { saved: true };
+    });
+}

@@ -14,6 +14,64 @@ final class EdgePanelGeometryTests: XCTestCase {
         XCTAssertEqual(WidgetClusterGeometry.topWidth(cutout: 200, moduleCount: 12), 524)
     }
 
+    func testSessionDetailSizingScalesWithDisplayAndFitsConstrainedScreens() {
+        let laptop = WidgetClusterGeometry.detailSize(visible: CGSize(width: 1440, height: 900))
+        let desktop = WidgetClusterGeometry.detailSize(visible: CGSize(width: 2560, height: 1440))
+        XCTAssertEqual(laptop, CGSize(width: 560, height: 580))
+        XCTAssertEqual(desktop.width, 870.4, accuracy: 0.01)
+        XCTAssertEqual(desktop.height, 892.8, accuracy: 0.01)
+        XCTAssertGreaterThan(desktop.width, laptop.width)
+        for visible in [CGSize(width: 320, height: 240), CGSize(width: 800, height: 600),
+                        CGSize(width: 5120, height: 2880)] {
+            let size = WidgetClusterGeometry.detailSize(visible: visible)
+            XCTAssertLessThanOrEqual(size.width + 36, visible.width)
+            XCTAssertLessThanOrEqual(size.height + 36, visible.height)
+            for edge in [EdgePanelPlacement.top, .left, .right] {
+                let frame = EdgePanelGeometry.frame(placement: edge, size: size,
+                    screen: CGRect(origin: .zero, size: visible), visible: CGRect(origin: .zero, size: visible),
+                    sideCenterY: visible.height / 2)
+                XCTAssertTrue(CGRect(origin: .zero, size: visible).contains(frame))
+            }
+        }
+    }
+
+    func testShortDisplayReservesCompactRailsBeforeExpandingOneGroup() {
+        let allocation = WidgetClusterGeometry.allocate(
+            heights: [(189, 600), (100, 100), (108, 108)], visibleHeight: 500)
+        XCTAssertEqual(allocation.heights, [268, 100, 108])
+        XCTAssertEqual(allocation.gap, 12)
+        let roomy = WidgetClusterGeometry.allocate(
+            heights: [(189, 600), (100, 100), (108, 108)], visibleHeight: 1000)
+        XCTAssertEqual(roomy.heights, [600, 100, 108])
+        let overflowing = WidgetClusterGeometry.allocate(
+            heights: [(318, 600), (106, 106), (108, 108)], visibleHeight: 350)
+        XCTAssertEqual(overflowing.heights, [112, 106, 108], "Only the tall rail needs scrolling here")
+    }
+
+    func testOverflowClustersFitShortDisplaysWithoutOverlappingAtEitherDragLimit() {
+        for available in [1.0, 20, 120, 240, 300, 500] {
+            for requests: [(minimum: CGFloat, preferred: CGFloat)] in [
+                [(318, 660)], [(288, 600), (100, 100), (108, 108)], [(318, 318), (318, 318), (318, 318)]
+            ] {
+                let allocation = WidgetClusterGeometry.allocate(heights: requests, visibleHeight: available)
+                let visible = CGRect(x: -800, y: -400, width: 800, height: available)
+                for position in [0.0, 0.5, 1.0] {
+                    let centers = WidgetClusterGeometry.centers(
+                        heights: allocation.heights, position: position, visible: visible, gap: allocation.gap)
+                    var previousBottom = visible.maxY
+                    for (index, height) in allocation.heights.enumerated() {
+                        let top = centers[index] + height / 2
+                        let bottom = centers[index] - height / 2
+                        XCTAssertGreaterThanOrEqual(height, 0)
+                        XCTAssertLessThanOrEqual(top, previousBottom + 0.001)
+                        XCTAssertGreaterThanOrEqual(bottom, visible.minY - 0.001)
+                        previousBottom = bottom - allocation.gap
+                    }
+                }
+            }
+        }
+    }
+
     func testRoundedSurfacesKeepTheirFrameAndCutAllFourCorners() {
         let rect = CGRect(x: -400, y: 120, width: 44, height: 165)
         for edge in [EdgePanelPlacement.left, .right, .top] {
@@ -313,6 +371,27 @@ final class WidgetInteractionTests: XCTestCase {
         value.collapse()
         XCTAssertNil(value.hoveredSurface)
         XCTAssertNil(value.expanded)
+    }
+
+    @MainActor
+    func testPointerExitDuringSideDragCollapsesHoverOnRelease() async throws {
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        let side = WidgetSurfaceID(edge: .right)
+        value.hover(side, inside: true)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(value.hoveredSurface, side)
+        value.moveSide(position: 0.4, finished: false)
+        value.hover(side, inside: false)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(value.hoveredSurface, side, "the rail keeps its hover height while it is dragged")
+        value.moveSide(position: 0.4, finished: true)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertNil(value.hoveredSurface)
+        XCTAssertEqual(value.presentation(for: side), .compact)
     }
 }
 
@@ -744,6 +823,49 @@ final class EdgePanelControllerTests: XCTestCase {
         return value
     }
 
+    func testTopNotchReceivesPointerAboveTheMenuBarWithoutRaisingSidePanels() throws {
+        _ = NSApplication.shared
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        for placement in [EdgePanelPlacement.top, .left, .right] {
+            let value = EdgePanelController(
+                placement: placement, screen: screen, compactSize: CGSize(width: 360, height: 36),
+                expandedSize: CGSize(width: 432, height: 600), title: "Hidden layering test") { Color.black }
+            defer { value.panel.close() }
+            if placement == .top {
+                XCTAssertGreaterThan(value.panel.level.rawValue, NSWindow.Level.mainMenu.rawValue,
+                    "The menu bar otherwise intercepts the notch's agent buttons on displays without a camera cutout")
+            } else {
+                XCTAssertLessThan(value.panel.level.rawValue, NSWindow.Level.mainMenu.rawValue,
+                    "Side widgets must not cover system menus")
+            }
+        }
+    }
+
+    func testContentReplacementRetainsWindowAndAnimatesNewCompactSize() async throws {
+        let value = try controller()
+        defer { value.hide(); value.panel.close() }
+        value.setSideCenterY(400)
+        value.setPresentation(.compact, reduceMotion: true)
+        value.show()
+        let number = value.panel.windowNumber
+        let initial = value.panel.frame
+        value.updateContent { Color.orange }
+        XCTAssertEqual(value.panel.windowNumber, number)
+        XCTAssertEqual(value.panel.frame, initial, "Replacing modules must not reset placement")
+        value.setCompactSize(CGSize(width: 40, height: 220))
+        value.setPresentation(.compact, reduceMotion: false)
+        XCTAssertLessThan(value.panel.frame.height, 220, "Configuration must animate, not jump to its final size")
+        let deadline = ContinuousClock.now + .seconds(3)
+        while (value.lastTransitionTiming?.outcome != "completed" || value.panel.frame.height != 220), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertEqual(value.panel.windowNumber, number)
+        XCTAssertEqual(value.panel.frame.height, 220, accuracy: 0.5)
+        XCTAssertEqual(value.panel.frame.maxX, initial.maxX, accuracy: 0.5)
+        XCTAssertEqual(value.panel.frame.midY, initial.midY, accuracy: 0.5)
+        XCTAssertEqual(value.lastTransitionTiming?.outcome, "completed")
+    }
+
     func testReduceMotionAndHiddenPanelReachTheExactTargetWithoutCallbacks() throws {
         let value = try controller()
         defer { value.hide(); value.panel.close() }
@@ -767,7 +889,10 @@ final class EdgePanelControllerTests: XCTestCase {
         XCTAssertEqual(value.lastTransitionTiming?.outcome, "interrupted")
         try await Task.sleep(for: .milliseconds(60))
         value.setPresentation(.expanded, reduceMotion: false)
-        try await Task.sleep(for: .milliseconds(500))
+        let deadline = ContinuousClock.now + .seconds(3)
+        while (value.lastTransitionTiming?.outcome != "completed" || value.panel.frame.size != CGSize(width: 340, height: 400)), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
         XCTAssertEqual(value.panel.frame.size, CGSize(width: 340, height: 400))
         XCTAssertEqual(value.panel.frame.maxX, try XCTUnwrap(NSScreen.screens.first).frame.maxX, accuracy: 0.5)
         XCTAssertEqual(value.lastTransitionTiming?.outcome, "completed")
@@ -851,6 +976,15 @@ private struct EdgeSizingFixtureContent: View {
     }
 }
 
+private actor WidgetHoverTranscriptProbe {
+    private(set) var identities: [String] = []
+    func load(_ query: SessionTranscriptCache.Query) -> TranscriptEnvelope {
+        identities.append(query.identity)
+        return TranscriptEnvelope(provider: query.provider, sessionId: query.identity, filePath: query.query,
+            byteSize: 1, truncated: false, nextOffset: 0, turns: [])
+    }
+}
+
 @MainActor
 final class WidgetRosterTests: XCTestCase {
     private func fixtureSessions() -> [WidgetSession] {
@@ -878,7 +1012,7 @@ final class WidgetRosterTests: XCTestCase {
     }
 
     private func withFixture(
-        sessionCount: Int? = nil, sideStyle: String = "modular",
+        sessionCount: Int? = nil, sideStyle: String = "modular", transcriptCache: SessionTranscriptCache? = nil,
         _ body: (WidgetModel, URL, WidgetSnapshot) async throws -> Void
     ) async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("widget-roster-" + UUID().uuidString)
@@ -906,15 +1040,182 @@ final class WidgetRosterTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: domain) }
         let model = WidgetModel(
             binaryPath: binary.path, stateRoot: directory.path, defaults: defaults,
-            appearance: NativeSettingsAppearance(defaults: defaults, notificationNamespace: domain, observeExternalChanges: false))
+            appearance: NativeSettingsAppearance(defaults: defaults, notificationNamespace: domain, observeExternalChanges: false),
+            transcriptCache: transcriptCache)
         defer { model.stop() }
         model.startSettings()
         let deadline = ContinuousClock.now + .seconds(5)
         while model.snapshot == nil && ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(100))
         }
-        XCTAssertNotNil(model.snapshot)
+        _ = try XCTUnwrap(model.snapshot, "The fixture process did not deliver its initial snapshot within five seconds")
         try await body(model, snapshotFile, snapshot)
+    }
+
+    func testHoverWarmsThePointedAgentWithoutChangingTheSelectedConversation() async throws {
+        for edge in [EdgePanelPlacement.right, .top] {
+            let probe = WidgetHoverTranscriptProbe()
+            let cache = SessionTranscriptCache { await probe.load($0) }
+            try await withFixture(sessionCount: 2, transcriptCache: cache) { model, _, original in
+                let selected = original.sessions[0].key
+                let pointed = original.sessions[1]
+                let surface = WidgetSurfaceID(edge: edge)
+                model.selectedKey = selected
+                model.hover(surface, inside: true)
+                model.hoverSession(pointed.key, on: surface, inside: true)
+                let deadline = ContinuousClock.now + .seconds(2)
+                while await probe.identities.isEmpty, ContinuousClock.now < deadline {
+                    try await Task.sleep(for: .milliseconds(100))
+                }
+                let hovered = await probe.identities
+                XCTAssertEqual(hovered, [pointed.key], "Hover must not warm the previously selected agent")
+                model.hoverSession(pointed.key, on: surface, inside: false)
+                model.hover(surface, inside: true)
+                try await Task.sleep(for: .milliseconds(250))
+                let afterReflow = await probe.identities
+                XCTAssertEqual(afterReflow, [pointed.key], "Preview expansion must not switch a stationary pointer's preload back to the selected session")
+                XCTAssertEqual(model.selectedKey, selected, "Pointer movement must not change the reply destination")
+                _ = try await cache.value(for: .init(identity: pointed.key, query: pointed.target.sessionId, provider: "codex"))
+                let opened = await probe.identities
+                XCTAssertEqual(opened, [pointed.key], "Opening must reuse the hovered agent's load")
+                model.hoverSession(pointed.key, on: surface, inside: false)
+                model.hover(surface, inside: false)
+                try await Task.sleep(for: .milliseconds(250))
+                model.hover(surface, inside: true)
+                try await Task.sleep(for: .milliseconds(250))
+                let afterLeaving = await probe.identities
+                XCTAssertEqual(afterLeaving, [pointed.key, selected], "Reentering the surface must not retain an old agent target")
+            }
+        }
+    }
+
+    func testSessionSwitchWaitsForItsMatchingInboxBeforeClaimingItIsEmpty() async throws {
+        try await withFixture(sessionCount: 2) { model, _, original in
+            var snapshot = original
+            let first = snapshot.sessions[0].key
+            let second = snapshot.sessions[1].key
+            model.selectedKey = first
+            snapshot.selectedKey = first
+            model.receive([String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)])
+            XCTAssertFalse(model.inboxLoading, "An empty response for this session is a real empty inbox")
+
+            model.select(second)
+            XCTAssertTrue(model.inboxLoading, "The previous session's empty list says nothing about the new session")
+            model.receive([String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)])
+            XCTAssertTrue(model.inboxLoading, "An in-flight old response must not show an empty result")
+
+            snapshot.selectedKey = second
+            model.receive([String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)])
+            XCTAssertFalse(model.inboxLoading, "The matching response ends the loading state even when empty")
+            model.select(first)
+            XCTAssertTrue(model.inboxLoading)
+            model.error = "Fixture source failure"
+            XCTAssertFalse(model.inboxLoading, "A failed request must leave an actionable error rather than an endless spinner")
+        }
+    }
+
+    func testConversationStartsAtRecentMessagesAndKeepsOlderReadingPosition() async throws {
+        guard #available(macOS 15, *) else { throw XCTSkip("Role-specific scroll anchors require macOS 15") }
+        _ = NSApplication.shared
+        try await withFixture(sessionCount: 1) { model, _, original in
+            model.selectedKey = original.sessions[0].key
+            model.section = "Conversation"
+            func turn(_ index: Int) -> TranscriptTurn {
+                TranscriptTurn(id: "turn-\(index)", role: "assistant",
+                    at: ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: 1_700_000_000 + Double(index))),
+                    text: String(repeating: "Message \(index) fixture content. ", count: 30))
+            }
+            model.transcript = (0..<12).map(turn)
+            let host = NSHostingView(rootView: LiveWidgetView(model: model, edge: .right, embedded: true))
+            host.sizingOptions = []
+            let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 432, height: 600),
+                styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.alphaValue = 0
+            window.ignoresMouseEvents = true
+            defer { window.close() }
+            window.contentView = host
+            window.orderBack(nil)
+            host.layoutSubtreeIfNeeded()
+            @MainActor func scrollViews(_ view: NSView) -> [NSScrollView] {
+                if let scroll = view as? NSScrollView { return [scroll] }
+                return view.subviews.flatMap(scrollViews)
+            }
+            let scroll = try XCTUnwrap(scrollViews(host).first)
+            let document = try XCTUnwrap(scroll.documentView)
+            func settleAtEnd() async throws {
+                let deadline = ContinuousClock.now + .seconds(2)
+                repeat {
+                    try await Task.sleep(for: .milliseconds(100))
+                    host.layoutSubtreeIfNeeded()
+                } while abs(scroll.contentView.bounds.maxY - document.bounds.maxY) > 2 && ContinuousClock.now < deadline
+            }
+            try await settleAtEnd()
+            XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0, "Conversation must open on recent messages")
+            XCTAssertEqual(scroll.contentView.bounds.maxY, document.bounds.maxY, accuracy: 2)
+            model.transcript.append(turn(12))
+            try await settleAtEnd()
+            XCTAssertEqual(scroll.contentView.bounds.maxY, document.bounds.maxY, accuracy: 2,
+                "A reader at the end follows a newly arrived message")
+
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: 120))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            try await Task.sleep(for: .milliseconds(100))
+            host.layoutSubtreeIfNeeded()
+            let readingY = scroll.contentView.bounds.minY
+            XCTAssertLessThan(readingY, document.bounds.height / 2)
+            model.transcript.append(turn(13))
+            try await Task.sleep(for: .milliseconds(200))
+            host.layoutSubtreeIfNeeded()
+            XCTAssertEqual(scroll.contentView.bounds.minY, readingY, accuracy: 2,
+                "An arriving message must not pull the reader away from older history")
+        }
+    }
+
+    func testNewOutgoingMessageScrollsItsReceiptIntoTheViewport() async throws {
+        _ = NSApplication.shared
+        try await withFixture(sessionCount: 1) { model, _, original in
+            var snapshot = original
+            let session = try XCTUnwrap(snapshot.sessions.first)
+            model.selectedKey = session.key
+            model.section = "Inbox"
+            func message(_ index: Int) -> WidgetOutgoing {
+                WidgetOutgoing(id: "receipt-\(index)", target: session.target,
+                    payload: ["kind": "followup", "text": .string(String(repeating: "Fixture message \(index). ", count: 30))],
+                    assetIds: [], createdAt: Double(index), sequence: index, state: "sent")
+            }
+            snapshot.state.outgoing = (0..<8).map(message)
+            model.receive([String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)])
+            let host = NSHostingView(rootView: LiveWidgetView(model: model, edge: .right, embedded: true))
+            host.sizingOptions = []
+            let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 432, height: 600),
+                styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.alphaValue = 0
+            window.ignoresMouseEvents = true
+            defer { window.close() }
+            window.contentView = host
+            window.orderBack(nil)
+            host.layoutSubtreeIfNeeded()
+            @MainActor func scrollViews(_ view: NSView) -> [NSScrollView] {
+                if let scroll = view as? NSScrollView { return [scroll] }
+                return view.subviews.flatMap(scrollViews)
+            }
+            let scroll = try XCTUnwrap(scrollViews(host).first)
+            let document = try XCTUnwrap(scroll.documentView)
+            XCTAssertGreaterThan(document.bounds.height, scroll.contentView.bounds.height * 2)
+            XCTAssertEqual(scroll.contentView.bounds.minY, 0, accuracy: 1)
+            snapshot.state.outgoing.append(message(8))
+            model.receive([String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)])
+            let deadline = ContinuousClock.now + .seconds(2)
+            while abs(scroll.contentView.bounds.maxY - document.bounds.maxY) > 2 && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(100))
+                host.layoutSubtreeIfNeeded()
+            }
+            XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0, "Sending must reveal the new receipt below the history")
+            XCTAssertEqual(scroll.contentView.bounds.maxY, document.bounds.maxY, accuracy: 2,
+                "The new receipt must be inside the real native scrolling viewport")
+        }
     }
 
     func testCompactSideHeightMatchesRealHostingLayoutForEachStyleAndSessionCount() async throws {
@@ -932,20 +1233,20 @@ final class WidgetRosterTests: XCTestCase {
                     for edge in [EdgePanelPlacement.left, .right] {
                         for ids in groups {
                             let metrics = WidgetSideStripMetrics(
-                                classic: style == "classic", moduleIDs: ids, visibleSessionCount: model.sessions.count)
+                                classic: style == "classic", moduleIDs: ids, visibleSessionCount: model.railActivitySessions.count)
                             let root = WidgetHostView(
                                 model: model, registry: registry, surface: WidgetSurfaceID(edge: edge),
                                 moduleIDs: ids, cutout: 0, headerHeight: 36, visibleHeight: 900)
-                            let host = NSHostingView(rootView: root)
+                            let host = NSHostingView(rootView: root.sideStripContents)
                             let measured = host.fittingSize
                             XCTAssertEqual(measured.width, 44, accuracy: 0.5)
                             XCTAssertEqual(measured.height, metrics.minimumHeight, accuracy: 0.5,
                                 "Real SwiftUI layout differs: style=\(style), sessions=\(count), modules=\(ids)")
                             if ids.count == 4 && count >= 4 {
-                                XCTAssertEqual(measured.height, style == "classic" ? 288 : 318, accuracy: 0.5)
+                                XCTAssertEqual(measured.height, style == "classic" ? 252 : 282, accuracy: 0.5)
                             }
                             if ids.isEmpty {
-                                XCTAssertEqual(measured.height, style == "classic" ? 100 : 106, accuracy: 0.5)
+                                XCTAssertEqual(measured.height, style == "classic" ? 116 : 122, accuracy: 0.5)
                             }
                             print("SIDE_LAYOUT style=\(style) edge=\(edge) sessions=\(count) modules=\(ids.count) measured=\(measured.height) allocated=\(metrics.minimumHeight)")
                         }
@@ -955,7 +1256,301 @@ final class WidgetRosterTests: XCTestCase {
         }
     }
 
-    func testInboxDoesNotParseTranscriptAndLeavingConversationStopsTail() async throws {
+    func testInboxBadgeAddsSpaceWithoutConsumingRailEndPadding() async throws {
+        _ = NSApplication.shared
+        for style in ["classic", "modular"] {
+            try await withFixture(sessionCount: 4, sideStyle: style) { model, _, _ in
+                let ids = ["agents", "capture", "shelf", "tasks"]
+                let registry = WidgetModuleRegistry()
+                for id in ids {
+                    try registry.register(WidgetModuleDescriptor(
+                        id: id, title: id, symbol: "tray", tint: .blue, summary: { "Fixture" }
+                    ) { _ in EmptyView() })
+                }
+                for edge in [EdgePanelPlacement.left, .right] {
+                    var heights: [CGFloat] = []
+                    for count in [0, 128, 0] {
+                        model.updateInbox(WidgetInboxSummary(
+                            unread: count, needsAnswer: 0, complete: true, truncated: false, sessions: []))
+                        let metrics = WidgetSideStripMetrics(classic: style == "classic", moduleIDs: ids,
+                            visibleSessionCount: model.railActivitySessions.count, hasInboxBadge: count > 0)
+                        let root = WidgetHostView(model: model, registry: registry,
+                            surface: WidgetSurfaceID(edge: edge), moduleIDs: ids, cutout: 0,
+                            headerHeight: 36, visibleHeight: 900)
+                        let host = NSHostingView(rootView: root.sideStripContents)
+                        let measured = host.fittingSize
+                        XCTAssertEqual(measured.height, metrics.minimumHeight, accuracy: 0.5,
+                            "Badge contents must increase the allocated window height")
+                        XCTAssertEqual(measured.width, 44, accuracy: 0.5)
+                        heights.append(measured.height)
+                    }
+                    XCTAssertGreaterThanOrEqual(WidgetSideStripMetrics.verticalPadding, 12)
+                    XCTAssertEqual(heights[1] - heights[0], style == "classic" ? 14 : 10, accuracy: 0.5)
+                    XCTAssertEqual(heights[2], heights[0], accuracy: 0.5,
+                        "Removing the badge must release its additional height")
+                }
+            }
+        }
+    }
+
+    func testRailStaysAtBezelDuringInterruptedAnimation() async throws {
+        _ = NSApplication.shared
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        for edge in [EdgePanelPlacement.left, .right] {
+            try await withFixture(sessionCount: 4, sideStyle: "classic") { model, _, _ in
+                let registry = WidgetModuleRegistry()
+                try registry.register(WidgetModuleDescriptor(
+                    id: "shelf", title: "Shelf", symbol: "tray", tint: .blue, summary: { "Fixture" }
+                ) { _ in Color.blue })
+                let surface = WidgetSurfaceID(edge: edge)
+                let compactCenter = screen.visibleFrame.maxY - 100
+                let controller = EdgePanelController(
+                    placement: edge, screen: screen, compactSize: CGSize(width: 44, height: 180),
+                    expandedSize: CGSize(width: 476, height: 480), title: "Hidden rail animation fixture"
+                ) {
+                    WidgetHostView(model: model, registry: registry, surface: surface, moduleIDs: ["shelf"],
+                        cutout: 0, headerHeight: 36, visibleHeight: screen.visibleFrame.height,
+                        railScreenCenterY: { compactCenter })
+                }
+                let panel = controller.panel
+                panel.alphaValue = 0
+                panel.level = NSWindow.Level(rawValue: -1000)
+                defer { controller.hide(); panel.close() }
+                controller.setSideCenterY(compactCenter)
+                controller.show()
+                controller.setPresentation(.compact, reduceMotion: true)
+                func handles(_ view: NSView) -> [ScreenVerticalDragView] {
+                    if let handle = view as? ScreenVerticalDragView { return [handle] }
+                    return view.subviews.flatMap(handles)
+                }
+                var sampledFrames: [CGRect] = []
+                func sample() throws {
+                    let host = try XCTUnwrap(panel.contentView)
+                    host.layoutSubtreeIfNeeded()
+                    let handle = try XCTUnwrap(handles(host).first)
+                    let frame = panel.convertToScreen(handle.convert(handle.bounds, to: nil))
+                    sampledFrames.append(frame)
+                    let expectedX = edge == .right ? screen.frame.maxX - 42 : screen.frame.minX + 2
+                    XCTAssertEqual(frame.minX, expectedX, accuracy: 0.5, "A growing content view moved the rail")
+                    if let baseline = sampledFrames.first {
+
+                        XCTAssertEqual(frame.minY, baseline.minY, accuracy: 1,
+                            "A growing panel moved the rail beyond AppKit's one-point frame rounding")
+                    }
+                    XCTAssertTrue(panel.frame.insetBy(dx: -0.5, dy: -0.5).contains(frame), "Handle escaped panel")
+                }
+                try await Task.sleep(for: .milliseconds(100))
+                try sample()
+                for opening in [true, false, true] {
+                    if opening { model.openModule("shelf", on: surface) } else { model.collapse() }
+                    controller.setPresentation(opening ? .expanded : .compact, reduceMotion: false)
+                    // A bounded animation-frame sampler, not a production polling loop.
+                    for _ in 0..<12 {
+                        try await Task.sleep(for: .milliseconds(16))
+                        try sample()
+                    }
+                }
+                try await Task.sleep(for: .milliseconds(300))
+                try sample()
+                XCTAssertGreaterThan(sampledFrames.count, 30)
+                let xs = sampledFrames.map { $0.minX }
+                let ys = sampledFrames.map { $0.minY }
+                XCTAssertLessThanOrEqual(ys.max()! - ys.min()!, 1)
+                print("RAIL_FRAME_PROOF edge=\(edge) samples=\(xs.count) x-range=\(xs.max()! - xs.min()!) y-range=\(ys.max()! - ys.min()!)")
+            }
+        }
+    }
+
+    func testSessionActivityRingContainsCountsWithoutShiftingTheirCenters() {
+        for count in [0, 1, 28, 128] {
+            let host = NSHostingView(rootView: WidgetSessionActivity(status: .working,
+                count: count, needsAnswer: false, animate: false))
+            let size = host.fittingSize
+            XCTAssertLessThanOrEqual(size.width, WidgetSideStripMetrics.sessionWidth)
+            XCTAssertLessThanOrEqual(size.height, WidgetSideStripMetrics.sessionHeight)
+            if count > 0 {
+                XCTAssertEqual(size.width, size.height, accuracy: 0.5)
+                XCTAssertGreaterThanOrEqual(size.width, 28)
+            }
+        }
+    }
+
+    func testInboxDetailUsesTheAvailableWidthInsteadOfAnEmbeddedFixedFrame() async throws {
+        try await withFixture(sessionCount: 1) { model, _, _ in
+            let host = NSHostingView(rootView: LiveWidgetView(model: model, edge: .right, embedded: true))
+            host.sizingOptions = []
+            let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 800, height: 700),
+                styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.alphaValue = 0
+            window.contentView = host
+            window.orderBack(nil)
+            defer { window.close() }
+            host.layoutSubtreeIfNeeded()
+            @MainActor func scrollViews(_ view: NSView) -> [NSScrollView] {
+                if let scroll = view as? NSScrollView { return [scroll] }
+                return view.subviews.flatMap(scrollViews)
+            }
+            let scroll = try XCTUnwrap(scrollViews(host).first)
+            XCTAssertGreaterThan(scroll.bounds.width, 750, "The detail must grow with its actual native host")
+            window.setContentSize(CGSize(width: 560, height: 700))
+            host.layoutSubtreeIfNeeded()
+            XCTAssertEqual(scroll.bounds.width, 524, accuracy: 2)
+        }
+    }
+
+    func testInboxBadgesMeasureTheirTextInsteadOfClippingLargeCounts() {
+        for compact in [false, true] {
+            func size(_ count: Int) -> CGSize {
+                NSHostingView(rootView: WidgetInboxCount(count: count, needsAnswer: true,
+                    pulse: 0, reduceMotion: true, compact: compact)).fittingSize
+            }
+            XCTAssertGreaterThan(size(99).width, size(1).width)
+            XCTAssertGreaterThan(size(128).width, size(99).width, "99+ needs room for the plus sign")
+            XCTAssertEqual(size(128).height, size(1).height, accuracy: 0.5)
+            XCTAssertGreaterThanOrEqual(size(1).height, compact ? 14 : 18)
+        }
+    }
+
+    func testTopBarUsesTheAnimatedProposalWithoutLosingItsIntrinsicTarget() throws {
+        _ = NSApplication.shared
+        var intrinsic = CGSize.zero
+        let host = NSHostingView(rootView: Color.clear.overlay(alignment: .top) {
+            WidgetTopBarLayout(cutout: 0, intrinsicSizeChanged: { intrinsic = $0 }) {
+                ScreenVerticalDragArea { _, _ in }.frame(width: 70, height: 20)
+                Color.blue.frame(width: 140, height: 20)
+            }.fixedSize(horizontal: false, vertical: true)
+        })
+        host.sizingOptions = []
+        let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 120, height: 30),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.contentView = host
+        window.orderBack(nil)
+        defer { window.close() }
+        func handles(_ view: NSView) -> [ScreenVerticalDragView] {
+            if let handle = view as? ScreenVerticalDragView { return [handle] }
+            return view.subviews.flatMap(handles)
+        }
+        for width: CGFloat in [120, 160, 226] {
+            window.setContentSize(CGSize(width: width, height: 30))
+            host.layoutSubtreeIfNeeded()
+            let handle = try XCTUnwrap(handles(host).first)
+            let rect = host.convert(handle.bounds, from: handle)
+            XCTAssertEqual(rect.minX, 0, accuracy: 0.5, "Contents must not jump to the final-width centered position")
+            XCTAssertEqual(intrinsic.width, 226, accuracy: 0.5)
+        }
+    }
+
+    func testTopBarMeasuresChangingWingsAndReservesCutout() {
+        for cutout: CGFloat in [0, 200] {
+            for widths: (CGFloat, CGFloat) in [(70, 60), (120, 260)] {
+                let host = NSHostingView(rootView: WidgetTopBarLayout(cutout: cutout).callAsFunction {
+                    Color.red.frame(width: widths.0, height: 23)
+                    Color.blue.frame(width: widths.1, height: 25)
+                }.fixedSize())
+                let expected = cutout > 0 ? max(widths.0, widths.1) * 2 + cutout + 16 : widths.0 + widths.1 + 16
+                XCTAssertEqual(host.fittingSize.width, expected, accuracy: 0.5)
+                XCTAssertEqual(host.fittingSize.height, 25, accuracy: 0.5)
+            }
+        }
+    }
+
+    func testScreenDragIgnoresMovingWindowAndEndsOnce() throws {
+        _ = NSApplication.shared
+        let view = ScreenVerticalDragView(frame: CGRect(x: 0, y: 0, width: 40, height: 21))
+        let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 44, height: 180),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView?.addSubview(view)
+        defer { window.close() }
+        var pointer = CGPoint(x: 500, y: 600)
+        view.pointer = { _ in pointer }
+        XCTAssertEqual(view.accessibilityIdentifier(), "widget.drag")
+        var received: [(CGFloat, Bool)] = []
+        view.moved = { received.append(($0, $1)) }
+        let event = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: .zero,
+            modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+            eventNumber: 1, clickCount: 1, pressure: 1))
+        view.mouseDown(with: event)
+        pointer.y -= 120
+        window.setFrameOrigin(CGPoint(x: -10000, y: -10120))
+        view.mouseDragged(with: event)
+        pointer.y += 40
+        window.setFrameOrigin(CGPoint(x: -10000, y: -10080))
+        view.mouseDragged(with: event)
+        view.mouseUp(with: event)
+        view.mouseUp(with: event)
+        XCTAssertEqual(received.map { $0.0 }, [0, 120, 80, 80])
+        XCTAssertEqual(received.map { $0.1 }, [false, false, false, true])
+    }
+
+    func testOverflowUsesARealScrollableViewportAndReachesDocumentEnd() async throws {
+        _ = NSApplication.shared
+        for style in ["classic", "modular"] {
+            try await withFixture(sessionCount: 4, sideStyle: style) { model, _, _ in
+                let ids = ["agents", "capture", "shelf", "tasks"]
+                let registry = WidgetModuleRegistry()
+                for id in ids {
+                    try registry.register(WidgetModuleDescriptor(
+                        id: id, title: id, symbol: "circle", tint: .blue, summary: { "Fixture" }
+                    ) { _ in Color.clear })
+                }
+                for edge in [EdgePanelPlacement.left, .right] {
+                    for height: CGFloat in [60, 120, 240] {
+                        let surface = WidgetSurfaceID(edge: edge)
+                        for expanded in [false, true] {
+                            if expanded { model.openModule("shelf", on: surface) } else { model.collapse() }
+                            let width: CGFloat = expanded ? 476 : 44
+                            let root = WidgetHostView(
+                                model: model, registry: registry, surface: surface, moduleIDs: ids,
+                                cutout: 0, headerHeight: 36, visibleHeight: height)
+                            let host = NSHostingView(rootView: root)
+                            host.sizingOptions = []
+                            let window = NSWindow(
+                                contentRect: CGRect(x: -10000, y: -10000, width: width, height: height),
+                                styleMask: [.borderless], backing: .buffered, defer: false)
+                            window.isReleasedWhenClosed = false
+                            defer { window.close() }
+                            window.contentView = host
+                            host.layoutSubtreeIfNeeded()
+                            @MainActor func scrollViews(_ view: NSView) -> [NSScrollView] {
+                                if let scroll = view as? NSScrollView { return [scroll] }
+                                return view.subviews.flatMap(scrollViews)
+                            }
+                            let scroll = try XCTUnwrap(scrollViews(host).first,
+                                "An undersized rail must have a native scrolling viewport")
+                            let document = try XCTUnwrap(scroll.documentView)
+                            XCTAssertLessThanOrEqual(scroll.bounds.height, height + 0.5)
+                            XCTAssertGreaterThan(document.bounds.height, scroll.contentView.bounds.height)
+                            XCTAssertTrue(host.bounds.insetBy(dx: -0.5, dy: -0.5).contains(host.convert(scroll.bounds, from: scroll)),
+                                "Viewport escaped host: style=\(style), edge=\(edge), expanded=\(expanded), height=\(height), host=\(host.bounds), scroll=\(host.convert(scroll.bounds, from: scroll))")
+                            if height >= 120 {
+                                XCTAssertEqual(scroll.contentView.bounds.height, height - (style == "classic" ? 79 : 83), accuracy: 0.5,
+                                    "The scrolling viewport must leave room for fixed settings and drag controls")
+                            } else {
+                                XCTAssertEqual(scroll.contentView.bounds.height, height, accuracy: 0.5)
+                            }
+                            document.scroll(CGPoint(x: 0, y: document.bounds.maxY))
+                            host.layoutSubtreeIfNeeded()
+                            XCTAssertEqual(scroll.contentView.bounds.maxY, document.bounds.maxY, accuracy: 0.5,
+                                "Scrolling must reach the final control rather than clipping the document")
+                            document.scroll(.zero)
+                            host.layoutSubtreeIfNeeded()
+                            XCTAssertEqual(scroll.contentView.bounds.minY, 0, accuracy: 0.5,
+                                "The initial module must remain reachable after returning to the top")
+                            XCTAssertFalse(window.isVisible, "The regression must never show a desktop window")
+                            print("SIDE_OVERFLOW style=\(style) edge=\(edge) expanded=\(expanded) height=\(height) viewport=\(scroll.contentView.bounds.height) document=\(document.bounds.height)")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func testInboxPrefetchIsReusedAndLeavingConversationStopsTail() async throws {
         try await withFixture { model, snapshotFile, _ in
             let directory = snapshotFile.deletingLastPathComponent()
             let calls = directory.appendingPathComponent("calls.txt")
@@ -978,9 +1573,15 @@ final class WidgetRosterTests: XCTestCase {
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
             model.select("fixture-0")
             model.open(.top)
-            try await Task.sleep(for: .milliseconds(100))
-            let inboxCalls = try String(contentsOf: calls, encoding: .utf8)
-            XCTAssertFalse(inboxCalls.contains("ai sessions tail"), "Inbox must not launch the full transcript parser")
+            let preloadDeadline = ContinuousClock.now + .seconds(3)
+            var inboxCalls = ""
+            repeat {
+                try await Task.sleep(for: .milliseconds(100))
+                inboxCalls = try String(contentsOf: calls, encoding: .utf8)
+            } while !inboxCalls.contains("ai sessions tail") && ContinuousClock.now < preloadDeadline
+            XCTAssertEqual(inboxCalls.components(separatedBy: "ai sessions tail").count - 1, 1,
+                "Opening Inbox must prepare one bounded transcript load; calls: \(inboxCalls)")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: tailPID.path), "Inbox must not start a live follow process")
             XCTAssertFalse(model.transcriptLoading)
             model.section = "Conversation"
             let deadline = ContinuousClock.now + .seconds(5)
@@ -989,6 +1590,9 @@ final class WidgetRosterTests: XCTestCase {
                 try await Task.sleep(for: .milliseconds(100))
             }
             XCTAssertEqual(model.transcript.first?.text, "Fixture conversation")
+            let allCalls = try String(contentsOf: calls, encoding: .utf8)
+            let initialLoads = allCalls.components(separatedBy: "\n").filter { $0.contains("ai sessions tail") && !$0.contains(" --live ") }
+            XCTAssertEqual(initialLoads.count, 1, "Conversation must reuse the initial preload; calls: \(allCalls)")
             let pidText = try String(contentsOf: tailPID, encoding: .utf8)
             let pid = try XCTUnwrap(Int32(pidText))
             XCTAssertEqual(kill(pid, 0), 0, "The live follow process must have started")
@@ -1038,6 +1642,30 @@ final class WidgetRosterTests: XCTestCase {
         XCTAssertTrue(roster.visible.isEmpty)
         XCTAssertTrue(roster.preview.isEmpty)
         XCTAssertEqual(roster.waiting, 0)
+    }
+
+    func testRailKeepsTargetsInPlaceAcrossActivityAndStatusRefreshes() {
+        var sessions = Array(fixtureSessions().filter(\.visible).prefix(8))
+        var roster = WidgetSessionRoster()
+        roster.update(sessions)
+        let original = roster.rail.map(\.key)
+        sessions.reverse()
+        sessions[0].status = "working"
+        sessions[0].activityAt += 1_000_000
+        sessions[1].status = "waiting"
+        sessions[1].title = "Updated in place"
+        roster.update(sessions)
+        XCTAssertEqual(roster.rail.map(\.key), original, "A pointer target must not move when an agent becomes active")
+        XCTAssertEqual(roster.rail.first(where: { $0.key == sessions[1].key })?.title, "Updated in place")
+        let removed = sessions.removeFirst().key
+        roster.update(sessions)
+        XCTAssertEqual(roster.rail.map(\.key), original.filter { $0 != removed })
+        var fresh = sessions[0]
+        fresh.key = "new-arrival"
+        fresh.activityAt += 2_000_000
+        sessions.insert(fresh, at: 0)
+        roster.update(sessions)
+        XCTAssertEqual(roster.rail.last?.key, "new-arrival", "An incoming session cannot steal a hovered dot")
     }
 
     func testRosterReadBenchmark() async throws {

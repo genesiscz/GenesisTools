@@ -59,6 +59,7 @@ function initializeReadModel(db: Database): void {
     );`);
     db.exec("CREATE TABLE IF NOT EXISTS ingest_offsets (file TEXT PRIMARY KEY, byte_offset INTEGER);");
     db.exec("CREATE INDEX IF NOT EXISTS idx_entries_project_ts ON entries(project, ts);");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_entries_active_ts ON entries(ts DESC) WHERE superseded_by IS NULL;");
     ensureColumn(db, "entries", "commit_message", "ALTER TABLE entries ADD COLUMN commit_message TEXT");
     ensureColumn(db, "entries", "agent", "ALTER TABLE entries ADD COLUMN agent TEXT");
     ensureColumn(db, "entries", "attachments_json", "ALTER TABLE entries ADD COLUMN attachments_json TEXT");
@@ -67,6 +68,25 @@ function initializeReadModel(db: Database): void {
         "CREATE INDEX IF NOT EXISTS idx_entries_missing_anchor ON entries(id) WHERE transcript_anchor_json IS NULL"
     );
     db.exec("CREATE INDEX IF NOT EXISTS idx_entries_missing_images ON entries(id) WHERE attachments_json IS NULL");
+}
+
+export function readQuestionSnapshot<T>({
+    dbPath,
+    logBase,
+    read,
+}: {
+    dbPath: string;
+    logBase?: string;
+    read: (db: Database) => T;
+}): T {
+    return withDatabaseReadSnapshot({
+        path: dbPath,
+        initialize: initializeReadModel,
+        read: (db) => {
+            catchUp(db, logBase);
+            return read(db);
+        },
+    });
 }
 
 export function queryEntriesSnapshot({ dbPath, opts = {} }: { dbPath: string; opts?: QueryOpts }): QaRow[] {
@@ -88,12 +108,12 @@ function catchUp(db: Database, logBase?: string): void {
         return;
     }
 
-    const insert = db.prepare(`INSERT OR REPLACE INTO entries
+    const insert = db.query(`INSERT OR REPLACE INTO entries
         (id,ts,session_id,session_title,project,repo_root,cwd,branch,commit_sha,commit_message,agent,is_worktree,worktree_path,ai_agent,agent_label,tag,question,answer_md,refs_json,source,turn_uuid,superseded_by,read_at,dedupe_key,attachments_json,transcript_anchor_json)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,?)`);
-    const getOff = db.prepare("SELECT byte_offset FROM ingest_offsets WHERE file = ?");
-    const setOff = db.prepare("INSERT OR REPLACE INTO ingest_offsets (file, byte_offset) VALUES (?, ?)");
-    const supersede = db.prepare(
+    const getOff = db.query("SELECT byte_offset FROM ingest_offsets WHERE file = ?");
+    const setOff = db.query("INSERT OR REPLACE INTO ingest_offsets (file, byte_offset) VALUES (?, ?)");
+    const supersede = db.query(
         "UPDATE entries SET superseded_by = ? WHERE dedupe_key = ? AND id != ? AND superseded_by IS NULL"
     );
 
@@ -175,7 +195,7 @@ function backfillAttachments(db: Database, dir: string): void {
     }
 
     const pending = new Set(missing.map((row) => row.id));
-    const update = db.prepare(
+    const update = db.query(
         "UPDATE entries SET attachments_json = COALESCE(attachments_json, ?), transcript_anchor_json = COALESCE(transcript_anchor_json, ?) WHERE id = ?"
     );
 
@@ -215,7 +235,7 @@ function backfillAttachments(db: Database, dir: string): void {
 
     // Entries whose source log was retired have no attachment metadata to recover.
     const finish = db.transaction(() => {
-        const retained = db.prepare("SELECT * FROM entries WHERE id = ?");
+        const retained = db.query("SELECT * FROM entries WHERE id = ?");
         for (const id of pending) {
             const row = retained.get(id) as Record<string, unknown> | null;
             if (row) {
@@ -234,6 +254,8 @@ export interface QueryOpts {
     tag?: string;
     unread?: boolean;
     limit?: number;
+    /** Also return the newest unread entry when it is older than the window: a notification names that one. */
+    includeNewestUnread?: boolean;
 }
 export interface QaRow extends QaEntry {
     supersededBy: string | null;
@@ -317,8 +339,22 @@ export function queryEntries(db: Database, opts: QueryOpts = {}): QaRow[] {
             SELECT * FROM entries WHERE ${where.join(" AND ")} ORDER BY ts DESC LIMIT ?
         ) ORDER BY ts ASC
     `;
+    const filters = [...params];
     params.push(opts.limit ?? 50);
-    return (db.query(sql).all(...params) as Record<string, unknown>[]).map(rowToQaRow);
+    const rows = (db.query(sql).all(...params) as Record<string, unknown>[]).map(rowToQaRow);
+    if (!opts.includeNewestUnread || opts.unread) {
+        return rows;
+    }
+
+    const newest = db
+        .query(`SELECT * FROM entries WHERE ${[...where, "read_at IS NULL"].join(" AND ")} ORDER BY ts DESC LIMIT 1`)
+        .get(...filters) as Record<string, unknown> | null;
+    if (!newest || rows.some((row) => row.id === newest.id)) {
+        return rows;
+    }
+
+    // Older than every row in the window, so it goes first to keep the oldest-to-newest order.
+    return [rowToQaRow(newest), ...rows];
 }
 
 export function getStoredEntryById(db: Database, id: string): QaRow | null {
@@ -353,7 +389,7 @@ export function markEntriesRead(db: Database, ids: string[], opts: Pick<QueryOpt
 
     catchUp(db, opts.logBase);
     const now = Date.now();
-    const stmt = db.prepare("UPDATE entries SET read_at = ? WHERE id = ? AND read_at IS NULL");
+    const stmt = db.query("UPDATE entries SET read_at = ? WHERE id = ? AND read_at IS NULL");
     let updated = 0;
 
     const tx = db.transaction((rowIds: string[]) => {

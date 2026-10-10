@@ -7,6 +7,27 @@ private enum WidgetInk {
     static let blue = Color(red: 0.23, green: 0.62, blue: 1)
 }
 
+struct WidgetInboxCount: View {
+    let count: Int
+    let needsAnswer: Bool
+    let pulse: Int
+    let reduceMotion: Bool
+    var complete = true
+    var compact = false
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    var body: some View {
+        Text(verbatim: count > 99 ? "99+" : String(max(0, count)) + (complete ? "" : "+"))
+            .font(.system(size: compact ? 9 : 11, weight: .semibold, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(needsAnswer ? Color.orange : Color(red: 0.45, green: 0.76, blue: 1))
+            .padding(.horizontal, compact ? 4 : 6)
+            .padding(.vertical, compact ? 2 : 3)
+            .fixedSize()
+            .background((needsAnswer ? Color.orange : WidgetInk.blue).opacity(0.16), in: Capsule())
+            .accessibilityLabel((complete ? "" : "At least ") + "\(count) inbox notifications")
+    }
+}
+
 public struct GenesisWidgetMark: View {
     public init() {}
     public var body: some View {

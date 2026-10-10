@@ -1,5 +1,5 @@
 import { parseSttProvider } from "@genesiscz/utils/ai/stt/resolve";
-import { parseLanguages, STT_PROVIDER_IDS } from "@genesiscz/utils/ai/stt/types";
+import { liveTranscriptKind, parseLanguages, STT_PROVIDER_IDS } from "@genesiscz/utils/ai/stt/types";
 import { voiceConfiguration } from "@genesiscz/utils/ai/voice/configuration";
 import { createVoiceSession, type VoiceEvent } from "@genesiscz/utils/ai/voice/session";
 import { runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
@@ -9,11 +9,12 @@ import { out } from "@genesiscz/utils/logger";
 import { openVoiceCapsule, type VoiceCapsuleHandle } from "@genesiscz/utils/macos/voice-capsule";
 import { Command } from "commander";
 import { z } from "zod";
+import { registerVoiceRecording } from "./commands/record";
 import { registerVoiceTransforms } from "./commands/transform";
 
 const fixtureSchema = z.array(
     z.object({
-        kind: z.enum(["partial", "final", "speech_start", "speech_end", "error"]),
+        kind: z.enum(liveTranscriptKind),
         text: z.string(),
         isFinal: z.boolean(),
         startedAtMs: z.number(),
@@ -142,5 +143,6 @@ program
     .action(async () => {
         out.result(await voiceConfiguration());
     });
+registerVoiceRecording(program);
 registerVoiceTransforms(program);
 await runTool(program, { tool: "voice" });

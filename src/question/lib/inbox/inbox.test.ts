@@ -391,8 +391,11 @@ describe("answerInboxDecision", () => {
             }
         );
 
-        expect(delivered).toEqual([["claude", "cmux", "send", "s-alpha", "DECISION 3: b) drop it", "--json"]]);
-        expect(result).toMatchObject({ channel: "cmux", delivered: true, text: "DECISION 3: b) drop it" });
+        const reply = "Reply to: Keep the cache?\nLedger decision 3 (d_3_s-alpha)\nb) drop it";
+        expect(delivered).toEqual([
+            ["claude", "cmux", "send", "s-alpha", reply, "--json", "--paste", "--exact-session"],
+        ]);
+        expect(result).toMatchObject({ channel: "cmux", delivered: true, text: reply });
         expect(readDecisions(file)).toMatchObject([{ id: "d_3_s-alpha", state: "sent", option: "b", harvested: true }]);
     });
 
@@ -447,7 +450,12 @@ describe("answerInboxDecision", () => {
         };
 
         const preview = await answerInboxDecision({ session: "s-alpha", number: 3, option: "a", dryRun: true }, deps);
-        expect(preview).toMatchObject({ channel: "dry-run", delivered: false, text: "DECISION 3: a) keep it" });
+        // A titled card previews the exact payload a real send delivers (see the transcript-only test above).
+        expect(preview).toMatchObject({
+            channel: "dry-run",
+            delivered: false,
+            text: "Reply to: Keep the cache?\nLedger decision 3 (d_3_s-alpha)\na) keep it",
+        });
         expect(existsSync(file)).toBe(false);
 
         await expect(answerInboxDecision({ session: "s-alpha", number: 3, option: "c" }, deps)).rejects.toThrow(
@@ -458,7 +466,7 @@ describe("answerInboxDecision", () => {
         );
         await expect(answerInboxDecision({ session: "s-alpha", number: 3 }, deps)).rejects.toThrow("option letter");
 
-        await answerInboxDecision(
+        const sent = await answerInboxDecision(
             { session: "s-alpha", number: 3, option: "a" },
             {
                 ...deps,
@@ -468,6 +476,7 @@ describe("answerInboxDecision", () => {
                 },
             }
         );
+        expect(sent.text).toBe(preview.text);
         await expect(answerInboxDecision({ session: "s-alpha", number: 3, option: "b" }, deps)).rejects.toThrow(
             "already sent"
         );
@@ -523,7 +532,16 @@ describe("answerInboxDecisions", () => {
         );
 
         expect(typed).toEqual([
-            ["claude", "cmux", "send", "s-beta", "DECISION 1: b) 4000 ; DECISION 2: later", "--json"],
+            [
+                "claude",
+                "cmux",
+                "send",
+                "s-beta",
+                "DECISION 1: b) 4000\nDECISION 2: later",
+                "--json",
+                "--paste",
+                "--exact-session",
+            ],
         ]);
         expect(result).toMatchObject({ channel: "cmux", delivered: true });
         expect(readDecisions(file).map((row) => [row.number, row.state, row.delivery?.route])).toEqual([
@@ -727,7 +745,7 @@ describe("inbox answer: the hub's argv", () => {
                     deliver: {
                         runTool: async (args) => {
                             runs.push(args);
-                            return { success: true, stdout: "", stderr: "" };
+                            return { success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}', stderr: "" };
                         },
                         codexWorkerFor: (session) => (session === "s-codex" ? "w1" : null),
                     },
@@ -735,12 +753,12 @@ describe("inbox answer: the hub's argv", () => {
             }
         );
 
-        expect(runs).toEqual([["codex", "steer", "--name", "w1", "--prompt", "DECISION 1: b) note"]]);
+        expect(runs).toEqual([["codex", "steer", "--name", "w1", "--json", "--prompt-file", expect.any(String)]]);
         expect(printed).toMatchObject({
             channel: "codex",
             delivered: true,
-            target: "codex worker w1",
-            detail: "codex worker w1",
+            target: "codex worker w1 · input acknowledged (turn fixture-turn)",
+            detail: "codex worker w1 · input acknowledged (turn fixture-turn)",
         });
     });
 

@@ -4,7 +4,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { json2md } from "@genesiscz/utils/json2md";
 import { isTestProcess } from "@genesiscz/utils/test-process";
-import { DeliveryUnknownError } from "./deliver";
+import { DeliveryUnknownError, NotDeliveredError } from "./deliver";
 import {
     boundContext,
     cleanBlock,
@@ -180,7 +180,7 @@ export function deliverDecisions(
     rows: DecisionRecord[],
     send: (text: string) => void
 ): { text: string; numbers: number[] } {
-    const due = rows.filter((row) => row.state === "answered" && hasAnswer(row));
+    const due = rows.filter((row) => row.state === "answered" && !row.delivery?.queueId && hasAnswer(row));
 
     if (due.length === 0) {
         throw new Error("nothing to send");
@@ -196,18 +196,19 @@ export function optionLetters(option: string | undefined | null): string[] {
     return [...new Set((option ?? "").toLowerCase().replace(/[^a-z]/g, ""))].sort();
 }
 
-/**
- * `DECISION 4: b) keep the cache`. Built from stored fields only: the option letters, then the
- * answer text, or the options' own labels when the answer was a bare pick. Two letters read
- * `DECISION 4: a) c) note`.
- */
+/** Preserves the card title and ledger identity before the user's literal answer or option labels. */
 export function decisionLine(row: DecisionRecord): string {
     const letters = optionLetters(row.option);
     const labels = letters.map((letter) => row.options[letter.charCodeAt(0) - 97]).filter(Boolean);
     const text = row.answer?.trim() || labels.join(" / ");
     const picks = letters.map((letter) => `${letter}) `).join("");
 
-    return `DECISION ${row.number}: ${picks}${text}`.trimEnd();
+    const answer = `${picks}${text}`.trimEnd();
+    if (row.title?.trim()) {
+        return [`Reply to: ${row.title.trim()}`, `Ledger decision ${row.number} (${row.id})`, answer].join("\n");
+    }
+
+    return `DECISION ${row.number}: ${answer}`.trimEnd();
 }
 
 function decisionLines(rows: DecisionRecord[]): string {
@@ -258,7 +259,13 @@ export async function sendSessionDecisions({
         await emit(sent.text, sent.numbers);
     } catch (error) {
         if (!(error instanceof DeliveryUnknownError)) {
-            await restoreUndelivered(file, events, ids);
+            const queued = error instanceof NotDeliveredError && error.result.queueId ? error.result : undefined;
+            await restoreUndelivered({
+                file,
+                events,
+                ids,
+                ...(queued ? { delivery: { route: "queued", queueId: queued.queueId, error: queued.error } } : {}),
+            });
         }
         throw error;
     }

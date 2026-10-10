@@ -2,6 +2,17 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum WidgetOutgoingControls {
+    static func canCancel(_ state: String) -> Bool {
+        ["preparing", "review", "queued", "failed", "waiting-route"].contains(state)
+    }
+}
+
+private struct WidgetOutgoingPosition: Equatable {
+    let session: String
+    let messageID: String?
+}
+
 public struct LiveWidgetView: View {
     @ObservedObject var model: WidgetModel
     let edge: EdgePanelPlacement
@@ -14,6 +25,7 @@ public struct LiveWidgetView: View {
     }
 
     @State private var retry: WidgetOutgoing?
+    @State private var choosingSession = false
     /// An unknown delivery the user checked in the conversation and wants to drop, so later follow-ups can go.
     @State private var discard: WidgetOutgoing?
     @FocusState private var editing: Bool
@@ -141,7 +153,7 @@ public struct LiveWidgetView: View {
                 Text("Conversation").tag("Conversation")
                 if model.snapshot?.state.preferences.showChanges == true { Text("Changes").tag("Changes") }
             }.pickerStyle(.segmented)
-            if model.snapshot == nil {
+            if model.snapshot == nil || (model.selected == nil && model.snapshot?.rosterLoading == true) {
                 VStack(spacing: 12) {
                     ProgressView()
                     Text("Connecting to your local agents…").font(.callout).foregroundStyle(.secondary)
@@ -156,26 +168,35 @@ public struct LiveWidgetView: View {
                     Button("Choose sessions") { model.showSettings?() }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        if section == "Inbox" {
-                            inbox
-                        } else if section == "Sessions" {
-                            WidgetSessionBrowser(model: model)
-                        } else if section == "Changes" {
-                            changes
-                        } else {
-                            conversation
+                ScrollViewReader { reader in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 14) {
+                            if section == "Inbox" {
+                                inbox
+                            } else if section == "Sessions" {
+                                WidgetSessionBrowser(model: model)
+                            } else if section == "Changes" {
+                                changes
+                            } else {
+                                conversation
+                            }
+                            if section == "Inbox" {
+                                ForEach(model.outgoing) { message in
+                                    outgoing(message).id("outgoing-" + message.id)
+                                }
+                            }
+                        }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
+                    }.scrollIndicators(.hidden)
+                        .modifier(LatestScrollAnchor(enabled: section == "Conversation", identity: model.selectedKey))
+                        .onChange(of: WidgetOutgoingPosition(session: model.selectedKey, messageID: model.outgoing.last?.id)) { previous, next in
+                            guard section == "Inbox", previous.session == next.session, let id = next.messageID else { return }
+                            ScrollViewPositioning.scroll(reader, to: "outgoing-" + id, anchor: .bottom)
                         }
-                        if section == "Inbox" {
-                            ForEach(model.outgoing) { message in outgoing(message) }
-                        }
-                    }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
-                }.scrollIndicators(.hidden)
+                }
                 if section != "Sessions" { composer }
             }
         }
-        .padding(18).frame(width: 432).frame(maxHeight: .infinity)
+        .padding(18).frame(maxWidth: .infinity, maxHeight: .infinity)
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             for provider in providers {
                 _ = provider.loadObject(ofClass: URL.self) { url, error in
@@ -194,14 +215,8 @@ public struct LiveWidgetView: View {
 
     private var header: some View {
         HStack(spacing: 9) {
-            Menu {
-                ForEach(model.sessions) { session in
-                    Button(session.target.provider.capitalized + " · " + session.title) {
-                        model.select(session.key)
-                    }
-                }
-                Divider()
-                Button("All sessions and filters…") { model.showSettings?() }
+            Button {
+                choosingSession = true
             } label: {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(model.selected?.title ?? "Agent inbox").font(.system(size: 13, weight: .semibold))
@@ -212,7 +227,17 @@ public struct LiveWidgetView: View {
                     )
                     .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                 }
-            }.menuStyle(.borderlessButton)
+            }
+            .accessibilityLabel("Choose session or subagent")
+            .popover(isPresented: $choosingSession, arrowEdge: .bottom) {
+                ScrollView {
+                    WidgetSessionBrowser(model: model) { session in
+                        model.select(session.key, edge: edge)
+                        choosingSession = false
+                    }.padding(16)
+                }.frame(width: 560, height: 520)
+            }
+            .onChange(of: choosingSession) { _, value in model.dialogOpen = value }
             Spacer(minLength: 0)
             Button(action: model.unpinSelected) { Image(systemName: "pin.slash") }
                 .help("Unpin this session from the widget").accessibilityLabel("Unpin selected session")
@@ -340,6 +365,10 @@ public struct LiveWidgetView: View {
                 Button(ref.value) { openReference(ref.value) }.buttonStyle(.link).font(.caption).lineLimit(
                     1)
             }
+        } else if model.inboxLoading {
+            ProgressView("Loading this session’s inbox…")
+                .controlSize(.small).padding(.vertical, 12)
+                .accessibilityIdentifier("widget.inbox.loading")
         } else {
             Text("No inbox items for this session.").foregroundStyle(.secondary).font(.callout)
             Button("See conversation") { section = "Conversation" }
@@ -538,9 +567,10 @@ public struct LiveWidgetView: View {
                     )
                 }
                 Text(receiptLabel(message)).font(.system(size: 10))
+                    .accessibilityIdentifier("widget.receipt." + message.id)
                 Spacer(minLength: 0)
             }.foregroundStyle(message.state == "sent" ? .green : .secondary)
-            if let error = message.error {
+            if let error = message.error, !(message.state == "waiting-route" && message.receipt?.channel == "session-queue") {
                 Text(error).font(.caption2).foregroundStyle(.orange).textSelection(.enabled)
             }
             if message.isWithdrawable || message.needsRecovery {
@@ -630,8 +660,7 @@ public struct LiveWidgetView: View {
                 }
                 .modifier(WidgetGlassControl())
                 .foregroundStyle(model.voiceActive ? .red : .secondary)
-                .help(model.voiceActive ? "Stop dictation" : "Dictate").accessibilityLabel(
-                    model.voiceActive ? "Stop dictation" : "Dictate")
+                .help(model.voiceActionLabel).accessibilityLabel(model.voiceActionLabel)
                 Spacer()
                 Text("⌘V media · Esc close").font(.system(size: 9)).foregroundStyle(.tertiary)
             }.font(.system(size: 12)).foregroundStyle(.secondary).buttonStyle(.plain)
@@ -666,6 +695,7 @@ public struct LiveWidgetView: View {
                     }
                 }
             }.buttonStyle(.plain)
+                .accessibilityIdentifier("widget.attachment." + asset.id)
             Spacer(minLength: 0)
             if removable {
                 Button {
@@ -688,12 +718,14 @@ public struct LiveWidgetView: View {
     }
     private func receiptLabel(_ message: WidgetOutgoing) -> String {
         switch message.state {
-        case "sent": return "Sent · " + (message.receipt?.detail ?? message.target.provider)
+        case "sent":
+            return message.receipt?.channel == "session-queue" ? "Received by agent" : "Sent · " + (message.receipt?.detail ?? message.target.provider)
         case "review": return "Review the skipped video frames before sending"
         case "preparing": return "Preparing video · message saved"
         case "queued": return "Queued"
         case "dispatching": return "Sending…"
-        case "waiting-route": return "Waiting for an available session route"
+        case "waiting-route":
+            return message.receipt?.channel == "session-queue" ? "Queued for this session · waiting for the agent" : "Waiting for an available session route"
         case "unknown": return "Delivery unknown · check the conversation"
         default: return message.state.capitalized
         }

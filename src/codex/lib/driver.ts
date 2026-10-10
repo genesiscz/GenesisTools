@@ -3,8 +3,9 @@ import { THOUGHT_MODES, TRANSCRIPT_FORMATS } from "@genesiscz/utils/ai/transcrip
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
+import { WorkerDeliveryRejectedError, workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import type { WorkerDriver, WorkerVerbOutcome } from "@genesiscz/utils/worker/driver";
-import type { CodexControl } from "./control";
+import { type CodexControl, parseControlTarget } from "./control";
 import { sendControlRequest } from "./control-channel";
 import { isCodexDaemonPid, parseWritePolicy, schemaDriftWarning, spawnCodexSession } from "./spawn";
 import { type CodexSessionMeta, CodexSessionStore, deriveSessionStatus } from "./store";
@@ -23,6 +24,10 @@ async function control(name: string, request: CodexControl, fallback: unknown = 
     const response = await sendControlRequest(name, request);
 
     if (!response.ok) {
+        if (response.code === "rejected") {
+            throw new WorkerDeliveryRejectedError(response.error);
+        }
+
         throw new Error(response.error);
     }
 
@@ -128,10 +133,31 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
     },
 
     steer(meta, input) {
+        const { expectSession, expectHome, expectTurn } = input.extras;
+        if (expectTurn !== undefined) {
+            throw new WorkerDeliveryRejectedError(
+                "Codex steering has no turn guard; omit --expect-turn. No prompt was sent."
+            );
+        }
+
+        const expectedTarget =
+            expectSession === undefined && expectHome === undefined
+                ? undefined
+                : parseControlTarget({ threadId: expectSession, home: expectHome });
+        if (
+            expectedTarget &&
+            (meta.threadId !== expectedTarget.threadId ||
+                !meta.home ||
+                workerSourceHome(meta.home) !== workerSourceHome(expectedTarget.home))
+        ) {
+            throw new WorkerDeliveryRejectedError("The Codex thread or source home changed; no prompt was sent.");
+        }
+
         return control(meta.name, {
             op: "steer",
             body: input.prompt,
             force: (input.extras as { force?: boolean }).force === true,
+            ...(expectedTarget ? { expectedTarget } : {}),
         });
     },
 

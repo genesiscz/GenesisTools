@@ -52,6 +52,18 @@ shape of the code, measure again with the same instrument, and prove the output 
 | One slow call makes all calls slow | Serial server queue | Fix the slowest door first, re-rank |
 | Width state writes 30×/s | Geometry → state → layout feedback | Whole points + a loop detector |
 
+## Animated panels and notches
+
+For icons jumping during hover or expansion, a top notch overflowing its contents, or a drag handle
+that fights the pointer, read [animation-verification.md](references/animation-verification.md).
+It covers intermediate-frame anchoring, intrinsic content sizing, screen-coordinate dragging,
+window-level hit tests and build-specific screenshot evidence. Check interrupted transitions as well
+as settled states. For a pane that pauses before moving, also inspect native menu construction in
+[performance.md](references/performance.md#defer-large-recipient-menus-until-the-user-opens-them).
+For the exact window-only recording and contact-sheet recipe, use
+[recording-animations.md](references/recording-animations.md). It keeps actions inside the capture
+interval and distinguishes window isolation, Retina detail, callback timing and video sampling.
+
 ## Measuring
 
 Instruments, what each answers and the traps in reading them: [references/measuring.md](references/measuring.md).

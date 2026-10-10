@@ -73,9 +73,10 @@ public final class EdgePanelController<Content: View> {
             backing: .buffered, defer: false)
         panel.title = title
         panel.identifier = NSUserInterfaceItemIdentifier("widget-preview." + placement.rawValue)
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isFloatingPanel = true
+        // isFloatingPanel resets the level. Apply the top notch's menu-bar layer afterward.
+        panel.level = placement == .top ? .statusBar : .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.backgroundColor = .clear
@@ -87,6 +88,10 @@ public final class EdgePanelController<Content: View> {
         hosting.sizingOptions = []
         panel.contentView = hosting
         self.panel = panel
+    }
+
+    public func updateContent(@ViewBuilder _ content: () -> Content) {
+        (panel.contentView as? NSHostingView<Content>)?.rootView = content()
     }
 
     public func setCompactSize(_ size: CGSize) { compactSize = size }
@@ -155,7 +160,7 @@ public final class EdgePanelController<Content: View> {
             next.finished = { [weak self] summary in
                 guard let self else { return }
                 self.lastTransitionTiming = summary
-                PerfLog.mark("edge.transition edge=\(self.placement.rawValue) state=\(presentation) \(summary.description)")
+                PerfLog.mark("edge.transition pid=\(ProcessInfo.processInfo.processIdentifier) window=\(self.panel.windowNumber) edge=\(self.placement.rawValue) state=\(presentation) \(summary.description)")
             }
             animation = next
             next.start()
